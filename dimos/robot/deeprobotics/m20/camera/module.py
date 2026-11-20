@@ -64,6 +64,20 @@ class M20CameraRelayConfig(NativeModuleConfig):
     # vendor publishes no factory calibration.
     focal_length_px: float = Field(default=607.0, gt=0.0)
     focal_length_width_px: int = Field(default=1280, ge=1)
+    # The lenses' distortion as CameraInfo names it: "plumb_bob" (k1, k2, p1, p2, k3) or "equidistant" (fisheye,
+    # k1..k4), at the focal length above. Uncalibrated: the lenses are fisheyes, and a plumb-line fit to one rear
+    # frame gives equidistant, focal 486 px at 1280 wide, k1..k4 = 0 (an estimate, not a calibration).
+    distortion_model: Literal["plumb_bob", "equidistant"] = "plumb_bob"
+    distortion_coefficients: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
+    # Undistort every frame on the robot before encoding (rust encoder only). CameraInfo then describes the
+    # deskewed frames: their new pinhole matrix, no distortion, the same frame_id.
+    deskew: bool = False
+    # Deskewed frame size; 0 keeps the capture's.
+    deskew_width: int = Field(default=0, ge=0)
+    deskew_height: int = Field(default=0, ge=0)
+    # 0 keeps only what every edge of the frame saw (no black borders), 1 the whole field of view.
+    deskew_balance: float = Field(default=0.0, ge=0.0, le=1.0)
+    deskew_interpolation: Literal["bilinear", "nearest"] = "bilinear"
     retry_s: float = Field(default=2.0, ge=0.1, le=60.0)
     # Without an answer or a frame for this long, the stream is dropped and reopened.
     stall_timeout_s: float = Field(default=2.0, ge=0.1, le=60.0)

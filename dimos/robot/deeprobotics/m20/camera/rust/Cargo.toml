@@ -34,4 +34,4 @@ serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
 anyhow = "1"
-rockchip-h264 = "0.2"
+rockchip-h264 = "0.3"

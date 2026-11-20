@@ -11,8 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! The M20's front and rear RTSP cameras relayed as H.265 `CompressedVideo`, every frame, with their
-//! static transforms and a CameraInfo sized to what each stream actually sends.
+//! The M20's front and rear cameras relayed as H.264 `CompressedVideo`, every frame (optionally deskewed), with
+//! their static transforms and a CameraInfo describing what each stream actually sends.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,8 +22,22 @@ use lcm_msgs::foxglove_msgs::CompressedVideo;
 use lcm_msgs::sensor_msgs::CameraInfo;
 use tracing::warn;
 
-use crate::geometry::{camera_info, camera_transforms};
+use rockchip_h264::deskew::{new_camera, Interpolation, Model, Options};
+
+use crate::geometry::{camera_info, camera_transforms, intrinsics, rectified_camera_info};
 use crate::relay::{relay, wall_s, Camera, Encode, Encoder};
+
+fn valid_model(name: &str) -> Result<(), validator::ValidationError> {
+    name.parse::<Model>().map(|_| ()).map_err(|_| {
+        validator::ValidationError::new("distortion_model must be plumb_bob or equidistant")
+    })
+}
+
+fn valid_interpolation(name: &str) -> Result<(), validator::ValidationError> {
+    name.parse::<Interpolation>().map(|_| ()).map_err(|_| {
+        validator::ValidationError::new("deskew_interpolation must be nearest or bilinear")
+    })
+}
 
 fn valid_encoder(name: &str) -> Result<(), validator::ValidationError> {
     name.parse::<Encoder>()
@@ -61,6 +75,23 @@ pub struct Config {
     focal_length_px: f64,
     #[validate(range(min = 1))]
     focal_length_width_px: i64,
+    /// The lenses' distortion, as CameraInfo names it: `plumb_bob` (k1, k2, p1, p2, k3) or `equidistant` (k1..k4)
+    #[validate(custom(function = "valid_model"))]
+    distortion_model: String,
+    distortion_coefficients: Vec<f64>,
+    /// Undistort every frame before encoding (rust encoder only); CameraInfo then describes the deskewed frames
+    deskew: bool,
+    /// Deskewed frame size; 0 keeps the capture's
+    #[validate(range(min = 0))]
+    deskew_width: i64,
+    #[validate(range(min = 0))]
+    deskew_height: i64,
+    /// 0 keeps only what every edge of the frame saw (no black corners), 1 the whole field of view
+    #[validate(range(min = 0.0, max = 1.0))]
+    deskew_balance: f64,
+    /// `bilinear` or `nearest`
+    #[validate(custom(function = "valid_interpolation"))]
+    deskew_interpolation: String,
     /// Seconds between reconnect attempts.
     #[validate(range(min = 0.1, max = 60.0))]
     retry_s: f64,
@@ -93,16 +124,53 @@ pub struct M20Camera {
     config: Config,
 }
 
+impl Config {
+    /// The deskew options, when deskewing is on.
+    fn deskew_options(&self) -> Option<Options> {
+        self.deskew.then(|| Options {
+            output_size: (self.deskew_width > 0 && self.deskew_height > 0)
+                .then_some((self.deskew_width as u32, self.deskew_height as u32)),
+            balance: self.deskew_balance,
+            interpolation: self
+                .deskew_interpolation
+                .parse()
+                .unwrap_or(Interpolation::Bilinear),
+        })
+    }
+
+    /// The raw camera at a capture size.
+    fn camera(&self, width: u32, height: u32) -> rockchip_h264::deskew::Intrinsics {
+        intrinsics(
+            width,
+            height,
+            self.focal_length_px,
+            self.focal_length_width_px as f64,
+            self.distortion_model.parse().unwrap_or(Model::PlumbBob),
+            &self.distortion_coefficients,
+        )
+    }
+}
+
 impl M20Camera {
     async fn start(&mut self) {
         let config = self.config.clone();
+        let encoder = config.encoder.parse().unwrap_or(Encoder::Rust);
+        if config.deskew && encoder != Encoder::Rust {
+            warn!("deskew needs the rust encoder; the gstreamer pipeline publishes the frames as captured");
+        }
         let encode = Encode {
             width: config.width as u32,
             height: config.height as u32,
             fps: config.fps as u32,
             bitrate_bps: config.bitrate_bps as u32,
             gop: config.gop as u32,
-            encoder: config.encoder.parse().unwrap_or(Encoder::Rust),
+            encoder,
+            deskew: config.deskew_options().map(|options| {
+                (
+                    config.camera(config.width as u32, config.height as u32),
+                    options,
+                )
+            }),
         };
         let front = Arc::new(Camera {
             name: "front_camera".into(),
@@ -133,6 +201,13 @@ impl M20Camera {
     }
 }
 
+fn encoder_is_rust(config: &Config) -> bool {
+    config
+        .encoder
+        .parse::<Encoder>()
+        .map_or(true, |e| e == Encoder::Rust)
+}
+
 /// The static transforms every period, and each camera's CameraInfo once its size is known.
 async fn publish_metadata(config: Config, cameras: [Arc<Camera>; 2], tf: Tf) {
     let mut ticks = tokio::time::interval(Duration::from_secs_f64(config.metadata_period_s));
@@ -150,14 +225,13 @@ async fn publish_metadata(config: Config, cameras: [Arc<Camera>; 2], tf: Tf) {
             let Some((width, height)) = *camera.size.lock().unwrap() else {
                 continue;
             };
-            let info = camera_info(
-                width,
-                height,
-                config.focal_length_px,
-                config.focal_length_width_px as f64,
-                &camera.frame_id,
-                ts,
-            );
+            let raw = config.camera(width, height);
+            let info = match config.deskew_options() {
+                Some(options) if encoder_is_rust(&config) => {
+                    rectified_camera_info(&new_camera(&raw, &options), &camera.frame_id, ts)
+                }
+                _ => camera_info(&raw, &camera.frame_id, ts),
+            };
             if let Err(error) = camera.info.publish(&info).await {
                 warn!(%error, "cannot publish the camera info");
             }
