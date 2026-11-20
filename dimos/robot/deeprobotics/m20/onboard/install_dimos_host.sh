@@ -73,7 +73,9 @@ name="$1" lan_ip="$2" lidar_listen="$3" connect="$4" tags="$5" cpus="$6" port="$
 as_root() { echo "$sudo_pass" | sudo -S -p '' "$@"; }
 cd "$dest"
 # Listen is per unit (HOST__LISTEN in its environment beats .env); the rest is the Host's .env.
-.venv/bin/dimos host config name="$name" tags="$tags" connect="$connect" listen= autodiscovery=false >/dev/null
+# gossip off: a Host links only to the routers it is told to dial, never to ones a link advertises
+# (NOS would hand AOS GOS's robot-LAN locator, and AOS would link to GOS over its USB adapter).
+.venv/bin/dimos host config name="$name" tags="$tags" connect="$connect" listen= autodiscovery=false gossip=false >/dev/null
 
 # Loopback (the Host's own fragments), the robot LAN when the board listens there, and the lidar network.
 listen_endpoints() {
