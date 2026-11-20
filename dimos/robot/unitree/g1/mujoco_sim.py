@@ -37,6 +37,7 @@ from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.simulation.mujoco.menagerie import check_mujoco_dependencies
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -48,6 +49,11 @@ class G1SimConfig(ModuleConfig):
 
 
 class G1SimConnection(G1ConnectionBase):
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        super().check_dependencies(**kwargs)
+        check_mujoco_dependencies()
+
     config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]

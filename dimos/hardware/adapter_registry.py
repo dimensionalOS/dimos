@@ -21,9 +21,8 @@ manifests mapping name to a ``"module:attr"`` import path::
         "xarm": "dimos.hardware.manipulators.xarm.adapter:XArmAdapter",
     }
 
-Adapter modules are imported only when ``create()`` is first called for a
-name, so a missing vendor SDK fails loudly at creation instead of silently
-dropping the adapter from the registry at import time.
+Listing adapters reads only the manifests. Resolving a selected factory imports
+its implementation so callers can check its dependencies before construction.
 """
 
 from __future__ import annotations
@@ -32,6 +31,8 @@ from collections.abc import Callable, Mapping
 import importlib
 import os
 from typing import Any, ClassVar, Generic, TypeVar, cast
+
+from dimos.utils.optional_dependencies import OptionalDependencyError, explain_missing_extra
 
 AdapterT = TypeVar("AdapterT")
 
@@ -80,13 +81,14 @@ class LazyAdapterRegistry(Generic[AdapterT]):
             ImportError: If the factory's module cannot be imported (e.g.
                 the vendor SDK is not installed).
         """
-        return self._resolve_factory(name)(**kwargs)
+        return self.resolve_factory(name)(**kwargs)
 
     def available(self) -> list[str]:
         """List registered adapter names; import is not attempted."""
         return sorted(self._factory_paths.keys() | self._factories.keys())
 
-    def _resolve_factory(self, name: str) -> Callable[..., AdapterT]:
+    def resolve_factory(self, name: str) -> Callable[..., AdapterT]:
+        """Import the selected factory without constructing or connecting the adapter."""
         key = name.lower()
         if key in self._factories:
             return self._factories[key]
@@ -95,7 +97,10 @@ class LazyAdapterRegistry(Generic[AdapterT]):
         factory_path = self._factory_paths[key]
         module_name, attr = factory_path.split(":", maxsplit=1)
         try:
-            module = importlib.import_module(module_name)
+            with explain_missing_extra():
+                module = importlib.import_module(module_name)
+        except OptionalDependencyError:
+            raise
         except ImportError as exc:
             raise ImportError(
                 f"Cannot create {self.kind} {name!r}: "

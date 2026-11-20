@@ -84,6 +84,8 @@ def _pgo_config(cfg: PGOVoxelMapperConfig) -> PGOConfig:
 class PGOVoxelMapper(Module):
     """Global voxel map that stays loop-closed, anchored at the robot, optionally on a premap."""
 
+    required_imports = ("gtsam",)
+
     config: PGOVoxelMapperConfig
     dedicated_worker = True
 

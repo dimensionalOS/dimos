@@ -156,6 +156,8 @@ class PiperConnection(ConnectionModule):
     its emergency stop, where it sinks slowly to rest.
     """
 
+    required_imports = ("piper_sdk",)
+
     config: PiperConfig
 
     position_command: In[JointState]

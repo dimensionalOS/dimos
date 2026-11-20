@@ -217,6 +217,9 @@ class ManipulationModule(Module):
 
     @classmethod
     def check_dependencies(cls, **kwargs: Any) -> None:
+        super().check_dependencies(**kwargs)
+        if kwargs.get("model") is not None:
+            RobotModelConfig.model_validate(kwargs["model"]).model.check_dependencies()
         fields = get_type_hints(cls)["config"].model_fields
         if kwargs.get("world_backend", fields["world_backend"].default) != "roboplan":
             return

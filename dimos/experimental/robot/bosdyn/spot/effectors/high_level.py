@@ -130,6 +130,7 @@ class SpotHighLevel(StaticTfPublisher):
     """Drives Spot and streams its fisheye cameras, depth cameras, and odometry."""
 
     config: SpotHighLevelConfig
+    required_imports = ("bosdyn.client", "bosdyn.api")
 
     cmd_vel: In[Twist]
 

@@ -14,13 +14,16 @@
 
 from collections.abc import Callable
 from pathlib import Path
+import sys
 import xml.etree.ElementTree as ET
 
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.core.coordination.module_coordinator import check_module_dependencies
 from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.utils.data import LfsPath
 
 
@@ -817,3 +820,22 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
     transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
     assert transferred_joint is not None
     assert transferred_joint.velocity == 0.2
+
+
+def test_module_preflight_checks_attached_xacro_without_fetching_assets(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.setitem(sys.modules, "xacro", None)
+    fetch = mocker.patch(
+        "dimos.utils.data.get_data", side_effect=AssertionError("fetched an asset")
+    )
+    root = robot_model.RobotModel.from_root_link("world")
+    check_module_dependencies(UrdfManager.blueprint(model=root))
+    model = root.with_attached_model(
+        robot_model.RobotModel.from_file(LfsPath("robot/arm.xacro")),
+        parent_link="world",
+        joint_name="mount",
+    )
+    with pytest.raises(ImportError, match=r"dimos\[control\]"):
+        check_module_dependencies(UrdfManager.blueprint(model=model))
+    fetch.assert_not_called()

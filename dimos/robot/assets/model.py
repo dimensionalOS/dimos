@@ -34,7 +34,9 @@ from scipy.spatial.transform import Rotation
 from typing_extensions import Self
 
 from dimos.robot.assets.xacro import expand_xacro
+from dimos.utils.data import LfsPath
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 logger = setup_logger()
 
@@ -200,6 +202,23 @@ class RobotModel:
     # (follower, leader, multiplier, offset) per joint that copies another.
     _mimic_joints: tuple[tuple[str, str, float, float], ...] = ()
     _mesh_path_replacements: tuple[tuple[str, str], ...] = ()
+
+    def check_dependencies(self) -> None:
+        """Check declared Xacro sources without fetching models, including attached children."""
+        if self._base_model is not None:
+            self._base_model.check_dependencies()
+        else:
+            source = self._source_path
+            if isinstance(source, LfsPath):
+                source = LfsPath.cbor_encode(source)
+            if isinstance(source, str):
+                source = Path(source)
+            # Custom PathLike sources can resolve at runtime; expand_xacro checks those on use.
+            if isinstance(source, Path) and source.suffix.lower() == ".xacro":
+                check_imports("xacro")
+        for frame in self._fixed_frames:
+            if isinstance(frame, _AttachedModel):
+                frame.child.check_dependencies()
 
     @classmethod
     def from_file(

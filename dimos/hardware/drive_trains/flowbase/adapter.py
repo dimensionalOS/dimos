@@ -48,6 +48,8 @@ class FlowBaseAdapter:
         address: Portal RPC address as "host:port" (default: ``DEFAULT_ADDRESS``)
     """
 
+    required_imports = ("portal",)
+
     def __init__(self, dof: int = 3, address: str | None = None, **_: object) -> None:
         if dof != 3:
             raise ValueError(f"FlowBase only supports 3 DOF (holonomic), got {dof}")

@@ -67,6 +67,13 @@ Start one or more robot blueprints. Built-in dimOS blueprints use bare names suc
 `unitree-go2`; external blueprints installed from Python packages use namespaced names
 such as `my-robot-stack.go2`.
 
+If a blueprint import fails because an optional package is missing, `dimos run` names
+the extra that provides it. It also checks declared dependencies of selected modules
+and adapters before starting workers. For example, Go2 replay needs `dimos[mapping]`
+for its mapper, and the Go2 mesh viewer needs `dimos[cuda]` for Warp. On Linux x86-64
+with Python 3.10 the mapping extra has no compatible gtsam build. Use a supported
+Python 3.11 or 3.12 environment on that platform before installing the extra.
+
 ```bash
 dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--choice NAME=OPTION]... [--<config-field> <value> ...]
 ```

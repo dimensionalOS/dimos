@@ -74,6 +74,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -99,6 +100,11 @@ class TaskConfig:
 class ControlCoordinatorConfig(ModuleConfig):
     """Configuration for the ControlCoordinator."""
 
+    def check_dependencies(self) -> None:
+        for component in self.hardware:
+            factory = _adapter_factory(self.select_adapter(component))
+            check_imports(*getattr(factory, "required_imports", ()))
+
     tick_rate: float = 100.0
     publish_joint_state: bool = True
     # Transitional: goes away once every consumer reads per-robot streams.
@@ -123,6 +129,31 @@ class ControlCoordinatorConfig(ModuleConfig):
     # stiffness. The connection keeps those gains; this declaration only
     # lets tasks that require zero stiffness (hand guiding) accept the robot.
     zero_stiffness_joints: list[str] = field(default_factory=lambda: [])
+
+    def select_adapter(self, component: HardwareComponent) -> HardwareComponent:
+        """Apply saved hardware addresses and select the stand-in for an unaddressed device."""
+        address = component.address
+        if not self.g.simulation:
+            address = self.addresses.get(component.hardware_id, address)
+        if address is None and component.mock_limits is not None:
+            return replace(component, adapter_type="mock", limits=component.mock_limits)
+        return replace(component, address=address)
+
+
+def _adapter_factory(
+    component: HardwareComponent,
+) -> "Callable[..., ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter]":
+    if component.hardware_type == HardwareType.WHOLE_BODY:
+        from dimos.hardware.whole_body.registry import whole_body_adapter_registry
+
+        return whole_body_adapter_registry.resolve_factory(component.adapter_type)
+    if component.hardware_type == HardwareType.BASE:
+        from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
+
+        return twist_base_adapter_registry.resolve_factory(component.adapter_type)
+    from dimos.hardware.manipulators.registry import adapter_registry
+
+    return adapter_registry.resolve_factory(component.adapter_type)
 
 
 class ControlCoordinator(Module):
@@ -297,29 +328,31 @@ class ControlCoordinator(Module):
         stand-in when it has one. A simulated manipulator without a scene
         attaches to the blueprint's MujocoSimModule.
         """
-        address = component.address
-        if not self.config.g.simulation:
-            address = self.config.addresses.get(component.hardware_id, address)
-        if address is None and component.mock_limits is not None:
-            return replace(component, adapter_type="mock", limits=component.mock_limits)
-        if address is None and component.adapter_type == "sim_mujoco":
+        component = self.config.select_adapter(component)
+        if component.address is None and component.adapter_type == "sim_mujoco":
             if self._mujoco_sim is None:
                 raise RuntimeError(
                     f"Hardware {component.hardware_id!r} simulates an arm but the blueprint "
                     "has no MujocoSimModule to attach to; add one or set the scene as its address"
                 )
-            address = str(self._mujoco_sim.scene_path())
-        return replace(component, address=address)
+            return replace(component, address=str(self._mujoco_sim.scene_path()))
+        return component
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
-        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter
-        if component.hardware_type == HardwareType.WHOLE_BODY:
-            adapter = self._create_whole_body_adapter(component)
-        elif component.hardware_type == HardwareType.BASE:
-            adapter = self._create_twist_base_adapter(component)
-        else:
-            adapter = self._create_adapter(component)
+        factory = _adapter_factory(component)
+        dds = (
+            {"domain_id": component.domain_id}
+            if component.hardware_type == HardwareType.WHOLE_BODY
+            else {}
+        )
+        adapter = factory(
+            dof=len(component.joints),
+            address=component.address,
+            hardware_id=component.hardware_id,
+            **dds,
+            **component.adapter_kwargs,
+        )
 
         if not adapter.connect():
             raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
@@ -337,43 +370,6 @@ class ControlCoordinator(Module):
         except Exception:
             adapter.disconnect()
             raise
-
-    def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:
-        """Create a manipulator adapter from component config."""
-        from dimos.hardware.manipulators.registry import adapter_registry
-
-        return adapter_registry.create(
-            component.adapter_type,
-            dof=len(component.joints),
-            address=component.address,
-            hardware_id=component.hardware_id,
-            **component.adapter_kwargs,
-        )
-
-    def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
-        """Create a twist base adapter from component config."""
-        from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
-
-        return twist_base_adapter_registry.create(
-            component.adapter_type,
-            dof=len(component.joints),
-            address=component.address,
-            hardware_id=component.hardware_id,
-            **component.adapter_kwargs,
-        )
-
-    def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
-        """Create a whole-body adapter from component config."""
-        from dimos.hardware.whole_body.registry import whole_body_adapter_registry
-
-        return whole_body_adapter_registry.create(
-            component.adapter_type,
-            dof=len(component.joints),
-            hardware_id=component.hardware_id,
-            address=component.address,
-            domain_id=component.domain_id,
-            **component.adapter_kwargs,
-        )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config via the task registry."""

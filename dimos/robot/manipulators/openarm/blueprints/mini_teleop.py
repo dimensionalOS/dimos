@@ -42,8 +42,8 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
 )
 from dimos.robot.manipulators.feetech.connection import (
     GUARDED_JOINT_FRAME_ID,
+    DualFeetechConnectionConfig,
     FeetechConnection,
-    FeetechConnectionConfig,
 )
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_MINI_ARM_LEADERS,
@@ -88,7 +88,7 @@ class OpenArmLeaderCoordinator(DamiaoCoordinator):
     leader_joint_command: In[JointState]
 
 
-class OpenArmMiniConnectionConfig(FeetechConnectionConfig):
+class OpenArmMiniConnectionConfig(DualFeetechConnectionConfig):
     """Serial ports of the two OpenArm Mini leader arms.
 
     Attributes:
@@ -96,9 +96,6 @@ class OpenArmMiniConnectionConfig(FeetechConnectionConfig):
             empty leaves that leader unread.
         right_serial_port: The right leader's serial port; empty leaves it unread.
     """
-
-    left_serial_port: str = ""
-    right_serial_port: str = ""
 
 
 class OpenArmMiniConnection(FeetechConnection):
@@ -115,7 +112,7 @@ class OpenArmMiniConnection(FeetechConnection):
     robot = OPENARM_MINI_LEADERS
 
     def serial_ports(self) -> dict[str, str]:
-        return {"left": self.config.left_serial_port, "right": self.config.right_serial_port}
+        return self.config.serial_ports()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

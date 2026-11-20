@@ -44,6 +44,9 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 
 class UrdfManagerConfig(ModuleConfig):
+    def check_dependencies(self) -> None:
+        self.model.check_dependencies()
+
     model: RobotModel
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True

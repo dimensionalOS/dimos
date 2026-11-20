@@ -15,15 +15,22 @@
 from collections.abc import Callable, Iterator
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 from pydantic import TypeAdapter
 import pytest
+from typer.testing import CliRunner
 
+from dimos.cli.dimos import main
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+from dimos.core import run_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.module_coordinator import check_module_dependencies
 from dimos.core.global_config import global_config
+from dimos.hardware.drive_trains import registry as drive_trains
+from dimos.hardware.manipulators import registry as manipulators
 from dimos.robot.manipulators.xarm.config import make_xarm_hardware, xarm7_hardware
 
 
@@ -123,3 +130,54 @@ def test_simulation_keeps_the_simulated_adapter_and_takes_the_sim_modules_scene(
         make_xarm_hardware("arm", 7, adapter_type="sim_mujoco", address="/own.xml")
     )
     assert explicit.address == "/own.xml"
+
+
+@pytest.fixture
+def missing_sdk(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[str, str], None]:
+    """Make a real adapter import encounter a missing vendor package on any host."""
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    def hide(package: str, adapter_module: str) -> None:
+        for name in list(sys.modules):
+            if name.partition(".")[0] == package or name == adapter_module:
+                monkeypatch.delitem(sys.modules, name)
+        (tmp_path / f"{package}.py").write_text(
+            f"raise ModuleNotFoundError('No module named {package}', name=__name__)"
+        )
+
+    return hide
+
+
+def test_go2_keyboard_reports_adapter_sdk_before_allocating(
+    missing_sdk: Callable[[str, str], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_sdk("unitree_sdk2py", "dimos.hardware.drive_trains.unitree_go2.adapter")
+    monkeypatch.setattr(
+        drive_trains, "twist_base_adapter_registry", drive_trains.TwistBaseAdapterRegistry()
+    )
+    monkeypatch.setattr(run_registry, "cleanup_stale", lambda: pytest.fail("allocated a run"))
+
+    result = CliRunner().invoke(
+        main, ["--viewer", "none", "--replay", "run", "unitree-go2-keyboard-teleop"]
+    )
+
+    assert result.exit_code == 1
+    assert "dimos[unitree-dds]" in result.output
+
+
+def test_preflight_uses_the_configured_adapter_or_its_mock(
+    missing_sdk: Callable[[str, str], None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_sdk("xarm", "dimos.hardware.manipulators.xarm.adapter")
+    monkeypatch.setattr(manipulators, "adapter_registry", manipulators.AdapterRegistry())
+    hardware = [make_xarm_hardware("arm", 7, adapter_type="xarm", mock_without_address=True)]
+    blueprint = ControlCoordinator.blueprint(hardware=hardware, addresses={"arm": "configured"})
+    parser = BlueprintConfigParser(blueprint)
+    # Simulation ignores the saved hardware address and selects the SDK-free stand-in.
+    check_module_dependencies(
+        blueprint, parser.parse(global_overrides={"simulation": "mujoco"}, environ={})
+    )
+    with pytest.raises(ImportError, match=r"dimos\[control\]"):
+        check_module_dependencies(
+            blueprint, parser.parse(global_overrides={"simulation": ""}, environ={})
+        )
