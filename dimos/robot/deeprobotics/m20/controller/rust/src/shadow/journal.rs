@@ -16,7 +16,9 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 
@@ -88,27 +90,109 @@ pub fn parse_log_line(line: &str, utc_offset_s: i64) -> Option<(f64, Event)> {
     Some((iso_seconds(&iso)?, Event::State(state_name(to))))
 }
 
-/// Follow rl_deploy's log file (today's path; tail -F waits for it), state transitions to `tx`.
-pub fn follow_log(path: &str, utc_offset_s: i64, tx: Sender<(f64, Event)>) -> Result<Child> {
-    let mut child = Command::new("tail")
-        .args(["-F", "-n", "20000", path])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("starting tail")?;
-    let out = child.stdout.take().context("tail stdout")?;
-    std::thread::Builder::new()
+/// Days since the epoch -> (year, month, day) (Howard Hinnant's algorithm).
+pub fn civil(days: i64) -> (i64, i64, i64) {
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + if m <= 2 { 1 } else { 0 }, m, d)
+}
+
+/// rl_deploy's log path for the local day of `epoch_s` ({date} = YYYY_MMDD), and the seconds left in that day.
+pub fn log_path_for(pattern: &str, epoch_s: i64, utc_offset_s: i64) -> (String, u64) {
+    let local = epoch_s + utc_offset_s;
+    let (y, m, d) = civil(local.div_euclid(86400));
+    let left = 86400 - local.rem_euclid(86400);
+    (
+        pattern.replace("{date}", &format!("{y:04}_{m:02}{d:02}")),
+        left as u64,
+    )
+}
+
+/// rl_deploy's log followed across days: one `tail -F` (inotify) per local day's file, switched at midnight.
+pub struct LogFollower {
+    stop: Option<Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl LogFollower {
+    /// End the current tail and the thread.
+    pub fn stop(mut self) {
+        self.stop.take();
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+fn epoch_s() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Follow rl_deploy's log file (tail -F waits for a file not there yet), state transitions to `tx`; `history`
+/// lines of each day's file are read back first.
+pub fn follow_log(
+    pattern: &str,
+    utc_offset_s: i64,
+    history: usize,
+    tx: Sender<(f64, Event)>,
+) -> Result<LogFollower> {
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let pattern = pattern.to_string();
+    let thread = std::thread::Builder::new()
         .name("shadow-rl-log".into())
-        .spawn(move || {
-            for line in BufReader::new(out).lines().map_while(Result::ok) {
-                if let Some(e) = parse_log_line(&line, utc_offset_s) {
-                    if tx.send(e).is_err() {
-                        return;
-                    }
+        .spawn(move || loop {
+            let (path, left) = log_path_for(&pattern, epoch_s(), utc_offset_s);
+            let tail = Command::new("tail")
+                .args(["-F", "-n", &history.to_string(), &path])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn();
+            let (mut child, reader) = match tail {
+                Ok(mut child) => {
+                    let reader = child.stdout.take().map(|out| {
+                        let tx = tx.clone();
+                        std::thread::spawn(move || {
+                            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                                if let Some(e) = parse_log_line(&line, utc_offset_s) {
+                                    if tx.send(e).is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                        })
+                    });
+                    (Some(child), reader)
                 }
+                Err(e) => {
+                    eprintln!("shadow: tail {path}: {e}");
+                    (None, None)
+                }
+            };
+            // wakes at the local midnight (the next day's file) or when stopped
+            let woke = stop_rx.recv_timeout(Duration::from_secs(left));
+            if let Some(c) = child.as_mut() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            if let Some(r) = reader {
+                let _ = r.join();
+            }
+            if woke != Err(RecvTimeoutError::Timeout) {
+                return;
             }
         })?;
-    Ok(child)
+    Ok(LogFollower {
+        stop: Some(stop_tx),
+        thread: Some(thread),
+    })
 }
 
 /// "2026-11-20T14:16:31.638834+0800" -> seconds since the epoch.
@@ -125,8 +209,9 @@ pub fn iso_seconds(s: &str) -> Option<f64> {
     );
     let sec: f64 = c.next()?.parse().ok()?;
     let sign = if tz.starts_with('-') { -1 } else { 1 };
-    let tz = tz[1..].replace(':', "");
-    let off = sign * (tz[..2].parse::<i64>().ok()? * 3600 + tz[2..4].parse::<i64>().ok()? * 60);
+    let tz = tz.get(1..)?.replace(':', "");
+    let off =
+        sign * (tz.get(..2)?.parse::<i64>().ok()? * 3600 + tz.get(2..4)?.parse::<i64>().ok()? * 60);
     // days from the civil date (Howard Hinnant's algorithm)
     let yy = if mo <= 2 { y - 1 } else { y };
     let era = yy.div_euclid(400);
@@ -137,7 +222,8 @@ pub fn iso_seconds(s: &str) -> Option<f64> {
     Some((days * 86400 + h * 3600 + mi * 60 - off) as f64 + sec)
 }
 
-/// Follow the unit's journal from now on; events go to `tx`. The child is returned so it can be killed.
+/// Follow the unit's journal from now on (journalctl -f waits on the journal, no polling); events go to `tx`. The
+/// child is returned so it can be killed.
 /// The last `history` lines come first, so the current state and gait are known at start.
 pub fn follow(unit: &str, history: usize, tx: Sender<(f64, Event)>) -> Result<Child> {
     let mut child = Command::new("journalctl")
@@ -194,6 +280,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(e, Event::State("start_damping".into()));
-        assert!((t - 1795169826.048410).abs() < 1e-5, "{t}");
+        assert!((t - 1_795_169_826.048_41).abs() < 1e-5, "{t}");
+    }
+
+    #[test]
+    fn short_timezone_is_no_stamp() {
+        assert_eq!(iso_seconds("2026-11-20T14:16:31.6+08"), None);
+        assert_eq!(
+            parse_line("2026-11-20T14:16:31.6+0 host x: target_gait: 3003"),
+            None
+        );
+    }
+
+    #[test]
+    fn log_path_switches_at_local_midnight() {
+        // 2026-11-20 23:59:59 at +0800 is 15:59:59 UTC
+        let before = 1_795_190_399;
+        let pattern = "/log/{date}/rl_deploy.{date}.log";
+        assert_eq!(
+            log_path_for(pattern, before, 28800),
+            ("/log/2026_1120/rl_deploy.2026_1120.log".to_string(), 1)
+        );
+        assert_eq!(
+            log_path_for(pattern, before + 1, 28800).0,
+            "/log/2026_1121/rl_deploy.2026_1121.log"
+        );
     }
 }

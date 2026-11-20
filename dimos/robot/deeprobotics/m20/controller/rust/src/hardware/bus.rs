@@ -54,6 +54,7 @@ pub fn motor_commands(
         .map(|joint| {
             let i = joint.index();
             m20_ecan::JointCommand {
+                // protocol constant: the M20's one motor board (m20-ecan, rl_deploy's frames)
                 board_id: 0x79,
                 joint,
                 position: calibration.motor_position(joint, cmd.q[i] as f32),
@@ -169,13 +170,16 @@ impl BusHardware {
 impl Hardware for BusHardware {
     fn read_state(&mut self) -> Result<RobotState> {
         // rl_deploy's startup, then sitting commands until a reply lands
-        while self.bus.owner.in_startup() || self.last.is_none() {
+        loop {
+            if !self.bus.owner.in_startup() {
+                if let Some(s) = self.last.clone() {
+                    return self.with_imu(s);
+                }
+            }
             if let Some(s) = self.step(None)? {
                 self.last = Some(s);
             }
         }
-        let s = self.last.clone().unwrap();
-        self.with_imu(s)
     }
 
     fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {

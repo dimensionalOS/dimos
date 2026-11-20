@@ -21,6 +21,11 @@
 //!   m20_controller ... --backend bus         (the shared m20-ecan bus owner: rl_deploy's startup first; gains only
 //!                                             with [ecan] allow_gains; frames streamed to [ecan] tap_socket)
 
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -111,7 +116,7 @@ fn main() -> Result<()> {
             {
                 eprintln!("policy thread realtime setup: {e:#}");
             }
-        }))
+        })?)
     };
     let mut hardware: Box<dyn Hardware> = match args.backend.as_str() {
         "mujoco" => {
@@ -160,6 +165,8 @@ fn main() -> Result<()> {
     let mut last_state = State::Passive;
     let mut last_fault: Option<String> = None;
     let seconds = args.seconds;
+    // a status line once a second of control ticks
+    let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let stats = rt::run(
         &cfg,
         hardware.as_mut(),
@@ -184,7 +191,7 @@ fn main() -> Result<()> {
                 let _ = log_tx.send(format!("{:.3} fault {:?}", c.time(), c.fault));
                 last_fault = c.fault.clone();
             }
-            if tick.stats.ticks % 1000 == 0 {
+            if tick.stats.ticks % status_every == 0 {
                 let k = &c.counters;
                 let _ = log_tx.send(format!(
                     "{:.0} s: policy steps {} refused {} infer {:.2} ms (max {:.2}) overruns {} hw errors {} max tick {:.2} ms",

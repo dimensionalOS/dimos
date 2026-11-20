@@ -110,7 +110,7 @@ fn run_script(
     let cfg = common::config();
     let mut sim = MujocoSim::connect(&format!("127.0.0.1:{port}")).unwrap();
     sim.reset(&serde_json::json!({ "pose": "lie" })).unwrap();
-    let mut policy = ThreadedPolicy::spawn(RunnerSet::load(&cfg, &dir).unwrap(), || {});
+    let mut policy = ThreadedPolicy::spawn(RunnerSet::load(&cfg, &dir).unwrap(), || {}).unwrap();
     let mut commands = ScriptedCommands::new(script);
     let mut controller = Controller::new(cfg.clone());
     let stop = AtomicBool::new(false);

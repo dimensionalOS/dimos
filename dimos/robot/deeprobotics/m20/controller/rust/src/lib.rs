@@ -16,6 +16,11 @@
 //! runners (observation and action pipelines per m20_controller.toml), a 1 kHz real-time loop with the policy on its
 //! own thread, and two hardware backends (MuJoCo over a socket for tests, the eth1 ECAN motor bus).
 
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 pub mod commands;
 pub mod config;
 pub mod frames;

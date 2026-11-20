@@ -24,6 +24,15 @@ finetune_height_gait = 0x3004
 cpus = [1, 2, 3]
 nice = 10
 status_every = 10000
+# IMU / steer history kept (s); a segment's state is the journal's last word up to state_lookup_slack_s past its
+# first enable frame; at most max_catchup_ticks control ticks for cycles the shim missed
+keep_s = 30.0
+state_lookup_slack_s = 0.01
+max_catchup_ticks = 50
+# longest wait on a silent shim stream (stop latency, last cycles); lines of history read from journal / rl_deploy log
+tap_idle_timeout_ms = 200
+journal_history_lines = 5000
+rl_log_history_lines = 20000
 
 # the guard (deploy/shadow/guard.sh) stops the shadow when rl_deploy's "send Data update timeout" count rises faster
 # than guard_factor x its background (counted over guard_baseline_s before the guard starts, or after a restart's

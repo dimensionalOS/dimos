@@ -41,8 +41,6 @@ pub const STATES: [&str; 6] = [
     "joint_damping",
     "start_damping",
 ];
-/// how much input history is kept (s)
-const KEEP_S: f64 = 30.0;
 
 pub struct Cycle {
     pub t_ns: u64,
@@ -67,6 +65,13 @@ fn last_before<T: Clone>(v: &VecDeque<(f64, T)>, t: f64) -> Option<(f64, T)> {
     v.iter().rev().find(|(et, _)| *et <= t).cloned()
 }
 
+/// Drop events older than `cutoff`, keeping the newest one before it (last_before still finds it).
+fn prune_events<T>(v: &mut VecDeque<(f64, T)>, cutoff: f64) {
+    while v.len() > 1 && v.get(1).is_some_and(|(t, _)| *t <= cutoff) {
+        v.pop_front();
+    }
+}
+
 #[derive(Default)]
 pub struct Counters {
     pub cycles: u64,
@@ -74,6 +79,8 @@ pub struct Counters {
     pub policy_steps: u64,
     pub no_imu: u64,
     pub dropped: u64,
+    /// policy steps that failed (the cycle is logged without ours)
+    pub policy_errors: u64,
 }
 
 pub struct Engine {
@@ -155,14 +162,22 @@ impl Engine {
 
     pub fn imu(&mut self, s: Imu) {
         self.imu.push_back(s);
-        while self.imu.front().is_some_and(|f| s.t - f.t > KEEP_S) {
+        while self
+            .imu
+            .front()
+            .is_some_and(|f| s.t - f.t > self.scfg.keep_s)
+        {
             self.imu.pop_front();
         }
     }
 
     pub fn steer(&mut self, s: Steer) {
         self.steer.push_back(s);
-        while self.steer.front().is_some_and(|f| s.t - f.t > KEEP_S) {
+        while self
+            .steer
+            .front()
+            .is_some_and(|f| s.t - f.t > self.scfg.keep_s)
+        {
             self.steer.pop_front();
         }
     }
@@ -174,6 +189,13 @@ impl Engine {
             Event::Target(g) => self.targets.push_back((t, g)),
             Event::Height(h) => self.heights.push_back((t, h)),
         }
+        // bounded over a days-long run: events before the oldest pending cycle's window are only needed as the last
+        let oldest = self.pending.front().map_or(t, |c| c.t_ns as f64 * 1e-9);
+        let cutoff = oldest.min(t) - self.scfg.keep_s;
+        prune_events(&mut self.states, cutoff);
+        prune_events(&mut self.gaits, cutoff);
+        prune_events(&mut self.targets, cutoff);
+        prune_events(&mut self.heights, cutoff);
     }
 
     /// A joint-state reply arrived (state in joint space); it is stamped with the command it answered, the clock
@@ -243,18 +265,22 @@ impl Engine {
     }
 
     fn process(&mut self) -> Result<()> {
-        let c = self.pending.pop_front().unwrap();
+        let Some(c) = self.pending.pop_front() else {
+            return Ok(());
+        };
         let t = c.t_ns as f64 * 1e-9;
         let rl_enable = c.rl.word == self.scfg.enable_word;
         let rl_legs = legs(&c.rl.command);
+        let hz = self.cfg.timing.control_hz;
         let mut missing = self
             .prev_t
-            .map_or(0, |p| (((t - p) * 1000.0).round() as i64 - 1).max(0) as u64);
+            .map_or(0, |p| (((t - p) * hz).round() as i64 - 1).max(0) as u64);
         self.counters.cycles += 1;
         let mut flags = if rl_enable { FLAG_RL_ENABLE } else { 0 };
         // a new state segment starts at rl_deploy's first enable frame
         if rl_enable && !self.prev_rl_enable {
-            self.state = last_before(&self.states, t + 0.01).map(|(_, s)| s);
+            self.state =
+                last_before(&self.states, t + self.scfg.state_lookup_slack_s).map(|(_, s)| s);
             self.seg_cycle = 0;
             missing = 0;
             if let (Some(name), Some(rx)) = (self.state.clone(), c.rx.as_ref()) {
@@ -265,6 +291,7 @@ impl Engine {
                             ..Default::default()
                         };
                         self.controller.force(st, &rx.1, &cmd, true);
+                        // far past every start-up gate (rl_deploy is long up)
                         self.controller.set_time(1e9);
                     }
                 }
@@ -325,10 +352,15 @@ impl Engine {
                             && !self.change_ahead(&rl_legs, (period / 2) as usize);
                         if first || changed || cadence {
                             if let Some(s) = input.as_ref() {
-                                if let Some(cmd) = self.policy_step(t, s)? {
-                                    self.held = Some(cmd);
-                                    flags |= FLAG_POLICY_STEP;
-                                    self.counters.policy_steps += 1;
+                                // a failed step keeps the last command: one bad input never ends a dry run
+                                match self.policy_step(t, s) {
+                                    Ok(Some(cmd)) => {
+                                        self.held = Some(cmd);
+                                        flags |= FLAG_POLICY_STEP;
+                                        self.counters.policy_steps += 1;
+                                    }
+                                    Ok(None) => {}
+                                    Err(_) => self.counters.policy_errors += 1,
                                 }
                             }
                             self.since_step = 0;
@@ -352,7 +384,7 @@ impl Engine {
                             target,
                             ..Default::default()
                         };
-                        for _ in 0..missing.min(50) {
+                        for _ in 0..missing.min(self.scfg.max_catchup_ticks) {
                             self.controller.tick(&rx.1, &cmd, &mut self.no_policy);
                             self.controller.hold_state(st);
                         }
@@ -429,7 +461,9 @@ impl Engine {
         self.prev_gait = gait;
         let steer = self.steer.iter().rev().find(|st| st.t <= t).copied();
         let fresh = steer.filter(|st| t - st.t <= self.scfg.command_timeout_s);
-        let spec = &self.cfg.runners[&runner];
+        let Some(spec) = self.cfg.runners.get(&runner) else {
+            anyhow::bail!("no runner {runner}");
+        };
         let mut axes = [0.0; 3];
         if let Some(st) = fresh {
             let v = [st.axes[0], st.axes[1], st.axes[2]];
@@ -514,4 +548,20 @@ fn legs(c: &JointCommand) -> [f64; 12] {
         out[k] = c.q[i];
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pruned_events_keep_the_last_one_before_the_window() {
+        let mut v: VecDeque<(f64, u32)> = (0..100).map(|i| (i as f64, i)).collect();
+        prune_events(&mut v, 50.5);
+        assert_eq!(last_before(&v, 50.7), Some((50.0, 50)));
+        assert_eq!(v.front(), Some(&(50.0, 50)));
+        let mut one: VecDeque<(f64, u32)> = [(0.0, 1)].into_iter().collect();
+        prune_events(&mut one, 1e9);
+        assert_eq!(one.len(), 1);
+    }
 }

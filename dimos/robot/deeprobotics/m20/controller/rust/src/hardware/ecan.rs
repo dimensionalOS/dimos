@@ -79,15 +79,26 @@ mod sys {
     impl RawSocket {
         pub fn open(interface: &str, ethertype: u16) -> Result<RawSocket> {
             let proto = (ethertype as u16).to_be() as i32;
-            let fd = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_RAW, proto) };
+            let fd = unsafe {
+                libc::socket(libc::AF_PACKET, libc::SOCK_RAW | libc::SOCK_CLOEXEC, proto)
+            };
             if fd < 0 {
                 return Err(io::Error::last_os_error())
                     .context("AF_PACKET socket (needs CAP_NET_RAW)");
             }
+            // owned from here: every error below closes the descriptor
+            let mut socket = RawSocket {
+                fd,
+                ifindex: 0,
+                mac: [0; 6],
+            };
             let name = CString::new(interface)?;
             let ifindex = unsafe { libc::if_nametoindex(name.as_ptr()) } as i32;
             if ifindex == 0 {
                 bail!("no interface {interface}");
+            }
+            if interface.len() >= libc::IFNAMSIZ {
+                bail!("interface name {interface} is too long");
             }
             let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
             for (d, s) in ifr.ifr_name.iter_mut().zip(interface.as_bytes()) {
@@ -119,7 +130,9 @@ mod sys {
             if r < 0 {
                 return Err(io::Error::last_os_error()).context("bind AF_PACKET");
             }
-            Ok(RawSocket { fd, ifindex, mac })
+            socket.ifindex = ifindex;
+            socket.mac = mac;
+            Ok(socket)
         }
 
         pub fn send(&self, frame: &[u8], flags: u32) -> io::Result<()> {
@@ -162,7 +175,7 @@ mod sys {
                 };
                 let ts = libc::timespec {
                     tv_sec: 0,
-                    tv_nsec: left.as_nanos().min(999_999_999) as i64,
+                    tv_nsec: left.as_nanos().min(999_999_999) as libc::c_long,
                 };
                 let r = unsafe { libc::ppoll(&mut pfd, 1, &ts, std::ptr::null()) };
                 if r < 0 {
@@ -346,7 +359,8 @@ impl Hardware for EcanBus {
                 if let Some(charge) = self.charge.as_mut() {
                     charge.on_frame(&frame);
                 }
-                if let Some(s) = decode_state(&frame, self.cfg.ethertype, &self.map)? {
+                // a malformed frame (bad checksum, short) is skipped: this tick's reply may still come
+                if let Ok(Some(s)) = decode_state(&frame, self.cfg.ethertype, &self.map) {
                     let s = self.with_imu(s)?;
                     self.last = Some(s.clone());
                     return Ok(s);

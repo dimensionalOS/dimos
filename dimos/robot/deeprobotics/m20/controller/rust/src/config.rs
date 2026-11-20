@@ -44,6 +44,7 @@ pub struct Robot {
     pub joint_upper: Vec<f64>,
     pub hipx_limit_fraction: f64,
     pub wheel_velocity_limit: f64,
+    /// the sim's actuator clip only: the motor drivers compute the PD torque, rl_deploy sends no torque limit
     pub torque_limit: Vec<f64>,
     pub thigh_length: f64,
     pub shank_length: f64,
@@ -361,7 +362,7 @@ pub struct RunnerSpec {
 }
 
 /// Real-time placement of the 1 kHz loop and the policy thread (Linux; ignored elsewhere).
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Realtime {
     #[serde(default)]
     pub control_cpu: Option<usize>,
@@ -373,6 +374,26 @@ pub struct Realtime {
     pub policy_fifo_priority: Option<i32>,
     #[serde(default)]
     pub lock_memory: bool,
+    /// off Linux only (dev runs): sleep this much short of each deadline, then yield to it (macOS oversleeps ~1 ms)
+    #[serde(default = "default_sleep_slack_s")]
+    pub sleep_slack_s: f64,
+}
+
+fn default_sleep_slack_s() -> f64 {
+    0.0015
+}
+
+impl Default for Realtime {
+    fn default() -> Self {
+        Realtime {
+            control_cpu: None,
+            policy_cpu: None,
+            control_fifo_priority: None,
+            policy_fifo_priority: None,
+            lock_memory: false,
+            sleep_slack_s: default_sleep_slack_s(),
+        }
+    }
 }
 
 /// The eth1 motor bus (see the ECAN backend); defaults are the values seen on the robot.
@@ -474,6 +495,50 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        let positive = [
+            ("timing.control_hz", self.timing.control_hz),
+            ("robot.thigh_length", self.robot.thigh_length),
+            ("robot.shank_length", self.robot.shank_length),
+        ];
+        for (name, v) in positive {
+            if !(v.is_finite() && v > 0.0) {
+                bail!("{name} must be a positive number, is {v}");
+            }
+        }
+        if self.timing.policy_decimation == 0 {
+            bail!("timing.policy_decimation must be at least 1");
+        }
+        let durations = [
+            ("safety.startup_grace_s", self.safety.startup_grace_s),
+            ("safety.state_timeout_s", self.safety.state_timeout_s),
+            ("safety.command_timeout_s", self.safety.command_timeout_s),
+            ("ecan.reply_timeout_s", self.ecan.reply_timeout_s),
+            ("realtime.sleep_slack_s", self.realtime.sleep_slack_s),
+            ("states.stand_up.phase_s", self.states.stand_up.phase_s),
+            ("states.lie_down.phase_s", self.states.lie_down.phase_s),
+        ];
+        for (name, v) in durations {
+            if !(v.is_finite() && v >= 0.0) {
+                bail!("{name} must be a non-negative number of seconds, is {v}");
+            }
+        }
+        let st = &self.states;
+        let state_gains = [
+            ("passive", &st.passive.kp, &st.passive.kd),
+            ("start_damping", &st.start_damping.kp, &st.start_damping.kd),
+            ("joint_damping", &st.joint_damping.kp, &st.joint_damping.kd),
+            ("stand_up", &st.stand_up.kp, &st.stand_up.kd),
+            ("lie_down", &st.lie_down.kp, &st.lie_down.kd),
+        ];
+        for (name, kp, kd) in state_gains {
+            tile(kp, JOINTS).with_context(|| format!("states.{name}.kp"))?;
+            tile(kd, JOINTS).with_context(|| format!("states.{name}.kd"))?;
+        }
+        tile(&self.ecan.position_offset, JOINTS).context("ecan.position_offset")?;
+        let direction = tile(&self.ecan.direction, JOINTS).context("ecan.direction")?;
+        if direction.iter().any(|d| d.abs() != 1.0) {
+            bail!("ecan.direction entries must be 1 or -1");
+        }
         let lens = [
             ("joint_names", self.robot.joint_names.len()),
             ("joint_lower", self.robot.joint_lower.len()),
@@ -506,6 +571,14 @@ impl Config {
             }
             tile(&r.kp, JOINTS).with_context(|| format!("runner {name} kp"))?;
             tile(&r.kd, JOINTS).with_context(|| format!("runner {name} kd"))?;
+            tile(&r.action.leg_scale, 12)
+                .with_context(|| format!("runner {name} action.leg_scale"))?;
+            if let Some(g) = &r.gait_clock {
+                let gains = [g.frequency, g.wz_gain, g.vx_gain, g.vy_gain];
+                if gains.iter().any(|v| !(v.is_finite() && *v > 0.0)) {
+                    bail!("runner {name}: gait_clock frequency and gains must be positive");
+                }
+            }
             let size: usize = r.obs.iter().map(block_size).sum();
             if size != r.frame {
                 bail!(
@@ -544,5 +617,32 @@ pub fn block_size(b: &ObsBlock) -> usize {
         }
         ObsBlock::LastAction { .. } => JOINTS,
         ObsBlock::HeightMap { rows, cols, .. } => rows * cols,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> Config {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../m20_controller.toml");
+        Config::load(&path).unwrap()
+    }
+
+    #[test]
+    fn rejects_what_would_panic_later() {
+        let mut c = config();
+        c.timing.control_hz = 0.0;
+        assert!(c.validate().is_err());
+        let mut c = config();
+        c.states.stand_up.kp = vec![1.0; 3];
+        assert!(c.validate().is_err());
+        let mut c = config();
+        c.ecan.direction = vec![0.0];
+        assert!(c.validate().is_err());
+        let mut c = config();
+        c.ecan.reply_timeout_s = -1.0;
+        assert!(c.validate().is_err());
+        assert!(config().validate().is_ok());
     }
 }

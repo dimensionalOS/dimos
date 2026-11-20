@@ -142,10 +142,9 @@ pub struct Pipeline {
     pub collected: u64,
 }
 
-fn arr16(v: &[f64]) -> [f64; JOINTS] {
-    let mut a = [0.0; JOINTS];
-    a.copy_from_slice(&v[..JOINTS]);
-    a
+fn arr16(what: &str, v: &[f64]) -> Result<[f64; JOINTS]> {
+    v.try_into()
+        .map_err(|_| anyhow!("{what} has {} values, needs {JOINTS}", v.len()))
 }
 
 impl Pipeline {
@@ -153,9 +152,9 @@ impl Pipeline {
         Ok(Pipeline {
             name: name.to_string(),
             spec: spec.clone(),
-            default: arr16(&spec.default_pose),
-            kp: arr16(&tile(&spec.kp, JOINTS)?),
-            kd: arr16(&tile(&spec.kd, JOINTS)?),
+            default: arr16("default_pose", &spec.default_pose)?,
+            kp: arr16("kp", &tile(&spec.kp, JOINTS)?)?,
+            kd: arr16("kd", &tile(&spec.kd, JOINTS)?)?,
             limits: joint_limits(robot),
             wheel_limit: robot.wheel_velocity_limit,
             policy_dt,

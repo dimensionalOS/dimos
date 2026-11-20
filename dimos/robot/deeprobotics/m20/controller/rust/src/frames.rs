@@ -23,6 +23,7 @@ use anyhow::{bail, Result};
 use crate::config::{tile, Ecan, JOINTS};
 use crate::types::{JointCommand, RobotState};
 
+// protocol constants of the ECAN wire format (decoded from captures, scratchpad ecan/NOTES.md and SPEC.md)
 pub const ETH_HEADER: usize = 14;
 pub const ECAN_HEADER: usize = 10;
 pub const JOINT_UNIT: usize = 24;
@@ -262,13 +263,12 @@ pub const TAP_HEADER: usize = 32;
 pub fn decode_tap_datagram(datagram: &[u8]) -> Vec<TapRecord> {
     let mut out = Vec::new();
     let mut at = 0;
-    while at + TAP_HEADER <= datagram.len() {
-        let h = &datagram[at..at + TAP_HEADER];
+    while let Some(h) = datagram.get(at..at + TAP_HEADER) {
         if &h[0..4] != TAP_MAGIC || u16::from_le_bytes([h[4], h[5]]) != 1 {
             break;
         }
         let len = u16::from_le_bytes([h[6], h[7]]) as usize;
-        let word = |i: usize| u32::from_le_bytes(h[i..i + 4].try_into().unwrap());
+        let word = |i: usize| u32::from_le_bytes([h[i], h[i + 1], h[i + 2], h[i + 3]]);
         let sent = match word(8) {
             1 => false,
             2 => true,
@@ -278,7 +278,7 @@ pub fn decode_tap_datagram(datagram: &[u8]) -> Vec<TapRecord> {
             break;
         };
         out.push(TapRecord {
-            timestamp_ns: u64::from_le_bytes(h[24..32].try_into().unwrap()),
+            timestamp_ns: u64::from(word(24)) | u64::from(word(28)) << 32,
             sent,
             ring_dropped: word(12),
             send_dropped: word(16),

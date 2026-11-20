@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -88,7 +88,22 @@ impl RunnerSet {
         }
     }
 
+    /// One request; a panic inside inference (tract) comes back as an error result, a policy fault.
     pub fn serve(&mut self, req: &PolicyRequest) -> PolicyResult {
+        let started = Instant::now();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.serve_inner(req))) {
+            Ok(result) => result,
+            Err(_) => PolicyResult {
+                runner: req.runner.clone(),
+                seq: req.seq,
+                targets: Err("inference panicked".into()),
+                gain_scale: 1.0,
+                inference_s: started.elapsed().as_secs_f64(),
+            },
+        }
+    }
+
+    fn serve_inner(&mut self, req: &PolicyRequest) -> PolicyResult {
         let started = Instant::now();
         let mut gain_scale = 1.0;
         let targets = match self.runners.get_mut(&req.runner) {
@@ -151,6 +166,11 @@ struct Slot {
     stop: bool,
 }
 
+/// The slot even if a thread panicked holding it (the slot's fields stay consistent: each write is one assignment).
+fn lock_slot(lock: &Mutex<Slot>) -> MutexGuard<'_, Slot> {
+    lock.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// A worker thread with a one-request mailbox.
 pub struct ThreadedPolicy {
     shared: Arc<(Mutex<Slot>, Condvar)>,
@@ -159,7 +179,10 @@ pub struct ThreadedPolicy {
 }
 
 impl ThreadedPolicy {
-    pub fn spawn(mut runners: RunnerSet, setup: impl FnOnce() + Send + 'static) -> ThreadedPolicy {
+    pub fn spawn(
+        mut runners: RunnerSet,
+        setup: impl FnOnce() + Send + 'static,
+    ) -> Result<ThreadedPolicy> {
         let shared = Arc::new((
             Mutex::new(Slot {
                 request: None,
@@ -177,36 +200,38 @@ impl ThreadedPolicy {
                 let (lock, cv) = &*worker_shared;
                 loop {
                     let req = {
-                        let mut slot = lock.lock().unwrap();
-                        while slot.request.is_none() && !slot.stop {
-                            slot = cv.wait(slot).unwrap();
-                        }
-                        if slot.stop {
-                            return;
-                        }
+                        let mut slot = lock_slot(lock);
+                        let req = loop {
+                            if slot.stop {
+                                return;
+                            }
+                            if let Some(req) = slot.request.take() {
+                                break req;
+                            }
+                            slot = cv.wait(slot).unwrap_or_else(PoisonError::into_inner);
+                        };
                         slot.busy = true;
-                        slot.request.take().unwrap()
+                        req
                     };
                     let result = runners.serve(&req);
-                    let mut slot = lock.lock().unwrap();
+                    let mut slot = lock_slot(lock);
                     slot.result = Some(result);
                     slot.busy = false;
                 }
-            })
-            .expect("spawn policy thread");
-        ThreadedPolicy {
+            })?;
+        Ok(ThreadedPolicy {
             shared,
             dropped: Arc::new(AtomicU64::new(0)),
             worker: Some(worker),
-        }
+        })
     }
 }
 
 impl PolicyService for ThreadedPolicy {
     fn offer(&mut self, request: PolicyRequest) -> bool {
         let (lock, cv) = &*self.shared;
-        // never block the 1 kHz loop on the worker's lock
-        let Ok(mut slot) = lock.try_lock() else {
+        // never block the 1 kHz loop on the worker's lock (a poisoned lock still holds a consistent slot)
+        let Some(mut slot) = try_lock_slot(lock) else {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             return false;
         };
@@ -220,11 +245,7 @@ impl PolicyService for ThreadedPolicy {
     }
 
     fn take_result(&mut self) -> Option<PolicyResult> {
-        self.shared
-            .0
-            .try_lock()
-            .ok()
-            .and_then(|mut s| s.result.take())
+        try_lock_slot(&self.shared.0).and_then(|mut s| s.result.take())
     }
 
     fn dropped(&self) -> u64 {
@@ -232,11 +253,17 @@ impl PolicyService for ThreadedPolicy {
     }
 }
 
+fn try_lock_slot(lock: &Mutex<Slot>) -> Option<MutexGuard<'_, Slot>> {
+    match lock.try_lock() {
+        Ok(slot) => Some(slot),
+        Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
 impl Drop for ThreadedPolicy {
     fn drop(&mut self) {
-        if let Ok(mut s) = self.shared.0.lock() {
-            s.stop = true;
-        }
+        lock_slot(&self.shared.0).stop = true;
         self.shared.1.notify_one();
         if let Some(w) = self.worker.take() {
             let _ = w.join();
