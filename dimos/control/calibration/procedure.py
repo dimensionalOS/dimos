@@ -85,7 +85,7 @@ from dimos.control.calibration.motion import (
     speed_rad_s,
 )
 from dimos.control.calibration.recording import RecordingSource
-from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState
+from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState, JointGains
 from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.connection.module_config import (
     DEFAULT_CONFIG_LEASE_S,
@@ -107,7 +107,7 @@ DEFAULT_KD_SCALES = (1.0, 2.5, 5.0)
 DEFAULT_STEP_DELTAS_DEG = (1.0, -1.0, 3.0, -3.0)
 DEFAULT_DITHER_DEG = 1.0
 DEFAULT_HOLD_S = 2.0
-DEFAULT_DITHER_HOLD_S = 1.5
+DEFAULT_DITHER_HOLD_S = 1.0
 DEFAULT_STEP_HOLD_S = 2.0
 # Damping a floating joint keeps: stops it coasting, still yields to a hand.
 DEFAULT_FLOAT_KD = 0.5
@@ -260,6 +260,11 @@ class RunState:
             connection reported it (``config_get``): its file and link masses.
         step_span: When the gain sweep started and ended.
         baseline: Tracking with the values the arm had before this run, by pose.
+        buzzing: By joint, the gain sweep's candidates stopped at a buzzing
+            step, by ``(kp, kd)`` as applied, and why.
+        proposed_gains: The gains the operator accepted at ``pick_gains``,
+            until ``confirm_tracking`` saves them.
+        proposed_friction_nm: Each joint's friction ``pick_gains`` judged them with.
     """
 
     run_id: str
@@ -269,6 +274,9 @@ class RunState:
     gravity_applied: ArmConfigState | None = None
     step_span: tuple[float, float] | None = None
     baseline: TrackingLog | None = None
+    buzzing: dict[str, dict[tuple[float, float], str]] = field(default_factory=dict)
+    proposed_gains: dict[str, JointGains] | None = None
+    proposed_friction_nm: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
