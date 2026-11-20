@@ -23,6 +23,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
+    RustEventConfig,
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
@@ -33,6 +34,8 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 
 
 class SampleRustRecorder(RustRecorder):
@@ -114,7 +117,52 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "codec": "lcm",
         },
     ]
-    assert set(config) == {"encoding_threads", "store", "streams"}
+    assert config["mode"] == {"kind": "continuous"}
+    assert set(config) == {"encoding_threads", "store", "streams", "mode"}
+
+
+def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> None:
+    streams = [
+        RustStreamSpec(
+            port=name,
+            name=name,
+            payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
+            codec="lcm",
+        )
+        for name, payload_type in [
+            ("color_image", Image),
+            ("lidar", PointCloud2),
+            ("global_map", PointCloud2),
+            ("odom", PoseStamped),
+            ("clip_that", String),
+        ]
+    ]
+    events = RustEventConfig(heavy_period_s=2.0)
+
+    native = events.resolve(
+        streams, tmp_path / "run" / "memory.mcap", tmp_path / "windows"
+    ).model_dump()
+
+    assert native["periods"] == {
+        "color_image": 2.0,
+        "lidar": 2.0,
+        "global_map": 2.0,
+        "odom": 0.0,
+        "clip_that": 0.0,
+    }
+    assert native["window_dir"] == str(tmp_path / "windows" / "run")
+    assert set(native) == {
+        "kind",
+        "window_dir",
+        "pre_s",
+        "post_s",
+        "segment_s",
+        "sync_s",
+        "max_clip_s",
+        "max_window_mb",
+        "trigger",
+        "periods",
+    }
 
 
 def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
