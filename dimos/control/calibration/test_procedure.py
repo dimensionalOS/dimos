@@ -274,11 +274,17 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     steps = rig.recording.markers["step_events"]
     assert len(steps) == 8 * 4 * 2 + 6 * 9 * 4
     dither = {
-        joint: math.degrees(0.2 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0])
+        joint: min(
+            math.degrees(0.3 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0]), 5.0
+        )
         for joint in LEFT_MEASURED
     }
-    assert dither["left_joint2"] == pytest.approx(1.432, abs=1e-3)
-    assert dither["left_joint4"] == pytest.approx(4.092, abs=1e-3)
+    assert dither["left_joint2"] == pytest.approx(2.149, abs=1e-3)
+    assert dither["left_joint4"] == 5.0
+    assert rig.messages()["gravity_poses"].startswith(
+        "visited 8 of 8 poses, dithering left_joint2 by 2.1 deg, left_joint3 by 2.1 deg, "
+        "left_joint4 by 5 deg, left_joint5 by 5 deg; redid "
+    )
     assert results["gravity_poses"]["dither_deg"] == pytest.approx(dither, abs=1e-3)
     first, end = results["gravity_poses"]["span"]
     dithered = {m["joint"]: abs(m["delta_deg"]) for m in steps if first <= m["t0"] <= end}
@@ -312,9 +318,10 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert json.loads(json.dumps(value)) == value
 
 
-def test_each_joint_dithers_by_a_fifth_of_its_torque_limit_over_its_kp() -> None:
-    assert dither_deg(80.0, 10.0, 1.0) == pytest.approx(math.degrees(0.025))
-    assert dither_deg(10.0, 3.57, 1.0) == pytest.approx(math.degrees(0.0714))
+def test_each_joint_dithers_by_0_3_of_its_torque_limit_over_its_kp() -> None:
+    assert dither_deg(80.0, 10.0, 1.0) == pytest.approx(math.degrees(0.0375))
+    assert dither_deg(20.0, 3.57, 1.0) == pytest.approx(math.degrees(0.05355))
+    assert dither_deg(10.0, 3.57, 1.0) == 5.0
     assert dither_deg(400.0, 10.0, 1.0) == 1.0
     assert dither_deg(1.0, 10.0, 1.0) == 5.0
     assert dither_deg(80.0, None, 1.0) == 1.0
@@ -337,9 +344,8 @@ def test_a_dither_pair_the_joint_did_not_follow_is_redone_once_at_twice_the_ampl
     retried = result["retried"]
     assert retried and all(pair.endswith(" left_joint2") for pair in retried)
     pairs = result["poses"] * len(LEFT_MEASURED)
-    assert rig.messages()["gravity_poses"] == (
-        f"visited {result['poses']} of {result['planned']} poses; redid {len(retried)} of "
-        f"{pairs} dither pairs at twice the amplitude"
+    assert rig.messages()["gravity_poses"].endswith(
+        f"; redid {len(retried)} of {pairs} dither pairs at twice the amplitude"
     )
     first, end = result["span"]
     shoulder = [

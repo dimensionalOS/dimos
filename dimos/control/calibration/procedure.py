@@ -143,7 +143,7 @@ class ProcedureSettings:
     Attributes:
         poses: Gravity identification poses to visit.
         dither_deg: Smallest dither of a measured joint at every pose, +d then
-            -d; each dithers by a fifth of its torque limit over its kp, at most
+            -d; each dithers by 0.3 of its torque limit over its kp, at most
             ``MAX_STEP_DEG``.
         hold_s: Rest at each pose before dithering, before a joint floats, and
             at each tracking pose.

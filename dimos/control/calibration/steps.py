@@ -22,7 +22,7 @@
    (``gravity_poses.generate_poses``) the pose is marked, the arm ramps there
    (through home when the straight ramp would dip), holds, and dithers each
    measured joint +d then -d, holding after each; an end marker closes it.
-   Each joint's d is a fifth of its torque limit over its kp, so the spring
+   Each joint's d is 0.3 of its torque limit over its kp, so the spring
    beats its friction, from ``dither_deg`` up to ``MAX_STEP_DEG``. A pair the
    joint followed less than halfway is redone once at twice d, at most
    ``MAX_STEP_DEG``.
@@ -177,7 +177,7 @@ FLOAT_POSES_PER_JOINT = 2
 FLOAT_LIMIT_MARGIN_DEG = 5.0
 MIN_FLOAT_GRAVITY_NM = 0.2
 NO_GRAVITY_LOAD = "no gravity load to test"
-DITHER_TORQUE_FRACTION = 0.2
+DITHER_TORQUE_FRACTION = 0.3
 # Two link masses differ when any value differs by more than this.
 SAME_MASS_TOLERANCE = 1e-9
 
@@ -466,6 +466,10 @@ def dithers(ctx: StepContext, applied: ArmConfigState | None) -> dict[str, float
     }
 
 
+def _dithering(dither: Mapping[str, float]) -> str:
+    return ", ".join(f"{joint} by {round(d, 1):g} deg" for joint, d in dither.items())
+
+
 def gravity_poses(ctx: StepContext) -> list[Pose]:
     """This run's gravity identification poses, generated once when the sweep did not run."""
     run: RunState = ctx.run
@@ -732,8 +736,7 @@ class GravityPosesStep(Step):
         ctx.confirm(
             f"The arm will visit {len(poses)} poses, about {_minutes(expected)} of motion "
             f"({_minutes(redone)} if every dither is redone), "
-            f"dithering {', '.join(f'{joint} by {d:.1f}' for joint, d in dither.items())} deg "
-            "at each. Clear the workspace. Enter to start"
+            f"dithering {_dithering(dither)} at each. Clear the workspace. Enter to start"
         )
         log = TrackingLog(ctx.spec.joint_names)
         visited: list[Vector] = []
@@ -808,8 +811,8 @@ class GravityPosesStep(Step):
             "calibration_sha256": None if file is None else file.sha256,
         }
         return StepResult(
-            f"visited {len(visited)} of {len(poses)} poses; redid {len(retried)} of {pairs} "
-            "dither pairs at twice the amplitude",
+            f"visited {len(visited)} of {len(poses)} poses, dithering {_dithering(dither)}; "
+            f"redid {len(retried)} of {pairs} dither pairs at twice the amplitude",
             data,
         )
 
