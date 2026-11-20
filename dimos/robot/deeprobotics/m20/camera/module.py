@@ -15,7 +15,7 @@
 """The M20's two cameras captured off V4L2 (MJPEG) and hardware-encoded to H.264, every frame, by the native ``m20_camera`` module — the direct path that replaces the vendor RTSP server.
 
 Each ``CompressedVideo`` is one H.264 Annex-B access unit, so a stream holds P-frames and decodes only
-in order. ``h264parse config-interval=-1`` puts the SPS/PPS in front of every keyframe, so a late
+in order. The SPS/PPS go in front of every keyframe, so a late
 subscriber starts decoding at the next keyframe, about a GOP away. A lost message corrupts the picture
 until the next keyframe, so these topics keep zenoh's reliable delivery rather than ``QOS_LATEST_WINS``.
 
@@ -52,9 +52,9 @@ class M20CameraRelayConfig(NativeModuleConfig):
     fps: int = Field(default=30, ge=1, le=120)
     bitrate_bps: int = Field(default=4_000_000, ge=100_000, le=50_000_000)
     gop: int = Field(default=30, ge=1, le=600)
-    # "rust": in-process, the rockchip-h264 crate driving the RK3588's JPEG decoder and H.264 encoder directly.
-    # "gstreamer": a gst-launch child per camera (the vendor mpp plugin, which leaks a dmabuf fd per frame).
-    encoder: Literal["rust", "gstreamer"] = "gstreamer"
+    # "rust" (default): in-process, the rockchip-h264 crate driving the RK3588's JPEG decoder and H.264 encoder directly.
+    # "gstreamer" (fallback): a gst-launch child per camera (the vendor mpp plugin, which leaks a dmabuf fd per frame).
+    encoder: Literal["rust", "gstreamer"] = "rust"
     # Camera centers in base_link from the Deep Robotics docs, and their turn about z.
     front_camera_xyz: tuple[float, float, float] = (0.37646, 0.0, 0.03738)
     front_camera_yaw_rad: float = 0.0

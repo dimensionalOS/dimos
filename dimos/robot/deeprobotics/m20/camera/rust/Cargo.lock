@@ -2248,9 +2248,9 @@ dependencies = [
 
 [[package]]
 name = "rockchip-h264"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95c5a36c4f1dfb7c3b3aaa711101b0939148a10eabff48d8b0410f8065990e81"
+checksum = "ec1d45f6940ad5b58708549aa884ce81351936caa95d289811015543a08ea797"
 dependencies = [
  "anyhow",
  "libc",

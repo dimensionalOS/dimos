@@ -102,7 +102,7 @@ impl M20Camera {
             fps: config.fps as u32,
             bitrate_bps: config.bitrate_bps as u32,
             gop: config.gop as u32,
-            encoder: config.encoder.parse().unwrap_or(Encoder::Gstreamer),
+            encoder: config.encoder.parse().unwrap_or(Encoder::Rust),
         };
         let front = Arc::new(Camera {
             name: "front_camera".into(),

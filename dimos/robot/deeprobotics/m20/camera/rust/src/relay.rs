@@ -17,10 +17,10 @@
 //! decoding the vendor's H.265 and re-encoding H.264, which freed the robot's big cores for navigation.
 //!
 //! Two ways to do the Rockchip hardware work (JPEG decode → H.264 encode), picked by `Encode::encoder`:
-//! - `Encoder::Rust`: in this process, through the `rockchip-h264` crate (the RK3588's JPEG decoder and VEPU580 driven
+//! - `Encoder::Rust` (the default): in this process, through the `rockchip-h264` crate (the RK3588's JPEG decoder and VEPU580 driven
 //!   straight through `/dev/mpp_service`), one blocking thread per camera capturing V4L2 MJPEG and producing one
 //!   access unit per frame.
-//! - `Encoder::Gstreamer`: a `gst-launch-1.0` pipeline per camera (`mppjpegdec` → `mpph264enc`) writing an Annex-B
+//! - `Encoder::Gstreamer` (opt-in fallback): a `gst-launch-1.0` pipeline per camera (`mppjpegdec` → `mpph264enc`) writing an Annex-B
 //!   byte stream to its stdout, split back into access units here. The vendor plugin on AOS leaks a dmabuf fd per
 //!   frame (~510k fds and 2.6 fps after a day), which is why the Rust path exists.
 //!
