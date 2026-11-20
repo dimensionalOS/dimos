@@ -107,7 +107,11 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     when no module publishes it, so ``dimos topic send`` can start a clip. That topic
     joins the recorded streams' LCM URL when they use LCM.
     """
-    events = RustEventConfig() if global_config.record_events else None
+    events = (
+        RustEventConfig(max_window_mb=global_config.record_window_mb)
+        if global_config.record_events
+        else None
+    )
     transports = dict(transports)
     selected = matching(global_config.record_topics, (name for name, _ in transports))
     if events is not None:

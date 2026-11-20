@@ -218,7 +218,7 @@ fn record(latest: &mut Option<Report>, report: &Report) -> bool {
 }
 
 /// Publishes goal status on every transition and on the heartbeat, and a note on clip_that
-/// when a goal aborts.
+/// when a goal aborts, unless only because the robot is not localized yet.
 #[derive(Clone)]
 pub(crate) struct StatusReporter {
     pub(crate) out: Output<GoalStatus>,
@@ -231,7 +231,7 @@ impl StatusReporter {
         let mut latest = self.latest.lock().await;
         if record(&mut latest, &report) {
             self.publish(&report).await;
-            if report.status == GoalStatus::ABORTED {
+            if report.status == GoalStatus::ABORTED && report.reason != NO_GOAL_FRAME {
                 self.clip(&report).await;
             }
         }
