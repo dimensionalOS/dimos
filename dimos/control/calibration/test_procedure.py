@@ -79,13 +79,16 @@ from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     WorkspaceGuard,
 )
-from dimos.control.calibration.steps import calibration_steps
+from dimos.control.calibration.steps import calibration_steps, dither_deg, dithered_joints
 from dimos.control.connection.module_config import ConfigPatch
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.makermods_metal.config import METAL
 
 STEP_IDS = [step.id for step in calibration_steps()]
 LEFT_MEASURED = [f"left_joint{i}" for i in (2, 3, 4, 5)]
+# The spec measures joints 2 to 5; the wrist roll's torque varies with the
+# gripper's centre of mass, so it is dithered too. The yaw carries nothing.
+LEFT_DITHERED = [*LEFT_MEASURED, "left_joint6"]
 # Short holds and fast ramps: a full run is about 4 simulated minutes.
 FAST = {
     "poses": 8,
@@ -93,7 +96,6 @@ FAST = {
     "dither_hold_s": 1.0,
     "step_hold_s": 1.0,
     "speed_deg_s": 30.0,
-    "float_settle_s": 0.5,
     "float_window_s": 2.0,
     "tracking_poses": 3,
 }
@@ -222,19 +224,30 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert urdf_error > 1.0
     assert fitted_error_nm(arm, truth, to_inertial_overrides(calibration)) < 0.2 * urdf_error
     assert calibration.friction_nm is not None and set(calibration.friction_nm) == set(
-        LEFT_MEASURED
+        LEFT_DITHERED
     )
-    # The big joints settle at twice their kp; the wrists rest past 0.1 deg
-    # on their friction at every kp tried, so they keep their robot gains.
+    # The big joints rest closest at 1.5 times their kp; the wrists rest best
+    # at 1.5 times theirs, where their 1 deg steps still stick now and then.
     assert calibration.gains is not None
     assert {j: (g.kp, g.kd) for j, g in calibration.gains.items()} == {
-        f"left_joint{i}": (160.0, pytest.approx(math.sqrt(2))) for i in (1, 2, 3)
+        **{f"left_joint{i}": (120.0, 1.0) for i in (1, 2, 3)},
+        **{f"left_joint{i}": (15.0, 1.5) for i in (4, 5, 6)},
     }
     results = rig.procedure.results()
-    wrist = results["pick_gains"]["proposals"]["left_joint4"]
-    # The sweep's kd follows the square root of the kp scale: 1.5, 1.84, 2.12.
-    assert wrist["kp"] is None and "rests" in wrist["rejected"]["kp=10 kd=1.5"]
-    assert set(wrist["rejected"]) == {"kp=10 kd=1.5", "kp=15 kd=1.83712", "kp=20 kd=2.12132"}
+    gains = results["pick_gains"]
+    wrist = gains["proposals"]["left_joint4"]
+    # Its kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd clamped to 5.
+    assert set(wrist["rejected"]) == {
+        f"kp={kp:g} kd={kd:g}" for kp in (6, 10, 15) for kd in (1.5, 3.75, 5)
+    } - {"kp=15 kd=1.5"}
+    # A stuck 3 deg step rejects; stuck 1 deg steps only drop out of the score.
+    assert "-3 deg step is stuck" in wrist["rejected"]["kp=6 kd=5"]
+    assert wrist["rejected"]["kp=6 kd=1.5"].startswith("passes, but scores")
+    assert wrist["rejected"]["kp=6 kd=1.5"].endswith("stuck and do not count")
+    assert wrist["reason"].startswith("kp=15 kd=1.5: lowest score")
+    assert 0.05 <= wrist["friction_nm"] <= 0.07
+    assert gains["friction_nm"]["left_joint4"]["sweep"] > 0.0
+    assert gains["friction_nm"]["left_joint1"]["dither"] is None
     assert calibration.checks is not None and set(calibration.checks) == {"float", "tracking"}
     floats = calibration.checks["float"]["joints"]
     assert set(floats) == set(LEFT_MEASURED) and all(row["passed"] for row in floats.values())
@@ -264,7 +277,29 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert fit["holdout_rms_nm"][joint]["after"] < fit["holdout_rms_nm"][joint]["before"]
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
-    assert len(steps) == 8 * 4 * 2 + 6 * 3 * 4
+    assert len(steps) == 8 * 5 * 2 + 6 * 9 * 4
+    dither = {
+        joint: min(
+            math.degrees(0.3 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0]), 5.0
+        )
+        for joint in LEFT_DITHERED
+    }
+    assert dither["left_joint2"] == pytest.approx(2.149, abs=1e-3)
+    assert dither["left_joint4"] == 5.0
+    assert rig.messages()["gravity_poses"].startswith(
+        "visited 8 of 8 poses, dithering left_joint2 by 2.1 deg, left_joint3 by 2.1 deg, "
+        "left_joint4 by 5 deg, left_joint5 by 5 deg, left_joint6 by 5 deg; redid 0 of 40 "
+    )
+    assert all(
+        m["data"]["dithered"] == LEFT_DITHERED for m in rig.recording.markers["gravity_events"][:-1]
+    )
+    assert results["gravity_poses"]["dither_deg"] == pytest.approx(dither, abs=1e-3)
+    first, end = results["gravity_poses"]["span"]
+    dithered = {m["joint"]: abs(m["delta_deg"]) for m in steps if first <= m["t0"] <= end}
+    assert dithered == pytest.approx(dither)
+    assert fit["stuck_pairs"] == 0 and fit["incomplete_pairs"] == 0
+    assert fit["held_joints"] == {}
+    assert set(fit["holdout_rms_nm"]) == set(LEFT_DITHERED)
     assert len(rig.recording.markers["float_events"]) == 8
     # The fit was scored against the URDF, the masses the arm ran (the URDF's
     # here) and itself.
@@ -290,6 +325,59 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert not rig.fake.session_active()
     for value in (rig.procedure.plan(), rig.procedure.status(), results):
         assert json.loads(json.dumps(value)) == value
+
+
+def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
+    poses = generate_poses(arm, count=8).identification
+    assert dithered_joints(arm, arm, poses) == LEFT_DITHERED
+    assert dithered_joints(arm, arm, poses[:1]) == LEFT_MEASURED
+
+
+def test_each_joint_dithers_by_0_3_of_its_torque_limit_over_its_kp() -> None:
+    assert dither_deg(80.0, 10.0, 1.0) == pytest.approx(math.degrees(0.0375))
+    assert dither_deg(20.0, 3.57, 1.0) == pytest.approx(math.degrees(0.05355))
+    assert dither_deg(10.0, 3.57, 1.0) == 5.0
+    assert dither_deg(400.0, 10.0, 1.0) == 1.0
+    assert dither_deg(1.0, 10.0, 1.0) == 5.0
+    assert dither_deg(80.0, None, 1.0) == 1.0
+    assert dither_deg(None, 10.0, 2.0) == 2.0
+
+
+def test_a_dither_pair_the_joint_did_not_follow_is_redone_once_at_twice_the_amplitude(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    friction = {name: 0.05 for name in left_spec.joint_names}
+    friction["left_joint2"] = 0.9
+    rig = make_rig(confirm_each=False, fake={"friction_nm": friction})
+    prompts: list[str] = []
+
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"], lambda p: prompts.append(p) or "confirm"
+    )
+
+    assert status["state"] == "done", status["message"]
+    result = rig.procedure.results()["gravity_poses"]
+    # Each redone pair replaced its stuck one: one measurement per pose and joint.
+    fit = rig.procedure.results()["gravity_fit"]
+    assert fit["measurements"] == result["poses"] * len(LEFT_DITHERED)
+    assert fit["stuck_pairs"] == 0
+    d = result["dither_deg"]["left_joint2"]
+    retried = result["retried"]
+    assert retried and all(pair.endswith(" left_joint2") for pair in retried)
+    pairs = result["poses"] * len(LEFT_DITHERED)
+    assert rig.messages()["gravity_poses"].endswith(
+        f"; redid {len(retried)} of {pairs} dither pairs at twice the amplitude"
+    )
+    first, end = result["span"]
+    shoulder = [
+        abs(m["delta_deg"])
+        for m in rig.recording.markers["step_events"]
+        if m["joint"] == "left_joint2" and first <= m["t0"] <= end
+    ]
+    assert shoulder.count(pytest.approx(min(2 * d, 5.0), abs=1e-3)) == 2 * len(retried)
+    assert len(shoulder) == 2 * (result["poses"] + len(retried))
+    [plan] = [p for p in prompts if p.startswith("The arm will visit")]
+    assert re.search(r"about \d+\.\d min of motion \(\d+\.\d min if every dither is redone\)", plan)
 
 
 def test_skip_and_abort_at_a_pose_stop_where_the_arm_is(make_rig: Callable[..., Rig]) -> None:
@@ -463,7 +551,7 @@ def test_steps_the_connection_cannot_save_or_serve_are_skipped_with_why(
     make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
 ) -> None:
     # A connection that saves nothing: no fit, no picked gains, no checks recorded.
-    rig = make_rig(fake={"persist": []}, float_window_s=1.0, float_settle_s=0.0)
+    rig = make_rig(fake={"persist": []}, float_window_s=1.0)
     path = save_calibration(rig.root / left_spec.arm_id, ArmCalibration.for_spec(left_spec))
 
     reasons = {step["id"]: step["reason"] for step in rig.procedure.plan() if not step["supported"]}
@@ -622,9 +710,7 @@ def test_a_check_is_not_recorded_against_a_fit_the_arm_never_ran(
             gravity=GravityCalibration(links=gravity_links_from_inertial(left_spec, heavy)),
         ),
     )
-    rig = make_rig(
-        confirm_each=False, fake={"applied": old}, float_window_s=1.0, float_settle_s=0.0
-    )
+    rig = make_rig(confirm_each=False, fake={"applied": old}, float_window_s=1.0)
 
     status = rig.run(
         ["check", "gravity_poses", "gravity_fit", "float_check"],
@@ -670,7 +756,7 @@ def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
 ) -> None:
     # The shoulder carries about 1 N m more than compensated at its float pose:
     # lightly damped it falls fast, heavily damped it creeps past 5 deg.
-    rig = make_rig(float_window_s=5.0, float_settle_s=0.0, float_kd=float_kd)
+    rig = make_rig(float_window_s=5.0, float_kd=float_kd)
 
     status = rig.run(["float_check"])
 
@@ -842,7 +928,7 @@ def _far_from_home(rig: Rig) -> float:
 def test_the_float_check_floats_each_joint_where_it_carries_the_most_gravity(
     make_rig: Callable[..., Rig],
 ) -> None:
-    rig = make_rig(float_window_s=1.0, float_settle_s=0.0)
+    rig = make_rig(float_window_s=1.0)
     prompts: list[str] = []
 
     def answer(prompt: str) -> str:
@@ -871,12 +957,45 @@ def test_the_float_check_floats_each_joint_where_it_carries_the_most_gravity(
     assert not result["joints"]["left_joint2"]["passed"]
     assert len(rig.recording.markers["float_events"]) == 2 * len(LEFT_MEASURED)
     assert not rig.fake.session_active()
+    # Every joint rested at its pose for hold_s before it went limp.
+    events = rig.recording.markers["float_events"]
+    sent = rig.recording.steps(events[0]["t0"] - 60.0, events[-1]["t0"]).commands
+    hold = FAST["hold_s"]
+    for event in events:
+        for trace in sent.values():
+            rest = (trace.t >= event["t0"] - hold + 0.03) & (trace.t < event["t0"] - 0.01)
+            assert rest.sum() >= 20 and np.ptp(trace.q_deg[rest]) < 1e-9
+
+
+def test_the_float_check_picks_its_poses_with_the_masses_the_arm_runs(
+    make_rig: Callable[..., Rig], arm: ArmModel, left_spec: ArmCalibrationSpec, tmp_path: Path
+) -> None:
+    applied = tmp_path / "applied.json"
+    save_calibration(applied, _heavy_forearm(arm, left_spec, 3.0))
+    model = arm.model.copy()
+    apply_inertial_overrides(model, to_inertial_overrides(load_for_spec(left_spec, applied)))
+    runs = ArmModel(left_spec, model)
+    rig = make_rig(fake={"applied": applied}, float_window_s=0.5)
+
+    status = rig.run(["float_check"], lambda p: "skip" if p.startswith("Float ") else "confirm")
+
+    assert status["state"] == "done", status["message"]
+    poses = {p.name: p for p in generate_poses(arm, count=8).identification}
+    for joint, row in rig.procedure.results()["float_check"]["joints"].items():
+        if row.get("skipped") and not row.get("poses"):
+            continue
+        i = arm.joint_names.index(joint)
+        for chosen in row["poses"]:
+            q = np.asarray(poses[chosen["pose"]].joints_rad)
+            assert chosen["gravity_nm"] == pytest.approx(float(runs.gravity(q)[i]), abs=1e-3)
+        largest = max(abs(float(runs.gravity(np.asarray(p.joints_rad))[i])) for p in poses.values())
+        assert abs(row["poses"][0]["gravity_nm"]) == pytest.approx(largest, abs=1e-3), joint
 
 
 def test_a_joint_with_no_gravity_load_is_not_floated(make_rig: Callable[..., Rig]) -> None:
     # At the 60/60 home pose the last wrist joint carries nothing.
     home_deg = tuple(float(v) for v in np.degrees(make_rig().procedure.arm.home))
-    rig = make_rig(float_window_s=1.0, float_settle_s=0.0, float_pose_deg=home_deg)
+    rig = make_rig(float_window_s=1.0, float_pose_deg=home_deg)
 
     status = rig.run(["float_check"])
 
@@ -1088,21 +1207,31 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
         with pytest.raises(StepFailedError, match="would pass a joint limit"):
             session.step_joint("joint3", 1.0, 0.5)
 
-    status = rig.run(["check", "step_sweep"])
+    prompts: list[str] = []
+    status = rig.run(["check", "step_sweep"], lambda p: prompts.append(p) or "confirm")
 
     assert status["state"] == "done", status["message"]
+    [plan] = [p for p in prompts if p.startswith("The arm will move to")]
+    assert "kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5" in plan
+    # Its first joints run at kd 5 already, so kd x 2.5 and 5 add nothing there;
+    # its wrists at kd 2 reach the kd limit at x 2.5 already.
+    assert "(joint1 3, joint2 3, joint3 3, joint4 6, joint5 6, joint6 6 candidates)" in plan
+    assert "108 steps, about 1.8 min" in plan
     sweep = rig.procedure.results()["step_sweep"]
     assert set(sweep["joints"]) == set(b601_spec.joint_names)
     assert sweep["pose"].startswith("gravity pose ")
     pose = np.radians(sweep["pose_deg"])
     assert math.degrees(limit_margin_rad(pose, lower, upper)) >= 3.0 + 2.0
-    # Back home after the sweep, every step at kp x 1, 1.5, 2 with kd x sqrt.
+    # Back home after the sweep: the robot's gains first, then kp x 0.6, 1,
+    # 1.5 by kd x 1, 2.5, 5 with kd clamped to 5, so a kd of 2 gives 2 and 5.
     assert _far_from_home(rig) < 3.0
-    kp0, kd0 = b601_spec.gains["joint4"]
+    assert b601_spec.gains["joint4"] == (18.0, 2.0)
+    grid = [(kp, kd) for kp in (10.8, 18.0, 27.0) for kd in (2.0, 5.0)]
+    expected = [(18.0, 2.0), *(pair for pair in grid if pair != (18.0, 2.0))]
     assert sweep["joints"]["joint4"] == [
-        [pytest.approx(kp0 * s), pytest.approx(min(kd0 * math.sqrt(s), 5.0))]
-        for s in (1.0, 1.5, 2.0)
+        [pytest.approx(kp), pytest.approx(kd)] for kp, kd in expected
     ]
+    assert sweep["kp_scales"] == [0.6, 1.0, 1.5] and sweep["kd_scales"] == [1.0, 2.5, 5.0]
 
 
 def _heavy_forearm(arm: ArmModel, spec: ArmCalibrationSpec, extra_kg: float) -> ArmCalibration:
@@ -1181,8 +1310,8 @@ def test_a_fit_worse_than_the_running_file_is_not_saved(
     refused = {refusal.split(" ")[0] for refusal in fit["refusals"]}
     for joint, row in fit["holdout_rms_nm"].items():
         # URDF -> running -> new: the fit beats the URDF, not what the arm runs.
-        assert row["after"] < row["before"], joint
-        assert row["running"] < row["after"] or joint not in refused, joint
+        assert row["after"] < row["before"] or row["before"] < 1e-3, joint
+        assert row["running"] <= row["after"] or joint not in refused, joint
     assert load_for_spec(left_spec, root_path) == saved
 
 

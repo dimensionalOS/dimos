@@ -23,12 +23,16 @@ target when there is one, and writes ``step_report/`` next to it:
 ``propose_gains`` picks per joint), one PNG per joint (a panel per gain set,
 the steps overlaid) and two summary PNGs (settle time and overshoot against kp,
 a panel per joint). Joints are taken by name from the recorded joint states.
+Each joint's friction, which sets its rest limits, comes from its rests at the
+first gains it was swept with: half the spread of its largest steps' rests, or
+its largest rest error over the steps that moved, if that is more
+(``sweep_friction_nm``).
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 import csv
 from dataclasses import dataclass, field
 import math
@@ -52,6 +56,7 @@ from dimos.control.calibration.step_analysis import (
     gain_label,
     propose_gains,
     segment_steps,
+    sweep_friction_nm,
 )
 from dimos.memory.store.sqlite import SqliteStore
 
@@ -223,14 +228,18 @@ def step_start(recording: Recording, event: StepEvent, stop: float) -> float:
 
 
 def extract_steps(
-    recording: Recording, on_step: Callable[[StepEvent], None] | None = None
+    recording: Recording,
+    on_step: Callable[[StepEvent], None] | None = None,
+    dither_friction_nm: Mapping[str, float] | None = None,
 ) -> list[StepRecord]:
     """One record per step marker, from when its target went out (``step_start``).
 
     A marker with no recorded samples keeps its record, with none, and fails.
+    Each joint's friction is the larger of what its sweep shows
+    (``sweep_friction_nm``) and ``dither_friction_nm``, by joint name.
     """
-    records: list[StepRecord] = []
     unrecorded = JointTrace(t=np.empty(0), q_deg=np.empty(0), dq_deg_s=np.empty(0))
+    windows = []
     for event, _, stop in segment_steps(recording.events, recording.t_end):
         if on_step is not None:
             on_step(event)
@@ -239,19 +248,23 @@ def extract_steps(
         mask = (trace.t >= start) & (trace.t <= stop)
         before = np.flatnonzero(trace.t < start)
         y0 = float(trace.q_deg[before[-1]]) if before.size else event.target_before_deg
-        t = trace.t[mask] - start
-        q = trace.q_deg[mask]
-        metrics = analyze_step(event, t, q, trace.dq_deg_s[mask], y0_deg=y0)
-        records.append(
-            StepRecord(
-                event=event,
-                t=t,
-                q_deg=q - event.target_before_deg,
-                target_deg=np.full(t.shape, event.target_after_deg - event.target_before_deg),
-                metrics=metrics,
-            )
+        windows.append((event, trace.t[mask] - start, trace.q_deg[mask], trace.dq_deg_s[mask], y0))
+    friction = dict(dither_friction_nm or {})
+    swept = sweep_friction_nm(analyze_step(e, t, q, dq, y0_deg=y0) for e, t, q, dq, y0 in windows)
+    for joint, value in swept.items():
+        friction[joint] = max(value, friction.get(joint, 0.0))
+    return [
+        StepRecord(
+            event=event,
+            t=t,
+            q_deg=q - event.target_before_deg,
+            target_deg=np.full(t.shape, event.target_after_deg - event.target_before_deg),
+            metrics=analyze_step(
+                event, t, q, dq, y0_deg=y0, friction_nm=friction.get(event.joint, 0.0)
+            ),
         )
-    return records
+        for event, t, q, dq, y0 in windows
+    ]
 
 
 def write_tables(records: list[StepRecord], out_dir: Path) -> tuple[Path, Path]:
