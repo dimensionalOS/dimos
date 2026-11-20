@@ -23,6 +23,7 @@ import importlib
 from io import BytesIO
 import json
 from pathlib import Path
+import tarfile
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -290,8 +291,7 @@ def run_build(tmp_path: Path, mocker, *, build_native: bool) -> Path:
     sentinel = tmp_path / "build_ran"
     exe = tmp_path / "already_built"
     exe.touch()
-    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path)
-    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
     module = StubBuildModule(
         source_dir=".",
         executable=exe.name,
@@ -639,8 +639,7 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
 def test_builtin_build_outputs_use_shared_checkout(
     module_path, class_name, executable, tmp_path, mocker
 ):
-    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
-    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
     module_class = getattr(importlib.import_module(module_path), class_name)
     options = (
         {"setup_network": False, "pcap": "capture.pcap", "host_ip": "192.168.1.5"}
@@ -649,6 +648,7 @@ def test_builtin_build_outputs_use_shared_checkout(
     )
     module = module_class(**options)
     try:
+        (tmp_path / module.config.source_dir).mkdir(parents=True)
         module.config.model_validate(module.config.model_dump())
         mocker.patch.object(module, "_maybe_build")
         module._prepare_native()
@@ -689,20 +689,20 @@ def test_source_build_rejects_nonportable_paths(kwargs):
 
 
 def test_external_binary_does_not_fetch_checkout(mocker):
-    root = mocker.patch("dimos.core.native_module.get_project_root")
+    root = mocker.patch("dimos.core.native_module._native_source_root")
     config = NativeModuleConfig(executable="/provided/bin/native")
     assert config.resolve_paths() == ("/provided/bin", "/provided/bin/native")
     root.assert_not_called()
 
 
 def test_source_config_is_lazy_and_subclass_location_independent(tmp_path, mocker):
-    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
-    root = mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    root = mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
 
     class RobotRecorderConfig(RustRecorderConfig):
         pass
 
     config = RobotRecorderConfig()
+    (tmp_path / config.source_dir).mkdir(parents=True)
     root.assert_not_called()
     cwd, executable = config.resolve_paths()
     assert cwd == str(tmp_path / "dimos/experimental/memory/rust")
@@ -712,123 +712,51 @@ def test_source_config_is_lazy_and_subclass_location_independent(tmp_path, mocke
     assert "source_dir" not in config.to_config_dict()
 
 
-@pytest.mark.parametrize("manifest", ["Cargo.toml", "flake.nix"])
-def test_source_build_prefers_packaged_sources(tmp_path, mocker, manifest):
-    package_root = tmp_path / "site-packages"
-    source = package_root / "dimos/mapping/ray_tracing/rust"
-    source.mkdir(parents=True)
-    (source / manifest).touch()
-    mocker.patch.object(native_module_mod, "DIMOS_PROJECT_ROOT", package_root)
+def test_installed_sources_are_writable_reused_and_versioned(tmp_path, monkeypatch):
+    package = tmp_path / "site-packages"
+    (package / "dimos").mkdir(parents=True)
     cache = tmp_path / "cache"
-    mocker.patch.object(native_module_mod, "CACHE_DIR", cache)
-    fetch = mocker.patch("dimos.core.native_module.get_project_root")
-    config = NativeModuleConfig(
-        source_dir="dimos/mapping/ray_tracing/rust", executable="result/bin/voxel_ray_tracing"
-    )
+    monkeypatch.setattr(native_module_mod, "DIMOS_PROJECT_ROOT", package)
+    monkeypatch.setattr(native_module_mod, "CACHE_DIR", cache)
+    config = NativeModuleConfig(source_dir="examples/demo", executable="bin/example")
 
-    cwd, executable = config.resolve_paths()
-    staged = Path(cwd)
-    assert staged.is_relative_to(cache)
-    assert (staged / manifest).read_bytes() == b""
-    assert executable == str(staged / "result/bin/voxel_ray_tracing")
-    assert config.resolve_paths() == (cwd, executable)
-    fetch.assert_not_called()
-
-
-def test_packaged_build_cache_preserves_inputs_and_changes_with_sources(tmp_path, mocker):
-    package_root = tmp_path / "site-packages"
-    source_dir = "dimos/navigation/trajectory_follower/fancy/rust"
-    source = package_root / source_dir
-    source.mkdir(parents=True)
-    manifest = source / "Cargo.toml"
-    manifest.write_text("release one")
-    sibling = package_root / "dimos/navigation/local_planner/rust/src/lib.rs"
-    sibling.parent.mkdir(parents=True)
-    sibling.write_text("planner")
-    cargo_config = source / ".cargo/config.toml"
-    cargo_config.parent.mkdir()
-    cargo_config.write_text("[build]")
-    resource = source / "nested/data/sample.cdr"
-    resource.parent.mkdir(parents=True)
-    resource.write_bytes(b"native resource")
-    artifact = source / "nested/target/debug/build.rs"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_text("generated")
-    mocker.patch.object(native_module_mod, "DIMOS_PROJECT_ROOT", package_root)
-    cache = tmp_path / "cache"
-    mocker.patch.object(native_module_mod, "CACHE_DIR", cache)
-    fetch = mocker.patch.object(native_module_mod, "get_project_root")
-    config = NativeModuleConfig(source_dir=source_dir, executable="result/bin/follower")
-
-    source.chmod(0o555)
-    manifest.chmod(0o444)
-    try:
+    script = tmp_path / "build.sh"
+    bundle = package / "dimos/native_sources.tar"
+    for revision in ("first", "second"):
+        script.write_text(revision)
+        script.chmod(0o755)
+        with tarfile.open(bundle, "w") as archive:
+            archive.add(script, "examples/demo/build.sh")
         cwd, executable = config.resolve_paths()
-        staged = Path(cwd)
-        assert staged.is_relative_to(cache)
-        assert (staged / "../../../local_planner/rust/src/lib.rs").read_text() == "planner"
-        assert (staged / ".cargo/config.toml").read_text() == "[build]"
-        assert (staged / "nested/data/sample.cdr").read_bytes() == b"native resource"
-        assert not (staged / "nested/target").exists()
-        Path(executable).parent.mkdir(parents=True)
+        source = Path(cwd)
+        assert source.is_relative_to(cache)
+        assert (source / "build.sh").read_text() == revision
+        assert (source / "build.sh").stat().st_mode & 0o100
+        assert not Path(executable).exists()
+        Path(executable).parent.mkdir()
         Path(executable).touch()
         assert config.resolve_paths() == (cwd, executable)
-        assert not (source / "result").exists()
-    finally:
-        source.chmod(0o755)
-        manifest.chmod(0o644)
-
-    runtime_source = package_root / "dimos/data/repo" / source_dir / "src/lib.rs"
-    runtime_source.parent.mkdir(parents=True)
-    for content in ("runtime checkout", "updated runtime checkout"):
-        runtime_source.write_text(content)
-        assert config.resolve_paths() == (cwd, executable)
-        assert not (staged / "../../../../data").exists()
-
-    sibling.write_text("updated planner")
-    new_cwd, new_executable = config.resolve_paths()
-    assert new_cwd != cwd
-    assert not Path(new_executable).exists()
-    assert not (Path(new_cwd) / "../../../../data").exists()
-    fetch.assert_not_called()
-
-    # Editable worktrees keep their sources and resource paths in place.
-    (package_root / ".git").touch()
-    assert config.resolve_paths() == (str(source), str(source / "result/bin/follower"))
+        assert Path(executable).is_file()
+    assert not (package / "examples").exists()
 
 
-@pytest.mark.parametrize(
-    "source_dir,manifest,executable",
-    [
-        ("dimos/mapping/ray_tracing/rust", None, "result/bin/voxel_ray_tracing"),
-        ("dimos/hardware/sensors/lidar/virtual_mid360", "flake.nix", "result/bin/virtual_mid360"),
-        ("dimos/simulation/habitat/nix", "flake.nix", "../../../../target/habitat/habitat-native"),
-    ],
-)
-def test_source_build_falls_back_without_staged_manifest(
-    tmp_path, monkeypatch, mocker, source_dir, manifest, executable
-):
-    package_root = tmp_path / "site-packages"
-    source = package_root / source_dir
-    source.mkdir(parents=True)
-    if manifest is not None:
-        (source / manifest).touch()
-    monkeypatch.setattr(native_module_mod, "DIMOS_PROJECT_ROOT", package_root)
+def test_incomplete_installation_refuses_unavailable_native_sources(tmp_path, monkeypatch):
+    (tmp_path / "dimos").mkdir()
+    monkeypatch.setattr(native_module_mod, "DIMOS_PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(native_module_mod, "CACHE_DIR", tmp_path / "cache")
-    checkout = tmp_path / "checkout"
-    fetch = mocker.patch("dimos.core.native_module.get_project_root", return_value=checkout)
-    config = NativeModuleConfig(source_dir=source_dir, executable=executable)
+    config = NativeModuleConfig(source_dir="missing/module", executable="result/bin/missing")
+    with pytest.raises(FileNotFoundError, match="Native build sources are missing"):
+        config.resolve_paths()
 
-    assert config.resolve_paths() == (
-        str(checkout / source_dir),
-        str((checkout / source_dir / executable).resolve()),
-    )
-    fetch.assert_called_once_with()
+    with tarfile.open(tmp_path / "dimos/native_sources.tar", "w") as archive:
+        archive.addfile(tarfile.TarInfo("present/Cargo.toml"))
+    with pytest.raises(FileNotFoundError, match="missing/module"):
+        config.resolve_paths()
 
 
 def test_external_binary_paths_are_anchored_at_initialization(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
-    root = mocker.patch("dimos.core.native_module.get_project_root")
+    root = mocker.patch("dimos.core.native_module._native_source_root")
     module = StubBuildModule(executable="bin/native")
     try:
         monkeypatch.chdir(tmp_path.parent)
@@ -846,8 +774,8 @@ def test_legacy_cwd_has_migration_error(factory):
 
 
 def test_source_preparation_is_lazy_and_reused(tmp_path, mocker):
-    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
-    root = mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    root = mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
+    (tmp_path / "rust").mkdir()
     module = StubBuildModule(source_dir="rust", executable="bin/native")
     try:
         root.assert_not_called()
@@ -866,12 +794,12 @@ def test_source_preparation_is_lazy_and_reused(tmp_path, mocker):
 
 @pytest.mark.parametrize("build_first", [False, True])
 def test_start_prepares_sources_once_before_spawn(tmp_path, mocker, build_first):
-    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
-    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
     mocker.patch.object(Module, "start")
     spawn = mocker.patch(
         "dimos.core.native_module.subprocess.Popen", side_effect=RuntimeError("spawn boundary")
     )
+    (tmp_path / "rust").mkdir()
     module = StubBuildModule(source_dir="rust", executable="bin/native")
     try:
         build = mocker.patch.object(module, "_maybe_build")

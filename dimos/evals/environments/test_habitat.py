@@ -102,7 +102,7 @@ def test_external_executable_reaches_blueprint_without_source_build(
     custom_dataset.write_text("{}")
     monkeypatch.chdir(tmp_path)
     source = mocker.patch(
-        "dimos.core.native_module.get_project_root", side_effect=AssertionError("source fetch")
+        "dimos.core.native_module._native_source_root", side_effect=AssertionError("source fetch")
     )
     env = environment(
         executable=executable.name if relative else str(executable),

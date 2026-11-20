@@ -47,10 +47,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -67,7 +67,6 @@ from dimos.core.transport_factory import session_config
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES, ZenohConfig
-from dimos.utils.data import get_project_root
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -144,43 +143,30 @@ def _check_legacy_cwd(values: Any) -> Any:
     return values
 
 
-def _packaged_native_root() -> Path:
-    """Stage bundled Rust inputs in a writable cache, keeping sibling crate paths."""
-    inputs: set[Path] = set()
-    for directory, dirs, files in os.walk(DIMOS_PROJECT_ROOT / "dimos"):
-        relative = Path(directory).relative_to(DIMOS_PROJECT_ROOT)
-        dirs[:] = [
-            name
-            for name in dirs
-            if name not in {"target", "build", "__pycache__"}
-            and not name.startswith("result")
-            # Runtime data owns the fallback checkout; crate-local data is still an input.
-            and relative / name != Path("dimos/data")
-        ]
-        if "rust" in relative.parts:
-            inputs.update(
-                relative / name
-                for name in files
-                if not name.startswith("result") and not name.endswith(".pyc")
-            )
-    digest = hashlib.sha256()
-    for path in sorted(inputs):
-        digest.update(path.as_posix().encode() + b"\0")
-        digest.update(hashlib.sha256((DIMOS_PROJECT_ROOT / path).read_bytes()).digest())
+def _native_source_root() -> Path:
+    """Use the local checkout or unpack the installed release into a writable build tree."""
+    bundle = DIMOS_PROJECT_ROOT / "dimos/native_sources.tar"
+    if (DIMOS_PROJECT_ROOT / ".git").exists() or (
+        (DIMOS_PROJECT_ROOT / "pyproject.toml").is_file() and not bundle.is_file()
+    ):
+        return DIMOS_PROJECT_ROOT
+
+    if not bundle.is_file():
+        raise FileNotFoundError(
+            f"Native build sources are missing from this installation: {bundle}"
+        )
     cache = CACHE_DIR / "native"
     cache.mkdir(parents=True, exist_ok=True)
-    root = cache / digest.hexdigest()
-    with FileLock(cache / f"{root.name}.lock"):
-        if not root.exists():
-            with tempfile.TemporaryDirectory(dir=cache) as temporary:
-                staged = Path(temporary) / "sources"
-                staged.mkdir()
-                for path in inputs:
-                    target = staged / path
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    # Do not propagate read-only installation permissions.
-                    shutil.copyfile(DIMOS_PROJECT_ROOT / path, target)
-                staged.rename(root)
+    with bundle.open("rb") as stream:
+        root = cache / hashlib.sha256(stream.read()).hexdigest()
+        with FileLock(cache / f"{root.name}.lock"):
+            if not root.exists():
+                stream.seek(0)
+                with tempfile.TemporaryDirectory(dir=cache) as temporary:
+                    staged = Path(temporary) / "sources"
+                    with tarfile.open(fileobj=stream) as archive:
+                        archive.extractall(staged, filter="data")
+                    staged.rename(root)
     return root
 
 
@@ -234,14 +220,9 @@ class NativeModuleConfig(ModuleConfig):
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
-            manifests = ("flake.nix", "Cargo.toml")
-            build_cwd = DIMOS_PROJECT_ROOT / self.source_dir
-            if not any((build_cwd / name).is_file() for name in manifests):
-                build_cwd = get_project_root() / self.source_dir
-            elif not (DIMOS_PROJECT_ROOT / ".git").exists():
-                build_cwd = _packaged_native_root() / self.source_dir
-                if not any((build_cwd / name).is_file() for name in manifests):
-                    build_cwd = get_project_root() / self.source_dir
+            build_cwd = _native_source_root() / self.source_dir
+            if not build_cwd.is_dir():
+                raise FileNotFoundError(f"Native build directory is missing: {build_cwd}")
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)
