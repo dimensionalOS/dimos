@@ -24,6 +24,7 @@ from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
+from dimos.core.config_aliases import GLOBAL_ALIASES
 from dimos.visualization.rerun.constants import ViewerBackend
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
@@ -92,7 +93,7 @@ class GlobalConfig(BaseSettings):
     # env name and the `--transport` CLI flag (which sets the field by name) working.
     transport: TransportBackend = Field(
         default="zenoh",
-        validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
+        validation_alias=AliasChoices(*GLOBAL_ALIASES["transport"]),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = Field(default=False, description="Publish live resource stats for dtop.")

@@ -46,10 +46,22 @@ os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 from dotenv import load_dotenv
 import typer
 
+from dimos.core.config_aliases import GLOBAL_ALIASES, resolve_global_values
+
 # Load before CLI imports freeze config/state paths, so a daemon re-exec and
 # later status/stop commands resolve the same registry. Keep tests isolated.
 if "PYTEST_VERSION" not in os.environ:
+    # Keep an exported setting ahead of any alternate spelling supplied by dotenv.
+    exported_names = set(os.environ)
+    exported = resolve_global_values(os.environ, GLOBAL_ALIASES, allow_qualified=True)
     load_dotenv()
+    for field, value in exported.items():
+        aliases = GLOBAL_ALIASES[field]
+        spellings = {alias.upper() for alias in aliases}
+        for name in os.environ.keys() - exported_names:
+            if name.upper().removeprefix("G__") in spellings:
+                del os.environ[name]
+        os.environ[aliases[0]] = value
 
 from dimos.cli.cache import app as cache_app
 from dimos.cli.can import app as can_app

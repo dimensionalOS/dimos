@@ -19,9 +19,12 @@ startup time balloons from <2s to >5s, which is a terrible UX.
 """
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
+
+import pytest
 
 # CI runners are slower — give generous headroom but still catch gross regressions.
 HELP_TIMEOUT_SECONDS = 8
@@ -144,3 +147,89 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
         env=env,
     )
     assert leaked == []
+
+
+@pytest.mark.parametrize(
+    ("shell_name", "dotenv_name"),
+    [
+        ("TRANSPORT", "DIMOS_TRANSPORT"),
+        ("G__TRANSPORT", "dimos_transport"),
+        ("G__DIMOS_TRANSPORT", "TRANSPORT"),
+    ],
+)
+def test_cli_and_its_child_keep_the_exported_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shell_name: str, dotenv_name: str
+) -> None:
+    (tmp_path / ".env").write_text(f"{dotenv_name}=lcm\n")
+    monkeypatch.delenv("PYTEST_VERSION", raising=False)
+    monkeypatch.delenv("DIMOS_TRANSPORT", raising=False)
+    monkeypatch.delenv("TRANSPORT", raising=False)
+    monkeypatch.setenv(shell_name, "zenoh")
+    read_transport = (
+        "from dimos.core.global_config import global_config; "
+        "from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser; "
+        "print(global_config.transport, BlueprintConfigParser.preparse_global_config()['transport'], flush=True)"
+    )
+    code = (
+        f"import subprocess, sys; import dimos.cli.dimos; {read_transport}; "
+        f"subprocess.run([sys.executable, '-c', {read_transport!r}], check=True)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=True
+    )
+    assert result.stdout.splitlines() == ["zenoh zenoh", "zenoh zenoh"]
+
+
+@pytest.mark.parametrize("source", ["shell", "dotenv"])
+def test_cli_and_blueprint_prefer_bare_globals_in_either_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    settings = [
+        ("DIMOS_TRANSPORT", "zenoh"),
+        ("G__DIMOS_TRANSPORT", "lcm"),
+        ("N_WORKERS", "3"),
+        ("G__N_WORKERS", "7"),
+    ]
+    for name in ("PYTEST_VERSION", "TRANSPORT", "G__TRANSPORT", *(k for k, _ in settings)):
+        monkeypatch.delenv(name, raising=False)
+    read_config = """
+from dimos.core.global_config import global_config
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.module import Module
+
+parser = BlueprintConfigParser(Module.blueprint())
+for values in (global_config.model_dump(), parser.preparse_global_config(), parser.parse().global_config):
+    print(values["transport"], values["n_workers"])
+"""
+    code = (
+        "import subprocess, sys; import dimos.cli.dimos; "
+        f"subprocess.run([sys.executable, '-c', {read_config!r}], check=True)"
+    )
+    for order in (settings, list(reversed(settings))):
+        env = dict(os.environ)
+        if source == "shell":
+            env.update(order)
+        else:
+            (tmp_path / ".env").write_text("".join(f"{k}={v}\n" for k, v in order))
+        cli = subprocess.run(
+            [sys.executable, "-m", "dimos.cli.dimos", "show-config"],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert "transport: zenoh" in cli.stdout.splitlines()
+        assert "n_workers: 3" in cli.stdout.splitlines()
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        assert result.stdout.splitlines() == ["zenoh 3"] * 3

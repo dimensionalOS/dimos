@@ -62,6 +62,59 @@ def test_default_environment_reads_dotenv_at_environment_precedence(
     assert parsed.module_kwargs("primarymodule")["speed"] == 3.5
 
 
+def test_global_aliases_follow_source_precedence(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text('{"G":{"DIMOS_TRANSPORT":"lcm","N_WORKERS":5}}')
+    parser = BlueprintConfigParser(PrimaryModule.blueprint())
+    cli = ["--transport=zenoh"]
+
+    assert parser.parse(config_path=path, environ={}).global_config["transport"] == "lcm"
+    assert (
+        parser.preparse_global_config(environ={"G__DIMOS_TRANSPORT": "lcm"})["transport"] == "lcm"
+    )
+    for values in (
+        parser.preparse_global_config(cli, config_path=path, environ={}),
+        parser.parse(cli, config_path=path, environ={}).explicit_global_config_values(),
+        parser.parse(config_path=path, environ={"TRANSPORT": "zenoh"}).global_config_values(),
+        parser.parse(cli, config_path=path, environ={}).file_and_cli["g"],
+    ):
+        assert values["transport"] == "zenoh"
+        assert values["n_workers"] == 5
+        assert "DIMOS_TRANSPORT" not in values
+
+
+def test_environment_aliases_follow_source_and_model_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / ".env"
+    path.write_text("TRANSPORT=lcm\nDIMOS_TRANSPORT=lcm\n")
+    monkeypatch.setattr("dimos.core.coordination.blueprint_config.sources.ENV_FILE", str(path))
+    monkeypatch.setenv("TRANSPORT", "zenoh")
+    monkeypatch.delenv("DIMOS_TRANSPORT", raising=False)
+    parser = BlueprintConfigParser(PrimaryModule.blueprint())
+    for env, expected in (
+        (None, "zenoh"),
+        ({"DIMOS_TRANSPORT": "lcm", "TRANSPORT": "zenoh"}, "lcm"),
+        ({"TRANSPORT": "zenoh", "DIMOS_TRANSPORT": "lcm"}, "lcm"),
+        ({"G__DIMOS_TRANSPORT": "lcm", "TRANSPORT": "zenoh"}, "zenoh"),
+        ({"TRANSPORT": "zenoh", "G__DIMOS_TRANSPORT": "lcm"}, "zenoh"),
+    ):
+        assert parser.preparse_global_config(environ=env)["transport"] == expected
+        assert parser.parse(environ=env).global_config["transport"] == expected
+
+
+def test_programmatic_global_aliases_override_blueprint_pins() -> None:
+    parser = BlueprintConfigParser(PrimaryModule.blueprint().global_config(DIMOS_TRANSPORT="lcm"))
+
+    option = next(line for line in parser.format_help().splitlines() if "--g.transport " in line)
+    assert "(default: lcm)" in option
+
+    parsed = parser.parse(environ={}, overrides={"g": {"transport": "zenoh"}})
+    assert parsed.explicit_global_config_values() == {"transport": "zenoh"}
+    explicit = parser.parse(environ={}, global_overrides={"TRANSPORT": "zenoh"})
+    assert explicit.explicit_global_config_values() == {"transport": "zenoh"}
+
+
 def test_preparse_environment_null_coerces_to_none() -> None:
     values = BlueprintConfigParser.preparse_global_config(
         environ={"ROBOT_IP": "null", "G__RELAY_URL": "null"},
