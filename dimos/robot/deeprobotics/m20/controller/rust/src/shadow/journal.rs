@@ -37,15 +37,7 @@ pub fn parse_line(line: &str) -> Option<(f64, Event)> {
     let t = iso_seconds(stamp)?;
     let msg = rest.split_once(": ").map(|(_, m)| m)?;
     if let Some((_, to)) = msg.split_once(" ------------> ") {
-        let name = match to.trim() {
-            "idle_state" => "passive",
-            "standup_state" => "stand_up",
-            "liedown_state" => "lie_down",
-            "rl_control" => "rl_control",
-            "joint_damping" => "joint_damping",
-            other => other,
-        };
-        return Some((t, Event::State(name.to_string())));
+        return Some((t, Event::State(state_name(to))));
     }
     if let Some(r) = msg.strip_prefix("target_gait --- ") {
         let code = r.split(',').next()?.trim();
@@ -62,6 +54,61 @@ pub fn parse_line(line: &str) -> Option<(f64, Event)> {
         return v.trim().parse().ok().map(|h| (t, Event::Height(h)));
     }
     None
+}
+
+fn state_name(to: &str) -> String {
+    match to.trim() {
+        "idle_state" => "passive",
+        "standup_state" => "stand_up",
+        "liedown_state" => "lie_down",
+        "rl_control" => "rl_control",
+        "joint_damping" => "joint_damping",
+        other => other,
+    }
+    .to_string()
+}
+
+/// A state transition from rl_deploy's own log file ("[2026-11-20 18:17:06.048.410] [INFO  ] [Trans]  ------------>
+/// start_damping"); its stamps are local time, `utc_offset_s` east of UTC. The file keeps what the journal may drop.
+pub fn parse_log_line(line: &str, utc_offset_s: i64) -> Option<(f64, Event)> {
+    let rest = line.strip_prefix('[')?;
+    let (stamp, rest) = rest.split_once(']')?;
+    let (_, to) = rest.split_once("------------> ")?;
+    let (date, clock) = stamp.split_once(' ')?;
+    // "18:17:06.048.410" -> "18:17:06.048410"
+    let mut parts = clock.splitn(2, '.');
+    let (hms, frac) = (parts.next()?, parts.next().unwrap_or("0").replace('.', ""));
+    let sign = if utc_offset_s < 0 { '-' } else { '+' };
+    let off = utc_offset_s.abs();
+    let iso = format!(
+        "{date}T{hms}.{frac}{sign}{:02}{:02}",
+        off / 3600,
+        off % 3600 / 60
+    );
+    Some((iso_seconds(&iso)?, Event::State(state_name(to))))
+}
+
+/// Follow rl_deploy's log file (today's path; tail -F waits for it), state transitions to `tx`.
+pub fn follow_log(path: &str, utc_offset_s: i64, tx: Sender<(f64, Event)>) -> Result<Child> {
+    let mut child = Command::new("tail")
+        .args(["-F", "-n", "20000", path])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("starting tail")?;
+    let out = child.stdout.take().context("tail stdout")?;
+    std::thread::Builder::new()
+        .name("shadow-rl-log".into())
+        .spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                if let Some(e) = parse_log_line(&line, utc_offset_s) {
+                    if tx.send(e).is_err() {
+                        return;
+                    }
+                }
+            }
+        })?;
+    Ok(child)
 }
 
 /// "2026-11-20T14:16:31.638834+0800" -> seconds since the epoch.
@@ -141,5 +188,12 @@ mod tests {
             parse_line("2026-11-20T14:16:41.635308+0800 host run.sh[1]: target_gait: 3003")
                 .unwrap();
         assert_eq!(e, Event::Target(0x3003));
+        let (t, e) = parse_log_line(
+            "[2026-11-20 18:17:06.048.410] [INFO  ] [Trans]  ------------> start_damping ",
+            28800,
+        )
+        .unwrap();
+        assert_eq!(e, Event::State("start_damping".into()));
+        assert!((t - 1795169826.048410).abs() < 1e-5, "{t}");
     }
 }

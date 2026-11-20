@@ -71,6 +71,10 @@ pub struct ShadowConfig {
     pub pose_inputs: Vec<PoseInput>,
     /// journalctl -u this
     pub journal_unit: String,
+    /// rl_deploy's own log (its state transitions survive a journal reset); {date} = YYYY_MMDD, local time
+    pub rl_log: String,
+    /// the AOS clock's offset from UTC (its log stamps are local time)
+    pub utc_offset_s: i64,
     /// rl_deploy's enable frames' control word, and its "stand-in" gait
     pub enable_word: u16,
     pub stand_in_gait: u32,
