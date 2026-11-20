@@ -298,7 +298,7 @@ fn run_owner(config: &Config, latest: &Latest) {
                     );
                     std::process::exit(2);
                 }
-                if replies % 5000 == 0 {
+                if replies.is_multiple_of(5000) {
                     info!(
                         replies,
                         refused = bus.owner.refused,

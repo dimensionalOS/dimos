@@ -78,7 +78,7 @@ mod sys {
 
     impl RawSocket {
         pub fn open(interface: &str, ethertype: u16) -> Result<RawSocket> {
-            let proto = (ethertype as u16).to_be() as i32;
+            let proto = ethertype.to_be() as i32;
             let fd = unsafe {
                 libc::socket(libc::AF_PACKET, libc::SOCK_RAW | libc::SOCK_CLOEXEC, proto)
             };
@@ -118,7 +118,7 @@ mod sys {
             ];
             let mut sll: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
             sll.sll_family = libc::AF_PACKET as u16;
-            sll.sll_protocol = (ethertype as u16).to_be();
+            sll.sll_protocol = ethertype.to_be();
             sll.sll_ifindex = ifindex;
             let r = unsafe {
                 libc::bind(

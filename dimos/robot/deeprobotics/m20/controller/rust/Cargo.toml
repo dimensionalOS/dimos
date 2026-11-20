@@ -40,7 +40,7 @@ toml = "0.8"
 # pure Rust ONNX inference: no shared library to ship to the aarch64 board, cross-compiles with cargo zigbuild
 tract-onnx = "0.23"
 m20-ecan = { version = "0.3.2", optional = true }
-m20-battery = { version = "0.3.1", optional = true }
+m20-battery = { version = "0.3.2", optional = true }
 
 [dev-dependencies]
 m20-ecan = "0.3.2"
