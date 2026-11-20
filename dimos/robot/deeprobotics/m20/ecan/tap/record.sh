@@ -13,6 +13,10 @@
 #   record.sh uninstall     remove the shim + restart rl_deploy (robot sitting/docked), unwrap m20tool
 #   record.sh wrap|unwrap   log every m20tool run on this board (bind mount, gone after a reboot)
 #                           (on GOS: dir=/var/tmp/ecan_capture record.sh wrap)
+# Charge-enable test controls in the shim (off unless the file exists, no restart needed):
+#   touch $dir/drop_charge_enable    rl_deploy's 0xb3 charge-enable frames are swallowed; rm it to stop
+#   touch $dir/inject_charge_enable  the next 3 zero-gain joint commands go out as 0xb3 (one request); the shim removes it
+# Removing the shim entirely: record.sh uninstall (restarts rl_deploy: robot sitting/docked).
 # Options: --force skips the robot-is-sitting check before a restart.
 set -euo pipefail
 dir=${dir:-/var/opt/robot/data/ecan_capture}
@@ -195,12 +199,14 @@ case "${1:-status}" in
         if shim_loaded; then echo "shim loaded in rl_deploy pid $(pid)"; else echo "shim not loaded (rl_deploy pid $(pid || true))"; fi
         [ -f "$dropin" ] && echo "drop-in present: $dropin" || echo "no drop-in"
         [ -f "$dir/recording.pid" ] && kill -0 "$(cat "$dir/recording.pid")" 2>/dev/null && echo "recording now (pid $(cat "$dir/recording.pid"))"
+        [ -f "$dir/drop_charge_enable" ] && echo "DROPPING rl_deploy's charge-enable frames (rm $dir/drop_charge_enable)"
+        [ -f "$dir/charge_control_stats" ] && echo "charge controls: $(cat "$dir/charge_control_stats")"
         [ -S "$dir/live.sock" ] && echo "live reader bound: $dir/live.sock" || echo "no live reader"
         mounted /usr/local/bin/m20tool && echo "m20tool wrapped" || echo "m20tool not wrapped"
         ls -dt "$dir"/session_* "$dir"/capture_*.pcapng 2>/dev/null | head -5 || true
         ;;
     *[!0-9]*)
-        sed -n '5,14p' "$0"; exit 1
+        sed -n '5,19p' "$0"; exit 1
         ;;
     *)
         record "$1"
