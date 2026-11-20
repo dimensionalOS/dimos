@@ -60,7 +60,7 @@ uv run dimos run habitat-nav
 uv run dimos shell
 ```
 
-* For each goal, hover over a free spot on the planner surface a few metres away in Rerun and read its coordinates. Send the second goal after the robot arrives, and stop it on the way.
+* For each goal, hover over a free spot on the planner surface a few metres away in Rerun and read the `Hover position` line of the tooltip. The `positions` line below it is in the camera frame when the pointer is on a scan point. Send the second goal after the robot arrives, and stop it on the way.
 
 ...in the shell:
 
@@ -71,7 +71,7 @@ app.MLSPlannerNative.go_to(PoseStamped(position=(<x2>, <y2>, <z2>), frame_id="wo
 app.MLSPlannerNative.stop_navigation()
 ```
 
-Expected result: each `go_to` draws a path. The robot stops at the first point, and `stop_navigation` halts it short of the second.
+Expected result: each `go_to` returns a `Time` stamp at once and draws a path. The robot stops at the first point, and `stop_navigation` halts it short of the second.
 
 ## 7.4 TypeSafe navigation agent
 
