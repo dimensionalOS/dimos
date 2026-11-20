@@ -75,10 +75,7 @@ def test_preflight_retries_a_failed_version_check_once(mocker, monkeypatch):
             subprocess.CompletedProcess([], 0, stdout="ok", stderr=""),
         ],
     )
-    agent = DimosAgentAdapter()
-    env = Dataset("unused")
-    agent.preflight(env)
-    agent.preflight(env)
+    DimosAgentAdapter().preflight(Dataset("unused"))
     assert version.call_count == 2
 
 

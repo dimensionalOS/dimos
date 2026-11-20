@@ -133,24 +133,14 @@ class DimosAgentAdapter(PiAdapter):
 
     def preflight(self, environment: Environment) -> None:
         super().preflight(environment)
-        if getattr(self, "_version_ok", False):
-            return
         # Checks Node and builds the agent when its inputs changed, before any case starts.
-        version = subprocess.run(
-            [shutil.which(self.config.cli) or self.config.cli, "agent", "version"],
-            capture_output=True,
-            text=True,
-        )
+        cmd = [shutil.which(self.config.cli) or self.config.cli, "agent", "version"]
+        version = subprocess.run(cmd, capture_output=True, text=True)
         if version.returncode:
-            version = subprocess.run(
-                [shutil.which(self.config.cli) or self.config.cli, "agent", "version"],
-                capture_output=True,
-                text=True,
-            )
+            version = subprocess.run(cmd, capture_output=True, text=True)
         if version.returncode:
             tail = "\n".join((version.stderr.strip() or version.stdout.strip()).splitlines()[-20:])
             raise RuntimeError(f"`{self.config.cli} agent version` failed:\n{tail}")
-        self._version_ok = True
 
     def _prepare_case(self, env: RunningEnvironment, run_dir: Path) -> str:
         # The agent reaches the robot through its own tools and prompt, not an MCP tool listing.
