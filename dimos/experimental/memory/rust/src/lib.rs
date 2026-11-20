@@ -35,6 +35,7 @@ use crate::store::{Observation, RecordingStore};
 mod decoding;
 mod encoding;
 pub mod events;
+pub mod recovery;
 pub mod store;
 mod window;
 
