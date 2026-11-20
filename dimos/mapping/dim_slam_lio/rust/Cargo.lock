@@ -588,7 +588,7 @@ dependencies = [
 [[package]]
 name = "dim_slam"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimSLAM?branch=jeff%2Ffeat%2Flio_without_cuvslam#62abf013bd4845b28aa10dd3cc6a67fd20aa290a"
+source = "git+https://github.com/dimensionalOS/dimSLAM?branch=jeff%2Ffeat%2Flio_multi_lidar_fixes#a6d22db0fd9151ff7b274f2b8d186f5545bde91c"
 dependencies = [
  "cu_vslam_rs",
  "nalgebra",
