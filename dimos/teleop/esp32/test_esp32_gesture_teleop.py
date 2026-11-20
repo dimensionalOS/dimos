@@ -114,3 +114,28 @@ def test_scanner_failure_is_retried(module: Esp32GestureTeleop, mocker) -> None:
     mocker.patch.object(module._stop_event, "wait", return_value=False)
     module._run()
     assert len(attempts) == 2
+
+
+def test_no_tap_is_published_once_stopping(mocker) -> None:
+    module = Esp32GestureTeleop(address="aa:bb:cc:dd:ee:01", press_hold_s=60)
+    publish = mocker.patch.object(module.gesture_joy, "publish")
+    module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
+    module.stop()
+    module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # a scan callback still running
+    publish.assert_not_called()
+    assert module._release_timer is None
+
+
+def test_stale_timer_does_not_release_a_newer_tap(mocker) -> None:
+    module = Esp32GestureTeleop(address="aa:bb:cc:dd:ee:01", press_hold_s=60)
+    publish = mocker.patch.object(module.gesture_joy, "publish")
+    try:
+        module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
+        module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # STAND
+        stale = module._release_timer
+        module._on_payload(bytes([0, 2, 1, 20, 3]), now=0.2)  # SIT replaces STAND's timer
+        assert stale is not None
+        module._release_after_hold(stale)  # STAND's timer fires late
+        assert [msg.buttons for msg in published(publish)] == [[0, 1], [0, 0], [1, 0]]
+    finally:
+        module.stop()

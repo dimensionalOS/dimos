@@ -112,6 +112,8 @@ class Esp32GestureTeleop(Module):
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
+        # A tap being published holds the lock, so it finishes before this flush; later taps see
+        # the stop event and publish nothing.
         self._flush_release()  # never leave a button pressed
         if self._thread is not None:
             # The scanner may still be starting (scan_start_timeout_s) or stopping (5 s).
@@ -119,6 +121,7 @@ class Esp32GestureTeleop(Module):
             if self._thread.is_alive():
                 logger.warning("[esp32] Bluetooth scanner did not stop in time")
             self._thread = None
+        self._flush_release()
         super().stop()
 
     def _run(self) -> None:
@@ -176,26 +179,40 @@ class Esp32GestureTeleop(Module):
         logger.info(f"[esp32] {packet.gesture} count={packet.count} cm={packet.distance_cm}")
 
     def _publish_tap(self, press: Joy, release: Joy) -> None:
-        # A still-pending release from the previous gesture goes out first, so taps never overlap.
-        self._flush_release()
-        self.gesture_joy.publish(press)
-        if self.config.press_hold_s <= 0:
-            self.gesture_joy.publish(release)
-            return
         with self._release_lock:
+            if self._stop_event.is_set():
+                return  # stopping: publish nothing new
+            # A still-pending release from the previous gesture goes out first, so taps never overlap.
+            self._flush_release_locked()
+            self.gesture_joy.publish(press)
+            if self.config.press_hold_s <= 0:
+                self.gesture_joy.publish(release)
+                return
             self._pending_release = release
-            self._release_timer = threading.Timer(self.config.press_hold_s, self._flush_release)
-            self._release_timer.daemon = True
-            self._release_timer.start()
+            timer = threading.Timer(
+                self.config.press_hold_s, lambda: self._release_after_hold(timer)
+            )
+            timer.daemon = True
+            self._release_timer = timer
+            timer.start()
+
+    def _release_after_hold(self, timer: threading.Timer) -> None:
+        with self._release_lock:
+            # A timer that lost the race to a newer tap must not release that tap early.
+            if self._release_timer is timer:
+                self._flush_release_locked()
 
     def _flush_release(self) -> None:
         with self._release_lock:
-            if self._release_timer is not None:
-                self._release_timer.cancel()
-                self._release_timer = None
-            release, self._pending_release = self._pending_release, None
-            if release is not None:
-                self.gesture_joy.publish(release)
+            self._flush_release_locked()
+
+    def _flush_release_locked(self) -> None:
+        if self._release_timer is not None:
+            self._release_timer.cancel()
+            self._release_timer = None
+        release, self._pending_release = self._pending_release, None
+        if release is not None:
+            self.gesture_joy.publish(release)
 
     def _warn(self, warning: str | None) -> None:
         if warning is not None and warning != self._last_warning:
