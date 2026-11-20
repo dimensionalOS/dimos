@@ -19,7 +19,9 @@ import pytest
 
 from dimos.calibration import hand_eye_capture
 from dimos.calibration.hand_eye_capture import TopicCapture, check_color_frame
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
@@ -160,6 +162,39 @@ def test_rejects_stale_edge_in_transform_chain(topic_source):
     events.append((0.25, pair_with_stale_edge))
     with source, pytest.raises(RuntimeError, match="No fresh TF"):
         source.capture(timeout_sec=1.0)
+
+
+def test_tip_from_mount_uses_planner_world_links_at_exposure(topic_source):
+    source, _, _, callbacks, _, _ = topic_source
+    world_tip = Transform(
+        ts=1000,
+        frame_id="world",
+        child_frame_id="tip",
+        translation=Vector3(1, 2, 3),
+        rotation=Quaternion(0, 0, math.sqrt(0.5), math.sqrt(0.5)),
+    )
+    world_mount = Transform(
+        ts=1000, frame_id="world", child_frame_id="ee", translation=Vector3(1, 3, 3)
+    )
+    with source:
+        callbacks["tf"](TFMessage(world_tip, world_mount))
+        pose = source.tip_from_mount("tip", 1000.1)
+        np.testing.assert_allclose(
+            pose.to_matrix(),
+            np.linalg.solve(world_tip.to_matrix(), world_mount.to_matrix()),
+            atol=1e-12,
+        )
+        assert (pose.frame_id, pose.child_frame_id) == ("tip", "ee")
+        with pytest.raises(RuntimeError, match="No fresh TF.*tip.*ee"):
+            source.tip_from_mount("tip", 1001)
+
+
+def test_tip_from_mount_is_identity_for_camera_on_tcp(topic_source):
+    source, *_ = topic_source
+    with source:
+        pose = source.tip_from_mount("ee", 1000)
+    np.testing.assert_array_equal(pose.to_matrix(), np.eye(4))
+    assert pose.ts == 1000
 
 
 def test_cleans_up_after_timeout(topic_source):

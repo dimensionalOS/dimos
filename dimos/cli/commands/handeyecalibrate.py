@@ -59,6 +59,16 @@ def run(
         ..., metavar="Q1 Q2 ...", help="Centered home in planner joint order, angles in radians."
     ),
     ee_frame: str = typer.Option(..., help="TF link that the camera is rigidly mounted on."),
+    orbit_axis: str | None = typer.Option(
+        None,
+        help="Orbit using the planner TCP axis closest to the camera's forward direction at home "
+        "(x, -x, y, -y, z, -z). The example A1Z/D405 mount uses x.",
+    ),
+    orbit_calibration: Path | None = typer.Option(
+        None,
+        help="Skip the four initial aiming tilts using a validated hand_eye.json from this mount. "
+        "Choose at most one of --orbit-calibration and --orbit-axis.",
+    ),
     count: int = typer.Option(
         MIN_TRAINING_SAMPLES, min=MIN_TRAINING_SAMPLES, help="Training images."
     ),
@@ -74,7 +84,7 @@ def run(
     marker_id: int = typer.Option(0),
     timeout_sec: float = typer.Option(10.0, min=0.1, help="Seconds to wait for camera or TF data."),
 ) -> None:
-    """Capture two tilt rings, solve and validate, then move to the arm's return pose."""
+    """Aim from the first five training views, sweep around the tag, solve, validate and park."""
     # Load camera, GUI and planner dependencies only for the motion-enabled command.
     from dimos.calibration.hand_eye_run import run_live_hand_eye
     from dimos.cli.hand_eye_preview import hand_eye_preview
@@ -84,6 +94,8 @@ def run(
             session,
             home=home,
             ee_frame=ee_frame,
+            orbit_axis=orbit_axis,
+            orbit_calibration=orbit_calibration,
             count=count,
             validation_count=validation_count,
             marker_size_m=marker_size_m,

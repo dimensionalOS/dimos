@@ -118,6 +118,23 @@ class TopicCapture:
             self._buffer.receive_tfmessage(message)
             self._condition.notify_all()
 
+    def tip_from_mount(self, tip_frame: str, timestamp: float) -> Transform:
+        """Express the camera mounting link in the planner TCP at image time."""
+        with self._condition:
+            pose = self._buffer.get(
+                tip_frame,
+                self.ee_frame,
+                time_point=timestamp,
+                time_tolerance=TF_TOLERANCE_SEC,
+                warn=False,
+            )
+        if pose is None:
+            raise RuntimeError(
+                f"No fresh TF from planner tip {tip_frame!r} to camera mount {self.ee_frame!r} "
+                "at the image timestamp."
+            )
+        return pose
+
     def capture(self, timeout_sec: float = 10.0) -> tuple[Image, Transform]:
         """Wait for fresh, stationary pairs; raise RuntimeError on timeout."""
         if not math.isfinite(timeout_sec) or timeout_sec <= 0:

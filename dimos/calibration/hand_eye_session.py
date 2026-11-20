@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+from itertools import islice
 import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.calibration import DEFAULT_BASE_FRAME, DEFAULT_MARKER_SIZE_M
 from dimos.calibration.hand_eye import (
@@ -30,6 +32,7 @@ from dimos.calibration.hand_eye import (
     check_marker,
     checked_camera_matrices,
     detect_sample,
+    fit_hand_eye,
     solve_hand_eye,
     validate_hand_eye,
 )
@@ -105,8 +108,10 @@ def open_session(
     return data
 
 
-def save_home_tool_pose(directory: Path, pose: PoseStamped) -> None:
-    """Save the measured center of the tool-space rings before the first capture."""
+def save_home_tool_pose(
+    directory: Path, pose: PoseStamped, tip_from_camera: NDArray[np.float64] | None = None
+) -> None:
+    """Save the measured home pose and optional orbit mount for repeatable views on resume."""
     position, orientation = pose.position.to_list(), pose.orientation.to_list()
     if (
         pose.frame_id != "world"
@@ -120,6 +125,8 @@ def save_home_tool_pose(directory: Path, pose: PoseStamped) -> None:
         "position": position,
         "orientation": orientation,
     }
+    if tip_from_camera is not None:
+        data["orbit_tip_from_camera"] = tip_from_camera.tolist()
     _write_json(directory / "session.json", data)
 
 
@@ -174,20 +181,40 @@ def record_sample(
     return entry
 
 
-def _samples(data: dict[str, Any], role: str) -> list[HandEyeSample]:
+def _samples(data: dict[str, Any], role: str, limit: int | None = None) -> list[HandEyeSample]:
+    entries = (s for s in data["samples"] if s["role"] == role)
     return [
         HandEyeSample(
             np.array(s["base_from_ee"]),
             np.array(s["camera_from_target"]),
             s["reprojection_error_px"],
         )
-        for s in data["samples"]
-        if s["role"] == role
+        for s in islice(entries, limit)
     ]
 
 
 def _sample_ids(data: dict[str, Any], role: str) -> list[str]:
     return [s["id"] for s in data["samples"] if s["role"] == role]
+
+
+def estimate_aiming_mount(directory: Path, sample_count: int) -> NDArray[np.float64]:
+    """Estimate mount <- camera from the initial training views for aiming subsequent moves."""
+    samples = _samples(load_session(directory), "train", limit=sample_count)
+    if len(samples) != sample_count:
+        raise ValueError(f"Need {sample_count} initial training views to aim the camera")
+    try:
+        result = fit_hand_eye(samples)
+        metrics = result["training_metrics"]
+        if not metrics["passed"]:
+            raise ValueError(
+                f"Initial views disagree on the target pose or reprojection: {metrics}"
+            )
+    except ValueError as error:
+        raise ValueError(
+            f"Could not aim the camera from the first {sample_count} training views: {error}. "
+            "Check that the tag stays fixed and clearly visible through the tilts."
+        ) from error
+    return np.asarray(result["camera_to_ee"], dtype=np.float64)
 
 
 def solve_session(directory: Path) -> dict[str, Any]:

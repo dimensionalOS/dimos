@@ -56,7 +56,10 @@ def test_mcp_start_schema_requires_home_and_mount(calibration):
     start = next(
         tool for tool in skill.get_skills() if tool.func_name == "start_hand_eye_calibration"
     )
-    assert set(json.loads(start.args_schema)["required"]) == {"home", "ee_frame"}
+    schema = json.loads(start.args_schema)
+    assert set(schema["required"]) == {"home", "ee_frame"}
+    assert "orbit_axis" in schema["properties"]
+    assert "orbit_calibration" in schema["properties"]
     assert not start.allow_reentry
 
 
@@ -67,9 +70,20 @@ def test_mcp_start_schema_requires_home_and_mount(calibration):
         ({"ee_frame": "bracket"}, TypeError, "home"),
         ({"home": [], "ee_frame": "bracket"}, ValueError, "home"),
         ({"home": [0.2], "ee_frame": ""}, ValueError, "ee_frame"),
+        ({"home": [0.2], "ee_frame": "bracket", "orbit_axis": "xy"}, ValueError, "(?i)axis"),
+        (
+            {
+                "home": [0.2],
+                "ee_frame": "bracket",
+                "orbit_axis": "x",
+                "orbit_calibration": "prior.json",
+            },
+            ValueError,
+            "(?i)orbit",
+        ),
     ],
 )
-def test_missing_or_empty_home_or_mount_is_rejected_before_creating_a_session(
+def test_invalid_motion_arguments_are_rejected_before_creating_a_session(
     calibration, tmp_path, arguments, error, missing
 ):
     skill, run, _ = calibration
@@ -99,7 +113,9 @@ def test_invalid_counts_are_rejected_before_creating_a_session(
     assert frames.get(timeout=5)["method"] == tool_stream.TOOL_STREAM_STOPPED_METHOD
 
 
-def test_duplicate_start_preserves_active_run_and_explicit_retry_uses_fresh_session(calibration):
+def test_duplicate_start_preserves_active_run_and_explicit_retry_uses_fresh_session(
+    calibration, tmp_path
+):
     skill, run, frames = calibration
     arrived, release = Event(), Event()
     reason = "Train 1/8 (home): Expected exactly one tag36h11 ID 0; detected 0"
@@ -112,11 +128,15 @@ def test_duplicate_start_preserves_active_run_and_explicit_retry_uses_fresh_sess
 
     run.side_effect = reject_view
     try:
-        started = skill.start_hand_eye_calibration(home=[0.4, -0.2], ee_frame="camera_bracket")
+        prior = tmp_path / "prior" / "hand_eye.json"
+        started = skill.start_hand_eye_calibration(
+            home=[0.4, -0.2], ee_frame="camera_bracket", orbit_calibration=str(prior)
+        )
         assert arrived.wait(timeout=5)
         first_session = run.call_args.args[0]
         assert run.call_args.kwargs["home"] == [0.4, -0.2]
         assert run.call_args.kwargs["ee_frame"] == "camera_bracket"
+        assert run.call_args.kwargs["orbit_calibration"] == prior
         assert str(first_session) in started
         assert "At home" in skill.hand_eye_calibration_status()
         with pytest.raises(RuntimeError, match="already in progress"):
@@ -126,12 +146,13 @@ def test_duplicate_start_preserves_active_run_and_explicit_retry_uses_fresh_sess
         release.set()
     assert reason in reported_result(skill, frames)
 
-    skill.start_hand_eye_calibration(home=[0.1, 0.2], ee_frame="wrist")
+    skill.start_hand_eye_calibration(home=[0.1, 0.2], ee_frame="wrist", orbit_axis="-z")
     assert reason in reported_result(skill, frames)
     assert run.call_count == 2
     assert run.call_args.args[0] != first_session
     assert run.call_args.kwargs["home"] == [0.1, 0.2]
     assert run.call_args.kwargs["ee_frame"] == "wrist"
+    assert run.call_args.kwargs["orbit_axis"] == "-z"
 
 
 @pytest.mark.parametrize(

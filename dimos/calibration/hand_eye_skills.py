@@ -33,7 +33,7 @@ from dimos.calibration import (
     MIN_TRAINING_SAMPLES,
     MIN_VALIDATION_SAMPLES,
 )
-from dimos.calibration.hand_eye_run import check_view_counts, run_live_hand_eye
+from dimos.calibration.hand_eye_run import check_orbit_axis, check_view_counts, run_live_hand_eye
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -89,9 +89,12 @@ class HandEyeCalibrationSkills(Module):
         ee_frame: str,
         count: int = MIN_TRAINING_SAMPLES,
         validation_count: int = MIN_VALIDATION_SAMPLES,
+        orbit_axis: str | None = None,
+        orbit_calibration: str | None = None,
     ) -> str:
         """Move the arm and calibrate once the operator has placed the fixed target and asked to start.
 
+        By default, home and four training tilts aim the camera for the two sweeps.
         A rejected stationary view ends the run.
         A completion update reports the grade or failure reason and session path.
 
@@ -100,6 +103,10 @@ class HandEyeCalibrationSkills(Module):
             ee_frame: TF name of the link carrying the camera, supplied by the operator.
             count: Number of training views, at least 8.
             validation_count: Number of separate validation views, at least 4.
+            orbit_axis: For smaller rings, supply the planner TCP axis closest to camera forward
+                at home (x, -x, y, -y, z, -z). The example A1Z/D405 mount uses x.
+            orbit_calibration: To skip the four aiming tilts, supply the path on the robot stack
+                to a validated hand_eye.json from this camera mount. Choose at most one orbit option.
         """
         with self._lock:
             if self._closing:
@@ -109,6 +116,10 @@ class HandEyeCalibrationSkills(Module):
             self.start_tool(_START_TOOL)
             try:
                 check_view_counts(count, validation_count)
+                calibration_path = (
+                    Path(orbit_calibration) if orbit_calibration is not None else None
+                )
+                check_orbit_axis(orbit_axis, calibration_path)
                 if not home:
                     raise ValueError("Pass home as a nonempty list of joint angles in radians.")
                 if not ee_frame or not ee_frame.strip():
@@ -119,7 +130,15 @@ class HandEyeCalibrationSkills(Module):
                 self._cancel.clear()
                 worker = Thread(
                     target=self._run,
-                    args=(session, count, validation_count, list(home), ee_frame),
+                    args=(
+                        session,
+                        count,
+                        validation_count,
+                        list(home),
+                        ee_frame,
+                        orbit_axis,
+                        calibration_path,
+                    ),
                     name="hand-eye",
                     daemon=True,
                 )
@@ -137,7 +156,14 @@ class HandEyeCalibrationSkills(Module):
             raise CancelledError
 
     def _run(
-        self, session: Path, count: int, validation_count: int, home: list[float], ee_frame: str
+        self,
+        session: Path,
+        count: int,
+        validation_count: int,
+        home: list[float],
+        ee_frame: str,
+        orbit_axis: str | None,
+        orbit_calibration: Path | None,
     ) -> None:
         def progress(message: str) -> None:
             with self._lock:
@@ -149,6 +175,8 @@ class HandEyeCalibrationSkills(Module):
                 session,
                 home=home,
                 ee_frame=ee_frame,
+                orbit_axis=orbit_axis,
+                orbit_calibration=orbit_calibration,
                 count=count,
                 validation_count=validation_count,
                 image_topic=self.config.image_topic,

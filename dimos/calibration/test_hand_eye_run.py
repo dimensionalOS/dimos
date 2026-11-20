@@ -25,9 +25,15 @@ from dimos.calibration.hand_eye_run import run_hand_eye
 from dimos.calibration.hand_eye_session import load_session
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 HOME = (0.0, 1.0, -1.0, 1.1, 0.0, 0.0)
 A1Z_RETURN = (0.0, 0.05, -0.05, 0.0, 0.0, 0.0)
+
+
+@pytest.fixture
+def tip_from_mount():
+    return Transform(frame_id="tip", child_frame_id="mount", translation=Vector3(-0.075, 0, 0))
 
 
 @pytest.fixture
@@ -40,12 +46,10 @@ def home_tool_pose():
 
 
 @pytest.fixture
-def automatic_run(tmp_path, marker_image, observations, mocker, home_tool_pose):
+def automatic_run(tmp_path, marker_image, observations, mocker, home_tool_pose, tip_from_mount):
     """Simulate a planner moving its TCP with a camera mounted on a different link."""
     template, info, _ = marker_image
     _, camera_to_mount, base_from_target = observations
-    tcp_from_mount = np.eye(4)
-    tcp_from_mount[0, 3] = -0.075
     commands = []
     images = []
 
@@ -60,7 +64,7 @@ def automatic_run(tmp_path, marker_image, observations, mocker, home_tool_pose):
         image.data[0, 0] = len(images)
         images.append(image)
         measured = Transform.from_matrix(
-            Transform.from_pose("tip", tcp).to_matrix() @ tcp_from_mount,
+            Transform.from_pose("tip", tcp).to_matrix() @ tip_from_mount.to_matrix(),
             ts=image.ts,
             frame_id="base",
             child_frame_id="mount",
@@ -77,13 +81,14 @@ def automatic_run(tmp_path, marker_image, observations, mocker, home_tool_pose):
     def run(
         review,
         *,
+        directory=tmp_path,
         home=HOME,
         joint_count=6,
         move_joints=plan_joint_move,
         **settings,
     ):
         return run_hand_eye(
-            tmp_path,
+            directory,
             info,
             home=home,
             joint_names=[f"joint{i}" for i in range(joint_count)],
@@ -192,6 +197,325 @@ def test_retake_quit_and_resume_reuses_saved_home_and_approved_views(
     commands.clear()
     assert run(resumed_review)["validated"]
     assert commands == []
+
+
+@pytest.mark.parametrize(
+    ("axis_name", "tool_axis", "camera_pitch_deg", "distance"),
+    [("x", [1, 0, 0], 90, 0.23), ("-z", [0, 0, -1], 180, 0.33)],
+)
+def test_resumed_orbit_moves_around_the_home_target_and_keeps_it_centered(
+    automatic_run,
+    observations,
+    home_tool_pose,
+    mocker,
+    axis_name,
+    tool_axis,
+    camera_pitch_deg,
+    distance,
+):
+    run, commands, _ = automatic_run
+    _, camera_to_mount, base_from_target = observations
+    # Mount the camera at the TCP and center the target at a known distance.
+    camera_to_mount[:3, 3] = [0.075, 0, 0]
+    camera_to_mount[:3, :3] = Rotation.from_euler("y", camera_pitch_deg, degrees=True).as_matrix()
+    home_rotation = Rotation.from_quat(home_tool_pose.orientation.to_list())
+    home_position = np.array(home_tool_pose.position.to_list())
+    home_ray = home_rotation.apply(tool_axis)
+    target = home_position + distance * home_ray
+    base_from_target[:3, 3] = target
+
+    assert run(mocker.Mock(side_effect=["accept", "quit"]), orbit_axis=axis_name) is None
+    assert len(commands) == 2
+    first_goal = commands[-1]
+    with pytest.raises(ValueError, match="settings changed"):
+        run(None)
+    assert len(commands) == 2
+
+    assert run(None, orbit_axis=axis_name)["validated"]
+    resumed_goal = commands[2]
+    np.testing.assert_array_equal(resumed_goal.position.to_list(), first_goal.position.to_list())
+    np.testing.assert_array_equal(
+        resumed_goal.orientation.to_list(), first_goal.orientation.to_list()
+    )
+    training, validation = commands[2:9], commands[9:-1]
+    assert (len(training), len(validation)) == (7, 4)
+    first_directions = []
+    for ring, max_angle, max_radius in ((training, 11, 0.055), (validation, 8, 0.040)):
+        radius = min(distance * math.sin(math.radians(max_angle)), max_radius)
+        directions = []
+        for goal in ring:
+            position = np.array(goal.position.to_list())
+            viewing_ray = Rotation.from_quat(goal.orientation.to_list()).apply(tool_axis)
+            np.testing.assert_allclose(position + distance * viewing_ray, target, atol=1e-12)
+            offset = position - home_position
+            lateral = offset - np.dot(offset, home_ray) * home_ray
+            assert np.linalg.norm(lateral) == pytest.approx(radius)
+            directions.append(lateral / radius)
+        first_directions.append(directions[0])
+        for i, direction in enumerate(directions):
+            assert direction @ directions[0] == pytest.approx(math.cos(math.tau * i / len(ring)))
+    assert first_directions[0] @ first_directions[1] == pytest.approx(math.cos(math.pi / 4))
+
+
+@pytest.fixture
+def orbit_mount(home_tool_pose, observations, marker_image, tip_from_mount):
+    """An offset wrist camera looking obliquely at a tag, with no world-aligned tag axes."""
+    _, mount_from_camera, world_from_tag = observations
+    tip_from_camera = tip_from_mount.to_matrix() @ mount_from_camera
+    world_from_camera = Transform.from_pose("tip", home_tool_pose).to_matrix() @ tip_from_camera
+    camera_from_tag = np.eye(4)
+    camera_from_tag[:3, :3] = Rotation.from_euler("xyz", [155, 8, 40], degrees=True).as_matrix()
+    camera_from_tag[:3, 3] = [0.004, -0.003, 0.29]
+    world_from_tag[:] = world_from_camera @ camera_from_tag
+    return Transform.from_matrix(
+        tip_from_camera, frame_id="tip", child_frame_id=marker_image[0].frame_id
+    )
+
+
+def _home_relative_offsets(views, home, world_from_tag):
+    """Measure actual optical centers from the captured views on their respective tool poses."""
+    camera_from_tag = np.array([view["camera_from_target"] for view in views])
+    np.testing.assert_allclose(camera_from_tag[:, :2, 3], 0, atol=1e-8)
+    assert np.all(camera_from_tag[:, 2, 3] > 0)
+    world_from_camera = world_from_tag @ np.linalg.inv(camera_from_tag)
+    world_from_home = world_from_tag @ np.linalg.inv(home["camera_from_target"])
+    return world_from_camera[:, :3, 3] - world_from_home[:3, 3]
+
+
+def _check_sweep_coverage(training, validation):
+    lateral = training[:, 1]
+    assert abs(lateral[0]) > 0.12
+    assert lateral[-1] == pytest.approx(-lateral[0])
+    # A center training pose is required even when the requested sweep count is even.
+    (center,) = np.flatnonzero(np.isclose(lateral, 0, atol=1e-8))
+    assert abs(center - (len(lateral) - 1 - center)) <= 1
+    regular_lateral = lateral.copy()
+    if len(training) == 7:
+        # The first left-side view is halfway toward home from its mirrored right-side view.
+        np.testing.assert_allclose(training[4], training[2] * [0.5, -0.5, 0.5], atol=1e-8)
+        regular_lateral[4] *= 2
+    for side in (regular_lateral[: center + 1], regular_lateral[center:]):
+        np.testing.assert_allclose(side, np.linspace(side[0], side[-1], len(side)), atol=1e-8)
+    lateral = validation[:, 1]
+    assert abs(lateral[0]) > 0.05
+    expected = np.linspace(lateral[0], -lateral[0], len(lateral))
+    if len(validation) == 4:
+        expected[2] *= 0.5
+        # View 3 mirrors view 2 across home, at half its displacement in all axes.
+        np.testing.assert_allclose(validation[2], validation[1] * [0.5, -0.5, 0.5], atol=1e-8)
+    np.testing.assert_allclose(lateral, expected, atol=1e-8)
+    assert training[0, 1] * validation[0, 1] < 0  # Validation sweeps back.
+    # Include forward/back and above/below home at the minimum capture count.
+    all_offsets = np.concatenate((training, validation))
+    for axis in (0, 2):
+        assert all_offsets[:, axis].min() < -0.01
+        assert all_offsets[:, axis].max() > 0.01
+    distances = np.linalg.norm(training[:, None] - validation, axis=2)
+    assert distances.min() > 1e-3
+
+
+def test_target_centered_sweep_resumes_and_observes_tag_from_both_sides(
+    tmp_path, automatic_run, observations, orbit_mount, mocker
+):
+    run, commands, _ = automatic_run
+    _, mount_from_camera, world_from_tag = observations
+    assert run(mocker.Mock(side_effect=["accept", "quit"]), orbit_camera=orbit_mount) is None
+    first_goal = commands[-1]
+    changed_mount = Transform.from_matrix(
+        orbit_mount.to_matrix(), frame_id="tip", child_frame_id=orbit_mount.child_frame_id
+    )
+    changed_mount.translation.y += 0.02
+    with pytest.raises(ValueError, match="mount changed"):
+        run(None, orbit_camera=changed_mount)
+    assert len(commands) == 2
+
+    result = run(None, orbit_camera=orbit_mount)
+    assert result["validated"]
+    np.testing.assert_allclose(result["camera_to_ee"], mount_from_camera, atol=1e-8)
+    np.testing.assert_allclose(
+        Transform.from_pose("tip", commands[2]).to_matrix(),
+        Transform.from_pose("tip", first_goal).to_matrix(),
+    )
+
+    samples = load_session(tmp_path)["samples"]
+    training = _home_relative_offsets(samples[1:8], samples[0], world_from_tag)
+    validation = _home_relative_offsets(samples[8:], samples[0], world_from_tag)
+    assert (len(training), len(validation)) == (7, 4)
+    _check_sweep_coverage(training, validation)
+
+
+def test_camera_seed_steers_views_but_solver_refits_mount(automatic_run, observations, orbit_mount):
+    run, _, _ = automatic_run
+    _, mount_from_camera, _ = observations
+    orbit_mount.translation.z += 0.012
+
+    result = run(None, orbit_camera=orbit_mount)
+
+    assert result["validated"]
+    np.testing.assert_allclose(result["camera_to_ee"], mount_from_camera, atol=1e-8)
+
+
+def test_low_endpoint_behind_the_tag_stops_before_leaving_home(
+    automatic_run, observations, orbit_mount, home_tool_pose
+):
+    run, commands, _ = automatic_run
+    _, _, world_from_tag = observations
+    camera_at_home = (
+        Transform.from_pose("tip", home_tool_pose).to_matrix() @ orbit_mount.to_matrix()
+    )
+    world_from_tag[:3, :3] = np.eye(3)
+    world_from_tag[:3, 3] = camera_at_home[:3, 3] + [0.20, 0, -0.08]
+
+    with pytest.raises(ValueError, match="crosses the tag plane"):
+        run(None, orbit_camera=orbit_mount)
+
+    assert commands == [HOME]
+
+
+@pytest.mark.parametrize(
+    ("space", "initial_views", "rise"),
+    [
+        ("tag_azimuth_deg_radius_height_m", 1, 0.0),
+        ("tag_arc", 1, 0.04),
+        ("tool_tilts_then_tag_arc", 5, 0.04),
+    ],
+)
+def test_prior_tag_plane_sweep_resumes_its_saved_camera_goals(
+    tmp_path, automatic_run, orbit_mount, tip_from_mount, mocker, space, initial_views, rise
+):
+    run, _, _ = automatic_run
+    options = (
+        {"orbit_camera": orbit_mount} if initial_views == 1 else {"tip_from_mount": tip_from_mount}
+    )
+    assert run(mocker.Mock(side_effect=["accept"] * initial_views + ["quit"]), **options) is None
+    session = load_session(tmp_path)
+    current = session["settings"]["automatic_views"]
+    # These are the angle/radius/height values written by the previous releases.
+    training = [
+        [float(a), 0.17, float(0.18 + rise * (1.0 - (a / 50.0) ** 2))]
+        for a in np.linspace(-50.0, 50.0, 8 - initial_views)
+    ]
+    validation = [[float(a), 0.09, 0.19] for a in np.linspace(60.0, -60.0, 4)]
+    schedule = {k: current[k] for k in ("home_joints", "joint_names", "tip_frame")}
+    schedule.update(
+        space=space, train=current["train"][:initial_views] + training, validation=validation
+    )
+    if initial_views == 1:
+        schedule["camera_frame"] = orbit_mount.child_frame_id
+    else:
+        schedule["initial_tilt_views"] = initial_views
+    session["settings"]["automatic_views"] = schedule
+    (tmp_path / "session.json").write_text(json.dumps(session))
+
+    result = run(None, **options)
+
+    assert result["validated"]
+    samples = load_session(tmp_path)["samples"]
+    assert samples[:initial_views] == session["samples"]
+    centers = np.linalg.inv(np.array([s["camera_from_target"] for s in samples]))[:, :3, 3]
+    home_azimuth = math.atan2(centers[0, 1], centers[0, 0])
+    for measured, requested in ((centers[initial_views:8], training), (centers[8:], validation)):
+        azimuth, radius, height = np.array(requested).T
+        angles = np.radians(azimuth) + home_azimuth
+        expected = np.column_stack((radius * np.cos(angles), radius * np.sin(angles), height))
+        np.testing.assert_allclose(measured, expected, atol=1e-8)
+
+
+@pytest.mark.usefixtures("orbit_mount")
+@pytest.mark.parametrize("denser_count", [9, 12])  # Even and odd numbers of broad training views.
+def test_fresh_run_aims_both_arcs_from_its_first_five_observations(
+    tmp_path, automatic_run, observations, tip_from_mount, mocker, denser_count
+):
+    run, commands, _ = automatic_run
+    _, mount_from_camera, world_from_tag = observations
+    quit_at_first_wide_view = mocker.Mock(side_effect=["accept"] * 5 + ["quit"])
+    assert run(quit_at_first_wide_view, tip_from_mount=tip_from_mount) is None
+    pilot = load_session(tmp_path)["samples"]
+    assert len(pilot) == 5
+    assert not (tmp_path / "hand_eye.json").exists()
+    first_goal = commands[-1]
+    commands.clear()
+
+    result = run(None, tip_from_mount=tip_from_mount)
+
+    np.testing.assert_allclose(
+        Transform.from_pose("tip", commands[0]).to_matrix(),
+        Transform.from_pose("tip", first_goal).to_matrix(),
+    )
+    assert result["validated"]
+    np.testing.assert_allclose(result["camera_to_ee"], mount_from_camera, atol=1e-8)
+    samples = load_session(tmp_path)["samples"]
+    assert samples[:5] == pilot
+    assert result["training_sample_ids"] == [s["id"] for s in samples[:8]]
+    assert result["validation_sample_ids"] == [s["id"] for s in samples[8:]]
+    assert len(samples) == 12
+    training = _home_relative_offsets(samples[5:8], samples[0], world_from_tag)
+    validation = _home_relative_offsets(samples[8:], samples[0], world_from_tag)
+    _check_sweep_coverage(training, validation)
+
+    # Adding views fills in the same range on both sweeps.
+    denser = tmp_path / "denser"
+    result = run(
+        None,
+        directory=denser,
+        tip_from_mount=tip_from_mount,
+        count=denser_count,
+        validation_count=5,
+    )
+    assert result["validated"]
+    samples = load_session(denser)["samples"]
+    more_training = _home_relative_offsets(samples[5:denser_count], samples[0], world_from_tag)
+    more_validation = _home_relative_offsets(samples[denser_count:], samples[0], world_from_tag)
+    assert (len(more_training), len(more_validation)) == (denser_count - 5, 5)
+    _check_sweep_coverage(more_training, more_validation)
+    np.testing.assert_allclose(more_training[[0, -1]], training[[0, -1]], atol=1e-8)
+    np.testing.assert_allclose(more_validation[[0, -1]], validation[[0, -1]], atol=1e-8)
+
+
+def test_unobservable_initial_tilts_stop_before_any_wide_move(
+    tmp_path, automatic_run, home_tool_pose, tip_from_mount, mocker
+):
+    run, commands, _ = automatic_run
+    # The reported robot and camera poses never rotate, even though tilt commands were issued.
+    camera_from_target = np.eye(4)
+    camera_from_target[2, 3] = 0.29
+    mocker.patch(
+        "dimos.calibration.hand_eye_session.detect_sample",
+        return_value=HandEyeSample(np.eye(4), camera_from_target, 0.1),
+    )
+
+    with pytest.raises(ValueError, match="rotations"):
+        run(None, tip_from_mount=tip_from_mount)
+
+    assert len(commands) == len(load_session(tmp_path)["samples"]) == 5
+    for tilt in commands[1:]:
+        np.testing.assert_allclose(tilt.position.to_list(), home_tool_pose.position.to_list())
+    assert not (tmp_path / "hand_eye.json").exists()
+
+
+def test_orbit_needs_an_accepted_home_observation_before_its_first_view(automatic_run, mocker):
+    run, commands, _ = automatic_run
+    mocker.patch(
+        "dimos.calibration.hand_eye_session.detect_sample",
+        side_effect=MarkerObservationError("No tag in view"),
+    )
+    with pytest.raises(MarkerObservationError, match="home.*No tag"):
+        run(None, orbit_axis="x")
+    assert commands == [HOME]
+
+
+@pytest.mark.parametrize(("depth", "error"), [(-0.24, "in front"), (0.6, "too far")])
+def test_unsuitable_home_target_stops_before_any_orbit_move(automatic_run, mocker, depth, error):
+    run, commands, _ = automatic_run
+    tag = np.eye(4)
+    tag[2, 3] = depth
+    mocker.patch(
+        "dimos.calibration.hand_eye_session.detect_sample",
+        return_value=HandEyeSample(np.eye(4), tag, 0.1),
+    )
+    with pytest.raises(ValueError, match=error):
+        run(None, orbit_axis="x")
+    assert commands == [HOME]
 
 
 def test_unreviewed_run_collects_and_validates_both_rings(tmp_path, automatic_run, mocker):

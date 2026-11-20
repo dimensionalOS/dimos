@@ -6,7 +6,7 @@ Eye-in-hand calibration measures the transform from a wrist camera’s optical f
 
 - Attach the camera rigidly. The default target is a flat **tag36h11, ID 0**, measuring **150 mm across the outer black square**. The CLI accepts `--marker-id` and `--marker-size-m` for another tag in that family. Keep the tag fixed relative to the base through validation.
 - Publish an 8-bit color or grayscale `Image`, matching `CameraInfo` and measured base-from-mount TF. Timestamp images and arm feedback on the same clock. Keep resolution, crop, focus and zoom fixed. Supported distortion models are `plumb_bob` and `rational_polynomial`.
-- Both planner-driven modes need a planner/coordinator with one pose-capable arm group and one measured `joint_state` output. Check arm, camera and cable clearance through both rings and the return move. CLI image review also needs a display.
+- Both planner-driven modes need one pose-capable arm group, measured `joint_state`, and TF between the planner tool and the rigid camera mounting link. Check arm, camera and cable clearance through both sweeps and the return move. CLI image review also needs a display.
 
 **Supply `home` and `ee_frame` each time you start a planner-driven calibration.** `home` is the pose that centers the tag, with one angle per joint in planner order, in radians. `ee_frame` is the TF name of the link carrying the camera. Pass `--home` and `--ee-frame` to the CLI, include both fields in the MCP call, or give both values to the chat agent.
 
@@ -39,7 +39,7 @@ sudo env DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib${DYLD_FALLBACK_LIBRARY_PA
   --a1zconnection.can-port a1zcan --realsensecamera.serial-number 260522271635
 ```
 
-**Place and secure the target before starting calibration.** It should be centered at home and visible from both tilt rings. From a second terminal, pass the home and mount for your setup. The values below are from the tested A1Z/D405 setup.
+**Place and secure the target before starting calibration.** Center it at home and keep it visible from both sweeps. From a second terminal, pass the home and mount for your setup. The values below are from the tested A1Z/D405 setup.
 
 ```sh skip
 dimos mcp call start_hand_eye_calibration \
@@ -55,13 +55,13 @@ While calibration holds the arm, MCP rejects another start. Use `dimos mcp call 
 
 ### CLI with operator review
 
-Start the planner and camera in the first terminal.
+Start the planner and camera in the first terminal. On the example Mac with the D405 connected, run this from the DimOS checkout.
 
 ```sh skip
-dimos run a1z-planner-coordinator real-sense-camera --a1zconnection.can-port a1zcan
+sudo env DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}" \
+  "$PWD/.venv/bin/dimos" run a1z-planner-coordinator real-sense-camera \
+  --a1zconnection.can-port a1zcan --realsensecamera.serial-number 260522271635
 ```
-
-On a Mac that requires privileged camera access, use the same `sudo env` and virtual environment executable as in the MCP example with this planner-and-camera command.
 
 In a second terminal using the same DimOS environment, start with the arm stationary. `--ee-frame` names the camera’s mounting link.
 
@@ -71,8 +71,31 @@ dimos handeyecalibrate run --session ./hand-eye-01 \
 ```
 
 1. At home, center the tag on the crosshair, secure it, and press **R** to refresh if you adjusted it.
-2. Press **Enter** in the image window to accept each image and its measured mount pose, or **R** to retake it. The default is **8 training views** (home and an 11° tilt ring), then **4 validation views** on an offset 7° ring. To collect more, add `--count 15 --validation-count 5`.
+2. Press **Enter** in the image window to accept each image and its measured mount pose, or **R** to retake it. The default is **8 training views** and **4 held-out views**. For seven stops across the wide sweep, add `--count 12`.
 3. After grading, both the CLI and MCP workflows check the arm’s return pose when the run has moved the arm. The A1Z returns to `0 0.05 -0.05 0 0 0` radians (J1–J6), using its driver’s parking tolerance of 0.05 rad (about 2.86°) per joint. Other arms default to zero on every joint with a 2° tolerance. If the return fails, the error gives the saved result path.
+
+### Wide views around home
+
+The CLI and MCP both plan these views from the current session. Home locates the tag relative to the camera. Four 11° tilts about two tool axes estimate where the camera sits on the wrist. The planner can then place the lens relative to its home position and aim it at the measured tag center at each stop. Set home with the arm centered along the planner's X axis, with +X forward, Y left/right and +Z up.
+
+| Captures | Camera positions relative to home |
+| --- | --- |
+| Training | The lens starts 15.5 cm to one side, crosses the center, and finishes 15.5 cm to the other side. Both ends are 11 cm below and 1.2 cm forward of home. At the center the lens is 2.2 cm above and 6.8 cm behind home. |
+| Validation | The lens sweeps back across a 25 cm span. |
+
+Home and the four tilts count toward `--count`. The remaining training captures include both ends and the raised center. With seven sweep stops, the first stop after center uses half its usual offset toward the left, back and down to improve tag visibility. The lateral limits are fixed offsets chosen just inside the modeled reach of the example A1Z at this home. Check clearance for your setup, especially below home at the two ends. The running planner checks each move.
+
+The final solve uses every training view, and validation measures agreement against that frozen result. If the initial tilts give insufficient rotation or inconsistent target poses, the workflow stops before the wide sweep. Check that the tag stays fixed and clearly visible through the tilts before retrying.
+
+If you explicitly supply a validated result from the same physical mount with `--orbit-calibration PATH` (MCP `orbit_calibration`), the workflow skips the four tilts and uses that mount for aiming. It still locates the tag at home and fits a new calibration.
+
+### Optional smaller rings
+
+For the A1Z/D405 mount described above, add `--orbit-axis x` to the CLI run or `"orbit_axis":"x"` to the MCP start arguments. Use a fresh session for the first orbit run. Center the tag at home and leave clearance for the wrist and cable on both sides of that pose.
+
+The first accepted image gives the distance to the tag. DimOS places an estimated pivot that far along the selected tool axis, then moves the TCP sideways and turns the camera inward at each capture pose. At the example home distance of 29 cm, the training circle is **11 cm across** and the validation circle is **8 cm across**. At shorter distances the circles shrink to keep the tilts within 11° and 8°. The planner connects discrete capture poses. Tag visibility is checked at each stop.
+
+On another mount, choose the signed TCP axis (`x`, `-x`, `y`, `-y`, `z`, `-z`) aligned with the camera’s viewing direction. The estimate assumes the camera is near the TCP. Centering accuracy depends on that alignment and offset.
 
 ## Operator-positioned capture
 
@@ -104,14 +127,15 @@ Use `hand_eye.json` when `validated` is `true`. A failed grade gives a nonzero e
 ## Stop or retry
 
 - In `run`, **Q**, **Esc** or closing the review window stops at the current pose. **Ctrl-C** in the calibration terminal interrupts a move. Repeat the same command with the same setup to resume at the first unsaved view. A fully captured run regrades without motion.
-- In the operator-reviewed CLI, a rejected tag on a ring triggers one try at half the tilt. For a missed pose, check the reported error and clearance. For a failed solve or validation, check tag size, flatness, sharpness, mounting rigidity, rotation diversity and timestamps. Start a fresh session after changing the target placement, camera or mount, intrinsics, home or view schedule.
+- In the operator-reviewed CLI, a rejected tag away from home triggers one retry halfway toward home.
+- For a missed pose, check the reported error and clearance. For a failed solve or validation, check tag size, flatness, sharpness, mounting rigidity, rotation diversity and timestamps. Start a fresh session after changing the target placement, camera or mount, intrinsics, home or view schedule.
 - `solve` and `validate` work offline. After adding training images repeat both commands. After adding just validation images repeat `validate`.
 
 ## Saved result and hardware acceptance
 
 `session.json` pairs the numbered PNGs with measured poses and intrinsics. In `hand_eye.json`, `parent_frame` is the mounting link and `child_frame` the camera optical frame. For a homogeneous optical-frame point `[x, y, z, 1]`, `camera_to_ee @ point` gives mounting-link coordinates in metres.
 
-Both workflows below passed on the physical A1Z/D405 with 8 training and 4 held-out views. The table gives the maximum held-out errors.
+Both workflows below passed on the physical A1Z/D405 using the original tilt-in-place rings with 8 training and 4 held-out views. The table gives the maximum held-out errors.
 
 | Workflow | Position | Rotation | Reprojection |
 | --- | ---: | ---: | ---: |

@@ -197,14 +197,10 @@ def _metrics(
     }
 
 
-def solve_hand_eye(samples: list[HandEyeSample]) -> dict[str, Any]:
-    """Solve camera -> end effector and estimate the fixed target pose in base.
-
-    Uses OpenCV's Park solver. Validation observations must be collected separately;
-    training consistency alone is not an independent accuracy check.
-    """
-    if len(samples) < MIN_TRAINING_SAMPLES:
-        raise ValueError(f"Need at least {MIN_TRAINING_SAMPLES} training samples")
+def fit_hand_eye(samples: list[HandEyeSample]) -> dict[str, Any]:
+    """Fit camera -> end effector and the fixed target pose with OpenCV's Park solver."""
+    if len(samples) < 3:
+        raise ValueError("A hand-eye fit needs at least three poses about two rotation axes")
     robot, target = _sample_poses(samples)
     _check_rotation_diversity(robot)
     _check_rotation_diversity(target)
@@ -227,6 +223,13 @@ def solve_hand_eye(samples: list[HandEyeSample]) -> dict[str, Any]:
         "base_from_target": reference.tolist(),
         "training_metrics": _metrics(samples, targets_in_base, reference),
     }
+
+
+def solve_hand_eye(samples: list[HandEyeSample]) -> dict[str, Any]:
+    """Fit the final candidate on all training observations before independent validation."""
+    if len(samples) < MIN_TRAINING_SAMPLES:
+        raise ValueError(f"Need at least {MIN_TRAINING_SAMPLES} training samples")
+    return fit_hand_eye(samples)
 
 
 def validate_hand_eye(
