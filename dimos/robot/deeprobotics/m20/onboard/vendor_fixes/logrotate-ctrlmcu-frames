@@ -1,0 +1,9 @@
+# Keeps the ctrlmcu open-print frame log small: copytruncate since ctrlmcu_node holds it open.
+/var/opt/robot/data/ctrlmcu_frames/ctrlmcu.log {
+    size 20M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
