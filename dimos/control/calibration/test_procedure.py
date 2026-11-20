@@ -275,6 +275,7 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     dithered = {m["joint"]: abs(m["delta_deg"]) for m in steps if first <= m["t0"] <= end}
     assert dithered == pytest.approx(dither)
     assert fit["stuck_pairs"] == 0 and fit["incomplete_pairs"] == 0
+    assert fit["held_joints"] == {"left_joint6": 0.0}
     assert len(rig.recording.markers["float_events"]) == 8
     # The fit was scored against the URDF, the masses the arm ran (the URDF's
     # here) and itself.
@@ -1232,7 +1233,7 @@ def test_a_fit_worse_than_the_running_file_is_not_saved(
     for joint, row in fit["holdout_rms_nm"].items():
         # URDF -> running -> new: the fit beats the URDF, not what the arm runs.
         assert row["after"] < row["before"], joint
-        assert row["running"] < row["after"] or joint not in refused, joint
+        assert row["running"] <= row["after"] or joint not in refused, joint
     assert load_for_spec(left_spec, root_path) == saved
 
 

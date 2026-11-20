@@ -33,7 +33,9 @@ needs ``--compensation`` (``urdf`` or ``none``) and is refused without it. The
 error is fitted with pinocchio's torque regressor to corrections of the mass
 and first moment ``(m, m*c)`` of the spec's ``gravity_links``,
 ridge-regularised toward the URDF values, so directions the poses cannot
-determine stay at the URDF.
+determine stay at the URDF. Every arm joint that is not measured but carries
+gravity is held at its URDF gravity torque at the fitted poses, so the fit
+cannot move torque onto a joint it never measured.
 
 The report leads with the held-out error: by default every fifth pose is kept
 out of the fit and the corrected model is scored on it. Masses must stay
@@ -122,6 +124,7 @@ COM_BOX_M = 0.05  # a fitted COM may move this far per axis from the URDF COM
 # information from the recorded poses (1 % -> a 0.1 Nm error would move the
 # parameter by ten column scales).
 FIT_RANK_TOLERANCE = 1e-2
+HELD_MIN_NM = 1e-3
 DITHER_HOLD_TOLERANCE_S = 0.1
 STUCK_FRACTION = 0.5
 DITHER_SATURATION_FRACTION = 0.95  # friction this close to kp*d/2 means the joint never moved
@@ -258,6 +261,7 @@ class FitResult:
     measured_joints: tuple[str, ...] = ()
     incomplete_pairs: list[str] = field(default_factory=list)
     stuck_pairs: list[str] = field(default_factory=list)
+    held_joints: dict[str, float] = field(default_factory=dict)
 
     @property
     def bounds_ok(self) -> bool:
@@ -497,10 +501,16 @@ def fit_gravity(
     (singular values above ``FIT_RANK_TOLERANCE`` of the largest); directions
     outside it get exactly zero correction, i.e. stay at the URDF, and within
     it a ridge of ``ridge_nm`` shrinks weak directions toward the URDF too.
-    The mass ratio and COM box bounds are linear in the correction once each
-    COM bound is multiplied through by the fitted mass, which they keep
-    positive, so the solve is a convex quadratic program, physical by
-    construction.
+    Every arm joint that is not measured and whose gravity torque the fitted
+    links move (by more than ``HELD_MIN_NM`` per column scale) is held at its
+    URDF torque at the training poses, as rows of the objective weighted
+    without limit: the identifiable directions are cut to those that leave
+    its torque there. ``held_joints`` gives each such joint the largest
+    change the fit makes to its torque over those poses, N m, which only
+    clipping to the bounds can leave above zero. The mass ratio and COM box
+    bounds are linear in the correction once each COM bound is multiplied
+    through by the fitted mass, which they keep positive, so the solve is a
+    convex quadratic program, physical by construction.
     Standard errors come from the ridge covariance with the residual variance
     of the training rows; a parameter is "determined" when at least half of
     its direction lies in the identifiable subspace. ``incomplete_pairs`` and
@@ -529,8 +539,28 @@ def fit_gravity(
     b = np.asarray([m.tau_pd_nm for m in measurements])
     a_train = a_scaled[~is_holdout]
     b_train = b[~is_holdout]
+    train_q: dict[str, dict[str, float]] = {}
+    for m in measurements:
+        if m.pose not in holdout_set:
+            train_q.setdefault(m.pose, m.q_rad)
+    held: dict[str, np.ndarray] = {}
+    for i, name in enumerate(arm.joint_names):
+        if name in arm.measured_joints:
+            continue
+        loads = np.vstack([arm.scaled_regressor(arm.q(q), [i]) for q in train_q.values()])
+        if np.abs(loads).max() > HELD_MIN_NM:
+            held[name] = loads
+    a_held = np.vstack(list(held.values())) if held else None
 
-    sigma, basis = _identifiable_directions(a_train)
+    def fitted_directions(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        s, identifiable = _identifiable_directions(a)
+        if a_held is None:
+            return s, identifiable
+        kept = identifiable @ _null_space(a_held @ identifiable)
+        s, v = _identifiable_directions(a @ kept)
+        return s, kept @ v
+
+    sigma, basis = fitted_directions(a_train)
     rank = sigma.size
     if rank == 0:
         raise ValueError("the training poses carry no gravity information (zero regressor)")
@@ -601,7 +631,7 @@ def fit_gravity(
             errors = []
             for pose in sorted(set(train_poses_arr)):
                 keep = train_poses_arr != pose
-                _, directions = _identifiable_directions(a_train[keep])
+                _, directions = fitted_directions(a_train[keep])
                 y = solve(a_train[keep], b_train[keep], candidate, directions)
                 errors.append(a_train[~keep] @ y - b_train[~keep])
             ridge_cv[candidate] = float(np.sqrt(np.mean(np.square(np.concatenate(errors)))))
@@ -612,6 +642,7 @@ def fit_gravity(
     delta = to_delta_phi(x_phys)
     x_scaled = delta / arm.column_scale
     residual_after = b - a_scaled @ x_scaled
+    held_change = {joint: float(np.abs(rows @ x_scaled).max()) for joint, rows in held.items()}
     train_residual = residual_after[~is_holdout]
     gain = sigma / (sigma**2 + ridge_nm**2)
     dof = max(len(b_train) - float((sigma * gain).sum()), 1.0)
@@ -689,6 +720,7 @@ def fit_gravity(
         measured_joints=arm.measured_joints,
         incomplete_pairs=list(incomplete_pairs),
         stuck_pairs=list(stuck_pairs),
+        held_joints=held_change,
     )
 
 
@@ -701,6 +733,12 @@ def _identifiable_directions(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     _, s, vt = np.linalg.svd(a, full_matrices=False)
     rank = int((s > FIT_RANK_TOLERANCE * s[0]).sum()) if s.size and s[0] > 0 else 0
     return s[:rank], vt[:rank].T
+
+
+def _null_space(a: np.ndarray) -> np.ndarray:
+    _, s, vt = np.linalg.svd(a, full_matrices=True)
+    null: np.ndarray = vt[int((s > HELD_MIN_NM).sum()) :].T
+    return null
 
 
 def _vec3(values: np.ndarray) -> tuple[float, float, float]:
@@ -755,6 +793,7 @@ def fit_stats(result: FitResult, recording_dir: Path | None = None) -> dict[str,
         "measurements": len(result.measurements),
         "incomplete_pairs": list(result.incomplete_pairs),
         "stuck_pairs": list(result.stuck_pairs),
+        "held_joints": dict(result.held_joints),
         "measured_joints": list(result.measured_joints),
         "holdout_rms_nm": {
             joint: {"before": holdout_before[joint], "after": holdout_after[joint]}
@@ -963,6 +1002,13 @@ def format_report(
             f"joint and it moved less than {STUCK_FRACTION:.0%} of the dither:"
         )
         out.extend(f"- {pair}" for pair in result.stuck_pairs)
+    if result.held_joints:
+        out.append("")
+        out.append(
+            "Held at their URDF gravity torque over the fitted poses, as they are not measured "
+            "(largest change the fit still makes):"
+        )
+        out.extend(f"- {joint}: {change:.3f} Nm" for joint, change in result.held_joints.items())
     out.append("")
     out.append(
         f"## Held-out error ({len(result.holdout_poses)} pose(s): "
@@ -1189,6 +1235,11 @@ def generate_gravity_report(
             "with the calibration procedure"
         )
     paired, incomplete, stuck = extract_measurements(grec, spec)
+    if not paired:
+        raise ValueError(
+            f"{recording_dir} holds no dither pair to fit: {len(stuck)} stuck, "
+            f"{len(incomplete)} incomplete"
+        )
     measurements = to_urdf_error(arm, paired, compensation)
     result = fit_gravity(
         arm,

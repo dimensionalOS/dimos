@@ -857,6 +857,7 @@ class GravityFitStep(Step):
             "measurements": len(measurements),
             "incomplete_pairs": len(incomplete),
             "stuck_pairs": len(stuck),
+            "held_joints": {joint: round(v, 4) for joint, v in result.held_joints.items()},
             "report": None,
             "saved": None,
         }

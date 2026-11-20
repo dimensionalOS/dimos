@@ -45,6 +45,7 @@ from dimos.control.calibration.gravity_fit import (
     extract_measurements,
     find_previous_json,
     fit_gravity,
+    fit_stats,
     format_report,
     friction_flags,
     generate_gravity_report,
@@ -216,7 +217,7 @@ def test_right_arm_fit_recovers_a_right_side_perturbation(
     truth = perturbed_model(
         right_arm,
         {
-            "right_gripper": (0.25, np.array([-0.02, 0.0, -0.01])),
+            "right_gripper": (0.25, np.array([0.0, 0.0, -0.01])),
             "right_link3": (0.15, np.array([0.0, 0.0, -0.02])),
         },
     )
@@ -333,12 +334,39 @@ def test_directions_below_the_rank_tolerance_keep_the_urdf_values(
     )
     _, s, vt = np.linalg.svd(rows, full_matrices=False)
     weak = (s <= FIT_RANK_TOLERANCE * s[0]) & (s > 1e-9 * s[0])
-    assert weak.any() and result.rank == int((s > FIT_RANK_TOLERANCE * s[0]).sum())
+    rank = int((s > FIT_RANK_TOLERANCE * s[0]).sum())
+    assert weak.any() and 0 < result.rank <= rank
     correction = np.asarray([p.delta for p in result.parameters]) / arm.column_scale
-    assert np.abs(vt[result.rank :] @ correction).max() < 1e-9
+    assert np.abs(vt[rank:] @ correction).max() < 1e-9
     for p in result.parameters:
         if p.observable < 1e-12:
             assert p.value == pytest.approx(p.urdf, abs=1e-12), (p.link, p.name)
+
+
+def test_the_fit_holds_an_unmeasured_joint_at_its_urdf_torque(
+    arm: ArmModel, pose_set: PoseSet
+) -> None:
+    # A camera off the gripper's axis loads the unmeasured last joint too.
+    truth = perturbed_model(arm, {"left_gripper": (0.25, np.array([-0.02, 0.01, -0.01]))})
+    poses = [home_pose(arm), *pose_set.identification]
+    measurements = synthetic_measurements(arm, truth, poses, noise_nm=0.02, friction_nm=0.4)
+    result = fit_gravity(arm, measurements)
+    assert result.bounds_ok and set(result.held_joints) == {"left_joint6"}
+    assert result.held_joints["left_joint6"] < 1e-9
+    last = arm.joint_names.index("left_joint6")
+    truth_data = truth.createData()
+    moved = 0.0
+    for pose in poses:
+        q = arm.q(pose.joints_rad)
+        urdf = arm.gravity(q)[last]
+        assert corrected_gravity(arm, result.links, q)[last] == pytest.approx(urdf, abs=1e-9)
+        moved = max(moved, abs(pin.computeGeneralizedGravity(truth, truth_data, q)[last] - urdf))
+    assert moved > 0.01
+    before = result.rms_by_joint(holdout=True, after=False)
+    after = result.rms_by_joint(holdout=True, after=True)
+    assert all(after[joint] < before[joint] for joint in LEFT_MEASURED[:2])
+    assert fit_stats(result)["held_joints"] == result.held_joints
+    assert "- left_joint6: 0.000 Nm" in format_report(result, None, None)
 
 
 def test_a_failed_fit_produces_no_calibration(
@@ -583,6 +611,13 @@ def test_a_pair_the_joint_did_not_follow_is_left_out_and_listed(
     report = (out / "report.md").read_text()
     assert "Left out 2 stuck dither pair(s)" in report
     assert all(f"- {pair}" in report for pair in stuck)
+    every = {(pose.name, joint) for pose in poses for joint in LEFT_MEASURED}
+    all_stuck = _synthetic_recording(arm, poses, "", truth, stuck=every)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: all_stuck)
+    with pytest.raises(
+        ValueError, match=f"no dither pair to fit: {len(every)} stuck, 0 incomplete"
+    ):
+        generate_gravity_report(tmp_path, left_spec, arm=arm)
 
 
 def test_the_fit_takes_the_resting_torque_against_what_was_compensated(
@@ -949,6 +984,8 @@ def test_the_bench_recordings_fit_without_their_stuck_pairs(
     assert len(measurements) + len(stuck) == 60  # 15 poses, 4 measured joints
     result = fit_gravity(ArmModel(spec), measurements, stuck_pairs=stuck)
     assert result.bounds_ok and result.stuck_pairs == stuck
+    assert set(result.held_joints) == {f"{side}_joint6"}
+    assert result.held_joints[f"{side}_joint6"] < 1e-9
     reference = json.loads(REFERENCE_FIT.read_text())["links"]
     assert set(result.links) == set(spec.gravity_links)
     for link, fitted in result.links.items():
