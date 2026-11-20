@@ -21,7 +21,8 @@ when the arm has reached its target and settled, the client blocks until a new t
 arrives, so time spent thinking on the dimos side does not count against the episode.
 
 Wire format: msgpack over zenoh, under ``<prefix>/``:
-    obs     RoboLab -> dimos, one per step (and repeated while paused)
+    state   RoboLab -> dimos, one per step (and repeated while paused): joints, gripper
+    camera  RoboLab -> dimos, with each state: one RGB-D frame, its intrinsics and pose
     status  RoboLab -> dimos, episode start and end; never the task's success
     cmd     dimos -> RoboLab, {"seq", "q": [7], "gripper": 0..1} or {"release": true}
 """
@@ -72,7 +73,8 @@ class DimosClient(InferenceClient):  # type: ignore[misc]
         self._settle_steps = settle_steps
         self._joint_tolerance = joint_tolerance
         self._paused_publish_s = paused_publish_s
-        self._obs_pub = session.declare_publisher(f"{prefix}/obs")
+        self._state_pub = session.declare_publisher(f"{prefix}/state")
+        self._camera_pub = session.declare_publisher(f"{prefix}/camera")
         self._status_pub = session.declare_publisher(f"{prefix}/status")
         self._cmd_sub = session.declare_subscriber(f"{prefix}/cmd", self._on_cmd)
         self._lock = threading.Lock()
@@ -124,20 +126,23 @@ class DimosClient(InferenceClient):  # type: ignore[misc]
         }
 
     def _publish_obs(self, obs: dict[str, Any], paused: bool) -> None:
-        msg = {
-            "step": self._step,
-            "sim_time": self._step * self._period,
-            "paused": paused,
+        stamp = {"step": self._step, "sim_time": self._step * self._period, "paused": paused}
+        state = {
+            **stamp,
             "seq": self._seq,
-            "rgb": {"shape": obs["rgb"].shape, "data": obs["rgb"].tobytes()},
-            "depth": {"shape": obs["depth"].shape, "data": obs["depth"].tobytes()},
-            **{
-                k: obs[k].reshape(-1).tolist()
-                for k in ("K", "cam_pos", "cam_quat", "q", "ee_pos", "ee_quat")
-            },
+            **{k: obs[k].reshape(-1).tolist() for k in ("q", "ee_pos", "ee_quat")},
             "gripper": obs["gripper"],
         }
-        self._obs_pub.put(msgpack.packb(msg))
+        # The state goes first: the camera frame is the larger message.
+        self._state_pub.put(msgpack.packb(state))
+        camera = {
+            **stamp,
+            "camera": self._camera,
+            "rgb": {"shape": obs["rgb"].shape, "data": obs["rgb"].tobytes()},
+            "depth": {"shape": obs["depth"].shape, "data": obs["depth"].tobytes()},
+            **{k: obs[k].reshape(-1).tolist() for k in ("K", "cam_pos", "cam_quat")},
+        }
+        self._camera_pub.put(msgpack.packb(camera))
 
     def _take_cmd(self) -> bool:
         """Apply the newest command; True if it moved the target."""
