@@ -124,6 +124,8 @@ Nice=10
 LimitMEMLOCK=67108864
 # Raw receive-only capture for M20BodyImuSniff (it copies the vendor IMU's DDS samples off loopback); fragments inherit it.
 AmbientCapabilities=CAP_NET_RAW
+# The serial ports' group (dialout), for M20Imu's Yesense on /dev/ttyS9; fragments inherit it.
+SupplementaryGroups=dialout
 Restart=always
 RestartSec=3
 KillSignal=SIGINT
