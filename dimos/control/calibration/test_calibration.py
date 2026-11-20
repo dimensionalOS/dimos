@@ -135,6 +135,28 @@ def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(arm: Ar
     np.testing.assert_allclose(fake.q, arm.home, atol=1e-3)
 
 
+def test_a_q_answered_before_the_abort_rpc_aborts_and_the_arm_holds(arm: ArmModel) -> None:
+    fake = FakeArm(arm)
+    answered: list[float] = []
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "Move to pose_01" in prompt:
+            answered.append(fake.t)
+            return "abort"
+        return "stay" if "Go home?" in prompt else choices[0]
+
+    operator = FakeOperator(answer)
+    run = calibration(arm, operator, fake, steps=["gravity_poses"])
+    run.run()
+
+    assert operator.done is not None
+    ok, text, home = operator.done
+    assert not ok and home and "gravity_poses: aborted by the operator" in text
+    [t_abort] = answered
+    assert all(t <= t_abort for t in fake.commands) and run.measurements == []
+    assert any("Go home?" in prompt for prompt in operator.asked)
+
+
 def test_a_refused_set_config_fails_the_run_and_the_arm_holds(arm: ArmModel) -> None:
     fake = FakeArm(arm)
     fake.refuse = "refused by the test"

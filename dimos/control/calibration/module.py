@@ -301,7 +301,11 @@ class Calibration:
         self._operator("show", text)
 
     def ask(self, prompt: str, choices: list[str]) -> str:
+        """The operator's choice; "abort" (q) raises ``AbortedError``, whichever of it and the
+        ``abort`` RPC arrives first."""
         answer: str = self._operator("ask", prompt, choices)
+        if answer == "abort":
+            raise AbortedError("aborted by the operator")
         return answer
 
     def confirm(self, prompt: str, *, skippable: bool = True) -> None:
