@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.constants import (
@@ -101,7 +102,7 @@ class MujocoConnection:
         self.robot_model = robot_model
         self.process: subprocess.Popen[bytes] | None = None
         self.shm_data: ShmWriter | None = None
-        self._stop_timer: threading.Timer | None = None
+        self._motion_timer = MotionTimer()
 
         self._stream_threads: list[threading.Thread] = []
         self._output_thread: threading.Thread | None = None
@@ -254,15 +255,11 @@ class MujocoConnection:
                 logger.warning(f"MuJoCo output pump terminated: {e}")
 
     def stop(self) -> None:
-        if self._is_cleaned_up:
-            return
-
-        self._is_cleaned_up = True
-
-        # Cancel any pending timers
-        if self._stop_timer:
-            self._stop_timer.cancel()
-            self._stop_timer = None
+        with self._motion_timer.command() as timeout:
+            if self._is_cleaned_up:
+                return
+            self._is_cleaned_up = True
+            timeout.cancel()
 
         # Stop all stream threads
         for stop_event in self._stop_events:
@@ -456,27 +453,26 @@ class MujocoConnection:
         return empty()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        if self._is_cleaned_up or self.shm_data is None:
-            return True
+        """Replace the active command, optionally stopping it after duration seconds."""
+        with self._motion_timer.command() as timeout:
+            writer = self.shm_data
+            if self._is_cleaned_up or writer is None:
+                return True
 
-        linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
-        angular = np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32)
-        self.shm_data.write_command(linear, angular)
+            linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
+            angular = np.array(
+                [twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32
+            )
+            writer.write_command(linear, angular)
+            if duration > 0:
 
-        if duration > 0:
-            if self._stop_timer:
-                self._stop_timer.cancel()
+                def expire() -> None:
+                    zero = np.zeros(3, dtype=np.float32)
+                    writer.write_command(zero, zero)
 
-            def stop_movement() -> None:
-                if self.shm_data:
-                    self.shm_data.write_command(
-                        np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
-                    )
-                self._stop_timer = None
-
-            self._stop_timer = threading.Timer(duration, stop_movement)
-            self._stop_timer.daemon = True
-            self._stop_timer.start()
+                timeout.arm(duration, expire)
+            else:
+                timeout.cancel()
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
