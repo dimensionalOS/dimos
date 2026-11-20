@@ -23,7 +23,9 @@
    (through home when the straight ramp would dip), holds, and dithers each
    measured joint +d then -d, holding after each; an end marker closes it.
    Each joint's d is a fifth of its torque limit over its kp, so the spring
-   beats its friction, from ``dither_deg`` up to ``MAX_STEP_DEG``.
+   beats its friction, from ``dither_deg`` up to ``MAX_STEP_DEG``. A pair the
+   joint followed less than halfway is redone once at twice d, at most
+   ``MAX_STEP_DEG``.
    What the arm runs meanwhile is taken from the connection (``config_get``),
    not from the file on disk.
 3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``) against the
@@ -151,6 +153,7 @@ from dimos.control.calibration.spec import (
     urdf_limits,
 )
 from dimos.control.calibration.step_analysis import (
+    STUCK_FRACTION,
     gain_candidates,
     propose_gains,
     sweep_friction_nm,
@@ -725,8 +728,10 @@ class GravityPosesStep(Step):
         stops = [arm.home, *(np.asarray(p.joints_rad) for p in poses), arm.home]
         travel = sum(_ramp_s(a, b, settings.speed_deg_s) for a, b in itertools.pairwise(stops))
         expected = travel + len(poses) * (settings.hold_s + dithering)
+        redone = expected + len(poses) * dithering
         ctx.confirm(
-            f"The arm will visit {len(poses)} poses, about {_minutes(expected)} of motion, "
+            f"The arm will visit {len(poses)} poses, about {_minutes(expected)} of motion "
+            f"({_minutes(redone)} if every dither is redone), "
             f"dithering {', '.join(f'{joint} by {d:.1f}' for joint, d in dither.items())} deg "
             "at each. Clear the workspace. Enter to start"
         )
@@ -734,6 +739,8 @@ class GravityPosesStep(Step):
         visited: list[Vector] = []
         skipped: list[str] = []
         unreachable: list[str] = []
+        retried: list[str] = []
+        pairs = 0
         first: float | None = None
         with ctx.session() as session:
             session.move_to(arm.home)
@@ -769,8 +776,14 @@ class GravityPosesStep(Step):
                     visited.append(target)
                     session.hold(settings.hold_s, log)
                     for joint, d in dither.items():
-                        for sign in (1.0, -1.0):
-                            session.step_joint(joint, sign * d, settings.dither_hold_s)
+                        pairs += 1
+                        if self._pair(session, joint, d, settings.dither_hold_s) < (
+                            STUCK_FRACTION * d
+                        ):
+                            retried.append(f"{pose.name} {joint}")
+                            self._pair(
+                                session, joint, min(2.0 * d, MAX_STEP_DEG), settings.dither_hold_s
+                            )
             finally:
                 if first is not None:
                     end = session.mark_pose(END_LABEL, {"poses": len(visited)})
@@ -784,6 +797,7 @@ class GravityPosesStep(Step):
             "poses": len(visited),
             "planned": len(poses),
             "dither_deg": {joint: round(d, 3) for joint, d in dither.items()},
+            "retried": retried,
             "skipped": skipped,
             "unreachable": unreachable,
             "rank": pose_set.rank,
@@ -793,7 +807,19 @@ class GravityPosesStep(Step):
             "calibration": None if file is None else file.path,
             "calibration_sha256": None if file is None else file.sha256,
         }
-        return StepResult(f"visited {len(visited)} of {len(poses)} poses", data)
+        return StepResult(
+            f"visited {len(visited)} of {len(poses)} poses; redid {len(retried)} of {pairs} "
+            "dither pairs at twice the amplitude",
+            data,
+        )
+
+    @staticmethod
+    def _pair(session: ArmSession, joint: str, d: float, hold_s: float) -> float:
+        i = session.joint_names.index(joint)
+        session.step_joint(joint, d, hold_s)
+        up = float(session.measured[i])
+        session.step_joint(joint, -d, hold_s)
+        return math.degrees(up - float(session.measured[i]))
 
 
 class GravityFitStep(Step):

@@ -321,6 +321,38 @@ def test_each_joint_dithers_by_a_fifth_of_its_torque_limit_over_its_kp() -> None
     assert dither_deg(None, 10.0, 2.0) == 2.0
 
 
+def test_a_dither_pair_the_joint_did_not_follow_is_redone_once_at_twice_the_amplitude(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    friction = {name: 0.05 for name in left_spec.joint_names}
+    friction["left_joint2"] = 0.9
+    rig = make_rig(confirm_each=False, fake={"friction_nm": friction})
+    prompts: list[str] = []
+
+    status = rig.run(["check", "gravity_poses"], lambda p: prompts.append(p) or "confirm")
+
+    assert status["state"] == "done", status["message"]
+    result = rig.procedure.results()["gravity_poses"]
+    d = result["dither_deg"]["left_joint2"]
+    retried = result["retried"]
+    assert retried and all(pair.endswith(" left_joint2") for pair in retried)
+    pairs = result["poses"] * len(LEFT_MEASURED)
+    assert rig.messages()["gravity_poses"] == (
+        f"visited {result['poses']} of {result['planned']} poses; redid {len(retried)} of "
+        f"{pairs} dither pairs at twice the amplitude"
+    )
+    first, end = result["span"]
+    shoulder = [
+        abs(m["delta_deg"])
+        for m in rig.recording.markers["step_events"]
+        if m["joint"] == "left_joint2" and first <= m["t0"] <= end
+    ]
+    assert shoulder.count(pytest.approx(min(2 * d, 5.0), abs=1e-3)) == 2 * len(retried)
+    assert len(shoulder) == 2 * (result["poses"] + len(retried))
+    [plan] = [p for p in prompts if p.startswith("The arm will visit")]
+    assert re.search(r"about \d+\.\d min of motion \(\d+\.\d min if every dither is redone\)", plan)
+
+
 def test_skip_and_abort_at_a_pose_stop_where_the_arm_is(make_rig: Callable[..., Rig]) -> None:
     rig = make_rig()
     prompts: list[str] = []
