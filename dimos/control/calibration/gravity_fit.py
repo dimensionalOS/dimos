@@ -24,7 +24,9 @@ the gravity model the connection compensated (friction, which flips sign with
 the approach direction, cancels) and half their difference is the Coulomb
 friction. A dither whose samples stop short of its hold (the recording ended
 or the next step came early) may still be moving, so its pair is left out and
-the report counts it. The pose markers record that compensation
+the report counts it; so is a pair whose two rests lie less than half the
+dither apart, where friction held the joint and the pair cancels nothing.
+The pose markers record that compensation
 (``Compensation``: none, the URDF or the masses of a calibration file), which
 turns the PD torque into the error of the URDF; a recording that does not say
 needs ``--compensation`` (``urdf`` or ``none``) and is refused without it. The
@@ -120,6 +122,7 @@ COM_BOX_M = 0.05  # a fitted COM may move this far per axis from the URDF COM
 # parameter by ten column scales).
 FIT_RANK_TOLERANCE = 1e-2
 DITHER_HOLD_TOLERANCE_S = 0.1
+STUCK_FRACTION = 0.5
 DITHER_SATURATION_FRACTION = 0.95  # friction this close to kp*d/2 means the joint never moved
 DETERMINED_FRACTION = 0.5  # share of a parameter's direction inside the identifiable subspace
 FRICTION_FLAG_RATIO = 2.0
@@ -253,6 +256,7 @@ class FitResult:
     arm_id: str = ""
     measured_joints: tuple[str, ...] = ()
     incomplete_pairs: list[str] = field(default_factory=list)
+    stuck_pairs: list[str] = field(default_factory=list)
 
     @property
     def bounds_ok(self) -> bool:
@@ -359,20 +363,22 @@ def _rest_q_rad(
 
 def extract_measurements(
     grec: GravityRecording, spec: ArmCalibrationSpec
-) -> tuple[list[Measurement], list[str]]:
+) -> tuple[list[Measurement], list[str], list[str]]:
     """Pair the +d and -d dithers of each of ``spec``'s measured joints at each pose.
 
-    Returns the measurements and, as ``"<pose> <joint>"``, the pairs left out
-    because the hold of either dither was cut short.
+    Returns the measurements, the pairs left out because the hold of either
+    dither was cut short (``"<pose> <joint>"``), and the pairs left out
+    because the joint moved less than ``STUCK_FRACTION`` of the dither
+    between their two rests (``"<pose> <joint> moved x of d deg"``).
     """
     recording = grec.recording
     traces = trace_names(recording, spec.joint_names)
     measured = set(spec.measured_joints)
     windows = pose_windows(grec.markers, recording.t_end)
-    # (pose, joint, kp, kd, |delta|) -> sign -> [(tau_pd, q), or None for a hold cut short]
+    # (pose, joint, kp, kd, |delta|) -> sign -> [(tau_pd, q, target), or None for a hold cut short]
     groups: dict[
         tuple[str, str, float, float, float],
-        dict[int, list[tuple[float, dict[str, float]] | None]],
+        dict[int, list[tuple[float, dict[str, float], float] | None]],
     ] = defaultdict(lambda: defaultdict(list))
     for event, start, stop in segment_steps(recording.events, recording.t_end):
         joint = event.joint.rsplit("/", 1)[-1] if event.joint not in measured else event.joint
@@ -383,17 +389,24 @@ def extract_measurements(
             continue
         q = _rest_q_rad(recording, traces, start, stop, event.t0 + event.hold_s)
         key = (pose, joint, event.kp, event.kd, abs(event.delta_deg))
+        target = math.radians(event.target_after_deg)
         groups[key][int(math.copysign(1, event.delta_deg))].append(
-            None if q is None else (event.kp * (math.radians(event.target_after_deg) - q[joint]), q)
+            None if q is None else (event.kp * (target - q[joint]), q, target)
         )
     measurements = []
     incomplete = []
+    stuck = []
     for (pose, joint, kp, kd, dither), signs in groups.items():
         for plus, minus in zip(signs[1], signs[-1], strict=False):
             if plus is None or minus is None:
                 incomplete.append(f"{pose} {joint}")
                 continue
-            (tau_plus, q_plus), (tau_minus, q_minus) = plus, minus
+            (tau_plus, q_plus, target_plus), (tau_minus, q_minus, target_minus) = plus, minus
+            moved = math.degrees(q_plus[joint] - q_minus[joint])
+            commanded = math.degrees(target_plus - target_minus)
+            if moved < STUCK_FRACTION * commanded:
+                stuck.append(f"{pose} {joint} moved {moved:.2f} of {commanded:.2f} deg")
+                continue
             measurements.append(
                 Measurement(
                     pose=pose,
@@ -406,7 +419,7 @@ def extract_measurements(
                     friction_nm=0.5 * (tau_plus - tau_minus),
                 )
             )
-    return measurements, incomplete
+    return measurements, incomplete, stuck
 
 
 def recorded_compensation(grec: GravityRecording) -> Compensation | None:
@@ -467,6 +480,7 @@ def fit_gravity(
     ridge_nm: float | None = None,
     holdout: list[str] | None = None,
     incomplete_pairs: Sequence[str] = (),
+    stuck_pairs: Sequence[str] = (),
 ) -> FitResult:
     """Ridge least squares for ``(m, m*c)`` corrections of the fitted links.
 
@@ -482,8 +496,9 @@ def fit_gravity(
     construction.
     Standard errors come from the ridge covariance with the residual variance
     of the training rows; a parameter is "determined" when at least half of
-    its direction lies in the identifiable subspace. ``incomplete_pairs``, the
-    pairs ``extract_measurements`` left out, are carried to the report.
+    its direction lies in the identifiable subspace. ``incomplete_pairs`` and
+    ``stuck_pairs``, the pairs ``extract_measurements`` left out, are carried
+    to the report.
     """
     if not measurements:
         raise ValueError("no paired +/- dithers found; nothing to fit")
@@ -666,6 +681,7 @@ def fit_gravity(
         arm_id=arm.arm_id,
         measured_joints=arm.measured_joints,
         incomplete_pairs=list(incomplete_pairs),
+        stuck_pairs=list(stuck_pairs),
     )
 
 
@@ -731,6 +747,7 @@ def fit_stats(result: FitResult, recording_dir: Path | None = None) -> dict[str,
         "holdout_poses": result.holdout_poses,
         "measurements": len(result.measurements),
         "incomplete_pairs": list(result.incomplete_pairs),
+        "stuck_pairs": list(result.stuck_pairs),
         "measured_joints": list(result.measured_joints),
         "holdout_rms_nm": {
             joint: {"before": holdout_before[joint], "after": holdout_after[joint]}
@@ -932,6 +949,13 @@ def format_report(
             "a hold cut short before its end:"
         )
         out.extend(f"- {pair}" for pair in result.incomplete_pairs)
+    if result.stuck_pairs:
+        out.append("")
+        out.append(
+            f"Left out {len(result.stuck_pairs)} stuck dither pair(s), where friction held the "
+            f"joint and it moved less than {STUCK_FRACTION:.0%} of the dither:"
+        )
+        out.extend(f"- {pair}" for pair in result.stuck_pairs)
     out.append("")
     out.append(
         f"## Held-out error ({len(result.holdout_poses)} pose(s): "
@@ -1157,10 +1181,15 @@ def generate_gravity_report(
             "compensation it ran with (--compensation urdf or none) or record the poses again "
             "with the calibration procedure"
         )
-    paired, incomplete = extract_measurements(grec, spec)
+    paired, incomplete, stuck = extract_measurements(grec, spec)
     measurements = to_urdf_error(arm, paired, compensation)
     result = fit_gravity(
-        arm, measurements, ridge_nm=ridge_nm, holdout=holdout, incomplete_pairs=incomplete
+        arm,
+        measurements,
+        ridge_nm=ridge_nm,
+        holdout=holdout,
+        incomplete_pairs=incomplete,
+        stuck_pairs=stuck,
     )
     out_dir = recording_dir / REPORT_DIR_NAME
     out_dir.mkdir(exist_ok=True)

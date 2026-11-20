@@ -144,7 +144,7 @@ class CalibrationModuleConfig(ModuleConfig):
             arm with no workspace guard of its own; with ``min_x_m``.
         min_x_m: The fingertip stays in front of this x, m; with ``floor_z_m``.
         poses: Gravity identification poses.
-        dither_deg: Dither of each measured joint at every pose.
+        dither_deg: Smallest dither of a measured joint at every pose.
         hold_s: Rest at each pose.
         speed_deg_s: Peak joint speed of every ramp.
         float_pose_deg: One pose every joint floats at, one angle per arm joint

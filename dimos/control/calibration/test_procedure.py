@@ -79,7 +79,7 @@ from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     WorkspaceGuard,
 )
-from dimos.control.calibration.steps import calibration_steps
+from dimos.control.calibration.steps import calibration_steps, dither_deg
 from dimos.control.connection.module_config import ConfigPatch
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.makermods_metal.config import METAL
@@ -264,6 +264,17 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
     assert len(steps) == 8 * 4 * 2 + 6 * 3 * 4
+    dither = {
+        joint: math.degrees(0.2 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0])
+        for joint in LEFT_MEASURED
+    }
+    assert dither["left_joint2"] == pytest.approx(1.432, abs=1e-3)
+    assert dither["left_joint4"] == pytest.approx(4.092, abs=1e-3)
+    assert results["gravity_poses"]["dither_deg"] == pytest.approx(dither, abs=1e-3)
+    first, end = results["gravity_poses"]["span"]
+    dithered = {m["joint"]: abs(m["delta_deg"]) for m in steps if first <= m["t0"] <= end}
+    assert dithered == pytest.approx(dither)
+    assert fit["stuck_pairs"] == 0 and fit["incomplete_pairs"] == 0
     assert len(rig.recording.markers["float_events"]) == 8
     # The fit was scored against the URDF, the masses the arm ran (the URDF's
     # here) and itself.
@@ -289,6 +300,15 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert not rig.fake.session_active()
     for value in (rig.procedure.plan(), rig.procedure.status(), results):
         assert json.loads(json.dumps(value)) == value
+
+
+def test_each_joint_dithers_by_a_fifth_of_its_torque_limit_over_its_kp() -> None:
+    assert dither_deg(80.0, 10.0, 1.0) == pytest.approx(math.degrees(0.025))
+    assert dither_deg(10.0, 3.57, 1.0) == pytest.approx(math.degrees(0.0714))
+    assert dither_deg(400.0, 10.0, 1.0) == 1.0
+    assert dither_deg(1.0, 10.0, 1.0) == 5.0
+    assert dither_deg(80.0, None, 1.0) == 1.0
+    assert dither_deg(None, 10.0, 2.0) == 2.0
 
 
 def test_skip_and_abort_at_a_pose_stop_where_the_arm_is(make_rig: Callable[..., Rig]) -> None:
