@@ -384,8 +384,8 @@ def test_namespace_prefixes_names_streams_and_frames() -> None:
     assert blueprint.remapping_map[("robot0/moduleb", "data3")] == "robot0/data3"
 
 
-def test_namespace_expose_keeps_names_global() -> None:
-    blueprint = ModuleA.blueprint().namespace("robot0", expose={"data1"})
+def test_namespace_shared_keeps_names_global() -> None:
+    blueprint = ModuleA.blueprint().namespace("robot0", shared={"data1"})
 
     assert ("robot0/modulea", "data1") not in blueprint.remapping_map
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
@@ -405,20 +405,20 @@ def test_namespace_keeps_only_the_tf_stream_global() -> None:
         == "fleet/robot0/detected_tf"
     )
 
-    exposed = TfPublisher.blueprint().namespace("robot0", expose={"detected_tf"})
-    assert ("robot0/tfpublisher", "tf") not in exposed.remapping_map
-    assert ("robot0/tfpublisher", "detected_tf") not in exposed.remapping_map
+    with_detected = TfPublisher.blueprint().namespace("robot0", shared={"detected_tf"})
+    assert ("robot0/tfpublisher", "tf") not in with_detected.remapping_map
+    assert ("robot0/tfpublisher", "detected_tf") not in with_detected.remapping_map
 
-    private = TfPublisher.blueprint().namespace("robot0", only_expose=())
+    private = TfPublisher.blueprint().namespace("robot0", share_tf=False)
     assert private.remapping_map[("robot0/tfpublisher", "tf")] == "robot0/tf"
 
-    with pytest.raises(ValueError, match="not both"):
-        TfPublisher.blueprint().namespace("robot0", expose={"tf"}, only_expose=())
+    with pytest.raises(ValueError, match="share_tf=False"):
+        TfPublisher.blueprint().namespace("robot0", shared={"tf"}, share_tf=False)
 
 
-def test_namespace_expose_typo_raises() -> None:
+def test_namespace_shared_typo_raises() -> None:
     with pytest.raises(ValueError, match="data_typo"):
-        ModuleA.blueprint().namespace("robot0", expose={"data_typo"})
+        ModuleA.blueprint().namespace("robot0", shared={"data_typo"})
 
 
 def test_namespace_invalid_prefix_raises() -> None:

@@ -49,9 +49,6 @@ else:
 
 logger = setup_logger()
 
-# Streams ``Blueprint.namespace`` always leaves global, unless *only_expose* replaces them.
-DEFAULT_UNPREFIXED_STREAMS: tuple[str, ...] = ("tf",)
-
 
 class DisabledModuleProxy:
     def __init__(self, spec_name: str) -> None:
@@ -229,8 +226,8 @@ class BlueprintProtocol(Protocol):
         self,
         prefix: str,
         *,
-        expose: Iterable[str] = (),
-        only_expose: Iterable[str] | None = None,
+        shared: Iterable[str] = (),
+        share_tf: bool = True,
     ) -> Self: ...
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
@@ -382,8 +379,8 @@ class Blueprint(BlueprintProtocol):
         self,
         prefix: str,
         *,
-        expose: Iterable[str] = (),
-        only_expose: Iterable[str] | None = None,
+        shared: Iterable[str] = (),
+        share_tf: bool = True,
     ) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
@@ -392,17 +389,15 @@ class Blueprint(BlueprintProtocol):
         its own config (TF frame ids), which disconnects the namespaced
         modules from everything outside.
 
-        Stream names listed in *expose* are left unprefixed, so they connect
+        Stream names listed in *shared* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary. *expose* adds to ``DEFAULT_UNPREFIXED_STREAMS`` (``tf``), so
-        every robot's transforms share one tf tree (their frame ids are namespaced
-        instead). *only_expose* replaces the defaults, e.g. ``only_expose=()`` namespaces
-        tf too:
+        namespace boundary. ``tf`` is shared too unless ``share_tf=False``, so every
+        robot's transforms land in one tf tree (their frame ids are namespaced instead):
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
                 *[
-                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", shared={"pointcloud"})
                     for i, ip in enumerate(ips)
                 ],
             )
@@ -413,12 +408,10 @@ class Blueprint(BlueprintProtocol):
                 f"(nest namespaces by composition, not with '/')."
             )
 
-        listed = frozenset(expose)
-        expose_set = listed | frozenset(DEFAULT_UNPREFIXED_STREAMS)
-        if only_expose is not None:
-            if listed:
-                raise ValueError("pass expose or only_expose, not both")
-            listed = expose_set = frozenset(only_expose)
+        listed = frozenset(shared)
+        if "tf" in listed and not share_tf:
+            raise ValueError("shared lists 'tf' but share_tf=False")
+        shared_set = listed | {"tf"} if share_tf else listed
 
         effective_names = set()
         for atom in self.blueprints:
@@ -427,11 +420,11 @@ class Blueprint(BlueprintProtocol):
                 if isinstance(effective, str):
                     effective_names.add(effective)
 
-        # A default stream may be absent; a name the caller listed must exist.
+        # tf may be absent; a name the caller listed must exist.
         unknown = listed - effective_names
         if unknown:
             raise ValueError(
-                f"expose names {sorted(unknown)} do not match any stream in the "
+                f"shared names {sorted(unknown)} do not match any stream in the "
                 f"namespaced blueprint (available: {sorted(effective_names)})"
             )
 
@@ -455,7 +448,7 @@ class Blueprint(BlueprintProtocol):
                 effective = self.remapping_map.get((atom.name, stream.name), stream.name)
                 if not isinstance(effective, str):
                     continue
-                if effective in expose_set:
+                if effective in shared_set:
                     if (atom.name, stream.name) in self.remapping_map:
                         new_remap[new_name, stream.name] = effective
                 else:
@@ -468,7 +461,7 @@ class Blueprint(BlueprintProtocol):
 
         new_transports = {}
         for (name, type_), transport in self.transport_map.items():
-            if name in expose_set:
+            if name in shared_set:
                 new_transports[name, type_] = transport
             else:
                 new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)
@@ -611,14 +604,14 @@ class MetaBlueprint(BlueprintProtocol):
         self,
         prefix: str,
         *,
-        expose: Iterable[str] = (),
-        only_expose: Iterable[str] | None = None,
+        shared: Iterable[str] = (),
+        share_tf: bool = True,
     ) -> Self:
         return self._defer(
             Blueprint.namespace,
             prefix,
-            expose=tuple(expose),
-            only_expose=None if only_expose is None else tuple(only_expose),
+            shared=tuple(shared),
+            share_tf=share_tf,
         )
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self:

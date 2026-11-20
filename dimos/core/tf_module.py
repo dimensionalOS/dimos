@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# A frame that belongs to one robot (base_link, lidar); a namespaced blueprint prefixes it.
+# A frame that belongs to one robot (base_link, lidar); frame_id_prefix (set by a namespace) prefixes it.
 TransformFrameLocal: TypeAlias = str
 # A frame shared by everything in the blueprint (world, map); never prefixed.
 TransformFrameGlobal: TypeAlias = str
@@ -60,8 +60,8 @@ class TfModuleConfig(ModuleConfig):
 
     @property
     def tf_frames(self) -> dict[str, str]:
-        """Every role -> frame id, local and global together."""
-        return {**self.tf_frames_global, **self.tf_frames_local}
+        """Every role -> frame id, local (under frame_id_prefix) and global together."""
+        return _frame_ids(self.tf_frames_local, self.tf_frames_global, self.frame_id_prefix)
 
     @property
     def tf_edge_frames(self) -> set[tuple[str, str]]:
@@ -101,16 +101,6 @@ class TfModule(Module):
         """Frame ids by role, local and global together: ``self.frame.body``."""
         return TfFrames(self.config.tf_frames, self.config.instance_name or type(self).__name__)
 
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        """Also prefix the local frames, so namespaced copies don't share frames."""
-        return {
-            **super().handle_blueprint_namespace(config, prefix=prefix),
-            "tf_frames_local": {
-                role: f"{prefix}/{frame}" for role, frame in config["tf_frames_local"].items()
-            },
-        }
-
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
         """Refuse a frame with two parents or declared edges that form a cycle; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out."""
@@ -118,7 +108,11 @@ class TfModule(Module):
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            frames = {**atom.kwargs["tf_frames_global"], **atom.kwargs["tf_frames_local"]}
+            frames = _frame_ids(
+                atom.kwargs["tf_frames_local"],
+                atom.kwargs["tf_frames_global"],
+                atom.kwargs["frame_id_prefix"],
+            )
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 publishers[frames[child_role]][frames[parent_role]].append(atom.name)
         if not publishers:
@@ -188,6 +182,12 @@ class TfModule(Module):
             edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames,
             module_name=self.config.instance_name or type(self).__name__,
         )
+
+
+def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str | None) -> dict[str, str]:
+    if prefix:
+        local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
+    return {**shared, **local}
 
 
 def _is_checked(atom: "BlueprintAtom") -> bool:
