@@ -98,6 +98,8 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     config: RayTracingVoxelMapConfig
 
     lidar: In[PointCloud2]
+    # A second lidar's clouds, each traced from its own frame's origin like lidar's.
+    second_lidar: In[PointCloud2]
     # An externally loaded map cloud, placed by the latest tf world_frame ->
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]

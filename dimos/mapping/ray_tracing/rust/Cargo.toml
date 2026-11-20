@@ -22,6 +22,7 @@ threads = 2
 
 [package.metadata.dimos.module.ray_tracing.inputs]
 lidar = "sensor_msgs.PointCloud2"
+second_lidar = "sensor_msgs.PointCloud2"
 loaded_map = "sensor_msgs.PointCloud2"
 tf = "tf2_msgs.TFMessage"
 
