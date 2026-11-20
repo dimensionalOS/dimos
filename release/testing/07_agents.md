@@ -157,7 +157,9 @@ uv run dimos evals vqa run ~/.local/state/dimos/datasets/vqa/memory-frames --mod
 
 The first recorded images can precede the first `camera_info` or `tf` message. If generation reports missing calibration or pose at the selected image timestamp, increase `--start` until the first selected image is after both streams begin. `20` skipped the startup gap in this check.
 
-Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors.
+The simulated robot stands still until it is driven, so the three selected frames show the same view and the same questions repeat for each frame.
+
+Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors. The summary line ends in the run directory, which holds `results.jsonl` and `summary.json`. A `fail` line is a wrong answer from the model, not an error.
 
 ## 7.10 xArm6 WorldBelief
 
