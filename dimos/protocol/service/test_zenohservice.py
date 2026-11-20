@@ -16,9 +16,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import copy
-import json
 import os
+import queue
+import resource
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -145,14 +147,48 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
-def test_shared_memory_is_off() -> None:
-    """Zenoh's shared-memory path is disabled: it silently lost payloads over 3 kB.
+def _memlock_limit_below(size: int) -> bool:
+    limit = resource.getrlimit(resource.RLIMIT_MEMLOCK)[0]
+    return limit != resource.RLIM_INFINITY and limit < size
 
-    A planned path reached a light subscriber but not the rerun bridge.
-    """
 
-    config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
-    assert config["transport"]["shared_memory"]["enabled"] is False
+@pytest.mark.skipif(
+    _memlock_limit_below(16 * 1024 * 1024),
+    reason="zenoh cannot lock its shared-memory pool and falls back to TCP",
+)
+def test_large_payloads_between_local_sessions_go_through_shared_memory(
+    zenoh_defaults: None, unused_tcp_port: int
+) -> None:
+    endpoint = f"tcp/127.0.0.1:{unused_tcp_port}"
+    listener = zenoh.open(
+        zenohservice._zenoh_config(ZenohConfig(listen=[endpoint], multicast=False, gossip=False))
+    )
+    dialer = zenoh.open(
+        zenohservice._zenoh_config(ZenohConfig(connect=[endpoint], multicast=False, gossip=False))
+    )
+    received: queue.Queue[tuple[bool, bytes]] = queue.Queue()
+    samples: list[tuple[bool, bytes]] = []
+    payload = os.urandom(100_000)
+    try:
+        listener.declare_subscriber(
+            "shm/test",
+            lambda sample: received.put(
+                (sample.payload.as_shm() is not None, sample.payload.to_bytes())
+            ),
+        )
+        # Lazy mode allocates the pool on first use, so that first message goes over TCP.
+        deadline = time.monotonic() + _THREAD_TIMEOUT
+        while not any(via_shm for via_shm, _ in samples) and time.monotonic() < deadline:
+            dialer.put("shm/test", payload)
+            time.sleep(0.1)
+            while not received.empty():
+                samples.append(received.get())
+    finally:
+        dialer.close()
+        listener.close()
+
+    assert any(via_shm for via_shm, _ in samples)
+    assert all(body == payload for _, body in samples)
 
 
 def test_different_modes_produce_different_keys() -> None:
