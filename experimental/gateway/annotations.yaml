@@ -594,22 +594,11 @@ robots:
       blueprints:
         m20:
           title: 'M20: navigation'
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower, plus named map locations kept under the premap frame by the relocalizer.'
+          description: 'Runs on the M20 on its own Rust drivers with dimSLAM: ray-traced voxel map, MLS planning, local planner and trajectory follower, plus named map locations kept under the premap frame by the relocalizer. --choice M20Mode=sim runs it on the simulated M20 instead (no robot needed); M20Mode=sim-bench is one nav-bench case against the sim.'
           recommended_config:
-          - module: m20connection
-            field: basic_server_host
-            label: M20 control host
-            placeholder: 10.21.31.103
-          - module: localmaprelocalization
+          - module: premapmodule
             field: map_file
             label: Premap (.db/.mcap)
-        m20-sim-nav:
-          title: 'M20 in simulation (navigation)'
-          description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
-        m20-sim-nav-episode:
-          title: 'M20 in simulation (nav-bench episode)'
-          description: 'One nav-bench case driven against the simulated M20 navigation stack. Run by dimos nav-bench.'
-          hidden: true
     alfred:
       name: Alfred
       description: A DIY mobile base with a Mid-360 and a RealSense mast.

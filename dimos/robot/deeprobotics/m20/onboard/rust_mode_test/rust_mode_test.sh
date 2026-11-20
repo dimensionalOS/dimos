@@ -1,13 +1,13 @@
 # rust_mode_test.sh: one rust-mode test on the M20, run on GOS as user.
 # Copy this directory's files to GOS /tmp first, and install_dimos_host.sh as /tmp/install_dimos_host_rustmode.sh: the
 # test switches GOS's ~/dimos checkout, so nothing it runs may live in it. Push the branch under test to GOS as $BRANCH. Every vendor DrDDS service is STOPPED (never
-# disabled or masked, so a reboot or the revert brings vendor mode back), m20-rust runs with the bus owner (m20_ecan
+# disabled or masked, so a reboot or the revert brings vendor mode back), m20 runs with the bus owner (m20_ecan
 # owner mode: rl_deploy's startup, then zero-gain sitting commands, battery, charge enable), it is measured, and the
 # full vendor stack comes back in boot order. The revert runs on exit, also on failure or Ctrl-C.
 set -u
 
 # --- config ---
-RUN_SECS=330                 # m20-rust in rust mode at least this long (5 min + margin)
+RUN_SECS=330                 # m20 in rust mode at least this long (5 min + margin)
 CHECK_EVERY_S=30             # health check period while it runs
 TEMP_ABORT_C=85              # any board's hottest thermal zone above this ends the test (revert)
 BRANCH=m20_rust_rustmode     # jeff/feat/m20_rust pushed here before the run
@@ -76,7 +76,7 @@ STASHED=0
 revert() {
     trap - EXIT INT TERM
     log "=== REVERT"
-    # 1. the bus owner and everything else of m20-rust stop first, so rl_deploy never shares the bus
+    # 1. the bus owner and everything else of m20 stop first, so rl_deploy never shares the bus
     api -X POST http://x/active/stop > /dev/null
     for i in $(seq 1 30); do on AOS 'pgrep -x m20_ecan > /dev/null' || break; sleep 1; done
     on AOS 'pgrep -x m20_ecan > /dev/null' && { log "m20_ecan still running: killing it before rl_deploy starts"; on AOS 'pkill -9 -x m20_ecan' root; sleep 1; }
@@ -164,7 +164,7 @@ PY
 systemctl restart m20-imu-estop.service" root
 log "e-stop: $(on AOS 'systemctl is-active m20-imu-estop.service'), config $(on AOS 'cat /var/opt/robot/data/imu_estop/config.json')"
 
-# --- stop shadow, the vendor run; install m20-rust (vendor still up) ---
+# --- stop shadow, the vendor run; install m20 (vendor still up) ---
 [ "$(on AOS 'systemctl is-active m20-shadow.service')" = active ] && SHADOW_WAS_ACTIVE=1
 on AOS 'systemctl stop m20-shadow-guard.service m20-shadow.service' root
 log "shadow: $(on AOS 'systemctl is-active m20-shadow.service m20-shadow-guard.service' | tr '\n' ' ')"
@@ -206,14 +206,14 @@ rev=$(git rev-parse --short=10 HEAD)
 for i in $(seq 1 40); do [ "$(ZENOH_CONNECT=tcp/127.0.0.1:7447 timeout 30 .venv/bin/dimos host ls 2>/dev/null | grep -E '^(aos|gos|nos) ' | grep -c $rev)" = 3 ] && break; sleep 3; done
 log "hosts: $(ZENOH_CONNECT=tcp/127.0.0.1:7447 timeout 30 .venv/bin/dimos host ls 2>/dev/null | grep -E '^(aos|gos|nos) ' | awk '{print $1}' | tr '\n' ' ')"
 
-# --- m20-rust with the bus owner ---
+# --- m20 with the bus owner ---
 api -X POST http://x/active/exec -H "Content-Type: application/json" -d @$LAUNCH > /dev/null
 until api http://x/active | grep -q 'Running; Ctrl-C'; do
-    api http://x/active | grep -q '"phase":"\(failed\|stopped\)"' && { log "m20-rust failed to start"; api http://x/active > $OUT/failed.json; exit 1; }
+    api http://x/active | grep -q '"phase":"\(failed\|stopped\)"' && { log "m20 failed to start"; api http://x/active > $OUT/failed.json; exit 1; }
     sleep 3
 done
 R=$(run_id); echo $R > $OUT/run_id
-log "m20-rust running $R; m20_ecan pid $(on AOS 'pgrep -x m20_ecan')"
+log "m20 running $R; m20_ecan pid $(on AOS 'pgrep -x m20_ecan')"
 started=$(date +%s); next_measure=60; measured_early=0
 while [ $(( $(date +%s) - started )) -lt $RUN_SECS ]; do
     sleep $CHECK_EVERY_S
@@ -248,7 +248,7 @@ PY
     cams=$(timeout 20 ./.venv/bin/python /tmp/count_topics.py dimos 3 tcp/10.21.31.106:7447 2>/dev/null | grep -cE "(front|rear)_camera/foxglove")
     log "bus owner on AOS: alive, statuses 1, no guard line; cameras streaming on NOS's router: $cams of 2"
     [ "$cams" = 2 ] || { log "camera frames stopped (link: $(on AOS 'ss -tn state established | grep -E "10.21.33.106:744[78]" | awk "{print \$4}" | tr "\n" " "')): end the test"; exit 1; }
-    api http://x/active | grep -q '"running":true' || { log "m20-rust stopped: end the test"; exit 1; }
+    api http://x/active | grep -q '"running":true' || { log "m20 stopped: end the test"; exit 1; }
     for b in GOS AOS NOS; do
         t=$(hottest $b); log "temp $b: $t"
         [ "${t%% *}" -lt $TEMP_ABORT_C ] || { log "$b at ${t%% *} C >= $TEMP_ABORT_C C: end the test"; exit 1; }

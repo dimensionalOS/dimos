@@ -8,7 +8,7 @@
 #
 # gos is the Host the blueprint root places its own modules on. It runs from the checkout itself (its full
 # venv: the GOS modules need more than the boards' base install), configured by its unit's environment
-# rather than a .env in the checkout, and its CPUAffinity keeps them off the cores m20-rust gives DimSLAM
+# rather than a .env in the checkout, and its CPUAffinity keeps them off the cores m20 gives DimSLAM
 # alone when it runs there (M20_SLAM_BOARD=gos, constants.py GOS_SLAM_CPUS); with dimSLAM on NOS, every core.
 #
 # Layout: GOS builds the venv once at $dest (the same path the boards use, so the venv's
@@ -32,7 +32,7 @@ src="${DIMOS_CHECKOUT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/d
 dest=/var/opt/robot/data/dimos_host
 boards=("$@")
 [ ${#boards[@]} -gt 0 ] || boards=(aos nos)
-# Where m20-rust runs dimSLAM (its M20Slam choice): on GOS it has cores 4-5 alone (constants.GOS_SLAM_CPUS), so the
+# Where m20 runs dimSLAM (its M20Slam choice): on GOS it has cores 4-5 alone (constants.GOS_SLAM_CPUS), so the
 # GOS Host and every module it starts stay off them; on NOS (the default) the GOS Host gets every core.
 case "${M20_SLAM_BOARD:-nos}" in
     gos) gos_cpus=0-3,6-7 ;;

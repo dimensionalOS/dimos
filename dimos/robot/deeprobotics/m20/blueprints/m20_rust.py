@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20 on its own Rust drivers, with no vendor DrDDS stack: ``m20`` with dimSLAM in place of the vendor LIO.
+"""The real M20 (``m20``'s default mode) on its own Rust drivers, with no vendor DrDDS stack: dimSLAM in place of the vendor LIO.
 
 AOS (a ``dimos host`` tagged ``board=aos``) runs the hardware: both Airys, the Yesense body IMU, the cameras and,
 with ``--choice M20Joints=ecan``, the motor-bus joint state and batteries (needs rl_deploy with the ecan shim).
@@ -142,7 +142,7 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
     )
 
 
-m20_rust = autoconnect(
+_m20_real = autoconnect(
     # the body pose comes from the standing pose or the motor bus (ecan, needs rl_deploy with the shim)
     ChoiceAtom(
         name="M20Joints",

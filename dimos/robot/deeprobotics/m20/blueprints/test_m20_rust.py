@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""m20-rust builds without hardware: no vendor bridge, the drivers placed on AOS, and m20's navigation and relocalization."""
+"""``m20`` (real mode) builds without hardware: no vendor bridge, the drivers placed on AOS and NOS, and the navigation and
+relocalization m20 ran on the vendor's sensors."""
 
 import typing
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import stream_name_types, verify_no_name_conflicts
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
 from dimos.hosted.protocol import HostDescriptor
@@ -27,7 +28,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack, m20_relocalization
 from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
-from dimos.robot.deeprobotics.m20.blueprints.m20_rust import m20_rust
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS, NOS_SLAM_CPUS
@@ -49,8 +49,12 @@ _NOS_LIDARS = {"front_lidar/m20lidar", "rear_lidar/m20lidar"}
 _NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslamlio"}
 
 
+# m20 on the vendor's sensors was these with the vendor bridge; the real mode keeps their settings
+_VENDOR_NAV = autoconnect(m20_nav_stack(), m20_relocalization())
+
+
 def _solid(**choices: str) -> Blueprint:
-    blueprint = m20_rust.solidify(choices=choices)
+    blueprint = m20.solidify(choices={"M20Mode": "real", **choices})
     verify_no_name_conflicts(blueprint)
     return blueprint
 
@@ -204,7 +208,7 @@ def test_the_lidars_thin_at_or_above_the_ray_tracers_voxel_and_it_subsamples_as_
     """The lidars thin their own scans (no finer than the map's voxel) and send only x, y, z and offset_time; the ray
     tracer then subsamples them as m20's does the vendor cloud."""
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    m20_atoms = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    m20_atoms = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     voxel = atoms["raytracingvoxelmap"].kwargs["voxel_size"]
     for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
         assert atoms[lidar].kwargs["voxel"] >= voxel
@@ -238,7 +242,7 @@ def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
 
 def test_navigation_and_relocalization_match_m20() -> None:
     rust = {atom.name: atom for atom in _solid().active_blueprints}
-    vendor = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    vendor = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     shared = {atom.name for atom in m20_nav_stack().solidify().active_blueprints} | {
         atom.name for atom in m20_relocalization().active_blueprints
     }
@@ -289,7 +293,7 @@ def test_every_module_config_m20_rust_builds_validates_as_its_board_will_parse_i
 def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None:
     """Each Airy publishes its own cloud per sweep, so the ray tracer emits every 2nd and the relocalizer waits for both."""
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    m20_atoms = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    m20_atoms = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     assert (
         atoms["raytracingvoxelmap"].kwargs["emit_every"]
         == 2 * m20_atoms["raytracingvoxelmap"].kwargs["emit_every"]
