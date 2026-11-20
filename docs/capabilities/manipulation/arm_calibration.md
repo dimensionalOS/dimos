@@ -87,10 +87,10 @@ Saves happen with the arm at home. If applying a save would change a joint's gra
 
 The method:
 
-- Each joint is nudged up and down at every pose, by a fifth of its torque limit over its kp, 1 to 5 degrees. The pair cancels friction, so what is left is gravity. A pair where the joint moved less than half the nudge is stuck: it is left out and counted.
+- Each joint is nudged up and down at every pose, by 0.3 of its torque limit over its kp, 1 to 5 degrees. The pair cancels friction, so what is left is gravity. A pair the joint follows less than halfway is redone once at twice the nudge. One that still sticks stays in the fit and is listed; the held-out error judges the fit.
 - The link masses are fitted by least squares. Held-out poses give the cross validation error. A joint that is never nudged keeps its URDF gravity torque.
 - The fit is offered only when it is no worse than the URDF and the running file on every joint.
-- The step sweep rejects a kp and kd pair when a step sticks (moves less than half its size), overshoots more than 20 % or buzzes. Of the rest it picks the lowest worst rest error over max(0.1 deg, 1.5 x friction / kp) plus worst settle time over 0.5 s. Each joint's friction comes from its 3 degree steps and its nudges.
+- The step sweep rejects a kp and kd pair when a 3 degree step sticks (moves less than half its size), a step overshoots more than 20 % or buzzes. A stuck 1 degree step is listed and does not count. Of the rest it picks the lowest worst rest error over max(0.1 deg, 1.5 x friction / kp) plus worst settle time over 0.5 s. Each joint's friction comes from its 3 degree steps and its nudges.
 - A joint where nothing passes keeps its robot gains.
 - The float check sets kp to 0 for one joint at a time, at the poses where it carries the most gravity with the masses the arm runs. The fingertip drift counts from the moment the joint goes limp; more than 2 mm fails. A joint that drifts more than 5 degrees or moves faster than 20 degrees per second is held again and fails.
 
