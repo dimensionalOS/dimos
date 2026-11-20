@@ -72,20 +72,33 @@ def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(
     assert len(compile_fragments(_solid(**choices), placement, run_id="r", revision=_REVISION)) == 2
 
 
-def test_both_airys_share_one_lidar_stream_unmerged() -> None:
+def test_each_airy_is_its_own_stream_and_every_consumer_takes_both() -> None:
     blueprint = _solid()
 
     def topic(module: str, stream: str) -> object:
         return blueprint.remapping_map.get((module, stream), stream)
 
-    for airy in ("front_airy", "rear_airy"):
-        assert (topic(airy, "lidar"), topic(airy, "imu")) == ("lidar", "lidar_imu")
+    assert (topic("front_airy", "lidar"), topic("front_airy", "imu")) == (
+        "front_lidar",
+        "front_lidar_imu",
+    )
+    assert (topic("rear_airy", "lidar"), topic("rear_airy", "imu")) == (
+        "rear_lidar",
+        "rear_lidar_imu",
+    )
     for consumer in ("dimslamlio", "raytracingvoxelmap", "premapmodule"):
-        assert topic(consumer, "lidar") == "lidar"
-    assert topic("dimslamlio", "imu") == "lidar_imu"
+        assert (topic(consumer, "lidar"), topic(consumer, "second_lidar")) == (
+            "front_lidar",
+            "rear_lidar",
+        )
+    assert topic("dimslamlio", "imu") == "front_lidar_imu"
     streams = stream_name_types(blueprint)
-    assert {("lidar", PointCloud2), ("lidar_imu", Imu)} <= streams
-    assert not {name for name, _ in streams} & {"slam_body_points", "front_lidar", "rear_lidar"}
+    assert {
+        ("front_lidar", PointCloud2),
+        ("rear_lidar", PointCloud2),
+        ("front_lidar_imu", Imu),
+    } <= streams
+    assert not {name for name, _ in streams} & {"slam_body_points", "lidar", "second_lidar"}
 
 
 def test_navigation_and_relocalization_match_m20() -> None:

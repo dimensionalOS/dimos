@@ -34,8 +34,12 @@ PLANNER_VIZ_HZ = 2.0
 PLANNER_VIZ_SWEEP_CELLS = 1
 
 
-def m20_nav_stack(embodiment: Embodiment = M20, lidar: str = "slam_body_points") -> MetaBlueprint:
-    """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s; the ray tracer traces the scans on `lidar`."""
+def m20_nav_stack(
+    embodiment: Embodiment = M20,
+    lidar: str = "slam_body_points",
+    second_lidar: str = "second_lidar",
+) -> MetaBlueprint:
+    """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s; the ray tracer traces the scans on `lidar` and `second_lidar`, each from its own origin."""
     return autoconnect(
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_M,
@@ -46,7 +50,12 @@ def m20_nav_stack(embodiment: Embodiment = M20, lidar: str = "slam_body_points")
             global_emit_every=50,
             world_frame=WORLD_FRAME,
             worker_threads=3,
-        ).remappings([(RayTracingVoxelMap, "lidar", lidar)]),
+        ).remappings(
+            [
+                (RayTracingVoxelMap, "lidar", lidar),
+                (RayTracingVoxelMap, "second_lidar", second_lidar),
+            ]
+        ),
         MLSPlannerNative.blueprint(
             world_frame=WORLD_FRAME,
             voxel_size=VOXEL_SIZE_M,
@@ -71,8 +80,10 @@ def m20_nav_stack(embodiment: Embodiment = M20, lidar: str = "slam_body_points")
     )
 
 
-def m20_relocalization(lidar: str = "slam_body_points") -> Blueprint:
-    """Continuous relocalization against the premap, matching a live map built from the scans on `lidar` (each placed by tf at its stamp)."""
+def m20_relocalization(
+    lidar: str = "slam_body_points", second_lidar: str = "second_lidar"
+) -> Blueprint:
+    """Continuous relocalization against the premap, matching a live map built from the scans on `lidar` and `second_lidar` (each placed by tf at its stamp)."""
     return PremapModule.blueprint(
         world_frame=WORLD_FRAME,
         map_frame="premap",
@@ -87,4 +98,4 @@ def m20_relocalization(lidar: str = "slam_body_points") -> Blueprint:
         # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
         live_voxel_m=0.2,
         match_radius_m=15.0,
-    ).remappings([(PremapModule, "lidar", lidar)])
+    ).remappings([(PremapModule, "lidar", lidar), (PremapModule, "second_lidar", second_lidar)])

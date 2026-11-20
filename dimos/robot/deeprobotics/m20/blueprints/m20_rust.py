@@ -18,9 +18,9 @@ AOS (a ``dimos host`` tagged ``board=aos``) runs the hardware: both Airys, the Y
 with ``--choice M20Joints=ecan``, the motor-bus joint state and batteries (needs rl_deploy with the ecan shim).
 Everything else runs on the machine that starts the run (GOS): dimSLAM, the ray tracer, planners and relocalization.
 
-Both Airys publish onto one ``lidar`` stream, each scan in its own lidar frame, unmerged: dimSLAM tells them apart
-by frame_id, the ray tracer traces each from its own lidar's origin, and relocalization places each by tf at its
-stamp. Their IMUs share ``lidar_imu`` the same way. The cameras' module replaces ``m20-camera.service``
+The Airys are two independent streams, ``front_lidar`` and ``rear_lidar`` (each in its own lidar frame, with
+``front_lidar_imu`` / ``rear_lidar_imu``), and dimSLAM, the ray tracer and relocalization each take both, never merged.
+dimSLAM runs on the front lidar's IMU alone (both IMUs ran under real time on GOS). The cameras' module replaces ``m20-camera.service``
 (``--choice M20Cameras=off`` leaves them to it). Nothing commands the legs.
 """
 
@@ -31,7 +31,7 @@ from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
 from dimos.robot.deeprobotics.m20.imu.module import M20Imu
-from dimos.robot.deeprobotics.m20.lidar import FRONT_AIRY, REAR_AIRY, m20_airy_lidars
+from dimos.robot.deeprobotics.m20.lidar import m20_airy_lidars
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
 from dimos.robot.urdf_manager import UrdfManager
 
@@ -39,16 +39,7 @@ from dimos.robot.urdf_manager import UrdfManager
 AOS = {"board": "aos"}
 
 m20_rust = autoconnect(
-    autoconnect(m20_airy_lidars(), M20Imu.blueprint())
-    .remappings(
-        [
-            (FRONT_AIRY, "lidar", "lidar"),
-            (REAR_AIRY, "lidar", "lidar"),
-            (FRONT_AIRY, "imu", "lidar_imu"),
-            (REAR_AIRY, "imu", "lidar_imu"),
-        ]
-    )
-    .hosted(tags=AOS),
+    autoconnect(m20_airy_lidars(), M20Imu.blueprint()).hosted(tags=AOS),
     ChoiceAtom(
         name="M20Cameras",
         default="relay",
@@ -64,10 +55,16 @@ m20_rust = autoconnect(
             .hosted(tags=AOS),
         },
     ),
-    m20_dim_slam().remappings([(DimSlamLio, "imu", "lidar_imu")]),
+    m20_dim_slam().remappings(
+        [
+            (DimSlamLio, "lidar", "front_lidar"),
+            (DimSlamLio, "second_lidar", "rear_lidar"),
+            (DimSlamLio, "imu", "front_lidar_imu"),
+        ]
+    ),
     UrdfManager.blueprint(model=M20_MODEL),
-    m20_nav_stack(lidar="lidar"),
-    m20_relocalization(lidar="lidar"),
+    m20_nav_stack(lidar="front_lidar", second_lidar="rear_lidar"),
+    m20_relocalization(lidar="front_lidar", second_lidar="rear_lidar"),
 ).global_config(
     n_workers=5,
     transport="zenoh",
