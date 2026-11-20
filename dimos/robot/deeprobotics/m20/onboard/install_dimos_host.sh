@@ -106,6 +106,8 @@ CPUAffinity=$cpus
 Nice=10
 # The memlock a fragment's system check asks for (it cannot sudo prlimit itself).
 LimitMEMLOCK=67108864
+# Raw receive-only capture for M20BodyImuSniff (it copies the vendor IMU's DDS samples off loopback); fragments inherit it.
+AmbientCapabilities=CAP_NET_RAW
 Restart=always
 RestartSec=3
 KillSignal=SIGINT
