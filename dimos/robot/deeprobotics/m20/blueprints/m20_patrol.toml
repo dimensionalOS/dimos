@@ -5,7 +5,7 @@ resources = ["base"]
 goals = ["hardware", "kitchenette", "lobby", "common_area", "side_entrance", "bathroom", "garage", "flag", "robot_area", "hugo"]
 approach_location = "dock_approach"
 predock_location = "predock"
-low_battery = 0.20
+low_battery = 0.70
 full_battery = 0.80
 retry_s = 2.0
 goal_attempts = 3
@@ -20,8 +20,6 @@ ABORTED = 4
 [vars]
 "goal.index" = 0
 "goal.tries" = 0
-"cycle.visits" = 0
-"cycle.count" = 0
 skips = 0
 streak = 0
 "dock.tries" = 0
@@ -81,16 +79,11 @@ goto = "Charging"
 if = "power == DISCHARGING"
 goto = "Patrol"
 
-# Each cycle walks the whole loop plus one goal, so the next cycle docks from the next goal.
+# Walks the goals in a loop until the battery is low, then resumes at the same goal.
 [[node]]
 name = "Patrol"
-children = ["Lookup", "Going", "Retry", "Next"]
+children = ["Lookup", "Going", "Retry"]
 initial = "Lookup"
-outcomes = ["done"]
-
-[[node.transition]]
-on = "done"
-goto = "Charging"
 
 [[node.transition]]
 if = "battery < low_battery"
@@ -123,8 +116,8 @@ result = "nav.goal"
 
 [[node.transition]]
 if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
-goto = "Next"
-set = { streak = "0" }
+goto = "Lookup"
+set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", streak = "0" }
 
 [[node.transition]]
 if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
@@ -134,7 +127,7 @@ goto = "Retry"
 on = "failed"
 goto = "Retry"
 
-# Out of tries, the goal is skipped and still counts toward the cycle.
+# Out of tries, the goal is skipped.
 [[node]]
 name = "Retry"
 
@@ -146,25 +139,13 @@ set = { "goal.tries" = "goal.tries + 1" }
 
 [[node.transition]]
 after = "retry_s"
-goto = "Next"
-set = { skips = "skips + 1", streak = "streak + 1" }
-
-[[node]]
-name = "Next"
-
-[[node.transition]]
-if = "cycle.visits + 1 >= size(goals) + 1"
-goto = "done"
-set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", "cycle.visits" = "0", "cycle.count" = "cycle.count + 1" }
-
-[[node.transition]]
 goto = "Lookup"
-set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", "cycle.visits" = "cycle.visits + 1" }
+set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", skips = "skips + 1", streak = "streak + 1" }
 
 # Everything about the charger, from heading for it until the robot has undocked again.
 [[node]]
 name = "Charging"
-children = ["Arrive", "ApproachLookup", "Approach", "ApproachRetry", "PredockLookup", "Predock", "Docking", "TopUp", "Undocking", "UndockRetry", "Finished"]
+children = ["Arrive", "ApproachLookup", "Approach", "ApproachRetry", "PredockLookup", "Predock", "Docking", "TopUp", "Undocking", "UndockRetry"]
 initial = "Arrive"
 outcomes = ["done", "failed"]
 
@@ -278,10 +259,6 @@ goto = "failed"
 name = "TopUp"
 
 [[node.transition]]
-if = "cycle.count >= size(goals)"
-goto = "Finished"
-
-[[node.transition]]
 if = "battery >= full_battery"
 goto = "Undocking"
 
@@ -303,7 +280,3 @@ name = "UndockRetry"
 [[node.transition]]
 after = "retry_s"
 goto = "Undocking"
-
-# Docked from every goal, so the robot stays on the charger.
-[[node]]
-name = "Finished"
