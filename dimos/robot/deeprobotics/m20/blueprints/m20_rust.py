@@ -52,6 +52,7 @@ from dimos.robot.deeprobotics.m20.model import (
     M20StandingJointState,
     M20StandingJointStateConfig,
 )
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # The `dimos host` tag of the board the lidars, IMU, cameras and motor bus are wired to.
@@ -134,7 +135,7 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
         default="lidar",
         choices={
             # cut in each lidar's driver on AOS before publishing: no extra hop
-            "lidar": in_driver if joints == "standing" else autoconnect(joint_source, in_driver),
+            "lidar": autoconnect(joint_source, in_driver),
             "python": python,
         },
     )
@@ -176,6 +177,8 @@ m20_rust = autoconnect(
         },
     ),
     # m20's 5/5 subsampling on top of the lidars' voxel, as m20 traces the vendor cloud
+    # the robot's links on tf and its model for viewers, from whichever joint state the run has, as m20
+    UrdfManager.blueprint(model=M20_MODEL),
     m20_nav_stack(lidar="lidar"),
     m20_relocalization(lidar="lidar"),
 ).global_config(
