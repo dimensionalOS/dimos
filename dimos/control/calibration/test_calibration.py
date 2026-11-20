@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 from typing import Any
 
@@ -198,6 +199,18 @@ def test_a_pair_the_joint_did_not_follow_is_redone_at_twice_the_dither_and_kept_
     assert operator.done is not None and operator.done[0], operator.done
     assert [m.pose for m in run.measurements if m.stuck] == [p.name for p in run.poses or []]
     assert any("elbow: every pair stuck, friction not cancelled" in text for text in operator.shown)
+
+
+def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
+    elbow_only = ArmModel(replace(arm.spec, measured_joints=["elbow"]))
+    fake, operator = FakeArm(elbow_only, true_links=TRUE_LINKS), FakeOperator()
+    run = calibration(elbow_only, operator, fake, steps=["gravity_poses", "gravity_fit"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert run.dithered == ["shoulder", "elbow"]
+    assert {m.joint for m in run.measurements} == {"shoulder", "elbow"}
+    assert fake.file["fit"]["held_joints"] == {}
 
 
 def test_the_plan_skips_what_cannot_run() -> None:

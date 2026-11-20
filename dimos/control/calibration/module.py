@@ -75,6 +75,8 @@ class CalibrationModuleConfig(ModuleConfig):
             kp, so its spring beats its friction, within ``dither_deg`` and ``max_dither_deg``.
         stuck_fraction: A dither pair the joint followed less than this share of the way is
             stuck; it is redone once at twice the dither (at most ``max_dither_deg``).
+        dither_span_nm: A joint the spec does not measure is dithered too when its gravity
+            torque over the poses, or that of one column scale of correction, spans more.
         kp_scales: Multiples of each joint's kp the gain sweep tries (kd times the square
             root); must include 1, the baseline.
         step_deltas_deg: The gain sweep's steps, applied in turn; both signs needed.
@@ -97,6 +99,7 @@ class CalibrationModuleConfig(ModuleConfig):
     max_dither_deg: float = Field(default=5.0, gt=0.0)
     dither_torque_fraction: float = Field(default=0.3, gt=0.0)
     stuck_fraction: float = Field(default=0.5, gt=0.0, lt=1.0)
+    dither_span_nm: float = Field(default=0.1, gt=0.0)
     kp_scales: list[float] = Field(default_factory=lambda: [1.0, 1.5, 2.0])
     step_deltas_deg: list[float] = Field(default_factory=lambda: [1.0, -1.0, 3.0, -3.0])
     max_overshoot_pct: float = Field(default=20.0, gt=0.0)
@@ -193,6 +196,7 @@ class Calibration:
         self.state: dict[str, Any] = {}
         self.noise: dict[str, RestNoise] = {}
         self.poses: list[Pose] | None = None
+        self.dithered: list[str] = []
         self.measurements: list[Measurement] = []
         self.baseline: dict[str, np.ndarray] = {}
         self.step_metrics: list[StepMetrics] = []

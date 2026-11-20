@@ -22,7 +22,9 @@ the way is stuck: friction held it, so the pair cancels less than its friction; 
 fit, flagged. Adding what was compensated beyond the URDF
 gives the URDF's error, fitted with pinocchio's torque regressor as ridge least squares for
 corrections of ``(m, m*c)`` of the fitted links, inside the directions the poses identify and
-inside physical bounds (mass >= 0, COM within the arm's reach of its joint). The ridge is
+inside physical bounds (mass >= 0, COM within the arm's reach of its joint). An arm joint that
+was not dithered is held at its URDF torque at every pose, so the fit cannot move gravity onto a
+joint it never measured. The ridge is
 chosen by leave-one-pose-out cross-validation, and the fit is scored on every pose with that
 pose left out (the selection of the ridge nested inside), so a fit is offered only when its
 held-out error is no worse than the URDF's and the running model's on every measured joint.
@@ -96,6 +98,7 @@ class GravityFit:
     ridge: float
     rank: int
     singular_values: tuple[float, ...]
+    held_joints: dict[str, float] = field(default_factory=dict)
 
     def rms(self, values: np.ndarray) -> dict[str, float]:
         names = np.asarray([m.joint for m in self.measurements])
@@ -176,11 +179,30 @@ def stuck_pairs(measurements: Sequence[Measurement]) -> tuple[list[str], list[st
     return pairs, unfollowed
 
 
-def _solve(a: np.ndarray, b: np.ndarray, ridge: float, g: np.ndarray, h: np.ndarray) -> np.ndarray:
-    """Ridge least squares for ``a x = b`` inside the row space of ``a``, keeping ``g x <= h``."""
+def _directions(a: np.ndarray, held: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The SVD ``u, s, v`` of ``a`` within its row space less every direction ``held`` moves."""
     u, s, vt = np.linalg.svd(a, full_matrices=False)
-    keep = s > matrix_rank_tolerance(s, a.shape)
-    u, s, v = u[:, keep], s[keep], vt[keep].T
+    tolerance = matrix_rank_tolerance(s, a.shape)
+    v = vt[s > tolerance].T
+    if held.size:
+        _, s_held, vt_held = np.linalg.svd(held @ v)
+        v = v @ vt_held[int(np.sum(s_held > tolerance)) :].T
+    u, s, wt = np.linalg.svd(a @ v, full_matrices=False)
+    keep = s > tolerance
+    return u[:, keep], s[keep], v @ wt[keep].T
+
+
+def _solve(
+    a: np.ndarray,
+    b: np.ndarray,
+    ridge: float,
+    g: np.ndarray,
+    h: np.ndarray,
+    held: np.ndarray | None = None,
+) -> np.ndarray:
+    """Ridge least squares for ``a x = b`` inside the row space of ``a``, keeping ``g x <= h``
+    and ``held x = 0``."""
+    u, s, v = _directions(a, np.zeros((0, a.shape[1])) if held is None else held)
     x: np.ndarray = v @ (s / (s**2 + ridge**2) * (u.T @ b))
     if (g @ x <= h).all():
         return x
@@ -201,37 +223,44 @@ def _solve(a: np.ndarray, b: np.ndarray, ridge: float, g: np.ndarray, h: np.ndar
 
 
 def _choose_ridge(
-    a: np.ndarray, b: np.ndarray, poses: np.ndarray, g: np.ndarray, h: np.ndarray
+    a: np.ndarray, b: np.ndarray, poses: np.ndarray, g: np.ndarray, h: np.ndarray, held: np.ndarray
 ) -> float:
     """The ridge, among zero and the singular values of ``a``, with the least leave-one-pose-out error."""
-    s = np.linalg.svd(a, compute_uv=False)
+    s = _directions(a, held)[1]
 
     def held_out_mse(ridge: float) -> float:
         errors = [
-            a[poses == pose] @ _solve(a[poses != pose], b[poses != pose], ridge, g, h)
+            a[poses == pose] @ _solve(a[poses != pose], b[poses != pose], ridge, g, h, held)
             - b[poses == pose]
             for pose in np.unique(poses)
         ]
         return float(np.mean(np.square(np.concatenate(errors))))
 
-    return min([0.0, *map(float, s[s > matrix_rank_tolerance(s, a.shape)])], key=held_out_mse)
+    return min([0.0, *map(float, s)], key=held_out_mse)
 
 
 def fit_gravity(
-    arm: ArmModel, measurements: Sequence[Measurement], compensation: Compensation
+    arm: ArmModel,
+    measurements: Sequence[Measurement],
+    compensation: Compensation,
+    joints: Sequence[str] | None = None,
 ) -> GravityFit:
     """Fit the gravity links to ``measurements``, which were held with ``compensation``.
 
-    Needs at least three poses (each held-out pose's ridge is chosen by cross-validation over
-    the others). Raises ``ValueError`` when the masses compensated do not fit the model or
-    the fit drives a mass to zero.
+    ``joints`` are the joints that were dithered (default the arm's measured joints); every
+    other arm joint is held at its URDF torque at the poses (``held_joints``: the most the fit
+    changes it, N m, by joint, for those it could change). Needs at least three poses (each
+    held-out pose's ridge is chosen by cross-validation over the others). Raises
+    ``ValueError`` when the masses compensated do not fit the model or the fit drives a mass
+    to zero.
     """
+    dithered = tuple(arm.measured_joints if joints is None else joints)
     poses = np.asarray([m.pose for m in measurements])
     if np.unique(poses).size < 3:
         raise ValueError(f"need measurements at three or more poses, got {np.unique(poses).size}")
-    unknown = {m.joint for m in measurements} - set(arm.measured_joints)
+    unknown = {m.joint for m in measurements} - set(dithered)
     if unknown:
-        raise ValueError(f"{sorted(unknown)} are not {arm.arm_id} measured joints")
+        raise ValueError(f"{sorted(unknown)} are not among the dithered joints {list(dithered)}")
     compensated = arm.model.copy()
     apply_inertial_overrides(compensated, compensation.links)
     data = compensated.createData()
@@ -245,8 +274,17 @@ def fit_gravity(
             else 0.0
         )
         urdf_error.append(m.tau_pd_nm + float(given) - float(arm.gravity(q)[row]))
-        a_rows.append(arm.scaled_regressor(q)[arm.measured_joints.index(m.joint)])
+        a_rows.append(arm.scaled_regressor(q, [row])[0])
     a, b = np.vstack(a_rows), np.asarray(urdf_error)
+    at_pose = {m.pose: arm.q(m.q_rad) for m in measurements}
+    loads = {
+        name: np.vstack([arm.scaled_regressor(q, [row]) for q in at_pose.values()])
+        for row, name in enumerate(arm.joint_names)
+        if name not in dithered
+    }
+    tolerance = matrix_rank_tolerance(np.linalg.svd(a, compute_uv=False), a.shape)
+    loads = {name: rows for name, rows in loads.items() if np.abs(rows).max() > tolerance}
+    held = np.vstack([np.zeros((0, a.shape[1])), *loads.values()])
     masses = np.asarray([arm.model.inertias[j].mass for j in arm.fitted_joint_ids])
     coms = np.asarray([arm.model.inertias[j].lever for j in arm.fitted_joint_ids])
     moments = masses[:, None] * coms
@@ -267,10 +305,10 @@ def fit_gravity(
     held_out = np.empty_like(b)
     for pose in np.unique(poses):
         train = poses != pose
-        ridge = _choose_ridge(a[train], b[train], poses[train], g, h_)
-        held_out[~train] = b[~train] - a[~train] @ _solve(a[train], b[train], ridge, g, h_)
-    ridge = _choose_ridge(a, b, poses, g, h_)
-    x = _solve(a, b, ridge, g, h_)
+        ridge = _choose_ridge(a[train], b[train], poses[train], g, h_, held)
+        held_out[~train] = b[~train] - a[~train] @ _solve(a[train], b[train], ridge, g, h_, held)
+    ridge = _choose_ridge(a, b, poses, g, h_, held)
+    x = _solve(a, b, ridge, g, h_, held)
     delta = (x * arm.column_scale).reshape(-1, n)
     links, urdf_links = {}, {}
     for k, link in enumerate(arm.fitted_links):
@@ -285,11 +323,10 @@ def fit_gravity(
             mass_kg=float(masses[k]),
             com_m=(float(coms[k, 0]), float(coms[k, 1]), float(coms[k, 2])),
         )
-    s = np.linalg.svd(a, compute_uv=False)
-    s = s[s > matrix_rank_tolerance(s, a.shape)]
+    s = _directions(a, held)[1]
     return GravityFit(
         measurements=list(measurements),
-        joints=arm.measured_joints,
+        joints=dithered,
         urdf_error=b,
         running_error=np.asarray([m.tau_pd_nm for m in measurements]),
         held_out_error=held_out,
@@ -299,6 +336,7 @@ def fit_gravity(
         ridge=ridge,
         rank=int(s.size),
         singular_values=tuple(map(float, s)),
+        held_joints={name: float(np.abs(rows @ x).max()) for name, rows in loads.items()},
     )
 
 
@@ -339,6 +377,7 @@ def fit_stats(fit: GravityFit) -> dict[str, Any]:
         "poses": list(dict.fromkeys(m.pose for m in fit.measurements)),
         "measurements": len(fit.measurements),
         "stuck_pairs": stuck_pairs(fit.measurements)[0],
+        "held_joints": dict(fit.held_joints),
         "rms_nm": {
             joint: {kind: rms[joint] for kind, rms in by_kind.items()} for joint in by_kind["urdf"]
         },

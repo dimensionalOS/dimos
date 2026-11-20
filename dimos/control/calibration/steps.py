@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.float_analysis import analyze_float
 from dimos.control.calibration.gravity_fit import (
     Compensation,
@@ -37,7 +37,7 @@ from dimos.control.calibration.gravity_fit import (
     refusals,
     stuck_pairs,
 )
-from dimos.control.calibration.gravity_poses import Pose, generate_poses
+from dimos.control.calibration.gravity_poses import ArmModel, Pose, generate_poses
 from dimos.control.calibration.schema import gravity_links_from_inertial
 from dimos.control.calibration.step_analysis import (
     StepEvent,
@@ -97,6 +97,32 @@ def _rest_error(run: Calibration, rest: Motion, target: np.ndarray) -> np.ndarra
     t = np.asarray(rest.t)
     error: np.ndarray = np.asarray(rest.q)[t > t[-1] - run.config.rest_window_s].mean(0) - target
     return error
+
+
+def _links(run: Calibration) -> dict[str, LinkInertial]:
+    return {
+        name: LinkInertial(mass_kg=link["mass_kg"], com_m=tuple(link["com_m"]))
+        for name, link in run.state["links"].items()
+    }
+
+
+def _applied(run: Calibration) -> ArmModel:
+    model = run.arm.model.copy()
+    apply_inertial_overrides(model, _links(run))
+    return ArmModel(run.spec, model)
+
+
+def _dithered(run: Calibration, poses: list[Pose]) -> list[str]:
+    qs, applied = [np.asarray(pose.joints_rad) for pose in poses], _applied(run)
+    torque = np.asarray([applied.gravity(q) for q in qs])
+    every = range(run.arm.dof)
+    sensitivity = np.asarray([run.arm.scaled_regressor(q, every) for q in qs])
+    span = np.maximum(np.ptp(torque, axis=0), np.ptp(sensitivity, axis=0).max(axis=1))
+    return [
+        name
+        for name, varies in zip(run.arm.joint_names, span, strict=True)
+        if name in run.arm.measured_joints or varies > run.config.dither_span_nm
+    ]
 
 
 def _dither_deg(run: Calibration, joint: str) -> float:
@@ -189,8 +215,9 @@ def check(run: Calibration) -> str:
 
 
 def gravity_poses(run: Calibration) -> str:
-    poses, measured = _gravity_poses(run), run.arm.measured_joints
-    dithers = {joint: _dither_deg(run, joint) for joint in measured}
+    poses = _gravity_poses(run)
+    run.dithered = _dithered(run, poses)
+    dithers = {joint: _dither_deg(run, joint) for joint in run.dithered}
     run.confirm(
         f"The arm visits {len(poses)} poses and dithers "
         f"{', '.join(f'{j} by +-{d:.1f}' for j, d in dithers.items())} deg at each, redoing "
@@ -230,11 +257,8 @@ def gravity_poses(run: Calibration) -> str:
 
 
 def gravity_fit(run: Calibration) -> str:
-    links = {
-        name: LinkInertial(mass_kg=link["mass_kg"], com_m=tuple(link["com_m"]))
-        for name, link in run.state["links"].items()
-    }
-    fit = fit_gravity(run.arm, run.measurements, Compensation(run.state["can_float"], links))
+    compensation = Compensation(run.state["can_float"], _links(run))
+    fit = fit_gravity(run.arm, run.measurements, compensation, run.dithered)
     urdf, running, held = (
         fit.rms(v) for v in (fit.urdf_error, fit.running_error, fit.held_out_error)
     )

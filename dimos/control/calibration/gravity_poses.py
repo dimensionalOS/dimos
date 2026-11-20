@@ -160,13 +160,13 @@ class ArmModel:
     def gravity(self, q: np.ndarray) -> np.ndarray:
         return np.asarray(pin.computeGeneralizedGravity(self.model, self.data, q))
 
-    def scaled_regressor(self, q: np.ndarray) -> np.ndarray:
-        """Rows: measured joints; columns: ``(m, m*c)`` of the fitted bodies over ``column_scale``."""
+    def scaled_regressor(self, q: np.ndarray, rows: Sequence[int] | None = None) -> np.ndarray:
+        """Rows: the arm joints ``rows`` (default the measured joints); columns: ``(m, m*c)`` of
+        the fitted bodies over ``column_scale``."""
         zero = np.zeros(self.model.nv)
         full = np.asarray(pin.computeJointTorqueRegressor(self.model, self.data, q, zero, zero))
-        scaled: np.ndarray = (
-            full[np.ix_(self.measured_rows, self.param_columns)] * self.column_scale
-        )
+        index = self.measured_rows if rows is None else tuple(rows)
+        scaled: np.ndarray = full[np.ix_(index, self.param_columns)] * self.column_scale
         return scaled
 
     def _clear(self, tip: np.ndarray, others: np.ndarray) -> bool:

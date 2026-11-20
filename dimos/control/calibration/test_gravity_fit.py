@@ -23,6 +23,7 @@ from dimos.control.calibration._toy_arm import toy_arm
 from dimos.control.calibration.gravity_fit import (
     Compensation,
     DitherHold,
+    GravityFit,
     Measurement,
     _solve,
     dither_friction_nm,
@@ -185,6 +186,33 @@ def test_a_pair_the_joint_followed_less_than_halfway_is_kept_stuck(
     plus = hold(arm, joint, poses[0], target + 1, 1)
     with pytest.raises(ValueError, match="not a"):
         measure_dither("p", arm.joint_names, plus, plus, NOISE, stuck_fraction=0.5)
+
+
+def test_a_joint_that_was_not_dithered_keeps_its_urdf_torque(
+    arm: ArmModel, poses: list[np.ndarray]
+) -> None:
+    shoulder = [m for m in dithers(arm, Compensation(True), poses) if m.joint == "shoulder"]
+    held = fit_gravity(arm, shoulder, Compensation(True), ["shoulder"])
+    free = fit_gravity(arm, shoulder, Compensation(True), ["shoulder", "elbow"])
+
+    def elbow_change(fit: GravityFit) -> float:
+        fitted = arm.model.copy()
+        apply_inertial_overrides(fitted, fit.links)
+        return max(
+            abs(
+                float(
+                    pin.computeGeneralizedGravity(fitted, fitted.createData(), q)[2]
+                    - arm.gravity(q)[2]
+                )
+            )
+            for q in poses
+        )
+
+    assert held.held_joints == {"elbow": pytest.approx(0.0, abs=1e-9)} and free.held_joints == {}
+    assert elbow_change(held) < 1e-9 < 0.1 < elbow_change(free)
+    assert held.rms(held.held_out_error)["shoulder"] < 0.6 * held.rms(held.urdf_error)["shoulder"]
+    assert fit_stats(held)["held_joints"] == held.held_joints
+    assert "elbow has no measurement" in refusals(free)
 
 
 def test_too_few_poses_raise(arm: ArmModel, poses: list[np.ndarray]) -> None:
