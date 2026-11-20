@@ -35,6 +35,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustEventConfig,
     RustRecorderConfig,
     RustStreamSpec,
+    parse_periods,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
@@ -107,7 +108,15 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     when no module publishes it, so ``dimos topic send`` can start a clip. That topic
     joins the recorded streams' LCM URL when they use LCM.
     """
-    events = RustEventConfig() if global_config.record_events else None
+    events = (
+        RustEventConfig(
+            default_period=global_config.record_default_period,
+            type_periods=parse_periods(global_config.record_type_periods),
+            stream_periods=parse_periods(global_config.record_stream_periods),
+        )
+        if global_config.record_events
+        else None
+    )
     transports = dict(transports)
     selected = matching(global_config.record_topics, (name for name, _ in transports))
     if events is not None:

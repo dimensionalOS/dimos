@@ -54,6 +54,12 @@ class GlobalConfig(BaseSettings):
     record_encoding_threads: int | None = Field(default=None, ge=1)
     # Thin long recordings and keep full-rate clips around messages on the clip_that topic.
     record_events: bool = False
+    # Seconds between kept messages outside event recording clips, for every stream.
+    record_default_period: float = Field(default=5.0, ge=0)
+    # Overrides as comma-separated glob=seconds pairs. Payload type names (Image=10)
+    # override the default, stream names (lidar=2) override both.
+    record_type_periods: str = ""
+    record_stream_periods: str = ""
     # Event recording windows go in one subfolder per run here. Linux keeps them in RAM.
     record_window_dir: str = (
         "/dev/shm/dimos-recorder"

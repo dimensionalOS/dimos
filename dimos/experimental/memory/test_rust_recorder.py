@@ -29,6 +29,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorderConfig,
     RustSqliteStoreConfig,
     RustStreamSpec,
+    parse_periods,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
@@ -36,6 +37,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class SampleRustRecorder(RustRecorder):
@@ -121,7 +123,7 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
     assert set(config) == {"encoding_threads", "store", "streams", "mode"}
 
 
-def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> None:
+def test_stream_periods_override_type_periods_over_the_default_period(tmp_path: Path) -> None:
     streams = [
         RustStreamSpec(
             port=name,
@@ -133,11 +135,17 @@ def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> Non
             ("color_image", Image),
             ("lidar", PointCloud2),
             ("global_map", PointCloud2),
+            ("local_map", PointCloud2),
             ("odom", PoseStamped),
+            ("tf", TFMessage),
             ("clip_that", String),
         ]
     ]
-    events = RustEventConfig(heavy_period_s=2.0)
+    events = RustEventConfig(
+        default_period=5.0,
+        type_periods=parse_periods("Image=2, PoseSt*=0.5"),
+        stream_periods=parse_periods("global_*=30,lidar=0"),
+    )
 
     native = events.resolve(
         streams, tmp_path / "run" / "memory.mcap", tmp_path / "windows"
@@ -145,10 +153,12 @@ def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> Non
 
     assert native["periods"] == {
         "color_image": 2.0,
-        "lidar": 2.0,
-        "global_map": 2.0,
-        "odom": 0.0,
-        "clip_that": 0.0,
+        "lidar": 0.0,
+        "global_map": 30.0,
+        "local_map": 5.0,
+        "odom": 0.5,
+        "tf": 0.0,
+        "clip_that": 5.0,
     }
     assert native["window_dir"] == str(tmp_path / "windows" / "run")
     assert set(native) == {
