@@ -18,6 +18,10 @@ The native ``m20_ecan`` module reads the frames the ``ecan_tap.so`` shim streams
 (rl_deploy) on AOS and sends nothing to the bus. The motor board only answers rl_deploy's 1 kHz commands, so it needs
 rl_deploy running with the shim installed (``tap/record.sh install`` on AOS) and runs on AOS, where the socket is.
 Joint names and the motor-to-URDF calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
+
+Charge enable (the 0xb3 request a docked robot needs to charge) is not sent from here: this module only reads the tap,
+and while rl_deploy runs it owns the bus and sends the request itself. Without rl_deploy, the Rust motor controller
+sends it (``[ecan] charge_enable``, off by default), using m20-battery's rule.
 """
 
 from __future__ import annotations
