@@ -12,9 +12,17 @@ every R1 Pro.
 `galaxea-dimos` is Galaxea's own ROS 2 driver with local bug fixes applied; it
 is not part of dimos. `R1ProConnection` boots it, when it is not running, with
 [`vendor_setup.sh`](/dimos/robot/galaxea/r1pro/vendor_setup.sh): the standalone stack
-(no `moca_adapter`, chassis gatekeeper on-robot) without the vendor head camera and
-Livox drivers. HDAS brings up CAN FD itself, so `~/canfd.sh` is not needed. Pick a
-vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROVRTeleop`.
+(no `moca_adapter`, chassis gatekeeper on-robot) without the vendor head camera,
+wrist camera and Livox drivers. HDAS brings up CAN FD itself, so `~/canfd.sh` is not
+needed. Pick a vendor profile instead with
+`--r1proconnection.vendor-profile ATCStandard/R1PROVRTeleop`.
+
+**Wrist cameras.** dimos reads both wrist D405s' colour straight off V4L2
+(`r1pro_control`), 640x480 JPEG at 30 fps on `wrist_{left,right}_color`. Galaxea's
+wrist driver opens colour and depth on both at 1280x720, more than their shared USB
+controller carries, so every stream stalls. If a vendor profile or a reboot started
+it (`start_realsense_camera_r1pro.sh` in the `hdas` tmux session), stop it with Ctrl-C
+in that pane; until then the wrist cameras log and retry.
 
 ## Environment
 
