@@ -31,15 +31,15 @@ The command asks before every move. With `--no-confirm-each` it asks only at the
 ## What each step does
 
 1. **check.** Watches the arm at rest for one rest window to measure its noise and how often readings arrive, checks every joint is inside its limits, then moves home.
-2. **gravity_poses.** Moves to each gravity pose, lets it settle, then nudges each gravity-loaded joint up and down by the dither and lets it settle each time.
-3. **gravity_fit.** Fits the link masses. It shows each joint's gravity torque error for the URDF, the running model and the fit, each pose held out. If the fit is no better, it is not offered. Otherwise Enter saves and applies it.
-4. **float_check.** Each gravity-loaded joint in turn goes limp (kp 0, gravity still compensated) at the pose where it carries the most gravity. It passes if it settles with the fingertip inside the drift limit. Be ready to support the arm. Skipped on robots that do not compensate gravity.
-5. **step_sweep.** At the pose farthest from the joint limits, each joint steps by each step delta at each kp scale (kd times the square root of the scale). A gain that keeps the joint buzzing stops that joint's sweep.
-6. **pick_gains.** Proposes, per joint, the stiffest gains whose steps all passed, with every softer one passing too. Enter saves and applies them.
-7. **confirm_tracking.** Revisits some gravity poses with the new calibration and compares how far each joint rests from its target with the first visit.
+2. **gravity_poses.** Moves to each gravity pose, lets it settle, then nudges every joint whose gravity torque can vary up and down, holding each nudge 1 s. Each joint's nudge is 0.3 of its torque cap over its kp, at least the dither and at most 5 deg. A pair the joint followed less than halfway is redone once at twice the size. One still stuck stays in the fit and is listed; a joint whose every pair stuck gets a "friction not cancelled" warning.
+3. **gravity_fit.** Fits the link masses, holding the joints that were not nudged at their URDF torque. It shows each joint's gravity torque error for the URDF, the running model and the fit, each pose held out, and the total over all joints. If the total is no better than the running model's, it lists the joints it makes worse and asks; Enter keeps what the arm runs. Otherwise Enter saves and applies it, with each joint's friction.
+4. **float_check.** Each gravity-loaded joint in turn rests 2 s, then goes limp (kp 0, gravity still compensated) for 10 s at the pose where it carries the most gravity. It passes if the fingertip ends within 2 mm of where it went limp. A joint that turns 5 deg is held again and fails. Be ready to support the arm. Skipped on robots that do not compensate gravity.
+5. **step_sweep.** At the pose farthest from the joint limits, each joint steps by each step delta at its own gains, then at each kp scale by each kd scale, kd at most 5 and kp/4. A step that buzzes stops that candidate only; the joint gets its gains back and goes on.
+6. **pick_gains.** Proposes, per joint, the passing gains with the lowest score: worst rest error over its limit (1.5 times friction over kp, at least 0.1 deg) plus worst settle over 0.5 s. A largest step that barely moved rejects a candidate; a smaller one is left out. Nothing is saved here.
+7. **confirm_tracking.** Revisits some gravity poses with the new calibration and the proposed gains, and compares how far each joint rests from its target with the first visit. The gains are saved only if no joint stalls and each rests within 1.5 times its first visit or its rest limit; otherwise they are undone.
 8. **summary.** Shows the file the arm runs now.
 
-A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A step or a float also ends if it stops settling (each window moves as much as the one before), and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
+A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A step also ends if it stops settling (it oscillates in place), and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
 
 The calibration moves the arm only by streaming targets to its connection, one per reading. While it waits for you or computes a fit, it sends the arm nothing, so the connection holds the arm where it is and undoes any temporary gain change or limp joint. The same happens if the command or the calibration stops.
 
@@ -65,14 +65,17 @@ Each is a flag of `dimos arm calibrate` (and a `--calibrationmodule.` option of 
 | `--arm` | | `left` or `right` on a two-arm robot |
 | `--floor-z-m`, `--min-x-m` | | Table height, and the line the fingertip stays in front of, m |
 | `--poses` | 12 | Gravity poses to visit (at least 3) |
-| `--speed-deg-s` | 10 | Peak joint speed of every move; at most the URDF velocity limits |
+| `--speed-deg-s` | 10 | Peak joint speed of every move; at most 60 and the URDF velocity limits |
 | `--rest-window-s` | 0.5 | How long the arm sits still to measure its noise, and how long it must stay inside that noise to count as settled |
-| `--dither-deg` | 1 | How far each joint is nudged either way at a gravity pose |
-| `--kp-scales` | 1,1.5,2 | kp multiples the sweep tries; must include 1 |
+| `--dither-deg` | 1 | The smallest nudge either way at a gravity pose |
+| `--kp-scales` | 0.6,1,1.5 | kp multiples the sweep tries; must include 1 |
+| `--kd-scales` | 1,2.5,5 | kd multiples tried with each kp; must include 1 |
 | `--step-deltas-deg` | 1,-1,3,-3 | The sweep's steps, in turn |
 | `--max-overshoot-pct` | 20 | A step that overshoots this share of itself fails |
-| `--float-drift-limit-mm` | 5 | How far the fingertip may drift while a joint is limp |
+| `--float-drift-limit-mm` | 2 | How far the fingertip may end from where the joint went limp |
 | `--confirm-poses` | 3 | Poses `confirm_tracking` revisits |
 | `--grid-points` | 3000 | About how many candidate poses the pose search tries |
 | `--steps` | all | Steps to run after check, comma-separated |
 | `--no-confirm-each` | | Ask only at the start of each step. Not for a first run |
+
+The other numbers above are module settings, given as `--calibrationmodule.<name>`: `max-dither-deg`, `dither-torque-fraction`, `dither-hold-s`, `stuck-fraction`, `dither-span-nm`, `hold-s`, `float-window-s`, `float-trip-deg`, `kd-per-kp`, `rest-limit-deg`, `friction-rest-factor`, `settle-s` and `tracking-rest-ratio`.
