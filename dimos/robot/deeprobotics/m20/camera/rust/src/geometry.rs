@@ -17,7 +17,7 @@ use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion
 use dimos_module::Transform;
 use lcm_msgs::sensor_msgs::{CameraInfo, RegionOfInterest};
 use lcm_msgs::std_msgs::{Header, Time};
-use rockchip_h264::deskew::{Intrinsics, Model, Pinhole};
+use rockchip_h264::deskew::{Intrinsics, Model, Output, Projection};
 
 /// Body (REP-103) from optical axes, x y z w.
 const OPTICAL_ROTATION: [f64; 4] = [-0.5, 0.5, -0.5, 0.5];
@@ -68,37 +68,35 @@ pub fn intrinsics(
     }
 }
 
-/// The CameraInfo of raw frames from `camera`.
+/// The CameraInfo of raw frames from `camera`: its lens model and coefficients (padded to the model's length).
 pub fn camera_info(camera: &Intrinsics, frame_id: &str, ts: f64) -> CameraInfo {
-    let model = match camera.model {
-        Model::PlumbBob => "plumb_bob",
-        Model::Equidistant => "equidistant",
-    };
-    let size = match camera.model {
-        Model::PlumbBob => 5,
-        Model::Equidistant => 4,
-    };
     let mut d = camera.coefficients.clone();
-    d.resize(size.max(d.len()), 0.0);
+    d.resize(camera.model.coefficient_count().max(d.len()), 0.0);
     info(
         camera.width,
         camera.height,
         [camera.fx, camera.fy, camera.cx, camera.cy],
-        model,
+        camera.model.name(),
         d,
         frame_id,
         ts,
     )
 }
 
-/// The CameraInfo of deskewed frames: the new pinhole, no distortion.
-pub fn rectified_camera_info(camera: &Pinhole, frame_id: &str, ts: f64) -> CameraInfo {
+/// The CameraInfo of deskewed frames: no lens distortion. A pinhole output is a plain `plumb_bob` with zero
+/// coefficients; a cylindrical or equirectangular one names its projection in `distortion_model` (no standard
+/// CameraInfo model covers them), with K holding its angular scale and center.
+pub fn rectified_camera_info(camera: &Output, frame_id: &str, ts: f64) -> CameraInfo {
+    let (model, d) = match camera.projection {
+        Projection::Pinhole => (Model::PlumbBob.name(), vec![0.0; 5]),
+        other => (other.name(), vec![]),
+    };
     info(
         camera.width,
         camera.height,
         [camera.fx, camera.fy, camera.cx, camera.cy],
-        "plumb_bob",
-        vec![0.0; 5],
+        model,
+        d,
         frame_id,
         ts,
     )
@@ -175,7 +173,8 @@ mod tests {
 
     #[test]
     fn the_deskewed_camera_has_no_distortion_and_its_own_matrix() {
-        let rectified = Pinhole {
+        let rectified = Output {
+            projection: Projection::Pinhole,
             width: 1280,
             height: 720,
             fx: 393.68,
@@ -188,6 +187,37 @@ mod tests {
         assert_eq!(info.D, vec![0.0; 5]);
         assert_eq!((info.K[0], info.P[0], info.K[2]), (393.68, 393.68, 640.0));
         assert_eq!(info.header.frame_id, "rear_camera_optical");
+    }
+
+    #[test]
+    fn a_cylindrical_output_names_its_projection() {
+        let wide = Output {
+            projection: Projection::Cylindrical,
+            width: 1280,
+            height: 720,
+            fx: 486.0,
+            fy: 486.0,
+            cx: 640.0,
+            cy: 360.0,
+        };
+        let info = rectified_camera_info(&wide, "rear_camera_optical", 0.0);
+        assert_eq!(info.distortion_model, "cylindrical");
+        assert!(info.D.is_empty());
+    }
+
+    #[test]
+    fn a_rational_polynomial_camera_reports_eight_coefficients() {
+        let camera = intrinsics(
+            1280,
+            720,
+            600.0,
+            1280.0,
+            Model::RationalPolynomial,
+            &[0.1, 0.2],
+        );
+        let info = camera_info(&camera, "front_camera_optical", 0.0);
+        assert_eq!(info.distortion_model, "rational_polynomial");
+        assert_eq!(info.D.len(), 8);
     }
 
     #[test]

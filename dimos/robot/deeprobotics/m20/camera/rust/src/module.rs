@@ -22,7 +22,7 @@ use lcm_msgs::foxglove_msgs::CompressedVideo;
 use lcm_msgs::sensor_msgs::CameraInfo;
 use tracing::warn;
 
-use rockchip_h264::deskew::{new_camera, Interpolation, Model, Options};
+use rockchip_h264::deskew::{new_camera, Interpolation, Model, Options, Projection};
 
 use crate::geometry::{camera_info, camera_transforms, intrinsics, rectified_camera_info};
 use crate::relay::{relay, wall_s, Camera, Encode, Encoder};
@@ -30,6 +30,14 @@ use crate::relay::{relay, wall_s, Camera, Encode, Encoder};
 fn valid_model(name: &str) -> Result<(), validator::ValidationError> {
     name.parse::<Model>().map(|_| ()).map_err(|_| {
         validator::ValidationError::new("distortion_model must be plumb_bob or equidistant")
+    })
+}
+
+fn valid_projection(name: &str) -> Result<(), validator::ValidationError> {
+    name.parse::<Projection>().map(|_| ()).map_err(|_| {
+        validator::ValidationError::new(
+            "deskew_projection must be pinhole, cylindrical or equirectangular",
+        )
     })
 }
 
@@ -45,8 +53,19 @@ fn valid_encoder(name: &str) -> Result<(), validator::ValidationError> {
         .map_err(|_| validator::ValidationError::new("encoder must be rust or gstreamer"))
 }
 
+/// The lens settings as a whole: a model takes at most its own number of coefficients.
+fn valid_lens(config: &Config) -> Result<(), validator::ValidationError> {
+    let camera = config.camera(config.width.max(1) as u32, config.height.max(1) as u32);
+    camera.validate().map_err(|error| {
+        let mut e = validator::ValidationError::new("distortion");
+        e.message = Some(format!("{error:#}").into());
+        e
+    })
+}
+
 #[native_config]
 #[derive(Clone)]
+#[validate(schema(function = "valid_lens"))]
 pub struct Config {
     /// V4L2 device nodes of the two cameras (MJPEG off the vendor AOS board)
     front_device: String,
@@ -75,12 +94,17 @@ pub struct Config {
     focal_length_px: f64,
     #[validate(range(min = 1))]
     focal_length_width_px: i64,
-    /// The lenses' distortion, as CameraInfo names it: `plumb_bob` (k1, k2, p1, p2, k3) or `equidistant` (k1..k4)
+    /// The lenses' distortion, as CameraInfo names it: `plumb_bob` (k1, k2, p1, p2, k3), `rational_polynomial`
+    /// (k1, k2, p1, p2, k3, k4, k5, k6), or `equidistant` / `fisheye` / `kannala_brandt` (k1..k4)
     #[validate(custom(function = "valid_model"))]
     distortion_model: String,
     distortion_coefficients: Vec<f64>,
     /// Undistort every frame before encoding (rust encoder only); CameraInfo then describes the deskewed frames
     deskew: bool,
+    /// `pinhole` (straight lines stay straight), `cylindrical` or `equirectangular` (wide views without the black
+    /// wedges a pinhole needs)
+    #[validate(custom(function = "valid_projection"))]
+    deskew_projection: String,
     /// Deskewed frame size; 0 keeps the capture's
     #[validate(range(min = 0))]
     deskew_width: i64,
@@ -128,6 +152,10 @@ impl Config {
     /// The deskew options, when deskewing is on.
     fn deskew_options(&self) -> Option<Options> {
         self.deskew.then(|| Options {
+            projection: self
+                .deskew_projection
+                .parse()
+                .unwrap_or(Projection::Pinhole),
             output_size: (self.deskew_width > 0 && self.deskew_height > 0)
                 .then_some((self.deskew_width as u32, self.deskew_height as u32)),
             balance: self.deskew_balance,
