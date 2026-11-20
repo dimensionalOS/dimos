@@ -299,6 +299,22 @@ def last_before(events: list, t: float, default: Any = None) -> Any:
     return out
 
 
+def gains_match(s: Session, cfg: dict[str, Any], runner: str, row: int) -> bool:
+    """Whether rl_deploy's kp / kd on `row` are this runner's (or its start-up multiple on the legs)."""
+    spec = cfg["runners"][runner]
+    kp = np.resize(np.asarray(spec["kp"], float), JOINTS)
+    kd = np.resize(np.asarray(spec["kd"], float), JOINTS)
+    legs = ~IS_WHEEL
+    for k in (1.0, spec.get("start_gain_scale", 1.0)):
+        if (
+            np.allclose(gain_quant(kp[legs] * k), s.rec["kp"][row, legs])
+            and np.allclose(gain_quant(kd[legs] * k), s.rec["kd"][row, legs])
+            and np.isclose(kd[3], s.rec["kd"][row, 3])
+        ):
+            return True
+    return False
+
+
 def build_plan(
     s: Session, cfg: dict[str, Any], lag: int, nav_normalized: bool | None, persist: bool = True
 ):
@@ -339,13 +355,29 @@ def build_plan(
         if gait == 0:
             continue
         runner = runner_for_gait(cfg, gait) or cfg["states"]["rl_control"]["fallback_runner"]
+        # rl_deploy logs the gait it was asked for even while it forces the stand-in ("protect to sixaxis gait!"):
+        # when the gains on the bus are the stand-in runner's and not the logged one's, the stand-in is running
+        stand_in_runner = runner_for_gait(cfg, STAND_IN_GAIT)
+        stand_in_for = None
+        if (
+            gait != STAND_IN_GAIT
+            and stand_in_runner
+            and not gains_match(s, cfg, runner, row)
+            and gains_match(s, cfg, stand_in_runner, row)
+        ):
+            stand_in_for = gait
+            gait, runner = STAND_IN_GAIT, stand_in_runner
         params: dict[str, float] = {}
         if gait == STAND_IN_GAIT:
             # the stand-in's params come from the gait it hands over to: params for its first first_s, then
             # settle_params until the handover
             if prev_gait != STAND_IN_GAIT:
                 stand_in_start = t
-            nxt = next((e for e in s.events["gaits"] if e[0] > t), None)
+            nxt = (
+                (t, stand_in_for)
+                if stand_in_for
+                else next((e for e in s.events["gaits"] if e[0] > t), None)
+            )
             spec = next(
                 (
                     si
@@ -621,8 +653,12 @@ def write_page(
     path: Path,
     title: str,
     summary: str = "",
+    name: str = "",
+    also: list[Path] | None = None,
 ) -> None:
-    """Interactive time plot: recorded vs our q_cmd per joint (50 Hz), wheel velocity targets, kp."""
+    """Interactive time plot: recorded vs our q_cmd per joint (50 Hz), wheel velocity targets, kp; earlier replays'
+    page.json (in `also`) become more sessions on the same page."""
+    also = also or []
     rows = np.arange(0, len(s.t), 20)
     t = (s.t[rows] - s.t[0]).round(3).tolist()
     series = {"t": t, "joints": JOINT_NAMES, "recorded": {}, "ours": {k: {} for k in ours}}
@@ -641,8 +677,16 @@ def write_page(
         f"<td>{e['kp_match']:.3f} / {e['kd_match']:.3f}</td><td>{e['impl']}</td></tr>"
         for e in report
     )
-    html = PAGE.replace("__TITLE__", title).replace("__DATA__", json.dumps(series))
-    path.write_text(html.replace("__TABLE__", table).replace("__SUMMARY__", summary))
+    section = {"name": name or title, "series": series, "table": table, "summary": summary}
+    (path.parent / "page.json").write_text(json.dumps(section))
+    sections = [json.loads((Path(d) / "page.json").read_text()) for d in also] + [section]
+    compose(sections, path, title)
+
+
+def compose(sections: list[dict], path: Path, title: str) -> None:
+    """One page, a session picker over each replay's plot, summary and table."""
+    html = PAGE.replace("__TITLE__", title).replace("__DATA__", json.dumps(sections))
+    path.write_text(html)
 
 
 def clean(a: np.ndarray) -> list:
@@ -666,7 +710,8 @@ label{font-weight:600} select{font-size:14px;margin-left:6px}
 </style>
 <main>
 <h1>__TITLE__</h1>
-__SUMMARY__
+<div><label for="session">Session</label><select id="session"></select></div>
+<div id="summary"></div>
 <div><label for="joint">Joint</label><select id="joint"></select></div>
 <div id="plot"></div>
 <p>rl_deploy's command (solid) vs ours, sampled at 50 Hz. Legs: position target (rad); wheels: velocity target (rad/s).
@@ -674,19 +719,25 @@ Lines on top of each other is the goal.</p>
 <p>Per segment: the worst joint's typical (median) and 95th-percentile position-target error in rad, the share of ticks
 within 0.0001 rad, the worst wheel velocity-target RMS (rad/s), and the share of ticks whose kp / kd match exactly.
 Lower errors and 1.000 shares are better.</p>
-<div class="wrap"><table><tr><th>segment</th><th>start (s)</th><th>ticks</th><th>median</th><th>p95</th><th>exact</th><th>wheel RMS</th><th>kp / kd match</th><th>impl</th></tr>__TABLE__</table></div>
+<div class="wrap"><table><thead><tr><th>segment</th><th>start (s)</th><th>ticks</th><th>median</th><th>p95</th><th>exact</th><th>wheel RMS</th><th>kp / kd match</th><th>impl</th></tr></thead><tbody id="rows"></tbody></table></div>
 </main>
 <script>
-const D=__DATA__;
-const sel=document.getElementById('joint');
+const ALL=__DATA__;
+let D=ALL[ALL.length-1].series;
+const sel=document.getElementById('joint'), ses=document.getElementById('session');
+ALL.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.textContent=x.name;ses.appendChild(o)});
+ses.value=ALL.length-1;
 [...D.joints,'kp'].forEach(j=>{const o=document.createElement('option');o.value=j;o.textContent=j==='kp'?'kp (fl_hipy)':j;sel.appendChild(o)});
+function pick(){const x=ALL[ses.value];D=x.series;document.getElementById('summary').innerHTML=x.summary;
+ document.getElementById('rows').innerHTML=x.table;draw();}
+ses.onchange=pick;
 function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
 function draw(){const j=sel.value;const fg=css('--fg');
  const tr=[{x:D.t,y:D.recorded[j],name:'rl_deploy',line:{color:css('--rec'),width:2.5}}];
  Object.keys(D.ours).forEach((k,i)=>tr.push({x:D.t,y:D.ours[k][j],name:k,line:{color:css(['--a','--b','--c','--d'][i%4]),width:1.2,dash:k.includes('one-step')?'dot':'solid'}}));
  Plotly.react('plot',tr,{margin:{t:10,r:10,b:40,l:50},paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',
   font:{color:fg},xaxis:{title:'time since recording start (s)',gridcolor:css('--line')},yaxis:{gridcolor:css('--line')},legend:{orientation:'h'}},{responsive:true});}
-sel.onchange=draw; draw();
+sel.onchange=draw; pick();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
 </script>"""
 
@@ -714,6 +765,10 @@ def main() -> None:
     )
     parser.add_argument("--rust", type=Path, help="the controller's replay binary")
     parser.add_argument("--summary", type=Path, help="HTML fragment shown above the plot")
+    parser.add_argument("--name", help="this session's name on the page")
+    parser.add_argument(
+        "--also", type=Path, nargs="*", default=[], help="earlier replay --out dirs to include"
+    )
     args = parser.parse_args()
     cfg = load_config()
     cfg["ecan_enable_word"] = 2
@@ -746,7 +801,16 @@ def main() -> None:
             f"kp={e['kp_match']:.3f} kd={e['kd_match']:.3f} enable={e['enable_match']:.3f}"
         )
     summary = args.summary.read_text() if args.summary else ""
-    write_page(s, results, report, args.out / "replay.html", "M20 rl_deploy replay", summary)
+    write_page(
+        s,
+        results,
+        report,
+        args.out / "replay.html",
+        "M20 rl_deploy replay",
+        summary,
+        name=args.name or args.session.name,
+        also=args.also,
+    )
     print(f"wrote {args.out / 'replay.html'}")
 
 

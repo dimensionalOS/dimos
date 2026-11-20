@@ -106,8 +106,8 @@ max_pitch_deg = 65.0
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner
-# on the robot (2026-11-20) the BasicFlat stand-in ran 6.14 s in all; the replay fits mode 0 for the decoded 3 s, then
-# mode -1 until the handover; the decoded settle is 0.5 s, what stretched it to 3.14 s is unknown (settle_s measured)
+# BasicFlat's is the decoded 3 s + 0.5 s (a fresh rl_deploy's first entry, robot 16:37); one later entry (14:17) ran
+# 6.14 s, mode 0 for 3 s: what stretches it then is unknown
 [[states.rl_control.stand_in]]
 gait = 0x1001
 runner = "six_axis_stand"
@@ -116,7 +116,7 @@ on_switch = false
 first_s = 3.0
 later_s = 1.5
 params = { mode = 0.0 }
-settle_s = 3.14
+settle_s = 0.5
 settle_params = { mode = -1.0 }
 
 # switching to NaviCharge runs the stand policy 1.5 s first; entering rl_control on NaviCharge does not (robot, 2026-11-20)
