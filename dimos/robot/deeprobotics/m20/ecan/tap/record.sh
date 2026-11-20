@@ -8,10 +8,15 @@
 #   record.sh install       shim into rl_deploy.service + restart rl_deploy (robot sitting/docked), wrap m20tool here
 #   record.sh <seconds>     one session in session_<time>/: motor frames, basic_server + DDS + m20tool traffic,
 #                           rl_deploy/basic_server logs and the vendor CSV of those seconds; then timeline.py on it
+#   record.sh stop          end a running recording early; it still saves everything
 #   record.sh status        shim loaded?, live reader?, recent sessions
 #   record.sh uninstall     remove the shim + restart rl_deploy (robot sitting/docked), unwrap m20tool
 #   record.sh wrap|unwrap   log every m20tool run on this board (bind mount, gone after a reboot)
 #                           (on GOS: dir=/var/tmp/ecan_capture record.sh wrap)
+# Charge-enable test controls in the shim (off unless the file exists, no restart needed):
+#   touch $dir/drop_charge_enable    rl_deploy's 0xb3 charge-enable frames are swallowed; rm it to stop
+#   touch $dir/inject_charge_enable  the next 3 zero-gain joint commands go out as 0xb3 (one request); the shim removes it
+# Removing the shim entirely: record.sh uninstall (restarts rl_deploy: robot sitting/docked).
 # Options: --force skips the robot-is-sitting check before a restart.
 set -euo pipefail
 dir=${dir:-/var/opt/robot/data/ecan_capture}
@@ -126,9 +131,16 @@ record() {
     start_ns=$(date +%s%N)
     touch "$dir/enable"
     echo "M20TOOL $start_ns $(hostname) record.sh session start $session" > /dev/udp/127.0.0.1/$note_port || true
-    echo "recording $seconds s into $session"
-    sleep "$seconds"
-    rm -f "$dir/enable"
+    echo "recording $seconds s into $session (end early: $0 stop, or Ctrl-C)"
+    # the wait ends at the timeout, on `record.sh stop` (SIGUSR1) or on Ctrl-C/TERM; the session is saved either way
+    echo $$ > "$dir/recording.pid"
+    sleep "$seconds" &
+    local sleeper=$!
+    trap 'kill $sleeper 2>/dev/null' USR1 INT TERM HUP
+    wait "$sleeper" 2>/dev/null || true
+    trap - USR1 INT TERM HUP
+    kill "$sleeper" 2>/dev/null || true
+    rm -f "$dir/enable" "$dir/recording.pid"
     end_ns=$(date +%s%N)
     echo "M20TOOL $end_ns $(hostname) record.sh session end" > /dev/udp/127.0.0.1/$note_port || true
     for _ in $(seq 1 50); do [ -f "$dir/last_stats" ] && break; sleep 0.1; done
@@ -178,15 +190,23 @@ case "${1:-status}" in
         ;;
     wrap) wrap ;;
     unwrap) unwrap ;;
+    stop)
+        [ -f "$dir/recording.pid" ] && kill -USR1 "$(cat "$dir/recording.pid")" 2>/dev/null \
+            && echo "asked the recording (pid $(cat "$dir/recording.pid")) to stop; it saves the session and exits" \
+            || { echo "no recording running" >&2; exit 1; }
+        ;;
     status)
         if shim_loaded; then echo "shim loaded in rl_deploy pid $(pid)"; else echo "shim not loaded (rl_deploy pid $(pid || true))"; fi
         [ -f "$dropin" ] && echo "drop-in present: $dropin" || echo "no drop-in"
+        [ -f "$dir/recording.pid" ] && kill -0 "$(cat "$dir/recording.pid")" 2>/dev/null && echo "recording now (pid $(cat "$dir/recording.pid"))"
+        [ -f "$dir/drop_charge_enable" ] && echo "DROPPING rl_deploy's charge-enable frames (rm $dir/drop_charge_enable)"
+        [ -f "$dir/charge_control_stats" ] && echo "charge controls: $(cat "$dir/charge_control_stats")"
         [ -S "$dir/live.sock" ] && echo "live reader bound: $dir/live.sock" || echo "no live reader"
         mounted /usr/local/bin/m20tool && echo "m20tool wrapped" || echo "m20tool not wrapped"
         ls -dt "$dir"/session_* "$dir"/capture_*.pcapng 2>/dev/null | head -5 || true
         ;;
     *[!0-9]*)
-        sed -n '5,13p' "$0"; exit 1
+        sed -n '5,19p' "$0"; exit 1
         ;;
     *)
         record "$1"

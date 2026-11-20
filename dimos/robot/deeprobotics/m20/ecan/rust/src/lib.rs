@@ -13,4 +13,5 @@
 // limitations under the License.
 
 pub mod convert;
+pub mod frames;
 pub mod module;

@@ -566,6 +566,27 @@ vy 0.3, wz 0.5 (6 s each) -> stop -> lie down. Values are body-frame means over 
 The Rust controller passes the same lie -> stand-up -> walk 0.5 m/s -> lie-down run in real time against the sim
 (`cargo test --test sim_sequence`), and its 15 runners match the Python ones step for step (`--test golden`).
 
+## Checked against the robot (replay.py, 2026-11-20 14:16 moving session)
+
+`python -m dimos.simulation.m20_policy_sim.replay SESSION --out DIR [--rust .../examples/replay]` feeds the Python
+pipeline and the Rust controller what rl_deploy saw (1 kHz joint frames, body IMU from DDS, cmd_vel, journal) and
+compares their commands with rl_deploy's. The deterministic states, gains and enable frames match on every tick; the
+policies match to float precision once their state lines up. Rules this settled [C, robot]:
+- On entering stand_up, lie_down and rl_control rl_deploy sends 3 enable frames (raw zeros, control word 2); the
+  state's clock starts at the first of them. Stand-up / lie-down also spline the wheels' position targets to 0
+  (velocity 0); the IK clamps to the front leg's ControlParameters range (knee 2.793) before mirroring.
+- rl_deploy times its splines on a wall clock that slips by a tick now and then (up to 0.001 rad here).
+- Runners keep their history, last action and phase across gait switches and rl_control entries; start-up gains
+  (NaviCharge x1.3, 29 steps, legs only) restart on every switch to the runner.
+- The gait phase advances before it is observed. 36-frame runners, when fresh, hold the default pose for 37 steps
+  (0.74 s) while their history fills, with that pose as the last action.
+- Entering rl_control on 0x3001 runs no stand-in; switching to 0x3001 does (1.5 s). The 0x1001 stand-in ran 6.14 s:
+  mode 0 for 3 s, then mode -1 (what makes it 6.14 s rather than 3.5 s is unknown).
+- /NAV_CMD is metric (m/s, rad/s) and divided per gait (BasicFlat (2, 1, 2), not the decoded (2, 0.8, 1.5)); the
+  charge manager's steer is normalized and, on 0x3004 / 0xf001, also drives the pose inputs (7 yaw, -24 x, -18 y).
+- The body IMU is a 56-byte DDS sample on UDP 7441 (200 Hz): stamp, roll / pitch / yaw in degrees, gyro rad/s,
+  accelerometer m/s^2; rotation from ZYX roll-pitch-yaw.
+
 ## Building the controller for the robot
 
     cd dimos/robot/deeprobotics/m20/controller/rust

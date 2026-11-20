@@ -31,8 +31,10 @@ use crate::types::RobotState;
 #[derive(Debug, Clone)]
 pub struct PolicyRequest {
     pub runner: String,
-    /// clear history / last action / phase first (a runner switch)
+    /// clear history / last action / phase first (fresh runner state)
     pub reset: bool,
+    /// the runner just became the active one (a gait switch): restart its start-up gains
+    pub activate: bool,
     pub state: RobotState,
     pub axes: [f64; 3],
     pub params: BTreeMap<String, f64>,
@@ -74,6 +76,18 @@ impl RunnerSet {
         Ok(RunnerSet { runners })
     }
 
+    /// One runner by name (replays set its state).
+    pub fn runner_mut(&mut self, name: &str) -> Option<&mut Runner> {
+        self.runners.get_mut(name)
+    }
+
+    /// No runners (state-only use of the controller).
+    pub fn empty() -> RunnerSet {
+        RunnerSet {
+            runners: HashMap::new(),
+        }
+    }
+
     pub fn serve(&mut self, req: &PolicyRequest) -> PolicyResult {
         let started = Instant::now();
         let mut gain_scale = 1.0;
@@ -82,6 +96,9 @@ impl RunnerSet {
             Some(r) => {
                 if req.reset {
                     r.reset();
+                }
+                if req.activate {
+                    r.pipeline.activate();
                 }
                 gain_scale = r.pipeline.gain_scale();
                 r.step(&req.state, &req.axes, &req.params)

@@ -12,6 +12,24 @@ path = "src/lib.rs"
 [[bin]]
 name = "m20_controller"
 path = "src/bin/m20_controller.rs"
+required-features = ["ecan"]
+
+# the dry-run shadow: build with --no-default-features --features shadow, so no motor-bus transport is in it
+[[bin]]
+name = "m20_shadow"
+path = "src/bin/m20_shadow.rs"
+required-features = ["shadow"]
+
+[[test]]
+name = "ecan_capture"
+required-features = ["ecan"]
+
+[features]
+default = ["ecan"]
+# the eth1 motor-bus backend (sends) and the charge-enable rule
+ecan = ["dep:m20-ecan", "dep:m20-battery"]
+# passive inputs (shim stream, DDS sniffer, journal) and the shadow log; never with "ecan" on the robot
+shadow = []
 
 [dependencies]
 anyhow = "1"
@@ -21,6 +39,11 @@ serde_json = "1"
 toml = "0.8"
 # pure Rust ONNX inference: no shared library to ship to the aarch64 board, cross-compiles with cargo zigbuild
 tract-onnx = "0.23"
+m20-ecan = { version = "0.3.1", optional = true }
+m20-battery = { version = "0.3.1", optional = true }
+
+[dev-dependencies]
+m20-ecan = "0.3.1"
 
 # tests run the policies: optimize dependencies (tract) without paying for release LTO links
 [profile.dev.package."*"]

@@ -232,18 +232,18 @@ fn stand_walk_lie_navi_flat() {
     check(&trace, &controller, &stats, (10.5, 15.0), 0.5, "navi_flat");
 }
 
-/// The default path: BasicFlat entry runs the stand-in for 3.5 s, then BasicFlat walks.
+/// The default path: BasicFlat entry runs the finetune_stand_15kg stand-in (6.14 s, as on the robot), then walks.
 #[test]
 fn stand_walk_lie_basic_flat() {
     let script = vec![
         step(0.0, Target::Passive, 0x1001, [0.0; 3]),
         step(2.0, Target::RlControl, 0x1001, [0.0; 3]),
-        step(10.5, Target::RlControl, 0x1001, [0.25, 0.0, 0.0]),
-        step(15.5, Target::RlControl, 0x1001, [0.0; 3]),
-        step(17.5, Target::LieDown, 0x1001, [0.0; 3]),
+        step(12.5, Target::RlControl, 0x1001, [0.25, 0.0, 0.0]),
+        step(17.5, Target::RlControl, 0x1001, [0.0; 3]),
+        step(19.5, Target::LieDown, 0x1001, [0.0; 3]),
     ];
-    let Some((trace, controller, stats)) = run_script(43932, script, 24.5) else {
+    let Some((trace, controller, stats)) = run_script(43932, script, 26.5) else {
         return;
     };
-    check(&trace, &controller, &stats, (11.0, 15.5), 0.5, "basic_flat");
+    check(&trace, &controller, &stats, (13.0, 17.5), 0.5, "basic_flat");
 }

@@ -1480,18 +1480,18 @@ dependencies = [
 
 [[package]]
 name = "m20-battery"
-version = "0.1.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a043f2a75d0537eaa4f063c4f1e705b0946285556aabf36ba791f328413b8ca9"
+checksum = "e41f0dca50c6364b6067ac43f8c34362151f1e79fef10250d713f6cdebd045f2"
 dependencies = [
  "m20-ecan",
 ]
 
 [[package]]
 name = "m20-ecan"
-version = "0.1.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "333613e48bd96c3fffad377746c59bf45d92c5f2c3b93b9a3cc90128a8220733"
+checksum = "596ba043dcbdffa386ad45729c40b0b140be8bb9ef3be0fd05c0b01deacb347b"
 dependencies = [
  "libc",
 ]

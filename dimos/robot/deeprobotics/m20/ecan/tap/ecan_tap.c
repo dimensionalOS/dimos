@@ -6,6 +6,12 @@
 // - pcapng: while $ECAN_TAP_DIR/enable exists, into capture_<time>.pcapng (one file per enable).
 // - live: while the unix datagram socket $ECAN_TAP_SOCKET exists (a reader bound it), as datagrams of records
 //   (32-byte header + Ethernet frame, layout in the m20-ecan crate's `tap` module).
+// Charge-enable test controls (off unless their file exists; the writer thread polls them, the RT threads read atomics):
+// - $ECAN_TAP_DIR/drop_charge_enable present: rl_deploy's 0xb3 charge-enable frames are not sent (reported as sent);
+//   every other frame passes untouched.
+// - $ECAN_TAP_DIR/inject_charge_enable appears: it is removed, and the next 3 joint commands go out as 0xb3 frames with
+//   their sequence numbers (what rl_deploy itself does), only while every joint's kp and kd in them are zero; a command
+//   with any gain cancels the request.
 // rl_deploy's real-time threads only memcpy into a preallocated ring (a full ring drops, never waits); a low-priority
 // writer thread on cores 1-3 does all file and socket I/O, and drops a datagram the reader is not ready for.
 #define _GNU_SOURCE
@@ -48,6 +54,32 @@ static _Atomic uint64_t ring_dropped_total = 0;
 static uint64_t consumed_seq = 1;
 static _Atomic int capturing = 0;
 static _Atomic uint8_t packet_fds[MAX_FD];
+static _Atomic int drop_charge_enable = 0;
+static _Atomic int inject_pending = 0;
+static _Atomic uint64_t dropped_charge_enable = 0;
+static _Atomic uint64_t injected_charge_enable = 0;
+
+#define ETH_LEN 14
+#define JOINT_UNITS 16
+#define JOINT_UNIT_BYTES 24
+
+static int is_charge_enable(const uint8_t* f, size_t len) {
+    return len >= ETH_LEN + 10 && f[12] == 0x44 && f[13] == 0x52 && f[ETH_LEN + 5] == 0xb3;
+}
+
+// a joint command (type 0x89 out) whose 16 units all carry kp = kd = 0
+static int is_passive_joint_command(const uint8_t* f, size_t len) {
+    if (len < ETH_LEN + 10 + JOINT_UNITS * JOINT_UNIT_BYTES || f[12] != 0x44 || f[13] != 0x52 || f[ETH_LEN + 5] != 0x89) {
+        return 0;
+    }
+    for (int i = 0; i < JOINT_UNITS; i++) {
+        const uint8_t* u = f + ETH_LEN + 10 + i * JOINT_UNIT_BYTES;
+        if (u[16] | u[17] | u[18] | u[19]) {
+            return 0;
+        }
+    }
+    return 1;
+}
 static ssize_t (*real_sendto)(int, const void*, size_t, int, const struct sockaddr*, socklen_t);
 static ssize_t (*real_recvfrom)(int, void*, size_t, int, struct sockaddr*, socklen_t*);
 static int (*real_socket)(int, int, int);
@@ -110,6 +142,32 @@ int socket(int domain, int type, int protocol) {
 ssize_t sendto(int fd, const void* buf, size_t len, int flags, const struct sockaddr* addr, socklen_t addrlen) {
     if (!real_sendto) {
         real_sendto = dlsym(RTLD_NEXT, "sendto");
+    }
+    if (is_packet_fd(fd)) {
+        const uint8_t* f = buf;
+        if (atomic_load_explicit(&drop_charge_enable, memory_order_relaxed) && is_charge_enable(f, len)) {
+            atomic_fetch_add_explicit(&dropped_charge_enable, 1, memory_order_relaxed);
+            return (ssize_t)len;
+        }
+        if (atomic_load_explicit(&inject_pending, memory_order_relaxed) > 0 && f[ETH_LEN + 5] == 0x89 &&
+            !is_passive_joint_command(f, len)) {
+            atomic_store_explicit(&inject_pending, 0, memory_order_relaxed);  // gains on: cancel, never inject later
+        }
+        if (atomic_load_explicit(&inject_pending, memory_order_relaxed) > 0 && is_passive_joint_command(f, len)) {
+            // header-only 0xb3 frame: rl_deploy's Ethernet header and sequence, magic 0, flags 0, code 0x11
+            uint8_t enable[ETH_LEN + 10] = {0};
+            memcpy(enable, f, ETH_LEN);
+            enable[ETH_LEN + 2] = f[ETH_LEN + 2];
+            enable[ETH_LEN + 4] = 0x11;
+            enable[ETH_LEN + 5] = 0xb3;
+            ssize_t sent = real_sendto(fd, enable, sizeof enable, flags, addr, addrlen);
+            if (sent > 0) {
+                atomic_fetch_sub_explicit(&inject_pending, 1, memory_order_relaxed);
+                atomic_fetch_add_explicit(&injected_charge_enable, 1, memory_order_relaxed);
+                capture(enable, (size_t)sent, 2);
+                return (ssize_t)len;  // rl_deploy sees its command as sent, as in its own charge-enable cycles
+            }
+        }
     }
     ssize_t result = real_sendto(fd, buf, len, flags, addr, addrlen);
     if (result > 0 && is_packet_fd(fd)) {
@@ -223,6 +281,26 @@ static void live_add(Live* live, const Slot* slot) {
     }
 }
 
+// counters of the charge-enable controls, for the test log
+static void write_control_stats(void) {
+    static uint64_t last = UINT64_MAX;
+    uint64_t now = atomic_load(&dropped_charge_enable) * 4 + atomic_load(&injected_charge_enable) * 1000003u +
+                   (uint64_t)atomic_load(&drop_charge_enable) + (uint64_t)atomic_load(&inject_pending) * 7919u;
+    if (now == last) {
+        return;  // only when something changed
+    }
+    last = now;
+    char path[320];
+    snprintf(path, sizeof path, "%s/charge_control_stats", tap_dir);
+    FILE* f = fopen(path, "w");
+    if (f) {
+        fprintf(f, "drop=%d dropped=%llu injected=%llu pending=%d\n", atomic_load(&drop_charge_enable),
+                (unsigned long long)atomic_load(&dropped_charge_enable),
+                (unsigned long long)atomic_load(&injected_charge_enable), atomic_load(&inject_pending));
+        fclose(f);
+    }
+}
+
 static void* writer_main(void* unused) {
     (void)unused;
     cpu_set_t cpus;
@@ -233,8 +311,10 @@ static void* writer_main(void* unused) {
     pthread_setschedparam(pthread_self(), SCHED_OTHER, &param);
     pthread_setname_np(pthread_self(), "ecan_tap");
     setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 10);
-    char enable_path[300];
+    char enable_path[300], drop_path[300], inject_path[300];
     snprintf(enable_path, sizeof enable_path, "%s/enable", tap_dir);
+    snprintf(drop_path, sizeof drop_path, "%s/drop_charge_enable", tap_dir);
+    snprintf(inject_path, sizeof inject_path, "%s/inject_charge_enable", tap_dir);
     Live live = {.fd = -1, .buffer = malloc(datagram_bytes + 2 * (RECORD_HEADER + SLOT_BYTES))};
     live.address.sun_family = AF_UNIX;
     memcpy(live.address.sun_path, live_path, sizeof live.address.sun_path);
@@ -249,6 +329,12 @@ static void* writer_main(void* unused) {
             poll_ticks = 0;
             struct stat st;
             int want_file = stat(enable_path, &st) == 0;
+            int drop = stat(drop_path, &st) == 0;
+            atomic_store(&drop_charge_enable, drop);
+            if (unlink(inject_path) == 0) {
+                atomic_store(&inject_pending, 3);
+            }
+            write_control_stats();
             int reader = live_path[0] && live.buffer && stat(live_path, &st) == 0 && S_ISSOCK(st.st_mode);
             if (reader && live.fd < 0) {
                 live.fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);

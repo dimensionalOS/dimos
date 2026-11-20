@@ -171,6 +171,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "m20-battery",
+ "m20-ecan",
  "serde",
  "serde_json",
  "toml",
@@ -367,6 +369,24 @@ name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
+
+[[package]]
+name = "m20-battery"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e41f0dca50c6364b6067ac43f8c34362151f1e79fef10250d713f6cdebd045f2"
+dependencies = [
+ "m20-ecan",
+]
+
+[[package]]
+name = "m20-ecan"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "596ba043dcbdffa386ad45729c40b0b140be8bb9ef3be0fd05c0b01deacb347b"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "maplit"

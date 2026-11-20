@@ -7,9 +7,14 @@
     "battery_right": "dimos/ecan_battery_right/sensor_msgs.BatteryState"
   },
   "config": {
+    "mode": "tap",
     "socket_path": "/var/opt/robot/data/ecan_capture/live.sock",
+    "interface": "eth1",
+    "charge_enable": true,
     "frame_id": "base_link",
-    "silence_warning_s": 5.0
+    "silence_warning_s": 5.0,
+    "guard_max_torque": 1.0,
+    "guard_max_velocity": 0.5
   },
   "session": {
     "mode": "client",

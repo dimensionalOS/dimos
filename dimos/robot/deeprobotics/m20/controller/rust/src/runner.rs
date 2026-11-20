@@ -136,6 +136,10 @@ pub struct Pipeline {
     pub clock: Option<GaitClock>,
     /// policy steps since the last reset
     pub steps: u64,
+    /// policy steps since the last switch to this runner
+    pub active_steps: u64,
+    /// frames a fresh sequence runner has collected toward warmup_steps
+    pub collected: u64,
 }
 
 fn arr16(v: &[f64]) -> [f64; JOINTS] {
@@ -162,13 +166,20 @@ impl Pipeline {
             command: [0.0; 3],
             clock: spec.gait_clock.as_ref().map(GaitClock::new),
             steps: 0,
+            active_steps: 0,
+            collected: 0,
         })
     }
 
-    /// rl_deploy scales kp / kd for a runner's first steps (NaviCharge x1.3 for 29 steps).
+    /// The runner becomes the active one (a gait switch): its start-up gains count from here.
+    pub fn activate(&mut self) {
+        self.active_steps = 0;
+    }
+
+    /// rl_deploy scales kp / kd for a runner's first steps after each switch to it (NaviCharge x1.3 for 29).
     pub fn gain_scale(&self) -> f64 {
         match self.spec.start_gain_scale {
-            Some(k) if self.steps < self.spec.start_gain_steps => k,
+            Some(k) if self.active_steps < self.spec.start_gain_steps => k,
             _ => 1.0,
         }
     }
@@ -181,6 +192,8 @@ impl Pipeline {
         self.params = self.spec.command_params.clone();
         self.clock = self.spec.gait_clock.as_ref().map(GaitClock::new);
         self.steps = 0;
+        self.active_steps = 0;
+        self.collected = 0;
     }
 
     /// Normalized axes [-1, 1] -> physical (vx, vy, wz), slew-limited per policy step where configured.
@@ -278,12 +291,58 @@ impl Pipeline {
         Ok(f.into_iter().map(|v| v as f32).collect())
     }
 
+    /// The gait phase advances before it is observed (rl_deploy: the first frame after a reset sees one step).
+    pub fn advance_phase(&mut self) {
+        for block in &self.spec.obs {
+            if let ObsBlock::Phase { frequency } = block {
+                self.phase = (self.phase + self.policy_dt * frequency).rem_euclid(1.0);
+            }
+        }
+    }
+
+    /// A fresh sequence runner only collects frames for its first warmup_steps, holding the default pose (its last
+    /// action is that pose, as the absolute-target networks would have output it).
+    pub fn warmup(&mut self, frame: Vec<f32>) -> Result<Targets> {
+        self.history.push_back(frame);
+        while self.history.len() > self.spec.history {
+            self.history.pop_front();
+        }
+        let (command, dt) = (self.command, self.policy_dt);
+        if let Some(clock) = &mut self.clock {
+            clock.advance(dt, &command);
+        }
+        let act = &self.spec.action;
+        let mut a = [0.0; JOINTS];
+        if act.leg_mode == LegMode::Absolute {
+            let scale = tile(&act.leg_scale, 12)?;
+            match act.layout {
+                ActionLayout::PerLeg => {
+                    for (k, &i) in JointSet::LegsPerLeg.indices().iter().enumerate() {
+                        a[i] = self.default[i] / scale[k];
+                    }
+                }
+                ActionLayout::LegsByTypeThenWheels => {
+                    for (k, &i) in JointSet::LegsByType.indices().iter().enumerate() {
+                        a[k] = self.default[i] / scale[k];
+                    }
+                }
+            }
+        }
+        self.last_action = a;
+        self.collected += 1;
+        Ok(Targets {
+            q: self.default,
+            wheel_velocity: [0.0; 4],
+            action: a,
+            velocity_estimate: None,
+        })
+    }
+
     /// Push the frame into the history and build the network inputs (name order: state, command, uncertain).
     pub fn network_input(&mut self, frame: Vec<f32>) -> Result<Vec<Tensor>> {
         let n = self.spec.history;
         if self.history.is_empty() {
-            self.history
-                .extend(std::iter::repeat(frame.clone()).take(n));
+            self.history.extend(std::iter::repeat_n(frame.clone(), n));
         } else {
             self.history.pop_front();
             self.history.push_back(frame.clone());
@@ -383,11 +442,7 @@ impl Pipeline {
         }
         self.last_action = a;
         self.steps += 1;
-        for block in &self.spec.obs {
-            if let ObsBlock::Phase { frequency } = block {
-                self.phase = (self.phase + self.policy_dt * frequency).rem_euclid(1.0);
-            }
-        }
+        self.active_steps += 1;
         let (leg_idx, leg_a, wheel_a): (&[usize], Vec<f64>, Vec<f64>) = match act.layout {
             ActionLayout::PerLeg => {
                 let idx = JointSet::LegsPerLeg.indices();
@@ -484,8 +539,15 @@ impl Runner {
             .params
             .extend(params.iter().map(|(k, v)| (k.clone(), *v)));
         self.pipeline.update_command(axes);
+        let warming = self.pipeline.collected < self.pipeline.spec.warmup_steps;
+        if !warming {
+            self.pipeline.advance_phase();
+        }
         let frame = self.pipeline.frame(s)?;
         self.last_frame.clone_from(&frame);
+        if warming {
+            return self.pipeline.warmup(frame);
+        }
         let inputs = self.pipeline.network_input(frame)?;
         let (action, vel) = self.infer(inputs)?;
         self.pipeline.apply_output(&action, vel.as_deref())

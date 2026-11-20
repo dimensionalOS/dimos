@@ -25,6 +25,17 @@ use crate::policy::{PolicyRequest, PolicyService};
 use crate::runner::Targets;
 use crate::types::{roll_pitch, JointCommand, RobotState, Target, UserCommand};
 
+/// The config's name of a state (states.enable.on_enter).
+pub fn state_name(state: State) -> &'static str {
+    match state {
+        State::Passive => "passive",
+        State::StandUp => "stand_up",
+        State::RlControl => "rl_control",
+        State::LieDown => "lie_down",
+        State::JointDamping => "joint_damping",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Passive,
@@ -51,22 +62,20 @@ pub fn cubic(p0: f64, v0: f64, p1: f64, v1: f64, t: f64, total: f64) -> (f64, f6
 pub fn leg_pose_for_height(robot: &Robot, h: f64, hipx: f64) -> [f64; JOINTS] {
     let (l1, l2) = (robot.thigh_length, robot.shank_length);
     let h = h.abs().min(0.999 * (l1 + l2));
-    let hipy = -((l1 * l1 + h * h - l2 * l2) / (2.0 * h * l1))
+    // front-leg IK clamped to the front leg's ik range (rl_deploy ControlParameters), then mirrored
+    let hipy = (-((l1 * l1 + h * h - l2 * l2) / (2.0 * h * l1))
         .clamp(-1.0, 1.0)
-        .acos();
-    let knee = PI
+        .acos())
+    .clamp(robot.ik_lower[1], robot.ik_upper[1]);
+    let knee = (PI
         - ((l1 * l1 + l2 * l2 - h * h) / (2.0 * l1 * l2))
             .clamp(-1.0, 1.0)
-            .acos();
-    let pose = [
+            .acos())
+    .clamp(robot.ik_lower[2], robot.ik_upper[2]);
+    [
         hipx, hipy, knee, 0.0, -hipx, hipy, knee, 0.0, hipx, -hipy, -knee, 0.0, -hipx, -hipy,
         -knee, 0.0,
-    ];
-    let mut out = [0.0; JOINTS];
-    for i in 0..JOINTS {
-        out[i] = pose[i].clamp(robot.joint_lower[i], robot.joint_upper[i]);
-    }
-    out
+    ]
 }
 
 fn arr16(v: Vec<f64>) -> [f64; JOINTS] {
@@ -123,6 +132,9 @@ pub struct Controller {
     blocked_target: Option<Target>,
     last_stamp: Option<f64>,
     stale_run: u64,
+    enable_left: u64,
+    fault_checks: bool,
+    stand_ins_run: std::collections::BTreeSet<u32>,
     rl_entries: u64,
     stand_in: Option<ActiveStandIn>,
     gait: u32,
@@ -132,6 +144,7 @@ pub struct Controller {
     targets: Option<Targets>,
     gain_scale: f64,
     reset_pending: bool,
+    activate_pending: bool,
     since_offer: u64,
     seq: u64,
     pub transitions: Vec<(f64, State, State)>,
@@ -157,6 +170,9 @@ impl Controller {
             blocked_target: None,
             last_stamp: None,
             stale_run: 0,
+            enable_left: 0,
+            fault_checks: true,
+            stand_ins_run: Default::default(),
             rl_entries: 0,
             stand_in: None,
             gait: 0,
@@ -166,6 +182,7 @@ impl Controller {
             targets: None,
             gain_scale: 1.0,
             reset_pending: false,
+            activate_pending: false,
             since_offer: 0,
             seq: 0,
             transitions: Vec::new(),
@@ -201,6 +218,9 @@ impl Controller {
 
     /// Recomputed every tick like rl_deploy's SafeController (a fault clears when its cause does).
     fn check_faults(&self, s: &RobotState) -> Option<String> {
+        if !self.fault_checks {
+            return None;
+        }
         let safety = &self.cfg.safety;
         if self.time < safety.startup_grace_s {
             return None;
@@ -308,6 +328,12 @@ impl Controller {
         self.state_time = 0.0;
         self.enter_q = s.q;
         self.enter_dq = s.dq;
+        let enable = &self.cfg.states.enable;
+        self.enable_left = if enable.on_enter.iter().any(|n| n == state_name(next)) {
+            enable.ticks
+        } else {
+            0
+        };
         if next == State::RlControl {
             let rl = &self.cfg.states.rl_control;
             self.entry_raw_gait = cmd.gait;
@@ -324,22 +350,23 @@ impl Controller {
     }
 
     fn start_stand_in(&mut self, gait: u32, on_entry: bool) {
-        self.stand_in = self
+        let spec = self
             .cfg
             .states
             .rl_control
             .stand_in
             .iter()
-            .find(|si| si.gait == gait && (on_entry || si.on_switch))
-            .map(|si| ActiveStandIn {
-                spec: si.clone(),
-                duration: if self.rl_entries == 0 {
-                    si.first_s
-                } else {
-                    si.later_s
-                },
+            .find(|si| si.gait == gait && if on_entry { si.on_entry } else { si.on_switch })
+            .cloned();
+        // first_s the first time this stand-in runs, later_s after
+        self.stand_in = spec.map(|si| {
+            let first = self.stand_ins_run.insert(si.gait);
+            ActiveStandIn {
+                duration: if first { si.first_s } else { si.later_s },
+                spec: si,
                 elapsed: 0.0,
-            });
+            }
+        });
     }
 
     pub fn tick(
@@ -353,7 +380,7 @@ impl Controller {
             || self
                 .fault
                 .as_deref()
-                .map_or(false, |f| f.starts_with("policy"))
+                .is_some_and(|f| f.starts_with("policy"))
         {
             self.fault = fault.or(self.fault.take());
         } else {
@@ -373,10 +400,43 @@ impl Controller {
             State::LieDown => self.lie_down(),
             State::RlControl => self.rl_control(s, cmd, policy),
         };
+        let out = if self.enable_left > 0 {
+            self.enable_left -= 1;
+            JointCommand {
+                enable: true,
+                ..Default::default()
+            }
+        } else {
+            out
+        };
         self.state_time += self.dt;
         self.time += self.dt;
         self.counters.ticks += 1;
         out
+    }
+
+    /// Jump to `state` now (replays of recorded sessions): no stand-in policy, optional enable frames.
+    pub fn force(&mut self, state: State, s: &RobotState, cmd: &UserCommand, enable: bool) {
+        self.enter(state, s, cmd);
+        self.stand_in = None;
+        if !enable {
+            self.enable_left = 0;
+        }
+    }
+
+    /// Hold `state` regardless of the transition rules (replays compare transitions separately).
+    pub fn hold_state(&mut self, state: State) {
+        self.state = state;
+    }
+
+    /// Turn fault detection off (replays of recorded sessions) or back on.
+    pub fn set_fault_checks(&mut self, on: bool) {
+        self.fault_checks = on;
+    }
+
+    /// Place the controller's clock (replays start past the start-up gates).
+    pub fn set_time(&mut self, time: f64) {
+        self.time = time;
     }
 
     fn constant(&self, kp: &[f64], kd: &[f64]) -> JointCommand {
@@ -399,10 +459,14 @@ impl Controller {
         let (t, total) = (self.state_time, p.phase_s);
         if t <= total {
             let goal = leg_pose_for_height(&self.cfg.robot, p.crouch_height, p.hipx);
-            for i in 0..JOINTS {
-                (c.q[i], c.dq[i]) =
-                    cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, total);
+            for (i, &target) in goal.iter().enumerate() {
+                (c.q[i], c.dq[i]) = cubic(self.enter_q[i], self.enter_dq[i], target, 0.0, t, total);
             }
+            // the wheels' position targets follow the spline to 0 too (kp 0); their velocity targets stay 0
+            for i in (3..JOINTS).step_by(4) {
+                c.dq[i] = 0.0;
+            }
+            return c;
         } else {
             let (h, _) = cubic(p.crouch_height, 0.0, p.stand_height, 0.0, t - total, total);
             let (h_next, _) = cubic(
@@ -415,8 +479,8 @@ impl Controller {
             );
             c.q = leg_pose_for_height(&self.cfg.robot, h, p.hipx);
             let next = leg_pose_for_height(&self.cfg.robot, h_next, p.hipx);
-            for i in 0..JOINTS {
-                c.dq[i] = (next[i] - c.q[i]) / self.dt;
+            for (dq, (&n, &q)) in c.dq.iter_mut().zip(next.iter().zip(&c.q)) {
+                *dq = (n - q) / self.dt;
             }
         }
         for i in (3..JOINTS).step_by(4) {
@@ -445,13 +509,27 @@ impl Controller {
             kd,
             ..Default::default()
         };
-        for i in 0..JOINTS {
-            if i % 4 != 3 {
-                (c.q[i], c.dq[i]) =
-                    cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, total);
+        for (i, &target) in goal.iter().enumerate() {
+            (c.q[i], c.dq[i]) = cubic(self.enter_q[i], self.enter_dq[i], target, 0.0, t, total);
+            if i % 4 == 3 {
+                c.dq[i] = 0.0;
             }
         }
         c
+    }
+
+    /// The normalized axes: cmd.axes, or a metric cmd.velocity over the runner's real_steer_divisor.
+    fn axes_for(&self, runner: &str, cmd: &UserCommand) -> [f64; 3] {
+        match (cmd.velocity, self.cfg.runners[runner].real_steer_divisor) {
+            (Some(v), Some(d)) => {
+                let mut a = [0.0; 3];
+                for i in 0..3 {
+                    a[i] = if d[i] > 0.0 { v[i] / d[i] } else { 0.0 };
+                }
+                a
+            }
+            _ => cmd.axes,
+        }
     }
 
     fn rl_control(
@@ -489,7 +567,9 @@ impl Controller {
         };
         if self.runner.as_deref() != Some(wanted.as_str()) {
             self.runner = Some(wanted.clone());
-            self.reset_pending = true;
+            // rl_deploy keeps one object per runner: its history and last action carry over to the next use
+            self.reset_pending = false;
+            self.activate_pending = true;
             self.since_offer = self.cfg.timing.policy_decimation;
             self.gain_scale = 1.0;
         }
@@ -515,20 +595,23 @@ impl Controller {
             let req = PolicyRequest {
                 runner: wanted.clone(),
                 reset: self.reset_pending,
+                activate: self.activate_pending,
                 state: s.clone(),
-                axes: cmd.axes,
+                axes: self.axes_for(&wanted, cmd),
                 params,
                 seq: self.seq,
             };
             if policy.offer(req) {
                 self.since_offer = 0;
                 self.reset_pending = false;
+                self.activate_pending = false;
             } else {
                 self.counters.policy_offers_refused += 1;
             }
         }
         let (mut kp, mut kd) = self.runner_gains[&wanted];
-        for i in 0..JOINTS {
+        // legs only: on the robot NaviCharge's x1.3 start-up gains left the wheels' kd at 0.6
+        for i in (0..JOINTS).filter(|i| i % 4 != 3) {
             kp[i] *= self.gain_scale;
             kd[i] *= self.gain_scale;
         }
