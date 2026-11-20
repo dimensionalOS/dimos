@@ -1433,4 +1433,19 @@ mod tests {
             "live voxel bypasses support_min"
         );
     }
+
+    #[test]
+    fn a_live_voxel_that_is_already_healthy_bypasses_support_min() {
+        let mut map = map_with_healthy(&[(20, 0, 0)]);
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((20, 0, 0));
+        map.set_support_min(3);
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, None, &live),
+            false,
+            "world",
+            Time::default(),
+        );
+        assert!(cloud_points(&local).contains(&voxel_center(20, 0, 0)));
+    }
 }
