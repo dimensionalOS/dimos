@@ -130,3 +130,29 @@ def test_pose_fill_db_copies_selected_streams(pose_fill_source, tmp_path):
         assert [(obs.data, obs.pose_tuple) for obs in store.stream("other")] == [
             ("preserved", (4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0))
         ]
+
+
+@pytest.mark.parametrize("streams", [None, ["lidar", "aux"]])
+def test_pose_fill_db_shares_window_across_offset_streams(
+    tmp_path: Path, streams: list[str] | None
+) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    with SqliteStore(path=str(source)) as store:
+        store.stream("reference", str).append("start", ts=100.0)
+        for ts in (100.25, 101.0, 101.25, 101.5, 102.0):
+            store.stream("lidar", str).append(f"scan-{ts}", ts=ts)
+        for ts in (100.5, 101.0, 101.25, 101.5, 102.0):
+            store.stream("odom", Transform).append(Transform(), ts=ts)
+        for ts in (100.75, 101.0, 101.25, 101.5, 102.0):
+            store.stream("aux", str).append(f"aux-{ts}", ts=ts)
+
+    written = pose_fill_db(source, destination, streams=streams, seek=1.0, duration=0.5)
+
+    expected = {"lidar": 2, "aux": 2}
+    if streams is None:
+        expected.update(reference=0, odom=2)
+    assert written == expected
+    with SqliteStore(path=str(destination), must_exist=True) as store:
+        assert [obs.ts for obs in store.stream("lidar").order_by("ts")] == [101.0, 101.25]
+        assert [obs.ts for obs in store.stream("aux").order_by("ts")] == [101.0, 101.25]

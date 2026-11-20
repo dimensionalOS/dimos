@@ -168,7 +168,9 @@ class PickAndPlaceModule(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         """Keep the stack's grasp generators: the modules that answer propose_grasps_for."""
         self._grasp_generators = {
-            module.remote_name: module for module in modules if "propose_grasps_for" in module.rpcs
+            module.instance_name: module
+            for module in modules
+            if "propose_grasps_for" in module.rpcs
         }
 
     @skill
