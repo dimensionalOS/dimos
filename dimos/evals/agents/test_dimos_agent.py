@@ -65,7 +65,7 @@ def test_preflight_checks_the_agent_installation(mocker, monkeypatch, returncode
     )
 
 
-def test_preflight_retries_then_caches_agent_version(mocker, monkeypatch):
+def test_preflight_retries_a_failed_version_check_once(mocker, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     mocker.patch("dimos.evals.agents.dimos_agent.shutil.which", return_value="/test/bin/dimos")
     version = mocker.patch(
