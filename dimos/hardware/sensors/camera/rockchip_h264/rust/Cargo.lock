@@ -577,20 +577,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-rockchip-h264-cameras"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dimos-module",
- "lcm-msgs",
- "rockchip-h264",
- "serde",
- "tokio",
- "tracing",
- "validator",
-]
-
-[[package]]
 name = "dimos-module"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos?rev=0c1dfed7801c390ea1f111bd5f8bbfc2a16d1411#0c1dfed7801c390ea1f111bd5f8bbfc2a16d1411"
@@ -620,6 +606,20 @@ dependencies = [
  "quote",
  "syn 3.0.4",
  "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
+name = "dimos-rockchip-h264-cameras"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dimos-module",
+ "lcm-msgs",
+ "rockchip-h264",
+ "serde",
+ "tokio",
+ "tracing",
+ "validator",
 ]
 
 [[package]]
