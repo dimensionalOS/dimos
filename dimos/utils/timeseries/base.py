@@ -241,8 +241,11 @@ class TimeSeriesStore(Generic[T], ABC):
             end = start_ts + duration
 
         while True:
-            yield from self._iter_items(start=start, end=end)
-            if not loop:
+            emitted = False
+            for item in self._iter_items(start=start, end=end):
+                emitted = True
+                yield item
+            if not loop or not emitted:
                 break
 
     def iterate(
