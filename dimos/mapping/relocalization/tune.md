@@ -130,7 +130,7 @@ The procedure:
     run top studies against previously unseen data to check for overfiting
     `python -m dimos.mapping.relocalization.tune verify --study <name> --top 8 --repeats 10`.
 
-6. **Add the preset** in `lidar_relocalizer.py`, named for the rig, with a comment
+6. **Add the preset** in `cloud_relocalizer.py`, named for the rig, with a comment
    saying which study and trial it came from.
 
 

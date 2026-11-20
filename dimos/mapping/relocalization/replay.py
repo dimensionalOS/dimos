@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, NamedTuple
 
 import typer
@@ -29,7 +30,7 @@ import typer
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
-from dimos.mapping.relocalization.lidar_relocalizer import DEFAULT_PRESET, PRESETS, LidarRelocalizer
+from dimos.mapping.relocalization.cloud_relocalizer import DEFAULT_PRESET, PRESETS, CloudRelocalizer
 from dimos.mapping.relocalization.module import Config
 from dimos.mapping.relocalization.utils import fix_error, load_premap, yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
@@ -106,14 +107,17 @@ def replay(
     premap: PointCloud2,
     preset: str,
     world_frame: str,
-    reloc_interval: float,
     min_local_points: int,
     voxel_size: float,
     after_s: float,
     from_time: float | None,
     to_time: float | None,
 ) -> Replay:
-    """Drive the recording through the relocalizer and log the run to rerun."""
+    """Drive the recording through the relocalizer and log the run to rerun.
+
+    As live, an attempt starts on the first local map once the previous one has finished: it is
+    busy for as many recorded seconds as the attempt took to run.
+    """
     import rerun as rr
 
     # Needs the native ray tracer, which the other tune commands do without.
@@ -126,13 +130,13 @@ def replay(
     ray = RayTraceMap(voxel_size=voxel_size)
     frames = lidar.transform(pose_from_tf(tf, world_frame)).transform(ray)
 
-    relocalizer = LidarRelocalizer(premap.pointcloud, PRESETS[preset])
+    relocalizer = CloudRelocalizer(premap.pointcloud, PRESETS[preset])
     recorded = recorded_fix(store, world_frame, MAP_FRAME)
 
     attempts: list[ReplayAttempt] = []
     fix: Transform | None = None
     fix_ts = 0.0
-    next_attempt = 0.0
+    busy_until = -math.inf
     stop_at = math.inf
     t0: float | None = None
     for obs in frames:
@@ -143,10 +147,11 @@ def replay(
             break
         rr.set_time(TIMELINE, timestamp=obs.ts)
         rr.log("world/local_map", voxel_map_points(obs.data.points_f32(), voxel_size))
-        if fix is not None or obs.ts < next_attempt or len(obs.data) < min_local_points:
+        if fix is not None or obs.ts < busy_until or len(obs.data) < min_local_points:
             continue
-        next_attempt = obs.ts + reloc_interval
+        started = time.monotonic()
         fix_attempt = relocalizer.attempt(obs.data.pointcloud, world_frame, MAP_FRAME)
+        busy_until = obs.ts + time.monotonic() - started
         attempts.append(ReplayAttempt(obs.ts - t0, fix_attempt.result.fitness, fix_attempt.fix))
         rr.log(FITNESS_SERIES, rr.Scalars(fix_attempt.result.fitness))
         _print_attempt(attempts[-1], recorded)
@@ -206,11 +211,6 @@ def main(
     lidar: str = typer.Option("lidar", "--lidar", help="Lidar stream in the recording"),
     world_frame: str = typer.Option("odom", "--world-frame", help="Frame the live map is built in"),
     preset: str = typer.Option(DEFAULT_PRESET, "--preset", help=f"One of {sorted(PRESETS)}"),
-    reloc_interval: float = typer.Option(
-        _FIELDS["reloc_interval"].default,
-        "--reloc-interval",
-        help="Seconds of recording between attempts",
-    ),
     min_local_points: int = typer.Option(
         _FIELDS["min_local_points"].default,
         "--min-local-points",
@@ -242,7 +242,6 @@ def main(
             premap=premap_cloud,
             preset=preset,
             world_frame=world_frame,
-            reloc_interval=reloc_interval,
             min_local_points=min_local_points,
             voxel_size=voxel_size,
             after_s=after,

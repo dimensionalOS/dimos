@@ -34,10 +34,10 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import numpy as np
 import typer
 
-from dimos.mapping.relocalization.lidar_relocalizer import (
+from dimos.mapping.relocalization.cloud_relocalizer import (
     DEFAULT_PRESET,
     PRESETS,
-    LidarRelocalizer,
+    CloudRelocalizer,
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.replay import main as replay_main
@@ -373,7 +373,7 @@ def run_probes(
     elapsed time, matching included). Uses ``align`` so refused fixes stay visible.
     """
     premap, _ = fixtures(name)
-    relocalizer = LidarRelocalizer(premap.pointcloud, config)
+    relocalizer = CloudRelocalizer(premap.pointcloud, config)
     rate = scan_rate(name)
     probes: list[Probe] = []
 

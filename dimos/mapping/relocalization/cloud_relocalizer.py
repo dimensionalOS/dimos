@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Placing a live lidar cloud into a prior map.
+"""Placing a live point cloud (lidar scans or a local map) into a prior map.
 
 Coarse FPFH+RANSAC to find the place, then point-to-plane ICP over narrowing
-distances to settle it. Pure computation; ``lidar/module.py`` is the runtime
+distances to settle it. Pure computation; ``module.py`` is the runtime
 and ``tune.py`` measures it.
 
-    relocalizer = LidarRelocalizer(premap_cloud, PRESETS["mid360"])
+    relocalizer = CloudRelocalizer(premap_cloud, PRESETS["mid360"])
     tf = relocalizer.relocalize(live_cloud, "world", "map")  # world -> map, or None
 
 Configs are per-rig :data:`PRESETS`; see tune.md to measure a new one.
@@ -117,7 +117,7 @@ PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "mid360-nav": MID360_N
 DEFAULT_PRESET = "mid360"
 
 
-class LidarRelocalizer:
+class CloudRelocalizer:
     """A prior map, preprocessed once under ``config``, that places live clouds into itself."""
 
     def __init__(self, global_map: PointCloud, config: RelocalizeConfig) -> None:

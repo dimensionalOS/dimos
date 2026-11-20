@@ -36,15 +36,14 @@ from reactivex import Observable, Subject, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.mapping.relocalization.lidar_relocalizer import (
+from dimos.mapping.relocalization.cloud_relocalizer import (
     MID360,
-    LidarRelocalizer,
+    CloudRelocalizer,
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.utils import (
     DEFAULT_MAP_FRAME,
     LiveMap,
-    fix_stream,
     load_locations,
     load_premap,
     moved,
@@ -69,8 +68,15 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
-_SPARSE_CLOUD_GRACE_S = 10.0
-_SKIP_LOG_INTERVAL_S = 5.0
+
+def _stamped(tf: Transform, ts: float) -> Transform:
+    return Transform(
+        translation=tf.translation,
+        rotation=tf.rotation,
+        frame_id=tf.frame_id,
+        child_frame_id=tf.child_frame_id,
+        ts=ts,
+    )
 
 
 class Config(ModuleConfig):
@@ -82,11 +88,6 @@ class Config(ModuleConfig):
     world_frame: str = "world"
     # Frame for the loaded premap; None: the frame its stream names
     map_frame: str | None = None
-    # Seconds between world -> map tf republishes (tf is not latched); stamped lookups match within
-    # ~0.1 s (the ray tracer's tf_match_tolerance_s), so a slower edge fails them
-    tf_interval: float = 0.05
-    # Seconds between `loaded_map` republishes after the first fix; 0 publishes it once
-    republish_loaded_map: float = 0.0
     # Stop attempting once a fix is accepted; otherwise every later attempt refines the current
     # fix by ICP alone, and with local_map matches only its non-premap voxels (needs the premap bit)
     relocalize_once: bool = True
@@ -94,17 +95,16 @@ class Config(ModuleConfig):
     new_map: bool = False
     # Live cloud to match against the premap: the ray tracer's local_map, a window of lidar scans, or none
     live_cloud: Literal["none", "local_map", "lidar"] = "none"
-    reloc_interval: float = 2.0
     # Skip clouds sparser than this (smaller local maps are too small a patch; a mid360 sweep is ~3k points)
     min_local_points: int = 20_000
-    # Rig preset to align with, see lidar_relocalizer.PRESETS
+    # Seconds live clouds may stay under min_local_points (normal while the map builds) before that warns, once
+    sparse_cloud_grace_s: float = 10.0
+    # Rig preset to align with, see cloud_relocalizer.PRESETS
     relocalize: RelocalizeConfig = MID360
-    # relocalize_once off: fold local_map (at most) or the scans since (batched) into the kept live map this often (s)
-    accumulate_interval: float = 1.0
+    # relocalize_once off: the kept live map's voxel edge (m)
+    live_voxel_m: float = 0.1
     # ... lidar: a scan's tf must be stamped within this of the scan (s)
     scan_tf_tolerance_s: float = 0.1
-    # ... the kept live map's voxel edge (m)
-    live_voxel_m: float = 0.1
     # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
     match_radius_m: float = 30.0
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
@@ -149,11 +149,14 @@ class PremapModule(Module):
         self._cloud_stream: str | None = None
         self._map_frame: str | None = None
         self._locations_stream: str | None = None
-        self._relocalizer: LidarRelocalizer | None = None
-        self._first_sparse_cloud: float | None = None
-        self._last_skip_log: float | None = None
+        self._relocalizer: CloudRelocalizer | None = None
+        # When live clouds went under min_local_points, None while they have enough
+        self._sparse_since: float | None = None
+        self._sparse_warned = False
         self.live = LiveMap(self.config.live_voxel_m)
-        # Scans placed since the last batch was kept
+        # Fires whenever the kept live map grows, the continuous match's cue
+        self._live_changed: Subject[None] = Subject()
+        # Scans placed since the last fold
         self._scans: list[np.ndarray] = []
         self._center: tuple[float, float] | None = None
         self._refusals = 0
@@ -182,38 +185,36 @@ class PremapModule(Module):
     def _start_matching(self) -> None:
         assert self.premap is not None
         # Premap preprocessing is the dominant cost, paid once here.
-        self._relocalizer = LidarRelocalizer(self.premap.pointcloud, self.config.relocalize)
+        self._relocalizer = CloudRelocalizer(self.premap.pointcloud, self.config.relocalize)
         self.register_disposable(
-            backpressure(
-                self._clouds().pipe(
-                    ops.filter(lambda _: not (self._placed and self.config.relocalize_once)),
-                    ops.do_action(self._maybe_log_skip),
-                    ops.filter(self._has_enough_points),
-                )
-            ).subscribe(self._relocalize)
+            self._clouds()
+            .pipe(
+                ops.filter(lambda _: not (self._placed and self.config.relocalize_once)),
+                ops.do_action(self._log_point_count_change),
+                ops.filter(self._has_enough_points),
+            )
+            .subscribe(self._relocalize)
         )
 
     def _clouds(self) -> Observable[PointCloud2]:
-        """The live cloud to match, at most one every ``reloc_interval``."""
+        """The live cloud to match, on one worker: each attempt takes the latest cloud the moment the last one ends, those between are dropped."""
         scans = self.lidar.observable()  # type: ignore[no-untyped-call]
         local_maps = self.local_map.observable()  # type: ignore[no-untyped-call]
         if self.config.relocalize_once:
             if self.config.live_cloud == "lidar":
-                return window(scans, self.config.relocalize, self.config.reloc_interval)
-            return local_maps.pipe(ops.throttle_first(self.config.reloc_interval))
+                return window(scans, self.config.relocalize)
+            return backpressure(local_maps)
         if self.config.live_cloud == "lidar":
-            # Every scan is placed by the tf at its stamp, then kept in one batch per accumulate_interval
-            self.register_disposable(scans.subscribe(self._on_scan))
+            # Each scan is placed by the tf at its stamp as it lands; those placed during a fold go in the next one
             self.register_disposable(
-                rx.interval(self.config.accumulate_interval).subscribe(lambda _: self._keep_scans())
-            )
-        else:
-            self.register_disposable(
-                local_maps.pipe(ops.throttle_first(self.config.accumulate_interval)).subscribe(
-                    self._on_local_map
+                backpressure(scans.pipe(ops.filter(self._on_scan))).subscribe(
+                    lambda _: self._keep_scans()
                 )
             )
-        return rx.interval(self.config.reloc_interval).pipe(
+        else:
+            # A local map is the whole window around the robot, so the latest replaces any waiting during a fold
+            self.register_disposable(backpressure(local_maps).subscribe(self._on_local_map))
+        return backpressure(self._live_changed).pipe(
             ops.map(
                 lambda _: self.live.cloud(
                     self._live_frame, self._center, self.config.match_radius_m
@@ -221,7 +222,8 @@ class PremapModule(Module):
             )
         )
 
-    def _on_scan(self, scan: PointCloud2) -> None:
+    def _on_scan(self, scan: PointCloud2) -> bool:
+        """Place *scan* in the live frame for the next fold; False when it has no tf at its stamp."""
         to_live = self.tfbuffer.get(
             self._live_frame, scan.frame_id, scan.ts, self.config.scan_tf_tolerance_s
         )
@@ -229,17 +231,19 @@ class PremapModule(Module):
             logger.warning(
                 f"scan skipped: no transform from {scan.frame_id!r} to {self._live_frame!r} at its stamp"
             )
-            return
+            return False
         points = moved(scan.points_f32().reshape(-1, 3), to_live)
         with self._lock:
             self._scans.append(points)
         self._center = (float(to_live.translation.x), float(to_live.translation.y))
+        return True
 
     def _keep_scans(self) -> None:
         with self._lock:
             scans, self._scans = self._scans, []
         if scans:
             self.live.add(np.concatenate(scans))
+            self._live_changed.on_next(None)
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
         to_live = self.frame_to(self._live_frame, cloud.frame_id)
@@ -257,27 +261,28 @@ class PremapModule(Module):
                 [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, 0.0, 1.0]
             )
             self._center = (float(middle[0]), float(middle[1]))
+        self._live_changed.on_next(None)
 
-    def _maybe_log_skip(self, msg: PointCloud2) -> None:
+    def _log_point_count_change(self, msg: PointCloud2) -> None:
+        """Log when live clouds drop under min_local_points and when they reach it again; warn once if they stay under past the grace."""
+        fields = {"n_pts": len(msg), "min_local_points": self.config.min_local_points}
         if self._has_enough_points(msg):
-            self._first_sparse_cloud = None
-            self._last_skip_log = None
+            if self._sparse_since is not None:
+                logger.info("relocalize resumed: enough local points", **fields)
+            self._sparse_since = None
             return
         now = time.monotonic()
-        if self._first_sparse_cloud is None:
-            self._first_sparse_cloud = now
-        if self._last_skip_log is None or now - self._last_skip_log >= _SKIP_LOG_INTERVAL_S:
-            log = (
-                logger.info
-                if now - self._first_sparse_cloud < _SPARSE_CLOUD_GRACE_S
-                else logger.warning
+        if self._sparse_since is None:
+            self._sparse_since, self._sparse_warned = now, False
+            logger.info("relocalize skipped until there are enough local points", **fields)
+        elif (
+            not self._sparse_warned and now - self._sparse_since >= self.config.sparse_cloud_grace_s
+        ):
+            self._sparse_warned = True
+            logger.warning(
+                f"relocalize still skipped after {self.config.sparse_cloud_grace_s:.0f}s: not enough local points",
+                **fields,
             )
-            log(
-                "relocalize skipped: not enough local points",
-                n_pts=len(msg),
-                min_local_points=self.config.min_local_points,
-            )
-            self._last_skip_log = now
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
         return len(msg) >= self.config.min_local_points
@@ -323,10 +328,13 @@ class PremapModule(Module):
         self.submit(tf, "lidar")
 
     def _start_tf(self) -> None:
+        # Each scan carries the edges stamped with its own stamp, so the ray tracer's lookup at that stamp finds them exactly; a fix goes out at once
+        self.publish_tf()
         self.register_disposable(
             rx.merge(
-                rx.interval(self.config.tf_interval).pipe(ops.start_with(0)), self.fixes
-            ).subscribe(lambda _: self.publish_tf())
+                self.lidar.observable().pipe(ops.map(lambda scan: scan.ts)),  # type: ignore[no-untyped-call]
+                self.fixes.pipe(ops.map(lambda _: None)),
+            ).subscribe(self.publish_tf)
         )
 
     @property
@@ -375,20 +383,19 @@ class PremapModule(Module):
         premap.frame_id = self.map_frame
         self.premap = premap
 
-        # Only the first fix places the premap: split, later ones move world -> map instead.
+        # Only the first fix places the premap, once: split, later ones move world -> map instead.
         self.register_disposable(
-            fix_stream(self.fixes.pipe(ops.take(1)), self.config.republish_loaded_map).subscribe(
-                lambda _: self.loaded_map.publish(premap)
-            )
+            self.fixes.pipe(ops.take(1)).subscribe(lambda _: self.loaded_map.publish(premap))
         )
 
-    def publish_tf(self) -> None:
-        """Split: world -> map always, world -> premap once placed. Otherwise world -> premap once fixed."""
+    def publish_tf(self, ts: float | None = None) -> None:
+        """Split: world -> map always, world -> premap once placed. Otherwise world -> premap once fixed. Stamped *ts*, or now."""
+        stamp = time.time() if ts is None else ts
         if self._split:
             edges = [self._world_to_map()] + ([self.fix] if self.fix is not None else [])
-            self.tf.publish(TFMessage(*(edge.now() for edge in edges)))
+            self.tf.publish(TFMessage(*(_stamped(edge, stamp) for edge in edges)))
         elif self.fix is not None:
-            self.tf.publish(TFMessage(self.fix.now()))
+            self.tf.publish(TFMessage(_stamped(self.fix, stamp)))
 
     @property
     def placed(self) -> bool:

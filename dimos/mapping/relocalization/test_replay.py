@@ -26,7 +26,7 @@ pytest.importorskip("dimos_voxel_ray_tracing")
 
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.relocalization import replay as replay_module
-from dimos.mapping.relocalization.lidar_relocalizer import PRESETS, RelocAttempt
+from dimos.mapping.relocalization.cloud_relocalizer import PRESETS, RelocAttempt
 from dimos.mapping.relocalization.replay import recorded_fix, replay, write_loaded_map
 from dimos.mapping.relocalization.utils import fix_error
 from dimos.memory.store.sqlite import SqliteStore
@@ -90,7 +90,7 @@ def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif_aarch64
-def test_replay_spaces_attempts_and_stops_after_the_fix(
+def test_replay_starts_each_attempt_once_the_last_one_ends_and_stops_after_the_fix(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
     fix = _fix(90.0, x=1.0)
@@ -98,9 +98,12 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
         RelocAttempt(None, SimpleNamespace(fitness=0.2)),
         RelocAttempt(fix, SimpleNamespace(fitness=0.9)),
     ]
-    relocalizer_class = mocker.patch.object(replay_module, "LidarRelocalizer", autospec=True)
+    relocalizer_class = mocker.patch.object(replay_module, "CloudRelocalizer", autospec=True)
     attempt = relocalizer_class.return_value.attempt
     attempt.side_effect = attempts
+    # The first attempt runs for 0.7 s, so it is still busy at the 11.0 frame
+    clock = mocker.patch.object(replay_module, "time").monotonic
+    clock.side_effect = [0.0, 0.7, 5.0, 5.0]
     set_time = mocker.spy(rr, "set_time")
     span = np.arange(0.0, 1.0, 0.05)
     dense = np.array([(x, y, 0.5) for x in span for y in span], dtype=np.float32)
@@ -121,7 +124,6 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
             premap=premap,
             preset="mid360",
             world_frame="odom",
-            reloc_interval=1.0,
             min_local_points=50,
             voxel_size=0.1,
             after_s=0.6,
@@ -131,7 +133,7 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
 
     relocalizer_class.assert_called_once_with(premap.pointcloud, PRESETS["mid360"])
     assert attempt.call_count == 2
-    # The sparse frame at 0.0 s is skipped, so the first attempt waits for 0.5 s.
+    # The sparse frame at 0.0 s is skipped, so the first attempt waits for 0.5 s, the second for it to end.
     assert [a.t_s for a in result.attempts] == [0.5, 1.5]
     assert [a.fix for a in result.attempts] == [None, fix]
     assert result.fix is fix

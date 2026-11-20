@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Relocalization helpers: premap and named-location loading, map naming, fix streams, and the live clouds it matches."""
+"""Relocalization helpers: premap and named-location loading, map naming, and the live clouds it matches."""
 
 from __future__ import annotations
 
@@ -25,33 +25,33 @@ import re
 import threading
 
 import numpy as np
-import reactivex as rx
 from reactivex import Observable, operators as ops
 
-from dimos.mapping.relocalization.lidar_relocalizer import RelocalizeConfig
+from dimos.mapping.relocalization.cloud_relocalizer import RelocalizeConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import FLAG_NAMES, PointCloud2
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import InteractiveMarkerUpdate, pose_of
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
 RECORDING_SUFFIXES = (".db", ".mcap")
 
 
-def window(
-    scans: Observable[PointCloud2], cfg: RelocalizeConfig, interval: float
-) -> Observable[PointCloud2]:
-    """The last ``max_frames`` scans merged, at most one merge every ``interval`` s."""
+def window(scans: Observable[PointCloud2], cfg: RelocalizeConfig) -> Observable[PointCloud2]:
+    """The last ``max_frames`` scans merged, on a worker that takes only the latest window whenever it is free."""
     held: deque[PointCloud2] = deque(maxlen=cfg.max_frames)
-    return scans.pipe(
-        ops.do_action(held.append),
-        ops.throttle_first(interval),
-        ops.filter(lambda _: len(held) >= cfg.min_frames),
-        ops.map(lambda _: reduce(operator.add, held)),
-    )
+    return backpressure(
+        scans.pipe(
+            ops.do_action(held.append),
+            ops.filter(lambda _: len(held) >= cfg.min_frames),
+            # A snapshot, so the merge on the worker never sees the deque change under it
+            ops.map(lambda _: tuple(held)),
+        )
+    ).pipe(ops.map(lambda frames: reduce(operator.add, frames)))
 
 
 _PREMAP_BIT = 1 << FLAG_NAMES.index("premap")
@@ -208,16 +208,6 @@ def fix_error(fix: Transform, recorded: Transform) -> tuple[float, float]:
     """Yaw in degrees and translation in meters between two fixes of the same frame pair."""
     dyaw = (yaw_deg(fix) - yaw_deg(recorded) + 180.0) % 360.0 - 180.0
     return dyaw, (fix.translation - recorded.translation).length()
-
-
-def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Transform]:
-    """Every accepted fix as it lands, then again every ``interval`` s (once only if <= 0)."""
-
-    def now_and_again(fix: Transform) -> Observable[Transform]:
-        again = rx.interval(interval).pipe(ops.map(lambda _: fix)) if interval > 0 else rx.empty()
-        return rx.concat(rx.of(fix), again)
-
-    return fixes.pipe(ops.switch_map(now_and_again))
 
 
 def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:

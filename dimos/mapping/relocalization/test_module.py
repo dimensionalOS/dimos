@@ -22,7 +22,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
 from dimos.mapping.relocalization import module as relocalization
-from dimos.mapping.relocalization.lidar_relocalizer import MID360, LidarRelocalizer
+from dimos.mapping.relocalization.cloud_relocalizer import MID360, CloudRelocalizer
 from dimos.mapping.relocalization.module import PremapModule
 from dimos.mapping.relocalization.utils import LiveMap
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -82,14 +82,13 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
             attempts.append(initial_fix)
             return SimpleNamespace(fix=None, result=SimpleNamespace(fitness=0.5))
 
-    monkeypatch.setattr(relocalization, "LidarRelocalizer", FakeRelocalizer)
-    # Synchronous, so the attempts land before the assert and no worker thread is left behind
-    monkeypatch.setattr(relocalization, "backpressure", lambda clouds: clouds)
+    monkeypatch.setattr(relocalization, "CloudRelocalizer", FakeRelocalizer)
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
     cloud = PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32))
     for once in (True, False):
         m = module(live_cloud="lidar", relocalize_once=once, min_local_points=0)
         m.relocalization_strength = SimpleNamespace(publish=strengths.append)
+        # Synchronous, so the attempts land before the assert and no worker thread is left behind
         clouds = Subject()
         m._clouds = lambda clouds=clouds: clouds
         m.premap = cloud
@@ -99,21 +98,6 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
     assert attempts == [tf]
     # Refused or not, every attempt's fitness goes out
     assert [s.data for s in strengths] == [0.5]
-
-
-@pytest.mark.parametrize("interval", [3600.0, 0.0])
-def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
-    """Not on the next interval tick, and with or without republishing (<= 0 = once per fix)."""
-    from reactivex import Subject
-
-    from dimos.mapping.relocalization.utils import fix_stream
-
-    fixes, sent = Subject(), []
-    disposable = fix_stream(fixes, interval=interval).subscribe(sent.append)
-    tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
-    fixes.on_next(tf)
-    assert sent == [tf]
-    disposable.dispose()
 
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
@@ -138,7 +122,9 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     assert len(disposables) == 1  # the gated publish
     assert published == []  # ... which stays silent until a fix lands
     m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map/v1"))
-    assert published == [m.premap]  # republish_loaded_map=0: once, on that fix
+    assert published == [m.premap]  # ... once, on that fix
+    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map/v1"))
+    assert published == [m.premap]  # ... and never again
     disposables[0].dispose()
 
 
@@ -164,17 +150,19 @@ def test_saved_premap_flags_survive_loading(module, tmp_path):
 
 def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     """One config surface: the relocalizer holds the knobs and the accept decision."""
-    from dimos.mapping.relocalization import lidar_relocalizer as lidar
+    from dimos.mapping.relocalization import cloud_relocalizer
 
     placement = np.eye(4)
     placement[:3, 3] = [3.0, -1.0, 0.0]  # the map is 3 m +x of where the robot thought
     result = SimpleNamespace(transformation=placement, fitness=0.4, inlier_rmse=0.1)
-    monkeypatch.setattr(lidar.LidarRelocalizer, "_prepare", lambda self, cloud: None)
-    monkeypatch.setattr(lidar.LidarRelocalizer, "align", lambda self, cloud, initial=None: result)
+    monkeypatch.setattr(cloud_relocalizer.CloudRelocalizer, "_prepare", lambda self, cloud: None)
+    monkeypatch.setattr(
+        cloud_relocalizer.CloudRelocalizer, "align", lambda self, cloud, initial=None: result
+    )
 
     def relocalizer(threshold):
-        return lidar.LidarRelocalizer(
-            None, lidar.MID360.model_copy(update={"fitness_threshold": threshold})
+        return cloud_relocalizer.CloudRelocalizer(
+            None, cloud_relocalizer.MID360.model_copy(update={"fitness_threshold": threshold})
         )
 
     assert relocalizer(0.5).relocalize(None, "world", "map") is None
@@ -192,35 +180,107 @@ def test_no_config_without_naming_a_rig():
     """The scales are per-rig, so there is no bare RelocalizeConfig() to fall into."""
     import pydantic
 
-    from dimos.mapping.relocalization import lidar_relocalizer as lidar
+    from dimos.mapping.relocalization import cloud_relocalizer
 
-    assert lidar.DEFAULT_PRESET in lidar.PRESETS
-    assert lidar.PRESETS["mid360"] is lidar.MID360
+    assert cloud_relocalizer.DEFAULT_PRESET in cloud_relocalizer.PRESETS
+    assert cloud_relocalizer.PRESETS["mid360"] is cloud_relocalizer.MID360
     with pytest.raises(pydantic.ValidationError):
-        lidar.RelocalizeConfig()
+        cloud_relocalizer.RelocalizeConfig()
 
 
-def test_the_match_runs_on_a_window_of_the_last_scans():
-    """Every scan enters the window; a match sees the last `max_frames` of them."""
+@pytest.fixture
+def immediate_handoff(monkeypatch):
+    """Inputs reach a busy worker's pending slot on the sending thread, so a test knows when one is waiting."""
+    from reactivex.scheduler import ImmediateScheduler
+
+    from dimos.utils import reactive
+
+    monkeypatch.setattr(reactive, "get_scheduler", ImmediateScheduler)
+
+
+def wait_for(condition, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.001)
+
+
+def test_the_match_runs_on_the_latest_window_of_scans_once_the_last_match_ends(immediate_handoff):
+    """A match sees the last `max_frames` scans; windows that land while it runs are dropped but the latest."""
+    import threading
 
     from reactivex import Subject
 
-    from dimos.mapping.relocalization.lidar_relocalizer import MID360
+    from dimos.mapping.relocalization.cloud_relocalizer import MID360
     from dimos.mapping.relocalization.utils import window
 
     cfg = MID360.model_copy(update={"min_frames": 2, "max_frames": 3})
     scans = Subject()
-    matched = []
-    window(scans, cfg, interval=0.001).subscribe(matched.append)
+    matched, busy, release = [], threading.Event(), threading.Event()
 
-    for i in range(5):
+    def match(cloud):
+        busy.set()
+        release.wait()
+        matched.append(cloud)
+
+    disposable = window(scans, cfg).subscribe(match)
+
+    def scan(i):
         scans.on_next(PointCloud2.from_numpy(np.full((4, 3), i, dtype=np.float32), timestamp=0.0))
-        time.sleep(0.01)  # clear the throttle, so every scan gets its attempt
 
-    # The first scan is below min_frames; from then on the window is full.
-    assert [len(c) for c in matched] == [8, 12, 12, 12]
-    # ... and holds the *last* three scans, not the first.
-    assert set(matched[-1].points_f32()[:, 0]) == {2.0, 3.0, 4.0}
+    scan(0)  # below min_frames
+    scan(1)
+    busy.wait(5.0)
+    for i in range(2, 5):
+        scan(i)
+    release.set()
+    wait_for(lambda: len(matched) == 2)
+    disposable.dispose()
+    # The second match holds the *last* three scans; the windows at 2 and 3 never ran.
+    assert [sorted(set(c.points_f32()[:, 0])) for c in matched] == [[0.0, 1.0], [2.0, 3.0, 4.0]]
+
+
+def test_continuous_matching_starts_on_the_latest_live_map_as_the_last_attempt_ends(
+    module, monkeypatch, immediate_handoff
+):
+    import threading
+
+    from reactivex import Subject
+
+    seen, busy, release = [], threading.Event(), threading.Event()
+
+    class FakeRelocalizer:
+        def __init__(self, *_):
+            pass
+
+        def attempt(self, cloud, cloud_frame, map_frame, initial_fix=None):
+            seen.append(len(cloud.points))
+            busy.set()
+            release.wait()
+            return SimpleNamespace(fix=None, result=SimpleNamespace(fitness=0.1))
+
+    monkeypatch.setattr(relocalization, "CloudRelocalizer", FakeRelocalizer)
+    m = module(live_cloud="local_map", relocalize_once=False, min_local_points=0)
+    m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
+    local_maps = Subject()
+    m.local_map = SimpleNamespace(observable=lambda: local_maps)
+    m.lidar = SimpleNamespace(observable=Subject)
+    m.premap = local_map([[0, 0, 0]])
+    m._start_matching()
+
+    # Each local map holds the ones before it, as the ray tracer's window does
+    def send(n):
+        local_maps.on_next(local_map([[i, 0, 0] for i in range(1, n + 1)]))
+
+    send(1)
+    busy.wait(5.0)
+    for n in (2, 3, 4):
+        send(n)
+    wait_for(lambda: len(m.live) == 4)
+    release.set()
+    wait_for(lambda: len(seen) == 2)
+    # One attempt on the first map, then one on the latest, none for those between
+    assert seen == [1, 4]
 
 
 def test_from_matrix_inverse_matches_linalg_inv():
@@ -274,51 +334,39 @@ def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
     assert np.allclose(loaded.as_numpy()[0], np.eye(3))
 
 
-@pytest.fixture
-def sparse_module(module):
-    return module(live_cloud="local_map", min_local_points=3)
-
-
-def test_sparse_clouds_warn_only_after_grace_and_remain_throttled(sparse_module, mocker):
+def test_sparse_clouds_are_logged_once_per_change_and_warn_once_past_the_grace(module, mocker):
+    m = module(live_cloud="local_map", min_local_points=3, sparse_cloud_grace_s=10.0)
     logger = mocker.patch.object(relocalization, "logger")
-    clock = mocker.patch.object(relocalization.time, "monotonic")
-    cloud = PointCloud2.from_numpy(np.zeros((2, 3), dtype=np.float32))
-
-    for now in (100.0, 101.0, 105.0, 109.999, 110.0, 111.0, 115.0):
-        clock.return_value = now
-        sparse_module._maybe_log_skip(cloud)
-
-    message = "relocalize skipped: not enough local points"
-    fields = {"n_pts": 2, "min_local_points": 3}
-    assert logger.method_calls == [
-        mocker.call.info(message, **fields),
-        mocker.call.info(message, **fields),
-        mocker.call.warning(message, **fields),
-        mocker.call.warning(message, **fields),
-    ]
-    assert not sparse_module._has_enough_points(cloud)
-
-
-def test_enough_points_clear_sparse_cloud_warning_state(sparse_module, mocker):
-    logger = mocker.patch.object(relocalization, "logger")
-    clock = mocker.patch.object(relocalization.time, "monotonic", return_value=100.0)
+    clock = mocker.patch.object(relocalization, "time").monotonic
     sparse = PointCloud2.from_numpy(np.zeros((2, 3), dtype=np.float32))
     ready = PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32))
-    sparse_module._maybe_log_skip(sparse)
-    clock.return_value = 105.0
-    sparse_module._maybe_log_skip(ready)
-    clock.return_value = 120.0
-    sparse_module._maybe_log_skip(sparse)
 
-    assert logger.method_calls == [
-        mocker.call.info(
-            "relocalize skipped: not enough local points", n_pts=2, min_local_points=3
-        ),
-        mocker.call.info(
-            "relocalize skipped: not enough local points", n_pts=2, min_local_points=3
-        ),
-    ]
-    assert sparse_module._has_enough_points(ready)
+    for now, cloud in [
+        (100.0, ready),
+        (101.0, sparse),
+        (105.0, sparse),
+        (111.0, sparse),
+        (120.0, sparse),
+        (121.0, ready),
+        (122.0, ready),
+        (123.0, sparse),
+        (130.0, sparse),
+    ]:
+        clock.return_value = now
+        m._log_point_count_change(cloud)
+
+    sparse_fields = {"n_pts": 2, "min_local_points": 3}
+    skipped = mocker.call.info(
+        "relocalize skipped until there are enough local points", **sparse_fields
+    )
+    still = mocker.call.warning(
+        "relocalize still skipped after 10s: not enough local points", **sparse_fields
+    )
+    resumed = mocker.call.info(
+        "relocalize resumed: enough local points", n_pts=3, min_local_points=3
+    )
+    # A new sparse spell gets its own grace: 130 is only 7 s into it
+    assert logger.method_calls == [skipped, still, resumed, skipped]
 
 
 PREMAP = 1
@@ -385,7 +433,7 @@ def _room(rng):
 def test_a_near_fix_is_refined_by_icp_alone():
     rng = np.random.default_rng(0)
     room = _room(rng)
-    relocalizer = LidarRelocalizer(PointCloud2.from_numpy(room).pointcloud, MID360)
+    relocalizer = CloudRelocalizer(PointCloud2.from_numpy(room).pointcloud, MID360)
     # The live world sits 0.3 m and 3 deg off the map; the current fix is off by that much.
     truth = Transform(
         translation=Vector3(0.3, -0.2, 0.0),
@@ -413,17 +461,27 @@ def test_world_to_map_waits_for_the_first_fix(module):
     assert (fix.frame_id, fix.child_frame_id) == ("world", "map")
 
 
-def test_world_to_map_is_always_on_tf_beside_the_premap(module):
-    m = module(map_frame="premap", tf_interval=3600.0)
-    sent = []
+def test_tf_goes_out_at_start_with_every_scan_at_its_stamp_and_on_every_fix(module):
+    """world -> map is on tf from the start; each scan carries it stamped like the scan, for stamped lookups."""
+    from reactivex import Subject
+
+    m = module(map_frame="premap")
+    sent, scans = [], Subject()
     m.tf = SimpleNamespace(publish=sent.append)
-    disposables = []
-    m.register_disposable = disposables.append
+    m.lidar = SimpleNamespace(observable=lambda: scans)
     m._start_tf()
-    for disposable in disposables:
-        disposable.dispose()
-    edges = [(t.frame_id, t.child_frame_id) for msg in sent for t in msg.transforms]
-    assert edges == [("world", "map")]
+
+    def edges():
+        return [(t.frame_id, t.child_frame_id) for t in sent[-1].transforms]
+
+    assert len(sent) == 1 and edges() == [("world", "map")]
+    scans.on_next(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32), timestamp=5.0))
+    assert len(sent) == 2 and edges() == [("world", "map")]
+    assert sent[-1].transforms[0].ts == 5.0
+    m.submit(_fix(2.0))
+    assert len(sent) == 3 and edges() == [("world", "map"), ("world", "premap")]
+    scans.on_next(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32), timestamp=6.0))
+    assert [t.ts for t in sent[-1].transforms] == [6.0, 6.0]
 
 
 def _fix(x, yaw_deg=0.0, frame_id="world", child_frame_id="premap"):

@@ -24,7 +24,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY, render_map_region
-from dimos.mapping.relocalization.lidar_relocalizer import MID360_NAV
+from dimos.mapping.relocalization.cloud_relocalizer import MID360_NAV
 from dimos.mapping.relocalization.module import PremapModule
 from dimos.navigation.global_planner.mls_planner.viz import (
     SURFACE_MAP_ENTITY,
