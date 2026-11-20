@@ -127,7 +127,7 @@ uv run dimos --viewer none --replay run unitree-go2
 uv run dimos rerun-bridge --rerun-open web
 ```
 
-Expected result: the first run opens the web viewer at http://localhost:9878. The headless run opens no viewer and logs the `.rrd` path, which `rerun` plays back. The standalone bridge shows the streams of the run started with `--viewer none`.
+Expected result: the first run opens the web viewer at http://localhost:9878. To open it by hand, use the full URL from the `Rerun web viewer ready at` log line, because the bare address shows a viewer with no data. The headless run opens no viewer and logs the `.rrd` path, which `rerun` plays back. The standalone bridge shows the streams of the run started with `--viewer none`.
 
 ## 5.9 Blueprint graph and docs site
 
