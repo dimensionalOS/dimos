@@ -19,35 +19,24 @@ from typing import (
     Any,
     ClassVar,
     Generic,
-    Literal,
-    Protocol,
     TypeVar,
     get_args,
     get_origin,
-    get_type_hints,
     is_typeddict,
 )
 
 from langchain_core.messages.base import BaseMessage
 import numpy as np
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
-from pydantic.errors import PydanticUserError
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.protocol.encode import cbor
 
 I = TypeVar("I")
 O = TypeVar("O")
-I_contra = TypeVar("I_contra", contravariant=True)
-O_co = TypeVar("O_co", covariant=True)
-
-
-class Infers(Protocol[I_contra, O_co]):
-    """Anything with one typed inference call: an agent module or a plain model."""
-
-    def infer(self, x: I_contra) -> O_co: ...
+_SENDABLE: tuple[type, ...] = (bool, int, float, str, bytes, tuple, list, dict, set, frozenset)
+_SENDABLE += (type(None), Enum, Path, BaseModel, np.ndarray, np.generic)
 
 
 def _resolve(cls: type, target: type) -> tuple[Any, ...] | None:
@@ -66,74 +55,32 @@ def _resolve(cls: type, target: type) -> tuple[Any, ...] | None:
 
 
 def _matches(tp: Any, value: Any) -> bool:
-    if isinstance(tp, type):
+    try:
+        return isinstance(value, tp)
+    except TypeError:  # dict[str, float], a TypedDict: isinstance refuses them
+        config = None if is_typeddict(tp) else ConfigDict(arbitrary_types_allowed=True)
         try:
-            return isinstance(value, tp)
-        except TypeError:  # TypedDict and other classes that refuse isinstance
-            pass
-    try:
-        adapter = TypeAdapter(tp, config=ConfigDict(arbitrary_types_allowed=True))
-    except PydanticUserError:  # the type carries its own config
-        adapter = TypeAdapter(tp)
-    try:
-        adapter.validate_python(value, strict=True)
-    except ValidationError:
-        return False
-    return True
+            TypeAdapter(tp, config=config).validate_python(value, strict=True)
+        except ValidationError:
+            return False
+        return True
 
 
-_PLAIN = (type(None), bool, int, float, str, bytes, Path)
-
-
-def _unsendable(tp: Any, seen: frozenset[int] = frozenset()) -> str | None:
-    """Why values of tp cannot cross RPC or a transport (see protocol/encode/cbor.py), or None.
-
-    ``Any`` and ``object`` pass: what they hold is only known when a value is sent.
-    """
-    if tp is Any or tp is object or tp in _PLAIN or id(tp) in seen:
-        return None
-    origin = get_origin(tp)
-    if origin is Literal:
-        return None
-    if origin is not None:
-        if isinstance(origin, type) and issubclass(origin, np.ndarray):
-            return None
-        for arg in get_args(tp):
-            if arg is not Ellipsis and (reason := _unsendable(arg, seen)) is not None:
-                return reason
-        return None
-    if not isinstance(tp, type):
-        return f"{tp!r} is not a class or a typing form of classes"
-    if "<locals>" in tp.__qualname__:
-        return f"{tp.__qualname__} is defined inside a function, so the receiver cannot import it"
-    if issubclass(tp, (Enum, BaseModel, np.ndarray, np.generic, tuple, list, dict, set, frozenset)):
-        fields: dict[str, Any] = get_type_hints(tp) if is_typeddict(tp) else {}
-    elif dataclasses.is_dataclass(tp):
-        fields = get_type_hints(tp)
-    elif (
-        callable(getattr(tp, "lcm_encode", None))
-        or callable(getattr(tp, "cbor_encode", None))
-        or issubclass(tp, tuple(cbor._REGISTRY))
-    ):
-        return None
-    else:
-        return (
-            f"{tp.__module__}.{tp.__qualname__} is a plain class; make it a dataclass, a "
-            "pydantic model or a DimOS message, or give it cbor_encode/cbor_decode"
-        )
-    for name, hint in fields.items():
-        if (reason := _unsendable(hint, seen | {id(tp)})) is not None:
-            return f"{tp.__qualname__}.{name}: {reason}"
-    return None
+def _sendable(tp: Any) -> bool:
+    """Whether values of tp can cross RPC or a transport (see protocol/encode/cbor.py)."""
+    if args := get_args(tp):
+        return all(_sendable(arg) for arg in args if arg is not Ellipsis)
+    if not isinstance(tp, type) or tp in (Any, object) or dataclasses.is_dataclass(tp):
+        return True
+    return issubclass(tp, _SENDABLE) or hasattr(tp, "lcm_encode") or hasattr(tp, "cbor_encode")
 
 
 class BaseAgent(Module, Generic[I, O]):
-    """Base for agents: one typed inference call.
+    """Base for agents: one inference call and the chat streams.
 
-    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``, and they
-    are kept on the class as ``input_type`` and ``output_type``. An input with several parts
-    is one dataclass. An agent declares the streams it reads and writes itself and passes
-    what arrives to ``infer``.
+    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``, and they are
+    kept on the class as ``input_type`` and ``output_type``. An input with several
+    parts is one dataclass.
     """
 
     input_type: ClassVar[Any]
@@ -143,6 +90,7 @@ class BaseAgent(Module, Generic[I, O]):
     agent_idle: Out[bool]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
         types = _resolve(cls, BaseAgent)
         if types is None:
             raise TypeError(
@@ -150,22 +98,15 @@ class BaseAgent(Module, Generic[I, O]):
                 f"e.g. class {cls.__name__}(BaseAgent[str, str])"
             )
         unbound = [tp for tp in types if isinstance(tp, TypeVar)]
-        # Generic.__init_subclass__ has not run yet, so __parameters__ is still the parent's.
-        generic = any(
-            isinstance(arg, TypeVar)
-            for base in cls.__dict__.get("__orig_bases__", ())
-            for arg in get_args(base)
-        )
-        if unbound and not generic:
+        if unbound and not getattr(cls, "__parameters__", ()):
             raise TypeError(f"{cls.__name__} leaves {unbound} of BaseAgent unbound")
-        for tp in types if not unbound else ():
-            if (reason := _unsendable(tp)) is not None:
+        for tp in types:
+            if not _sendable(tp):
                 raise TypeError(
-                    f"{cls.__name__} names a type that cannot be sent over RPC or a transport: "
-                    f"{reason}"
+                    f"{cls.__name__}: {tp!r} cannot be sent over RPC or a transport; use a "
+                    "dataclass, a pydantic model or a DimOS message"
                 )
         cls.input_type, cls.output_type = types
-        super().__init_subclass__(**kwargs)
 
     @classmethod
     def accepts(cls, x: object) -> bool:
