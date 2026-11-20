@@ -197,14 +197,17 @@ class ArmModel:
         """Model gravity torque of every arm joint, ``joint_names`` order."""
         return np.asarray(pin.computeGeneralizedGravity(self.model, self.data, q))
 
-    def regressor(self, q: np.ndarray) -> np.ndarray:
-        """Rows: measured joints; columns: ``(m, m*c)`` of the fitted bodies, unscaled."""
+    def regressor(self, q: np.ndarray, rows: Sequence[int] | None = None) -> np.ndarray:
+        """Rows: measured joints, or ``rows``; columns: ``(m, m*c)`` of the fitted bodies.
+
+        Unscaled; ``scaled_regressor`` scales the columns.
+        """
         zero = np.zeros(self.model.nv)
         full = np.asarray(pin.computeJointTorqueRegressor(self.model, self.data, q, zero, zero))
-        return full[np.ix_(self.measured_rows, self.param_columns)]
+        return full[np.ix_(self.measured_rows if rows is None else rows, self.param_columns)]
 
-    def scaled_regressor(self, q: np.ndarray) -> np.ndarray:
-        scaled: np.ndarray = self.regressor(q) * self.column_scale
+    def scaled_regressor(self, q: np.ndarray, rows: Sequence[int] | None = None) -> np.ndarray:
+        scaled: np.ndarray = self.regressor(q, rows) * self.column_scale
         return scaled
 
     def keep_out_ok(self, points: np.ndarray) -> bool:
