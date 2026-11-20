@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
+import math
+
 import pytest
 from scipy.spatial.transform import Rotation
 
@@ -33,6 +36,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 # A seven-joint group whose measured stream includes its gripper and uses a different order.
 _JOINTS = tuple(f"left/J{i}" for i in range(1, 8))
 _HOME = (0.1, 0.7, -0.3, 0.0, 0.2, -0.1, 1.0)
+_A1Z_CONNECTION = "dimos.robot.manipulators.a1z.connection.A1ZConnection"
 
 
 def arm_state(positions=_HOME, ts=100.0):
@@ -285,7 +289,7 @@ def test_discovers_raw_arm_output_on_running_stack(deployed_arm):
 @pytest.mark.parametrize(
     ("qualified_path", "expected"),
     [
-        ("dimos.robot.manipulators.a1z.connection.A1ZConnection", (0, -0.05, 0, 0.05, 0, 0)),
+        (_A1Z_CONNECTION, (0, -0.05, 0, 0.05, 0, 0)),
         ("example.A1ZConnection", (0,) * 6),
     ],
 )
@@ -299,6 +303,48 @@ def test_a1z_return_uses_feedback_source_type_and_planner_joint_order(
 
     with connect_calibration_arm() as arm:
         assert arm.return_joints == expected
+
+
+@pytest.mark.parametrize(
+    ("qualified_path", "returning", "j4_error_deg", "expected"),
+    [
+        (_A1Z_CONNECTION, True, 2.022, nullcontext()),
+        (
+            _A1Z_CONNECTION,
+            True,
+            3.0,
+            pytest.raises(RuntimeError, match=r"arm_joint4 .*error 3\.000°"),
+        ),
+        (_A1Z_CONNECTION, False, 2.022, pytest.raises(RuntimeError, match=r"limit 2°")),
+        ("example.WristRig", True, 2.022, pytest.raises(RuntimeError, match=r"limit 2°")),
+    ],
+)
+def test_joint_arrival_uses_device_parking_tolerance_only_for_return(
+    deployed_arm, mocker, qualified_path, returning, j4_error_deg, expected
+):
+    app, discover = deployed_arm
+    planner = discover.return_value
+    names = tuple(f"arm/arm_joint{i}" for i in range(1, 7))
+    planner.info = PlanningGroupInfo("arm", names, "base", "tcp", True)
+    app.describe.return_value = ModuleInfo("WristRig", qualified_path=qualified_path)
+    feedback = app.get_module.return_value.get_stream.return_value.transport
+    mocker.patch("dimos.calibration.hand_eye_motion.time", return_value=100.0)
+
+    with connect_calibration_arm() as arm:
+        positions = list(arm.return_joints)
+        positions[3] += math.radians(j4_error_deg)
+        measured = JointState(name=list(names), position=positions, ts=100.0)
+        feedback.get_next.side_effect = [measured, measured, TimeoutError()]
+        pose = PoseStamped(frame_id="world", ts=100.0)
+        planner.state.return_value = PlanningGroupState(
+            joints=measured, end_effector_pose=pose, gripper_position=None
+        )
+
+        with expected:
+            assert arm.move_joints(arm.return_joints, returning=returning) is pose
+        planner.move_joints.assert_called_once_with(
+            arm.return_joints, speed_scale=0.15, timeout=60.0
+        )
 
 
 def test_ambiguous_measured_joint_sources_fail_before_motion(deployed_arm):

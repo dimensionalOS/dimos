@@ -116,6 +116,7 @@ def run(
                     info,
                     home=home,
                     return_joints=arm.return_joints,
+                    return_move=partial(arm.move_joints, returning=True),
                     base_frame=group.base_frame,
                     ee_frame=ee_frame,
                     joint_names=group.joint_names,

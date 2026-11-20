@@ -43,7 +43,12 @@ from dimos.control.contract.limits import model_limit, movable_joints
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.a1z.config import A1Z_DOF, A1Z_GRIPPER_OPENING_M, a1z_model
+from dimos.robot.manipulators.a1z.config import (
+    A1Z_DOF,
+    A1Z_GRIPPER_OPENING_M,
+    A1Z_HOME_TOLERANCE_RAD,
+    a1z_model,
+)
 from dimos.robot.manipulators.a1z.gs_usb_bus import gs_usb_can_bus
 from dimos.utils.logging_config import setup_logger
 
@@ -84,10 +89,9 @@ _STARTUP_LIMIT_MARGIN_RAD = 0.15
 
 # Going home, by the SDK's move_joints: its average speed in rad/s (it peaks at
 # 1.875 times that and refuses a peak over 4 rad/s), slower when starting than
-# when stopping, which DimOS gives about 5 s. How close every joint must come, in rad.
+# when stopping, which DimOS gives about 5 s.
 _HOME_SPEED_RAD_S = 0.5
 _PARK_SPEED_RAD_S = 1.0
-_HOME_TOLERANCE_RAD = 0.05
 _POLL_S = 0.01
 
 _SYS_CLASS_NET = Path("/sys/class/net")
@@ -422,7 +426,7 @@ class A1ZConnection(ConnectionModule):
         self._robot.move_joints(goal, speed=speed)
         timeout = 2 * float(np.max(np.abs(goal - start))) / speed + 1.0
         if not _wait_for(
-            lambda: bool(np.all(np.abs(self._read_joints()[0] - goal) <= _HOME_TOLERANCE_RAD)),
+            lambda: bool(np.all(np.abs(self._read_joints()[0] - goal) <= A1Z_HOME_TOLERANCE_RAD)),
             timeout,
         ):
             at = np.round(self._read_joints()[0], 3).tolist()

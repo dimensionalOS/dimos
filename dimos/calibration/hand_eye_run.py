@@ -83,6 +83,7 @@ def run_hand_eye(
     capture: Callable[[], tuple[Image, Transform]],
     review: Callable[[Image, str], Literal["accept", "retry", "quit"]],
     return_joints: Sequence[float] | None = None,
+    return_move: Callable[[Sequence[float]], PoseStamped] | None = None,
     report: Callable[[str], None] = print,
     count: int = MIN_TRAINING_SAMPLES,
     validation_count: int = MIN_VALIDATION_SAMPLES,
@@ -94,7 +95,8 @@ def run_hand_eye(
     The motion callbacks block until arrival. A joint move returns the measured world
     pose of the planner's tool. Capture returns a fresh image with the mount pose
     measured at image time. A resumed run reuses the original home tool pose.
-    After grading a run that moved the arm, move to return_joints (zero by default).
+    After grading a run that moved the arm, use return_move (move_joints by default)
+    to reach return_joints (zero by default).
     """
     home = tuple(home)
     if not joint_names or len(home) != len(joint_names) or not all(map(math.isfinite, home)):
@@ -182,8 +184,10 @@ def run_hand_eye(
             report(f"Validation metrics: {result['validation_metrics']}")
     if moved:
         report(f"Returning to joint positions {list(return_joints)} rad.")
+        if return_move is None:
+            return_move = move_joints
         try:
-            move_joints(return_joints)
+            return_move(return_joints)
         except (RuntimeError, OSError, ValueError) as error:
             raise RuntimeError(
                 f"Calibration result saved to {directory / 'hand_eye.json'}. "

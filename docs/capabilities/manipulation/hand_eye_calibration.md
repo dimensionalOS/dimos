@@ -84,7 +84,8 @@ dimos handeyecalibrate run --session ./hand-eye-01 \
    reference. Both transforms stay fixed throughout validation.
 4. A completed run saves `hand_eye.json` and reports **PASS** or **FAIL**. If
    the run moved the arm, it requests the return pose and verifies
-   arrival within 2° per joint. If that move fails, the error gives the path to
+   arrival within the A1Z parking tolerance of 0.05 rad (about 2.86°) per joint.
+   Other arms use 2° per joint. If that move fails, the error gives the path to
    the saved result. Check the file’s `validated` flag before using the transform.
 
 ### Stop or retry

@@ -35,6 +35,7 @@ from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
+from dimos.robot.manipulators.a1z.config import A1Z_HOME_TOLERANCE_RAD
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 if TYPE_CHECKING:
@@ -62,6 +63,7 @@ class CalibrationArm:
         self._arm = arm
         self.info = arm.info
         self.return_joints = (0.0,) * len(arm.info.joint_names)
+        self.return_tolerance_rad = _ANGLE_TOLERANCE
         self._feedback = feedback
         self._required_joints = set(self.info.joint_names)
         self._reached_joints: np.ndarray | None = None
@@ -93,20 +95,24 @@ class CalibrationArm:
         return tuple(self._positions(state))
 
     def _wait_for_arrival(
-        self, *, joints: Sequence[float] | None = None, target: PoseStamped | None = None
+        self,
+        *,
+        joints: Sequence[float] | None = None,
+        target: PoseStamped | None = None,
+        joint_tolerance_rad: float = _ANGLE_TOLERANCE,
     ) -> PoseStamped:
         reason = "No fresh arm joint feedback after the move."
         for raw in self._fresh_feedback():
             measured = self._positions(raw)
             if joints is not None and not np.allclose(
-                measured, joints, rtol=0, atol=_ANGLE_TOLERANCE
+                measured, joints, rtol=0, atol=joint_tolerance_rad
             ):
                 errors = np.abs(measured - joints)
                 worst = int(np.argmax(errors))
                 reason = (
                     f"Arm missed the requested joint positions. {self.info.joint_names[worst]} "
                     f"measured {measured[worst]:.4f} rad, requested {joints[worst]:.4f} rad, "
-                    f"error {math.degrees(errors[worst]):.3f}° (limit {math.degrees(_ANGLE_TOLERANCE):g}°)."
+                    f"error {math.degrees(errors[worst]):.3f}° (limit {math.degrees(joint_tolerance_rad):.4g}°)."
                 )
                 continue
             snapshot = self._arm.state()
@@ -161,8 +167,8 @@ class CalibrationArm:
                 ) from exc
             raise
 
-    def move_joints(self, joints: Sequence[float]) -> PoseStamped:
-        """Go to the requested joints and return the measured world pose of the tool."""
+    def move_joints(self, joints: Sequence[float], *, returning: bool = False) -> PoseStamped:
+        """Verify joint arrival, using the arm's parking tolerance for the final return."""
         if len(joints) != len(self.info.joint_names) or not all(math.isfinite(q) for q in joints):
             raise ValueError(
                 f"Expected {len(self.info.joint_names)} finite joint positions "
@@ -171,7 +177,8 @@ class CalibrationArm:
         with self._planned_move() as measured:
             if not np.allclose(measured, joints, rtol=0, atol=1e-3):
                 self._arm.move_joints(joints, speed_scale=0.15, timeout=60.0)
-            return self._wait_for_arrival(joints=joints)
+            tolerance = self.return_tolerance_rad if returning else _ANGLE_TOLERANCE
+            return self._wait_for_arrival(joints=joints, joint_tolerance_rad=tolerance)
 
     def move_pose(self, target: PoseStamped) -> None:
         """Plan to a tool pose, then verify the measured result before capture."""
@@ -242,6 +249,7 @@ def connect_calibration_arm() -> Iterator[CalibrationArm]:
             isinstance(publisher, ModuleInfo)
             and publisher.qualified_path == "dimos.robot.manipulators.a1z.connection.A1ZConnection"
         ):
+            connected.return_tolerance_rad = A1Z_HOME_TOLERANCE_RAD
             # Zero is J2's lower limit and J3's upper limit on the A1Z.
             offsets = {"arm_joint2": 0.05, "arm_joint3": -0.05}
             connected.return_joints = tuple(
