@@ -184,7 +184,7 @@ class CalibrationArm:
             tolerance = self.return_tolerance_rad if returning else _ANGLE_TOLERANCE
             return self._wait_for_arrival(joints=joints, joint_tolerance_rad=tolerance)
 
-    def move_pose(self, target: PoseStamped) -> None:
+    def move_pose(self, target: PoseStamped) -> PoseStamped:
         """Plan to a tool pose, then verify the measured result before capture."""
         _check_world_pose(target)
         with self._planned_move():
@@ -194,7 +194,7 @@ class CalibrationArm:
                 speed_scale=0.15,
                 timeout=60.0,
             )
-            self._wait_for_arrival(target=target)
+            return self._wait_for_arrival(target=target)
 
     def capture_at_view(
         self, capture: Callable[[], tuple[Image, Transform]]

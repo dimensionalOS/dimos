@@ -247,6 +247,7 @@ def connected_arm(mocker):
     )
     connected.return_joints = (0.0, 0.05, -0.05, 0.0, 0.0, 0.0, 0.0)
     connected.move_joints.return_value = PoseStamped(frame_id="world", position=[0.2, 0, 0.3])
+    connected.move_pose.side_effect = lambda goal: goal
     connected.capture_at_view.side_effect = lambda capture: capture()
     return connected
 
@@ -296,7 +297,7 @@ def test_run_cli_uses_planner_group_and_supplied_mount(
     assert run.call_args.kwargs["return_joints"] == connected_arm.return_joints
     connected_arm.move_joints.assert_called_once()
     assert list(connected_arm.move_joints.call_args.args[0]) == home
-    assert connected_arm.move_pose.call_count == 1
+    assert connected_arm.move_pose.call_count == 2
     assert [entry["image"] for entry in session["samples"]] == ["0001.png"]
 
 

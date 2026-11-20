@@ -57,10 +57,10 @@ from dimos.calibration.hand_eye_views import (
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -99,7 +99,7 @@ def _ring_tilts(count: int, *, angle_deg: float, validation: bool) -> list[list[
 def _home_tag_range(sample: dict[str, Any]) -> float:
     tag = checked_transform(sample["camera_from_target"])[:3, 3]
     if tag[2] <= 0:
-        raise ValueError("Orbit needs a home tag observation in front of the camera.")
+        raise ValueError("Orbit needs a first tag observation in front of the camera.")
     distance = math.hypot(*tag)
     if distance * math.sin(math.radians(MIN_ROTATION_DEG / 2)) >= _ORBIT_RADII_M["train"]:
         raise ValueError(
@@ -148,7 +148,7 @@ def run_hand_eye(
     ee_frame: str,
     tip_frame: str | None,
     move_joints: Callable[[Sequence[float]], PoseStamped],
-    move_pose: Callable[[PoseStamped], None],
+    move_pose: Callable[[PoseStamped], PoseStamped | None],
     capture: Callable[[], tuple[Image, Transform]],
     review: Review | None = None,
     review_rejected: ReviewRejected | None = None,
@@ -166,9 +166,10 @@ def run_hand_eye(
 ) -> dict[str, Any] | None:
     """Move, fit and independently validate. Return None when the operator quits.
 
-    Without a reviewer, a marker rejection away from home gets one halfway retry.
+    Without a reviewer, a marker rejection after the first sighting gets one halfway retry.
     With the rigid tip-to-mount TF, five initial training views estimate the camera
-    mount for aiming the wide and return sweeps. A supplied orbit_camera skips these tilts.
+    mount for aiming the wide and return sweeps. A supplied orbit_camera skips the four
+    mount-estimation tilts.
     The motion callbacks block until arrival. A joint move returns the measured world
     pose of the planner's tool. Capture returns a fresh image with the mount pose
     measured at image time. A resumed run reuses the original home tool pose.
@@ -204,19 +205,20 @@ def run_hand_eye(
         raise ValueError(
             "A calibrated orbit requires the optical frame mapped into the planner tip and no orbit-axis."
         )
-    # At home the tag gives its pose in the camera, but the camera pose in the tool
-    # is unknown. Four opposing tilts make that rotation and offset observable.
+    # Four opposing tilts make the camera mount observable after the first sighting.
     initial_views = (
         _ring_tilts(5, angle_deg=11.0, validation=False)
         if tip_from_mount is not None
         else [[0.0, 0.0, 0.0]]
     )
     tag_sweep = tip_from_mount is not None or orbit_camera is not None
-    saved_space = (
-        load_session(directory)["settings"].get("automatic_views", {}).get("space")
-        if tag_sweep and (directory / "session.json").is_file()
-        else None
+    saved_schedule = (
+        load_session(directory)["settings"].get("automatic_views", {})
+        if (directory / "session.json").is_file()
+        else {}
     )
+    saved_space = saved_schedule.get("space")
+    angled_start = saved_schedule.get("angled_start", not saved_schedule)
     home_relative = saved_space not in (
         "tag_azimuth_deg_radius_height_m",
         "tag_arc",
@@ -240,6 +242,10 @@ def run_hand_eye(
                 validation_count, angle_deg=7.0 if orbit_axis is None else 8.0, validation=True
             ),
         }
+    if angled_start:
+        # The wide sweep starts right of home, yawed inward toward the centered tag.
+        # Axis-based rings use an in-place tilt until the tag range is known.
+        views["train"][0] = [-0.03, math.radians(8)] if tag_sweep else [0.0, math.radians(-8)]
     schedule: dict[str, Any] = {
         "space": "tool_tilt_xy_rad",
         "joint_names": list(joint_names),
@@ -247,6 +253,8 @@ def run_hand_eye(
         "tip_frame": tip_frame,
         **views,
     }
+    if angled_start:
+        schedule["angled_start"] = True
     if orbit_axis is not None:
         schedule.update(space="tool_orbit_rad", orbit_axis=orbit_axis, max_radius_m=_ORBIT_RADII_M)
     if tag_sweep:
@@ -265,6 +273,11 @@ def run_hand_eye(
         automatic_views=schedule,
     )
     saved_pose = session.get("home_tool_pose")
+    sighting_world_from_tip = (
+        checked_transform(session["sighting_world_from_tip"])
+        if angled_start and tag_sweep and session["samples"]
+        else None
+    )
     home_pose = PoseStamped(**saved_pose) if saved_pose is not None else None
     if home_pose is None and session["samples"]:
         raise ValueError("Session is missing its home tool pose. Use a new session directory.")
@@ -291,20 +304,32 @@ def run_hand_eye(
         saved = sum(entry["role"] == role for entry in session["samples"])
         for index in range(saved, len(targets)):
             label = f"{role.capitalize()} {index + 1}/{len(targets)}"
-            at_home = role == "train" and index == 0
-            if at_home:
+            first_view = role == "train" and index == 0
+            if first_view and not angled_start:
                 label += (
                     " (home)" if review is None else " (home: center the target on the crosshair)"
                 )
-            elif tip_from_mount is not None and role == "train" and index < len(initial_views):
-                label += " (tilt to estimate camera mount)"
             report(f"Moving to {label}")
             check_cancelled()
             view_pose: Callable[[float], PoseStamped] | None = None
-            if at_home:
+            if first_view:
                 home_pose = move_joints(home)
                 save_home_tool_pose(directory, home_pose, tip_from_camera)
-            else:
+            if first_view and angled_start and tag_sweep:
+                assert home_pose is not None
+                lateral, yaw = targets[index]
+                goal = PoseStamped(
+                    frame_id=home_pose.frame_id,
+                    position=home_pose.position + Vector3(0, lateral, 0),
+                    orientation=Quaternion(Rotation.from_euler("z", yaw).as_quat())
+                    * home_pose.orientation,
+                )
+                check_cancelled()
+                reached = move_pose(goal)
+                sighting_world_from_tip = Transform.from_pose(
+                    tip_frame, reached if reached is not None else goal
+                ).to_matrix()
+            elif not first_view or angled_start:
                 assert home_pose is not None
                 if tag_sweep and (role == "validation" or index >= len(initial_views)):
                     if tip_from_camera is None:
@@ -312,7 +337,6 @@ def run_hand_eye(
                         mount = estimate_aiming_mount(directory, len(initial_views))
                         tip_from_camera = checked_transform(tip_from_mount.to_matrix() @ mount)
                         save_home_tool_pose(directory, home_pose, tip_from_camera)
-                        report("Aiming the sweep with the camera mount measured in this session.")
                     assert camera_from_tag is not None
                     view_pose = partial(
                         tag_view_pose,
@@ -321,6 +345,7 @@ def run_hand_eye(
                         camera_from_tag,
                         targets[index],
                         home_relative=home_relative,
+                        sighting_world_from_tip=sighting_world_from_tip,
                     )
                 else:
                     x, y = targets[index]
@@ -335,6 +360,8 @@ def run_hand_eye(
                     )
                 check_cancelled()
                 move_pose(view_pose(1.0))
+                if first_view:
+                    view_pose = None  # Require a usable first sighting before orbiting.
             moved = True
             while True:
                 check_cancelled()
@@ -393,15 +420,17 @@ def run_hand_eye(
                 if choice != "accept":
                     raise ValueError(f"Unknown image review choice {choice!r}")
                 check_cancelled()
+                if first_view and sighting_world_from_tip is not None:
+                    capture_session["sighting_world_from_tip"] = sighting_world_from_tip.tolist()
                 entry = save_observation(
                     directory, capture_session, image, sample, validation=role == "validation"
                 )
                 report(f"Saved {entry['image']} ({entry['reprojection_error_px']:.3f} px)")
-                if at_home and tag_sweep:
+                if first_view and tag_sweep:
                     camera_from_tag = checked_transform(entry["camera_from_target"])
                     if orbit_camera is not None:
-                        report("Located the tag at home. Starting the outer camera sweep.")
-                if at_home and orbit_axis is not None:
+                        report("Located the tag. Starting the outer camera sweep.")
+                if first_view and orbit_axis is not None:
                     distance_m = _home_tag_range(entry)
                     report(
                         f"Orbit center estimated {distance_m:.3f} m along TCP {orbit_axis} from home."
@@ -454,7 +483,7 @@ def run_live_hand_eye(
     """Check the camera and measured TF before the first move, then run both sweeps.
 
     Supply a preview for operator review and retakes. Without one, retry a rejected
-    non-home observation once from the halfway pose.
+    observation after the first sighting once from the halfway pose.
     """
     # The callback-based runner also works offline without loading the planner SDK.
     from dimos.calibration.hand_eye_motion import connect_calibration_arm

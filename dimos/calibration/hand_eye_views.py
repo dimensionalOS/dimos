@@ -32,6 +32,7 @@ HOME_SWEEP_SPACES = (
     "home_camera_offsets_world_m",
     "home_camera_offsets_world_m_v2",
     "home_camera_offsets_world_m_v3",
+    "home_camera_offsets_world_m_v4",
 )
 
 
@@ -85,8 +86,7 @@ def home_sweep_views(
             # Use the halfway pose that cleared the reflection on the printed tag.
             offsets[2] *= 0.5
     else:
-        # Both endpoints and the raised center need a capture even for an even count.
-        # Split any extra views evenly along each of the two straight segments.
+        # Spread the views along the two segments meeting above home.
         right = [0.012, -0.155, -0.110]
         raised_center = [-0.068, 0.0, 0.022]
         left = [0.012, 0.155, -0.110]
@@ -94,9 +94,15 @@ def home_sweep_views(
         to_center = np.linspace(right, raised_center, first_half + 1)
         from_center = np.linspace(raised_center, left, count - first_half)
         offsets = np.concatenate((to_center, from_center[1:]))
-        if count == 7 and space == HOME_SWEEP_SPACES[2]:
+        if count == 7 and space in HOME_SWEEP_SPACES[2:]:
             # The first stop after center read the tag more reliably halfway toward home.
             offsets[4] *= 0.5
+    if space == HOME_SWEEP_SPACES[-1] and count >= 3:
+        # Keep the depth and height of a centerline stop. Move the lens sideways
+        # toward the preceding view without overtaking it or changing other stops.
+        center = (count - 1) // 2
+        if not validation or count % 2:
+            offsets[center, 1] = np.clip(offsets[center - 1, 1] / 2, -0.04, 0.04)
     views: list[list[float]] = offsets.tolist()
     return views
 
@@ -109,10 +115,16 @@ def tag_view_pose(
     fraction: float,
     *,
     home_relative: bool = False,
+    sighting_world_from_tip: NDArray[np.float64] | None = None,
 ) -> PoseStamped:
     """Move the optical center and aim its +Z axis at the tag with minimal wrist rotation."""
     home_camera = Transform.from_pose("tip", home).to_matrix() @ tip_from_camera
-    world_from_tag = home_camera @ camera_from_tag
+    sighting_camera = (
+        home_camera
+        if sighting_world_from_tip is None
+        else sighting_world_from_tip @ tip_from_camera
+    )
+    world_from_tag = sighting_camera @ camera_from_tag
     if home_relative:
         offset = np.asarray(view)
         # Translation is relative to home, so a closer or tilted target can put

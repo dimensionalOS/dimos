@@ -47,7 +47,7 @@ dimos mcp call start_hand_eye_calibration \
 dimos mcp call hand_eye_calibration_status
 ```
 
-Each start creates a session under `./hand-eye-sessions/`. Home counts as the first of **8 training views** and must yield a usable tag observation before the arm proceeds. At any later training or validation stop, if tag detection or pose estimation fails its checks, the skill moves halfway toward home and takes one fresh stationary image. On a sweep this halves the lens offset from home and re-aims at the tag. On a tilt it halves the requested angle. A successful retry fills the same numbered view using its measured pose. A second rejection stops the run at the retry pose and reports the reason.
+Each start creates a session under `./hand-eye-sessions/`. The arm uses home as its motion reference and takes the first of **8 training views** at an angle. It must read the tag there before proceeding. At any later training or validation stop, if tag detection or pose estimation fails its checks, the skill moves halfway toward home and takes one fresh stationary image. On a sweep this halves the lens offset from home and re-aims at the tag. On a tilt it halves the requested angle. A successful retry fills the same numbered view using its measured pose. A second rejection stops the run at the retry pose and reports the reason.
 
 After solving, the skill takes **4 held-out views**, saves the grade and requests the return move. The status includes the errors and absolute path to `hand_eye.json`.
 
@@ -72,30 +72,30 @@ dimos handeyecalibrate run --session ./hand-eye-01 \
   --home 0 1.0 -1.0 1.1 0 0 --ee-frame arm_link6
 ```
 
-1. At home, center the tag on the crosshair, secure it, and press **R** to refresh if you adjusted it.
+1. Before starting, secure the tag so it is centered when the arm is at home. The first review appears after the arm moves to an angled pose.
 2. Press **Enter** in the image window to accept each image and its measured mount pose, or **R** to retake it. The default is **8 training views** and **4 held-out views**. For seven stops across the wide sweep, add `--count 12`.
 3. After grading, both the CLI and MCP workflows check the arm’s return pose when the run has moved the arm. The A1Z returns to `0 0.05 -0.05 0 0 0` radians (J1–J6), using its driver’s parking tolerance of 0.05 rad (about 2.86°) per joint. Other arms default to zero on every joint with a 2° tolerance. If the return fails, the error gives the saved result path.
 
 ### Wide views around home
 
-The CLI and MCP both plan these views from the current session. Home locates the tag relative to the camera. Four 11° tilts about two tool axes estimate where the camera sits on the wrist. The planner can then place the lens relative to its home position and aim it at the measured tag center at each stop. Set home with the arm centered along the planner's X axis, with +X forward, Y left/right and +Z up.
+The CLI and MCP both plan these views from the current session. From home, the tool moves 3 cm to the right (world −Y) and yaws 8° toward the target for the first sighting. Four 11° tilts about two tool axes estimate where the camera sits on the wrist. The planner can then place the lens relative to its home position and aim it at the measured tag center at each stop. Set home with the arm centered along the planner's X axis, with +X forward, Y left/right and +Z up.
 
 | Captures | Camera positions relative to home |
 | --- | --- |
-| Training | The lens starts 15.5 cm to one side, crosses the center, and finishes 15.5 cm to the other side. Both ends are 11 cm below and 1.2 cm forward of home. At the center the lens is 2.2 cm above and 6.8 cm behind home. |
+| Training | The lens starts 15.5 cm to one side, crosses the center, and finishes 15.5 cm to the other side. Both ends are 11 cm below and 1.2 cm forward of home. At the raised stop the lens is 2.2 cm above and 6.8 cm behind home, offset to one side. |
 | Validation | The lens sweeps back across a 25 cm span. |
 
-Home and the four tilts count toward `--count`. The remaining training captures include both ends and the raised center. With seven sweep stops, the first stop after center uses half its usual offset toward the left, back and down to improve tag visibility. The lateral limits are fixed offsets chosen just inside the modeled reach of the example A1Z at this home. Check clearance for your setup, especially below home at the two ends. The running planner checks each move.
+The first angled sighting and four tilts count toward `--count`. On both sweeps a stop that would fall on the home X centerline shifts sideways by half the spacing to the preceding stop, up to 4 cm. The default four validation stops are already off-axis. With seven sweep stops, the first stop after center uses half its usual offset toward the left, back and down to improve tag visibility. The lateral limits are fixed offsets chosen just inside the modeled reach of the example A1Z at this home. Check clearance for your setup, especially below home at the two ends. The running planner checks each move.
 
 The final solve uses every training view, and validation measures agreement against that frozen result. If the initial tilts give insufficient rotation or inconsistent target poses, the workflow stops before the wide sweep. Check that the tag stays fixed and clearly visible through the tilts before retrying.
 
-If you explicitly supply a validated result from the same physical mount with `--orbit-calibration PATH` (MCP `orbit_calibration`), the workflow skips the four tilts and uses that mount for aiming. It still locates the tag at home and fits a new calibration.
+If you explicitly supply a validated result from the same physical mount with `--orbit-calibration PATH` (MCP `orbit_calibration`), the workflow skips the four tilts and uses that mount for aiming. It locates the tag from the angled first sighting and fits a new calibration.
 
 ### Optional smaller rings
 
 For the A1Z/D405 mount described above, add `--orbit-axis x` to the CLI run or `"orbit_axis":"x"` to the MCP start arguments. Use a fresh session for the first orbit run. Center the tag at home and leave clearance for the wrist and cable on both sides of that pose.
 
-The first accepted image gives the distance to the tag. DimOS places an estimated pivot that far along the selected tool axis, then moves the TCP sideways and turns the camera inward at each capture pose. At the example home distance of 29 cm, the training circle is **11 cm across** and the validation circle is **8 cm across**. At shorter distances the circles shrink to keep the tilts within 11° and 8°. The planner connects discrete capture poses. Tag visibility is checked at each stop.
+In this mode, the first image is taken at an 8° in-place tilt and gives the distance to the tag. DimOS places an estimated pivot that far along the selected tool axis, then moves the TCP sideways and turns the camera inward at each capture pose. At the example home distance of 29 cm, the training circle is **11 cm across** and the validation circle is **8 cm across**. At shorter distances the circles shrink to keep the tilts within 11° and 8°. The planner connects discrete capture poses. Tag visibility is checked at each stop.
 
 On another mount, choose the signed TCP axis (`x`, `-x`, `y`, `-y`, `z`, `-z`) aligned with the camera’s viewing direction. The estimate assumes the camera is near the TCP. Centering accuracy depends on that alignment and offset.
 
@@ -128,7 +128,7 @@ Use `hand_eye.json` when `validated` is `true`. A failed grade gives a nonzero e
 
 ## Stop or retry
 
-- In `run`, **Q**, **Esc** or closing the review window stops at the current pose. **Ctrl-C** in the calibration terminal interrupts a move. Repeat the same command with the same setup to resume at the first unsaved view. A fully captured run regrades without motion.
+- In `run`, **Q**, **Esc** or closing the review window stops at the current pose. **Ctrl-C** in the calibration terminal interrupts a move. Repeat the same command with the same setup to resume at the first unsaved view. A fully captured run regrades without motion. Older sessions resume their saved viewpoints. Choose a fresh session directory for the off-axis schedule.
 - If the CLI rejects a frame, **R** retakes the same numbered view in place. Where offered, **H** moves halfway toward home for one retry at that position. **Enter** accepts a frame that passed detection.
 - For a missed pose, check the reported error and clearance. For a failed solve or validation, check tag size, flatness, sharpness, mounting rigidity, rotation diversity and timestamps. Start a fresh session after changing the target placement, camera or mount, intrinsics, home or view schedule.
 - `solve` and `validate` work offline. After adding training images repeat both commands. After adding just validation images repeat `validate`.
