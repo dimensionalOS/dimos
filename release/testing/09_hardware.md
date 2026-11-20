@@ -100,6 +100,9 @@ uv run unitree-fetch-aes-key --email <email> --device-type Go2 --sn <serial>
 GO2CONNECTION__AES_128_KEY=<key> uv run dimos --robot-ip <ip> run unitree-go2
 ```
 
+* `connect-wifi` scans for 5 seconds, lists the robots it found and asks `Select device`. Press Enter to take the only one.
+* `unitree-fetch-aes-key` asks for the password of the Unitree account.
+
 Expected result: the first `discover` lists the robot as a BLE row with its serial. `connect-wifi` prints "Provisioned." with the serial. The second `discover` also lists a LAN row with the robot's IP. The key tool prints a box with the `Key` line. `unitree-go2` connects with that key.
 
 ## 9.10 Go2 rage mode
