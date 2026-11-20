@@ -9,7 +9,8 @@ Most checks run in MuJoCo or on replay data from LFS. Checks with a Livox Mid-36
 uv run dimos run go2-sim-nav
 ```
 
-* Rerun shows the office and a voxel map that grows from the simulated Mid-360.
+* Rerun shows the office and a voxel map that grows from the simulated Mid-360. The DimOS Viewer is the only window, no MuJoCo window opens.
+* Drag in the 3D view until you look down into the room, because from the default camera the near wall hides the floor.
 * Click a floor point a few meters away. A path appears and the robot walks there.
 
 Expected result: the legged robot reaches the clicked goal without crossing walls, and no module crashes.
