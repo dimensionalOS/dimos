@@ -26,14 +26,20 @@ import threading
 import time
 from typing import IO, Any
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.global_config import global_config
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, RUN_SHUTDOWN_TIMEOUT
+from dimos.core.global_config import global_config, parse_periods
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.core.transport_factory import session_config
-from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
+from dimos.core.transport_factory import make_transport, session_config
+from dimos.experimental.memory.rust_recorder import (
+    RustContinuousMode,
+    RustEventConfig,
+    RustRecorderConfig,
+    RustStreamSpec,
+)
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 from dimos.utils.logging_config import setup_logger
 
@@ -42,6 +48,8 @@ logger = setup_logger()
 _READY_TIMEOUT = 10.0
 _DEFAULT_ENCODING_THREADS = 4
 _READY_MESSAGE = "memory recorder ready"
+# Event mode drains its whole window on stop. Only the run's own shutdown budget bounds it.
+_STOP_TIMEOUT = RUN_SHUTDOWN_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,7 @@ class RustRecordingPlan:
     streams: list[RustStreamSpec]
     payload_types: dict[str, type[Any]]
     path: Path
+    mode: RustContinuousMode | RustEventConfig
     lcm_url: str | None = None
 
 
@@ -92,8 +101,38 @@ def prepare_rust_recorder() -> Path:
 
 
 def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
-    """Resolve and validate the stream plan the standalone recorder will receive."""
+    """Resolve and validate the stream plan the standalone recorder will receive.
+
+    With ``--record-events`` the trigger stream is always recorded, so ``dimos topic send``
+    can start a clip.
+    """
+    events = (
+        RustEventConfig(
+            default_period=global_config.record_default_period,
+            type_periods=parse_periods(global_config.record_type_periods),
+            stream_periods=parse_periods(global_config.record_stream_periods),
+        )
+        if global_config.record_events
+        else None
+    )
+    transports = dict(transports)
     selected = matching(global_config.record_topics, (name for name, _ in transports))
+    if events is not None:
+        if not any(name == events.trigger for name, _ in transports):
+            lcm_transport = next(
+                (
+                    transport
+                    for (name, _), transport in transports.items()
+                    if name in selected and type(transport) is LCMTransport
+                ),
+                None,
+            )
+            transports[(events.trigger, String)] = (
+                make_transport(events.trigger, String)
+                if lcm_transport is None
+                else LCMTransport(f"/{events.trigger}", String, url=lcm_transport.lcm.config.url)
+            )
+        selected.add(events.trigger)
     unsupported_transports: list[str] = []
     streams: list[RustStreamSpec] = []
     topics: dict[str, str] = {}
@@ -163,13 +202,19 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
         raise ValueError("The Rust recorder cannot record conflicting LCM URLs in one artifact")
 
     suffix = "db" if global_config.record == "sqlite" else "mcap"
+    path = recording_dir() / f"memory.{suffix}"
     return RustRecordingPlan(
         backend=backends.pop(),
         lcm_url=next(iter(lcm_urls), None),
         topics=topics,
         streams=streams,
         payload_types=payload_types,
-        path=recording_dir() / f"memory.{suffix}",
+        path=path,
+        mode=(
+            RustContinuousMode()
+            if events is None
+            else events.resolve(streams, path, Path(global_config.record_window_dir))
+        ),
     )
 
 
@@ -206,6 +251,7 @@ class RustRecordingSession:
                 "encoding_threads": global_config.record_encoding_threads
                 or _DEFAULT_ENCODING_THREADS,
                 "streams": [stream.model_dump(exclude_none=True) for stream in self.plan.streams],
+                "mode": self.plan.mode.model_dump(),
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }
@@ -288,7 +334,7 @@ class RustRecordingSession:
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
             try:
-                process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                process.wait(timeout=_STOP_TIMEOUT)
             except subprocess.TimeoutExpired:
                 logger.warning("Rust recorder did not flush in time; sending SIGKILL")
                 process.kill()
