@@ -338,6 +338,15 @@ def test_the_cameras_get_the_m20s_devices_mounts_and_focal_length() -> None:
         math.pi,
         607.0,
     )
+    assert (config.width, config.height, config.fps, config.bitrate_bps, config.deskew) == (
+        1920,
+        1080,
+        30,
+        9_000_000,
+        False,
+    )
+    # the 1280-wide focal length, which the driver scales to the stream's width: x1.5 at 1080p
+    assert config.focal_length_px * config.width / config.focal_length_width_px == 607.0 * 1.5
 
 
 def test_the_serial_body_imu_gets_the_m20s_uart_and_mount() -> None:

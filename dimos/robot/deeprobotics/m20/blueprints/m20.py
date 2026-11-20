@@ -407,12 +407,20 @@ _m20_real = autoconnect(
         name="M20Cameras",
         default="relay",
         choices={
-            # the AOS board's two cameras, at their centers in base_link from the Deep Robotics docs, with the
-            # provisional M20/Whale focal length at 1280 px wide (the vendor publishes no factory calibration)
+            # the AOS board's two cameras at their full 1080p30 MJPEG, at their centers in base_link from the Deep
+            # Robotics docs; the provisional M20/Whale focal length is at 1280 px wide (the vendor publishes no
+            # factory calibration) and the driver scales it to the stream's width (x1.5 at 1920); the bitrate is
+            # the 720p 4 Mb/s scaled by the pixel count (x2.25); no deskew
             "relay": RockchipH264Cameras.blueprint(
+                width=1920,
+                height=1080,
+                fps=30,
+                bitrate_bps=9_000_000,
                 front_camera_xyz=(0.37646, 0.0, 0.03738),
                 rear_camera_xyz=(-0.37646, 0.0, 0.03738),
                 focal_length_px=607.0,
+                focal_length_width_px=1280,
+                deskew=False,
             ).hosted(tags=AOS),
             "off": autoconnect(),
         },
