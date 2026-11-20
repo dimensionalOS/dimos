@@ -23,8 +23,8 @@ rear_lidar). The URDF filter cuts the robot's body out of each scan, frame kept,
 tells the lidars apart by frame_id, the ray tracer traces each from its own lidar's origin, and relocalization places
 each by tf at its stamp. dimSLAM runs on the front lidar's IMU alone (both ran under real time
 on GOS). Each Airy is namespaced but publishes its mount onto the one global tf. The cameras' module replaces ``m20-camera.service``
-(``--choice M20Cameras=off`` leaves them to it); ``--choice M20BodyImu=off`` leaves the body IMU to the vendor
-yesense_node, which holds its serial port in vendor mode. Nothing commands the legs.
+(``--choice M20Cameras=off`` leaves them to it); the body IMU's serial driver is opt-in
+(``--choice M20BodyImu=on``): it needs the vendor yesense_node, which holds the port, stopped. Nothing commands the legs.
 """
 
 from typing import Any
@@ -65,10 +65,10 @@ def _body_filter(**config: Any) -> Blueprint:
 m20_rust = autoconnect(
     # the lidars voxelize at the ray tracer's voxel, the only thinning its scans get
     m20_lidars(voxel=VOXEL_SIZE_M).hosted(tags=AOS),
-    # off while the vendor yesense_node holds the IMU's serial port
+    # off by default: the serial driver needs the vendor yesense_node stopped (it holds the port)
     ChoiceAtom(
         name="M20BodyImu",
-        default="on",
+        default="off",
         choices={"on": M20Imu.blueprint().hosted(tags=AOS), "off": autoconnect()},
     ),
     ChoiceAtom(
