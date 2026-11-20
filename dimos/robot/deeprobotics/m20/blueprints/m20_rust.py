@@ -18,29 +18,36 @@ AOS (a ``dimos host`` tagged ``board=aos``) runs the hardware: both Airys, the Y
 with ``--choice M20Joints=ecan``, the motor-bus joint state and batteries (needs rl_deploy with the ecan shim).
 Everything else runs on the machine that starts the run (GOS): dimSLAM, the ray tracer, planners and relocalization.
 
-The Airys are two independent streams, ``front_lidar`` and ``rear_lidar`` (each in its own lidar frame, with
-``front_lidar_imu`` / ``rear_lidar_imu``), and dimSLAM, the ray tracer and relocalization each take both, never merged.
-dimSLAM runs on the front lidar's IMU alone (both IMUs ran under real time on GOS). The cameras' module replaces ``m20-camera.service``
+Both Airys publish onto one ``lidar`` stream (their IMUs onto ``lidar_imu``), each scan in its own frame (front_lidar,
+rear_lidar). The URDF filter cuts the robot's body out of each scan, frame kept, onto ``lidar_filtered``: dimSLAM
+tells the lidars apart by frame_id, the ray tracer traces each from its own lidar's origin, and relocalization places
+each by tf at its stamp. dimSLAM runs on the front lidar's IMU alone (both ran under real time
+on GOS). Each Airy is namespaced but publishes its mount onto the one global tf. The cameras' module replaces ``m20-camera.service``
 (``--choice M20Cameras=off`` leaves them to it); ``--choice M20BodyImu=off`` leaves the body IMU to the vendor
 yesense_node, which holds its serial port in vendor mode. Nothing commands the legs.
 """
 
 from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
 from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio
-from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack, m20_relocalization
+from dimos.robot.deeprobotics.m20.blueprints._nav import (
+    VOXEL_SIZE_M,
+    m20_nav_stack,
+    m20_relocalization,
+)
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
 from dimos.robot.deeprobotics.m20.imu.module import M20Imu
-from dimos.robot.deeprobotics.m20.lidar import m20_airy_lidars
+from dimos.robot.deeprobotics.m20.lidar import m20_lidars
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # The `dimos host` tag of the board the lidars, IMU, cameras and motor bus are wired to.
 AOS = {"board": "aos"}
 
 m20_rust = autoconnect(
-    m20_airy_lidars().hosted(tags=AOS),
+    # the lidars voxelize at the ray tracer's voxel, the only thinning its scans get
+    m20_lidars(voxel=VOXEL_SIZE_M).hosted(tags=AOS),
     # off while the vendor yesense_node holds the IMU's serial port
     ChoiceAtom(
         name="M20BodyImu",
@@ -62,16 +69,18 @@ m20_rust = autoconnect(
             .hosted(tags=AOS),
         },
     ),
-    m20_dim_slam().remappings(
+    # the robot's own body cut out of every scan, at the joint state (standing pose or ecan) at its stamp
+    UrdfManagerPointClearing.blueprint(model=M20_MODEL).remappings(
         [
-            (DimSlamLio, "lidar", "front_lidar"),
-            (DimSlamLio, "second_lidar", "rear_lidar"),
-            (DimSlamLio, "imu", "front_lidar_imu"),
+            (UrdfManagerPointClearing, "pointcloud", "lidar"),
+            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar_filtered"),
         ]
     ),
-    UrdfManager.blueprint(model=M20_MODEL),
-    m20_nav_stack(lidar="front_lidar", second_lidar="rear_lidar"),
-    m20_relocalization(lidar="front_lidar", second_lidar="rear_lidar"),
+    m20_dim_slam().remappings(
+        [(DimSlamLio, "lidar", "lidar_filtered"), (DimSlamLio, "imu", "lidar_imu")]
+    ),
+    m20_nav_stack(lidar="lidar_filtered", pre_trace_subsample=1, ray_subsample=1),
+    m20_relocalization(lidar="lidar_filtered"),
 ).global_config(
     n_workers=5,
     transport="zenoh",

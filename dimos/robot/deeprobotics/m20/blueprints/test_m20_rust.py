@@ -22,9 +22,11 @@ from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_ass
 from dimos.hosted.protocol import HostDescriptor
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack, m20_relocalization
 from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 from dimos.robot.deeprobotics.m20.blueprints.m20_rust import m20_rust
+from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 
 _REVISION = "revision-1"
@@ -37,7 +39,7 @@ _HOSTS = (
         host_id="nos", name="nos", tags={"board": "nos"}, revision=_REVISION, active_run_ids=()
     ),
 )
-_AOS_DRIVERS = {"front_airy", "rear_airy", "m20lidarmounttf", "m20imu", "m20camerarelay"}
+_AOS_DRIVERS = {"front_lidar/m20lidar", "rear_lidar/m20lidar", "m20imu", "m20camerarelay"}
 
 
 def _solid(**choices: str) -> Blueprint:
@@ -73,33 +75,72 @@ def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(
     assert len(compile_fragments(_solid(**choices), placement, run_id="r", revision=_REVISION)) == 2
 
 
-def test_each_airy_is_its_own_stream_and_every_consumer_takes_both() -> None:
+def _topic(blueprint: Blueprint, module: str, stream: str) -> object:
+    return blueprint.remapping_map.get((module, stream), stream)
+
+
+def test_raw_lidar_goes_only_into_the_body_filter_and_everything_else_takes_the_filtered_cloud() -> (
+    None
+):
     blueprint = _solid()
-
-    def topic(module: str, stream: str) -> object:
-        return blueprint.remapping_map.get((module, stream), stream)
-
-    assert (topic("front_airy", "lidar"), topic("front_airy", "imu")) == (
-        "front_lidar",
-        "front_lidar_imu",
-    )
-    assert (topic("rear_airy", "lidar"), topic("rear_airy", "imu")) == (
-        "rear_lidar",
-        "rear_lidar_imu",
-    )
-    for consumer in ("dimslamlio", "raytracingvoxelmap", "premapmodule"):
-        assert (topic(consumer, "lidar"), topic(consumer, "second_lidar")) == (
-            "front_lidar",
-            "rear_lidar",
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+        assert (_topic(blueprint, lidar, "lidar"), _topic(blueprint, lidar, "imu")) == (
+            "lidar",
+            "lidar_imu",
         )
-    assert topic("dimslamlio", "imu") == "front_lidar_imu"
+        assert _topic(blueprint, lidar, "tf") == "tf"
+    assert {
+        atoms["front_lidar/m20lidar"].kwargs["frame_id"],
+        atoms["rear_lidar/m20lidar"].kwargs["frame_id"],
+    } == {
+        "front_lidar",
+        "rear_lidar",
+    }
+    readers_of_lidar = {
+        atom.name
+        for atom in blueprint.active_blueprints
+        for stream in atom.streams
+        if stream.direction == "in" and _topic(blueprint, atom.name, stream.name) == "lidar"
+    }
+    assert readers_of_lidar == {"urdfmanagerpointclearing"}
+    assert _topic(blueprint, "urdfmanagerpointclearing", "filtered_pointcloud") == "lidar_filtered"
+    for consumer in ("dimslamlio", "raytracingvoxelmap", "premapmodule"):
+        assert _topic(blueprint, consumer, "lidar") == "lidar_filtered"
+    assert _topic(blueprint, "dimslamlio", "imu") == "lidar_imu"
     streams = stream_name_types(blueprint)
     assert {
-        ("front_lidar", PointCloud2),
-        ("rear_lidar", PointCloud2),
-        ("front_lidar_imu", Imu),
+        ("lidar", PointCloud2),
+        ("lidar_filtered", PointCloud2),
+        ("lidar_imu", Imu),
+        ("tf", TFMessage),
     } <= streams
-    assert not {name for name, _ in streams} & {"slam_body_points", "lidar", "second_lidar"}
+    assert not any(name.startswith(("front_lidar/", "rear_lidar/")) for name, _ in streams)
+
+
+def test_the_only_thinning_is_the_lidars_voxel_at_the_ray_tracers_voxel() -> None:
+    atoms = {atom.name: atom for atom in _solid().active_blueprints}
+    voxel = atoms["raytracingvoxelmap"].kwargs["voxel_size"]
+    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+        assert atoms[lidar].kwargs["voxel"] == voxel
+    assert (
+        atoms["raytracingvoxelmap"].kwargs["pre_trace_subsample"],
+        atoms["raytracingvoxelmap"].kwargs["ray_subsample"],
+    ) == (1, 1)
+
+
+def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
+    """The shared streams carry every frame; dimSLAM keeps the ones m20_dim_slam lists, which the lidars publish."""
+    atoms = {atom.name: atom for atom in _solid().active_blueprints}
+    slam = atoms["dimslamlio"].kwargs
+    expected = m20_dim_slam().blueprints[0].kwargs
+    assert (slam["lidars"], slam["imus"]) == (expected["lidars"], expected["imus"])
+    lidar_frames = {
+        atoms[name].kwargs["imu_frame_id"]
+        for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar")
+    }
+    assert {imu.frame_id for imu in slam["imus"]} <= lidar_frames
+    assert {lidar.frame_id for lidar in slam["lidars"]} == lidar_frames
 
 
 def test_navigation_and_relocalization_match_m20() -> None:
@@ -108,5 +149,8 @@ def test_navigation_and_relocalization_match_m20() -> None:
     shared = {atom.name for atom in m20_nav_stack().solidify().active_blueprints} | {
         atom.name for atom in m20_relocalization().active_blueprints
     }
+    thinning = {"pre_trace_subsample", "ray_subsample"}
     for name in shared:
-        assert (rust[name].module, rust[name].kwargs) == (vendor[name].module, vendor[name].kwargs)
+        rust_kwargs = {k: v for k, v in rust[name].kwargs.items() if k not in thinning}
+        vendor_kwargs = {k: v for k, v in vendor[name].kwargs.items() if k not in thinning}
+        assert (rust[name].module, rust_kwargs) == (vendor[name].module, vendor_kwargs)

@@ -333,7 +333,7 @@ all_modules = {
     "m20-connection": "dimos.robot.deeprobotics.m20.connection.M20Connection",
     "m20-ecan": "dimos.robot.deeprobotics.m20.ecan.module.M20Ecan",
     "m20-imu": "dimos.robot.deeprobotics.m20.imu.module.M20Imu",
-    "m20-lidar-mount-tf": "dimos.robot.deeprobotics.m20.lidar.M20LidarMountTf",
+    "m20-lidar": "dimos.robot.deeprobotics.m20.lidar.M20Lidar",
     "m20-standing-joint-state": "dimos.robot.deeprobotics.m20.model.M20StandingJointState",
     "manipulation-localize": "dimos.manipulation.manipulation_localize.ManipulationLocalize",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
