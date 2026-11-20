@@ -35,6 +35,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
 from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio
+from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
     VOXEL_SIZE_M,
     m20_nav_stack,
@@ -176,11 +177,15 @@ m20_rust = autoconnect(
             "gos": m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings([(DimSlamLio, "imu", "lidar_imu")]),
         },
     ),
-    # m20's 5/5 subsampling on top of the lidars' voxel, as m20 traces the vendor cloud
     # the robot's links on tf and its model for viewers, from whichever joint state the run has, as m20
     UrdfManager.blueprint(model=M20_MODEL),
-    m20_nav_stack(lidar="lidar"),
-    m20_relocalization(lidar="lidar"),
+    # m20's 5/5 subsampling on top of the lidars' voxel, as m20 traces the vendor cloud; the two Airys publish a cloud
+    # each per sweep, so a local map every 2nd cloud and a relocalization once both have landed keep m20's one per sweep
+    m20_nav_stack(lidar="lidar", emit_every=2),
+    m20_relocalization(
+        lidar="lidar",
+        attempt_after_frames=[constants.FRONT_LIDAR_FRAME, constants.REAR_LIDAR_FRAME],
+    ),
 ).global_config(
     n_workers=5,
     transport="zenoh",

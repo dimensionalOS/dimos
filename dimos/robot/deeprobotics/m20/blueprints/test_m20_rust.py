@@ -242,7 +242,8 @@ def test_navigation_and_relocalization_match_m20() -> None:
     shared = {atom.name for atom in m20_nav_stack().solidify().active_blueprints} | {
         atom.name for atom in m20_relocalization().active_blueprints
     }
-    thinning = {"pre_trace_subsample", "ray_subsample"}
+    # only the per-sweep pacing of two lidars differs (checked in its own test)
+    thinning = {"emit_every", "attempt_after_frames"}
     for name in shared:
         rust_kwargs = {k: v for k, v in rust[name].kwargs.items() if k not in thinning}
         vendor_kwargs = {k: v for k, v in vendor[name].kwargs.items() if k not in thinning}
@@ -283,3 +284,18 @@ def test_every_module_config_m20_rust_builds_validates_as_its_board_will_parse_i
     for atom in _solid(**choices).active_blueprints:
         config_type = typing.get_type_hints(atom.module)["config"]
         config_type(**{key: value for key, value in atom.kwargs.items() if key != "instance_name"})
+
+
+def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None:
+    """Each Airy publishes its own cloud per sweep, so the ray tracer emits every 2nd and the relocalizer waits for both."""
+    atoms = {atom.name: atom for atom in _solid().active_blueprints}
+    m20_atoms = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    assert (
+        atoms["raytracingvoxelmap"].kwargs["emit_every"]
+        == 2 * m20_atoms["raytracingvoxelmap"].kwargs["emit_every"]
+    )
+    lidar_frames = {
+        atoms[name].kwargs["frame_id"] for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar")
+    }
+    assert set(atoms["premapmodule"].kwargs["attempt_after_frames"]) == lidar_frames
+    assert m20_atoms["premapmodule"].kwargs["attempt_after_frames"] == []

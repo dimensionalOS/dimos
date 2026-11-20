@@ -39,6 +39,7 @@ def m20_nav_stack(
     lidar: str = "slam_body_points",
     pre_trace_subsample: int = 5,
     ray_subsample: int = 5,
+    emit_every: int = 1,
 ) -> MetaBlueprint:
     """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s; the ray tracer traces the scans on `lidar`."""
     return autoconnect(
@@ -48,7 +49,7 @@ def m20_nav_stack(
             # 1 keeps every point: a lidar that voxelizes its own scans needs no more thinning here
             pre_trace_subsample=pre_trace_subsample,
             ray_subsample=ray_subsample,
-            emit_every=1,
+            emit_every=emit_every,
             global_emit_every=50,
             world_frame=WORLD_FRAME,
             worker_threads=3,
@@ -77,7 +78,9 @@ def m20_nav_stack(
     )
 
 
-def m20_relocalization(lidar: str = "slam_body_points") -> Blueprint:
+def m20_relocalization(
+    lidar: str = "slam_body_points", attempt_after_frames: list[str] | None = None
+) -> Blueprint:
     """Continuous relocalization against the premap, matching a live map built from the scans on `lidar` (each placed by tf at its stamp)."""
     return PremapModule.blueprint(
         world_frame=WORLD_FRAME,
@@ -93,4 +96,5 @@ def m20_relocalization(lidar: str = "slam_body_points") -> Blueprint:
         # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
         live_voxel_m=0.2,
         match_radius_m=15.0,
+        attempt_after_frames=attempt_after_frames or [],
     ).remappings([(PremapModule, "lidar", lidar)])

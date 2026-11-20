@@ -597,3 +597,38 @@ def test_scans_are_kept_in_map_whatever_world_to_map_does(module):
     m._keep_scans()
     assert held(m.live) == [(3, 0, 0)]
     assert m._center == (1.0, 0.0)
+
+
+def _scan_from(frame: str) -> PointCloud2:
+    return PointCloud2.from_numpy(np.asarray([[2, 0, 0]], dtype=np.float32), frame_id=frame)
+
+
+@pytest.mark.parametrize(
+    ("attempt_after_frames", "frames", "attempts"),
+    [
+        # every scan starts an attempt by default
+        ([], ["front", "rear", "front"], 3),
+        # one attempt per sweep of both lidars, whichever lands first, and a lidar seen twice still waits for the other
+        (["front", "rear"], ["front", "rear", "rear", "front", "front"], 2),
+    ],
+)
+def test_an_attempt_waits_for_a_scan_from_every_configured_frame(
+    module, attempt_after_frames, frames, attempts
+):
+    m = module(
+        map_frame="premap",
+        relocalize_once=False,
+        live_cloud="lidar",
+        attempt_after_frames=attempt_after_frames,
+    )
+    m._tf = SimpleNamespace(
+        get=lambda *_: Transform(frame_id="map", child_frame_id="x"), dispose=lambda: None
+    )
+    changes = []
+    m._live_changed.subscribe(changes.append)
+    for frame in frames:
+        m._on_scan(_scan_from(frame))
+        m._keep_scans()
+    assert len(changes) == attempts
+    # every scan still joins the live map
+    assert len(held(m.live)) == 1

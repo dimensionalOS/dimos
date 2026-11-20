@@ -105,6 +105,9 @@ class Config(ModuleConfig):
     live_voxel_m: float = 0.1
     # ... lidar: a scan's tf must be stamped within this of the scan (s)
     scan_tf_tolerance_s: float = 0.1
+    # ... lidar: attempt only once a scan from each of these frames joined the live map since the last attempt (a rig
+    # whose lidars publish separately attempts once per sweep, not once per lidar); empty attempts on every scan
+    attempt_after_frames: list[str] = []
     # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
     match_radius_m: float = 30.0
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
@@ -156,8 +159,9 @@ class PremapModule(Module):
         self.live = LiveMap(self.config.live_voxel_m)
         # Fires whenever the kept live map grows, the continuous match's cue
         self._live_changed: Subject[None] = Subject()
-        # Scans placed since the last fold
+        # Scans placed since the last fold, and the frames that have joined the live map since the last attempt
         self._scans: list[np.ndarray] = []
+        self._frames_since_attempt: set[str] = set()
         self._center: tuple[float, float] | None = None
         self._refusals = 0
 
@@ -235,15 +239,21 @@ class PremapModule(Module):
         points = moved(scan.points_f32().reshape(-1, 3), to_live)
         with self._lock:
             self._scans.append(points)
+            self._frames_since_attempt.add(scan.frame_id)
         self._center = (float(to_live.translation.x), float(to_live.translation.y))
         return True
 
     def _keep_scans(self) -> None:
         with self._lock:
             scans, self._scans = self._scans, []
+            wanted = set(self.config.attempt_after_frames)
+            complete = wanted <= self._frames_since_attempt
+            if complete:
+                self._frames_since_attempt = set()
         if scans:
             self.live.add(np.concatenate(scans))
-            self._live_changed.on_next(None)
+            if complete:
+                self._live_changed.on_next(None)
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
         to_live = self.frame_to(self._live_frame, cloud.frame_id)
