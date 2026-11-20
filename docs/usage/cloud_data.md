@@ -26,11 +26,11 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
 - Each successful upload prints a `console:` link to it (production and staging APIs only).
 
-The Console preview of a SQLite recording includes stored timestamp intervals for the selected camera,
-LiDAR and odometry streams. The table shows the first and last timestamps relative to preview start,
+The uploader includes stored timestamp intervals for the selected camera, LiDAR and odometry streams
+in a SQLite recording. Console versions with the timing table show the first and last offsets from preview start,
 the largest interval, and the total number of intervals over one second. It lists the first 64 such
 intervals per stream. Timing is optional when timestamps cannot be read or adding it would exceed
-the 4 MiB preview limit.
+the 4 MiB preview limit. A spatial preview with non-finite JSON values fails separately from the recording upload.
 
 ## Pulls
 
