@@ -277,7 +277,7 @@ def test_deferred_arguments_are_snapshotted_and_reusable(clearing) -> None:
         autoconnect(VisModule.blueprint(), clearing)
         .transports(transports)
         .remappings(remappings)
-        .namespace("robot", expose=iter(["cleared"]))
+        .namespace("robot", shared=iter(["cleared"]))
         .hosted(tags=tags, minimum=minimum)
     )
     first = mapping.solidify()
