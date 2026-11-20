@@ -197,7 +197,7 @@ def calibrate_cmd(
     floor_z_m: float | None = typer.Option(None, help="Table height from the arm's base, m"),
     min_x_m: float | None = typer.Option(None, help="The fingertip stays in front of this x, m"),
     poses: int | None = typer.Option(None, help="Gravity poses to visit"),
-    speed_deg_s: float | None = typer.Option(None, help="Peak joint speed, deg/s"),
+    speed_deg_s: float | None = typer.Option(None, help="Peak joint speed, deg/s, at most 60"),
     rest_window_s: float | None = typer.Option(None, help="How long a rest measures noise, s"),
     dither_deg: float | None = typer.Option(None, help="Dither at each gravity pose, deg"),
     kp_scales: str | None = typer.Option(None, help="kp multiples the sweep tries, e.g. 0.6,1,1.5"),

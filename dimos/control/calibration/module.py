@@ -65,7 +65,7 @@ class CalibrationModuleConfig(ModuleConfig):
         floor_z_m: The table's height from the arm's base, m. Required, with ``min_x_m``.
         min_x_m: The fingertip stays in front of this x from the base, m.
         poses: How many gravity poses to visit.
-        speed_deg_s: Peak joint speed of every move; at most the URDF velocity limits.
+        speed_deg_s: Peak joint speed of every move; at most 60 and the URDF velocity limits.
         rest_window_s: How long the arm sits still to measure its noise; a hold is settled
             once one window of samples stays inside that noise. Long enough to catch the
             noise's peaks: the buzz check compares a step against them.
@@ -73,6 +73,7 @@ class CalibrationModuleConfig(ModuleConfig):
         max_dither_deg: The largest dither, also the farthest a pose's dithers turn a joint.
         dither_torque_fraction: Each joint dithers by this share of its torque cap over its
             kp, so its spring beats its friction, within ``dither_deg`` and ``max_dither_deg``.
+        dither_hold_s: How long each dither holds; its last rest window is the joint's rest.
         stuck_fraction: A dither pair the joint followed less than this share of the way is
             stuck; it is redone once at twice the dither (at most ``max_dither_deg``).
         dither_span_nm: A joint the spec does not measure is dithered too when its gravity
@@ -106,11 +107,12 @@ class CalibrationModuleConfig(ModuleConfig):
     floor_z_m: float | None = None
     min_x_m: float | None = None
     poses: int = Field(default=12, ge=3)
-    speed_deg_s: float = Field(default=10.0, gt=0.0)
+    speed_deg_s: float = Field(default=10.0, gt=0.0, le=60.0)
     rest_window_s: float = Field(default=0.5, gt=0.0)
     dither_deg: float = Field(default=1.0, gt=0.0)
     max_dither_deg: float = Field(default=5.0, gt=0.0)
     dither_torque_fraction: float = Field(default=0.3, gt=0.0)
+    dither_hold_s: float = Field(default=1.0, gt=0.0)
     stuck_fraction: float = Field(default=0.5, gt=0.0, lt=1.0)
     dither_span_nm: float = Field(default=0.1, gt=0.0)
     kp_scales: list[float] = Field(default_factory=lambda: [0.6, 1.0, 1.5])
@@ -140,6 +142,8 @@ class CalibrationModuleConfig(ModuleConfig):
             raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(steps.STEPS)}")
         if self.dither_deg > self.max_dither_deg:
             raise ValueError("dither_deg must not exceed max_dither_deg")
+        if self.dither_hold_s <= self.rest_window_s:
+            raise ValueError("dither_hold_s must outlast rest_window_s, the rest it scores")
         for name, scales in (("kp_scales", self.kp_scales), ("kd_scales", self.kd_scales)):
             if 1.0 not in scales or min(scales) <= 0.0:
                 raise ValueError(f"{name} must be positive and include 1, the baseline")

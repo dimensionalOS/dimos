@@ -148,9 +148,7 @@ def _dither(
     for sign in (1.0, -1.0):
         dithered = target.copy()
         dithered[i] += math.radians(sign * dither)
-        hold = run.stream(run.motion([dithered], "converge"))
-        if hold.ended != "settled":
-            raise RuntimeError(f"{joint} is {hold.ended} in its dither at {pose}")
+        hold = run.stream(run.motion([dithered], "fixed", run.config.dither_hold_s))
         event = StepEvent(
             joint,
             sign * dither,

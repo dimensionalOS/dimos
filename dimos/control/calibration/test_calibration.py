@@ -381,6 +381,32 @@ def test_proposed_gains_that_rest_worse_than_the_first_visit_are_not_saved(
     assert "gains" not in fake.file and fake.gains() == fake.defaults
 
 
+def test_moves_default_to_10_deg_s_up_to_60_and_each_dither_holds_a_second(
+    arm: ArmModel,
+) -> None:
+    config = CalibrationModuleConfig(robot="openyam")
+    assert (config.speed_deg_s, config.dither_hold_s) == (10.0, 1.0)
+    CalibrationModuleConfig(robot="openyam", speed_deg_s=60.0)
+    with pytest.raises(ValueError, match="less than or equal to 60"):
+        CalibrationModuleConfig(robot="openyam", speed_deg_s=61.0)
+    with pytest.raises(ValueError, match="outlast rest_window_s"):
+        CalibrationModuleConfig(robot="openyam", dither_hold_s=0.5)
+    run = calibration(arm, FakeOperator(), FakeArm(arm), steps=["gravity_poses"])
+    holds: list[float] = []
+    stream = run.stream
+
+    def timed(motion: Motion, patch: dict[str, Any] | None = None) -> Motion:
+        ended = stream(motion, patch)
+        if motion.mode == "fixed":
+            holds.append(motion.t[-1] - motion.t[0])
+        return ended
+
+    run.stream = timed
+    run.run()
+    assert len(holds) == 4 * 2 * 2 + 1
+    assert all(hold == pytest.approx(1.0, abs=0.011) for hold in holds[1:])
+
+
 def test_the_plan_skips_what_cannot_run() -> None:
     rows = dict(plan(["gravity_fit", "float_check"], can_float=False))
     assert rows["check"] is None

@@ -131,7 +131,7 @@ def test_every_forwarded_setting_parses_on_the_real_blueprint(
     [
         (["--kp-scales", "1.5,2"], "include 1"),
         (["--steps", "dance"], "unknown steps"),
-        (["--speed-deg-s", "10000"], "exceeds URDF limits"),
+        (["--speed-deg-s", "61"], "less than or equal to 60"),
     ],
 )
 def test_bad_settings_are_refused_before_anything_starts(
