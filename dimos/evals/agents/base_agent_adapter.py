@@ -35,7 +35,8 @@ from dimos.porcelain.dimos import Dimos
 
 class BaseAgentAdapterConfig(SubjectConfig):
     # rpc: infer() on a running agent. stream: publish on its agent_input and read
-    # agent_output. class: construct agent_class in this process and call infer().
+    # agent_output, for agents that declare those streams. class: construct agent_class
+    # in this process and call infer().
     via: Literal["rpc", "stream", "class"] = "rpc"
     # Instance name of the running agent; may be left out when one agent is running.
     agent: str | None = None
@@ -145,6 +146,13 @@ class BaseAgentAdapter(EvalSubject):
         finally:
             app.stop()
         transports = agent_transports(name)
+        missing = {"agent_input", "agent_output", "agent_idle"} - transports.keys()
+        if missing:
+            for transport in transports.values():
+                transport.stop()
+            raise LookupError(
+                f"{name} has no {sorted(missing)} stream; reach it with via='rpc' or via='class'"
+            )
         answers: list[Any] = []
         done = Event()
 

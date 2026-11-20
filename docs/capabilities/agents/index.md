@@ -65,7 +65,9 @@ app.get_module("Agent").infer(HumanMessage("what do you see?")).text
 
 `infer` blocks until the agent is done, background skills included, and shares its history with messages that arrive on the input stream.
 
-The two types also give the agent its streams: `BaseAgent[Input, Output]` declares `agent_input: In[Input]` and `agent_output: Out[Output]`, which `autoconnect` matches by name and type. A module sends to the agent by declaring `agent_input: Out[HumanMessage]`. Outside the blueprint, `dimos.agents.client.agent_transports()` returns the transports of the running agent's streams. Two agents with different input types in one blueprint need `.remappings()` on one of them.
+`BaseAgent` declares no input or output stream. An agent declares the streams it reads and writes and passes what arrives to `infer`; `Agent` declares `agent_input: In[HumanMessage]` and `agent_output: Out[AIMessage]`. A module sends to it by declaring `agent_input: Out[HumanMessage]`. Outside the blueprint, `dimos.agents.client.agent_transports()` returns the transports of the running agent's streams.
+
+Two agents of the same class share their stream names, so put each in a namespace: `Agent.blueprint().namespace("planner")` is the instance `planner/agent` on `/planner/agent_input`. `coordinator.get_instances(BaseAgent)` returns every deployed agent by instance name.
 
 An input with several parts is one dataclass:
 

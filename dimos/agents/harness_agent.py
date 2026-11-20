@@ -23,10 +23,12 @@ from threading import Lock, Thread
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
+from reactivex.disposable import Disposable
 
 from dimos.agents.base_agent import BaseAgent
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
+from dimos.core.stream import In, Out
 
 _CONVERSATION = re.compile(r"^Conversation (\d+)$", re.MULTILINE)
 
@@ -49,6 +51,10 @@ class HarnessAgent(BaseAgent[HumanMessage, AIMessage]):
     """
 
     config: HarnessAgentConfig
+
+    agent_input: In[HumanMessage]
+    agent_output: Out[AIMessage]
+
     _turn: Lock
 
     def __init__(self, **kwargs: Any) -> None:
@@ -56,10 +62,18 @@ class HarnessAgent(BaseAgent[HumanMessage, AIMessage]):
         self._turn = Lock()
         self.conversation = self.config.conversation
 
-    def _on_agent_input(self, x: HumanMessage) -> None:
-        # ponytail: a thread per message; turns queue on the lock, not in arrival order
-        # under contention. A queue and one worker if ordering matters.
-        Thread(target=self.infer, args=(x,), daemon=True).start()
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        def on_input(message: HumanMessage) -> None:
+            # ponytail: a thread per message; turns queue on the lock, not in arrival order
+            # under contention. A queue and one worker if ordering matters.
+            Thread(target=self.infer, args=(message,), daemon=True).start()
+
+        # No transport: the agent is used as a plain class and only infer() reaches it.
+        if self.agent_input.transport is not None:
+            self.register_disposable(Disposable(self.agent_input.subscribe(on_input)))
 
     @rpc
     def infer(self, x: HumanMessage) -> AIMessage:
