@@ -52,7 +52,7 @@ Expected result: the robot moves forward, both commands appear in `humancli` whe
 uv run dimos run unitree-go2-agentic
 ```
 
-* Open http://localhost:5555/, click the microphone and say "please rotate 180 degrees".
+* Open http://localhost:5555/, click the microphone, say "please rotate 180 degrees", then click the microphone again to stop the recording and send it.
 
 Expected result: the robot turns about 180 degrees, and the command shows in `humancli` when it is running.
 
