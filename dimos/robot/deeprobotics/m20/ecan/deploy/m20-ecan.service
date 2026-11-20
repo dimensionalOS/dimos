@@ -3,7 +3,8 @@
 #
 # The M20's joint state and batteries off the motor bus, on the vendor AOS board: reads the frames the ecan_tap.so
 # shim streams out of rl_deploy (install it with ../tap/record.sh install) and publishes JointState / BatteryState on
-# zenoh. Sends nothing to the motor bus. Without the shim it waits and warns.
+# zenoh. Sends nothing to the motor bus. Without the shim it waits and warns. The config must stay one line
+# (the module reads one line of stdin).
 [Unit]
 Description=DimOS M20 joint state + battery from the motor bus (rl_deploy shim -> zenoh)
 After=network-online.target rl_deploy.service

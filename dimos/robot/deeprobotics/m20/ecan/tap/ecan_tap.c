@@ -194,6 +194,9 @@ static void live_flush(Live* live) {
                           (struct sockaddr*)&live->address, sizeof live->address);
     if (sent < 0) {
         live->send_dropped++;
+        if (errno == ECONNREFUSED) {
+            unlink(live_path);  // the reader died without removing its socket; stop streaming until one binds again
+        }
     }
     live->used = 0;
 }
