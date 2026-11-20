@@ -110,7 +110,7 @@ dimos mcp status                                    # Server status
 | Method | How it works |
 |--------|-------------|
 | `humancli` | Standalone terminal: type messages, see responses |
-| `dimos agent-send "text"` | One-shot CLI command via LCM |
+| `dimos agent-send "text"` | One-shot CLI command via MCP (needs `McpServer`) |
 | `WebInput` | Web interface at localhost:5555 with Whisper STT |
 
 ## Models

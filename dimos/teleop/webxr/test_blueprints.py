@@ -52,34 +52,38 @@ def _binding(task: TaskConfig) -> TeleopBinding:
 
 
 def test_single_arm_blueprint_uses_one_frame_binding_and_right_stream() -> None:
-    tasks = _webxr_tasks(teleop_webxr_xarm7)
+    tasks = _webxr_tasks(teleop_webxr_xarm7.solidify())
 
     assert len(tasks) == 1
     binding = _binding(tasks[0])
     assert binding["hand"] == "right"
     assert binding["target_frame"] == "link_tcp"
     assert tasks[0].params["robot_model"].joint_names == tasks[0].joint_names
-    gripper = _gripper_tasks(teleop_webxr_xarm7)[0]
+    gripper = _gripper_tasks(teleop_webxr_xarm7.solidify())[0]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
     assert (
-        teleop_webxr_xarm7.remapping_map[(ArmTeleopModule.name, "right_controller_output")]
+        teleop_webxr_xarm7.solidify().remapping_map[
+            (ArmTeleopModule.name, "right_controller_output")
+        ]
         == "right_cartesian_command"
     )
     assert (
-        teleop_webxr_xarm7.remapping_map[(ArmTeleopModule.name, "right_gripper_command")]
+        teleop_webxr_xarm7.solidify().remapping_map[(ArmTeleopModule.name, "right_gripper_command")]
         == "right_gripper_command"
     )
 
 
 def test_single_arm_hand_blueprint_uses_right_card_stream() -> None:
     assert (
-        teleop_webxr_hand_xarm7.remapping_map[(HandTeleopModule.name, "right_controller_output")]
+        teleop_webxr_hand_xarm7.solidify().remapping_map[
+            (HandTeleopModule.name, "right_controller_output")
+        ]
         == "right_cartesian_command"
     )
 
 
 def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
-    tasks = _webxr_tasks(teleop_webxr_dual)
+    tasks = _webxr_tasks(teleop_webxr_dual.solidify())
 
     assert len(tasks) == 2
     by_name = {task.name: task for task in tasks}
@@ -99,24 +103,31 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
         by_name["teleop_piper"].params["robot_model"].joint_names
         == by_name["teleop_piper"].joint_names
     )
-    grippers = {task.name: task for task in _gripper_tasks(teleop_webxr_dual)}
+    grippers = {task.name: task for task in _gripper_tasks(teleop_webxr_dual.solidify())}
     assert grippers["xarm_arm_gripper"].stream_bind == {"gripper_command": "left_gripper_command"}
     assert grippers["piper_arm_gripper"].stream_bind == {"gripper_command": "right_gripper_command"}
     assert (
-        teleop_webxr_dual.remapping_map[(ArmTeleopModule.name, "left_controller_output")]
+        teleop_webxr_dual.solidify().remapping_map[(ArmTeleopModule.name, "left_controller_output")]
         == "left_cartesian_command"
     )
     assert (
-        teleop_webxr_dual.remapping_map[(ArmTeleopModule.name, "right_controller_output")]
+        teleop_webxr_dual.solidify().remapping_map[
+            (ArmTeleopModule.name, "right_controller_output")
+        ]
         == "right_cartesian_command"
     )
 
 
 def test_pico_body_tracking_demo_uses_single_required_webxr_module() -> None:
-    modules = {atom.module for atom in demo_pico_body_tracking.blueprints}
+    modules = {atom.module for atom in demo_pico_body_tracking.solidify().blueprints}
     webxr = next(
-        atom for atom in demo_pico_body_tracking.blueprints if atom.module is WebXRTeleopModule
+        atom
+        for atom in demo_pico_body_tracking.solidify().blueprints
+        if atom.module is WebXRTeleopModule
     )
     assert modules == {WebXRTeleopModule}
     assert webxr.kwargs["body_tracking_mode"] == "required"
-    assert ("body_tracking", BodyTrackingSnapshot) not in demo_pico_body_tracking.transport_map
+    assert (
+        "body_tracking",
+        BodyTrackingSnapshot,
+    ) not in demo_pico_body_tracking.solidify().transport_map

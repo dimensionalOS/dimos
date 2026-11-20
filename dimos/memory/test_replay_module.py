@@ -17,8 +17,10 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+from unittest import mock
 
 import pytest
+from reactivex import interval
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 from reactivex.testing import TestScheduler
@@ -331,6 +333,28 @@ def test_slow_first_decode_does_not_skip_other_streams(
     assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
 
 
+def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> None:
+    """Slow setup should not lose initial frames."""
+    real = ReplayStream._base_stream
+
+    def slow(self: Any) -> Any:
+        time.sleep(0.1)  # twice the late tolerance, on every query a subscribe makes
+        return real(self)
+
+    got: dict[str, list[float]] = {"odom": [], "goal": []}
+    with mock.patch("dimos.memory.replay.ReplayStream._base_stream", slow):
+        module = replay_module(recording)(dataset=recording)
+        module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
+        module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
+        module.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
+        time.sleep(0.01)
+    module.stop()
+    assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
+    assert [round(t, 3) for t in got["goal"]] == [1.05]
+
+
 def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
     from dimos.memory.replay_module import recorded_rerun_config
 
@@ -349,3 +373,61 @@ def test_dataset_path_resolves_names_and_skips_the_default(recording: str) -> No
     assert dataset_path(recording, explicit=False) == recording  # a real file always counts
     assert dataset_path("go2_short", explicit=False) == ""  # registry import: no LFS
     assert dataset_path("no-such-dataset-for-this-test") == ""
+
+
+@pytest.mark.parametrize("static", [False, True])
+def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mocker, static):
+    # Static metadata must not extend the reported duration or prevent completion.
+    with SqliteStore(path=recording) as store:
+        if static:
+            info = store.stream("camera_info", PoseStamped)
+            for _ in range(2):
+                info.append(PoseStamped(ts=0.0), ts=0.0)
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    module = replay_module(recording)(dataset=recording)
+    try:
+        module.start()
+        log.info.assert_called_once_with(
+            "Replay started",
+            source=recording,
+            path=recording,
+            duration_s=pytest.approx(0.2),
+            speed=1.0,
+            loop=False,
+        )
+        scheduler.advance_by(0.1)  # goal has ended; odom still has a frame to publish
+        assert log.info.call_count == 1
+        scheduler.advance_by(1)
+        assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=recording)]
+    finally:
+        module.stop()
+
+
+def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
+    with SqliteStore(path=recording) as store:
+        for _ in range(2):
+            store.stream("camera_info", PoseStamped).append(PoseStamped(ts=0.0), ts=0.0)
+    scheduler = TestScheduler()
+    mocker.patch(
+        "dimos.memory.replay_module.interval",
+        side_effect=lambda period: interval(period, scheduler=scheduler),
+    )
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    module = replay_module(recording, topics="camera_info")(dataset=recording, topics="camera_info")
+    received = []
+    with Disposable(module.outputs["camera_info"].subscribe(received.append)), module:
+        scheduler.advance_by(2)
+    assert [message.ts for message in received] == [0.0, 0.0]
+    assert log.info.call_args_list == [
+        mocker.call(
+            "Replay started",
+            source=recording,
+            path=recording,
+            duration_s=0.0,
+            speed=1.0,
+            loop=False,
+        ),
+        mocker.call("Replay finished", source=recording),
+    ]

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import threading
 import time
 
@@ -38,6 +39,9 @@ class SpeakSkill(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        if not os.environ.get("OPENAI_API_KEY"):
+            logger.warning("OPENAI_API_KEY is not set. Speech is disabled.")
+            return
         self._tts_node = OpenAITTSNode(speed=1.2, voice=Voice.ONYX)
         self._audio_output = SounddeviceAudioOutput(sample_rate=24000)
         self._audio_output.consume_audio(self._tts_node.emit_audio())

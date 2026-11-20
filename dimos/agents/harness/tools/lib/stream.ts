@@ -148,7 +148,7 @@ export function streamTool(options: {
     "stream_get",
     {
       name: "stream_get",
-      description: `Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame; when none arrives within ${LATEST_REFRESH_MS / 1000} s it returns the last one with stale=true. Next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.`,
+      description: `Discover streams with op=list, then use op=read with an exact returned channel ID. Prompt references use stream:// followed by the exact channel ID. If the whole reference is JSON-quoted, parse its JSON string escapes first, then remove exactly one stream:// prefix and pass the remaining ID as channel. Preserve case, percent signs and punctuation; do not URL-decode. Latest returns the current frame; when none arrives within ${LATEST_REFRESH_MS / 1000} s it returns the last one with stale=true. Next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.`,
       parameters: Parameters,
       execute: async (args, _api, context) => {
         try {

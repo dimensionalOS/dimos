@@ -23,7 +23,6 @@ advance together. Late subscribers skip past data already behind wall time.
 
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
 from pathlib import Path
 import threading
 import time
@@ -35,9 +34,9 @@ from reactivex.disposable import Disposable, SerialDisposable, SingleAssignmentD
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
+from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -51,8 +50,8 @@ _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 
 def resolve_db_path(dataset: str | Path) -> Path:
-    """Map a dataset name to an on-disk .db path (LFS-downloading on miss)."""
-    return resolve_named_path(dataset, ".db")
+    """Resolve a recording, trying the exact input before appending ``.db``."""
+    return resolve_dataset(dataset, suffix=".db")
 
 
 class ReplayConfig(BaseConfig):
@@ -75,9 +74,9 @@ class Replay(Configurable):
     def __init__(self, store: Store, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
+        self._first_ts: float | None = None
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
-        self._pending: list[tuple[Callable[[], None], Callable[[], None]]] | None = None
 
     @property
     def streams(self) -> StreamAccessor[ReplayStream[Any]]:
@@ -86,18 +85,32 @@ class Replay(Configurable):
     def list_streams(self) -> list[str]:
         return self.store.list_streams()
 
-    def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
-        return ReplayStream(replay=self, name=name, autocast=autocast)
+    def stream(
+        self,
+        name: str,
+        autocast: Callable[[Any], T] | None = None,
+        *,
+        source: Stream[Any] | None = None,
+    ) -> ReplayStream[T]:
+        """Replay a named stream, optionally from a filtered observation query."""
+        return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
 
     def first_ts(self) -> float | None:
-        """Earliest first_ts across non-empty streams in the underlying store."""
-        candidates: list[float] = []
-        for name in self.store.list_streams():
-            try:
-                candidates.append(float(self.store.stream(name).first().ts))
-            except (LookupError, ImportError, AttributeError):
-                continue
-        return min(candidates) if candidates else None
+        """Earliest source timestamp across non-empty streams in the underlying store.
+
+        Found once and reused. A replay reads a finished recording, and every
+        stream measures seek and duration from the same start.
+        """
+        if self._first_ts is None:
+            candidates: list[float] = []
+            for name in self.store.list_streams():
+                try:
+                    candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
+                except (LookupError, ImportError, AttributeError):
+                    continue
+            if candidates:
+                self._first_ts = min(candidates)
+        return self._first_ts
 
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
         """Pin (wall_t0, replay_t0) on first call; return shared anchor."""
@@ -113,41 +126,6 @@ class Replay(Configurable):
         first = self.first_ts() if ts is None else ts
         if first is not None:
             self._resolve_anchor(first)
-
-    @contextmanager
-    def prepare(self, ts: float | None = None) -> Iterator[None]:
-        """Prime startup subscriptions before pinning their shared playback clock.
-
-        Subscriptions inside this context own their iterators as usual, but do
-        not schedule until successful exit. A failed preparation cancels them.
-        Once playback has started, new subscriptions use normal late skipping.
-        """
-        with self._anchor_lock:
-            if self._anchor is not None or self._pending is not None:
-                raise RuntimeError("Replay preparation requires an unstarted replay")
-            self._pending = []
-            pending = self._pending
-        try:
-            try:
-                yield
-                self.pin_anchor(ts)
-            finally:
-                with self._anchor_lock:
-                    self._pending = None
-            for start, _ in pending:
-                start()
-        except BaseException:
-            with ExitStack() as cleanup:
-                for _, dispose in pending:
-                    cleanup.callback(dispose)
-            raise
-
-    def _start_or_defer(self, start: Callable[[], None], dispose: Callable[[], None]) -> None:
-        with self._anchor_lock:
-            if self._pending is not None:
-                self._pending.append((start, dispose))
-                return
-        start()
 
     def reset_anchor(self) -> None:
         """Forget the pinned anchor. Next ``.observable()`` re-pins it."""
@@ -168,14 +146,19 @@ class ReplayStream(Generic[T]):
         replay: Replay,
         name: str,
         autocast: Callable[[Any], T] | None = None,
+        source: Stream[Any] | None = None,
     ) -> None:
         self._replay = replay
         self._name = name
         self._autocast = autocast
+        self._source = source
 
     @property
     def name(self) -> str:
         return self._name
+
+    def _source_stream(self) -> Stream[Any]:
+        return self._replay.store.stream(self._name) if self._source is None else self._source
 
     def _decode(self, obs: Any) -> T:
         data = obs.data
@@ -186,7 +169,7 @@ class ReplayStream(Generic[T]):
     def _base_stream(self) -> Stream[Any]:
         """Memory Stream bounded by the replay window, ordered by ts."""
         cfg = self._replay.config
-        s: Stream[Any] = self._replay.store.stream(self._name)
+        s = self._source_stream()
 
         start: float | None = None
         if cfg.from_timestamp is not None:
@@ -256,14 +239,14 @@ class ReplayStream(Generic[T]):
             return None
 
     def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
-        s: Stream[Any] = self._replay.store.stream(self._name)
+        s = self._source_stream()
         try:
             obs: Any = s.at(timestamp, tolerance).first()
         except LookupError:
             return None
         return self._decode(obs)
 
-    def observable(self, *, predicate: Callable[[T], bool] | None = None) -> Observable[T]:
+    def observable(self, *, skip_late: bool = True) -> Observable[T]:
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
@@ -272,11 +255,14 @@ class ReplayStream(Generic[T]):
         Adapted from the legacy ``timed_playback`` (which pinned a fresh
         anchor per subscribe).
 
+        With *skip_late* off nothing is skipped: frames already behind wall
+        time are emitted at once, in order, and the rest keep their timing.
+        Disabled by a subscriber that is only behind by its own setup, like a module
+        subscribing every stream right after pinning the anchor.
+
         Disposing cancels pending emissions and waits for an active callback
         before releasing its iterator, so the store can then be closed safely.
-
-        An optional predicate excludes decoded payloads before scheduling and
-        loop detection. Without it, payloads are still decoded only at emission.
+        Read and decode failures close the iterator before notifying on_error.
         """
         replay = self._replay
         speed = replay.config.speed
@@ -298,35 +284,78 @@ class ReplayStream(Generic[T]):
                 while True:
                     emitted = False
                     obs: Any
-                    for obs in base():
-                        if predicate is not None and not predicate(decode(obs)):
-                            continue
-                        emitted = True
-                        yield (obs.ts, obs, wrapped)  # decoded at emission without a predicate
-                        wrapped = False
+                    rows = iter(base())
+                    try:
+                        for obs in rows:
+                            emitted = True
+                            yield (obs.ts, obs, wrapped)
+                            wrapped = False
+                    finally:
+                        close = getattr(rows, "close", None)
+                        if close is not None:
+                            close()
                     if not loop or not emitted:
                         break
                     wrapped = True
 
             iterator = make_iterator()
 
+            def dispose() -> None:
+                disposed.set()
+                pending.dispose()
+                # Reentrant for disposal from observer callbacks. An external
+                # stop waits here until decoding and cursor reads have finished.
+                with emission_lock:
+                    iterator.close()
+
+            def terminate(error: Exception | None = None) -> None:
+                if disposed.is_set():
+                    return
+                dispose()
+                if error is None:
+                    observer.on_completed()
+                else:
+                    observer.on_error(error)
+
             try:
-                first = next(iterator)
+                first_ts, first_data, _ = next(iterator)
             except StopIteration:
-                observer.on_completed()
+                terminate()
+                return Disposable()
+            except Exception as error:
+                terminate(error)
                 return Disposable()
 
-            wall_t0: float
-            replay_t0: float
+            wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
+            now_replay = replay_t0 + (time.time() - wall_t0) * speed
+
+            # Late-subscribe skip: drop frames behind the wall clock. Stop
+            # if the iterator wraps (ts < prev) — that means we've exhausted
+            # one full pass without finding a forward frame.
             wrap_offset = 0.0
-            prev_ts = first[0]
+            prev_skip = first_ts
+            while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
+                try:
+                    cand_ts, cand_data, wrapped = next(iterator)
+                except StopIteration:
+                    terminate()
+                    return Disposable()
+                except Exception as error:
+                    terminate(error)
+                    return Disposable()
+                if wrapped or cand_ts < prev_skip:
+                    wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
+                    first_ts, first_data = cand_ts, cand_data
+                    break
+                first_ts, first_data = cand_ts, cand_data
+                prev_skip = cand_ts
+
+            prev_ts = first_ts
 
             def schedule(message: tuple[float, Any, bool], wrap_off: float, prev: float) -> None:
                 if disposed.is_set():
                     return
                 ts, data, wrapped = message
-                # Filtering can leave a single timestamp; explicit wraps keep
-                # that loop bounded even when the next timestamp is equal.
                 if wrapped or ts < prev:
                     wrap_off += (prev - ts) + _LOOP_GAP
                 target = wall_t0 + ((ts + wrap_off) - replay_t0) / speed
@@ -337,7 +366,12 @@ class ReplayStream(Generic[T]):
                     with emission_lock:
                         if disposed.is_set():
                             return None
-                        observer.on_next(decode(data))
+                        try:
+                            value = decode(data)
+                        except Exception as error:
+                            terminate(error)
+                            return None
+                        observer.on_next(value)
                         # An observer may dispose from on_next, including closing
                         # the store. Do not advance its cursor after that.
                         if disposed.is_set():
@@ -345,7 +379,10 @@ class ReplayStream(Generic[T]):
                         try:
                             nxt = next(iterator)
                         except StopIteration:
-                            observer.on_completed()
+                            terminate()
+                            return None
+                        except Exception as error:
+                            terminate(error)
                             return None
                         wrap_offset = wrap_off
                         prev_ts = ts
@@ -359,47 +396,8 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            def start() -> None:
-                nonlocal wall_t0, replay_t0, wrap_offset, prev_ts
-                with emission_lock:
-                    if disposed.is_set():
-                        return
-                    first_ts, first_data, _ = first
-                    wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-                    now_replay = replay_t0 + (time.time() - wall_t0) * speed
+            schedule((first_ts, first_data, False), wrap_offset, prev_ts)
 
-                    # Late subscribers still skip elapsed playback. A wrap
-                    # ends the search after one pass even for a singleton loop.
-                    prev_skip = first_ts
-                    while first_ts < now_replay - _LATE_TOLERANCE:
-                        try:
-                            cand_ts, cand_data, wrapped = next(iterator)
-                        except StopIteration:
-                            observer.on_completed()
-                            return
-                        if wrapped or cand_ts < prev_skip:
-                            wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
-                            first_ts, first_data = cand_ts, cand_data
-                            break
-                        first_ts, first_data = cand_ts, cand_data
-                        prev_skip = cand_ts
-
-                    prev_ts = first_ts
-                    schedule((first_ts, first_data, False), wrap_offset, prev_ts)
-
-            def dispose() -> None:
-                disposed.set()
-                pending.dispose()
-                # Reentrant for disposal from on_next/on_completed. An external
-                # stop waits here until decoding and cursor reads have finished.
-                with emission_lock:
-                    iterator.close()
-
-            try:
-                replay._start_or_defer(start, dispose)
-            except BaseException:
-                dispose()
-                raise
             return Disposable(dispose)
 
         return rx.create(subscribe)

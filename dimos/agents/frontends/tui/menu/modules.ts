@@ -11,31 +11,28 @@ function moduleText(module: ModuleRow): string {
   );
 }
 
-/** Tab 3: every agent module with the conversation that owns it; r restarts, u unloads, d deletes. */
 export const modulesTab: MenuTab = {
   title: "Agent modules",
   rows: (context) => {
     const { ui } = context;
     return ui.gateway.modules.value.map((module) => ({
       text: moduleText(module),
+      searchText: module.name,
       level: module.lastError === null ? "ok" : "warn",
-      keys: [
+      actions: [
         {
-          key: "r",
           label: "restart",
           run: async () => {
             await ui.actions.observe(`restart ${module.name}`, owner(ui.gateway).restartModule({ name: module.name }));
           },
         },
         {
-          key: "u",
           label: "unload",
           run: async () => {
             await ui.actions.observe(`unload ${module.name}`, owner(ui.gateway).unloadModule({ name: module.name }));
           },
         },
         {
-          key: "d",
           label: "delete",
           run: async () => {
             await ui.actions.observe(`delete ${module.name}`, owner(ui.gateway).deleteModule({ name: module.name }));

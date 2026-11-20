@@ -30,10 +30,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from reactivex import interval
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.memory.cli.dataset import open_dataset, resolve_dataset, stream_payload_types
+from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -129,7 +131,8 @@ class ReplayModule(Module):
         super().start()
         if not self.config.dataset:
             raise ValueError("no recording: pass --replay-db <memory.db>")
-        store: Store = open_dataset(self.config.dataset)
+        path = resolve_dataset(self.config.dataset)
+        store: Store = open_store(path)
         store.start()
         self._store = store
         replay: Replay = store.replay(
@@ -138,8 +141,8 @@ class ReplayModule(Module):
             seek=self.config.seek,
             duration=self.config.duration,
         )
-        # Open every stream before pinning the anchor, so setup time is not
-        # counted as lateness that observable() would skip past.
+        # Open every stream before pinning the anchor, so setup time does not
+        # put the playback behind the wall clock from the start.
         streams: dict[str, ReplayStream[DimosMsg]] = {
             name: replay.stream(name) for name in self.outputs
         }
@@ -158,29 +161,38 @@ class ReplayModule(Module):
             if name in static:
                 continue
             first_ts = stream.first_ts()
-            predicate = None
             if issubclass(self.outputs[name].type, TFMessage):
                 frozen, first_ts = _split_tf_stream(cast("ReplayStream[TFMessage]", stream))
                 if frozen.transforms:
                     static[name] = frozen
                     edges = {(t.frame_id, t.child_frame_id) for t in frozen.transforms}
-                    predicate = partial(_has_dynamic_tf, edges)
+                    if first_ts is not None:
+                        rows = store.stream(name, TFMessage).time_range(first_ts, float("inf"))
+                        dynamic = rows.filter(
+                            lambda obs, edges=edges: _has_dynamic_tf(edges, obs.data)
+                        )
+                        stream = streams[name] = replay.stream(name, source=dynamic)
             if first_ts is not None:
                 timed_starts.append(first_ts)
-                timed_streams[name] = stream.observable(predicate=predicate)
+                timed_streams[name] = stream.observable(skip_late=False)
         for name, message in static.items():
             if isinstance(message, TFMessage):
                 self.outputs[name].publish(message)
-        with replay.prepare(min(timed_starts) if timed_starts else None):
-            port: Out[DimosMsg]
-            for name, port in self.outputs.items():
-                logger.info("Replaying %s -> %s", name, port)
-                if name in static:
-                    self.register_disposable(
-                        interval(1.0).subscribe(partial(_republish, port, static[name]))
-                    )
-                if name in timed_streams:
-                    self.register_disposable(timed_streams[name].subscribe(port.publish))
+        progress = ReplayProgress(str(path))
+        progress.start(replay, (streams[n] for n in timed_streams))
+        replay.pin_anchor(min(timed_starts) if timed_starts else None)
+        port: Out[DimosMsg]
+        for name, port in self.outputs.items():
+            logger.info("Replaying %s -> %s", name, port)
+            if name in static:
+                self.register_disposable(
+                    interval(1.0).subscribe(partial(_republish, port, static[name]))
+                )
+            if name in timed_streams:
+                self.register_disposable(
+                    progress.track(timed_streams[name]).subscribe(port.publish)
+                )
+        progress.seal()
 
     @rpc
     def stop(self) -> None:
@@ -296,7 +308,7 @@ def recorded_rerun_config(dataset: str) -> dict[str, Any]:
 
     if name not in all_blueprints:
         return {}
-    for atom in get_blueprint_by_name(name).blueprints:
+    for atom in autoconnect(get_blueprint_by_name(name)).solidify().blueprints:
         if atom.module is RerunBridgeModule:
             return {k: atom.kwargs[k] for k in _VIS_KEYS if k in atom.kwargs}
     return {}

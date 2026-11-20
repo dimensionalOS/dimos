@@ -57,25 +57,20 @@ pub fn arcs_of(path: &[[f64; 3]]) -> Vec<f64> {
     arcs
 }
 
-/// Closest waypoint, advanced through a fan by yaw progress (fan waypoints
-/// are coincident, so distance cannot separate them).
-pub fn progress_index(path: &[[f64; 3]], arcs: &[f64], px: f64, py: f64, pyaw: f64) -> usize {
-    let n = path.len();
+/// Meters one radian of heading counts as when matching a pose to a path.
+const YAW_M: f64 = 0.4;
+
+/// Closest waypoint, heading counted with position, so a spot the path turns
+/// on or passes twice is matched by the way the body faces.
+pub fn progress_index(path: &[[f64; 3]], px: f64, py: f64, pyaw: f64) -> usize {
     let mut i = 0usize;
     let mut best = f64::INFINITY;
     for (k, p) in path.iter().enumerate() {
-        // strict `<`: np.argmin keeps the first minimum on a tie
-        let d = ((p[0] - px) * (p[0] - px) + (p[1] - py) * (p[1] - py)).sqrt();
+        let d = (p[0] - px).hypot(p[1] - py) + YAW_M * angle_diff(p[2], pyaw).abs();
         if d < best {
             best = d;
             i = k;
         }
-    }
-    while i + 1 < n
-        && arcs[i + 1] - arcs[i] < 1e-6
-        && angle_diff(path[i + 1][2], pyaw).abs() < angle_diff(path[i][2], pyaw).abs()
-    {
-        i += 1;
     }
     i
 }

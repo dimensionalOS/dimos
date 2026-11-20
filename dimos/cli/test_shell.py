@@ -12,12 +12,74 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
+from functools import singledispatch
+
+from IPython.core.completer import provisionalcompleter
+from IPython.core.interactiveshell import InteractiveShell
+from IPython.utils import generics
+import pytest
+from traitlets.config import Config
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main
-from dimos.cli.shell import _format_description, _shell_namespace
+from dimos.cli.shell import _format_description, _register_module_completions, _shell_namespace
+from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.introspection.module.info import ModuleInfo, ParamInfo, RpcInfo
+from dimos.core.rpc_client import RPCClient
 from dimos.porcelain.dimos import Dimos
+from dimos.porcelain.module_handle import RemoteModuleProxy
+from dimos.protocol.rpc.spec import RPCSpec
+
+
+@pytest.fixture(autouse=True)
+def isolated_completion_registry(monkeypatch):
+    # Wrapping the dispatcher itself copies its register method and shares its registry.
+    monkeypatch.setattr(
+        generics, "complete_object", singledispatch(generics.complete_object.__wrapped__)
+    )
+
+
+@pytest.fixture(params=["importable", "unimportable"])
+def module_proxy(request, mocker):
+    transport = mocker.Mock(spec=RPCSpec)
+    if request.param == "importable":
+        module = RPCClient(None, StressTestModule, rpc=transport)
+    else:
+        module = RemoteModuleProxy(transport, "StressTestModule", set(StressTestModule.rpcs))
+    return module, transport
+
+
+@pytest.fixture
+def ipython(module_proxy, tmp_path):
+    module, _ = module_proxy
+    # A plain name, because IPython's non-Jedi completer only looks up attributes on
+    # objects without a custom __getattr__ or __getattribute__, which rules out the app.
+    shell = InteractiveShell(
+        user_ns={"module": module},
+        ipython_dir=str(tmp_path),
+        config=Config({"HistoryManager": {"enabled": False}}),
+    )
+    try:
+        yield shell
+    finally:
+        shell.cleanup()
+        atexit.unregister(shell.atexit_operations)
+        shell.atexit_operations()
+
+
+@pytest.mark.parametrize("use_jedi", [True, False])
+def test_shell_completion_offers_only_rpcs(ipython, module_proxy, use_jedi):
+    _, transport = module_proxy
+    _register_module_completions()
+    ipython.Completer.use_jedi = use_jedi
+    text = "module."
+
+    with provisionalcompleter():
+        completions = list(ipython.Completer.completions(text, len(text)))
+
+    assert {completion.text.lstrip(".") for completion in completions} == set(StressTestModule.rpcs)
+    assert transport.mock_calls == []
 
 
 def test_shell_rejects_non_interactive_execution(mocker):
@@ -38,11 +100,13 @@ def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
     connect = mocker.patch("dimos.cli.shell.Dimos.connect", return_value=app)
     mocker.patch("dimos.cli.shell.get_most_recent", return_value=None)
     start_ipython = mocker.patch("IPython.start_ipython")
+    register_completions = mocker.patch("dimos.cli.shell._register_module_completions")
 
     result = CliRunner().invoke(main, ["shell"])
 
     assert result.exit_code == 0, result.output
     connect.assert_called_once_with()
+    register_completions.assert_called_once_with()
     assert start_ipython.call_args.kwargs["argv"] == ["--no-banner"]
     namespace = start_ipython.call_args.kwargs["user_ns"]
     assert set(namespace) == {"app", "guide", "modules", "rpcs", "describe"}
