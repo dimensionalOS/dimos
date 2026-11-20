@@ -5,6 +5,8 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 `/apps/<name>/` reaches it as `../../dimos-gateway/`. `GET /openapi.json` has every route with its request and answer;
 `GET /info` `api` is the API version (released as `desktop-gateway-v<version>` tags).
 
+The catalog reads blueprints from the checkout it serves. It uses the default options for blueprint choices and also accepts blueprints from checkouts that predate choices.
+
 ## Rules
 
 1. **Relative URLs only:** `../../dimos-gateway/active`, never a host or port.
