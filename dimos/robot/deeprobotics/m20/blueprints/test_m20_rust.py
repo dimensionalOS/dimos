@@ -169,3 +169,10 @@ def test_the_body_filter_matches_the_joint_source_it_is_given() -> None:
     ].kwargs
     assert standing["state_tolerance_s"] == M20StandingJointStateConfig().publish_period_s
     assert "state_tolerance_s" not in ecan
+
+
+def test_dimslam_runs_alone_on_its_gos_cores() -> None:
+    from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS
+
+    atoms = {atom.name: atom for atom in _solid().active_blueprints}
+    assert atoms["dimslamlio"].kwargs["cpus"] == list(GOS_SLAM_CPUS)

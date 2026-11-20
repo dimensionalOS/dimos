@@ -39,6 +39,7 @@ from dimos.robot.deeprobotics.m20.blueprints._nav import (
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.body_imu_sniff.module import M20BodyImuSniff
 from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
+from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
 from dimos.robot.deeprobotics.m20.imu.module import M20Imu
 from dimos.robot.deeprobotics.m20.lidar import m20_lidars
@@ -99,7 +100,7 @@ m20_rust = autoconnect(
             ),
         },
     ),
-    m20_dim_slam().remappings(
+    m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings(
         [(DimSlamLio, "lidar", "lidar_filtered"), (DimSlamLio, "imu", "lidar_imu")]
     ),
     m20_nav_stack(lidar="lidar_filtered", pre_trace_subsample=1, ray_subsample=1),

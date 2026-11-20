@@ -33,6 +33,8 @@ from dimos.robot.deeprobotics.m20.constants import MAP_FRAME
 def m20_dim_slam(
     lidar_frames: tuple[str, ...] = ("front_lidar", "rear_lidar"),
     imu_frames: tuple[str, ...] = ("rear_lidar",),
+    # the RK3588's A76 cores (4-7): on its A55s (0-3) the filter takes ~100% of a core and falls seconds behind
+    cpus: tuple[int, ...] = (4, 5, 6, 7),
     **overrides: Any,
 ) -> Blueprint:
     """``imu_frames``: the first drives and levels the filter. The rear Airy's IMU, its gyro bias
@@ -49,7 +51,6 @@ def m20_dim_slam(
         ],
         # a walking dog's body changes motion far slower than Point-LIO's handheld defaults allow
         process_noise=ProcessNoise(velocity=2.0, angular_velocity=100.0, specific_force=50.0),
-        # the RK3588's A76 cores (4-7): on its A55s (0-3) the filter takes ~100% of a core and falls seconds behind
-        cpus=[4, 5, 6, 7],
+        cpus=list(cpus),
         **overrides,
     ).remappings([(DimSlamLio, "odometry", "slam_odom")])

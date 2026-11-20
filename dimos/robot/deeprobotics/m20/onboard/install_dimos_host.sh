@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Install (or re-sync) a minimal dimos + `dimos host` service on the M20's AOS and NOS boards.
+# Install (or re-sync) a minimal dimos + `dimos host` service on the M20's AOS and NOS boards, and on GOS itself.
 # Run on GOS, from the dimos checkout the blueprint root runs from: a Host only takes
 # fragments built from its own revision (commit + hash of uncommitted changes), so the boards
 # get exactly this checkout, uncommitted changes included.
 #
-#   install_dimos_host.sh [aos|nos ...]     # default: both
+#   install_dimos_host.sh [aos|nos|gos ...]     # default: aos nos
+#
+# gos is the Host the blueprint root places its own modules on. It runs from the checkout itself (its full
+# venv: the GOS modules need more than the boards' base install), configured by its unit's environment
+# rather than a .env in the checkout, and its CPUAffinity keeps them off the cores m20-rust gives DimSLAM
+# alone (constants.py GOS_SLAM_CPUS).
 #
 # Layout: GOS builds the venv once at $dest (the same path the boards use, so the venv's
 # absolute paths hold), then rsyncs checkout + venv + uv + uv's Python to each board. The
@@ -35,6 +40,7 @@ board_config() {
     case "$1" in
         aos) echo "10.21.31.103 - tcp/10.21.33.103:7447 tcp/10.21.33.106:7448 board=aos,m20,lidar,imu,ecan,camera 1-3 7447" ;;
         nos) echo "10.21.31.106 10.21.31.106 tcp/10.21.33.106:7448 tcp/10.21.31.104:7447 board=nos,m20 0-3 7448 7447" ;;
+        gos) echo "local 10.21.31.104 - - board=gos,m20 0-3,6-7 7447" ;;
         *) echo "unknown board $1" >&2; return 1 ;;
     esac
 }
@@ -62,26 +68,35 @@ install_board() {
     local name="$1" ip lan_ip lidar_listen connect tags cpus port router_port
     read -r ip lan_ip lidar_listen connect tags cpus port router_port < <(board_config "$name")
     echo "== $name ($ip)"
-    ssh "$ip" "printf '%s\n' $(printf '%q' "$sudo_pass") | sudo -S -p '' install -d -o \$USER -g \$USER $dest && mkdir -p ~/.local/bin ~/.local/share/uv/python"
-    nice rsync -a "$HOME/.local/bin/uv" "$ip:.local/bin/uv"
-    nice rsync -a "$HOME/.local/share/uv/python/" "$ip:.local/share/uv/python/"
-    nice rsync -a --delete --exclude /logs --exclude /.env "$dest/" "$ip:$dest/"
+    # GOS runs its Host from the checkout itself; a board gets a copy of the staging copy
+    local home="$dest"
+    if [ "$ip" = local ]; then
+        home="$src"
+        on_board() { bash -c "$1"; }
+    else
+        on_board() { ssh "$ip" "$1"; }
+        ssh "$ip" "printf '%s\n' $(printf '%q' "$sudo_pass") | sudo -S -p '' install -d -o \$USER -g \$USER $dest && mkdir -p ~/.local/bin ~/.local/share/uv/python"
+        nice rsync -a "$HOME/.local/bin/uv" "$ip:.local/bin/uv"
+        nice rsync -a "$HOME/.local/share/uv/python/" "$ip:.local/share/uv/python/"
+        nice rsync -a --delete --exclude /logs --exclude /.env "$dest/" "$ip:$dest/"
+    fi
     # ssh joins its arguments unquoted, and the sudo password is a quote.
-    ssh "$ip" "bash -s -- $(printf '%q ' "$name" "$lan_ip" "$lidar_listen" "$connect" "$tags" "$cpus" "$port" "${router_port:-}" "$dest" "$sudo_pass")" <<'REMOTE'
+    on_board "bash -s -- $(printf '%q ' "$name" "$lan_ip" "$lidar_listen" "$connect" "$tags" "$cpus" "$port" "${router_port:-}" "$home" "$sudo_pass")" <<'REMOTE'
 set -euo pipefail
 name="$1" lan_ip="$2" lidar_listen="$3" connect="$4" tags="$5" cpus="$6" port="$7" router_port="$8" dest="$9" sudo_pass="${10}"
 as_root() { echo "$sudo_pass" | sudo -S -p '' "$@"; }
 cd "$dest"
-# Listen is per unit (HOST__LISTEN in its environment beats .env); the rest is the Host's .env.
-# gossip off: a Host links only to the routers it is told to dial, never to ones a link advertises
-# (NOS would hand AOS GOS's robot-LAN locator, and AOS would link to GOS over its USB adapter).
-.venv/bin/dimos host config name="$name" tags="$tags" connect="$connect" listen= autodiscovery=false gossip=false >/dev/null
+# The Host's settings go in its unit's environment, which beats any .env. gossip off: a Host links only to the
+# routers it is told to dial, never to ones a link advertises (NOS would hand AOS GOS's robot-LAN locator, and
+# AOS would link to GOS over its USB adapter).
+[ "$connect" != - ] || connect=
 
 # Loopback (the Host's own fragments), the robot LAN when the board listens there, and the lidar network.
 listen_endpoints() {
     local endpoints="tcp/127.0.0.1:$1"
     [ "$lan_ip" = - ] || endpoints="$endpoints,tcp/$lan_ip:$1"
-    echo "$endpoints,$lidar_listen"
+    [ "$lidar_listen" = - ] || endpoints="$endpoints,$lidar_listen"
+    echo "$endpoints"
 }
 
 write_unit() {
@@ -101,6 +116,7 @@ ExecStart=$dest/.venv/bin/dimos host start --foreground
 Environment=PATH=$dest/.venv/bin:/usr/local/bin:/usr/bin:/bin
 # Loopback first: the Host's own fragments dial it.
 Environment=HOST__LISTEN=$(listen_endpoints "$port")
+Environment=HOST__NAME=$name HOST__TAGS=$tags HOST__CONNECT=$connect HOST__AUTODISCOVERY=false HOST__GOSSIP=false
 # Off the vendor's real-time cores (isolcpus); fragments inherit both.
 CPUAffinity=$cpus
 Nice=10

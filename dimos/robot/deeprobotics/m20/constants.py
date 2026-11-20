@@ -67,3 +67,7 @@ REAR_LIDAR_PORTS = (6692, 7782, 6682)
 IMU_FRAME = "imu_link"
 IMU_XYZ_M = (0.0632, -0.0268, -0.0435)
 IMU_MOUNT_RPY_RAD = (math.pi / 2, 0.0, 0.0)
+
+# GOS cores DimSLAM runs on alone in m20-rust: two of the RK3588's A76s (4-7). The GOS Host, and so every other
+# module it starts, is kept off them (its CPUAffinity in onboard/install_dimos_host.sh).
+GOS_SLAM_CPUS = (4, 5)
