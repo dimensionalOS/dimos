@@ -564,3 +564,16 @@ def test_infer_raises_when_its_turn_fails(
 def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
     with pytest.raises(RuntimeError, match="not running"):
         mcp_client.infer(HumanMessage("too early"))
+
+
+def test_each_turn_publishes_its_final_answer_on_agent_output(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
+    answers: list[AIMessage] = []
+    monkeypatch.setattr(running_agent.agent_output, "publish", answers.append)
+
+    running_agent.infer(HumanMessage("one"))
+    running_agent.infer(HumanMessage("two"))
+
+    assert [a.content for a in answers] == ["turn 1", "turn 2"]

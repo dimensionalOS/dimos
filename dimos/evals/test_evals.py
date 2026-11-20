@@ -908,6 +908,11 @@ def _write_trace_pair(trace_dir: Path, seq: int, *, response: bool = True) -> No
         (trace_dir / f"{seq:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + seq}))
 
 
+def _started(transport: Any) -> Any:
+    transport.start()
+    return transport
+
+
 def _run_agent_adapter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -923,17 +928,24 @@ def _run_agent_adapter(
     monkeypatch.setattr("dimos.porcelain.dimos.Dimos.connect", lambda: app)
 
     human, agent_t, idle = (
-        make_transport("/human_input"),
+        make_transport("/agent_input"),
         make_transport("/agent"),
         make_transport("/agent_idle"),
     )
     for t in (human, agent_t, idle):
         t.start()
+    monkeypatch.setattr(
+        "dimos.agents.client.agent_transports",
+        lambda: {
+            name: _started(make_transport("/" + name))
+            for name in ("agent_input", "agent", "agent_idle")
+        },
+    )
 
     workers: list[threading.Thread] = []
 
-    def on_human(msg: str) -> None:
-        worker = threading.Thread(target=fake_agent, args=(msg, trace_dir, agent_t, idle))
+    def on_human(msg: HumanMessage) -> None:
+        worker = threading.Thread(target=fake_agent, args=(str(msg.text), trace_dir, agent_t, idle))
         workers.append(worker)
         worker.start()
 
@@ -959,7 +971,7 @@ def test_agent_adapter_drives_a_turn_over_real_transports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
 ) -> None:
     """The production agent points the Agent's raw capture at run_dir/raw,
-    publishes on /human_input, reads the turn back on /agent until
+    publishes on the agent's input, reads the turn back on /agent until
     /agent_idle or its budget runs out, and links every model call to the
     Agent's trace files (the message must arrive with no flush sleep: LCM
     publish is a synchronous send)."""

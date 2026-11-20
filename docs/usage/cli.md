@@ -387,7 +387,7 @@ Send a text message to the running agent through the MCP server.
 dimos agent-send "walk forward 2 meters"
 ```
 
-Requires a blueprint that includes `McpServer` and `Agent`. The server publishes the text on `/human_input` on the active transport.
+Requires a blueprint that includes `McpServer` and `Agent`. The server publishes the text on its `agent_input` stream, which the blueprint connects to the agent.
 
 A successful send confirms publication, not that an agent received or processed the message.
 

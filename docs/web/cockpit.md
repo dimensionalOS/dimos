@@ -231,7 +231,7 @@ Keyboard driving. Publishes `Twist` messages on `stream`. `max_linear` (m/s) and
 
 ### Chat
 
-`Chat(input="human_input", messages="agent", idle="agent_idle", audio="audio_in", *, title="")`
+`Chat(input="agent_input", messages="agent", idle="agent_idle", audio="audio_in", *, title="")`
 
 The conversation with the robot's agent (the same streams the `humancli` tool uses). Typed text goes out on `input`, the agent's messages come back on `messages`, `idle` drives the thinking indicator, and the push-to-talk microphone sends recordings on `audio`. The blueprint needs the agent modules (the `agents` extra). The microphone button appears only on a secure page.
 

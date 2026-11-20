@@ -42,11 +42,12 @@ from textual.geometry import Size
 from textual.strip import Strip
 from textual.widgets import Input, RichLog, Static
 
+from dimos.agents.client import agent_transports
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli import theme
 from dimos.cli.tui_args import parse_tui_args
-from dimos.core.transport_factory import apply_transport_arg, make_transport
+from dimos.core.transport_factory import apply_transport_arg
 from dimos.utils.generic import truncate_display_string
 
 if TYPE_CHECKING:
@@ -283,9 +284,10 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self._human_transport = make_transport("/human_input")
-        self._agent_transport = make_transport("/agent")
-        self._agent_idle = make_transport("/agent_idle")
+        transports = agent_transports()
+        self._human_transport = transports["agent_input"]
+        self._agent_transport = transports["agent"]
+        self._agent_idle = transports["agent_idle"]
         self.chat_log: RichLog | None = None
         self.input_widget: Input | None = None
         self._subscription_thread: threading.Thread | None = None
@@ -666,7 +668,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
         # agent first drains any queued tool-stream updates.
         if self._thinking is not None:
             self._thinking.show()
-        self._human_transport.publish(message)
+        self._human_transport.publish(HumanMessage(message))
 
     def action_clear(self) -> None:
         """Clear the chat log."""

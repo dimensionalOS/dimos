@@ -21,10 +21,13 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.messages import HumanMessage
 import pytest
 
+from dimos.agents.client import agent_transports
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.global_config import global_config
+from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -203,15 +206,17 @@ def wait_for_system_ready(dimos_cli_call: DimosCliCall) -> Callable[..., None]:
 
 @pytest.fixture
 def human_input():
-    transport = make_transport("/human_input")
-    transport.start()
+    transports: dict[str, PubSubTransport[Any]] = {}
 
     def send_human_input(message: str) -> None:
-        transport.publish(message)
+        if not transports:
+            transports.update(agent_transports())
+        transports["agent_input"].publish(HumanMessage(message))
 
     yield send_human_input
 
-    transport.stop()
+    for transport in transports.values():
+        transport.stop()
 
 
 @pytest.fixture

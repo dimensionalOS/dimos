@@ -51,11 +51,16 @@ class FakeTransport:
 def transports(monkeypatch: pytest.MonkeyPatch) -> dict[str, FakeTransport]:
     transports: dict[str, FakeTransport] = {}
 
-    def fake_make_transport(name: str, *args: Any, **kwargs: Any) -> FakeTransport:
-        transports[name] = FakeTransport()
-        return transports[name]
+    def fake_agent_transports() -> dict[str, FakeTransport]:
+        for topic in ("/human_input", "/agent", "/agent_idle"):
+            transports[topic] = FakeTransport()
+        return {
+            "agent_input": transports["/human_input"],
+            "agent": transports["/agent"],
+            "agent_idle": transports["/agent_idle"],
+        }
 
-    monkeypatch.setattr(humancli, "make_transport", fake_make_transport)
+    monkeypatch.setattr(humancli, "agent_transports", fake_agent_transports)
     transports["tool_stream"] = FakeTransport()
     monkeypatch.setattr(tool_stream, "subscribe", transports["tool_stream"].subscribe)
     return transports

@@ -87,7 +87,8 @@ def test_default_zenoh_qos_high_rate_sensor_types_drop() -> None:
 
 
 def test_default_zenoh_qos_agent_channels_never_drop() -> None:
-    assert default_zenoh_qos("/human_input") == QOS_NEVER_DROP
+    assert default_zenoh_qos("/agent_input") == QOS_NEVER_DROP
+    assert default_zenoh_qos("/agent_output") == QOS_NEVER_DROP
     assert default_zenoh_qos("/agent") == QOS_NEVER_DROP
     assert default_zenoh_qos("/agent_idle") == QOS_NEVER_DROP
 
@@ -109,7 +110,7 @@ def test_make_transport_zenoh_typed_carries_qos() -> None:
 
 
 def test_make_transport_zenoh_untyped_carries_qos() -> None:
-    t = make_transport("/human_input", g=ZENOH)
+    t = make_transport("/agent_input", g=ZENOH)
     assert t._zenoh_topic.qos == QOS_NEVER_DROP
 
 

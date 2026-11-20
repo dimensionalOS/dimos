@@ -21,7 +21,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from dimos.agents.llm_trace import last_request_unanswered, list_llm_trace_pairs
 from dimos.agents.mcp.constants import TURN_FAILED_KEY
@@ -85,8 +85,8 @@ def _is_failure_note(msg: BaseMessage) -> bool:
 class AgentAdapter(EvalSubject):
     """An eval adapter for the production ``Agent``.
 
-    Send the instruction on ``/human_input`` and capture ``/agent`` until
-    ``/agent_idle``. Configure the model and prompt on the production module;
+    Send the instruction on the agent's ``agent_input`` and capture ``agent`` until
+    ``agent_idle``. Configure the model and prompt on the production module;
     this adapter only redirects its trace to ``run_dir/raw`` for each case.
     ``modules`` adds an agentic stack to the environment; an empty sequence
     uses the agent already supplied by the environment.
@@ -114,7 +114,7 @@ class AgentAdapter(EvalSubject):
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
     ) -> Trajectory:
         from dimos.agents.agent import AgentConfig
-        from dimos.core.transport_factory import make_transport
+        from dimos.agents.client import agent_transports
         from dimos.porcelain.dimos import Dimos
 
         # Set the directory for logging raw request/response payloads
@@ -129,20 +129,14 @@ class AgentAdapter(EvalSubject):
         # init the stateful trajectory builder and subscribe to Agent events
         trajectory = TrajectoryBuilder(inputs, name=type(self).__name__, model=AgentConfig().model)
         turn = _Turn(run_dir / "raw")
-        agent_t, idle_t, human_t = (
-            make_transport("/agent"),
-            make_transport("/agent_idle"),
-            make_transport("/human_input"),
-        )
-        for t in (agent_t, idle_t, human_t):
-            t.start()
+        transports = agent_transports()
         try:
-            agent_t.subscribe(turn.on_agent)
-            idle_t.subscribe(turn.on_idle)
-            human_t.publish(inputs)
+            transports["agent"].subscribe(turn.on_agent)
+            transports["agent_idle"].subscribe(turn.on_idle)
+            transports["agent_input"].publish(HumanMessage(inputs))
             finished = turn.done.wait(timeout_s)
         finally:
-            for t in (agent_t, idle_t, human_t):
+            for t in transports.values():
                 t.stop()
 
         # build and return the ATIF trajectory

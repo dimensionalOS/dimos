@@ -1,7 +1,7 @@
 // Push-to-talk mic for the chat composer. Hold to record, release to send:
 // the recording ships as audio.json.v1 chunks on the chat panel's audio
 // channel, and the robot-side VoiceInput module transcribes it onto
-// /human_input - the utterance then appears in the transcript when the
+// agent_input - the utterance then appears in the transcript when the
 // agent echoes it, exactly like typed text. Renders nothing when the
 // microphone APIs are unavailable (insecure context, no MediaRecorder).
 // Element-scoped listeners only: holding the mic never drives the robot.

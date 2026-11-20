@@ -88,6 +88,7 @@ class TypeSafeNavigationConfig(TypeSafeAgentConfig):
 class TypeSafeNavigationAgent(TypeSafeAgent):
     config: TypeSafeNavigationConfig
 
+    agent_input: In[HumanMessage]  # the goal as text
     odom: In[PoseStamped]
     odometry: In[Odometry]  # same pose, nav_msgs flavour (habitat)
     detections_3d: In[Detection3DArray]
@@ -192,7 +193,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
         self._state_gen = 0
         self._state_frame = ""
         super().start()
-        self.register_disposable(Disposable(self.human_input.subscribe(self.set_goal)))
+        self.register_disposable(
+            Disposable(self.agent_input.subscribe(lambda message: self.set_goal(str(message.text))))
+        )
         self._stop_event.clear()
         self._publisher = threading.Thread(
             target=self._publish_loop, name="TypeSafeNav-publish", daemon=True
