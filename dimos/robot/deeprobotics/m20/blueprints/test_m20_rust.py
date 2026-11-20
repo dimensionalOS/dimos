@@ -243,7 +243,7 @@ def test_navigation_and_relocalization_match_m20() -> None:
         atom.name for atom in m20_relocalization().active_blueprints
     }
     # only the per-sweep pacing of two lidars differs (checked in its own test)
-    thinning = {"emit_every", "attempt_after_frames"}
+    thinning = {"emit_every", "attempt_after_frames", "attempt_every_sweeps"}
     for name in shared:
         rust_kwargs = {k: v for k, v in rust[name].kwargs.items() if k not in thinning}
         vendor_kwargs = {k: v for k, v in vendor[name].kwargs.items() if k not in thinning}
@@ -298,4 +298,5 @@ def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None
         atoms[name].kwargs["frame_id"] for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar")
     }
     assert set(atoms["premapmodule"].kwargs["attempt_after_frames"]) == lidar_frames
+    assert atoms["premapmodule"].kwargs["attempt_every_sweeps"] == 10
     assert m20_atoms["premapmodule"].kwargs["attempt_after_frames"] == []

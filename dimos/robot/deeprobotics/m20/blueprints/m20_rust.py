@@ -182,9 +182,11 @@ m20_rust = autoconnect(
     # m20's 5/5 subsampling on top of the lidars' voxel, as m20 traces the vendor cloud; the two Airys publish a cloud
     # each per sweep, so a local map every 2nd cloud and a relocalization once both have landed keep m20's one per sweep
     m20_nav_stack(lidar="lidar", emit_every=2),
+    # ... and, as Jeff asked, an attempt about once a second: every 10th sweep of the Airys' 10 Hz (a count, not a timer)
     m20_relocalization(
         lidar="lidar",
         attempt_after_frames=[constants.FRONT_LIDAR_FRAME, constants.REAR_LIDAR_FRAME],
+        attempt_every_sweeps=10,
     ),
 ).global_config(
     n_workers=5,

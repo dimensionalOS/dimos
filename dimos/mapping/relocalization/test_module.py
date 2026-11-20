@@ -632,3 +632,24 @@ def test_an_attempt_waits_for_a_scan_from_every_configured_frame(
     assert len(changes) == attempts
     # every scan still joins the live map
     assert len(held(m.live)) == 1
+
+
+def test_an_attempt_comes_on_every_nth_complete_sweep(module):
+    m = module(
+        map_frame="premap",
+        relocalize_once=False,
+        live_cloud="lidar",
+        attempt_after_frames=["front", "rear"],
+        attempt_every_sweeps=3,
+    )
+    m._tf = SimpleNamespace(
+        get=lambda *_: Transform(frame_id="map", child_frame_id="x"), dispose=lambda: None
+    )
+    changes = []
+    m._live_changed.subscribe(changes.append)
+    for _ in range(7):
+        for frame in ("front", "rear"):
+            m._on_scan(_scan_from(frame))
+            m._keep_scans()
+    # sweeps 3 and 6 of 7
+    assert len(changes) == 2

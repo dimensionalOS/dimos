@@ -79,7 +79,9 @@ def m20_nav_stack(
 
 
 def m20_relocalization(
-    lidar: str = "slam_body_points", attempt_after_frames: list[str] | None = None
+    lidar: str = "slam_body_points",
+    attempt_after_frames: list[str] | None = None,
+    attempt_every_sweeps: int = 1,
 ) -> Blueprint:
     """Continuous relocalization against the premap, matching a live map built from the scans on `lidar` (each placed by tf at its stamp)."""
     return PremapModule.blueprint(
@@ -97,4 +99,5 @@ def m20_relocalization(
         live_voxel_m=0.2,
         match_radius_m=15.0,
         attempt_after_frames=attempt_after_frames or [],
+        attempt_every_sweeps=attempt_every_sweeps,
     ).remappings([(PremapModule, "lidar", lidar)])

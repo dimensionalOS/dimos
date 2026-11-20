@@ -30,6 +30,7 @@ from typing import Any, Literal
 import uuid
 
 import numpy as np
+from pydantic import Field
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
@@ -108,6 +109,8 @@ class Config(ModuleConfig):
     # ... lidar: attempt only once a scan from each of these frames joined the live map since the last attempt (a rig
     # whose lidars publish separately attempts once per sweep, not once per lidar); empty attempts on every scan
     attempt_after_frames: list[str] = []
+    # ... and only on every Nth such sweep (a count, not a timer); 1 attempts on every one
+    attempt_every_sweeps: int = Field(default=1, ge=1)
     # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
     match_radius_m: float = 30.0
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
@@ -162,6 +165,7 @@ class PremapModule(Module):
         # Scans placed since the last fold, and the frames that have joined the live map since the last attempt
         self._scans: list[np.ndarray] = []
         self._frames_since_attempt: set[str] = set()
+        self._sweeps_since_attempt = 0
         self._center: tuple[float, float] | None = None
         self._refusals = 0
 
@@ -250,6 +254,10 @@ class PremapModule(Module):
             complete = wanted <= self._frames_since_attempt
             if complete:
                 self._frames_since_attempt = set()
+                self._sweeps_since_attempt += 1
+                complete = self._sweeps_since_attempt >= self.config.attempt_every_sweeps
+                if complete:
+                    self._sweeps_since_attempt = 0
         if scans:
             self.live.add(np.concatenate(scans))
             if complete:
