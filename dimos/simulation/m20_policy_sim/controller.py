@@ -14,8 +14,9 @@
 
 """Reference re-implementation of rl_deploy's state machine (the Rust controller mirrors it).
 
-States: passive -> stand_up -> rl_control (runner picked by gait code) -> lie_down -> passive; joint_damping on a
-user request or a fault (stale state, tilt). One call to `tick` per 1 ms control step returns the 16 joint commands.
+States (rl_deploy names): passive (idle_state) -> stand_up -> rl_control (runner by gait code, after a stand-in policy
+on some gaits) -> lie_down; joint_damping on a request or a fault (stale state, tilt, joint beyond its range).
+One call to `tick` per 1 ms control step returns the 16 joint commands. See SPEC.md for the decoded rules.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from dimos.simulation.m20_policy_sim.config import (
     runner_for_gait,
     tile,
 )
-from dimos.simulation.m20_policy_sim.runner import RobotState, Runner, Targets, projected_gravity
+from dimos.simulation.m20_policy_sim.runner import RobotState, Runner, Targets
 
 STATES = ("passive", "stand_up", "rl_control", "lie_down", "joint_damping")
 
@@ -105,6 +106,26 @@ def leg_pose_for_height(robot: dict[str, Any], h: float, hipx: float) -> np.ndar
     return np.clip(pose, lo, hi)
 
 
+def roll_pitch(quat: np.ndarray) -> tuple[float, float]:
+    w, x, y, z = quat
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    return roll, pitch
+
+
+@dataclass
+class StandIn:
+    spec: dict[str, Any]
+    duration: float
+    elapsed: float = 0.0
+
+    def params(self) -> dict[str, float]:
+        return self.spec["params"] if self.elapsed < self.duration else self.spec["settle_params"]
+
+    def done(self) -> bool:
+        return self.elapsed >= self.duration + self.spec["settle_s"]
+
+
 class Controller:
     def __init__(self, cfg: dict[str, Any], policies: Path | None = None) -> None:
         self.cfg = cfg
@@ -115,6 +136,7 @@ class Controller:
         self.runners: dict[str, Runner] = {}
         self.state = "passive"
         self.state_time = 0.0
+        self.time = 0.0
         self.tick_count = 0
         self.runner: Runner | None = None
         self.targets: Targets | None = None
@@ -122,6 +144,12 @@ class Controller:
         self.enter_dq = np.zeros(JOINTS)
         self.last_stamp: float | None = None
         self.fault = ""
+        self.blocked_target: str | None = None
+        self.rl_entries = 0
+        self.stand_in: StandIn | None = None
+        self.gait = 0
+        self.entry_raw_gait = 0
+        self.policy_tick = 0
         self.transitions: list[tuple[float, str, str]] = []
 
     def runner_named(self, name: str) -> Runner:
@@ -131,131 +159,173 @@ class Controller:
             self.runners[name] = r
         return self.runners[name]
 
-    def select_runner(self, cmd: UserCommand) -> Runner:
-        name = (
-            cmd.runner
-            or runner_for_gait(self.cfg, cmd.gait)
-            or self.cfg["states"]["rl_control"]["fallback_runner"]
-        )
-        return self.runner_named(name)
-
-    def enter(self, state: str, s: RobotState) -> None:
-        self.transitions.append((self.tick_count * self.dt, self.state, state))
-        self.state = state
-        self.state_time = 0.0
-        self.enter_q, self.enter_dq = s.q.copy(), s.dq.copy()
-        if state == "rl_control":
-            self.runner = None
-
     def check_faults(self, s: RobotState) -> str:
         safety = self.cfg["safety"]
+        if self.time < safety["startup_grace_s"]:
+            return ""
         if self.last_stamp is not None and s.stamp - self.last_stamp > safety["state_timeout_s"]:
             return "stale state"
-        g = projected_gravity(s.quat)
-        if (
-            self.state == "rl_control"
-            and math.acos(max(-1.0, min(1.0, -g[2]))) > safety["max_tilt_rad"]
-        ):
+        lo, hi = np.array(self.robot["joint_lower"]), np.array(self.robot["joint_upper"])
+        margin = safety["joint_limit_margin_rad"]
+        if np.any(s.q < lo - margin) or np.any(s.q > hi + margin):
+            return "joint beyond its range"
+        roll, pitch = (abs(math.degrees(a)) for a in roll_pitch(s.quat))
+        st = self.cfg["states"]
+        if self.state == "passive" and max(roll, pitch) > st["passive"]["max_tilt_deg"]:
             return "tilt"
+        if self.state == "stand_up" and max(roll, pitch) > st["stand_up"]["max_tilt_deg"]:
+            return "tilt"
+        if self.state == "rl_control" and self.runner is not None:
+            spec = self.runner.spec
+            max_pitch = spec.get("max_pitch_deg", st["rl_control"]["max_pitch_deg"])
+            if spec.get("tilt_check", True) and (
+                roll > st["rl_control"]["max_roll_deg"] or pitch > max_pitch
+            ):
+                return "tilt"
         return ""
 
-    def next_state(self, cmd: UserCommand) -> str:
+    def effective_target(self, cmd: UserCommand) -> str:
+        """After a fault the operator's standing request is ignored until they send a different one."""
+        if self.blocked_target is not None:
+            if cmd.target == self.blocked_target:
+                return "passive"
+            self.blocked_target = None
+        return cmd.target
+
+    def next_state(self, target: str) -> str:
         st = self.cfg["states"]
         t = self.state_time
-        if self.state != "joint_damping" and (cmd.target == "joint_damping" or self.fault):
+        if self.state != "joint_damping" and (target == "joint_damping" or self.fault):
             return "joint_damping"
         if self.state == "passive":
-            return "stand_up" if cmd.target in ("stand", "rl_control") else "passive"
+            ready = self.time >= st["passive"]["min_s_before_stand"]
+            return "stand_up" if ready and target in ("stand", "rl_control") else "passive"
         if self.state == "stand_up":
-            done = t >= st["stand_up"]["crouch_duration_s"] + st["stand_up"]["rise_duration_s"]
-            if done and cmd.target == "rl_control":
-                return "rl_control"
-            if done and cmd.target in ("lie_down", "passive"):
-                return "lie_down"
+            if t > 2 * st["stand_up"]["phase_s"]:
+                if target == "rl_control":
+                    return "rl_control"
+                if target in ("lie_down", "passive"):
+                    return "lie_down"
             return "stand_up"
         if self.state == "rl_control":
-            return "lie_down" if cmd.target in ("lie_down", "passive") else "rl_control"
+            if target in ("lie_down", "passive") and self.stand_in is None:
+                return "lie_down"
+            return "rl_control"
         if self.state == "lie_down":
-            done = t >= st["lie_down"]["duration_s"] + st["lie_down"]["hold_s"]
-            if done and cmd.target in ("stand", "rl_control"):
+            if t > 2 * st["lie_down"]["phase_s"] and target in ("stand", "rl_control"):
                 return "stand_up"
-            return "passive" if done else "lie_down"
+            return "lie_down"
         if self.state == "joint_damping":
-            if cmd.target == "passive" and not self.fault:
+            if not self.fault and (t >= st["joint_damping"]["min_s"] or target != "joint_damping"):
                 return "passive"
             return "joint_damping"
         raise ValueError(self.state)
 
+    def enter(self, state: str, s: RobotState, cmd: UserCommand) -> None:
+        self.transitions.append((self.time, self.state, state))
+        if state == "joint_damping" and self.fault:
+            self.blocked_target = cmd.target
+        self.state = state
+        self.state_time = 0.0
+        self.enter_q, self.enter_dq = s.q.copy(), s.dq.copy()
+        if state == "rl_control":
+            rl = self.cfg["states"]["rl_control"]
+            self.entry_raw_gait = cmd.gait
+            self.gait = cmd.gait if cmd.gait in rl["entry_gaits"] else rl["entry_fallback_gait"]
+            self.runner, self.targets = None, None
+            self.start_stand_in(self.gait, on_entry=True)
+            self.rl_entries += 1
+
+    def start_stand_in(self, gait: int, on_entry: bool) -> None:
+        self.stand_in = None
+        for spec in self.cfg["states"]["rl_control"].get("stand_in", []):
+            if spec["gait"] == gait and (on_entry or spec["on_switch"]):
+                self.stand_in = StandIn(
+                    spec, spec["first_s"] if self.rl_entries == 0 else spec["later_s"]
+                )
+
     def tick(self, s: RobotState, cmd: UserCommand) -> JointCommand:
-        self.fault = self.fault or self.check_faults(s)
+        self.fault = self.check_faults(s)
         self.last_stamp = s.stamp
-        nxt = self.next_state(cmd)
+        target = self.effective_target(cmd)
+        nxt = self.next_state(target)
         if nxt != self.state:
-            self.enter(nxt, s)
+            self.enter(nxt, s, cmd)
         out = getattr(self, "run_" + self.state)(s, cmd)
         self.state_time += self.dt
+        self.time += self.dt
         self.tick_count += 1
         return out
 
-    def run_passive(self, s: RobotState, cmd: UserCommand) -> JointCommand:
-        p = self.cfg["states"]["passive"]
+    def gains(self, p: dict[str, Any]) -> JointCommand:
         c = JointCommand.zero()
         c.kp, c.kd = tile(p["kp"], JOINTS), tile(p["kd"], JOINTS)
-        c.q = s.q.copy()
         return c
 
+    def run_passive(self, s: RobotState, cmd: UserCommand) -> JointCommand:
+        return self.gains(self.cfg["states"]["passive"])
+
     def run_joint_damping(self, s: RobotState, cmd: UserCommand) -> JointCommand:
-        p = self.cfg["states"]["joint_damping"]
-        c = JointCommand.zero()
-        c.kp, c.kd = tile(p["kp"], JOINTS), tile(p["kd"], JOINTS)
-        c.q = s.q.copy()
-        return c
+        return self.gains(self.cfg["states"]["joint_damping"])
 
     def run_stand_up(self, s: RobotState, cmd: UserCommand) -> JointCommand:
         p = self.cfg["states"]["stand_up"]
-        c = JointCommand.zero()
-        c.kp, c.kd = tile(p["kp"], JOINTS), tile(p["kd"], JOINTS)
-        t, T1, T2 = self.state_time, p["crouch_duration_s"], p["rise_duration_s"]
-        if t <= T1:
+        c = self.gains(p)
+        t, T = self.state_time, p["phase_s"]
+        if t <= T:
             goal = leg_pose_for_height(self.robot, p["crouch_height"], p["hipx"])
             for i in range(JOINTS):
-                c.q[i], c.dq[i] = cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, T1)
-            c.kd[IS_WHEEL] = 0.0
-            c.q[IS_WHEEL], c.dq[IS_WHEEL] = 0.0, 0.0
+                c.q[i], c.dq[i] = cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, T)
         else:
-            h, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T1, T2)
-            h_next, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T1 + self.dt, T2)
+            h, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T, T)
+            h_next, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T + self.dt, T)
             c.q = leg_pose_for_height(self.robot, h, p["hipx"])
             c.dq = (leg_pose_for_height(self.robot, h_next, p["hipx"]) - c.q) / self.dt
-            c.kd[IS_WHEEL] = p["wheel_kd_after_crouch"]
-            c.q[IS_WHEEL], c.dq[IS_WHEEL] = 0.0, 0.0
+        c.q[IS_WHEEL], c.dq[IS_WHEEL] = 0.0, 0.0
         return c
 
     def run_lie_down(self, s: RobotState, cmd: UserCommand) -> JointCommand:
         p = self.cfg["states"]["lie_down"]
-        c = JointCommand.zero()
-        t, T = self.state_time, p["duration_s"]
+        t, T = self.state_time, p["phase_s"]
+        c = self.gains(p)
         if t <= T:
             goal = leg_pose_for_height(self.robot, p["lie_height"], p["hipx"])
-            c.kp, c.kd = tile(p["kp"], JOINTS), tile(p["kd"], JOINTS)
             for i in range(JOINTS):
                 c.q[i], c.dq[i] = cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, T)
             c.q[IS_WHEEL], c.dq[IS_WHEEL] = 0.0, 0.0
+        elif t <= 2 * T:
+            c.kp[:] = 0.0
         else:
-            c.kd = tile(p["kd"], JOINTS)
+            c = JointCommand.zero()
         return c
 
     def run_rl_control(self, s: RobotState, cmd: UserCommand) -> JointCommand:
-        r = self.select_runner(cmd)
+        params = cmd.params
+        if self.stand_in is not None:
+            name = self.stand_in.spec["runner"]
+            params = self.stand_in.params()
+            self.stand_in.elapsed += self.dt
+            if self.stand_in.done():
+                self.stand_in = None
+        else:
+            # a gait change after entry (rl_deploy's gait-change marker) is followed as is
+            wanted = cmd.gait if cmd.gait != self.entry_raw_gait else self.gait
+            if wanted != self.gait:
+                self.gait = wanted
+                self.start_stand_in(wanted, on_entry=False)
+            rl = self.cfg["states"]["rl_control"]
+            name = cmd.runner or runner_for_gait(self.cfg, self.gait) or rl["fallback_runner"]
+        r = self.runner_named(name)
         if r is not self.runner:
             r.reset()
-            self.runner, self.targets, self.policy_tick = r, None, 0
-        r.params.update(cmd.params)
+            self.runner, self.policy_tick = r, 0
+        r.params.update(params)
         if self.policy_tick % self.decimation == 0:
             self.targets = r.step(s, cmd.axes)
         self.policy_tick += 1
         c = JointCommand.zero()
-        c.kp, c.kd = r.kp.copy(), r.kd.copy()
+        scale = r.gain_scale()
+        c.kp, c.kd = r.kp * scale, r.kd * scale
         c.q = self.targets.q.copy()
         c.q[IS_WHEEL] = 0.0
         c.dq[IS_WHEEL] = self.targets.wheel_velocity

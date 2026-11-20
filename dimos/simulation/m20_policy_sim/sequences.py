@@ -24,10 +24,12 @@ from typing import Any
 
 import numpy as np
 
+from dimos.simulation.m20_policy_sim.config import runner_for_gait
 from dimos.simulation.m20_policy_sim.controller import (
     JointCommand,
     UserCommand,
     leg_pose_for_height,
+    roll_pitch,
 )
 from dimos.simulation.m20_policy_sim.runner import RobotState, projected_gravity
 from dimos.simulation.m20_policy_sim.world import Terrain, World
@@ -66,14 +68,54 @@ class Sequence:
     checks: Callable[[World, list[dict[str, Any]]], dict[str, tuple[float, bool]]] | None = None
     # max |error| / |command| allowed per tracked axis for a pass
     tracking_tolerance: float = 0.5
+    # a known failure and why: reported as XFAIL, not counted against the run
+    expected_failure: str = ""
+
+
+def nearest_entry_gait(cfg: dict[str, Any], runner: str) -> int:
+    """The entry gait whose runner stands closest to `runner`'s default pose, so the switch starts in distribution."""
+    rl = cfg["states"]["rl_control"]
+    pose = np.array(cfg["runners"][runner]["default_pose"])
+    best, best_d = rl["entry_fallback_gait"], math.inf
+    for gait in rl["entry_gaits"]:
+        name = runner_for_gait(cfg, gait)
+        if name is None:
+            continue
+        d = float(np.linalg.norm(np.array(cfg["runners"][name]["default_pose"]) - pose))
+        if d < best_d - 1e-9:
+            best, best_d = gait, d
+    return best
+
+
+def entry_segments(cfg: dict[str, Any], runner: str) -> list[Segment]:
+    """Lying -> stand_up -> rl_control entry as rl_deploy allows it, then the runner's own gait (or a forced runner).
+
+    rl_control only starts on its entry gaits (others become BasicFlat after the finetune_stand_15kg stand-in), so a
+    runner with another gait is reached by a gait change once rl_control runs, as an operator would.
+    """
+    spec = cfg["runners"][runner]
+    rl = cfg["states"]["rl_control"]
+    own = spec["gaits"][0] if spec["gaits"] else None
+    entry = own if own in rl["entry_gaits"] else nearest_entry_gait(cfg, runner)
+    return [
+        Segment("lying", 2.0, "passive", gait=entry),
+        Segment("stand_up", 3.2, "rl_control"),
+        Segment("stand_in", 4.0, "rl_control"),
+        Segment(
+            "switch",
+            1.0,
+            "rl_control",
+            gait=own if own is not None else entry,
+            runner=None if own else runner,
+        ),
+    ]
 
 
 def walk_segments(
     cfg: dict[str, Any], runner: str, speed: float = 0.5, lateral: float = 0.3, turn: float = 0.5
 ) -> list[Segment]:
     return [
-        Segment("lying", 1.0, "passive"),
-        Segment("stand_up", 5.0, "rl_control"),
+        *entry_segments(cfg, runner),
         Segment("stand", 4.0, "rl_control", track=True),
         Segment("vx", 6.0, "rl_control", (speed, 0, 0), track=True),
         Segment("vy", 6.0, "rl_control", (0, lateral, 0), track=True),
@@ -83,11 +125,15 @@ def walk_segments(
     ]
 
 
-def stand_only_segments() -> list[Segment]:
+def stand_only_segments(cfg: dict[str, Any], runner: str) -> list[Segment]:
+    """The stand policies hold a body pose from params: height in [0, 1] (lower), roll / pitch in [-1, 1]."""
     return [
-        Segment("lying", 1.0, "passive"),
-        Segment("stand_up", 5.0, "rl_control"),
-        Segment("stand", 8.0, "rl_control", track=True),
+        *entry_segments(cfg, runner),
+        Segment("stand", 4.0, "rl_control", track=True),
+        Segment("lower", 4.0, "rl_control", params={"height": 0.8}, track=True),
+        Segment("pitch", 4.0, "rl_control", params={"height": 0.0, "pitch": 0.8}, track=True),
+        Segment("roll", 4.0, "rl_control", params={"pitch": 0.0, "roll": 0.8}, track=True),
+        Segment("level", 3.0, "rl_control", params={"roll": 0.0}, track=True),
         Segment("lie_down", 5.0, "lie_down"),
     ]
 
@@ -98,10 +144,7 @@ def run_sequence(
     world = world or World(seq.terrain, torque_limit=np.tile(cfg["robot"]["torque_limit"], 4))
     world.reset(leg_pose_for_height(cfg["robot"], cfg["states"]["lie_down"]["lie_height"], 0.0))
     spec = cfg["runners"][seq.runner]
-    gait = spec["gaits"][0] if spec["gaits"] else 0
-    cmd = UserCommand(gait=gait, runner="" if spec["gaits"] else seq.runner)
-    cmd.params.update(spec.get("command_params", {}))
-    command_max = np.array(spec["command_max"], np.float64)
+    cmd = UserCommand()
     log: list[dict[str, Any]] = []
     fell_at = None
     dt = 1.0 / cfg["timing"]["control_hz"]
@@ -115,6 +158,13 @@ def run_sequence(
             cmd.gait = seg.gait
         if seg.runner is not None:
             cmd.runner = seg.runner
+        # physical velocity -> the normalized axes of the runner that will be active
+        active = (
+            cmd.runner
+            or runner_for_gait(cfg, cmd.gait)
+            or cfg["states"]["rl_control"]["fallback_runner"]
+        )
+        command_max = np.array(cfg["runners"][active]["command_max"], np.float64)
         for k in range(round(seg.seconds / dt)):
             velocity = seg.steer(world) if seg.steer else np.array(seg.velocity, np.float64)
             cmd.axes = np.divide(velocity, command_max, out=np.zeros(3), where=command_max > 0)
@@ -131,7 +181,10 @@ def run_sequence(
                 g = projected_gravity(s.quat)
                 tilt = math.acos(max(-1.0, min(1.0, -g[2])))
                 pos, _ = world.base_pose()
+                roll, pitch = roll_pitch(s.quat)
                 rec = dict(
+                    roll=roll,
+                    pitch=pitch,
                     t=t,
                     seg=seg.name,
                     cmd=velocity.tolist(),
@@ -141,7 +194,7 @@ def run_sequence(
                     trunk_contact=world.body_contacts_ground(),
                 )
                 log.append(rec)
-                in_policy = seg.target == "rl_control" and seg.name != "stand_up"
+                in_policy = seg.target == "rl_control" and seg.name not in ("lying", "stand_up")
                 if in_policy and fell_at is None and (tilt > FALL_TILT_RAD or rec["trunk_contact"]):
                     fell_at = t
         if fell_at is not None:
@@ -149,8 +202,17 @@ def run_sequence(
     return score(seq, log, fell_at, world)
 
 
-# [I] height-map grid for HeightGap: legged_gym's convention (base height - 0.5 - terrain), 41 x 11 at 0.05 / 0.05 m
-HEIGHT_MAP_GRID = dict(spacing_x=0.05, spacing_y=0.05, offset=0.5)
+# HeightGap's map as rl_deploy's HeightsSubCallback filters it [C]; the grid spacing, orientation and offset are not
+# in the binary (height_map_nav makes the image) [I]
+HEIGHT_MAP_GRID = dict(
+    spacing_x=0.05,
+    spacing_y=0.05,
+    offset=0.1,
+    min_value=0.18,
+    fill=0.6,
+    min_row=20,
+    front_first=False,
+)
 
 
 def score(
@@ -169,6 +231,12 @@ def score(
             true=np.round(v, 3).tolist(),
             max_tilt_deg=round(math.degrees(max(r["tilt"] for r in rows)), 1),
             z=round(float(np.mean([r["pos"][2] for r in half])), 3) if half else None,
+            roll_deg=round(math.degrees(float(np.mean([r["roll"] for r in half]))), 1)
+            if half
+            else None,
+            pitch_deg=round(math.degrees(float(np.mean([r["pitch"] for r in half]))), 1)
+            if half
+            else None,
         )
         segment_def = next(s for s in seq.segments if s.name == name)
         if segment_def.track and segment_def.steer is None:
@@ -187,6 +255,7 @@ def score(
         checks["stand_z_m"] = (z, z > MIN_STAND_HEIGHT)
     ok = ok and completed and all(v[1] for v in checks.values())
     return dict(
+        expected_failure=seq.expected_failure,
         sequence=seq.name,
         runner=seq.runner,
         passed=ok,

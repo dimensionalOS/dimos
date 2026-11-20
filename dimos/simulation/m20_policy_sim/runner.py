@@ -85,6 +85,35 @@ class Targets:
     velocity_estimate: np.ndarray | None
 
 
+class GaitClock:
+    """The stand / StepMove runners' gait clock: counter per policy step, frequency re-picked each half period."""
+
+    def __init__(self, spec: dict[str, Any]) -> None:
+        self.spec = spec
+        self.frequency = spec["frequency"]
+        self.counter = 0.0
+
+    def fields(self, dt: float) -> dict[str, float]:
+        t = self.counter * dt
+        half = 0.5 / self.frequency
+        sign = 1.0 if math.sin(2 * math.pi * self.frequency * t) >= 0 else -1.0
+        r = math.fmod(t, half)
+        return {"half_period": half, "sign": sign, "remaining": half - r if r > 1e-6 else 0.0}
+
+    def advance(self, dt: float, command: np.ndarray) -> None:
+        half = 0.5 / self.frequency
+        before = math.floor(self.counter * dt / half + 1e-9)
+        self.counter += 1
+        if math.floor(self.counter * dt / half + 1e-9) != before:
+            g = self.spec
+            f = (1 + abs(command[2]) / g["wz_gain"]) * max(
+                1 + command[0] / g["vx_gain"], 1 + abs(command[1]) / g["vy_gain"]
+            )
+            f = min(max(f, g["min_frequency"]), g["max_frequency"])
+            self.counter *= self.frequency / f
+            self.frequency = f
+
+
 class Runner:
     def __init__(
         self, name: str, spec: dict[str, Any], robot: dict[str, Any], policy_dir: Path
@@ -111,10 +140,28 @@ class Runner:
         self.history: np.ndarray | None = None
         self.phase = 0.0
         self.command = np.zeros(3)
+        self.steps = 0
+        self.params = dict(self.spec.get("command_params", {}))
+        self.clock = GaitClock(self.spec["gait_clock"]) if "gait_clock" in self.spec else None
+
+    def gain_scale(self) -> float:
+        """rl_deploy scales kp / kd for a runner's first steps (NaviCharge x1.3 for 29 steps)."""
+        if self.steps < self.spec.get("start_gain_steps", 0):
+            return self.spec["start_gain_scale"]
+        return 1.0
 
     def update_command(self, axes: np.ndarray) -> np.ndarray:
         """Normalized user axes [-1, 1] -> physical (vx, vy, wz), slew-limited per policy step where configured."""
-        target = np.clip(axes, -1, 1) * self.command_max
+        axes = np.clip(axes, -1, 1)
+        deadband = np.array(self.spec.get("axis_deadband", [0.0, 0.0, 0.0]))
+        axes = np.where(np.abs(axes) < deadband, 0.0, axes)
+        target = axes * self.command_max
+        if "wz_speed_limit" in self.spec:
+            w = self.spec["wz_speed_limit"]
+            w_max = min(
+                w["a"] / (target[0] + w["b"]) - w["c"], w["d"] / (1 + w["e"] * abs(target[1]))
+            )
+            target[2] = axes[2] * min(max(w_max, w["lo"]), w["hi"])
         if "wz_clamp" in self.spec and target[0] > self.spec["wz_clamp_above_vx"]:
             target[2] = np.clip(target[2], -self.spec["wz_clamp"], self.spec["wz_clamp"])
         slew = self.command_slew
@@ -180,27 +227,41 @@ class Runner:
         self.history = (
             np.tile(frame, (n, 1)) if self.history is None else np.vstack([self.history[1:], frame])
         )
-        command = []
-        for entry in self.spec["command_vector"]:
-            if isinstance(entry, str):
-                command.append(
-                    {"vx": self.command[0], "vy": self.command[1], "wz": self.command[2]}.get(
-                        entry, self.params.get(entry, 0.0)
-                    )
-                )
-            else:
-                command.append(entry)
+        command = [self.command_entry(e) for e in self.spec["command_vector"]]
+        if self.clock is not None:
+            self.clock.advance(self.policy_dt, self.command)
         return {
             "state": self.history[None].astype(np.float32),
             "command": np.array([command], np.float32),
             "uncertain": np.zeros((1, 1), np.float32),
         }
 
+    def command_entry(self, e: Any) -> float:
+        if not isinstance(e, dict):
+            return float(e)
+        src = e["src"]
+        if src in ("vx", "vy", "wz"):
+            return float(self.command[("vx", "vy", "wz").index(src)])
+        if src == "param":
+            return self.params.get(e["name"], 0.0) * e.get("scale", 1.0) + e.get("offset", 0.0)
+        if src == "gait":
+            return self.clock.fields(self.policy_dt)[e["field"]] * e.get("scale", 1.0)
+        if src == "foot":
+            f = self.spec["feet"]
+            th = f["yaw_scale"] * self.params.get("yaw", 0.0)
+            nx, ny = f["nominal"][e["leg"]]
+            x = math.cos(th) * nx - math.sin(th) * ny + f["dx_scale"] * self.params.get("dx", 0.0)
+            y = math.sin(th) * nx + math.cos(th) * ny + f["dy_scale"] * self.params.get("dy", 0.0)
+            return x if e["axis"] == "x" else y
+        raise ValueError(f"unknown command source {src}")
+
     def step(self, s: RobotState, axes: np.ndarray) -> Targets:
         self.update_command(np.asarray(axes, np.float64))
-        outputs = self.session.run(None, self.network_input(self.frame(s)))
+        self.last_frame = self.frame(s)
+        outputs = self.session.run(None, self.network_input(self.last_frame))
         act = self.spec["action"]
         a = np.clip(outputs[0][0].astype(np.float64), -act["clip"], act["clip"])
+        self.steps += 1
         self.last_action = a
         for block in self.spec["obs"]:
             if block["kind"] == "phase":

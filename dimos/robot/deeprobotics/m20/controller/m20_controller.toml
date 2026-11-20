@@ -40,48 +40,81 @@ control_hz = 1000
 policy_decimation = 20
 
 [safety]
-# no fresh state from the hardware for this long -> joint damping
+# no faults are raised for this long after start (rl_deploy SafeController grace)
+startup_grace_s = 1.0
+# no fresh hardware / IMU state for this long -> fault (joint damping)
 state_timeout_s = 0.02
-# no user command for this long while in rl_control -> zero velocity command
-command_timeout_s = 0.5
-# body tilt (from projected gravity) above this -> joint damping
-max_tilt_rad = 1.2
+# no operator command for this long -> velocity axes zeroed (the state is kept)
+command_timeout_s = 0.15
+# a joint this far beyond its range -> fault
+joint_limit_margin_rad = 0.1
+# joint-damping ticks sent on shutdown before the controller exits
+shutdown_damping_ticks = 500
 
+# rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
 [states.passive]
-# all gains zero: motors limp
+# Idle: all-zero command (motors limp)
 kp = [0.0]
 kd = [0.0]
+# stand-up is accepted only this long after start
+min_s_before_stand = 2.0
+max_tilt_deg = 20.0
 
 [states.joint_damping]
-# kp 0, damping only (rl_deploy's fault state)
 kp = [0.0]
-kd = [3.0, 3.0, 3.0, 1.0]
+kd = [4.0, 4.0, 4.0, 1.0]
+# back to passive after this long, or at once when the operator asks for anything else (and no fault is active)
+min_s = 2.0
 
 [states.stand_up]
 kp = [200.0, 200.0, 200.0, 0.0]
-kd = [4.0, 4.0, 4.0, 0.0]
-# wheel kd once the joints reach the crouch pose
-wheel_kd_after_crouch = 1.0
-# phase 1: cubic spline from the current pose to the crouch (body height crouch_height)
+kd = [4.0, 4.0, 4.0, 2.0]
+# phase 1: per-joint cubic from the current pose to the leg-IK pose for crouch_height; phase 2: cubic height ramp
+# crouch_height -> stand_height through the IK; each phase lasts phase_s; leaving is allowed after both
 crouch_height = 0.12
-crouch_duration_s = 2.0
-# phase 2: body height spline crouch_height -> stand_height through leg IK
-stand_height = 0.348
-rise_duration_s = 2.0
+stand_height = 0.38
+phase_s = 1.5
 hipx = 0.0
+max_tilt_deg = 45.0
 
 [states.lie_down]
 kp = [300.0, 300.0, 300.0, 0.0]
-kd = [4.5, 4.5, 4.5, 3.0]
-# cubic spline to the pose with body height lie_height, then damping only for hold_s, then passive
+kd = [4.5, 4.5, 4.5, 2.0]
+# cubic to the leg-IK pose for lie_height over phase_s, then damping only for phase_s, then all zero
 lie_height = 0.03
-duration_s = 2.0
-hold_s = 2.0
+phase_s = 2.0
 hipx = 0.0
 
 [states.rl_control]
+# gait codes accepted on entry; others become entry_fallback_gait ("protect to basic flat gait")
+entry_gaits = [0x1001, 0x3001, 0x3004, 0xf003]
+entry_fallback_gait = 0x1001
 # runner for gait codes no runner lists (rl_deploy's default branch)
 fallback_runner = "basic_flat"
+max_roll_deg = 45.0
+max_pitch_deg = 65.0
+
+# a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
+# them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner
+[[states.rl_control.stand_in]]
+gait = 0x1001
+runner = "six_axis_stand"
+on_switch = false
+first_s = 3.0
+later_s = 1.5
+params = { mode = 0.0 }
+settle_s = 0.5
+settle_params = { mode = -1.0 }
+
+[[states.rl_control.stand_in]]
+gait = 0x3001
+runner = "six_axis_stand"
+on_switch = true
+first_s = 1.5
+later_s = 1.5
+params = { mode = -1.0 }
+settle_s = 0.0
+settle_params = {}
 
 # ---------------------------------------------------------------------------------------------------------------
 # Policy runners. kind "frames": network input [current frame, `history` past frames oldest->newest]; kind
@@ -92,8 +125,7 @@ fallback_runner = "basic_flat"
 # or absolute (the ONNX already outputs the target).
 
 [runners.basic_flat]
-# rl_deploy's default branch: any gait code not listed below
-gaits = []
+gaits = [0x1001]
 policy = "policy_m20_50.onnx"
 kind = "frames"
 history = 5
@@ -120,6 +152,7 @@ action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset
 [runners.basic_plat]
 gaits = [0x1002]
 policy = "policy_ca9bplatform.onnx"
+max_pitch_deg = 90.0
 kind = "frames"
 history = 5
 frame = 53
@@ -184,6 +217,9 @@ action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset
 [runners.navi_charge]
 gaits = [0x3001]
 policy = "m20_navi_charge_v8_0_isaaclab.onnx"
+# kp / kd x start_gain_scale for the first start_gain_steps policy steps
+start_gain_scale = 1.3
+start_gain_steps = 29
 kind = "frames"
 history = 5
 frame = 60
@@ -290,11 +326,12 @@ obs = [
     { kind = "joint_vel", joints = "legs_by_type", scale = [0.05] },
     { kind = "joint_vel", joints = "wheels", scale = [0.01] },
     { kind = "last_action" },
-    { kind = "height_map", rows = 41, cols = 11, scale = 5.0 },
+    { kind = "height_map", rows = 41, cols = 11, scale = [5.0] },
 ]
 action = { layout = "legs_by_type_then_wheels", clip = 50.0, leg_mode = "offset", leg_scale = [0.25], wheel_scale = 10.0 }
 
 [runners.extre]
+# 0x2001 Move, 0x2002 Jump, 0x2003 Bipedal, 0x2004 Inv_Bipedal; the gait -> mode mapping is not decoded (mode 0 walks)
 gaits = [0x2001, 0x2002, 0x2003, 0x2004]
 policy = "m20_forward_policy_2.onnx"
 kind = "sequence"
@@ -303,9 +340,10 @@ frame = 53
 default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
-command_max = [1.0, 1.0, 1.0]
-command_vector = ["vx", "vy", "wz", 0.0, "mode"]
+command_max = [3.0, 1.0, 2.0]
+tilt_check = false
 command_params = { mode = 0.0 }
+command_vector = [{ src = "vx" }, { src = "vy" }, { src = "wz" }, 0.0, { src = "param", name = "mode" }]
 obs = [
     { kind = "accel", scale = [0.10193679918] },
     { kind = "gyro", scale = [0.25] },
@@ -317,17 +355,42 @@ obs = [
 action = { layout = "per_leg", clip = 1e9, leg_mode = "absolute", leg_scale = [1.0], wheel_scale = 20.0 }
 
 [runners.finetune_stand]
+# FinetuneStand: m20_sixaxis_stand (the names cross over in rl_deploy)
 gaits = [0x3004]
 policy = "m20_sixaxis_stand.onnx"
 kind = "sequence"
 history = 36
 frame = 53
-default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
+default_pose = [0.0, -0.65, 1.3, 0.0, 0.0, -0.65, 1.3, 0.0, 0.0, 0.65, -1.3, 0.0, 0.0, 0.65, -1.3, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
-command_max = [1.0, 1.0, 1.0]
-command_vector = ["vx", "vy", "wz", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-command_params = {}
+# velocity is not an input: the operator's axes and params drive the body pose
+command_max = [0.0, 0.0, 0.0]
+# params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
+command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
+gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
+feet = { nominal = [[0.3141, 0.2], [0.3141, -0.2], [-0.3141, 0.2], [-0.3141, -0.2]], yaw_scale = 0.42760566, dx_scale = 0.145, dy_scale = 0.1 }
+command_vector = [
+    0.0, 0.0, 0.0,
+    { src = "param", name = "height", scale = -0.25, offset = 0.51 },
+    { src = "param", name = "roll", scale = 0.25307274 },
+    { src = "param", name = "pitch", scale = 0.42760566 },
+    { src = "param", name = "mode" },
+    { src = "gait", field = "half_period", scale = 5.0 },
+    { src = "gait", field = "sign", scale = 1.0 },
+    { src = "gait", field = "sign", scale = -1.0 },
+    { src = "gait", field = "sign", scale = -1.0 },
+    { src = "gait", field = "sign", scale = 1.0 },
+    { src = "gait", field = "remaining", scale = 5.0 },
+    { src = "foot", leg = 0, axis = "x" },
+    { src = "foot", leg = 0, axis = "y" },
+    { src = "foot", leg = 1, axis = "x" },
+    { src = "foot", leg = 1, axis = "y" },
+    { src = "foot", leg = 2, axis = "x" },
+    { src = "foot", leg = 2, axis = "y" },
+    { src = "foot", leg = 3, axis = "x" },
+    { src = "foot", leg = 3, axis = "y" },
+]
 obs = [
     { kind = "accel", scale = [0.10193679918] },
     { kind = "gyro", scale = [0.25] },
@@ -339,17 +402,42 @@ obs = [
 action = { layout = "per_leg", clip = 1e9, leg_mode = "absolute", leg_scale = [1.0], wheel_scale = 20.0 }
 
 [runners.six_axis_stand]
+# SixAxisStand: m20_finetune_stand_15kg; also the stand-in policy at rl_control entry
 gaits = [0xf001]
 policy = "m20_finetune_stand_15kg.onnx"
 kind = "sequence"
 history = 36
 frame = 53
-default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
+default_pose = [0.0, -0.7, 1.4, 0.0, 0.0, -0.7, 1.4, 0.0, 0.0, 0.7, -1.4, 0.0, 0.0, 0.7, -1.4, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
-command_max = [1.0, 1.0, 1.0]
-command_vector = ["vx", "vy", "wz", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-command_params = {}
+# velocity is not an input: the operator's axes and params drive the body pose
+command_max = [0.0, 0.0, 0.0]
+# params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
+command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
+gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
+feet = { nominal = [[0.3141, 0.2], [0.3141, -0.2], [-0.3141, 0.2], [-0.3141, -0.2]], yaw_scale = 0.42760566, dx_scale = 0.145, dy_scale = 0.1 }
+command_vector = [
+    0.0, 0.0, 0.0,
+    { src = "param", name = "height", scale = -0.25, offset = 0.51 },
+    { src = "param", name = "roll", scale = 0.25307274 },
+    { src = "param", name = "pitch", scale = 0.42760566 },
+    { src = "param", name = "mode" },
+    { src = "gait", field = "half_period", scale = 5.0 },
+    { src = "gait", field = "sign", scale = 1.0 },
+    { src = "gait", field = "sign", scale = -1.0 },
+    { src = "gait", field = "sign", scale = -1.0 },
+    { src = "gait", field = "sign", scale = 1.0 },
+    { src = "gait", field = "remaining", scale = 5.0 },
+    { src = "foot", leg = 0, axis = "x" },
+    { src = "foot", leg = 0, axis = "y" },
+    { src = "foot", leg = 1, axis = "x" },
+    { src = "foot", leg = 1, axis = "y" },
+    { src = "foot", leg = 2, axis = "x" },
+    { src = "foot", leg = 2, axis = "y" },
+    { src = "foot", leg = 3, axis = "x" },
+    { src = "foot", leg = 3, axis = "y" },
+]
 obs = [
     { kind = "accel", scale = [0.10193679918] },
     { kind = "gyro", scale = [0.25] },
@@ -366,12 +454,28 @@ policy = "m20_finetune_forward.onnx"
 kind = "sequence"
 history = 36
 frame = 53
-default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
+default_pose = [0.0, -1.0, 1.6, 0.0, 0.0, -1.0, 1.6, 0.0, 0.0, 1.0, -1.6, 0.0, 0.0, 1.0, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
-command_max = [1.0, 1.0, 1.0]
-command_vector = ["vx", "vy", "wz", "body_height", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-command_params = { body_height = 0.5 }
+# wz max follows the speed: clamp(min(a / (vx + b) - c, d / (1 + e |vy|)), lo, hi); |axis| below deadband -> 0
+command_max = [3.9, 0.9, 1.0]
+axis_deadband = [0.0, 0.0, 0.1]
+wz_speed_limit = { a = 10.8, b = 2.4, c = 0.15, d = 2.85, e = 0.5, lo = 1.0, hi = 3.0 }
+command_params = { height = 0.0, roll = 0.0, pitch = 0.0 }
+gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
+command_vector = [
+    { src = "vx" }, { src = "vy" }, { src = "wz" },
+    { src = "param", name = "height", scale = -0.26, offset = 0.51 },
+    { src = "param", name = "roll", scale = 0.2618 },
+    { src = "param", name = "pitch", scale = 0.4363 },
+    0.0,
+    { src = "gait", field = "half_period", scale = 5.0 },
+    { src = "gait", field = "sign", scale = 1.0 },
+    { src = "gait", field = "sign", scale = -1.0 },
+    { src = "gait", field = "sign", scale = -1.0 },
+    { src = "gait", field = "sign", scale = 1.0 },
+    { src = "gait", field = "remaining", scale = 5.0 },
+]
 obs = [
     { kind = "accel", scale = [0.10193679918] },
     { kind = "gyro", scale = [0.25] },

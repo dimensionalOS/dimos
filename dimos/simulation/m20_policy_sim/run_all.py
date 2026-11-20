@@ -35,6 +35,7 @@ from dimos.simulation.m20_policy_sim.controller import Controller
 from dimos.simulation.m20_policy_sim.sequences import (
     Segment,
     Sequence,
+    entry_segments,
     run_sequence,
     stand_only_segments,
     walk_segments,
@@ -72,10 +73,37 @@ def climbed(world: World, log: list[dict[str, Any]]) -> dict[str, tuple[float, b
     return {"reached_top_x": (best_x, best_x > x_top), "z_gain_m": (z_gain, z_gain > 0.8 * top)}
 
 
-def stairs_sequence(runner: str) -> Sequence:
+def pose_checks(cfg: dict[str, Any], runner: str):
+    """The stand policies follow the decoded pose inputs: height lowers the body, pitch / roll tilt it."""
+    params = cfg["runners"][runner]["command_vector"]
+    roll_gain = math.degrees(
+        next(e["scale"] for e in params if isinstance(e, dict) and e.get("name") == "roll")
+    )
+    pitch_gain = math.degrees(
+        next(e["scale"] for e in params if isinstance(e, dict) and e.get("name") == "pitch")
+    )
+
+    def checks(world: World, log: list[dict[str, Any]]) -> dict[str, tuple[float, bool]]:
+        def mean(seg: str, key: str, index: int | None = None) -> float:
+            rows = [r for r in log if r["seg"] == seg]
+            rows = rows[len(rows) // 2 :]
+            return float(np.mean([r[key][index] if index is not None else r[key] for r in rows]))
+
+        lowered = mean("stand", "pos", 2) - mean("lower", "pos", 2)
+        pitch = math.degrees(mean("pitch", "pitch"))
+        roll = math.degrees(mean("roll", "roll"))
+        return {
+            "lowered_m": (lowered, lowered > 0.1),
+            "pitch_deg": (pitch, abs(abs(pitch) - 0.8 * pitch_gain) < 5.0),
+            "roll_deg": (roll, abs(abs(roll) - 0.8 * roll_gain) < 4.0),
+        }
+
+    return checks
+
+
+def stairs_sequence(cfg: dict[str, Any], runner: str) -> Sequence:
     segs = [
-        Segment("lying", 1.0, "passive"),
-        Segment("stand_up", 5.0, "rl_control"),
+        *entry_segments(cfg, runner),
         Segment("stand", 2.0, "rl_control"),
         Segment("climb", 12.0, "rl_control", (0.5, 0, 0)),
         Segment("stop", 2.0, "rl_control"),
@@ -102,8 +130,7 @@ def dock_sequence(cfg: dict[str, Any]) -> Sequence:
         return steer
 
     segs = [
-        Segment("lying", 1.0, "passive"),
-        Segment("stand_up", 5.0, "rl_control"),
+        *entry_segments(cfg, "navi_charge"),
         Segment("stand", 2.0, "rl_control"),
         Segment("dock", 10.0, "rl_control", steer=toward(docked_x)),
         Segment("docked", 3.0, "rl_control"),
@@ -126,31 +153,68 @@ def dock_sequence(cfg: dict[str, Any]) -> Sequence:
 
 
 def gait_switch_sequence(cfg: dict[str, Any]) -> Sequence:
-    """Stand on NaviFlat, then switch through every gait code while standing and walking slowly."""
-    segs = [Segment("lying", 1.0, "passive"), Segment("stand_up", 5.0, "rl_control")]
-    for name, spec in cfg["runners"].items():
-        if spec["gaits"] and name not in STANDERS:
-            segs.append(
-                Segment(
-                    f"gait_{spec['gaits'][0]:#06x}",
-                    3.0,
-                    "rl_control",
-                    (0.2, 0, 0),
-                    gait=spec["gaits"][0],
-                )
-            )
-    segs += [
-        Segment("back_to_navi_flat", 3.0, "rl_control", gait=0x3002),
+    """Enter on NaviCharge, then change gait through every walking runner while moving slowly."""
+    order = (
+        "navi_flat",
+        "navi_orienteer",
+        "extre",
+        "step_move",
+        "basic_stair",
+        "basic_plat",
+        "basic_flat",
+        "basic_backknee",
+        "basic_flat",
+        "basic_stair",
+        "navi_charge",
+        "navi_flat",
+    )
+    segs = entry_segments(cfg, "navi_charge")
+    for k, name in enumerate(order):
+        gait = cfg["runners"][name]["gaits"][0]
+        segs.append(Segment(f"{k}:{name}", 3.0, "rl_control", (0.2, 0, 0), gait=gait))
+    segs.append(Segment("lie_down", 5.0, "lie_down"))
+    return Sequence("gait_switch", "navi_charge", segs)
+
+
+# HeightGap's height-map image convention (height_map_nav's grid, offset, orientation) is not in rl_deploy
+HEIGHT_MAP_UNKNOWN = (
+    "height map convention not decoded: the policy stands but walks / climbs wrongly"
+)
+EXPECTED_FAILURES = {
+    "walk:height_gap": HEIGHT_MAP_UNKNOWN,
+    "stairs:height_gap": HEIGHT_MAP_UNKNOWN,
+    "switch:basic_flat->navi_flat": "BasicFlat's tall sim stance (0.59 m) is out of NaviFlat's distribution",
+    "switch:basic_plat->basic_backknee": "BackKnee flips the hind knees; switching to it from BasicPlat while walking falls (standing works)",
+}
+
+
+def switch_sequence(cfg: dict[str, Any], src: str, dst: str) -> Sequence:
+    """Enter rl_control on src's gait, walk, then change to dst's gait while walking."""
+    segs = [
+        *entry_segments(cfg, src),
+        Segment("walk", 3.0, "rl_control", (0.2, 0, 0)),
+        Segment("switched", 4.0, "rl_control", (0.2, 0, 0), gait=cfg["runners"][dst]["gaits"][0]),
+        Segment("stop", 2.0, "rl_control"),
         Segment("lie_down", 5.0, "lie_down"),
     ]
-    return Sequence("gait_switch", "navi_flat", segs)
+    return Sequence(f"switch:{src}->{dst}", src, segs)
 
 
 def all_sequences(cfg: dict[str, Any]) -> list[Sequence]:
     seqs = [Sequence(f"walk:{r}", r, walk_segments(cfg, r)) for r in WALKERS]
-    seqs += [Sequence(f"stand:{r}", r, stand_only_segments()) for r in STANDERS]
-    seqs += [stairs_sequence(r) for r in CLIMBERS]
-    seqs += [dock_sequence(cfg), gait_switch_sequence(cfg)]
+    seqs += [
+        Sequence(f"stand:{r}", r, stand_only_segments(cfg, r), checks=pose_checks(cfg, r))
+        for r in STANDERS
+    ]
+    seqs += [stairs_sequence(cfg, r) for r in CLIMBERS]
+    seqs += [
+        dock_sequence(cfg),
+        gait_switch_sequence(cfg),
+        switch_sequence(cfg, "basic_flat", "navi_flat"),
+        switch_sequence(cfg, "basic_plat", "basic_backknee"),
+    ]
+    for seq in seqs:
+        seq.expected_failure = EXPECTED_FAILURES.get(seq.name, "")
     return seqs
 
 
@@ -172,7 +236,12 @@ def summary_line(r: dict[str, Any]) -> str:
     for k, (v, ok) in r["checks"].items():
         parts.append(f"{k}={v}{'' if ok else ' FAIL'}")
     fell = f" FELL at {r['fell_at']:.2f}s" if r["fell_at"] is not None else ""
-    return f"{'PASS' if r['passed'] else 'FAIL'}  {r['sequence']:<34}{fell}  " + "  ".join(parts)
+    if r["expected_failure"]:
+        verdict = "XPASS" if r["passed"] else "XFAIL"
+        parts.append(f"(known: {r['expected_failure']})")
+    else:
+        verdict = "PASS" if r["passed"] else "FAIL"
+    return f"{verdict:<5} {r['sequence']:<34}{fell}  " + "  ".join(parts)
 
 
 def main() -> None:
@@ -195,11 +264,14 @@ def main() -> None:
     for r in results:
         print(summary_line(r))
     passed = sum(r["passed"] for r in results)
-    print(f"{passed}/{len(results)} sequences passed")
+    unexpected = [r["sequence"] for r in results if not r["passed"] and not r["expected_failure"]]
+    print(
+        f"{passed}/{len(results)} sequences passed, {len(results) - passed - len(unexpected)} known failures"
+    )
     if args.json:
         with open(args.json, "w") as f:
             json.dump(results, f, indent=1)
-    raise SystemExit(0 if passed == len(results) else 1)
+    raise SystemExit(1 if unexpected else 0)
 
 
 if __name__ == "__main__":

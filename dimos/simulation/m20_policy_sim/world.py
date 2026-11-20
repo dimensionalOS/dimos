@@ -159,26 +159,40 @@ class World:
         return False
 
     def height_map(
-        self, rows: int, cols: int, spacing_x: float, spacing_y: float, offset: float
+        self,
+        rows: int,
+        cols: int,
+        spacing_x: float,
+        spacing_y: float,
+        offset: float,
+        min_value: float,
+        fill: float,
+        min_row: int,
+        front_first: bool,
     ) -> np.ndarray:
-        """Heights below a yaw-aligned grid around the base: clip(base_z - offset - terrain_z, -1, 1), x-major."""
+        """rl_deploy's HeightGap input from a yaw-aligned grid around the base (HeightsSubCallback): per cell
+        v = (base height above the terrain) - offset, kept when v > min_value and row >= min_row, else fill."""
         d = self.data
         base = d.qpos[0:3]
         w, x, y, z = d.qpos[3:7]
         yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
         c, s = np.cos(yaw), np.sin(yaw)
         xs = (np.arange(rows) - (rows - 1) / 2) * spacing_x
+        if front_first:
+            xs = xs[::-1]
         ys = (np.arange(cols) - (cols - 1) / 2) * spacing_y
-        out = np.zeros((rows, cols))
+        out = np.full((rows, cols), fill)
         geomid = np.zeros(1, np.int32)
-        exclude_body = -1
         group = np.array([1, 0, 0, 0, 0, 0], np.uint8)  # group 0 = floor and terrain
         for i, px in enumerate(xs):
+            if i < min_row:
+                continue
             for j, py in enumerate(ys):
                 pt = np.array([base[0] + c * px - s * py, base[1] + s * px + c * py, 2.0])
                 dist = mujoco.mj_ray(
-                    self.model, d, pt, np.array([0, 0, -1.0]), group, 1, exclude_body, geomid
+                    self.model, d, pt, np.array([0, 0, -1.0]), group, 1, -1, geomid
                 )
-                terrain_z = 2.0 - dist if dist >= 0 else 0.0
-                out[i, j] = base[2] - offset - terrain_z
-        return np.clip(out, -1, 1).ravel()
+                v = base[2] - (2.0 - dist if dist >= 0 else 0.0) - offset
+                if v > min_value:
+                    out[i, j] = v
+        return out.ravel()
