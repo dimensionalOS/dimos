@@ -114,6 +114,16 @@ An MCAP replay loads each replayed stream into memory at start, so memory use gr
 
 `--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds.
 
+To rename or drop streams in a SQLite recording, write a new copy:
+
+```bash
+dimos map rename recordings/<run-id>/memory.db --rename color_image=camera --out renamed.db
+```
+
+The copy keeps the original encoding and payload bytes, including JPEG color
+images and lossless depth images. Rows with search embeddings retain their vectors
+under the new stream name and observation IDs.
+
 ## Spatial queries
 
 `stream.near(pose, radius)` matches the pose attached to each observation. `--record` attaches none, so `near()` on a fresh recording returns nothing and warns. The `Poses` column of `dimos mem summary` counts the observations that have a pose.

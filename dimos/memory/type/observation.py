@@ -220,16 +220,14 @@ class Observation(Generic[T]):
         kwargs.update(_data_lock=threading.Lock())
         return cast("Observation[T]", cls(**kwargs))
 
+    def _with_metadata(self, **overrides: Any) -> Self:
+        # Keep inline values inline. A pending decode is shared with the original.
+        loader = (lambda: self.data) if isinstance(self._data, _Unloaded) else None
+        return cast("Self", self.derive_lazy(_loader=loader, **overrides))
+
     def tag(self, **tags: Any) -> Self:
         """Return a new observation with tags merged in."""
-        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
-        kwargs.update(
-            tags={**self.tags, **tags},
-            _data=_UNLOADED,
-            _loader=lambda: self.data,
-            _data_lock=threading.Lock(),
-        )
-        return type(self)(**kwargs)
+        return self._with_metadata(tags={**self.tags, **tags})
 
     def with_pose(self, pose: Any) -> Self:
         """Return a new observation with ``pose`` attached, payload kept lazy.
@@ -237,15 +235,7 @@ class Observation(Generic[T]):
         ``pose`` accepts anything :func:`_to_tuple` handles (a 3-/7-tuple,
         ``Pose``/``PoseStamped``/``Transform``, or ``None`` to clear).
         """
-        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
-        kwargs.pop("pose_tuple", None)
-        kwargs.update(
-            pose=pose,
-            _data=_UNLOADED,
-            _loader=lambda: self.data,
-            _data_lock=threading.Lock(),
-        )
-        return type(self)(**kwargs)
+        return self._with_metadata(pose=pose)
 
 
 @dataclass(init=False)

@@ -35,7 +35,7 @@ class VectorStore(Configurable, CompositeResource):
     Separates vector indexing from metadata so backends can swap
     search strategies (brute-force, vec0, FAISS, Qdrant) independently.
 
-    Same shape as BlobStore: ``put`` / ``search`` / ``delete``, keyed
+    Same shape as BlobStore: ``put`` / ``get`` / ``search`` / ``delete``, keyed
     by ``(stream, observation_id)``.  Vector index creation is lazy — the
     first ``put`` for a stream determines dimensionality.
     """
@@ -49,6 +49,11 @@ class VectorStore(Configurable, CompositeResource):
     @abstractmethod
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
         """Store an embedding vector for the given stream and observation id."""
+        ...
+
+    @abstractmethod
+    def get(self, stream_name: str, key: int) -> Embedding | None:
+        """Look up the vector for one observation, returning None if it has none."""
         ...
 
     @abstractmethod

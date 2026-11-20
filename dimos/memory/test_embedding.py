@@ -333,8 +333,12 @@ class TestPluggableVectorStore:
         vs = MemoryVectorStore()
         with MemoryStore(vector_store=vs) as store:
             s = store.stream("vecs", str)
-            s.append("hello", embedding=_emb([1, 0, 0]))
+            first = s.append("hello", embedding=_emb([1, 0, 0]))
             s.append("world", embedding=_emb([0, 1, 0]))
+            stored = vs.get("vecs", first.id)
+            assert stored is not None
+            np.testing.assert_array_equal(stored.to_numpy(), [1, 0, 0])
+            assert vs.get("missing", first.id) is None
 
         assert len(vs._vectors["vecs"]) == 2
 
