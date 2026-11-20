@@ -9,3 +9,6 @@ ExecStart=/var/opt/robot/data/m20_shadow/bin/guard.sh /var/opt/robot/data/m20_sh
 CPUAffinity=1 2 3
 Nice=10
 Restart=no
+StandardOutput=append:/var/opt/robot/data/m20_shadow/log/guard.out
+StandardError=append:/var/opt/robot/data/m20_shadow/log/guard.out
+ExecStopPost=/bin/sh -c 'echo "$$(date -Is) m20-shadow-guard ended: result=$$SERVICE_RESULT exit=$$EXIT_CODE/$$EXIT_STATUS" >> /var/opt/robot/data/m20_shadow/log/exits.log'

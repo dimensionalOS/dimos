@@ -26,9 +26,13 @@ nice = 10
 status_every = 10000
 
 # the guard (deploy/shadow/guard.sh) stops the shadow when rl_deploy's "send Data update timeout" count rises faster
-# than guard_per_hour + guard_slack, counted from guard_settle_s after rl_deploy (re)starts. Background measured
-# 2026-11-20: 8-11 per 10 min; a fresh rl_deploy logs a burst while the bus comes up
+# than guard_factor x its background (counted over guard_baseline_s before the guard starts, or after a restart's
+# settle), never below guard_per_hour, + guard_slack; a restart's first guard_settle_s are not counted. Measured
+# 2026-11-20: 8-11 per 10 min before 18:53, then 6-30 per minute after that restart with no shadow running
 guard_per_hour = 90
+guard_factor = 1.5
+guard_baseline_s = 600
+guard_log = "/var/opt/robot/data/m20_shadow/log/guard.log"
 guard_slack = 5
 guard_settle_s = 120
 
