@@ -223,12 +223,12 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert calibration.friction_nm is not None and set(calibration.friction_nm) == set(
         LEFT_MEASURED
     )
-    # The big joints rest closest at 1.5 times their kp; the wrists stick on
-    # their friction at the softer kps and rest best at 1.5 times theirs.
+    # The big joints rest closest at 1.5 times their kp; the wrists rest best
+    # at 1.5 times theirs, where their 1 deg steps still stick now and then.
     assert calibration.gains is not None
     assert {j: (g.kp, g.kd) for j, g in calibration.gains.items()} == {
         **{f"left_joint{i}": (120.0, 1.0) for i in (1, 2, 3)},
-        **{f"left_joint{i}": (15.0, 3.0) for i in (4, 5, 6)},
+        **{f"left_joint{i}": (15.0, 1.5) for i in (4, 5, 6)},
     }
     results = rig.procedure.results()
     gains = results["pick_gains"]
@@ -236,10 +236,12 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     # Its kp x 0.6, 1, 1.5 by kd x 1, 2, 3.5, kd clamped to 5.
     assert set(wrist["rejected"]) == {
         f"kp={kp:g} kd={kd:g}" for kp in (6, 10, 15) for kd in (1.5, 3, 5)
-    } - {"kp=15 kd=3"}
-    assert "is stuck" in wrist["rejected"]["kp=6 kd=1.5"]
-    assert wrist["rejected"]["kp=15 kd=5"].startswith("passes, but scores")
-    assert wrist["reason"].startswith("kp=15 kd=3: lowest score")
+    } - {"kp=15 kd=1.5"}
+    # A stuck 3 deg step rejects; stuck 1 deg steps only drop out of the score.
+    assert "-3 deg step is stuck" in wrist["rejected"]["kp=6 kd=3"]
+    assert wrist["rejected"]["kp=6 kd=1.5"].startswith("passes, but scores")
+    assert wrist["rejected"]["kp=6 kd=1.5"].endswith("stuck and do not count")
+    assert wrist["reason"].startswith("kp=15 kd=1.5: lowest score")
     assert 0.05 <= wrist["friction_nm"] <= 0.07
     assert gains["friction_nm"]["left_joint4"]["sweep"] > 0.0
     assert gains["friction_nm"]["left_joint1"]["dither"] is None

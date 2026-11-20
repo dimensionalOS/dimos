@@ -25,7 +25,9 @@ fails when its hold was cut short, a sample or metric is not finite, it is
 stuck, it overshoots more than 20 % or it buzzes at rest. ``propose_gains``
 ranks, per joint, the candidates whose steps all pass in both directions by
 worst rest error over its limit plus worst settle time over 0.5 s, and picks
-the lowest; it says why the others lost.
+the lowest; it says why the others lost. A stuck step smaller than a
+candidate's largest does not reject it: it is listed and left out of its
+score.
 """
 
 from __future__ import annotations
@@ -130,8 +132,11 @@ class StepMetrics:
     def settled_s(self) -> float:
         return self.recorded_s if self.settle_time_s is None else self.settle_time_s
 
-    def failures(self) -> list[str]:
-        """Why this step fails the pass criteria, in plain words; empty when it passes."""
+    def failures(self, *, stuck: bool = True) -> list[str]:
+        """Why this step fails the pass criteria, in plain words; empty when it passes.
+
+        With ``stuck`` False a stuck step is not one of the reasons.
+        """
         reasons: list[str] = []
         step = f"{self.delta_deg:+g} deg step"
         if self.nonfinite_samples:
@@ -151,7 +156,7 @@ class StepMetrics:
             finite[name] = value is None or math.isfinite(value)
             if not finite[name]:
                 reasons.append(f"{step} metric {name} is not finite")
-        if self.stuck:
+        if stuck and self.stuck:
             reasons.append(
                 f"{step} is stuck: moved {self.moved_deg:+.2f} deg "
                 f"(less than {STUCK_FRACTION:.0%} of the step)"
@@ -359,12 +364,13 @@ def format_table(metrics: list[StepMetrics]) -> str:
         )
     lines.append("")
     lines.append(
-        f"Pass: no step stuck (moved less than {STUCK_FRACTION:.0%} of its size), overshoot "
-        f"at most {OVERSHOOT_LIMIT_PCT:g} %, buzz RMS at most {BUZZ_RMS_LIMIT_DEG_S:g} deg/s "
-        f"over the last {REST_WINDOW_S} s. Passing gains are ranked by worst rest error over "
-        f"the rest limit, max({SETTLE_BAND_DEG:g} deg, {FRICTION_REST_FACTOR:g} x friction / kp), "
-        f"plus worst settle time, to within that limit of the rest, over "
-        f"{SETTLE_TIME_LIMIT_S:g} s; the lowest wins."
+        f"Pass: none of the largest steps stuck (moved less than {STUCK_FRACTION:.0%} of its "
+        f"size), overshoot at most {OVERSHOOT_LIMIT_PCT:g} %, buzz RMS at most "
+        f"{BUZZ_RMS_LIMIT_DEG_S:g} deg/s over the last {REST_WINDOW_S} s. Passing gains are "
+        f"ranked, over the steps that moved, by worst rest error over the rest limit, "
+        f"max({SETTLE_BAND_DEG:g} deg, {FRICTION_REST_FACTOR:g} x friction / kp), plus worst "
+        f"settle time, to within that limit of the rest, over {SETTLE_TIME_LIMIT_S:g} s; the "
+        "lowest wins."
     )
     return "\n".join(lines)
 
@@ -411,8 +417,10 @@ def propose_gains(
     step. A candidate passes when it has at least one positive and one
     negative step on the joint and every one of its steps passes (whole hold
     recorded, finite samples and metrics, not stuck, overshoots at most 20 %
-    where measured, does not buzz). Its score is its worst rest error over
-    its rest limit plus its worst settle time over 0.5 s; the lowest wins, a
+    where measured, does not buzz), but for a stuck step smaller than its
+    largest, which is listed and left out. Its score, over the steps that
+    moved, is its worst rest error over its rest limit plus its worst settle
+    time over 0.5 s; the lowest wins, a
     tie going to the higher kp, then the lower kd. When none passes and every
     candidate at the highest kd tried, the driver's ``KD_LIMIT``, overshoots,
     the reason says to lower kp. ``rejected`` explains every other candidate.
@@ -452,8 +460,9 @@ def propose_gains(
             if (other_kp, other_kd) != (kp, kd):
                 rejected[gain_label(other_kp, other_kd)] = (
                     f"passes, but scores {other:.2f} against {score:.2f}"
+                    f"{_stuck_note(by_gains[(other_kp, other_kd)])}"
                 )
-        steps = by_gains[(kp, kd)]
+        steps = [s for s in by_gains[(kp, kd)] if not s.stuck]
         overshoots = [s.overshoot_pct for s in steps if s.overshoot_pct is not None]
         reason = (
             f"{gain_label(kp, kd)}: lowest score {score:.2f} of {len(scored)} passing "
@@ -462,14 +471,21 @@ def propose_gains(
             f"{friction:.2f} Nm), settles in {max(s.settled_s for s in steps):.2f} s, "
             f"overshoot {max(overshoots, default=0.0):.0f} %, "
             f"buzz {max(s.buzz_rms_deg_s for s in steps):.2f} deg/s"
+            f"{_stuck_note(by_gains[(kp, kd)])}"
         )
         proposals[joint] = GainProposal(joint, kp, kd, reason, rejected, friction)
     return proposals
 
 
 def _score(steps: Sequence[StepMetrics]) -> float:
-    rest = max(abs(step.steady_state_error_deg) / step.rest_limit_deg for step in steps)
-    return rest + max(step.settled_s for step in steps) / SETTLE_TIME_LIMIT_S
+    moved = [step for step in steps if not step.stuck]
+    rest = max(abs(step.steady_state_error_deg) / step.rest_limit_deg for step in moved)
+    return rest + max(step.settled_s for step in moved) / SETTLE_TIME_LIMIT_S
+
+
+def _stuck_note(steps: Sequence[StepMetrics]) -> str:
+    stuck = [f"{step.delta_deg:+g}" for step in steps if step.stuck]
+    return f"; the {', '.join(stuck)} deg step(s) stuck and do not count" if stuck else ""
 
 
 def _overshoots_at_kd_limit(by_gains: dict[tuple[float, float], list[StepMetrics]]) -> bool:
@@ -485,7 +501,10 @@ def _overshoots_at_kd_limit(by_gains: dict[tuple[float, float], list[StepMetrics
 
 def _gain_failures(steps: Sequence[StepMetrics]) -> str:
     """Why one gain pair's steps on a joint do not pass; empty when they do."""
-    reasons = [reason for step in steps for reason in step.failures()]
+    largest = max(abs(step.delta_deg) for step in steps)
+    reasons = [
+        reason for step in steps for reason in step.failures(stuck=abs(step.delta_deg) >= largest)
+    ]
     if not any(step.delta_deg > 0.0 for step in steps):
         reasons.append("no positive step recorded")
     if not any(step.delta_deg < 0.0 for step in steps):

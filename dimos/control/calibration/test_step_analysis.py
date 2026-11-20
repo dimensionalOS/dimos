@@ -141,6 +141,7 @@ def test_a_step_that_barely_moves_is_stuck_and_skips_overshoot_and_settle() -> N
     assert metrics.failures() == [
         "-1 deg step is stuck: moved +0.20 deg (less than 50% of the step)"
     ]
+    assert metrics.failures(stuck=False) == [] and not metrics.passed
     half = analyze_step(_event(-1.0), *_first_order(-0.55, 0.05))
     assert not half.stuck and half.passed
 
@@ -295,6 +296,24 @@ def test_propose_gains_needs_a_step_each_way() -> None:
     only_up = propose_gains(up)["j"]
     assert only_up.gains is None
     assert only_up.rejected["kp=80 kd=5"] == "no negative step recorded"
+
+
+def test_a_stuck_small_step_drops_out_of_the_score_and_a_stuck_large_one_rejects() -> None:
+    def step(kp: float, delta: float, moved: float, tau: float = 0.05) -> StepMetrics:
+        return analyze_step(_event(delta, joint="j", kp=kp, kd=1.0), *_first_order(moved, tau))
+
+    # The 1 deg steps stick at kp 20 and kp 40; the 3 deg steps move, slowly at kp 20.
+    soft = [step(20.0, 1.0, 0.2), step(20.0, -1.0, -0.2)]
+    soft += [step(20.0, 3.0, 3.0, 0.1), step(20.0, -3.0, -3.0, 0.1)]
+    stiff = [step(40.0, 1.0, 0.3), step(40.0, -1.0, -0.3)]
+    stiff += [step(40.0, 3.0, 3.0), step(40.0, -3.0, -1.0)]
+    proposal = propose_gains([*soft, *stiff])["j"]
+    assert proposal.gains == (20.0, 1.0)
+    assert proposal.reason.endswith("; the +1, -1 deg step(s) stuck and do not count")
+    # Over its 3 deg steps alone: rests on target, settles in about 0.34 s.
+    assert "rests up to 0.00 deg off target" in proposal.reason
+    assert proposal.rejected["kp=40 kd=1"].startswith("-3 deg step is stuck: moved +1.00 deg")
+    assert "+1 deg step is stuck" not in proposal.rejected["kp=40 kd=1"]
 
 
 def test_a_rest_error_counts_against_what_friction_leaves_at_that_kp() -> None:
