@@ -15,7 +15,7 @@
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Condition, Event, RLock, Thread
+from threading import Event, RLock, Thread
 import time
 from typing import Any
 import uuid
@@ -110,8 +110,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     _agent_tools: list[StructuredTool] | None
     _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
-    _background: set[str]
-    _settled: Condition
     _thread: Thread
     _stop_event: Event
     _http_client: requests.Session
@@ -126,9 +124,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         self._agent_tools = None
         self._tool_registry = {}
         self._history = []
-        # Background skills this agent started that have not stopped yet.
-        self._background = set()
-        self._settled = Condition()
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -186,11 +181,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
         params = msg.get("params") or {}
-        if method == tool_stream.TOOL_STREAM_STOPPED_METHOD:
-            with self._settled:
-                self._background.discard(str(params.get("tool_name")))
-                self._settled.notify_all()
-            return
         if method == tool_stream.NOTIFICATIONS_PROGRESS_METHOD:
             text = params.get("message") or ""
             tool_name = (params.get("_meta") or {}).get("tool_name") or "tool"
@@ -239,24 +229,8 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
-        background = (mcp_tool.get("_meta") or {}).get("dimos/lifecycle") == "background"
-
         def call_tool(**kwargs: Any) -> str:
-            if background:
-                # Before the call: a short skill can stop before the call returns.
-                with self._settled:
-                    self._background.add(name)
-            try:
-                result = self._mcp_tool_call(name, kwargs)
-                started = not result.get("isError")
-            except Exception:
-                started = False
-                raise
-            finally:
-                if background and not started:
-                    with self._settled:
-                        self._background.discard(name)
-                        self._settled.notify_all()
+            result = self._mcp_tool_call(name, kwargs)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -364,22 +338,15 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
 
     @rpc
     def infer(self, x: HumanMessage) -> AIMessage:
-        """Send x as a turn and return the agent's final answer.
-
-        Blocks until the agent is done: every queued message has been processed and
-        every background skill it started has stopped. A failed turn raises RuntimeError.
-        """
+        """Send x like a message on human_input and return the answer once the queue is empty."""
         if not self._thread.is_alive():
             raise RuntimeError("Agent is not running; it starts with the blueprint")
         self._message_queue.put(x)
-        with self._settled:
-            self._settled.wait_for(
-                lambda: not self._background and self._message_queue.unfinished_tasks == 0
-            )
-        last = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
-        if TURN_FAILED_KEY in last.additional_kwargs:
-            raise RuntimeError(str(last.text))
-        return last
+        self._message_queue.join()
+        answer = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
+        if TURN_FAILED_KEY in answer.additional_kwargs:
+            raise RuntimeError(str(answer.text))
+        return answer
 
     @rpc
     def dispatch_continuation(
@@ -454,8 +421,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
                     self._process_message(self._state_graph, message)
             finally:
                 self._message_queue.task_done()
-                with self._settled:
-                    self._settled.notify_all()
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
