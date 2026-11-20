@@ -159,6 +159,7 @@ def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> Non
         "segment_s",
         "sync_s",
         "max_clip_s",
+        "max_window_mb",
         "trigger",
         "periods",
     }

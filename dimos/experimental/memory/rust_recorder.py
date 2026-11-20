@@ -151,6 +151,11 @@ class RustEventConfig(BaseModel):
         gt=0,
         description="Longest a clip may grow when overlapping triggers extend it.",
     )
+    max_window_mb: float = Field(
+        default=2048.0,
+        gt=0,
+        description="Most window data waiting to be stored before the oldest segment is stored thinned.",
+    )
     trigger: Literal["clip_that"] = "clip_that"
     heavy_period_s: float = Field(
         default=5.0,

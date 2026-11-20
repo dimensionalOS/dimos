@@ -25,7 +25,7 @@ use std::time::Duration;
 use anyhow::{anyhow, ensure, Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 use validator::{Validate, ValidationError};
 
 use crate::store::{Observation, RecordingStore, RecordingStoreConfig};
@@ -50,6 +50,8 @@ pub struct EventConfig {
     pub sync_s: f64,
     #[validate(range(exclusive_min = 0.0))]
     pub max_clip_s: f64,
+    #[validate(range(exclusive_min = 0.0))]
+    pub max_window_mb: f64,
     pub trigger: String,
     #[validate(custom(function = "nonnegative_periods"))]
     pub periods: HashMap<String, f64>,
@@ -156,6 +158,7 @@ impl EventWriter {
             stored: vec![0; streams.len()],
             clips: Clips::new(config.pre_s, config.post_s, config.max_clip_s),
             pre_s: config.pre_s,
+            max_window_bytes: (config.max_window_mb * 1e6) as u64,
             dir: dir.clone(),
         };
         let store_thread = thread::Builder::new()
@@ -323,40 +326,60 @@ struct StoreWriter {
     stored: Vec<u64>,
     clips: Clips,
     pre_s: f64,
+    max_window_bytes: u64,
     dir: PathBuf,
 }
 
 impl StoreWriter {
     /// Stores each segment once no trigger can still reach it, then drains the rest on `Finish`.
+    /// Over `max_window_bytes`, the oldest segments are stored thinned right away.
     /// A writer that stops without `Finish` leaves the window for `dimos-memory-recover`.
     fn run(mut self, events: Receiver<WindowEvent>) -> Result<()> {
-        let mut segments = VecDeque::new();
+        let mut segments: VecDeque<ClosedSegment> = VecDeque::new();
+        let mut window_bytes = 0;
         let mut clock = f64::NEG_INFINITY;
-        loop {
-            match events.recv() {
-                Ok(WindowEvent::Trigger(time)) => self.clips.add_trigger(time),
-                Ok(WindowEvent::Segment(segment)) => segments.push_back(segment),
-                Ok(WindowEvent::Clock(time)) => clock = time,
-                Ok(WindowEvent::Finish) => break,
-                Err(_) => return Ok(()),
+        'events: loop {
+            let Ok(next) = events.recv() else {
+                return Ok(());
+            };
+            for event in std::iter::once(next).chain(events.try_iter()) {
+                match event {
+                    WindowEvent::Trigger(time) => self.clips.add_trigger(time),
+                    WindowEvent::Segment(segment) => {
+                        window_bytes += segment.bytes;
+                        segments.push_back(segment);
+                    }
+                    WindowEvent::Clock(time) => clock = time,
+                    WindowEvent::Finish => break 'events,
+                }
             }
-            while segments
-                .front()
-                .is_some_and(|segment: &ClosedSegment| clock > segment.newest_ts + self.pre_s)
-            {
+            while let Some(segment) = segments.front() {
+                let over_cap = window_bytes > self.max_window_bytes;
+                if !over_cap && clock <= segment.newest_ts + self.pre_s {
+                    break;
+                }
                 let segment = segments.pop_front().expect("front segment exists");
-                self.store_segment(&segment)?;
+                window_bytes -= segment.bytes;
+                if over_cap {
+                    warn!(
+                        segment = segment.index,
+                        window_mb = (window_bytes + segment.bytes) as f64 / 1e6,
+                        "event window over its cap; storing the oldest segment thinned"
+                    );
+                }
+                self.store_segment(&segment, !over_cap)?;
             }
         }
         for segment in segments {
-            self.store_segment(&segment)?;
+            self.store_segment(&segment, true)?;
         }
         self.store.finish()?;
         remove_window(&self.dir)
     }
 
     /// Writes the segment's kept observations, makes them durable, then deletes the segment.
-    fn store_segment(&mut self, segment: &ClosedSegment) -> Result<()> {
+    /// Without `clips`, the whole segment is thinned.
+    fn store_segment(&mut self, segment: &ClosedSegment, clips: bool) -> Result<()> {
         let mut batch = Vec::with_capacity(WRITE_BATCH_SIZE);
         let mut records = 0;
         for record in SegmentReader::open(&segment.path)? {
@@ -364,7 +387,8 @@ impl StoreWriter {
             records += 1;
             let stream = usize::from(record.stream);
             let time = record.monotonic_ts;
-            if !self.clips.contains(time) && time - self.last_kept[stream] < self.periods[stream] {
+            let in_clip = clips && self.clips.contains(time);
+            if !in_clip && time - self.last_kept[stream] < self.periods[stream] {
                 continue;
             }
             self.last_kept[stream] = time;
@@ -423,8 +447,9 @@ mod tests {
             .count()
     }
 
-    #[test]
-    fn background_is_thinned_and_a_trigger_keeps_exactly_its_clip() {
+    /// Records 400 s of `cloud` and `odom` at 8 Hz with one trigger at 200 s, then returns the
+    /// stored cloud times and the odom and trigger counts. Waits for `waiting` segments first.
+    fn record_events(max_window_mb: f64, waiting: usize) -> (Vec<f64>, i64, i64) {
         let dir = tempfile::tempdir().unwrap();
         let window = dir.path().join("window");
         let database = dir.path().join("memory.db");
@@ -442,6 +467,7 @@ mod tests {
                 segment_s: 10.0,
                 sync_s: 1.0,
                 max_clip_s: 600.0,
+                max_window_mb,
                 trigger: "clip_that".to_string(),
                 periods: HashMap::from([
                     ("cloud".to_string(), 1.0),
@@ -456,7 +482,6 @@ mod tests {
             thread::spawn(move || writer_loop(config, receiver, permit_receiver, Instant::now()));
 
         let streams: Vec<Arc<StreamConfig>> = streams.into_iter().map(Arc::new).collect();
-        let times: Vec<f64> = (0..3200).map(|step| f64::from(step) * 0.125).collect();
         let mut sequence = 0;
         let mut send = |stream: &Arc<StreamConfig>, time: f64| {
             permit_sender.send(()).unwrap();
@@ -474,7 +499,7 @@ mod tests {
                 .unwrap();
             sequence += 1;
         };
-        for &time in &times {
+        for &time in &times() {
             send(&streams[0], time);
             send(&streams[1], time);
             if time == 200.0 {
@@ -482,9 +507,8 @@ mod tests {
             }
         }
 
-        // Segments 0 to 32 age out once the clock reaches 399.875. 33 to 38 wait, 39 is open.
         let deadline = Instant::now() + Duration::from_secs(10);
-        while segment_count(&window) != 7 {
+        while segment_count(&window) != waiting {
             assert!(Instant::now() < deadline, "segments did not age out");
             thread::sleep(Duration::from_millis(10));
         }
@@ -501,12 +525,6 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        let expected: Vec<f64> = times
-            .iter()
-            .copied()
-            .filter(|&time| (140.0..=260.0).contains(&time) || time.fract() == 0.0)
-            .collect();
-        assert_eq!(cloud, expected);
         let count = |table: &str| -> i64 {
             connection
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
@@ -514,7 +532,36 @@ mod tests {
                 })
                 .unwrap()
         };
-        assert_eq!(count("odom"), 3200);
-        assert_eq!(count("clip_that"), 1);
+        (cloud, count("odom"), count("clip_that"))
+    }
+
+    fn times() -> Vec<f64> {
+        (0..3200).map(|step| f64::from(step) * 0.125).collect()
+    }
+
+    #[test]
+    fn background_is_thinned_and_a_trigger_keeps_exactly_its_clip() {
+        // Segments 0 to 32 age out once the clock reaches 399.875. 33 to 38 wait, 39 is open.
+        let (cloud, odom, clip_that) = record_events(1000.0, 7);
+        let expected: Vec<f64> = times()
+            .into_iter()
+            .filter(|&time| (140.0..=260.0).contains(&time) || time.fract() == 0.0)
+            .collect();
+        assert_eq!(cloud, expected);
+        assert_eq!(odom, 3200);
+        assert_eq!(clip_that, 1);
+    }
+
+    #[test]
+    fn a_window_over_its_cap_stores_its_oldest_segments_thinned() {
+        // A cap below one segment stores every closed segment at once, so only the open one waits.
+        let (cloud, odom, clip_that) = record_events(0.0001, 1);
+        let expected: Vec<f64> = times()
+            .into_iter()
+            .filter(|&time| time.fract() == 0.0)
+            .collect();
+        assert_eq!(cloud, expected);
+        assert_eq!(odom, 3200);
+        assert_eq!(clip_that, 1);
     }
 }

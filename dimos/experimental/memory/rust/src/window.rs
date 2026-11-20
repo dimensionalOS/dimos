@@ -61,6 +61,7 @@ pub(crate) struct ClosedSegment {
     pub path: PathBuf,
     pub newest_ts: f64,
     pub records: u64,
+    pub bytes: u64,
 }
 
 pub(crate) fn segment_path(dir: &Path, index: u64) -> PathBuf {
@@ -106,6 +107,7 @@ pub(crate) struct SegmentWriter {
     pub records: u64,
     pub first_ts: f64,
     newest_ts: f64,
+    bytes: u64,
     path: PathBuf,
     file: BufWriter<File>,
 }
@@ -125,6 +127,7 @@ impl SegmentWriter {
             records: 0,
             first_ts: f64::NEG_INFINITY,
             newest_ts: f64::NEG_INFINITY,
+            bytes: 0,
             path,
             file: BufWriter::new(file),
         })
@@ -158,6 +161,7 @@ impl SegmentWriter {
             self.first_ts = observation.monotonic_ts;
         }
         self.records += 1;
+        self.bytes += (HEADER_SIZE + observation.data.len() + CRC_SIZE) as u64;
         self.newest_ts = self.newest_ts.max(observation.monotonic_ts);
         Ok(())
     }
@@ -176,6 +180,7 @@ impl SegmentWriter {
             path: self.path.clone(),
             newest_ts: self.newest_ts,
             records: self.records,
+            bytes: self.bytes,
         })
     }
 }
