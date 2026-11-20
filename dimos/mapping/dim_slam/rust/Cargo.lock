@@ -579,6 +579,7 @@ dependencies = [
  "dim_slam",
  "dimos-module",
  "lcm-msgs",
+ "libc",
  "serde",
  "tokio",
  "tracing",
@@ -588,7 +589,7 @@ dependencies = [
 [[package]]
 name = "dim_slam"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimSLAM?tag=v0.4.1#7a8fc571fbd2b43fbdf9b99dc4f6eb5c014376d9"
+source = "git+https://github.com/dimensionalOS/dimSLAM?tag=v1.0.0-beta#e558827b291a058c0e7936567e1d7ac67d60f89c"
 dependencies = [
  "cu_vslam_rs",
  "nalgebra",

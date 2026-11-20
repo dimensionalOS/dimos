@@ -31,6 +31,7 @@ from dimos.mapping.dim_slam.dim_slam import (
     Covariance,
     DimSlam,
     ImuConfig,
+    ProcessNoise,
     SourceConfig,
 )
 from dimos.robot.diy.alfred.blueprints._nav import _alfred_nav, _alfred_rerun_config
@@ -122,23 +123,25 @@ def vis_nav(
             # are kept as absolute anchors - the zero-twist constraint below only damps the
             # velocities and let all three random-walk (a second floor in the map, then a
             # visibly rolled robot). With no IMU there is no other gravity reference.
-            visual_odom_pose_variances=Covariance(x=0.01, y=0.01, roll=0.05, pitch=0.05, yaw=0.05),
-            # Only the wheels measure velocity; the tracker publishes no twist at all.
+            # Per-frame noise of the tracker's motion (m^2, rad^2): vision is trusted over the wheels for heading.
+            visual_odom_pose_variances=Covariance(x=1e-5, y=1e-5, roll=1e-5, pitch=1e-5, yaw=1e-5),
+            # Only the wheels measure velocity; the tracker publishes no twist at all. Their yaw rate is left out: it
+            # drifted the heading (drive_2026-08-16_23-46-03.db, 1.73 -> 0.28 m mean error against the lidar track).
             odom_sources=[
                 SourceConfig(
                     parent_frame_id="wheel_odom",
                     child_frame_id="base_link",
                     pose_variances=Covariance(x=0.05, y=0.05, z=0.001, roll=0.001, pitch=0.001),
-                    twist_variances=Covariance(x=0.02, y=0.02, yaw=0.05),
+                    twist_variances=Covariance(x=0.02, y=0.02, z=0.01, roll=0.01, pitch=0.01),
                 ),
             ],
+            # A wheeled base's velocity and turn rate change slowly between measurements.
+            process_noise=ProcessNoise(velocity=2.0, angular_velocity=30.0, specific_force=500.0),
             # The CPU tracker's reported translation std starts above 1.0 and grows past 9
             # while driving normally, so no threshold separates good frames from bad.
             covariance_gate_translation_std=0.0,
             # Alfred is holonomic in the plane.
             per_dimension_error_variance=Covariance(z=0.01, roll=0.01, pitch=0.01),
-            # Wheel odometry crosses the wifi link and can land seconds late.
-            replay_buffer_seconds=2.0,
             # Every IMU publishes on the one imu topic; the filter sorts them by frame_id and
             # keeps a bias pair per entry, so an unlisted frame is dropped rather than fused.
             imus=list(imus),

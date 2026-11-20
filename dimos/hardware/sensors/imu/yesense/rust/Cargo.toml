@@ -1,0 +1,41 @@
+[package]
+name = "dimos-yesense-imu"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: a Yesense IMU on a serial port as sensor_msgs Imu"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_yesense_imu"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yesense_imu"
+path = "src/bin/yesense_imu.rs"
+
+[package.metadata.dimos.module.yesense_imu]
+path = "dimos_yesense_imu::module::YesenseImu"
+python = "dimos.hardware.sensors.imu.yesense.module:YesenseImu"
+
+[package.metadata.dimos.module.yesense_imu.inputs]
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.yesense_imu.outputs]
+imu = "sensor_msgs.Imu"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+yesense-imu = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+
+[workspace]
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 # tag, not rev: nix's fetchGit only searches the ref the url names, so a bare rev is
 # unfetchable. Cargo.lock still pins the exact commit.
-dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.4.1" }
+dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v1.0.0-beta" }
 # Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
 # and build.rs needs it for the rpath.
 cu_vslam_rs = "0.2.0"
@@ -19,6 +19,7 @@ dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
+libc = "0.2"
 # native_config expands to ::serde and ::validator derives, so both must be direct deps.
 serde = { version = "1", features = ["derive"] }
 validator = { version = "0.21", features = ["derive"] }

@@ -7,13 +7,14 @@
     flake-utils.url = "github:numtide/flake-utils";
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
-    cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
+    # alt_support: every CUDA SDK main has, plus macOS CuMetal (sdk-metal) and the CUDA-free sdk-cpu.
+    cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs/alt_support";
     cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
     cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
   };
 
   outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, cu-vslam-rs }:
-    flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ] (system:
+    flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dim-slam-module";
@@ -55,7 +56,7 @@
           else called.workspaceMembers.${name}.build;
 
         # Upstream's CPU-fallback SDK for the host CPU; nix cannot see a GPU, so sdk_variant() picks a machine's own variant.
-        hostVariant = { x86_64-linux = "x86_64"; aarch64-linux = "aarch64"; }.${system};
+        hostVariant = { x86_64-linux = "x86_64"; aarch64-linux = "aarch64"; aarch64-darwin = "metal"; }.${system};
       in {
         packages = nixpkgs.lib.genAttrs variants (v: buildOf (callWith v null)) // {
           default = buildOf (callWith hostVariant null);

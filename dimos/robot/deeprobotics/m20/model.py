@@ -19,10 +19,11 @@ import time
 from typing import Any
 
 import mujoco
+from pydantic import Field
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.mjcf import mjcf_to_urdf
@@ -42,21 +43,34 @@ M20_SDK_SOURCE = SparseDescriptionSource(
 )
 M20_MJCF = M20_SDK_SOURCE / _MJCF_DIR / "mjcf" / "M20.xml"
 M20_POLICY = M20_SDK_SOURCE / _SDK / "policy" / "policy.onnx"
-# The URDF the real robot and the sim show, derived from the same MJCF the sim steps.
-M20_MODEL = mjcf_to_urdf(mujoco.MjSpec.from_file(str(M20_MJCF)))
-
-# Hip pitch and knee of the vendor SDK's standing pose; front knees fold back, hind knees forward.
+# Hip pitch and knee of the vendor SDK's standing pose; front knees fold back, hind knees forward; wheels at rest
+# (the body filter needs every movable joint).
 STAND_JOINT_POSITIONS = {
     **{f"{leg}_hipx_joint": 0.0 for leg in ("fl", "fr", "hl", "hr")},
     **{f"{leg}_hipy_joint": -0.3 for leg in ("fl", "fr")},
     **{f"{leg}_knee_joint": 0.6 for leg in ("fl", "fr")},
     **{f"{leg}_hipy_joint": 0.3 for leg in ("hl", "hr")},
     **{f"{leg}_knee_joint": -0.6 for leg in ("hl", "hr")},
+    **{f"{leg}_wheel_joint": 0.0 for leg in ("fl", "fr", "hl", "hr")},
 }
+# Placeholder (a hack, for the body filter only): rl_deploy's wheel speed clamp (rad/s) on every joint, because the
+# MJCF has no velocity limits, RoboPlan's URDF parser rejects a joint without one, and the legs' real limit is unknown.
+JOINT_VELOCITY_LIMIT_RAD_S = 79.3
+# The URDF the real robot and the sim show, derived from the same MJCF the sim steps.
+M20_MODEL = mjcf_to_urdf(mujoco.MjSpec.from_file(str(M20_MJCF))).with_joint_velocity_limits(
+    dict.fromkeys(STAND_JOINT_POSITIONS, JOINT_VELOCITY_LIMIT_RAD_S)
+)
+
+
+class M20StandingJointStateConfig(ModuleConfig):
+    # Seconds between republishes of the fixed pose.
+    publish_period_s: float = Field(default=1.0, gt=0.0)
 
 
 class M20StandingJointState(Module):
     """Publishes the standing pose as the joint state; the M20 bridge does not expose measured joint angles yet."""
+
+    config: M20StandingJointStateConfig
 
     coordinator_joint_state: Out[JointState]
 
@@ -83,7 +97,7 @@ class M20StandingJointState(Module):
                     position=list(STAND_JOINT_POSITIONS.values()),
                 )
             )
-            self._stop_event.wait(1.0)
+            self._stop_event.wait(self.config.publish_period_s)
 
     @rpc
     def stop(self) -> None:
