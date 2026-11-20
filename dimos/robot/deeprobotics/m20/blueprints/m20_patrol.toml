@@ -40,6 +40,11 @@ stream = "M20Connection.battery"
 field = "power_supply_status"
 
 [[stream_value]]
+name = "request"
+stream = "Orchestrator.orchestrator_request"
+field = "data"
+
+[[stream_value]]
 name = "nav_state"
 stream = "MLSPlannerNative.nav_status"
 field = "status"
@@ -111,6 +116,13 @@ initial = "Lookup"
 [[node.transition]]
 if = "battery < low_battery && dock.wait == 0"
 goto = "Charging"
+
+# An operator sends "dock" on orchestrator_request to charge now.
+[[node.transition]]
+on = "Orchestrator.orchestrator_request"
+if = "request == 'dock'"
+goto = "Charging"
+set = { "dock.wait" = "0" }
 
 [[node.transition]]
 if = "streak >= size(goals)"

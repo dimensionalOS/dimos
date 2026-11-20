@@ -161,6 +161,7 @@ class FakeBase(Module):
     """Reports each goal as reached, by its id, until it is halted."""
 
     status: Out[GoalStatus]
+    orchestrator_request: Out[String]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -193,6 +194,10 @@ class FakeBase(Module):
     def boom(self, name: str) -> str:
         self._calls.append(f"boom {name}")
         raise RuntimeError(f"cannot go to {name}")
+
+    @rpc
+    def request(self, text: str) -> None:
+        self.orchestrator_request.publish(String(text))
 
     @rpc
     def calls(self) -> list[str]:
@@ -304,6 +309,23 @@ def test_an_on_waits_for_a_message_on_its_stream(tmp_path: Path, build: Build) -
     job = _written(tmp_path, JOB.replace(arrived, f'on = "FakeBase.status"\n{arrived}'))
     calls = _calls_with(build(_blueprint(job)), {"halt", "mark"})
     assert calls[0] == "go_to lobby"
+
+
+def test_a_request_to_the_orchestrator_reaches_the_file(tmp_path: Path, build: Build) -> None:
+    arrived = 'if = "status == SUCCEEDED && reached == job.goal"'
+    request = 'on = "Orchestrator.orchestrator_request"\nif = "request == \'arrive\'"'
+    value = '[[stream_value]]\nname = "request"\nstream = "Orchestrator.orchestrator_request"\nfield = "data"\n\n'
+    job = _written(
+        tmp_path, JOB.replace(arrived, request).replace("[[activity]]", value + "[[activity]]", 1)
+    )
+    base = build(_blueprint(job)).get_instance(FakeBase)
+
+    def arrived_on_request() -> bool:
+        base.request("arrive")
+        return "mark" in base.calls()
+
+    wait_until(arrived_on_request, timeout=10.0, interval=0.1, message="the request never arrived")
+    assert base.calls()[0] == "go_to lobby"
 
 
 def test_a_fault_cancels_every_activity_once(tmp_path: Path, build: Build) -> None:

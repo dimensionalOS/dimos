@@ -27,7 +27,7 @@ from dimos.core.core import rpc
 from dimos.core.introspection.module.info import RpcInfo, StreamDescriptor
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.stream import Out, Transport
+from dimos.core.stream import In, Out, Transport
 from dimos.msgs.std_msgs.String import String
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve, streams
@@ -122,6 +122,8 @@ class Orchestrator(Module):
     config: OrchestratorConfig
 
     orchestrator_state: Out[String]
+    # Requests from an operator. The file names what each one does.
+    orchestrator_request: In[String]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)

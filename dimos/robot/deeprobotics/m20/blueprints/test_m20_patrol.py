@@ -27,6 +27,7 @@ from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.BatteryState import BatteryState
+from dimos.msgs.std_msgs.String import String
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind
@@ -44,11 +45,12 @@ from dimos.orchestration.engine import (
     TimerItem,
 )
 from dimos.orchestration.loader import load_and_check
+from dimos.orchestration.orchestrator import Orchestrator
 from dimos.orchestration.plain import field_to_plain, to_plain
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 
 PATROL = Path(__file__).parent / "m20_patrol.toml"
-MODULES = (MLSPlannerNative, M20Connection, LocalMapRelocalization)
+MODULES = (MLSPlannerNative, M20Connection, LocalMapRelocalization, Orchestrator)
 GOALS = [
     "hardware",
     "kitchenette",
@@ -74,6 +76,7 @@ def _checked() -> CheckedDefinition:
         streams={
             "MLSPlannerNative.nav_status": GoalStatus,
             "M20Connection.battery": BatteryState,
+            "Orchestrator.orchestrator_request": String,
         },
     )
     return bind(load_and_check(PATROL), deployed)
@@ -105,13 +108,15 @@ def _walk(
     failed_docks: int = 0,
     stalled_docks: int = 0,
     silent: str | None = None,
+    dock_at: str | None = None,
 ) -> tuple[list[str], list[str], list[float], list[FaultReport]]:
     """Run the file from the charger until the given undock.
 
     Every drive uses `drain` of the battery, and every dock after the first `failed_docks`
     charges it to 75% and then 80%, except the next `stalled_docks`, which stop charging
     at 75%. Sitting down swaps in a battery at 25%. The planner never reports on the
-    `silent` goal. Time passes only when nothing else is waiting, so timers fire last.
+    `silent` goal. An operator asks to dock during the first drive to `dock_at`.
+    Time passes only when nothing else is waiting, so timers fire last.
     """
     checked = _checked()
     calls: list[str] = []
@@ -120,12 +125,13 @@ def _walk(
     faults: list[FaultReport] = []
     level = 0.85
     docks = 0
+    requested = False
     queue: deque[QueueItem] = deque([_battery(CHARGING, level)])
     timers: list[Timer] = []
     runtime = engine.Runtime({})
 
     def perform(effects: Sequence[Effect]) -> None:
-        nonlocal level, docks
+        nonlocal level, docks, requested
         for effect in effects:
             match effect:
                 case SendStart(call) if call.rpc == "LocalMapRelocalization.location":
@@ -141,6 +147,10 @@ def _walk(
                         continue
                     level = round(level - drain, 2)
                     queue.append(_battery(DISCHARGING, level))
+                    if calls[-1] == dock_at and not requested:
+                        requested = True
+                        request = {"request": field_to_plain(String("dock"), "data")}
+                        queue.append(StreamItem("Orchestrator.orchestrator_request", request))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
                     reached = {
                         "nav_state": field_to_plain(status, "status"),
@@ -257,3 +267,15 @@ def test_a_goal_the_planner_never_finishes_is_skipped_after_ten_minutes() -> Non
     # Each reported drive uses 4%, and side_entrance reads 69%.
     dock = ["dock_approach", "predock", "dock"]
     assert calls == ["undock", *GOALS[:5], *dock, "undock"]
+
+
+def test_an_operator_request_docks_once_then_the_robot_resumes() -> None:
+    calls, _, undocked_at, faults = _walk(undocks=3, dock_at=GOALS[1])
+
+    assert faults == []
+    # "dock" arrives on the way to kitchenette. After charging the robot resumes that goal,
+    # and docks next when the battery is low, so one request docks once.
+    dock = ["dock_approach", "predock", "dock"]
+    after = [GOALS[1], GOALS[2], GOALS[3], *dock, "undock"]
+    assert calls == ["undock", *GOALS[:2], *dock, "undock", *after]
+    assert undocked_at == pytest.approx([0.85, 0.80, 0.80])
