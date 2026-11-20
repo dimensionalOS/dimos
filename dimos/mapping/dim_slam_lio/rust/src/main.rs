@@ -128,10 +128,11 @@ impl DimSlamLio {
         stats.scan_max_s = stats.scan_max_s.max(took);
         stats.scan_age_s += age;
         stats.scan_ages.push(age);
-        if self.config.stats_every_scans > 0 && stats.scans >= self.config.stats_every_scans {
+        // the pose goes out before the stats are sorted and logged
+        self.publish().await;
+        if self.config.stats_every_scans > 0 && self.stats.scans >= self.config.stats_every_scans {
             self.log_stats();
         }
-        self.publish().await;
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
