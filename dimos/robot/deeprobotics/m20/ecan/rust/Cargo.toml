@@ -1,0 +1,35 @@
+[package]
+name = "dimos-m20-ecan"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: the Deep Robotics M20's measured joint state, commanded joint targets and both battery packs, read off the motor bus through the ecan_tap.so shim inside rl_deploy (sends nothing to the bus)"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_m20_ecan"
+path = "src/lib.rs"
+
+[[bin]]
+name = "m20_ecan"
+path = "src/bin/m20_ecan.rs"
+
+[package.metadata.dimos.module.m20_ecan]
+path = "dimos_m20_ecan::module::M20Ecan"
+python = "dimos.robot.deeprobotics.m20.ecan.module:M20Ecan"
+
+[package.metadata.dimos.module.m20_ecan.outputs]
+joint_state = "sensor_msgs.JointState"
+joint_command = "sensor_msgs.JointState"
+battery = "sensor_msgs.BatteryState"
+battery_left = "sensor_msgs.BatteryState"
+battery_right = "sensor_msgs.BatteryState"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+m20-ecan = "0.3.1"
+m20-battery = "0.3.1"

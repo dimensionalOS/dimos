@@ -391,6 +391,13 @@ pub struct Ecan {
     // send the BMS charge-enable request (0xb3) when m20-battery's rule asks, in place of the next joint commands
     // (rl_deploy's way); off by default
     pub charge_enable: bool,
+    // backend "bus" only: let commands carrying kp / kd onto the motor bus. Off (the default) every such command goes
+    // out as rl_deploy's sitting command (all gains zero), so the controller cannot move the robot. Never turn it on
+    // on the robot without an operator's go.
+    pub allow_gains: bool,
+    // backend "bus" only: stream every frame sent and received here, in the ecan_tap.so shim's format, so the dimos
+    // m20_ecan module (tap mode) publishes joint state and batteries as it does beside rl_deploy; empty = off
+    pub tap_socket: String,
 }
 
 impl Default for Ecan {
@@ -410,6 +417,8 @@ impl Default for Ecan {
             position_offset: vendor_calibration().0,
             direction: vendor_calibration().1,
             charge_enable: false,
+            allow_gains: false,
+            tap_socket: "/var/opt/robot/data/ecan_capture/live.sock".into(),
         }
     }
 }

@@ -18,6 +18,8 @@
 //!   m20_controller --config m20_controller.toml --policies DIR --backend mujoco [--sim 127.0.0.1:43921]
 //!                  [--script commands.json] [--seconds N] [--pacing realtime|free] [--inline-policy]
 //!   m20_controller ... --backend ecan        (eth1 motor bus; needs CAP_NET_RAW and an IMU source)
+//!   m20_controller ... --backend bus         (the shared m20-ecan bus owner: rl_deploy's startup first; gains only
+//!                                             with [ecan] allow_gains; frames streamed to [ecan] tap_socket)
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -118,6 +120,28 @@ fn main() -> Result<()> {
             Box::new(sim)
         }
         "ecan" => Box::new(EcanBus::open(&cfg.ecan, Box::new(NoImu))?),
+        #[cfg(target_os = "linux")]
+        "bus" => {
+            let mut tap = (!cfg.ecan.tap_socket.is_empty())
+                .then(|| m20_ecan::tap::TapSender::new(&cfg.ecan.tap_socket))
+                .transpose()?;
+            let sink: m20_controller::hardware::bus::Sink = Box::new(move |t, direction, frame| {
+                if let Some(tap) = tap.as_mut() {
+                    tap.send(t, direction, frame);
+                }
+            });
+            let owner = m20_ecan::owner::OwnerConfig {
+                allow_gains: cfg.ecan.allow_gains,
+            };
+            Box::new(m20_controller::hardware::bus::BusHardware::open(
+                &cfg.ecan.interface,
+                owner,
+                cfg.ecan.charge_enable,
+                cfg.ecan.reply_timeout_s,
+                Box::new(NoImu),
+                sink,
+            )?)
+        }
         other => bail!("unknown backend {other}"),
     };
     let mut commands: Box<dyn CommandSource> = match &args.script {
