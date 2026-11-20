@@ -20,8 +20,9 @@ use lcm_msgs::geometry_msgs::{
 };
 use lcm_msgs::nav_msgs::{OccupancyGrid, Odometry, Path};
 use lcm_msgs::sensor_msgs::{
-    CameraInfo, CompressedImage, Image, Imu, JointState, Joy, PointCloud2,
+    BatteryState, CameraInfo, CompressedImage, Image, Imu, JointState, Joy, PointCloud2,
 };
+use lcm_msgs::std_msgs::Header;
 use lcm_msgs::tf2_msgs::TFMessage;
 use lcm_msgs::vision_msgs::{Detection2D, Detection2DArray, Detection3D, Detection3DArray};
 
@@ -113,8 +114,7 @@ fn decode_tf(data: &[u8]) -> Result<Vec<DecodedObservation>> {
 
 /// Read source time while transport-decoding common stamped LCM payloads.
 ///
-/// Unknown LCM payloads remain opaque and use reception time, matching the
-/// Python recorder's fallback for messages without a ``ts`` attribute.
+/// Unknown wire formats remain opaque and use reception time.
 fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Result<f64> {
     macro_rules! stamped {
         ($message_type:ty) => {{
@@ -127,7 +127,8 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Resul
     let (sec, nsec) = match payload_type {
         "dimos.msgs.geometry_msgs.PointStamped.PointStamped" => stamped!(PointStamped),
         "dimos.msgs.geometry_msgs.PoseArray.PoseArray" => stamped!(PoseArray),
-        "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped" => stamped!(PoseStamped),
+        "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped"
+        | "dimos.robot.unitree.type.odometry.Odometry" => stamped!(PoseStamped),
         "dimos.msgs.geometry_msgs.PoseWithCovarianceStamped.PoseWithCovarianceStamped" => {
             stamped!(PoseWithCovarianceStamped)
         }
@@ -141,6 +142,11 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Resul
         }
         "dimos.msgs.nav_msgs.OccupancyGrid.OccupancyGrid" => stamped!(OccupancyGrid),
         "dimos.msgs.nav_msgs.Odometry.Odometry" => stamped!(Odometry),
+        "dimos.msgs.std_msgs.Header.Header" => {
+            let header = Header::decode(data).context("invalid LCM Header")?;
+            (header.stamp.sec, header.stamp.nsec)
+        }
+        "dimos.msgs.sensor_msgs.BatteryState.BatteryState" => stamped!(BatteryState),
         "dimos.msgs.sensor_msgs.CameraInfo.CameraInfo" => stamped!(CameraInfo),
         "dimos.msgs.sensor_msgs.CompressedImage.CompressedImage" => stamped!(CompressedImage),
         "dimos.msgs.sensor_msgs.Imu.Imu" => stamped!(Imu),

@@ -37,7 +37,7 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.memory.type.recording import message_timestamp, recording_rows
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -102,11 +102,8 @@ class TransportRecorder:
                     codec = codec_for(stream_type, sample=msg)
                     stream = self.store.stream(name, stream_type, codec=codec)
                     self._streams[name] = stream
-                if isinstance(msg, TFMessage) and msg.transforms:
-                    for transform in msg.transforms:
-                        stream.append(TFMessage(transform), ts=transform.ts)
-                else:
-                    stream.append(msg, ts=ts)
+                for payload, source_ts in recording_rows(msg, ts):
+                    stream.append(payload, ts=source_ts)
             except Exception:
                 logger.exception("--record: failed to append to %s", name)
 
@@ -129,10 +126,7 @@ class TransportRecorder:
 
         def on_msg(msg: Any) -> None:
             try:
-                ts = getattr(msg, "ts", None)
-                if ts is None:
-                    ts = time.time()
-                self._queue.put_nowait((name, stream_type, msg, ts))
+                self._queue.put_nowait((name, stream_type, msg, message_timestamp(msg)))
             except queue.Full:
                 self.dropped += 1
                 if self.dropped % 1000 == 1:

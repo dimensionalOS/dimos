@@ -243,7 +243,8 @@ def test_constant_timestamp_tf_republishes_every_edge(sqlite_store, mocker):
     ] == [[("base", "camera", 42.25), ("camera", "optical", 42.25)]] * 2
 
 
-def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_store, mocker):
+@pytest.mark.parametrize("seek", [None, 990.0])
+def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_store, mocker, seek):
     with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
         transport = mocker.Mock(spec=Transport)
         unsubscribe = recorder.tap("tf", TFMessage, transport)
@@ -281,7 +282,7 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
     tf = []
     path = sqlite_store.config.path
     with ExitStack() as cleanup:
-        module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True)
+        module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True, seek=seek)
         cleanup.callback(module.stop)
         module.register_disposable(Disposable(module.outputs["z_odom"].subscribe(odom.append)))
         module.register_disposable(
@@ -305,6 +306,32 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
         assert [m.ts for m in odom] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "world"] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "base"] == [10.0] * 3
+
+
+def test_legacy_tf_batches_publish_fixed_edges_once_at_start(sqlite_store, mocker):
+    rows = sqlite_store.stream("tf", TFMessage)
+    fixed = Transform(frame_id="base", child_frame_id="camera", ts=0.0)
+    for ts in (10.0, 11.0):
+        rows.append(
+            TFMessage(fixed, Transform(frame_id="world", child_frame_id="base", ts=ts)), ts=ts
+        )
+    scheduler = TestScheduler()
+    mocker.patch.object(replay_mod.time, "time", side_effect=lambda: scheduler.clock)
+    mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    path = sqlite_store.config.path
+    seen = []
+    with ExitStack() as cleanup:
+        module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC)
+        cleanup.callback(module.stop)
+        module.register_disposable(Disposable(module.outputs["tf"].subscribe(seen.append)))
+        module.start()
+        scheduler.advance_to(0.01)
+        assert [[t.child_frame_id for t in msg.transforms] for msg in seen] == [
+            ["camera"],
+            ["base"],
+        ]
 
 
 def test_slow_first_decode_does_not_skip_other_streams(

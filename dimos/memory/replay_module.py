@@ -23,10 +23,9 @@ class still ends up with the same ports.
 from __future__ import annotations
 
 from functools import partial
-from itertools import islice
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from reactivex import interval
 
@@ -46,6 +45,8 @@ if TYPE_CHECKING:
     from reactivex import Observable
 
     from dimos.memory.replay import Replay, ReplayStream
+    from dimos.memory.stream import Stream
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.protocol import DimosMsg
 
@@ -150,28 +151,33 @@ class ReplayModule(Module):
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
         # would spend that lead time emitting nothing.
-        static = {
-            n: _static_message(s)
-            for n, s in streams.items()
-            if s.count() > 1 and s.first_ts() == s.last_ts()
-        }
+        static: dict[str, DimosMsg] = {}
         timed_streams: dict[str, Observable[DimosMsg]] = {}
         timed_starts = []
         for name, stream in streams.items():
-            if name in static:
-                continue
-            first_ts = stream.first_ts()
             if issubclass(self.outputs[name].type, TFMessage):
-                frozen, first_ts = _split_tf_stream(cast("ReplayStream[TFMessage]", stream))
+                # Frozen frames describe the coordinate system even when their
+                # original source stamp is outside the selected time window.
+                rows = store.stream(name, TFMessage)
+                frozen, edges = _frozen_tf(rows)
                 if frozen.transforms:
                     static[name] = frozen
-                    edges = {(t.frame_id, t.child_frame_id) for t in frozen.transforms}
-                    if first_ts is not None:
-                        rows = store.stream(name, TFMessage).time_range(first_ts, float("inf"))
-                        dynamic = rows.filter(
-                            lambda obs, edges=edges: _has_dynamic_tf(edges, obs.data)
-                        )
-                        stream = streams[name] = replay.stream(name, source=dynamic)
+                    dynamic = rows.filter(partial(_has_dynamic_tf, edges))
+                    try:
+                        start = dynamic.order_by("ts").first().ts
+                    except LookupError:
+                        continue
+                    stream = streams[name] = replay.stream(
+                        name,
+                        autocast=partial(_dynamic_tf, edges),
+                        source=dynamic.time_range(start, float("inf")),
+                    )
+            elif stream.count() > 1 and stream.first_ts() == stream.last_ts():
+                message = stream.first()
+                if message is not None:
+                    static[name] = message
+                continue
+            first_ts = stream.first_ts()
             if first_ts is not None:
                 timed_starts.append(first_ts)
                 timed_streams[name] = stream.observable(skip_late=False)
@@ -202,52 +208,43 @@ class ReplayModule(Module):
             self._store = None
 
 
-def _static_message(stream: ReplayStream[DimosMsg]) -> DimosMsg | None:
-    first = stream.first()
-    if not isinstance(first, TFMessage):
-        return first
-    # TF rows can hold different edges. Keep every distinct transform, without
-    # multiplying repeated batches. Bound iteration because replay may loop.
-    transforms = {
-        transform.lcm_encode(): transform
-        for message in islice(cast("ReplayStream[TFMessage]", stream).iterate(), stream.count())
-        for transform in message.transforms
-    }
-    return TFMessage(*transforms.values())
-
-
-def _has_dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> bool:
-    return not message.transforms or any(
-        (t.frame_id, t.child_frame_id) not in edges for t in message.transforms
+def _has_dynamic_tf(edges: set[tuple[str, str]], row: Observation[TFMessage]) -> bool:
+    return not row.data.transforms or any(
+        (t.frame_id, t.child_frame_id) not in edges for t in row.data.transforms
     )
 
 
-def _split_tf_stream(stream: ReplayStream[TFMessage]) -> tuple[TFMessage, float | None]:
-    """Collect frozen edges and the first timed row in the selected replay window."""
-    count = stream.count()
-    # None marks an edge whose source timestamp changes. Keep only per-edge
-    # metadata here, never the history of a dynamic edge's payloads.
+def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
+    # Older recordings can carry both fixed and changing edges in one row.
+    return TFMessage(
+        *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
+    )
+
+
+def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
+    """Find fixed edges in a finite recording, independent of playback bounds."""
+    all_static = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
+    # A changing stamp disqualifies the edge. Only the last stamp and count
+    # are kept for each edge, irrespective of the length of the recording.
     stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
-    for message in islice(stream.iterate(), count):
-        for transform in message.transforms:
+    for row in rows:
+        for transform in row.data.transforms:
             edge = (transform.frame_id, transform.child_frame_id)
             previous = stamps.get(edge, (transform.ts, 0))
             if previous is not None:
                 stamps[edge] = (
                     (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
                 )
-    edges = {edge for edge, stamp in stamps.items() if stamp is not None and stamp[1] > 1}
+    edges = {
+        edge for edge, stamp in stamps.items() if stamp is not None and (all_static or stamp[1] > 1)
+    }
     transforms: dict[bytes, Transform] = {}
-    first_ts = None
-    # Both scans are bounded even when the replay loops. Encoded identity keeps
-    # distinct values at a frozen timestamp, in their source order.
-    for ts, message in islice(stream.iterate_ts(), count):
-        if first_ts is None and _has_dynamic_tf(edges, message):
-            first_ts = ts
-        for transform in message.transforms:
-            if (transform.frame_id, transform.child_frame_id) in edges:
-                transforms[transform.lcm_encode()] = transform
-    return TFMessage(*transforms.values()), first_ts
+    if edges:
+        for row in rows:
+            for transform in row.data.transforms:
+                if (transform.frame_id, transform.child_frame_id) in edges:
+                    transforms[transform.lcm_encode()] = transform
+    return TFMessage(*transforms.values()), edges
 
 
 def _republish(port: Out[Any], msg: Any, _tick: int) -> None:

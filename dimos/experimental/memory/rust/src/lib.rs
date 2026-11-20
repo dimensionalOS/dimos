@@ -784,6 +784,83 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_indexes_known_stamped_payloads_by_source_time() {
+        use lcm_msgs::geometry_msgs::{PoseArray, PoseStamped};
+        use lcm_msgs::sensor_msgs::BatteryState;
+
+        let file = NamedTempFile::new().unwrap();
+        let header = Header {
+            stamp: Time {
+                sec: 0,
+                nsec: 250_000_000,
+            },
+            ..Default::default()
+        };
+        let cases = [
+            (
+                "poses",
+                "dimos.msgs.geometry_msgs.PoseArray.PoseArray",
+                PoseArray {
+                    header: header.clone(),
+                    ..Default::default()
+                }
+                .encode(),
+            ),
+            (
+                "power",
+                "dimos.msgs.sensor_msgs.BatteryState.BatteryState",
+                BatteryState {
+                    header: header.clone(),
+                    ..Default::default()
+                }
+                .encode(),
+            ),
+            (
+                "odom",
+                "dimos.robot.unitree.type.odometry.Odometry",
+                PoseStamped {
+                    header: header.clone(),
+                    ..Default::default()
+                }
+                .encode(),
+            ),
+            (
+                "header",
+                "dimos.msgs.std_msgs.Header.Header",
+                header.encode(),
+            ),
+        ];
+        let config = RecorderConfig {
+            store: store::RecordingStoreConfig::Sqlite {
+                path: file.path().to_string_lossy().into_owned(),
+            },
+            encoding_threads: 1,
+            streams: cases
+                .iter()
+                .map(|(name, ty, _)| (*typed_stream(name, ty, Codec::Lcm)).clone())
+                .collect(),
+        };
+        let engine = RecorderEngine::start(config).unwrap();
+        for (name, ty, data) in &cases {
+            engine
+                .handle()
+                .record(typed_stream(name, ty, Codec::Lcm), data);
+        }
+        let stats = engine.shutdown().unwrap();
+        assert_eq!(stats.written, cases.len() as u64);
+        let db = Connection::open(file.path()).unwrap();
+        for (name, _, sent) in cases {
+            let query = format!("SELECT ts, json_extract(tags, '$.reception_ts'), data FROM {name} JOIN {name}_blob USING(id)");
+            let (source, received, stored): (f64, f64, Vec<u8>) = db
+                .query_row(&query, [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap();
+            assert_eq!(source, 0.25, "{name}");
+            assert!(received > source);
+            assert_eq!(stored, sent);
+        }
+    }
+
+    #[test]
     fn encoding_failure_fails_the_recording_with_stream_and_sequence() {
         let file = NamedTempFile::new().unwrap();
         let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
