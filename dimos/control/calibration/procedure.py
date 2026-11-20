@@ -85,7 +85,7 @@ from dimos.control.calibration.motion import (
     speed_rad_s,
 )
 from dimos.control.calibration.recording import RecordingSource
-from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState
+from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState, JointGains
 from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.connection.module_config import (
     DEFAULT_CONFIG_LEASE_S,
@@ -262,6 +262,9 @@ class RunState:
         baseline: Tracking with the values the arm had before this run, by pose.
         buzzing: By joint, the gain sweep's candidates stopped at a buzzing
             step, by ``(kp, kd)`` as applied, and why.
+        proposed_gains: The gains the operator accepted at ``pick_gains``,
+            until ``confirm_tracking`` saves them.
+        proposed_friction_nm: Each joint's friction ``pick_gains`` judged them with.
     """
 
     run_id: str
@@ -272,6 +275,8 @@ class RunState:
     step_span: tuple[float, float] | None = None
     baseline: TrackingLog | None = None
     buzzing: dict[str, dict[tuple[float, float], str]] = field(default_factory=dict)
+    proposed_gains: dict[str, JointGains] | None = None
+    proposed_friction_nm: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

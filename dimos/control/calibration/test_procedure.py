@@ -250,6 +250,12 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert 0.05 <= wrist["friction_nm"] <= 0.07
     assert gains["friction_nm"]["left_joint4"]["sweep"] > 0.0
     assert gains["friction_nm"]["left_joint1"]["dither"] is None
+    assert gains["saved"] is None and set(gains["accepted"]) == set(left_spec.joint_names)
+    assert rig.messages()["pick_gains"].startswith("accepted gains for ")
+    tracked = results["confirm_tracking"]["gains"]
+    assert tracked["saved"] == str(path) and tracked["applied"] and tracked["failed"] == []
+    assert tracked["proposed"] == {j: [g.kp, g.kd] for j, g in calibration.gains.items()}
+    assert not any("gains" in line for line in results["summary"]["next_steps"])
     assert calibration.checks is not None and set(calibration.checks) == {"float", "tracking"}
     floats = calibration.checks["float"]["joints"]
     assert set(floats) == set(LEFT_MEASURED) and all(row["passed"] for row in floats.values())
@@ -1264,7 +1270,119 @@ def test_a_candidate_stops_at_its_first_buzzing_step_and_is_rejected_for_it(
     proposal = results["pick_gains"]["proposals"]["left_joint5"]
     assert proposal["rejected"]["kp=10 kd=2.5"] == why
     assert (proposal["kp"], proposal["kd"]) == (15.0, 1.5)
+    assert rig.messages()["pick_gains"].endswith(
+        "not saved: confirm_tracking, which tries and saves them, is not selected"
+    )
     assert _far_from_home(rig) < 3.0
+
+
+GAINS_ONLY = ["check", "step_sweep", "pick_gains", "confirm_tracking", "summary"]
+
+
+def _arm_gains(rig: Rig, spec: ArmCalibrationSpec) -> dict[str, tuple[float, float]]:
+    state = ArmConfigState.from_state(rig.fake.config_get()[spec.arm_id])
+    return {joint: (g.kp, g.kd) for joint, g in state.gains.items()}
+
+
+def test_gains_alone_are_tracked_against_a_first_pass_and_then_saved(
+    make_rig: Callable[..., Rig], arm: ArmModel, left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig(fake={"truth": arm.model.copy()})
+    prompts: list[str] = []
+
+    status = rig.run(GAINS_ONLY, lambda p: prompts.append(p) or "confirm")
+
+    assert status["state"] == "done", status["message"]
+    results = rig.procedure.results()
+    [start] = [p for p in prompts if p.startswith("The arm will revisit")]
+    assert ", first with the gains it runs, then with the proposed gains (left_joint1 kp=" in start
+    assert "rests within 1.5 times its baseline, or what its friction allows" in start
+    assert any(p.startswith("Baseline pose 1/") for p in prompts)
+    tracking = results["confirm_tracking"]
+    assert tracking["baseline"]["rest_samples"] > 0 and tracking["gains"]["failed"] == []
+    path = calibration_path(left_spec.arm_id, rig.root)
+    saved = load_for_spec(left_spec, path).gains
+    assert saved is not None and tracking["gains"]["saved"] == str(path)
+    assert _arm_gains(rig, left_spec) == {j: (g.kp, g.kd) for j, g in saved.items()}
+    assert rig.messages()["confirm_tracking"].endswith(f"saved gains for {sorted(saved)} to {path}")
+
+
+def test_a_stall_with_the_proposed_gains_saves_nothing_and_gives_the_gains_back(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig()
+
+    def answer(prompt: str) -> str:
+        if prompt.startswith("Tracking pose 1/"):
+            rig.fake.blocked = {"left_joint2"}
+        return "confirm"
+
+    status = rig.run(GAINS_ONLY, answer)
+
+    assert status["state"] == "done", status["message"]
+    assert rig.statuses()["confirm_tracking"] == "done"
+    message = rig.messages()["confirm_tracking"]
+    assert message.startswith("gains not saved: stopped: the arm is ")
+    assert "(left_joint2 " in message
+    assert message.endswith("the arm runs its earlier gains again; the arm holds where it stopped")
+    results = rig.procedure.results()
+    (failed,) = results["confirm_tracking"]["gains"]["failed"]
+    assert failed in message and results["confirm_tracking"]["gains"]["saved"] is None
+    assert not calibration_path(left_spec.arm_id, rig.root).exists()
+    assert _arm_gains(rig, left_spec) == dict(left_spec.gains)
+    assert not rig.fake.session_active()
+    assert any(
+        line.startswith(
+            f"The proposed gains were not saved: they failed confirm_tracking: {failed}"
+        )
+        for line in results["summary"]["next_steps"]
+    )
+
+
+def test_proposed_gains_that_rest_worse_than_the_baseline_are_not_saved(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig(confirm_each=False)
+
+    status = rig.run(GAINS_ONLY)
+
+    assert status["state"] == "done", status["message"]
+    results = rig.procedure.results()
+    assert results["pick_gains"]["accepted"]["left_joint4"] == [6.0, 1.5]
+    tracking = results["confirm_tracking"]
+    (failed,) = tracking["gains"]["failed"]
+    rest, before = tracking["rest_rms_deg"]["left_joint4"], tracking["baseline"]["rest_rms_deg"]
+    assert rest > 1.5 * before["left_joint4"]
+    assert failed == (
+        f"left_joint4 rests {rest:.2f} deg RMS against {before['left_joint4']:.2f} deg before "
+        f"(limit {1.5 * before['left_joint4']:.2f} deg)"
+    )
+    assert rig.messages()["confirm_tracking"] == (
+        f"gains not saved: {failed}; the arm runs its earlier gains again"
+    )
+    assert not calibration_path(left_spec.arm_id, rig.root).exists()
+    assert _arm_gains(rig, left_spec) == dict(left_spec.gains)
+
+
+def test_skipping_the_tracking_check_saves_no_gains_and_the_summary_says_so(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig(confirm_each=False)
+
+    status = rig.run(
+        GAINS_ONLY, lambda p: "skip" if p.startswith("The arm will revisit") else "confirm"
+    )
+
+    assert status["state"] == "done", status["message"]
+    assert rig.statuses()["confirm_tracking"] == "skipped"
+    assert not calibration_path(left_spec.arm_id, rig.root).exists()
+    results = rig.procedure.results()
+    summary = results["summary"]
+    assert summary["proposed_gains"] == results["pick_gains"]["accepted"]
+    assert (
+        "The proposed gains were not saved: confirm_tracking, which saves them, was skipped. "
+        "Run step_sweep, pick_gains and confirm_tracking again."
+    ) in summary["next_steps"]
 
 
 def _heavy_forearm(arm: ArmModel, spec: ArmCalibrationSpec, extra_kg: float) -> ArmCalibration:

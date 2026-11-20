@@ -444,17 +444,22 @@ def print_results(step_id: str, data: dict[str, Any]) -> None:
             for joint, row in proposals.items():
                 for tried, why in (row.get("rejected") or {}).items():
                     echo(f"    rejected {joint} {tried}: {why}")
-        if data.get("saved"):
-            echo(f"    saved {data['saved']}")
+        if data.get("accepted"):
+            echo("    accepted: confirm_tracking saves them once the arm tracks with them")
     elif step_id == "confirm_tracking":
         rest, ramp = data.get("rest_rms_deg") or {}, data.get("ramp_rms_deg") or {}
         base = (data.get("baseline") or {}).get("rest_rms_deg") or {}
         if rest:
-            echo("    tracking RMS, deg (resting; baseline from the gravity poses; moving):")
+            echo("    tracking RMS, deg (resting; baseline before the new values; moving):")
             rows = [["joint", "rest", "baseline", "moving"]]
             for joint, value in rest.items():
                 rows.append([joint, _f(value), _f(base.get(joint)), _f(ramp.get(joint))])
             table(rows)
+        gains = data.get("gains") or {}
+        if gains.get("saved"):
+            echo(f"    saved gains to {gains['saved']}")
+        for why in gains.get("failed") or []:
+            echo(f"    gains not saved: {why}")
     elif step_id == "summary":
         for item in data.get("next_steps") or []:
             echo(f"    next: {item}")
@@ -808,9 +813,14 @@ class Wizard:
 
 def saved_files(results: dict[str, Any]) -> Path | None:
     """The calibration file this run wrote, from the steps' results, else None."""
-    for step in ("summary", "pick_gains", "gravity_fit"):
+    for step in ("summary", "confirm_tracking", "gravity_fit"):
         data = results.get(step) or {}
-        path = data.get("file") if step == "summary" else data.get("saved")
+        if step == "summary":
+            path = data.get("file")
+        elif step == "confirm_tracking":
+            path = (data.get("gains") or {}).get("saved")
+        else:
+            path = data.get("saved")
         if path:
             return Path(path)
     return None

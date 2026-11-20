@@ -79,8 +79,8 @@ The command starts the robot in the background, talks to it, brings the arm home
 3. **gravity_fit.** Fit link masses. Shows `URDF -> running -> new` error per joint and over all joints. Enter saves and applies.
 4. **float_check.** At each pose the arm rests, then one joint goes limp for about ten seconds. Be ready to support the arm.
 5. **step_sweep.** Each joint steps at up to nine kp and kd pairs at the sweep pose. The prompt says how long it takes.
-6. **pick_gains.** Shows the proposed gains and every rejected try. Enter saves and applies.
-7. **confirm_tracking.** Revisit the held-out poses and compare rests before and after.
+6. **pick_gains.** Shows the proposed gains and every rejected try. Enter accepts them. Nothing is saved yet.
+7. **confirm_tracking.** Revisit the held-out poses with the accepted gains and compare rests before and after. The gains are saved only if every joint keeps up and rests within 1.5 times its baseline (or what its friction allows at its new kp). Otherwise the arm's gains come back and nothing is saved. Without gravity_poses in the run, it first revisits the poses with the gains the arm runs, as the baseline.
 8. **summary.** Lists the file, the files it replaced and what to do next.
 
 Saves happen with the arm at home. If applying a save would change a joint's gravity torque by more than 2 N m, the connection writes nothing and the wizard asks again: Enter forces it, s saves the file without applying it.

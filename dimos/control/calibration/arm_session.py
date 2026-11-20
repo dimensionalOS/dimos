@@ -128,6 +128,10 @@ class StaleReadingError(StepFailedError):
     """The latest joint state is older than ``MAX_READING_AGE_S``: the connection is not publishing."""
 
 
+class JointLaggedError(StepFailedError):
+    pass
+
+
 class JointDriftedError(StepFailedError):
     """A floating joint moved too far or too fast; it was held again."""
 
@@ -607,7 +611,7 @@ class ArmSession:
         )
         lag = tracking_error(held, self._target[indices], self._measured[indices], limits)
         if lag is not None:
-            raise StepFailedError(f"stopped: {lag}; the arm holds where it is")
+            raise JointLaggedError(f"stopped: {lag}; the arm holds where it is")
         assert self._guard is not None
         sag = self._guard.check_measured(self._measured)
         if sag is not None:

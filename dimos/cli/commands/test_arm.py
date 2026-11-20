@@ -867,3 +867,20 @@ def test_every_forwarded_flag_parses_on_the_real_blueprint_to_the_value_given() 
         "follower_r",
     )
     assert connection["config_sessions"] is True
+
+
+def test_the_tracking_check_says_whether_it_saved_the_gains(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stall = "stopped: the arm is more than 10 deg from its target (left_joint4 -10.6 deg)"
+    arm_command.print_results(
+        "confirm_tracking",
+        {"rest_rms_deg": {"left_joint4": 0.3}, "gains": {"saved": None, "failed": [stall]}},
+    )
+    assert f"gains not saved: {stall}" in capsys.readouterr().out
+    saved = "/state/arms/dual_openyam/left/calibration.json"
+    results = {"confirm_tracking": {"saved": None, "gains": {"saved": saved, "failed": []}}}
+    arm_command.print_results("confirm_tracking", results["confirm_tracking"])
+    assert f"saved gains to {saved}" in capsys.readouterr().out
+    assert arm_command.saved_files(results) == Path(saved)
+    assert arm_command.saved_files({"pick_gains": {"saved": None, "accepted": {}}}) is None
