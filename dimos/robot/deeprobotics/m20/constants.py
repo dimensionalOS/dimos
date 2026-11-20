@@ -75,3 +75,9 @@ GOS_SLAM_CPUS = (4, 5)
 # NOS cores DimSLAM runs on in m20: two of its A76s (4-7, isolcpus, the vendor's real-time cores; its LIO and
 # rslidar use ~17% of each). NOS's Host and every other fragment stay on 0-3 (onboard/install_dimos_host.sh).
 NOS_SLAM_CPUS = (4, 5)
+
+# The navigation stack's map voxel (m), the planner's wall clearance (m), and its viz rate (Hz) and sweep (cells).
+VOXEL_SIZE_M = 0.08
+WALL_CLEARANCE_M = 0.07
+PLANNER_VIZ_HZ = 2.0
+PLANNER_VIZ_SWEEP_CELLS = 1
