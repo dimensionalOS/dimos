@@ -29,7 +29,6 @@ from dimos.core.transport import (
 )
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
-    QOS_LOW_LATENCY,
     QOS_NEVER_DROP,
     Topic as ZenohTopic,
     ZenohQoS,
@@ -65,9 +64,6 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 # High-rate sensor streams: drop stale frames under congestion, never stall the
 # publisher. Matched by message type since that is what makes them high-rate.
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
-# Small streams read the instant they land: on a link shared with point clouds a pose otherwise waits behind a
-# whole cloud (M20, NOS -> GOS odometry: p95 34 ms of a 68 ms tail).
-_LOW_LATENCY_TYPES = ("nav_msgs.Odometry", "tf2_msgs.TFMessage")
 # Low-rate channels where a drop loses something that never comes back: a whole
 # turn of agent/human conversation, a one-shot robot action verb, a push-to-talk
 # chunk where one gap discards the whole utterance, or a region of a seeded map
@@ -95,8 +91,6 @@ def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
         return QOS_NEVER_DROP
     if msg_name in _LATEST_WINS_TYPES:
         return QOS_LATEST_WINS
-    if msg_name in _LOW_LATENCY_TYPES:
-        return QOS_LOW_LATENCY
     return None
 
 

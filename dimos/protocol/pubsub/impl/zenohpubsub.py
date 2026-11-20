@@ -43,15 +43,6 @@ _CONGESTION_CONTROL = {
     "drop": zenoh.CongestionControl.DROP,
     "block": zenoh.CongestionControl.BLOCK,
 }
-_PRIORITY = {
-    "real_time": zenoh.Priority.REAL_TIME,
-    "interactive_high": zenoh.Priority.INTERACTIVE_HIGH,
-    "interactive_low": zenoh.Priority.INTERACTIVE_LOW,
-    "data_high": zenoh.Priority.DATA_HIGH,
-    "data": zenoh.Priority.DATA,
-    "data_low": zenoh.Priority.DATA_LOW,
-    "background": zenoh.Priority.BACKGROUND,
-}
 
 
 @dataclass(frozen=True)
@@ -60,21 +51,6 @@ class ZenohQoS:
 
     reliability: Literal["reliable", "best_effort"] | None = None
     congestion_control: Literal["drop", "block"] | None = None
-    # The queue it rides on every hop, so a small sample is not stuck behind bulk ones on a shared link.
-    priority: (
-        Literal[
-            "real_time",
-            "interactive_high",
-            "interactive_low",
-            "data_high",
-            "data",
-            "data_low",
-            "background",
-        ]
-        | None
-    ) = None
-    # Sent at once instead of held for a batch.
-    express: bool | None = None
 
     def publisher_kwargs(self) -> dict[str, Any]:
         """`declare_publisher` kwargs for this QoS."""
@@ -83,23 +59,15 @@ class ZenohQoS:
             kwargs["reliability"] = _RELIABILITY[self.reliability]
         if self.congestion_control is not None:
             kwargs["congestion_control"] = _CONGESTION_CONTROL[self.congestion_control]
-        if self.priority is not None:
-            kwargs["priority"] = _PRIORITY[self.priority]
-        if self.express is not None:
-            kwargs["express"] = self.express
         return kwargs
 
-    def to_wire(self) -> dict[str, str | bool]:
+    def to_wire(self) -> dict[str, str]:
         """Serializable QoS sent to native modules over stdin. Only set fields."""
-        wire: dict[str, str | bool] = {}
+        wire: dict[str, str] = {}
         if self.reliability is not None:
             wire["reliability"] = self.reliability
         if self.congestion_control is not None:
             wire["congestion_control"] = self.congestion_control
-        if self.priority is not None:
-            wire["priority"] = self.priority
-        if self.express is not None:
-            wire["express"] = self.express
         return wire
 
 
@@ -107,9 +75,6 @@ class ZenohQoS:
 # publisher defaults (reliable, drop under congestion).
 QOS_NEVER_DROP = ZenohQoS(reliability="reliable", congestion_control="block")
 QOS_LATEST_WINS = ZenohQoS(reliability="best_effort", congestion_control="drop")
-# Small streams a consumer acts on the instant they land (a pose, a transform): ahead of bulk sensor data on
-# every hop and never held for a batch.
-QOS_LOW_LATENCY = ZenohQoS(priority="interactive_high", express=True)
 
 
 @dataclass

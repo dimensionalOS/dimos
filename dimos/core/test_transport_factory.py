@@ -33,10 +33,9 @@ from dimos.core.transport_factory import (
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_LOW_LATENCY, QOS_NEVER_DROP
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.lcmservice import LCMConfig
@@ -97,11 +96,6 @@ def test_default_zenoh_qos_seed_channels_never_drop_despite_their_types() -> Non
     assert default_zenoh_qos("/loaded_map", PointCloud2) == QOS_NEVER_DROP
     assert default_zenoh_qos("/seed_map", PointCloud2) == QOS_NEVER_DROP
     assert default_zenoh_qos("/seed_bounds", PoseStamped) == QOS_NEVER_DROP
-
-
-def test_default_zenoh_qos_poses_go_ahead_of_bulk_data() -> None:
-    assert default_zenoh_qos("/odometry", Odometry) == QOS_LOW_LATENCY
-    assert QOS_LOW_LATENCY.to_wire() == {"priority": "interactive_high", "express": True}
 
 
 def test_default_zenoh_qos_everything_else_uses_zenoh_defaults() -> None:

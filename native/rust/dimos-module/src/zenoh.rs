@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use ::zenoh::pubsub::Publisher;
-use ::zenoh::qos::{CongestionControl, Priority, Reliability};
+use ::zenoh::qos::{CongestionControl, Reliability};
 use ::zenoh::sample::Locality;
 use ::zenoh::Session;
 use serde::{Deserialize, Serialize};
@@ -125,14 +125,10 @@ struct ChannelQos {
     /// inside the process that publishes it, which is how a baked host hides
     /// its internal hops without changing the modules.
     locality: Option<Locality>,
-    /// Queue it rides on every hop: a small latency-critical sample ahead of bulk ones.
-    priority: Option<Priority>,
-    /// Sent at once, not held for a batch.
-    express: Option<bool>,
 }
 
 /// Parse the coordinator's `qos` object (channel -> {reliability,
-/// congestion_control, locality, priority, express}) into a lookup. Unknown or absent fields keep defaults.
+/// congestion_control}) into a lookup. Unknown or absent fields keep defaults.
 fn parse_channel_qos(value: &serde_json::Value) -> HashMap<String, ChannelQos> {
     let mut map = HashMap::new();
     let Some(object) = value.as_object() else {
@@ -156,17 +152,6 @@ fn parse_channel_qos(value: &serde_json::Value) -> HashMap<String, ChannelQos> {
             Some("any") => qos.locality = Some(Locality::Any),
             _ => {}
         }
-        qos.priority = match entry.get("priority").and_then(|v| v.as_str()) {
-            Some("real_time") => Some(Priority::RealTime),
-            Some("interactive_high") => Some(Priority::InteractiveHigh),
-            Some("interactive_low") => Some(Priority::InteractiveLow),
-            Some("data_high") => Some(Priority::DataHigh),
-            Some("data") => Some(Priority::Data),
-            Some("data_low") => Some(Priority::DataLow),
-            Some("background") => Some(Priority::Background),
-            _ => None,
-        };
-        qos.express = entry.get("express").and_then(|v| v.as_bool());
         map.insert(channel.clone(), qos);
     }
     map
@@ -306,12 +291,6 @@ impl ZenohTransport {
         }
         if let Some(locality) = qos.locality {
             builder = builder.allowed_destination(locality);
-        }
-        if let Some(priority) = qos.priority {
-            builder = builder.priority(priority);
-        }
-        if let Some(express) = qos.express {
-            builder = builder.express(express);
         }
         builder.await.map_err(to_io)
     }
@@ -725,23 +704,6 @@ mod tests {
         let unknown = &map["unknown_values"];
         assert_eq!(unknown.reliability, None);
         assert_eq!(unknown.congestion_control, None);
-    }
-
-    #[test]
-    fn parse_channel_qos_reads_priority_and_express() {
-        let value = serde_json::json!({
-            "dimos/odometry/nav_msgs.Odometry": {"priority": "interactive_high", "express": true},
-            "plain": {"reliability": "reliable"},
-            "unknown": {"priority": "urgent", "express": "yes"},
-        });
-        let map = parse_channel_qos(&value);
-        let odometry = &map["dimos/odometry/nav_msgs.Odometry"];
-        assert_eq!(odometry.priority, Some(Priority::InteractiveHigh));
-        assert_eq!(odometry.express, Some(true));
-        for channel in ["plain", "unknown"] {
-            assert_eq!(map[channel].priority, None);
-            assert_eq!(map[channel].express, None);
-        }
     }
 
     #[test]
