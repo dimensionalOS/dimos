@@ -14,7 +14,8 @@
 
 //! RoboSense Airy native module: robosense-airy's sensor -> PointCloud2/Imu.
 
-use dimos_module::{native_config, Module, Output};
+use dimos_module::nalgebra::{Isometry3, Translation3, UnitQuaternion};
+use dimos_module::{native_config, Module, Output, Tf, Transform};
 use lcm_msgs::geometry_msgs::{Quaternion, Vector3};
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -60,6 +61,11 @@ pub struct Config {
     frame_id: String,
     imu_frame_id: String,
     imu_in_lidar_frame: bool,
+    /// The frame the lidar is mounted on; null publishes no mount transform.
+    mount_parent_frame_id: Nullable<String>,
+    /// The lidar's position and roll, pitch, yaw in the mount parent.
+    mount_xyz: [f64; 3],
+    mount_rpy: [f64; 3],
     #[validate(range(min = 0.0))]
     min_distance: f32,
     #[validate(range(min = 0.0))]
@@ -144,6 +150,9 @@ pub struct Airy {
     #[output(encode = Imu::encode)]
     imu: Output<Imu>,
 
+    #[tf]
+    tf: Tf,
+
     #[config]
     config: Config,
 
@@ -173,11 +182,22 @@ impl Airy {
                 }
             }));
         }
-        let (lidar, config, ended) = (self.lidar.clone(), self.config.clone(), self.ended.clone());
+        let (lidar, tf, config, ended) = (
+            self.lidar.clone(),
+            self.tf.clone(),
+            self.config.clone(),
+            self.ended.clone(),
+        );
         self.threads.push(std::thread::spawn(move || {
             let stats = sensor.stats_handle();
             for framed in sensor.scans().iter() {
                 let msg = cloud_message(config.point_format, &config.frame_id, &framed.scan);
+                // the mount goes out stamped like each scan, so a lookup at the scan's stamp finds it
+                if let Some(mount) = mount_transform(&config, framed.scan.timestamp) {
+                    if let Err(error) = handle.block_on(tf.publish(&[mount])) {
+                        tracing::warn!(%error, "cannot publish the mount transform");
+                    }
+                }
                 let _ = handle.block_on(lidar.publish(&msg));
             }
             let get = |c: &std::sync::atomic::AtomicU64| c.load(Ordering::Relaxed);
@@ -211,6 +231,22 @@ impl Airy {
         })
         .await;
     }
+}
+
+/// mount_parent_frame_id -> frame_id at `seconds`, or None without a mount parent.
+fn mount_transform(config: &Config, seconds: f64) -> Option<Transform> {
+    let parent = config.mount_parent_frame_id.0.clone()?;
+    let ([x, y, z], [roll, pitch, yaw]) = (config.mount_xyz, config.mount_rpy);
+    let pose = Isometry3::from_parts(
+        Translation3::new(x, y, z),
+        UnitQuaternion::from_euler_angles(roll, pitch, yaw),
+    );
+    Some(Transform::new(
+        parent,
+        config.frame_id.clone(),
+        seconds,
+        pose,
+    ))
 }
 
 fn stamp(seconds: f64) -> Time {
@@ -423,7 +459,8 @@ mod tests {
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.2, "max_distance": 60.0,
             "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "voxel": 0.0,
-            "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null
+            "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
+            "mount_parent_frame_id": null, "mount_xyz": [0.0, 0.0, 0.0], "mount_rpy": [0.0, 0.0, 0.0]
         });
         let config: Config = serde_json::from_value(json.clone()).unwrap();
         let sensor = config.sensor_config();
@@ -433,5 +470,40 @@ mod tests {
         let mut missing = json;
         missing.as_object_mut().unwrap().remove("host_ip");
         assert!(serde_json::from_value::<Config>(missing).is_err());
+    }
+
+    #[test]
+    fn mount_goes_from_its_parent_at_the_scan_stamp() {
+        let mut config: Config = serde_json::from_value(serde_json::json!({
+            "group": null, "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
+            "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
+            "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.0, "max_distance": 0.0,
+            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "voxel": 0.0,
+            "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
+            "mount_parent_frame_id": "base_link", "mount_xyz": [0.32028, 0.0, -0.013],
+            "mount_rpy": [0.0, -std::f64::consts::FRAC_PI_2, std::f64::consts::PI]
+        }))
+        .unwrap();
+        let mount = mount_transform(&config, 12.5).unwrap();
+        assert_eq!(
+            (mount.parent.as_str(), mount.child.as_str(), mount.ts),
+            ("base_link", "front_lidar", 12.5)
+        );
+        assert!((mount.translation().x - 0.32028).abs() < 1e-12);
+        // the same quaternion as the Python Quaternion.from_euler of this roll, pitch, yaw
+        let q = mount.rotation();
+        let sign = q.w.signum();
+        let got = [q.i * sign, q.j * sign, q.k * sign, q.w * sign];
+        let want = [
+            0.7071067811865475,
+            -4.329780281177466e-17,
+            0.7071067811865476,
+            4.329780281177467e-17,
+        ];
+        for (g, w) in got.iter().zip(want) {
+            assert!((g - w).abs() < 1e-9, "{got:?}");
+        }
+        config.mount_parent_frame_id = Nullable(None);
+        assert!(mount_transform(&config, 12.5).is_none());
     }
 }

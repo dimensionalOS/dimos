@@ -38,6 +38,7 @@ from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
 
@@ -68,6 +69,11 @@ class AiryConfig(NativeModuleConfig):
     # so this is normally the lidar frame too.
     imu_frame_id: str = "lidar_link"
     imu_in_lidar_frame: bool = True
+    # The frame the lidar is mounted on; with one set, mount_parent_frame_id -> frame_id goes out on tf with each scan.
+    mount_parent_frame_id: str | None = None
+    # The lidar's position (m) and roll, pitch, yaw (rad) in mount_parent_frame_id.
+    mount_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    mount_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
     # Range filter in metres; both 0 keeps the Airy's own 0.1..60 m.
     min_distance: float = Field(default=0.0, ge=0)
     max_distance: float = Field(default=0.0, ge=0)
@@ -92,8 +98,11 @@ class AiryConfig(NativeModuleConfig):
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
         # The rust struct has every key. None crosses as an explicit null.
-        for key in ("group", "host_ip", "lidar_ip", "recv_buffer_bytes"):
+        for key in ("group", "host_ip", "lidar_ip", "recv_buffer_bytes", "mount_parent_frame_id"):
             config[key] = getattr(self, key)
+        # JSON arrays, as the rust [f64; 3] reads them
+        for key in ("mount_xyz", "mount_rpy"):
+            config[key] = list(getattr(self, key))
         return config
 
 
@@ -109,6 +118,7 @@ class Airy(NativeModule, perception.Lidar, perception.IMU):
 
     lidar: Out[PointCloud2]
     imu: Out[Imu]
+    tf: Out[TFMessage]
 
     @rpc
     def start(self) -> None:

@@ -41,7 +41,7 @@ def test_config_dict_is_the_wire_config() -> None:
     wire = AiryConfig().to_config_dict()
     assert set(wire) == _wire_fields()
     # Nones cross as nulls, never as missing keys.
-    for key in ("group", "host_ip", "lidar_ip", "recv_buffer_bytes"):
+    for key in ("group", "host_ip", "lidar_ip", "recv_buffer_bytes", "mount_parent_frame_id"):
         assert wire[key] is None
     assert json.loads(json.dumps(wire)) == wire
 
@@ -88,4 +88,4 @@ def test_ports_match_registry() -> None:
 
     manifest = tomllib.loads((_RUST_DIR / "Cargo.toml").read_text())
     registry = manifest["package"]["metadata"]["dimos"]["module"]["airy"]
-    assert set(registry["outputs"]) == ports(Airy)
+    assert set(registry["outputs"]) | set(registry["inputs"]) == ports(Airy)

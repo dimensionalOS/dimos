@@ -16,6 +16,9 @@ path = "src/main.rs"
 path = "dimos_robosense::module::Airy"
 python = "dimos.hardware.sensors.lidar.robosense.module:Airy"
 
+[package.metadata.dimos.module.airy.inputs]
+tf = "tf2_msgs.TFMessage"
+
 [package.metadata.dimos.module.airy.outputs]
 lidar = "sensor_msgs.PointCloud2"
 imu = "sensor_msgs.Imu"
