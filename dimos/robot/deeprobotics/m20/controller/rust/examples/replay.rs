@@ -104,6 +104,7 @@ fn state_of(name: &str) -> Result<(State, Target)> {
         "lie_down" => (State::LieDown, Target::LieDown),
         "joint_damping" => (State::JointDamping, Target::JointDamping),
         "rl_control" => (State::RlControl, Target::RlControl),
+        "start_damping" => (State::StartDamping, Target::Passive),
         other => bail!("unknown state {other}"),
     })
 }
@@ -115,7 +116,7 @@ fn main() -> Result<()> {
             .context("usage: replay DIR [--config F] [--policies D]")?,
     );
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut config = manifest.join("../m20_controller.toml");
+    let mut config = manifest.join("m20_controller.toml");
     let mut policies = PathBuf::from(std::env::var("M20_POLICY_DIR").unwrap_or_else(|_| {
         format!(
             "{}/.cache/dimos/m20_policies",

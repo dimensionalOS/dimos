@@ -63,12 +63,15 @@ pub fn rtps_data(p: &[u8]) -> Vec<([u8; 4], [u8; 8], &[u8])> {
         let Some(body) = p.get(i + 4..i + 4 + n) else {
             break;
         };
-        if sid == 0x15 && body.len() >= 20 {
-            out.push((
-                body[8..12].try_into().unwrap(),
-                body[12..20].try_into().unwrap(),
-                &body[20..],
-            ));
+        // RTPS DATA submessage (protocol constant): reader id, writer id, sequence number, then the payload
+        if sid == 0x15 {
+            if let (Some(Ok(entity)), Some(Ok(sn)), Some(data)) = (
+                body.get(8..12).map(<[u8; 4]>::try_from),
+                body.get(12..20).map(<[u8; 8]>::try_from),
+                body.get(20..),
+            ) {
+                out.push((entity, sn, data));
+            }
         }
         if n == 0 {
             break;
@@ -79,10 +82,21 @@ pub fn rtps_data(p: &[u8]) -> Vec<([u8; 4], [u8; 8], &[u8])> {
 }
 
 fn f32s(d: &[u8]) -> Vec<f64> {
-    d.chunks_exact(4)
-        .map(|c| f32::from_le_bytes(c.try_into().unwrap()) as f64)
+    d.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c) as f64)
         .collect()
 }
+
+/// u32 at byte o, little-endian, if the slice is long enough.
+fn u32_at(d: &[u8], o: usize) -> Option<u32> {
+    let b = d.get(o..o + 4)?;
+    Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// Sample ids remembered for duplicate drops (each sample reaches a few readers within microseconds).
+const DEDUP_WINDOW: usize = 4096;
 
 pub struct Parser {
     imu_port: u16,
@@ -122,16 +136,20 @@ impl Parser {
         let dport = u16::from_be_bytes([udp[2], udp[3]]);
         for (entity, sn, data) in rtps_data(&udp[8..]) {
             if dport == self.imu_port && data.len() == self.imu_bytes {
-                let stamp = (
-                    u32::from_le_bytes(data[12..16].try_into().unwrap()),
-                    u32::from_le_bytes(data[16..20].try_into().unwrap()),
-                );
+                // stamp at 12..20, then roll pitch yaw gyro accel as 9 f32 (56 bytes in all)
+                let (Some(sec), Some(nsec)) = (u32_at(data, 12), u32_at(data, 16)) else {
+                    continue;
+                };
+                let f = f32s(data.get(20..).unwrap_or_default());
+                if f.len() < 9 {
+                    continue;
+                }
+                let stamp = (sec, nsec);
                 if self.seen_imu.insert(stamp) {
-                    if self.seen_imu.len() > 4096 {
+                    if self.seen_imu.len() > DEDUP_WINDOW {
                         self.seen_imu.clear();
                         self.seen_imu.insert(stamp);
                     }
-                    let f = f32s(&data[20..56]);
                     out.push(Sample::Imu(Imu {
                         t,
                         rpy_deg: [f[0], f[1], f[2]],
@@ -147,7 +165,7 @@ impl Parser {
             if data.len() < 24 || !self.seen_steer.insert((entity, sn)) {
                 continue;
             }
-            if self.seen_steer.len() > 4096 {
+            if self.seen_steer.len() > DEDUP_WINDOW {
                 self.seen_steer.clear();
             }
             let f = f32s(&data[20..]);
@@ -221,8 +239,15 @@ pub mod socket {
                 unsafe { libc::close(fd) };
                 return Err(io::Error::last_os_error()).context("bind AF_PACKET");
             }
+            let sniffer = Sniffer { fd };
             attach_udp_port_filter(fd, lo_port, hi_port)?;
-            Ok(Sniffer { fd })
+            Ok(sniffer)
+        }
+    }
+
+    impl Drop for Sniffer {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.fd) };
         }
     }
 
@@ -270,7 +295,8 @@ pub mod socket {
         Ok(())
     }
 
-    /// Wait up to timeout_ms on all sniffers; call f(packet) for each one received. EINTR just returns.
+    /// Wait up to timeout_ms (-1: until a packet) on all sniffers; call f(packet) for each one received. EINTR
+    /// just returns (the caller polls again).
     pub fn poll_all(
         sniffers: &[Sniffer],
         timeout_ms: i32,
@@ -319,7 +345,11 @@ pub fn run(
     let mut buf = vec![0u8; 65536];
     loop {
         let mut closed = false;
-        socket::poll_all(&sniffers, 200, &mut buf, |p| {
+        // blocks until a packet: the thread ends on the first send after the engine is gone
+        if sniffers.is_empty() {
+            return;
+        }
+        socket::poll_all(&sniffers, -1, &mut buf, |p| {
             for s in parser.packet(now(), p) {
                 if tx.send(s).is_err() {
                     closed = true;
@@ -329,5 +359,56 @@ pub fn run(
         if closed {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shadow_config() -> ShadowConfig {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../shadow.toml");
+        ShadowConfig::load(&path).unwrap()
+    }
+
+    /// One IPv4 / UDP / RTPS packet to `port` carrying one DATA submessage with this payload.
+    fn packet(port: u16, data: &[u8]) -> Vec<u8> {
+        let mut rtps = b"RTPS".to_vec();
+        rtps.extend_from_slice(&[0u8; 16]);
+        rtps.extend_from_slice(&[0x15, 1]);
+        rtps.extend_from_slice(&((20 + data.len()) as u16).to_le_bytes());
+        rtps.extend_from_slice(&[0u8; 20]);
+        rtps.extend_from_slice(data);
+        let mut ip = vec![0x45, 0, 0, 0, 0, 0, 0, 0, 64, 17];
+        ip.extend_from_slice(&[0u8; 10]);
+        ip.extend_from_slice(&[0, 0]);
+        ip.extend_from_slice(&port.to_be_bytes());
+        ip.extend_from_slice(&[0u8; 4]);
+        ip.extend_from_slice(&rtps);
+        ip
+    }
+
+    #[test]
+    fn imu_samples_of_a_configured_short_size_do_not_panic() {
+        let mut cfg = shadow_config();
+        cfg.imu_sample_bytes = 16;
+        let mut p = Parser::new(&cfg).unwrap();
+        assert!(p.packet(0.0, &packet(cfg.imu_port, &[0u8; 16])).is_empty());
+    }
+
+    #[test]
+    fn imu_sample_decodes() {
+        let cfg = shadow_config();
+        let mut p = Parser::new(&cfg).unwrap();
+        let mut data = vec![0u8; 20];
+        for v in 1..=9 {
+            data.extend_from_slice(&(v as f32).to_le_bytes());
+        }
+        let out = p.packet(0.0, &packet(cfg.imu_port, &data));
+        let [Sample::Imu(imu)] = out.as_slice() else {
+            panic!("{out:?}");
+        };
+        assert_eq!(imu.rpy_deg, [1.0, 2.0, 3.0]);
+        assert_eq!(imu.accel, [7.0, 8.0, 9.0]);
     }
 }

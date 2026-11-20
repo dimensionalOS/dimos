@@ -93,8 +93,8 @@ pub fn control_realtime(rt: &Realtime) -> Result<()> {
     apply_realtime(rt.control_cpu, rt.control_fifo_priority, rt.lock_memory)
 }
 
-/// Sleep until `deadline` (on the Instant clock); EINTR resumes the sleep.
-fn sleep_until(deadline: Instant) {
+/// Sleep until `deadline` (on the Instant clock); EINTR resumes the sleep. `slack` is used off Linux only.
+fn sleep_until(deadline: Instant, slack: Duration) {
     #[cfg(target_os = "linux")]
     {
         let now = Instant::now();
@@ -105,7 +105,9 @@ fn sleep_until(deadline: Instant) {
             tv_sec: 0,
             tv_nsec: 0,
         };
+        let _ = slack;
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        // the wait is under a period, so these conversions cannot truncate
         let wait = deadline - now;
         let total_ns = ts.tv_nsec as u128 + wait.as_nanos();
         let target = libc::timespec {
@@ -129,7 +131,6 @@ fn sleep_until(deadline: Instant) {
     #[cfg(not(target_os = "linux"))]
     {
         // macOS oversleeps sub-ms requests by up to ~1 ms: sleep short of the deadline, then yield until it
-        let slack = Duration::from_micros(1500);
         let now = Instant::now();
         if deadline > now + slack {
             std::thread::sleep(deadline - now - slack);
@@ -153,14 +154,18 @@ pub fn run<H: Hardware + ?Sized>(
     stop: &AtomicBool,
     mut observe: impl FnMut(&mut H, &Tick),
 ) -> Result<LoopStats> {
-    let period = Duration::from_secs_f64(cfg.control_dt());
+    // validated finite and positive at load; try_ keeps a hand-built config from panicking
+    let period = Duration::try_from_secs_f64(cfg.control_dt())?;
+    let slack = Duration::try_from_secs_f64(cfg.realtime.sleep_slack_s)?;
     let mut stats = LoopStats::default();
+    let mut retry_at = Instant::now();
     let mut state = loop {
         match hardware.read_state() {
             Ok(s) => break s,
             Err(_) if !stop.load(Ordering::Relaxed) => {
                 stats.hardware_errors += 1;
-                sleep_until(Instant::now() + period);
+                retry_at = (retry_at + period).max(Instant::now());
+                sleep_until(retry_at, slack);
             }
             Err(e) => return Err(e),
         }
@@ -179,6 +184,8 @@ pub fn run<H: Hardware + ?Sized>(
         let mut effective = user.clone();
         if now - last_command_at > cfg.safety.command_timeout_s && commands.expires() {
             effective.axes = [0.0; 3];
+            // a metric velocity (cmd_vel) expires the same way
+            effective.velocity = effective.velocity.map(|_| [0.0; 3]);
         }
         let cmd = controller.tick(&state, &effective, policy);
         match hardware.exchange(&cmd) {
@@ -209,7 +216,7 @@ pub fn run<H: Hardware + ?Sized>(
                 stats.overruns += 1;
                 deadline = now + period;
             } else {
-                sleep_until(deadline);
+                sleep_until(deadline, slack);
                 deadline += period;
             }
         }
@@ -218,13 +225,16 @@ pub fn run<H: Hardware + ?Sized>(
         target: crate::types::Target::JointDamping,
         ..Default::default()
     };
+    // the shutdown ticks keep the loop's absolute deadlines (no drift)
+    deadline = deadline.max(Instant::now());
     for _ in 0..cfg.safety.shutdown_damping_ticks {
         let cmd = controller.tick(&state, &damping, policy);
         if let Ok(s) = hardware.exchange(&cmd) {
             state = s;
         }
         if pacing == Pacing::Realtime {
-            sleep_until(Instant::now() + period);
+            sleep_until(deadline, slack);
+            deadline += period;
         }
     }
     Ok(stats)

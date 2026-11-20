@@ -20,6 +20,11 @@
 //!   m20_shadow --config m20_controller.toml --shadow shadow.toml [--policies DIR]          (live, on AOS)
 //!   m20_shadow --config m20_controller.toml --shadow shadow.toml --session DIR --log DIR  (a recorded session)
 
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -156,8 +161,8 @@ fn main() -> Result<()> {
         engine.flush()?;
         let c = &engine.counters;
         eprintln!(
-            "cycles {} ours {} policy steps {} no imu {}",
-            c.cycles, c.ours, c.policy_steps, c.no_imu
+            "cycles {} ours {} policy steps {} (errors {}) no imu {}",
+            c.cycles, c.ours, c.policy_steps, c.policy_errors, c.no_imu
         );
         return Ok(());
     }
@@ -197,7 +202,10 @@ fn live(mut engine: Engine, map: Mapping, cfg: Config, scfg: ShadowConfig) -> Re
         libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
     }
     // every input is opened (and journalctl started) before the lock-down; nothing can be opened after
-    let mut tap = TapReader::bind(&scfg.tap_socket, Duration::from_millis(200))?;
+    let mut tap = TapReader::bind(
+        &scfg.tap_socket,
+        Duration::from_millis(scfg.tap_idle_timeout_ms.max(1)),
+    )?;
     let mut sniffers = Vec::new();
     for name in &scfg.sniff_interfaces {
         match Sniffer::open(name, scfg.dds_port_range[0], scfg.dds_port_range[1]) {
@@ -206,7 +214,15 @@ fn live(mut engine: Engine, map: Mapping, cfg: Config, scfg: ShadowConfig) -> Re
         }
     }
     let (etx, erx) = mpsc::channel();
-    let mut journal_child = journal::follow(&scfg.journal_unit, 5000, etx)?;
+    let mut journal_child =
+        journal::follow(&scfg.journal_unit, scfg.journal_history_lines, etx.clone())?;
+    // the day's log file in rl_deploy's local time, the next day's from its midnight
+    let log_follower = journal::follow_log(
+        &scfg.rl_log,
+        scfg.utc_offset_s,
+        scfg.rl_log_history_lines,
+        etx,
+    )?;
     let mut fds = vec![tap.fd()];
     fds.extend(sniffers.iter().map(|s| s.fd));
     seccomp::lock_down(&fds)?;
@@ -241,10 +257,11 @@ fn live(mut engine: Engine, map: Mapping, cfg: Config, scfg: ShadowConfig) -> Re
             last_status = c.cycles;
             let wall = realtime_now() - started;
             eprintln!(
-                "shadow: cycles {} ours {} policy steps {} no imu {} dropped {} pending {} cpu {:.1}% shim dropped {}/{}",
+                "shadow: cycles {} ours {} policy steps {} (errors {}) no imu {} dropped {} pending {} cpu {:.1}% shim dropped {}/{}",
                 c.cycles,
                 c.ours,
                 c.policy_steps,
+                c.policy_errors,
                 c.no_imu,
                 c.dropped,
                 engine.pending(),
@@ -258,6 +275,8 @@ fn live(mut engine: Engine, map: Mapping, cfg: Config, scfg: ShadowConfig) -> Re
     engine.drain(f64::INFINITY, true)?;
     engine.flush()?;
     let _ = journal_child.kill();
+    let _ = journal_child.wait();
+    log_follower.stop();
     eprintln!("shadow: stopped");
     Ok(())
 }

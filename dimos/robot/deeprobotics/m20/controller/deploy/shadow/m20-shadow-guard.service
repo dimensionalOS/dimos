@@ -4,8 +4,11 @@ PartOf=m20-shadow.service
 After=m20-shadow.service
 
 [Service]
-# background measured 8-11 per 10 min (~66 / hour, 2026-11-20); allow 90 / hour + 5; check every 30 s
-ExecStart=/var/opt/robot/data/m20_shadow/bin/guard.sh 90 5 30
+# rate, slack and post-restart settle time: guard_* in shadow.toml
+ExecStart=/var/opt/robot/data/m20_shadow/bin/guard.sh /var/opt/robot/data/m20_shadow/shadow.toml
 CPUAffinity=1 2 3
 Nice=10
 Restart=no
+StandardOutput=append:/var/opt/robot/data/m20_shadow/log/guard.out
+StandardError=append:/var/opt/robot/data/m20_shadow/log/guard.out
+ExecStopPost=/bin/sh -c 'echo "$$(date -Is) m20-shadow-guard ended: result=$$SERVICE_RESULT exit=$$EXIT_CODE/$$EXIT_STATUS" >> /var/opt/robot/data/m20_shadow/log/exits.log'

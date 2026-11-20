@@ -83,7 +83,7 @@ def _placement(blueprint: Blueprint) -> dict[str, str]:
 def test_no_vendor_bridge() -> None:
     for blueprint in (
         _solid(),
-        _solid(M20Joints="ecan", M20Cameras="off"),
+        _solid(M20Joints="controller", M20Cameras="off"),
         _solid(M20BodyFilter="python"),
     ):
         assert M20Connection not in {atom.module for atom in blueprint.active_blueprints}
@@ -93,7 +93,7 @@ def test_no_vendor_bridge() -> None:
     ("choices", "on_aos"),
     [
         ({}, _AOS_DRIVERS),
-        ({"M20Joints": "ecan"}, _AOS_DRIVERS | {"m20ecan"}),
+        ({"M20Joints": "controller"}, _AOS_DRIVERS | {"m20controller"}),
         ({"M20Cameras": "off"}, _AOS_DRIVERS - {"rockchiph264cameras"}),
         (
             {"M20Cameras": "off", "M20BodyImu": "serial"},
@@ -101,7 +101,10 @@ def test_no_vendor_bridge() -> None:
         ),
         ({"M20BodyImu": "off"}, _AOS_DRIVERS - {"m20bodyimusniff"}),
         ({"M20BodyFilter": "python"}, _AOS_DRIVERS),
-        ({"M20Joints": "ecan", "M20BodyFilter": "python"}, _AOS_DRIVERS | {"m20ecan"}),
+        ({"M20Joints": "controller", "M20BodyFilter": "python"}, _AOS_DRIVERS | {"m20controller"}),
+        ({"M20Walker": "rl_deploy"}, _AOS_DRIVERS | {"m20cmdvel"}),
+        ({"M20Walker": "controller"}, _AOS_DRIVERS | {"m20controller"}),
+        ({"M20Joints": "controller", "M20Walker": "controller"}, _AOS_DRIVERS | {"m20controller"}),
     ],
 )
 def test_drivers_on_aos_lidars_and_dimslam_on_nos_and_the_rest_where_the_run_starts(
@@ -152,7 +155,7 @@ def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
     assert slam["publish_every"] >= 1
 
 
-@pytest.mark.parametrize("joints", ["standing", "ecan"])
+@pytest.mark.parametrize("joints", ["standing", "controller"])
 def test_every_lidar_mount_has_one_publisher(joints: str) -> None:
     """Both pairs read the same two Airys; only AOS's publishes base_link -> lidar, so tf has one writer per edge."""
     atoms = {atom.name: atom for atom in _solid(M20Joints=joints).active_blueprints}
@@ -179,7 +182,7 @@ def _readers(blueprint: Blueprint, topic: str) -> set[str]:
     }
 
 
-@pytest.mark.parametrize("joints", ["standing", "ecan"])
+@pytest.mark.parametrize("joints", ["standing", "controller"])
 def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: str) -> None:
     blueprint = _solid(M20Joints=joints)
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
@@ -209,7 +212,7 @@ def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: s
     assert "lidar_raw" not in {name for name, _ in streams}
 
 
-@pytest.mark.parametrize("joints", ["standing", "ecan"])
+@pytest.mark.parametrize("joints", ["standing", "controller"])
 def test_the_python_filter_stays_selectable_between_lidar_raw_and_lidar(joints: str) -> None:
     blueprint = _solid(M20Joints=joints, M20BodyFilter="python")
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
@@ -272,15 +275,15 @@ def test_navigation_and_relocalization_match_m20() -> None:
 
 
 def test_the_python_filter_matches_the_joint_source_it_is_given() -> None:
-    """A fixed pose republished every period is matched within that period; ecan's 1 kHz state keeps the default."""
+    """A fixed pose republished every period is matched within that period; the controller's 1 kHz state keeps the default."""
     standing = {a.name: a for a in _solid(M20BodyFilter="python").active_blueprints}[
         "urdfmanagerpointclearing"
     ].kwargs
-    ecan = {a.name: a for a in _solid(M20Joints="ecan", M20BodyFilter="python").active_blueprints}[
-        "urdfmanagerpointclearing"
-    ].kwargs
+    controller = {
+        a.name: a for a in _solid(M20Joints="controller", M20BodyFilter="python").active_blueprints
+    }["urdfmanagerpointclearing"].kwargs
     assert standing["state_tolerance_s"] == M20StandingJointStateConfig().publish_period_s
-    assert "state_tolerance_s" not in ecan
+    assert "state_tolerance_s" not in controller
 
 
 def test_dimslam_runs_on_nos_a76_cores() -> None:
@@ -294,8 +297,10 @@ def test_dimslam_runs_on_nos_a76_cores() -> None:
     [
         {},
         {"M20Slam": "gos"},
-        {"M20Joints": "ecan"},
-        {"M20Joints": "ecan", "M20BodyFilter": "python"},
+        {"M20Joints": "controller"},
+        {"M20Joints": "controller", "M20BodyFilter": "python"},
+        {"M20Walker": "rl_deploy"},
+        {"M20Walker": "controller"},
     ],
 )
 def test_every_module_config_m20_rust_builds_validates_as_its_board_will_parse_it(
@@ -305,6 +310,30 @@ def test_every_module_config_m20_rust_builds_validates_as_its_board_will_parse_i
     for atom in _solid(**choices).active_blueprints:
         config_type = typing.get_type_hints(atom.module)["config"]
         config_type(**{key: value for key, value in atom.kwargs.items() if key != "instance_name"})
+
+
+def test_nothing_takes_cmd_vel_unless_a_walker_is_chosen_and_the_controller_never_sends_gains() -> (
+    None
+):
+    def walkers(**choices: str) -> dict[str, dict[str, typing.Any]]:
+        return {
+            atom.name: dict(atom.kwargs)
+            for atom in _solid(**choices).active_blueprints
+            if atom.name in {"m20controller", "m20cmdvel"}
+        }
+
+    assert walkers() == {}
+    assert set(walkers(M20Walker="rl_deploy")) == {"m20cmdvel"}
+    for choices in (
+        {"M20Walker": "controller"},
+        {"M20Joints": "controller", "M20Walker": "controller"},
+    ):
+        (controller,) = walkers(**choices).values()
+        assert controller["mode"] == "owner" and controller["policy"] is True
+        assert controller.get("allow_gains", False) is False
+    # the joint source alone is the shim reader: no bus ownership, no policy
+    (tap,) = walkers(M20Joints="controller").values()
+    assert tap.get("mode", "tap") == "tap" and not tap.get("policy", False)
 
 
 def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None:

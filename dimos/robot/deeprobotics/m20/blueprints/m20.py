@@ -16,26 +16,27 @@
 """The M20: one blueprint for the real robot and its simulation, picked with ``--choice M20Mode=...``.
 
 ``real`` (default) runs on the robot on its own Rust drivers with dimSLAM, the voxel map, MLS planning, local planner,
-follower and continuous relocalization, with its own choices (M20Joints, M20BodyFilter, M20BodyImu, M20Cameras,
-M20Slam). ``sim`` drives the simulated walking M20 with the same navigation stack to a clicked goal.
+follower and continuous relocalization, with its own choices (M20Joints, M20Walker, M20BodyFilter, M20BodyImu,
+M20Cameras, M20Slam). ``sim`` drives the simulated walking M20 with the same navigation stack to a clicked goal.
 ``sim-bench`` is ``sim`` with one nav-bench case driven against it (``dimos nav-bench`` runs it).
 
 Real mode runs the M20 on its own Rust drivers, with no vendor DrDDS stack: dimSLAM in place of the vendor LIO.
 
-AOS (a ``dimos host`` tagged ``board=aos``) runs the body IMU, the cameras and, with ``--choice M20Joints=ecan``, the
-motor-bus joint state and batteries (needs rl_deploy with the ecan shim). NOS (``board=nos``) takes the Airys' multicast
+AOS (a ``dimos host`` tagged ``board=aos``) runs the body IMU, the cameras and, with ``--choice M20Joints=controller``, the
+motor-bus joint state and batteries (the M20 controller; needs rl_deploy with the ecan shim). NOS (``board=nos``) takes the Airys' multicast
 on its own lidar NIC and runs both Airy pairs off it: full sweeps with the body cut, for the map and relocalization,
 and 10 ms slices of each sweep for dimSLAM beside them (``--choice M20Slam=gos`` runs dimSLAM on GOS on the full sweeps).
 Everything else runs on the machine that starts the run (GOS): the ray tracer, planners and relocalization.
 
 Both Airys publish onto one ``lidar`` stream (their IMUs onto ``lidar_imu``), each scan in its own frame (front_lidar,
 rear_lidar), with the robot's body already cut out by the lidar driver (the URDF's collision geometry at the standing
-pose, or at ecan's joint state with ``--choice M20Joints=ecan``): dimSLAM tells the lidars apart by frame_id, the ray
+pose, or at the controller's joint state with ``--choice M20Joints=controller``): dimSLAM tells the lidars apart by frame_id, the ray
 tracer traces each from its own lidar's origin, and relocalization places each by tf at its stamp.
 ``--choice M20BodyFilter=python`` cuts it with the Python UrdfManagerPointClearing instead (lidars onto ``lidar_raw``,
 the filter onto ``lidar``). dimSLAM runs on the rear lidar's IMU alone (two IMUs ran under real time
 on the RK3588). Each Airy is namespaced but publishes its mount onto the one global tf. ``--choice M20Cameras=off`` runs no cameras; the body IMU (``imu``) is sniffed off the vendor
-yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, with yesense_node stopped. Nothing commands the legs.
+yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, with yesense_node stopped. Nothing commands the legs
+unless ``--choice M20Walker=rl_deploy|controller`` gives cmd_vel a walker.
 """
 
 from __future__ import annotations
@@ -67,6 +68,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.body_imu_sniff.module import M20BodyImuSniff
+from dimos.robot.deeprobotics.m20.cmd_vel.module import M20CmdVel
 from dimos.robot.deeprobotics.m20.constants import (
     GOS_SLAM_CPUS,
     MAP_FRAME,
@@ -77,7 +79,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     WALL_CLEARANCE_M,
     WORLD_FRAME,
 )
-from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
+from dimos.robot.deeprobotics.m20.controller.module import M20Controller
 from dimos.robot.deeprobotics.m20.model import (
     M20_MODEL,
     STAND_JOINT_POSITIONS,
@@ -331,12 +333,12 @@ def _python_body_filter(**config: Any) -> Blueprint:
 
 
 def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
-    """Both lidars and where the body is cut out of their scans, for one joint source (standing or ecan)."""
+    """Both lidars and where the body is cut out of their scans, for one joint source (standing or controller)."""
     joint_source: Blueprint = (
         M20StandingJointState.blueprint()
         if joints == "standing"
-        else M20Ecan.blueprint()
-        .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
+        else M20Controller.blueprint()
+        .remappings([(M20Controller, "joint_state", "coordinator_joint_state")])
         .hosted(tags=AOS)
     )
     # the lidars' voxel thins the scans on the wire: the rear Airy sees ~5x the front's points at
@@ -344,8 +346,8 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
     # offset_time on the wire (nothing past the body cut reads intensity or ring)
     front, rear = {"voxel": VOXEL_SIZE_M}, {"voxel": 0.12}
     # on NOS, which takes the Airys' multicast on its own lidar NIC like AOS (and its cores 0-3 are idle), so the
-    # scans skip the AOS -> NOS hop; ecan's joint state still comes from AOS over zenoh. The body is the URDF's
-    # collision geometry, at the standing pose unless ecan's joint state poses it
+    # scans skip the AOS -> NOS hop; the controller's joint state still comes from AOS over zenoh. The body is the
+    # URDF's collision geometry, at the standing pose unless the controller's joint state poses it
     in_driver = _airys(
         front,
         rear,
@@ -377,13 +379,27 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
 
 
 _m20_real = autoconnect(
-    # the body pose comes from the standing pose or the motor bus (ecan, needs rl_deploy with the shim)
+    # the body pose comes from the standing pose or the motor bus (the controller; in its default tap mode it needs
+    # rl_deploy with the ecan shim)
     ChoiceAtom(
         name="M20Joints",
         default="standing",
         choices={
             "standing": _lidars_and_body_filter("standing"),
-            "ecan": _lidars_and_body_filter("ecan"),
+            "controller": _lidars_and_body_filter("controller"),
+        },
+    ),
+    # who takes cmd_vel. off (default): nobody, nothing walks. rl_deploy: the vendor walking controller, through its
+    # REAL_STEER topic (needs rl_deploy running, basic_server stopped). controller: the M20 controller owns the motor
+    # bus (rl_deploy stopped) with its walking policy on; its gains stay off (allow_gains) until an operator turns them
+    # on, so it runs the state machine without moving anything. With M20Joints=controller it is the same module.
+    ChoiceAtom(
+        name="M20Walker",
+        default="off",
+        choices={
+            "off": autoconnect(),
+            "rl_deploy": M20CmdVel.blueprint().hosted(tags=AOS),
+            "controller": M20Controller.blueprint(mode="owner", policy=True).hosted(tags=AOS),
         },
     ),
     # sniff: the vendor yesense_node's samples copied off its DDS traffic (needs it running); serial: the UART read

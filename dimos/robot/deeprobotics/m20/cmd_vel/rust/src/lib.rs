@@ -17,9 +17,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-use dimos_m20_ecan::module::M20Ecan;
-
-#[tokio::main]
-async fn main() {
-    dimos_module::run_with_transport::<M20Ecan>().await;
-}
+pub mod dds;
+pub mod gate;
+pub mod module;
+pub mod wire;

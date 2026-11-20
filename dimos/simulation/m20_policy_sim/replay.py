@@ -478,6 +478,7 @@ def run_python(s: Session, cfg: dict[str, Any], segments, steps) -> dict[str, np
         "lie_down": "lie_down",
         "passive": "passive",
         "joint_damping": "joint_damping",
+        "start_damping": "passive",
     }
     for seg in segments:
         if seg["state"] == "rl_control":

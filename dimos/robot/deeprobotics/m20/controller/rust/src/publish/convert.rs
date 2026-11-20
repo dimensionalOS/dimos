@@ -245,7 +245,8 @@ mod tests {
     use m20_battery::BatteryReport;
     use m20_ecan::{decode_ethernet, tap, Direction, Message};
 
-    const CAPTURE: &[u8] = include_bytes!("../tests/sitting_docked_20261120_125557.pcapng");
+    const CAPTURE: &[u8] =
+        include_bytes!("../../tests/fixtures/sitting_docked_20261120_125557.pcapng");
 
     #[test]
     fn stamp_saturates_past_2038() {

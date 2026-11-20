@@ -24,7 +24,8 @@ import numpy as np
 import tomllib
 
 CONFIG_PATH = (
-    Path(__file__).resolve().parents[2] / "robot/deeprobotics/m20/controller/m20_controller.toml"
+    Path(__file__).resolve().parents[2]
+    / "robot/deeprobotics/m20/controller/rust/m20_controller.toml"
 )
 # extract_policies.py writes here by default; M20_POLICY_DIR overrides
 DEFAULT_POLICY_DIR = Path("~/.cache/dimos/m20_policies").expanduser()

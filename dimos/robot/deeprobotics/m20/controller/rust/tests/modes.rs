@@ -15,10 +15,10 @@
 //! Tap mode and owner mode give the same messages for the same frames: the moving-session cut (joint states,
 //! commands, battery) once as the shim's stream delivers it and once as the owner's Bus hands it over.
 
-use dimos_m20_ecan::frames::FrameHandler;
+use m20_controller::publish::frames::FrameHandler;
 use m20_ecan::tap::{read_capture, TapRecord};
 
-const CAPTURE: &[u8] = include_bytes!("moving_20261120_141603.pcapng");
+const CAPTURE: &[u8] = include_bytes!("fixtures/moving_20261120_141603.pcapng");
 
 #[test]
 fn identical_outputs_across_modes() {
@@ -50,14 +50,15 @@ fn identical_outputs_across_modes() {
         .iter()
         .map(|(t, d, f)| handler.handle(*t, *d, f).unwrap())
         .collect();
-    let bytes = |v: &Vec<Option<dimos_m20_ecan::frames::Published>>| -> Vec<Option<Vec<Vec<u8>>>> {
-        v.iter().map(|p| p.as_ref().map(|p| p.encoded())).collect()
-    };
+    let bytes =
+        |v: &Vec<Option<m20_controller::publish::frames::Published>>| -> Vec<Option<Vec<Vec<u8>>>> {
+            v.iter().map(|p| p.as_ref().map(|p| p.encoded())).collect()
+        };
     assert_eq!(bytes(&tap), bytes(&owner));
-    let count = |pick: fn(&dimos_m20_ecan::frames::Published) -> bool| {
+    let count = |pick: fn(&m20_controller::publish::frames::Published) -> bool| {
         owner.iter().flatten().filter(|p| pick(p)).count()
     };
-    use dimos_m20_ecan::frames::Published as P;
+    use m20_controller::publish::frames::Published as P;
     assert!(count(|p| matches!(p, P::JointState(_))) >= 30);
     assert!(count(|p| matches!(p, P::JointCommand(_))) >= 30);
     assert_eq!(count(|p| matches!(p, P::Battery(_))), 3);

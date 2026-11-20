@@ -104,8 +104,8 @@ impl Logger {
             header,
             file: None,
             written: 0,
-            file_bytes: file_mb << 20,
-            max_total: max_total_mb << 20,
+            file_bytes: file_mb.saturating_mul(1 << 20),
+            max_total: max_total_mb.saturating_mul(1 << 20),
             buf: Vec::with_capacity(RECORD_SIZE),
         })
     }
@@ -114,15 +114,22 @@ impl Logger {
         if let Some(mut f) = self.file.take() {
             f.flush()?;
         }
-        let path = self.dir.join(format!("{t_ns}.m20shadow"));
+        // never truncate an earlier file: a second rotation in the same ns (or a clock step back) gets a suffix
+        let mut path = self.dir.join(format!("{t_ns}.m20shadow"));
+        let mut n = 0;
+        while path.exists() {
+            n += 1;
+            path = self.dir.join(format!("{t_ns}_{n}.m20shadow"));
+        }
         let mut f = BufWriter::with_capacity(1 << 20, File::create(&path)?);
         f.write_all(&self.header)?;
         self.file = Some(f);
         self.written = 0;
-        self.prune()
+        self.prune(&path)
     }
 
-    fn prune(&self) -> Result<()> {
+    /// Oldest first by name (the start ns), never the file being written (a clock step back names it lower).
+    fn prune(&self, current: &Path) -> Result<()> {
         let mut files: Vec<(PathBuf, u64)> = std::fs::read_dir(&self.dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|x| x == "m20shadow"))
@@ -133,6 +140,9 @@ impl Logger {
         for (path, len) in &files {
             if total <= self.max_total {
                 break;
+            }
+            if path == current {
+                continue;
             }
             let _ = std::fs::remove_file(path);
             total -= len;
@@ -146,7 +156,8 @@ impl Logger {
         }
         self.buf.clear();
         encode(r, &mut self.buf);
-        self.file.as_mut().unwrap().write_all(&self.buf)?;
+        let file = self.file.as_mut().context("no log file open")?;
+        file.write_all(&self.buf)?;
         self.written += self.buf.len() as u64;
         Ok(())
     }
@@ -183,5 +194,33 @@ mod tests {
         encode(&r, &mut out);
         assert_eq!(out.len(), RECORD_SIZE);
         assert_eq!(RECORD_SIZE, 716);
+    }
+
+    #[test]
+    fn rotation_in_the_same_ns_keeps_the_earlier_file() {
+        let dir = std::env::temp_dir().join(format!("m20shadow_log_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut log = Logger::new(&dir, &serde_json::json!({}), 0, 1 << 20).unwrap();
+        let s = RobotState::default();
+        let c = JointCommand::default();
+        for _ in 0..3 {
+            let r = Record {
+                t_ns: 7,
+                flags: 0,
+                rl_word: 4,
+                state: 0,
+                runner: 255,
+                gait: 0,
+                input: &s,
+                axes: [0.0; 3],
+                ours: None,
+                rl: &c,
+            };
+            log.write(&r).unwrap();
+        }
+        log.flush().unwrap();
+        let files = std::fs::read_dir(&dir).unwrap().count();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(files, 3);
     }
 }

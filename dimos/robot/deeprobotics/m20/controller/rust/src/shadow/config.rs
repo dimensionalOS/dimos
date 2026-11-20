@@ -71,6 +71,10 @@ pub struct ShadowConfig {
     pub pose_inputs: Vec<PoseInput>,
     /// journalctl -u this
     pub journal_unit: String,
+    /// rl_deploy's own log (its state transitions survive a journal reset); {date} = YYYY_MMDD, local time
+    pub rl_log: String,
+    /// the AOS clock's offset from UTC (its log stamps are local time)
+    pub utc_offset_s: i64,
     /// rl_deploy's enable frames' control word, and its "stand-in" gait
     pub enable_word: u16,
     pub stand_in_gait: u32,
@@ -80,6 +84,42 @@ pub struct ShadowConfig {
     pub nice: i32,
     /// print a status line to stderr every this many cycles
     pub status_every: u64,
+    /// IMU / steer history kept for lookups (s); journal events keep the newest one before this window too
+    #[serde(default = "default_keep_s")]
+    pub keep_s: f64,
+    /// a segment's state is the journal's last transition up to this long after its first enable frame (s)
+    #[serde(default = "default_state_lookup_slack_s")]
+    pub state_lookup_slack_s: f64,
+    /// control ticks run for cycles the shim missed (a gap in the stream), at most this many
+    #[serde(default = "default_max_catchup_ticks")]
+    pub max_catchup_ticks: u64,
+    /// longest wait on the shim's stream while it is silent: bounds how late a stop or the last cycles are handled
+    #[serde(default = "default_tap_idle_timeout_ms")]
+    pub tap_idle_timeout_ms: u64,
+    /// journal lines read back at start (the current state and gait), and lines of rl_deploy's own log
+    #[serde(default = "default_journal_history_lines")]
+    pub journal_history_lines: usize,
+    #[serde(default = "default_rl_log_history_lines")]
+    pub rl_log_history_lines: usize,
+}
+
+fn default_keep_s() -> f64 {
+    30.0
+}
+fn default_state_lookup_slack_s() -> f64 {
+    0.01
+}
+fn default_max_catchup_ticks() -> u64 {
+    50
+}
+fn default_tap_idle_timeout_ms() -> u64 {
+    200
+}
+fn default_journal_history_lines() -> usize {
+    5000
+}
+fn default_rl_log_history_lines() -> usize {
+    20000
 }
 
 impl ShadowConfig {

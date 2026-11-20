@@ -16,7 +16,7 @@
 
 from pathlib import Path
 
-from dimos.robot.deeprobotics.m20.ecan.module import M20EcanConfig
+from dimos.robot.deeprobotics.m20.cmd_vel.module import M20CmdVelConfig
 
 _RUST = Path(__file__).parent / "rust" / "src" / "module.rs"
 
@@ -29,4 +29,4 @@ def test_the_wire_config_has_every_rust_field() -> None:
         for line in struct.splitlines()
         if ": " in line and not line.strip().startswith(("//", "#"))
     }
-    assert set(M20EcanConfig(mode="owner").to_config_dict()) == declared
+    assert set(M20CmdVelConfig().to_config_dict()) == declared

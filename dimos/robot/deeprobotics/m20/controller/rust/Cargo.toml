@@ -2,13 +2,20 @@
 name = "dimos-m20-controller"
 version = "0.1.0"
 edition = "2021"
-description = "M20 motor controller (rl_deploy replacement): state machine, ONNX policy runners, MuJoCo and ECAN backends"
+description = "The M20 controller: the dimos module that owns the motor bus (joint state, batteries, charge enable) with the rl_deploy-replacement walking policy built in (state machine, ONNX runners), plus its MuJoCo backend and the dry-run shadow"
 license = "Apache-2.0"
 
 [lib]
 name = "m20_controller"
 path = "src/lib.rs"
 
+# the dimos module (feature "module"): `controller` in the blueprints
+[[bin]]
+name = "m20_controller_module"
+path = "src/bin/m20_controller_module.rs"
+required-features = ["module"]
+
+# the controller from the command line (MuJoCo sim, scripted commands)
 [[bin]]
 name = "m20_controller"
 path = "src/bin/m20_controller.rs"
@@ -24,12 +31,18 @@ required-features = ["shadow"]
 name = "ecan_capture"
 required-features = ["ecan"]
 
+[[test]]
+name = "modes"
+required-features = ["module"]
+
 [features]
-default = ["ecan"]
+default = ["ecan", "module"]
 # the eth1 motor-bus backend (sends) and the charge-enable rule
 ecan = ["dep:m20-ecan", "dep:m20-battery"]
 # passive inputs (shim stream, DDS sniffer, journal) and the shadow log; never with "ecan" on the robot
 shadow = []
+# the dimos native module: motor-bus owner / shim reader, publishing, cmd_vel into the policy
+module = ["ecan", "dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:validator"]
 
 [dependencies]
 anyhow = "1"
@@ -39,11 +52,35 @@ serde_json = "1"
 toml = "0.8"
 # pure Rust ONNX inference: no shared library to ship to the aarch64 board, cross-compiles with cargo zigbuild
 tract-onnx = "0.23"
-m20-ecan = { version = "0.3.1", optional = true }
-m20-battery = { version = "0.3.1", optional = true }
+m20-ecan = { version = "0.3.2", optional = true }
+m20-battery = { version = "0.3.2", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f", optional = true }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"], optional = true }
+tracing = { version = "0.1", optional = true }
+validator = { version = "0.21", features = ["derive"], optional = true }
 
 [dev-dependencies]
-m20-ecan = "0.3.1"
+m20-ecan = "0.3.2"
+
+[package.metadata.dimos.module.m20_controller]
+path = "m20_controller::module::M20Controller"
+python = "dimos.robot.deeprobotics.m20.controller.module:M20Controller"
+
+[package.metadata.dimos.module.m20_controller.inputs]
+cmd_vel = "geometry_msgs.Twist"
+imu = "sensor_msgs.Imu"
+motion_cmd = "std_msgs.String"
+gait_cmd = "std_msgs.UInt32"
+
+[package.metadata.dimos.module.m20_controller.outputs]
+joint_state = "sensor_msgs.JointState"
+joint_command = "sensor_msgs.JointState"
+battery = "sensor_msgs.BatteryState"
+battery_left = "sensor_msgs.BatteryState"
+battery_right = "sensor_msgs.BatteryState"
+command_ready = "std_msgs.Bool"
+controller_state = "std_msgs.String"
 
 # tests run the policies: optimize dependencies (tract) without paying for release LTO links
 [profile.dev.package."*"]

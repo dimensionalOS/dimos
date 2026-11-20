@@ -33,6 +33,7 @@ pub fn state_name(state: State) -> &'static str {
         State::RlControl => "rl_control",
         State::LieDown => "lie_down",
         State::JointDamping => "joint_damping",
+        State::StartDamping => "start_damping",
     }
 }
 
@@ -43,6 +44,8 @@ pub enum State {
     RlControl,
     LieDown,
     JointDamping,
+    /// rl_deploy's state after a (re)start, until the operator stands it up
+    StartDamping,
 }
 
 /// Hermite cubic from (p0, v0) at 0 to (p1, v1) at T (rl_deploy's GetCubicSplinePos/Vel); holds p1 past T.
@@ -78,17 +81,37 @@ pub fn leg_pose_for_height(robot: &Robot, h: f64, hipx: f64) -> [f64; JOINTS] {
     ]
 }
 
-fn arr16(v: Vec<f64>) -> [f64; JOINTS] {
-    let mut a = [0.0; JOINTS];
-    a.copy_from_slice(&v[..JOINTS]);
-    a
+/// Gains tiled to every joint (Config::validate checks they tile); a list that does not tile gives zero gains.
+fn tiled(v: &[f64]) -> [f64; JOINTS] {
+    tile(v, JOINTS)
+        .ok()
+        .and_then(|t| t.try_into().ok())
+        .unwrap_or([0.0; JOINTS])
 }
 
 fn gains(kp: &[f64], kd: &[f64]) -> ([f64; JOINTS], [f64; JOINTS]) {
-    (
-        arr16(tile(kp, JOINTS).expect("validated")),
-        arr16(tile(kd, JOINTS).expect("validated")),
-    )
+    (tiled(kp), tiled(kd))
+}
+
+/// The first non-finite number in a state the faults are judged on, by name.
+fn non_finite_state(s: &RobotState) -> Option<&'static str> {
+    let fields: [(&str, &[f64]); 5] = [
+        ("joint position", &s.q),
+        ("joint velocity", &s.dq),
+        ("orientation", &s.quat),
+        ("gyro", &s.gyro),
+        ("stamp", std::slice::from_ref(&s.stamp)),
+    ];
+    fields
+        .iter()
+        .find(|(_, v)| v.iter().any(|x| !x.is_finite()))
+        .map(|(name, _)| *name)
+}
+
+fn command_is_finite(c: &JointCommand) -> bool {
+    [&c.kp, &c.q, &c.kd, &c.dq, &c.tau]
+        .iter()
+        .all(|a| a.iter().all(|x| x.is_finite()))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -225,6 +248,10 @@ impl Controller {
         if self.time < safety.startup_grace_s {
             return None;
         }
+        // NaN compares false against every limit below, so a non-finite reading is a fault of its own
+        if let Some(name) = non_finite_state(s) {
+            return Some(format!("non-finite {name} in the hardware state"));
+        }
         if self.stale_run as f64 * self.dt > safety.state_timeout_s {
             return Some(format!("no hardware state for {} ticks", self.stale_run));
         }
@@ -248,7 +275,7 @@ impl Controller {
         let (roll, pitch) = (roll.abs().to_degrees(), pitch.abs().to_degrees());
         let st = &self.cfg.states;
         let tilted = match self.state {
-            State::Passive => roll.max(pitch) > st.passive.max_tilt_deg,
+            State::Passive | State::StartDamping => roll.max(pitch) > st.passive.max_tilt_deg,
             State::StandUp => roll.max(pitch) > st.stand_up.max_tilt_deg,
             State::RlControl => match self.runner.as_ref().and_then(|n| self.cfg.runners.get(n)) {
                 Some(spec) if spec.tilt_check => {
@@ -282,12 +309,12 @@ impl Controller {
             return State::JointDamping;
         }
         match self.state {
-            State::Passive => {
+            State::Passive | State::StartDamping => {
                 let ready = self.time >= st.passive.min_s_before_stand;
                 if ready && matches!(target, Target::Stand | Target::RlControl) {
                     State::StandUp
                 } else {
-                    State::Passive
+                    self.state
                 }
             }
             State::StandUp => match target {
@@ -395,10 +422,18 @@ impl Controller {
         let st = self.cfg.states.clone();
         let out = match self.state {
             State::Passive => self.constant(&st.passive.kp, &st.passive.kd),
+            State::StartDamping => self.constant(&st.start_damping.kp, &st.start_damping.kd),
             State::JointDamping => self.constant(&st.joint_damping.kp, &st.joint_damping.kd),
             State::StandUp => self.stand_up(),
             State::LieDown => self.lie_down(),
             State::RlControl => self.rl_control(s, cmd, policy),
+        };
+        // a NaN / inf target or gain (a policy output, a bad state through a spline) never reaches the motors
+        let out = if self.fault_checks && !command_is_finite(&out) {
+            self.fault = Some("policy: non-finite joint command".into());
+            self.constant(&st.joint_damping.kp, &st.joint_damping.kd)
+        } else {
+            out
         };
         let out = if self.enable_left > 0 {
             self.enable_left -= 1;
@@ -520,7 +555,12 @@ impl Controller {
 
     /// The normalized axes: cmd.axes, or a metric cmd.velocity over the runner's real_steer_divisor.
     fn axes_for(&self, runner: &str, cmd: &UserCommand) -> [f64; 3] {
-        match (cmd.velocity, self.cfg.runners[runner].real_steer_divisor) {
+        let divisor = self
+            .cfg
+            .runners
+            .get(runner)
+            .and_then(|r| r.real_steer_divisor);
+        match (cmd.velocity, divisor) {
             (Some(v), Some(d)) => {
                 let mut a = [0.0; 3];
                 for i in 0..3 {
@@ -558,9 +598,11 @@ impl Controller {
                     self.gait = gait;
                     self.start_stand_in(gait, false);
                 }
+                // a forced runner the config does not have is ignored (the gait's runner runs)
                 let name = cmd
                     .runner
                     .clone()
+                    .filter(|r| self.cfg.runners.contains_key(r))
                     .unwrap_or_else(|| self.cfg.runner_for_gait(self.gait).to_string());
                 (name, cmd.params.clone())
             }
@@ -609,7 +651,11 @@ impl Controller {
                 self.counters.policy_offers_refused += 1;
             }
         }
-        let (mut kp, mut kd) = self.runner_gains[&wanted];
+        let (mut kp, mut kd) = self
+            .runner_gains
+            .get(&wanted)
+            .copied()
+            .unwrap_or(([0.0; JOINTS], [0.0; JOINTS]));
         // legs only: on the robot NaviCharge's x1.3 start-up gains left the wheels' kd at 0.6
         for i in (0..JOINTS).filter(|i| i % 4 != 3) {
             kp[i] *= self.gain_scale;
@@ -636,5 +682,118 @@ impl Controller {
             c.q[i] = 0.0;
         }
         c
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy::{InlinePolicy, PolicyResult, RunnerSet};
+
+    fn config() -> Config {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        Config::load(&path).unwrap()
+    }
+
+    fn standing_state(cfg: &Config) -> RobotState {
+        let mut s = RobotState {
+            quat: [1.0, 0.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        for i in 0..JOINTS {
+            s.q[i] = (cfg.robot.joint_lower[i] + cfg.robot.joint_upper[i]) / 2.0;
+        }
+        s
+    }
+
+    /// Answers every offer with these targets.
+    struct Fixed(Targets, Option<PolicyResult>);
+
+    impl PolicyService for Fixed {
+        fn offer(&mut self, request: PolicyRequest) -> bool {
+            self.1 = Some(PolicyResult {
+                runner: request.runner,
+                seq: request.seq,
+                targets: Ok(self.0.clone()),
+                gain_scale: 1.0,
+                inference_s: 0.0,
+            });
+            true
+        }
+        fn take_result(&mut self) -> Option<PolicyResult> {
+            self.1.take()
+        }
+        fn dropped(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn unknown_forced_runner_does_not_panic() {
+        let cfg = config();
+        let s = standing_state(&cfg);
+        let mut c = Controller::new(cfg);
+        let cmd = UserCommand {
+            target: Target::RlControl,
+            runner: Some("no_such_runner".into()),
+            ..Default::default()
+        };
+        c.set_time(10.0);
+        c.force(State::RlControl, &s, &cmd, false);
+        let mut policy = InlinePolicy::new(RunnerSet::empty());
+        for _ in 0..50 {
+            c.tick(&s, &cmd, &mut policy);
+        }
+        // the gait's runner ran (and, with no networks loaded, failed into a policy fault)
+        assert_eq!(c.state, State::JointDamping);
+        assert!(c.fault.as_deref().is_some_and(|f| f.starts_with("policy")));
+    }
+
+    #[test]
+    fn non_finite_state_is_a_fault() {
+        let cfg = config();
+        let mut s = standing_state(&cfg);
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let mut policy = InlinePolicy::new(RunnerSet::empty());
+        c.tick(&s, &UserCommand::default(), &mut policy);
+        assert!(c.fault.is_none());
+        s.q[5] = f64::NAN;
+        c.tick(&s, &UserCommand::default(), &mut policy);
+        assert!(c.fault.as_deref().is_some_and(|f| f.contains("non-finite")));
+        c.tick(&s, &UserCommand::default(), &mut policy);
+        assert_eq!(c.state, State::JointDamping);
+    }
+
+    #[test]
+    fn non_finite_policy_target_never_goes_out() {
+        let cfg = config();
+        let s = standing_state(&cfg);
+        let damping = gains(&cfg.states.joint_damping.kp, &cfg.states.joint_damping.kd);
+        let mut c = Controller::new(cfg);
+        let cmd = UserCommand {
+            target: Target::RlControl,
+            ..Default::default()
+        };
+        c.set_time(10.0);
+        c.force(State::RlControl, &s, &cmd, false);
+        let mut q = [0.0; JOINTS];
+        q[1] = f64::NAN;
+        let mut policy = Fixed(
+            Targets {
+                q,
+                wheel_velocity: [0.0; 4],
+                action: [0.0; JOINTS],
+                velocity_estimate: None,
+            },
+            None,
+        );
+        let mut sent = Vec::new();
+        for _ in 0..100 {
+            sent.push(c.tick(&s, &cmd, &mut policy));
+        }
+        assert!(sent.iter().all(command_is_finite));
+        assert!(sent.iter().any(|o| (o.kp, o.kd) == damping));
+        assert_eq!(c.state, State::JointDamping);
     }
 }

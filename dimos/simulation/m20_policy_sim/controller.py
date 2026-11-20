@@ -37,7 +37,7 @@ from dimos.simulation.m20_policy_sim.config import (
 )
 from dimos.simulation.m20_policy_sim.runner import RobotState, Runner, Targets
 
-STATES = ("passive", "stand_up", "rl_control", "lie_down", "joint_damping")
+STATES = ("passive", "stand_up", "rl_control", "lie_down", "joint_damping", "start_damping")
 
 
 @dataclass
@@ -162,7 +162,10 @@ class Controller:
             return "joint beyond its range"
         roll, pitch = (abs(math.degrees(a)) for a in roll_pitch(s.quat))
         st = self.cfg["states"]
-        if self.state == "passive" and max(roll, pitch) > st["passive"]["max_tilt_deg"]:
+        if (
+            self.state in ("passive", "start_damping")
+            and max(roll, pitch) > st["passive"]["max_tilt_deg"]
+        ):
             return "tilt"
         if self.state == "stand_up" and max(roll, pitch) > st["stand_up"]["max_tilt_deg"]:
             return "tilt"
@@ -188,9 +191,9 @@ class Controller:
         t = self.state_time
         if self.state != "joint_damping" and (target == "joint_damping" or self.fault):
             return "joint_damping"
-        if self.state == "passive":
+        if self.state in ("passive", "start_damping"):
             ready = self.time >= st["passive"]["min_s_before_stand"]
-            return "stand_up" if ready and target in ("stand", "rl_control") else "passive"
+            return "stand_up" if ready and target in ("stand", "rl_control") else self.state
         if self.state == "stand_up":
             if t > 2 * st["stand_up"]["phase_s"]:
                 if target == "rl_control":
@@ -269,6 +272,9 @@ class Controller:
 
     def run_passive(self, s: RobotState, cmd: UserCommand) -> JointCommand:
         return self.gains(self.cfg["states"]["passive"])
+
+    def run_start_damping(self, s: RobotState, cmd: UserCommand) -> JointCommand:
+        return self.gains(self.cfg["states"]["start_damping"])
 
     def run_joint_damping(self, s: RobotState, cmd: UserCommand) -> JointCommand:
         return self.gains(self.cfg["states"]["joint_damping"])

@@ -90,7 +90,9 @@ def test_both_namespaced_lidars_land_on_lidar_and_the_global_tf() -> None:
         assert blueprint.remapping_map[(name, "joint_state")] == "coordinator_joint_state"
 
 
-def test_the_body_is_cut_in_the_driver_at_the_standing_pose_or_ecans_joint_state() -> None:
+def test_the_body_is_cut_in_the_driver_at_the_standing_pose_or_the_controllers_joint_state() -> (
+    None
+):
     for name in (FRONT, REAR):
         wire = _wire(name)
         assert wire["body_filter"] is True
@@ -99,7 +101,7 @@ def test_the_body_is_cut_in_the_driver_at_the_standing_pose_or_ecans_joint_state
         assert wire["body_filter_urdf"] == M20_MODEL.load().xml
         # the URDF's root is the frame the lidar is mounted in, which places the body around the lidar
         assert wire["mount_parent_frame_id"] == M20_MODEL.load().root_link
-        assert _wire(name, M20Joints="ecan")["body_filter_joint_source"] == "joint_state"
+        assert _wire(name, M20Joints="controller")["body_filter_joint_source"] == "joint_state"
         # the Python filter cuts the raw scans instead
         assert _wire(name, M20BodyFilter="python")["body_filter"] is False
 

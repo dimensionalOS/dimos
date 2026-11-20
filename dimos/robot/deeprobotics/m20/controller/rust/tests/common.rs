@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use m20_controller::config::Config;
 
 pub fn config_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../m20_controller.toml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml")
 }
 
 pub fn config() -> Config {

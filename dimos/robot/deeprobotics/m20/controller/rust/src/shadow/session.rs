@@ -40,16 +40,24 @@ impl Input {
     }
 }
 
-/// (time ns, direction flags, packet) per enhanced packet block of a pcapng file.
+/// u32 at byte i, little-endian; 0 past the end (every caller bounds-checks first).
+fn u32_le(b: &[u8], i: usize) -> u32 {
+    match b.get(i..i + 4) {
+        Some(w) => u32::from_le_bytes([w[0], w[1], w[2], w[3]]),
+        None => 0,
+    }
+}
+
+/// (time ns, direction flags, packet) per enhanced packet block of a pcapng file; a truncated or malformed block
+/// ends the read.
 pub fn pcapng(bytes: &[u8]) -> Result<Vec<(u64, u32, &[u8])>> {
     let mut out = Vec::new();
     let mut at = 0usize;
     let mut resol = 1e-6f64;
-    let u32_at = |i: usize| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap());
     while at + 12 <= bytes.len() {
-        let kind = u32_at(at);
-        let len = u32_at(at + 4) as usize;
-        if len < 12 || at + len > bytes.len() {
+        let kind = u32_le(bytes, at);
+        let len = u32_le(bytes, at + 4) as usize;
+        if len < 12 || len > bytes.len() - at {
             break;
         }
         let body = &bytes[at + 8..at + len - 4];
@@ -63,7 +71,9 @@ pub fn pcapng(bytes: &[u8]) -> Result<Vec<(u64, u32, &[u8])>> {
                     break;
                 }
                 if code == 9 && n >= 1 {
-                    let r = body[o + 4];
+                    let Some(&r) = body.get(o + 4) else {
+                        break;
+                    };
                     resol = if r & 0x80 != 0 {
                         2f64.powi(-((r & 0x7f) as i32))
                     } else {
@@ -73,12 +83,11 @@ pub fn pcapng(bytes: &[u8]) -> Result<Vec<(u64, u32, &[u8])>> {
                 o += 4 + n.div_ceil(4) * 4;
             }
         } else if kind == 6 && body.len() >= 20 {
-            let ts = ((u32::from_le_bytes(body[4..8].try_into().unwrap()) as u64) << 32)
-                | u32::from_le_bytes(body[8..12].try_into().unwrap()) as u64;
-            let cap = u32::from_le_bytes(body[12..16].try_into().unwrap()) as usize;
+            let ts = ((u32_le(body, 4) as u64) << 32) | u32_le(body, 8) as u64;
+            let cap = u32_le(body, 12) as usize;
             let data = &body[20..20 + cap.min(body.len() - 20)];
             let mut flags = 0u32;
-            let mut o = 20 + cap.div_ceil(4) * 4;
+            let mut o = 20usize.saturating_add(cap.div_ceil(4).saturating_mul(4));
             while o + 4 <= body.len() {
                 let code = u16::from_le_bytes([body[o], body[o + 1]]);
                 let n = u16::from_le_bytes([body[o + 2], body[o + 3]]) as usize;
@@ -86,7 +95,7 @@ pub fn pcapng(bytes: &[u8]) -> Result<Vec<(u64, u32, &[u8])>> {
                     break;
                 }
                 if code == 2 && n == 4 {
-                    flags = u32::from_le_bytes(body[o + 4..o + 8].try_into().unwrap());
+                    flags = u32_le(body, o + 4);
                 }
                 o += 4 + n.div_ceil(4) * 4;
             }
@@ -102,16 +111,16 @@ pub fn pcap_ipv4(bytes: &[u8]) -> Result<Vec<(f64, &[u8])>> {
     if bytes.len() < 24 {
         bail!("short pcap");
     }
-    let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    let magic = u32_le(bytes, 0);
     let nano = magic == 0xa1b2_3c4d;
-    let link = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
+    let link = u32_le(bytes, 20);
     let off = if link == 113 { 16 } else { 14 };
     let mut out = Vec::new();
     let mut at = 24;
     while at + 16 <= bytes.len() {
-        let w = |i: usize| u32::from_le_bytes(bytes[at + i..at + i + 4].try_into().unwrap());
+        let w = |i: usize| u32_le(bytes, at + i);
         let (sec, frac, incl) = (w(0), w(4), w(8) as usize);
-        let Some(d) = bytes.get(at + 16..at + 16 + incl) else {
+        let Some(d) = bytes.get(at + 16..(at + 16).saturating_add(incl)) else {
             break;
         };
         at += 16 + incl;
@@ -147,4 +156,31 @@ pub fn load(dir: &Path, parser: &mut Parser) -> Result<Vec<Input>> {
     }
     inputs.sort_by(|a, b| a.time().total_cmp(&b.time()));
     Ok(inputs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncated_pcapng_options_do_not_panic() {
+        // an interface block whose if_tsresol option claims a value past the block's end
+        let mut b = Vec::new();
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&24u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 8]);
+        b.extend_from_slice(&9u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&24u32.to_le_bytes());
+        assert!(pcapng(&b).unwrap().is_empty());
+        // an enhanced packet block with a flags option cut short
+        let mut e = Vec::new();
+        e.extend_from_slice(&6u32.to_le_bytes());
+        e.extend_from_slice(&36u32.to_le_bytes());
+        e.extend_from_slice(&[0u8; 20]);
+        e.extend_from_slice(&2u16.to_le_bytes());
+        e.extend_from_slice(&4u16.to_le_bytes());
+        e.extend_from_slice(&36u32.to_le_bytes());
+        assert_eq!(pcapng(&e).unwrap().len(), 1);
+    }
 }

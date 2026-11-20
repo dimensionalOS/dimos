@@ -12,15 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! M20 motor controller, a replacement for the vendor rl_deploy: the rl_deploy state machine, its ONNX policy
+//! The M20 controller: the dimos module that owns the motor bus (joint state, batteries, charge enable; feature
+//! "module"), with a replacement for the vendor rl_deploy built in: the rl_deploy state machine, its ONNX policy
 //! runners (observation and action pipelines per m20_controller.toml), a 1 kHz real-time loop with the policy on its
-//! own thread, and two hardware backends (MuJoCo over a socket for tests, the eth1 ECAN motor bus).
+//! own thread, and the hardware backends (MuJoCo over a socket for tests, the eth1 ECAN motor bus).
+
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 pub mod commands;
 pub mod config;
 pub mod frames;
 pub mod hardware;
+#[cfg(feature = "module")]
+pub mod module;
 pub mod policy;
+#[cfg(feature = "module")]
+pub mod publish;
 pub mod rt;
 pub mod runner;
 #[cfg(feature = "shadow")]

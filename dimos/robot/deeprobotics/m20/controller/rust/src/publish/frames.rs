@@ -19,7 +19,7 @@ use lcm_msgs::sensor_msgs::{BatteryState, JointState};
 use m20_battery::BatteryReport;
 use m20_ecan::{decode_ethernet, Calibration, Direction, Message};
 
-use crate::convert;
+use crate::publish::convert;
 
 /// Both packs and the combined battery from one battery frame.
 #[derive(Clone, Debug, PartialEq)]

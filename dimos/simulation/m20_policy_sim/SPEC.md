@@ -2,7 +2,7 @@
 
 What the vendor walking controller (`/opt/robot/share/rl_deploy`, binary md5 b16070a4bf2abb52a0ce33e863a4df2e) does,
 decoded from its disassembly and confirmed in MuJoCo. Both re-implementations follow this file and read the same
-config, `dimos/robot/deeprobotics/m20/controller/m20_controller.toml`:
+config, `dimos/robot/deeprobotics/m20/controller/rust/m20_controller.toml`:
 
 - the Python reference sim (this folder): `python -m dimos.simulation.m20_policy_sim.run_all`
 - the Rust controller: `dimos/robot/deeprobotics/m20/controller/rust` (tested against the sim, never run on the robot)

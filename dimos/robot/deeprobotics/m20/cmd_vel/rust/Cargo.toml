@@ -1,0 +1,43 @@
+[package]
+name = "dimos-m20-cmd-vel"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: dimos cmd_vel to the Deep Robotics M20's walking controller (rl_deploy) on its rt/REAL_STEER DDS topic, gated and limited as the vendor bridge does, with no vendor DrDDS process in between"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_m20_cmd_vel"
+path = "src/lib.rs"
+
+[[bin]]
+name = "m20_cmd_vel"
+path = "src/bin/m20_cmd_vel.rs"
+
+[[bin]]
+name = "m20_steer_check"
+path = "src/bin/m20_steer_check.rs"
+
+[package.metadata.dimos.module.m20_cmd_vel]
+path = "dimos_m20_cmd_vel::module::M20CmdVel"
+python = "dimos.robot.deeprobotics.m20.cmd_vel.module:M20CmdVel"
+
+[package.metadata.dimos.module.m20_cmd_vel.inputs]
+cmd_vel = "geometry_msgs.Twist"
+
+[package.metadata.dimos.module.m20_cmd_vel.outputs]
+command_ready = "std_msgs.Bool"
+motion_state = "std_msgs.Int32"
+gait_state = "std_msgs.UInt32"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+rustdds = "0.15.1"
+
+[dev-dependencies]
+byteorder = "1"

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The controller on m20-ecan's bus owner (the shared one the dimos m20_ecan module also runs): rl_deploy's startup
+//! The controller on m20-ecan's bus owner (the one the dimos controller module runs): rl_deploy's startup
 //! in `read_state`, then one frame per tick. Gains go out only with `allow_gains`; without it every command that
 //! holds a joint becomes rl_deploy's sitting command, so the controller can run but not move the robot. Every frame
 //! sent and received is handed to `sink` (joint state / battery publishing), and the charge rule runs on them.
@@ -54,6 +54,7 @@ pub fn motor_commands(
         .map(|joint| {
             let i = joint.index();
             m20_ecan::JointCommand {
+                // protocol constant: the M20's one motor board (m20-ecan, rl_deploy's frames)
                 board_id: 0x79,
                 joint,
                 position: calibration.motor_position(joint, cmd.q[i] as f32),
@@ -117,6 +118,11 @@ impl BusHardware {
         })
     }
 
+    /// Still sending rl_deploy's startup (status words are not yet meaningful).
+    pub fn in_startup(&self) -> bool {
+        self.bus.owner.in_startup()
+    }
+
     pub fn refused(&self) -> u64 {
         self.bus.owner.refused
     }
@@ -169,13 +175,16 @@ impl BusHardware {
 impl Hardware for BusHardware {
     fn read_state(&mut self) -> Result<RobotState> {
         // rl_deploy's startup, then sitting commands until a reply lands
-        while self.bus.owner.in_startup() || self.last.is_none() {
+        loop {
+            if !self.bus.owner.in_startup() {
+                if let Some(s) = self.last.clone() {
+                    return self.with_imu(s);
+                }
+            }
             if let Some(s) = self.step(None)? {
                 self.last = Some(s);
             }
         }
-        let s = self.last.clone().unwrap();
-        self.with_imu(s)
     }
 
     fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {

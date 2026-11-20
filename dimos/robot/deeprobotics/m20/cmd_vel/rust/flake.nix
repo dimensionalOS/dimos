@@ -1,5 +1,5 @@
 {
-  description = "Deep Robotics M20 motor-bus (joint state + battery) native module for dimos";
+  description = "Deep Robotics M20 cmd_vel -> rl_deploy (rt/REAL_STEER) native module for dimos";
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
@@ -13,7 +13,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        name = "dimos-m20-ecan";
+        name = "dimos-m20-cmd-vel";
 
         src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
