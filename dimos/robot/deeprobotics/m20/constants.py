@@ -61,3 +61,9 @@ FRONT_LIDAR_IP = "10.21.33.201"
 REAR_LIDAR_IP = "10.21.33.202"
 FRONT_LIDAR_PORTS = (6691, 7781, 6681)
 REAR_LIDAR_PORTS = (6692, 7782, 6682)
+
+# The body IMU (Yesense on the AOS board's UART) in base_link: position from the vendor MJCF's imu_site, and
+# its turn as Deep Robotics' yesense_node undoes it (base_link axes = sensor x, -z, y: +90 deg about x).
+IMU_FRAME = "imu_link"
+IMU_XYZ_M = (0.0632, -0.0268, -0.0435)
+IMU_MOUNT_RPY_RAD = (math.pi / 2, 0.0, 0.0)
