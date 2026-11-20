@@ -144,9 +144,7 @@ class DimosAgentAdapter(PiAdapter):
             if version.returncode == 0:
                 self._agent_ready = True
                 return
-            last = "\n".join(
-                (version.stderr.strip() or version.stdout.strip()).splitlines()[-20:]
-            )
+            last = "\n".join((version.stderr.strip() or version.stdout.strip()).splitlines()[-20:])
         raise RuntimeError(f"`{self.config.cli} agent version` failed:\n{last}")
 
     def _prepare_case(self, env: RunningEnvironment, run_dir: Path) -> str:
