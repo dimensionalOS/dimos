@@ -30,10 +30,11 @@
    than either on any joint and the operator agrees. It refuses to fit when
    the arm's calibration file on disk holds other masses than the arm runs.
 4. ``float_check``: floats each measured joint at up to two gravity poses
-   where its model gravity torque is largest and it is clear of its limits
-   (or at ``float_pose_deg``), and measures how far the fingertip drifts
-   (``float_analysis``); a joint with no gravity load anywhere is skipped,
-   and robots that do not compensate gravity cannot float.
+   where the gravity torque of the masses the arm runs is largest and it is
+   clear of its limits (or at ``float_pose_deg``), after resting there
+   ``hold_s``, and measures how far the fingertip drifts from the first limp
+   sample (``float_analysis``); a joint with no gravity load anywhere is
+   skipped, and robots that do not compensate gravity cannot float.
 5. ``step_sweep``: at the sweep pose (the gravity pose farthest from every
    joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
    at each kp scale of its robot kp, with its robot kd times the square root
@@ -77,7 +78,7 @@ import uuid
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
     ArmSession,
@@ -518,8 +519,9 @@ def float_plan(
     """Per measured joint, where to float it: up to ``FLOAT_POSES_PER_JOINT`` of (name, pose, torque).
 
     The candidates are ``float_pose_deg`` when set, else this run's gravity
-    poses. Each joint floats where its model gravity torque is largest, with
-    it at least ``FLOAT_LIMIT_MARGIN_DEG`` from its limits. A joint whose
+    poses. Each joint floats where the gravity torque of the masses the arm
+    runs now (``config_get``) is largest, with it at least
+    ``FLOAT_LIMIT_MARGIN_DEG`` from its limits. A joint whose
     torque stays under ``MIN_FLOAT_GRAVITY_NM`` at every candidate, or that
     has no candidate clear of its limits, is returned in the second dict
     with why.
@@ -535,7 +537,10 @@ def float_plan(
         ]
     lower, upper = joint_limits(ctx.spec)
     margin = math.radians(FLOAT_LIMIT_MARGIN_DEG)
-    torques = [(name, q, arm.gravity(arm.q(q))) for name, q in candidates]
+    model = arm.model.copy()
+    apply_inertial_overrides(model, _links_of(_applied_now(ctx)))
+    applied = ArmModel(ctx.spec, model)
+    torques = [(name, q, applied.gravity(applied.q(q))) for name, q in candidates]
     plan: dict[str, list[tuple[str, Vector, float]]] = {}
     skipped: dict[str, str] = {}
     for joint in arm.measured_joints:
@@ -880,7 +885,8 @@ class FloatCheckStep(Step):
     instructions = (
         "Each joint that carries gravity goes limp in turn, held up by gravity compensation "
         "alone, at the gravity poses where it carries the most (or at the float pose, if one "
-        "is set), and the fingertip's drift is measured; a good gravity model keeps it under "
+        "is set). The arm rests at the pose first; the fingertip's drift is measured from the "
+        "moment the joint goes limp, and a good gravity model keeps it under "
         f"{DRIFT_LIMIT_MM:g} mm. A joint with no gravity load anywhere is skipped. You confirm "
         "each move. Be ready to support the arm: a joint that drifts or speeds up is held "
         "again at once."
@@ -908,7 +914,7 @@ class FloatCheckStep(Step):
             skipped = f"; {', '.join(no_load)} skipped ({NO_GRAVITY_LOAD})" if no_load else ""
             ctx.confirm(
                 f"{floats} floats of {', '.join(plan)} at {where}, "
-                f"{settings.float_settle_s + settings.float_window_s:g} s each{skipped}. You "
+                f"{settings.hold_s + settings.float_window_s:g} s each{skipped}. You "
                 "confirm each move. Clear the workspace. Enter to start"
             )
             last: str | None = None
@@ -935,6 +941,7 @@ class FloatCheckStep(Step):
                             rows.append({**row, "skipped": True})
                             continue
                         session.move_to(pose)
+                        session.hold(settings.hold_s)
                         last = name
                         # Ending the float holds the joint again where it is; the next
                         # move takes every joint to the next pose.
@@ -982,8 +989,6 @@ class FloatCheckStep(Step):
         settings = ctx.settings
         try:
             with session.floating(joint, settings.float_kd) as kd:
-                if settings.float_settle_s > 0.0:
-                    session.float_window(joint, settings.float_settle_s)
                 event = session.mark_float(ctx.side, index, settings.float_window_s, kd)
                 t, q = session.float_window(joint, settings.float_window_s)
         except JointDriftedError as drifted:

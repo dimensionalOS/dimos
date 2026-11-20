@@ -110,7 +110,6 @@ DEFAULT_DITHER_HOLD_S = 1.5
 DEFAULT_STEP_HOLD_S = 2.0
 # Damping a floating joint keeps: stops it coasting, still yields to a hand.
 DEFAULT_FLOAT_KD = 0.5
-DEFAULT_FLOAT_SETTLE_S = 1.0
 DEFAULT_FLOAT_WINDOW_S = 10.0
 DEFAULT_TRACKING_POSES = 5
 MIN_STREAM_HZ = 50.0
@@ -143,7 +142,8 @@ class ProcedureSettings:
     Attributes:
         poses: Gravity identification poses to visit.
         dither_deg: Dither of each measured joint at every pose, +d then -d.
-        hold_s: Rest at each pose before dithering, and at each tracking pose.
+        hold_s: Rest at each pose before dithering, before a joint floats, and
+            at each tracking pose.
         dither_hold_s: Rest after each dither.
         step_hold_s: Rest after each step of the gain sweep.
         speed_deg_s: Peak joint speed of every ramp, at most ``MAX_SPEED_DEG_S``.
@@ -157,8 +157,8 @@ class ProcedureSettings:
             in degrees; ``None`` means, per joint, the gravity poses where it
             carries the most gravity torque.
         float_kd: Damping a floating joint keeps, N m s/rad.
-        float_settle_s: Wait after a joint starts floating before its window.
-        float_window_s: How long a floating joint is watched for drift.
+        float_window_s: How long a floating joint is watched for drift, from
+            the moment it goes limp.
         tracking_poses: At most this many held-out gravity poses for the
             tracking check.
         stream_hz: Targets sent per second during a config session.
@@ -180,7 +180,6 @@ class ProcedureSettings:
     sweep_pose_deg: tuple[float, ...] | None = None
     float_pose_deg: tuple[float, ...] | None = None
     float_kd: float = DEFAULT_FLOAT_KD
-    float_settle_s: float = DEFAULT_FLOAT_SETTLE_S
     float_window_s: float = DEFAULT_FLOAT_WINDOW_S
     tracking_poses: int = DEFAULT_TRACKING_POSES
     stream_hz: float = MIN_STREAM_HZ
@@ -199,7 +198,7 @@ class ProcedureSettings:
         if self.poses < 1 or self.tracking_poses < 0:
             raise ValueError("poses must be at least 1 and tracking_poses not negative")
         holds = (self.hold_s, self.dither_hold_s, self.step_hold_s, self.float_window_s)
-        if not all(math.isfinite(s) and s > 0.0 for s in holds) or self.float_settle_s < 0.0:
+        if not all(math.isfinite(s) and s > 0.0 for s in holds):
             raise ValueError("holds and windows must be positive")
         if not self.kp_scales or not all(math.isfinite(s) and s > 0.0 for s in self.kp_scales):
             raise ValueError(f"kp scales must be positive, got {self.kp_scales}")

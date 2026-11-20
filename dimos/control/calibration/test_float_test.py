@@ -58,8 +58,8 @@ def test_analyze_window_reports_drift_and_the_busiest_joint(left_model: Fingerti
     event = FloatEvent(side="left", index=1, t0=0.0, duration_s=10.0)
     metrics = analyze_window(left_model, event, t, q)
     assert metrics.max_joint == "left_joint3"
-    # Medians over the first and last 0.25 s shave a little off the full 0.2 deg.
-    assert 0.17 < metrics.max_joint_drift_deg < 0.2
+    # From the first sample to the median of the last 0.25 s: a hair under 0.2 deg.
+    assert 0.195 < metrics.max_joint_drift_deg < 0.2
     assert 0.0 < metrics.fingertip_drift_mm < DRIFT_LIMIT_MM
     assert metrics.fingertip_peak_mm >= metrics.fingertip_drift_mm
     assert metrics.passed and metrics.samples == 201 and metrics.duration_s == 10.0
@@ -67,6 +67,20 @@ def test_analyze_window_reports_drift_and_the_busiest_joint(left_model: Fingerti
     assert still.fingertip_drift_mm == 0.0 and still.passed
     with pytest.raises(ValueError, match="sample"):
         analyze_window(left_model, event, t[:1], q[:1])
+
+
+def test_a_fall_in_the_first_moments_counts_toward_the_drift(
+    left_model: FingertipModel,
+) -> None:
+    home = np.asarray(DUAL_OPENYAM_HOME_PER_ARM)
+    t = np.linspace(0.0, 10.0, 1001)
+    q = np.tile(home, (t.size, 1))
+    q[:, 3] -= np.radians(4.5) * np.clip(t / 0.4, 0.0, 1.0)
+    event = FloatEvent(side="left", index=1, t0=0.0, duration_s=10.0)
+    metrics = analyze_window(left_model, event, t, q)
+    assert metrics.max_joint == "left_joint4"
+    assert metrics.joint_drift_deg["left_joint4"] == pytest.approx(-4.5, abs=1e-9)
+    assert metrics.fingertip_drift_mm > DRIFT_LIMIT_MM and not metrics.passed
 
 
 def test_segment_windows_cut_at_the_next_marker() -> None:

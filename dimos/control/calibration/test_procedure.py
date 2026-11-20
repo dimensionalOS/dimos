@@ -93,7 +93,6 @@ FAST = {
     "dither_hold_s": 1.0,
     "step_hold_s": 1.0,
     "speed_deg_s": 30.0,
-    "float_settle_s": 0.5,
     "float_window_s": 2.0,
     "tracking_poses": 3,
 }
@@ -463,7 +462,7 @@ def test_steps_the_connection_cannot_save_or_serve_are_skipped_with_why(
     make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
 ) -> None:
     # A connection that saves nothing: no fit, no picked gains, no checks recorded.
-    rig = make_rig(fake={"persist": []}, float_window_s=1.0, float_settle_s=0.0)
+    rig = make_rig(fake={"persist": []}, float_window_s=1.0)
     path = save_calibration(rig.root / left_spec.arm_id, ArmCalibration.for_spec(left_spec))
 
     reasons = {step["id"]: step["reason"] for step in rig.procedure.plan() if not step["supported"]}
@@ -622,9 +621,7 @@ def test_a_check_is_not_recorded_against_a_fit_the_arm_never_ran(
             gravity=GravityCalibration(links=gravity_links_from_inertial(left_spec, heavy)),
         ),
     )
-    rig = make_rig(
-        confirm_each=False, fake={"applied": old}, float_window_s=1.0, float_settle_s=0.0
-    )
+    rig = make_rig(confirm_each=False, fake={"applied": old}, float_window_s=1.0)
 
     status = rig.run(
         ["check", "gravity_poses", "gravity_fit", "float_check"],
@@ -670,7 +667,7 @@ def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
 ) -> None:
     # The shoulder carries about 1 N m more than compensated at its float pose:
     # lightly damped it falls fast, heavily damped it creeps past 5 deg.
-    rig = make_rig(float_window_s=5.0, float_settle_s=0.0, float_kd=float_kd)
+    rig = make_rig(float_window_s=5.0, float_kd=float_kd)
 
     status = rig.run(["float_check"])
 
@@ -842,7 +839,7 @@ def _far_from_home(rig: Rig) -> float:
 def test_the_float_check_floats_each_joint_where_it_carries_the_most_gravity(
     make_rig: Callable[..., Rig],
 ) -> None:
-    rig = make_rig(float_window_s=1.0, float_settle_s=0.0)
+    rig = make_rig(float_window_s=1.0)
     prompts: list[str] = []
 
     def answer(prompt: str) -> str:
@@ -871,12 +868,45 @@ def test_the_float_check_floats_each_joint_where_it_carries_the_most_gravity(
     assert not result["joints"]["left_joint2"]["passed"]
     assert len(rig.recording.markers["float_events"]) == 2 * len(LEFT_MEASURED)
     assert not rig.fake.session_active()
+    # Every joint rested at its pose for hold_s before it went limp.
+    events = rig.recording.markers["float_events"]
+    sent = rig.recording.steps(events[0]["t0"] - 60.0, events[-1]["t0"]).commands
+    hold = FAST["hold_s"]
+    for event in events:
+        for trace in sent.values():
+            rest = (trace.t >= event["t0"] - hold + 0.03) & (trace.t < event["t0"] - 0.01)
+            assert rest.sum() >= 20 and np.ptp(trace.q_deg[rest]) < 1e-9
+
+
+def test_the_float_check_picks_its_poses_with_the_masses_the_arm_runs(
+    make_rig: Callable[..., Rig], arm: ArmModel, left_spec: ArmCalibrationSpec, tmp_path: Path
+) -> None:
+    applied = tmp_path / "applied.json"
+    save_calibration(applied, _heavy_forearm(arm, left_spec, 3.0))
+    model = arm.model.copy()
+    apply_inertial_overrides(model, to_inertial_overrides(load_for_spec(left_spec, applied)))
+    runs = ArmModel(left_spec, model)
+    rig = make_rig(fake={"applied": applied}, float_window_s=0.5)
+
+    status = rig.run(["float_check"], lambda p: "skip" if p.startswith("Float ") else "confirm")
+
+    assert status["state"] == "done", status["message"]
+    poses = {p.name: p for p in generate_poses(arm, count=8).identification}
+    for joint, row in rig.procedure.results()["float_check"]["joints"].items():
+        if row.get("skipped") and not row.get("poses"):
+            continue
+        i = arm.joint_names.index(joint)
+        for chosen in row["poses"]:
+            q = np.asarray(poses[chosen["pose"]].joints_rad)
+            assert chosen["gravity_nm"] == pytest.approx(float(runs.gravity(q)[i]), abs=1e-3)
+        largest = max(abs(float(runs.gravity(np.asarray(p.joints_rad))[i])) for p in poses.values())
+        assert abs(row["poses"][0]["gravity_nm"]) == pytest.approx(largest, abs=1e-3), joint
 
 
 def test_a_joint_with_no_gravity_load_is_not_floated(make_rig: Callable[..., Rig]) -> None:
     # At the 60/60 home pose the last wrist joint carries nothing.
     home_deg = tuple(float(v) for v in np.degrees(make_rig().procedure.arm.home))
-    rig = make_rig(float_window_s=1.0, float_settle_s=0.0, float_pose_deg=home_deg)
+    rig = make_rig(float_window_s=1.0, float_pose_deg=home_deg)
 
     status = rig.run(["float_check"])
 
