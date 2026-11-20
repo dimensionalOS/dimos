@@ -36,9 +36,12 @@ from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import config_defaults
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import frame_id_prefix
+from dimos.core.tf_module import _frame_ids
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -460,7 +463,9 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
 def test_namespace_prefixes_every_go2_frame() -> None:
     """The odom origin is this go2's own world, so it gets the namespace like base_link."""
     atom = GO2Connection.blueprint().namespace("robot0").blueprints[0]
-    frames = ConnectionConfig(**atom.kwargs, ip="10.0.0.1").tf_frames
+    frames = _frame_ids(
+        config_defaults(GO2Connection)["tf_frames_local"], {}, frame_id_prefix(atom.name)
+    )
     assert frames["world"] == "robot0/world"
     odom = PoseStamped(ts=1.0, frame_id=frames["world"])
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, frames)

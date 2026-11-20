@@ -44,7 +44,7 @@ class Odom(TfModule):
 
     @rpc
     def frames(self) -> dict[str, str]:
-        return self.config.tf_frames
+        return self.tf_frames
 
 
 def test_namespaced_local_frames_are_prefixed_and_global_frames_are_not() -> None:

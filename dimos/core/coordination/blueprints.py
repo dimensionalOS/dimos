@@ -385,9 +385,9 @@ class Blueprint(BlueprintProtocol):
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
         Instance names, stream names (and so their topics), and RPC topics all get
-        the `{prefix}/` prefix; each module's ``handle_blueprint_namespace`` namespaces
-        its own config (TF frame ids), which disconnects the namespaced
-        modules from everything outside.
+        the `{prefix}/` prefix, which disconnects the namespaced modules from
+        everything outside. TF frame ids follow the instance name
+        (``ModuleBase.frame_id_prefix``).
 
         Stream names listed in *shared* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
@@ -433,15 +433,7 @@ class Blueprint(BlueprintProtocol):
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"
-            config = {**config_defaults(atom.module), **atom.kwargs}
-            changes = atom.module.handle_blueprint_namespace(config, prefix=prefix)
-            unchanged = sorted(name for name, value in changes.items() if value is config.get(name))
-            if unchanged:
-                raise ValueError(
-                    f"{atom.module.__name__}.handle_blueprint_namespace returned {unchanged} "
-                    "unchanged; return only the fields it changes"
-                )
-            kwargs = {**atom.kwargs, **changes, "instance_name": new_name}
+            kwargs = {**atom.kwargs, "instance_name": new_name}
             new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
 
             for stream in atom.streams:

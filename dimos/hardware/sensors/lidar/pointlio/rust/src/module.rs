@@ -36,12 +36,10 @@ use validator::ValidationError;
 #[derive(Clone)]
 #[validate(schema(function = core_config_parses))]
 pub struct Config {
-    /// TfModule role -> frame id; reads "odom" (fixed) and "sensor" (moving). Local frames
-    /// go under frame_id_prefix.
+    /// TfModule role -> frame id; reads "odom" (fixed) and "sensor" (moving). Namespacing
+    /// already prefixed the local ones on the Python side.
     tf_frames_local: HashMap<String, String>,
     tf_frames_global: HashMap<String, String>,
-    /// Set by a blueprint namespace; empty outside one.
-    frame_id_prefix: String,
     /// Declared for the blueprint's tf checks, which run in Python.
     #[allow(dead_code)]
     tf_edges: Vec<(String, String)>,
@@ -348,21 +346,21 @@ fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
 }
 
 impl Config {
-    fn tf_frame(&self, role: &str) -> Option<String> {
-        match (
-            self.tf_frames_local.get(role),
-            self.frame_id_prefix.as_str(),
-        ) {
-            (Some(frame), prefix) if !prefix.is_empty() => Some(format!("{prefix}/{frame}")),
-            (Some(frame), _) => Some(frame.clone()),
-            (None, _) => self.tf_frames_global.get(role).cloned(),
-        }
+    fn tf_frame(&self, role: &str) -> Option<&str> {
+        self.tf_frames_local
+            .get(role)
+            .or_else(|| self.tf_frames_global.get(role))
+            .map(String::as_str)
     }
     fn world_frame(&self) -> String {
-        self.tf_frame("odom").expect("validated at launch")
+        self.tf_frame("odom")
+            .expect("validated at launch")
+            .to_string()
     }
     fn sensor_frame(&self) -> String {
-        self.tf_frame("sensor").expect("validated at launch")
+        self.tf_frame("sensor")
+            .expect("validated at launch")
+            .to_string()
     }
 }
 
@@ -557,9 +555,10 @@ mod tests {
         assert_eq!(plain.world_frame(), "odom");
         assert_eq!(plain.sensor_frame(), "mid360_link");
 
-        let namespaced: Config = serde_json::from_str(
-            &SAMPLE.replace(r#""frame_id_prefix":"""#, r#""frame_id_prefix":"r1""#),
-        )
+        let namespaced: Config = serde_json::from_str(&SAMPLE.replace(
+            r#""odom":"odom","sensor":"mid360_link""#,
+            r#""odom":"r1/odom","sensor":"r1/mid360_link""#,
+        ))
         .unwrap();
         assert_eq!(namespaced.world_frame(), "r1/odom");
         assert_eq!(namespaced.sensor_frame(), "r1/mid360_link");
@@ -584,7 +583,7 @@ mod tests {
     }
 
     const SAMPLE: &str = r#"{
-        "tf_frames_local":{"odom":"odom","sensor":"mid360_link"},"tf_frames_global":{},"frame_id_prefix":"",
+        "tf_frames_local":{"odom":"odom","sensor":"mid360_link"},"tf_frames_global":{},
         "tf_edges":[["odom","sensor"]],"skip_tf_checks":false,"pointcloud_freq":10.0,"odom_freq":30.0,
         "msr_freq":50.0,"main_freq":5000.0,"con_frame":false,"con_frame_num":1,"cut_frame":false,
         "cut_frame_time_interval":0.1,"time_lag_imu_to_lidar":0.0,"scan_line":4,"scan_rate":10,

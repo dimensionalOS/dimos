@@ -364,7 +364,7 @@ Inside a namespace everything is prefixed:
 
 * instance names (`robot0/go2connection`),
 * stream names and topics (`/robot0/lidar`),
-* TF frames a module declares as local (a `TfModule`'s `tf_frames_local`),
+* TF frames a module declares as local (a `TfModule`'s `tf_frames_local`), under `frame_id_prefix`, which comes from the instance name,
 * and the module's name within its run-scoped RPC address (`robot0/go2connection`).
 
 Prefixed streams only connect within their namespace.

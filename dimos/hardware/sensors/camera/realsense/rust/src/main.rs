@@ -86,11 +86,9 @@ struct Config {
     height: i32,
     #[validate(range(min = 1))]
     fps: i32,
-    /// TfModule role -> frame id; reads "link". Local frames go under frame_id_prefix.
+    /// TfModule role -> frame id; reads "link". Namespacing already prefixed it on the Python side.
     tf_frames_local: HashMap<String, String>,
     tf_frames_global: HashMap<String, String>,
-    /// Set by a blueprint namespace; empty outside one.
-    frame_id_prefix: String,
     /// Declared for the blueprint's tf checks, which run in Python.
     #[allow(dead_code)]
     tf_edges: Vec<(String, String)>,
@@ -136,18 +134,11 @@ impl Config {
     }
     /// The "link" tf frame: what a mount edge points at.
     fn camera_link(&self) -> String {
-        match (
-            self.tf_frames_local.get("link"),
-            self.frame_id_prefix.as_str(),
-        ) {
-            (Some(frame), prefix) if !prefix.is_empty() => format!("{prefix}/{frame}"),
-            (Some(frame), _) => frame.clone(),
-            (None, _) => self
-                .tf_frames_global
-                .get("link")
-                .cloned()
-                .expect("validated at launch"),
-        }
+        self.tf_frames_local
+            .get("link")
+            .or_else(|| self.tf_frames_global.get("link"))
+            .cloned()
+            .expect("validated at launch")
     }
     /// The imager frames hang off the link with its `_link` dropped:
     /// `d435_link` -> `d435_color_optical_frame`.

@@ -35,9 +35,9 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, frame_id_prefix
 from dimos.core.stream import In, Out
-from dimos.core.tf_module import TfModule, TfModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig, _frame_ids
 from dimos.core.transport import LCMTransport
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
@@ -379,6 +379,7 @@ def test_namespace_prefixes_names_streams_and_frames() -> None:
     atom_a = next(a for a in blueprint.blueprints if a.module is ModuleA)
     assert atom_a.name == "robot0/modulea"
     assert atom_a.kwargs["instance_name"] == "robot0/modulea"
+    assert frame_id_prefix(atom_a.name) == "robot0"
     # Every stream is remapped under the prefix.
     assert blueprint.remapping_map[("robot0/modulea", "data1")] == "robot0/data1"
     assert blueprint.remapping_map[("robot0/moduleb", "data3")] == "robot0/data3"
@@ -431,6 +432,7 @@ def test_namespace_nesting_composes() -> None:
 
     atom = blueprint.blueprints[0]
     assert atom.name == "fleet/robot0/modulea"
+    assert frame_id_prefix(atom.name) == "fleet/robot0"
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
@@ -444,10 +446,11 @@ class FramePrefixed(TfModule):
 
 def test_namespace_stacks_local_tf_frames() -> None:
     nested = FramePrefixed.blueprint().namespace("robot0").namespace("fleet").blueprints[0]
-    assert FramePrefixedConfig(**nested.kwargs).tf_frames == {"body": "fleet/robot0/base_link"}
+    assert frame_id_prefix(nested.name) == "fleet/robot0"
 
     user_set = FramePrefixed.blueprint(tf_frames_local={"body": "custom"}).namespace("robot0")
-    assert FramePrefixedConfig(**user_set.blueprints[0].kwargs).tf_frames == {
+    atom = user_set.blueprints[0]
+    assert _frame_ids(atom.kwargs["tf_frames_local"], {}, frame_id_prefix(atom.name)) == {
         "body": "robot0/custom"
     }
 
@@ -544,14 +547,3 @@ def test_blueprint_roundtrip_keeps_checks_and_pinned_transports() -> None:
         assert [atom.module for atom in restored.blueprints] == [ModuleA, ModuleB]
     finally:
         pinned.stop()
-
-
-class ReturnsEverything(Module):
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return {**config, **super().handle_blueprint_namespace(config, prefix=prefix)}
-
-
-def test_namespace_hook_must_return_only_changes() -> None:
-    with pytest.raises(ValueError, match="return only the fields it changes"):
-        ReturnsEverything.blueprint().namespace("robot0")

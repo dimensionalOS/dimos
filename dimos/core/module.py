@@ -137,6 +137,11 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
+def frame_id_prefix(instance_name: str | None) -> str:
+    """The namespace in an instance name: frames of ``fleet/robot0/odom`` go under ``fleet/robot0``."""
+    return (instance_name or "").rpartition("/")[0]
+
+
 class ModuleBase(Configurable, CompositeResource):
     config: ModuleConfig
 
@@ -195,16 +200,13 @@ class ModuleBase(Configurable, CompositeResource):
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
     @property
+    def frame_id_prefix(self) -> str:
+        """The namespace in the instance name: ``robot0`` for ``robot0/go2connection``."""
+        return frame_id_prefix(self.config.instance_name)
+
+    @property
     def frame_id(self) -> str:
         return self.config.frame_id or self.__class__.__name__
-
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        """Only the config fields to change once ``Blueprint.namespace(prefix)`` wraps this module (once per level, innermost first).
-
-        *config* is the module's kwargs over its config defaults.
-        """
-        return {}
 
     @rpc
     def build(self) -> None:

@@ -336,6 +336,12 @@ class NativeModule(Module):
     def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
+        if self.frame_id_prefix and "tf_frames_local" in config_dict:
+            # The namespace lives in the instance name, so send local frames resolved.
+            config_dict["tf_frames_local"] = {
+                role: f"{self.frame_id_prefix}/{frame}"
+                for role, frame in config_dict["tf_frames_local"].items()
+            }
         blob: dict[str, Any] = {
             "topics": topics,
             "config": config_dict or None,

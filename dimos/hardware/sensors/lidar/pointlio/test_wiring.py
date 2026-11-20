@@ -18,6 +18,7 @@ autoconnect merges same-named streams, so a second IMU on the topic would feed t
 estimator two sensors and it would silently stop publishing.
 """
 
+import json
 import warnings
 
 from pydantic import BaseModel
@@ -82,3 +83,12 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
         warnings.warn(
             f"checked {len(checked)} blueprints, could not import: {skipped}", stacklevel=1
         )
+
+
+def test_a_namespaced_pointlio_sends_its_local_frames_resolved() -> None:
+    module = PointLio(instance_name="robot0/pointlio")
+    try:
+        frames = json.loads(module._stdin_blob({}))["config"]["tf_frames_local"]
+    finally:
+        module.stop()
+    assert frames == {"odom": "robot0/odom", "sensor": "robot0/mid360_link"}
