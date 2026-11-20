@@ -443,11 +443,13 @@ class FramePrefixed(TfModule):
 
 
 def test_namespace_stacks_local_tf_frames() -> None:
-    nested = FramePrefixed.blueprint().namespace("robot0").namespace("fleet")
-    assert nested.blueprints[0].kwargs["tf_frames_local"] == {"body": "fleet/robot0/base_link"}
+    nested = FramePrefixed.blueprint().namespace("robot0").namespace("fleet").blueprints[0]
+    assert FramePrefixedConfig(**nested.kwargs).tf_frames == {"body": "fleet/robot0/base_link"}
 
     user_set = FramePrefixed.blueprint(tf_frames_local={"body": "custom"}).namespace("robot0")
-    assert user_set.blueprints[0].kwargs["tf_frames_local"] == {"body": "robot0/custom"}
+    assert FramePrefixedConfig(**user_set.blueprints[0].kwargs).tf_frames == {
+        "body": "robot0/custom"
+    }
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:

@@ -72,7 +72,7 @@ class MockJointConnection(ConnectionModule):
             raise ValueError("Initial positions must give one finite value for every model joint")
         self._positions = {name: positions[name] for name in names}
         # A declared "root" frame wins over the model's root link (declare it to namespace it).
-        self._frame = self.config.tf_frames_local.get("root") or self.config.model.load().root_link
+        self._frame = self.config.tf_frames.get("root") or self.config.model.load().root_link
 
     @rpc
     def start(self) -> None:

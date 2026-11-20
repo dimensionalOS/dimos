@@ -44,6 +44,8 @@ class TfModuleConfig(ModuleConfig):
     tf_edges: list[tuple[str, str]] = Field(default_factory=list)
     # Opt this module out of tf checks (its tfbuffer publishes any edge).
     skip_tf_checks: bool = False
+    # Set by Blueprint.namespace (stacked per level); prefixes every local frame.
+    frame_id_prefix: str = ""
 
     @model_validator(mode="after")
     def _check_roles(self) -> "TfModuleConfig":
@@ -100,6 +102,15 @@ class TfModule(Module):
     def frame(self) -> TfFrames:
         """Frame ids by role, local and global together: ``self.frame.body``."""
         return TfFrames(self.config.tf_frames, self.config.instance_name or type(self).__name__)
+
+    @classmethod
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        """Stack the namespace onto frame_id_prefix the way instance names stack: ``prefix/old``."""
+        frame_id_prefix = config["frame_id_prefix"]
+        return {
+            **super().handle_blueprint_namespace(config, prefix=prefix),
+            "frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix,
+        }
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -184,7 +195,7 @@ class TfModule(Module):
         )
 
 
-def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str | None) -> dict[str, str]:
+def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
     if prefix:
         local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
     return {**shared, **local}

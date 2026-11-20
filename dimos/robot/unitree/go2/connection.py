@@ -494,7 +494,7 @@ class GO2Connection(TfModule, Camera, Pointcloud):
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.frame.world
         if self.config.publish_tf:
-            self.tfbuffer.publish(*self._odom_to_tf(msg, self.config.tf_frames_local))
+            self.tfbuffer.publish(*self._odom_to_tf(msg, self.config.tf_frames))
         if self.odom.transport:
             self.odom.publish(msg)
 

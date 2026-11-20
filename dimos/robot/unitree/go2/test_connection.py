@@ -459,7 +459,8 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
 
 def test_namespace_prefixes_every_go2_frame() -> None:
     """The odom origin is this go2's own world, so it gets the namespace like base_link."""
-    frames = GO2Connection.blueprint().namespace("robot0").blueprints[0].kwargs["tf_frames_local"]
+    atom = GO2Connection.blueprint().namespace("robot0").blueprints[0]
+    frames = ConnectionConfig(**atom.kwargs, ip="10.0.0.1").tf_frames
     assert frames["world"] == "robot0/world"
     odom = PoseStamped(ts=1.0, frame_id=frames["world"])
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, frames)
