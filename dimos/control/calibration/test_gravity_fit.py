@@ -50,6 +50,8 @@ from dimos.control.calibration.gravity_fit import (
     format_report,
     friction_flags,
     generate_gravity_report,
+    holdout_totals,
+    joint_regressions,
     load_gravity_recording,
     median_friction,
     pose_windows,
@@ -857,29 +859,48 @@ def test_save_needs_a_held_out_pose_and_no_worse_held_out_error(
     )
     generate_gravity_report(run, left_spec, arm=arm, holdout=[], save_to=stored, force=True)
     assert load_calibration(stored).gravity == calibration.gravity
-    # A held-out error that rises on one joint is refused too.
     fitted = fit_gravity(arm, extract_measurements(recording, left_spec)[0])
-    assert save_refusals(fitted) == []
-    worse = fitted.residual_after.copy()
+    assert save_refusals(fitted) == [] and joint_regressions(fitted) == []
+    before = fitted.rms_by_joint(holdout=True, after=False)
+    after = fitted.rms_by_joint(holdout=True, after=True)
+    totals = holdout_totals(fitted)
+    assert totals["after"] == pytest.approx(np.sqrt(np.mean(np.square(list(after.values())))))
+    assert totals["before"] > totals["after"] and "running" not in totals
     rows = [
         i
         for i, (m, held) in enumerate(zip(fitted.measurements, fitted.is_holdout, strict=True))
         if held and m.joint == "left_joint4"
     ]
-    worse[rows] = 10.0 * fitted.residual_before[rows] + 0.1
-    (reason,) = save_refusals(replace(fitted, residual_after=worse))
-    assert reason.startswith("left_joint4 held-out RMS rose from")
+    one_worse = fitted.residual_after.copy()
+    one_worse[rows] = np.abs(fitted.residual_before[rows]) + 0.01
+    nudged = replace(fitted, residual_after=one_worse)
+    assert save_refusals(nudged) == []
+    (regressed,) = joint_regressions(nudged)
+    assert regressed.startswith("left_joint4 ") and regressed.endswith(" Nm (URDF)")
+    held = fitted.is_holdout.astype(bool)
+    all_worse = fitted.residual_after.copy()
+    all_worse[held] = 2.0 * np.abs(fitted.residual_before[held]) + 0.1
+    (reason,) = save_refusals(replace(fitted, residual_after=all_worse))
+    assert reason.startswith("held-out RMS over the joints ")
+    assert reason.endswith(f"is worse than the URDF's {totals['before']:.3f} Nm")
     missing = [m for m in fitted.measurements if not (m.joint == "left_joint5")]
     assert "left_joint5 has no held-out measurement" in save_refusals(fit_gravity(arm, missing))
     # Better than the URDF is not enough when the arm already runs better masses.
-    after = fitted.rms_by_joint(holdout=True, after=True)
     running = {joint: 0.5 * value for joint, value in after.items()}
-    running["left_joint2"] = 2.0 * after["left_joint2"]
-    refused = save_refusals(fitted, running)
-    assert len(refused) == len(after) - 1
-    assert refused[0].startswith("left_joint3 held-out RMS ")
-    assert "is worse than the running calibration's" in refused[0]
+    (refused,) = save_refusals(fitted, running)
+    assert refused.endswith(
+        f"is worse than the running calibration's {holdout_totals(fitted, running)['running']:.3f} Nm"
+    )
+    assert len(joint_regressions(fitted, running)) == len(after)
+    best = min(after, key=lambda joint: after[joint])
+    mixed = {joint: 2.0 * value for joint, value in after.items()} | {best: 0.5 * after[best]}
+    assert holdout_totals(fitted, mixed)["running"] > totals["after"]
+    assert save_refusals(fitted, mixed) == []
+    assert joint_regressions(fitted, mixed) == [
+        f"{best} {0.5 * after[best]:.3f} -> {after[best]:.3f} Nm (running calibration)"
+    ]
     assert fitted.rms_of(fitted.residual_after, holdout=True) == after
+    assert set(before) == set(after)
 
 
 def test_save_cli_refuses_without_force_and_shows_the_bounds(

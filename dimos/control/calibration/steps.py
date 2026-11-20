@@ -34,9 +34,12 @@
    not from the file on disk.
 3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``) against the
    masses the arm ran, shows the held-out error of the URDF, of the running
-   file and of the fit, and saves and applies the fit when it is no worse
-   than either on any joint and the operator agrees. It refuses to fit when
-   the arm's calibration file on disk holds other masses than the arm runs.
+   file and of the fit, by joint and over all of them, at this run's held-out
+   poses, and saves and applies the fit when the operator agrees. A fit
+   worse over all the joints than either is saved only when the operator
+   asks for it at a prompt whose Enter keeps what the arm runs. It refuses
+   to fit when the arm's calibration file on disk holds other masses than
+   the arm runs.
 4. ``float_check``: floats each measured joint at up to two gravity poses
    where the gravity torque of the masses the arm runs is largest and it is
    clear of its limits (or at ``float_pose_deg``), after resting there
@@ -115,11 +118,14 @@ from dimos.control.calibration.gravity_fit import (
     dithered_arm,
     extract_measurements,
     fit_gravity,
+    fit_refusals,
     format_report,
+    holdout_totals,
+    joint_regressions,
     median_friction,
+    overall_regressions,
     plot_resting_torque,
     recorded_compensation,
-    save_refusals,
     to_urdf_error,
     write_measurements_csv,
 )
@@ -858,9 +864,10 @@ class GravityFitStep(Step):
     instructions = (
         "Fits the link masses and centres of mass to what the gravity poses recorded, keeping "
         "some poses out of the fit to score it against the URDF and against the file the arm "
-        "runs. It is saved only when it is no worse than either on any joint, and only when you "
-        "agree; it is then applied with the arm at home, and the replaced file is kept in the "
-        "history. It does not fit when the file on disk holds other masses than the arm runs."
+        "runs, by joint and over all the joints. It is saved only when you agree; one worse over "
+        "all the joints than either is saved only when you ask for it anyway. It is applied with "
+        "the arm at home, and the replaced file is kept in the history. It does not fit when the "
+        "file on disk holds other masses than the arm runs."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -900,17 +907,23 @@ class GravityFitStep(Step):
         # The raw resting torque is the error of the masses the arm ran.
         running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)
         refusals = (
-            save_refusals(result, running)
+            fit_refusals(result)
             if result.bounds_ok
             else [f"the fit failed its physical bounds: {'; '.join(result.bound_violations)}"]
         )
+        worse = [] if refusals else overall_regressions(result, running)
+        regressed = [] if refusals else joint_regressions(result, running)
         holdout = _rms_table(
             result.rms_by_joint(holdout=True, after=False),
             running,
             result.rms_by_joint(holdout=True, after=True),
         )
+        totals = {key: round(value, 4) for key, value in holdout_totals(result, running).items()}
         data: dict[str, Any] = {
             "holdout_rms_nm": holdout,
+            "holdout_total_nm": totals,
+            "worse_overall": worse,
+            "regressed": regressed,
             "rank": result.rank,
             "condition_number": round(result.condition_number, 2),
             "at_bounds": list(result.at_bounds),
@@ -925,10 +938,18 @@ class GravityFitStep(Step):
             "saved": None,
         }
         if recording.directory is not None:
-            data["report"] = str(self._write_report(result, recording.directory, refusals, running))
+            data["report"] = str(
+                self._write_report(result, recording.directory, refusals + worse, running)
+            )
         table = ", ".join(
-            f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
-            for joint, row in holdout.items()
+            [
+                *(
+                    f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
+                    for joint, row in holdout.items()
+                ),
+                f"all joints {totals['before']:.3f} -> {totals['running']:.3f} -> "
+                f"{totals['after']:.3f}",
+            ]
         )
         left_out = "".join(
             [
@@ -939,13 +960,23 @@ class GravityFitStep(Step):
         if refusals:
             return StepResult(f"not saved: {'; '.join(refusals)}{left_out}", data)
         bounds = f"; at bounds: {'; '.join(result.at_bounds)}" if result.at_bounds else ""
-        try:
-            ctx.confirm(
-                f"Held-out RMS (Nm, URDF -> running -> new): {table}; rank {result.rank}{bounds}. "
-                "Save and apply? Enter to save"
-            )
-        except SkipRequestedError:
-            return StepResult("not saved, as asked", data, skipped=True)
+        joints = f"; regressed: {', '.join(regressed)}" if regressed else ""
+        shown = f"Held-out RMS (Nm, URDF -> running -> new): {table}{joints}; rank {result.rank}"
+        if worse:
+            try:
+                ctx.confirm(
+                    f"{shown}{bounds}. Not better overall: {'; '.join(worse)}. Save anyway? "
+                    "Enter keeps what the arm runs, s saves and applies the fit"
+                )
+            except SkipRequestedError:
+                data["saved_anyway"] = True
+            else:
+                return StepResult(f"not saved: {'; '.join(worse)}{joints}{left_out}", data)
+        else:
+            try:
+                ctx.confirm(f"{shown}{bounds}. Save and apply? Enter to save")
+            except SkipRequestedError:
+                return StepResult("not saved, as asked", data, skipped=True)
         calibration = calibration_from_fit(
             result, ctx.spec, recording_dir=recording.directory, created=_now()
         )
@@ -961,8 +992,10 @@ class GravityFitStep(Step):
         )
         data.update(_save(ctx, patch))
         outcome = "applied" if data["applied"] else "not applied"
+        anyway = " though not better overall" if worse else ""
         return StepResult(
-            f"saved {data['saved']} and {outcome}; held-out RMS {table}{left_out}", data
+            f"saved {data['saved']} and {outcome}{anyway}; held-out RMS {table}{joints}{left_out}",
+            data,
         )
 
     @staticmethod

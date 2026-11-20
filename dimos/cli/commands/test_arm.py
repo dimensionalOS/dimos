@@ -74,6 +74,9 @@ def status(
 RESULTS = {
     "gravity_fit": {
         "holdout_rms_nm": {"left_joint2": {"before": 0.5, "after": 0.1}},
+        "holdout_total_nm": {"before": 0.5, "running": 0.4, "after": 0.1},
+        "regressed": ["left_joint3 0.154 -> 0.200 Nm (running calibration)"],
+        "worse_overall": [],
         "at_bounds": ["left_link3 mass at its upper bound"],
         "refusals": [],
         "saved": "/state/arms/dual_openyam/left/calibration.json",
@@ -286,6 +289,8 @@ def test_calibrate_answers_the_right_prompts_goes_home_and_only_then_stops_its_r
     assert "Move to home?" in out and "Save and apply?" in out
     # The results of a finished step come as a table.
     assert "left_joint2  0.500 -> 0.100" in out
+    assert "all joints   0.500 -> 0.100" in out
+    assert "regressed: left_joint3 0.154 -> 0.200 Nm (running calibration)" in out
     assert "at a bound" in out and "left_joint3" in out and "FAIL" in out
     assert "Calibration file: /state/arms/dual_openyam/left/calibration.json" in out
     assert "history/" in out and "calibration off" in out

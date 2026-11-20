@@ -1279,10 +1279,9 @@ def test_the_fit_refuses_when_the_file_on_disk_is_not_what_the_arm_runs(
     assert load_for_spec(left_spec, path) == c1
 
 
-def test_a_fit_worse_than_the_running_file_is_not_saved(
-    make_rig: Callable[..., Rig], arm: ArmModel, truth: pin.Model, left_spec: ArmCalibrationSpec
-) -> None:
-    # The arm already runs its true masses; a fit from eight poses cannot beat them.
+def _running_true_masses(
+    make_rig: Callable[..., Rig], truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> tuple[Rig, Path]:
     exact = {
         link: LinkInertial(
             mass_kg=float(truth.inertias[body_joint_id(truth, link)].mass),
@@ -1298,21 +1297,55 @@ def test_a_fit_worse_than_the_running_file_is_not_saved(
             gravity=GravityCalibration(links=gravity_links_from_inertial(left_spec, exact)),
         ),
     )
-    saved = load_for_spec(left_spec, root_path)
-    rig = make_rig(confirm_each=False, fake={"applied": root_path})
+    return make_rig(confirm_each=False, fake={"applied": root_path}), root_path
 
-    status = rig.run(["check", "gravity_poses", "gravity_fit"])
+
+def test_a_fit_worse_than_the_running_file_over_all_joints_is_not_saved_by_default(
+    make_rig: Callable[..., Rig], truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> None:
+    # The arm already runs its true masses; a fit from eight poses cannot beat them.
+    rig, root_path = _running_true_masses(make_rig, truth, left_spec)
+    saved = load_for_spec(left_spec, root_path)
+    prompts: list[str] = []
+
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"], lambda p: prompts.append(p) or "confirm"
+    )
 
     assert status["state"] == "done", status["message"]
     fit = rig.procedure.results()["gravity_fit"]
-    assert fit["saved"] is None and fit["refusals"]
-    assert all("is worse than the running calibration's" in r for r in fit["refusals"])
-    refused = {refusal.split(" ")[0] for refusal in fit["refusals"]}
-    for joint, row in fit["holdout_rms_nm"].items():
-        # URDF -> running -> new: the fit beats the URDF, not what the arm runs.
-        assert row["after"] < row["before"] or row["before"] < 1e-3, joint
-        assert row["running"] <= row["after"] or joint not in refused, joint
+    assert fit["saved"] is None and fit["refusals"] == []
+    (worse,) = fit["worse_overall"]
+    assert worse.startswith("held-out RMS over the joints ")
+    assert "is worse than the running calibration's" in worse
+    totals = fit["holdout_total_nm"]
+    # URDF -> running -> new over all the joints: the fit beats the URDF, not what the arm runs.
+    assert totals["running"] < totals["after"] < totals["before"]
+    assert fit["regressed"] and all(r.endswith("(running calibration)") for r in fit["regressed"])
+    [prompt] = [p for p in prompts if "Save anyway?" in p]
+    assert f"Not better overall: {worse}" in prompt
+    assert f"regressed: {', '.join(fit['regressed'])}" in prompt
+    assert prompt.endswith("Enter keeps what the arm runs, s saves and applies the fit")
+    assert rig.messages()["gravity_fit"].startswith(f"not saved: {worse}; regressed: ")
     assert load_for_spec(left_spec, root_path) == saved
+
+
+def test_a_fit_worse_over_all_joints_is_saved_when_asked_anyway(
+    make_rig: Callable[..., Rig], truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> None:
+    rig, root_path = _running_true_masses(make_rig, truth, left_spec)
+    saved = load_for_spec(left_spec, root_path)
+
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"],
+        lambda p: "skip" if "Save anyway?" in p else "confirm",
+    )
+
+    assert status["state"] == "done", status["message"]
+    fit = rig.procedure.results()["gravity_fit"]
+    assert fit["saved"] == str(root_path) and fit["saved_anyway"] and fit["applied"]
+    assert " though not better overall; held-out RMS " in rig.messages()["gravity_fit"]
+    assert load_for_spec(left_spec, root_path).gravity != saved.gravity
 
 
 def test_a_recorder_that_is_not_writing_fails_the_check_before_any_motion(

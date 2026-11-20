@@ -394,10 +394,19 @@ def print_results(step_id: str, data: dict[str, Any]) -> None:
         rms = data.get("holdout_rms_nm") or {}
         if rms:
             echo("    hold-out RMS torque error, Nm (before -> after):")
-            table([[j, f"{_f(r['before'])} -> {_f(r['after'])}"] for j, r in rms.items()])
+            rows = [[j, f"{_f(r['before'])} -> {_f(r['after'])}"] for j, r in rms.items()]
+            total = data.get("holdout_total_nm") or {}
+            if total:
+                rows.append(
+                    ["all joints", f"{_f(total.get('before'))} -> {_f(total.get('after'))}"]
+                )
+            table(rows)
+        for joint in data.get("regressed") or []:
+            echo(f"    regressed: {joint}")
         if data.get("at_bounds"):
             echo("    at a bound (not pinned down by the poses): " + "; ".join(data["at_bounds"]))
-        for reason in data.get("refusals") or []:
+        worse = [] if data.get("saved") else data.get("worse_overall") or []
+        for reason in [*(data.get("refusals") or []), *worse]:
             echo(f"    not saved: {reason}")
         if data.get("saved"):
             applied = "applied" if data.get("applied") else "NOT applied"

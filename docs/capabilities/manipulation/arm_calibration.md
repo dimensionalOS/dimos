@@ -76,7 +76,7 @@ The command starts the robot in the background, talks to it, brings the arm home
 
 1. **check.** Connection, joint readings and recorder work. Then move home.
 2. **gravity_poses.** Rest at each pose, nudge each joint up and down, far enough to beat its friction.
-3. **gravity_fit.** Fit link masses. Shows `URDF -> running -> new` error per joint. Enter saves and applies.
+3. **gravity_fit.** Fit link masses. Shows `URDF -> running -> new` error per joint and over all joints. Enter saves and applies.
 4. **float_check.** At each pose the arm rests, then one joint goes limp for about ten seconds. Be ready to support the arm.
 5. **step_sweep.** Each joint steps at up to nine kp and kd pairs at the sweep pose. The prompt says how long it takes.
 6. **pick_gains.** Shows the proposed gains and every rejected try. Enter saves and applies.
@@ -89,7 +89,7 @@ The method:
 
 - Each joint is nudged up and down at every pose, by 0.3 of its torque limit over its kp, 1 to 5 degrees. The pair cancels friction, so what is left is gravity. A pair the joint follows less than halfway is redone once at twice the nudge. One that still sticks stays in the fit and is listed; the held-out error judges the fit.
 - The link masses are fitted by least squares. Held-out poses give the cross validation error. Every joint whose gravity torque can change by more than 0.1 N m over the poses is nudged; one that is not keeps its URDF gravity torque.
-- The fit is offered only when it is no worse than the URDF and the running file on every joint.
+- The fit is judged on all joints together, at this run's held-out poses. If it is worse overall than the URDF or the running file, the prompt says so and Enter keeps the running file; s saves it anyway. Joints that got worse are listed either way.
 - The step sweep rejects a kp and kd pair when a 3 degree step sticks (moves less than half its size), a step overshoots more than 20 % or buzzes. A stuck 1 degree step is listed and does not count. Of the rest it picks the lowest worst rest error over max(0.1 deg, 1.5 x friction / kp) plus worst settle time over 0.5 s. Each joint's friction comes from its 3 degree steps and its nudges.
 - A joint where nothing passes keeps its robot gains.
 - The float check sets kp to 0 for one joint at a time, at the poses where it carries the most gravity with the masses the arm runs. The fingertip drift counts from the moment the joint goes limp; more than 2 mm fails. A joint that drifts more than 5 degrees or moves faster than 20 degrees per second is held again and fails.
