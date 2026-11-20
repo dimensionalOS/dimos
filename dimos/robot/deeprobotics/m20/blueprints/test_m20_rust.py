@@ -14,6 +14,8 @@
 
 """m20-rust builds without hardware: no vendor bridge, the drivers placed on AOS, and m20's navigation and relocalization."""
 
+import typing
+
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
@@ -250,14 +252,19 @@ def test_dimslam_runs_on_nos_a76_cores() -> None:
     assert all(4 <= cpu <= 7 for cpu in NOS_SLAM_CPUS)
 
 
-@pytest.mark.parametrize("slam", ["nos", "gos"])
-def test_every_lidar_config_m20_rust_builds_validates_as_its_board_will_parse_it(slam: str) -> None:
+@pytest.mark.parametrize(
+    "choices",
+    [
+        {},
+        {"M20Slam": "gos"},
+        {"M20Joints": "ecan"},
+        {"M20Joints": "ecan", "M20BodyFilter": "python"},
+    ],
+)
+def test_every_module_config_m20_rust_builds_validates_as_its_board_will_parse_it(
+    choices: dict[str, str],
+) -> None:
     """A Host validates each module's config when it starts the fragment; nothing the blueprint sets may fail there."""
-    from dimos.robot.deeprobotics.m20.lidar import M20Lidar, M20LidarConfig
-
-    lidars = [atom for atom in _solid(M20Slam=slam).active_blueprints if atom.module is M20Lidar]
-    assert lidars
-    for atom in lidars:
-        M20LidarConfig(
-            **{key: value for key, value in atom.kwargs.items() if key != "instance_name"}
-        )
+    for atom in _solid(**choices).active_blueprints:
+        config_type = typing.get_type_hints(atom.module)["config"]
+        config_type(**{key: value for key, value in atom.kwargs.items() if key != "instance_name"})
