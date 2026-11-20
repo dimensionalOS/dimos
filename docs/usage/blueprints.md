@@ -330,7 +330,7 @@ blueprint.remappings([
 
 You can use namespaces to control several robot instances.
 
-Use `.namespace(prefix, expose=...)` on a blueprint to isolate its modules
+Use `.namespace(prefix, shared=...)` on a blueprint to isolate its modules
 under a name prefix so several copies can coexist. Because blueprints are plain
 Python values, a variable-size (and mixed-type) fleet is just a loop:
 
@@ -354,7 +354,7 @@ robot_ips = ["10.0.0.1", "10.0.0.2"]
 fleet = autoconnect(
     AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
     *[
-        Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+        Sensor.blueprint(ip=ip).namespace(f"robot{i}", shared={"pointcloud"})
         for i, ip in enumerate(robot_ips)
     ],
 )
@@ -369,7 +369,7 @@ Inside a namespace everything is prefixed:
 
 Prefixed streams only connect within their namespace.
 
-Stream names listed in `expose` are left unprefixed, so they connect globally.
+Stream names listed in `shared` are left unprefixed, so they connect globally.
 That is how data crosses the boundary.
 
 In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.

@@ -43,8 +43,8 @@ class Odom(TfModule):
     config: OdomConfig
 
     @rpc
-    def frames(self) -> tuple[dict[str, str], dict[str, str]]:
-        return self.config.tf_frames_local, self.config.tf_frames_global
+    def frames(self) -> dict[str, str]:
+        return self.config.tf_frames
 
 
 def test_namespaced_local_frames_are_prefixed_and_global_frames_are_not() -> None:
@@ -55,14 +55,28 @@ def test_namespaced_local_frames_are_prefixed_and_global_frames_are_not() -> Non
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
-        assert coordinator.get_instance("robot0/odom").frames() == (
-            {"body": "robot0/base_link"},
-            {"world": "world"},
-        )
-        assert coordinator.get_instance("robot1/inner/odom").frames() == (
-            {"body": "robot1/inner/torso"},
-            {"world": "world"},
-        )
+        assert coordinator.get_instance("robot0/odom").frames() == {
+            "body": "robot0/base_link",
+            "world": "world",
+        }
+        assert coordinator.get_instance("robot1/inner/odom").frames() == {
+            "body": "robot1/inner/torso",
+            "world": "world",
+        }
+    finally:
+        coordinator.stop()
+
+
+def test_overridden_local_frames_still_get_the_namespace() -> None:
+    blueprint = Odom.blueprint().namespace("robot0")
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--robot0/odom.tf-frames-local", '{"body": "torso"}'],
+        environ={},
+        overrides={"g": {"viewer": "none"}},
+    )
+    coordinator = ModuleCoordinator.build(blueprint, parsed)
+    try:
+        assert coordinator.get_instance("robot0/odom").frames()["body"] == "robot0/torso"
     finally:
         coordinator.stop()
 
@@ -72,7 +86,7 @@ def test_unnamespaced_local_frames_are_untouched() -> None:
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
-        assert coordinator.get_instance(Odom).frames()[0] == {"body": "base_link"}
+        assert coordinator.get_instance(Odom).frames()["body"] == "base_link"
     finally:
         coordinator.stop()
 

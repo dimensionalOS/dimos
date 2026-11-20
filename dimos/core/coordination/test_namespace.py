@@ -92,7 +92,7 @@ def _fleet_blueprint():
                     LocalMapper.blueprint(),
                 )
                 .solidify()
-                .namespace(f"robot{i}", expose={"pointcloud"})
+                .namespace(f"robot{i}", shared={"pointcloud"})
                 for i in range(2)
             ],
         )
