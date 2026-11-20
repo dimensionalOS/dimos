@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+from dimos_lcm.foxglove_msgs import Grid
+from dimos_lcm.std_msgs import Float32MultiArray, Time
 import pytest
 from pytest_mock import MockerFixture
 import typer
@@ -19,6 +22,7 @@ import typer
 from dimos.cli.topic import (
     _build_eval_context,
     _decode_typed_lcm_message,
+    _format_message,
     _split_topic,
     topic_echo,
     topic_send,
@@ -29,6 +33,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.testing.collector import CallbackCollector
 
@@ -51,6 +56,25 @@ def test_decode_typed_lcm_message_resolves_message_submodule() -> None:
     assert decoded.height == 1080
     assert decoded.frame_id == "camera_optical"
     assert decoded.distortion_model == "plumb_bob"
+
+
+def test_format_message_lists_fields_of_messages_without_str() -> None:
+    status = GoalStatus(goal_id=GoalID(stamp=Time(sec=1, nsec=2), id="goal"), status=3, text="done")
+
+    assert _format_message(String("hello")) == "String(data='hello')"
+    assert _format_message(status) == (
+        "GoalStatus(goal_id=GoalID(stamp=Time(sec=1, nsec=2), id='goal'), status=3, text='done')"
+    )
+
+
+def test_format_message_shortens_long_lists_and_bytes() -> None:
+    array = Float32MultiArray(data_length=10, data=[float(i) for i in range(10)])
+    grid = Grid(data_length=4096, data=bytes(4096))
+
+    assert _format_message(array).endswith(
+        "data=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, ... (2 more)])"
+    )
+    assert _format_message(grid).endswith("data=<4096 bytes>)")
 
 
 def test_build_eval_context_maps_message_names_to_classes() -> None:
@@ -107,7 +131,11 @@ def test_topic_send_delivers(topic_form: str) -> None:
 def test_topic_echo_delivers(topic_form: str, type_name: str | None, mocker: MockerFixture) -> None:
     collector = CallbackCollector(1)
     message = Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))
-    mocker.patch("dimos.cli.topic.print", side_effect=lambda msg, **kwargs: collector(msg, None))
+    # numpy print options are per thread, so render the expected text on the printing thread
+    mocker.patch(
+        "dimos.cli.topic.print",
+        side_effect=lambda text, **kwargs: collector(text, _format_message(message)),
+    )
 
     with make_transport("/test_topic", Twist) as publisher:
 
@@ -118,7 +146,8 @@ def test_topic_echo_delivers(topic_form: str, type_name: str | None, mocker: Moc
         mocker.patch("dimos.cli.topic._listen_forever", side_effect=publish_and_wait)
         topic_echo(topic_form, type_name)
 
-    assert collector.results[0][0] == message
+    printed, expected = collector.results[0]
+    assert printed == expected
 
 
 @pytest.mark.parametrize(

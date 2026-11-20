@@ -49,8 +49,7 @@ Terminal 3, use MCP while the same stack continues running:
 
 ## xarm-localize-live
 
-Terminal 1, the sensors. One coordinator per bus is allowed, so the feed runs
-as a plain process publishing on the same topics a robot connection would:
+In terminal 1, start the sensor feed. It publishes directly to the topics used by the robot connection.
 
     uv run python -m dimos.perception.localize.demo_blueprints.xarm_feed
 

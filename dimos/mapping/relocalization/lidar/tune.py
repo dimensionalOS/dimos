@@ -44,6 +44,7 @@ from dimos.mapping.relocalization.lidar.replay import main as replay_main
 from dimos.mapping.relocalization.module import load_premap
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -463,7 +464,7 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
     if out is not None:
         rr.save(out)
     else:
-        rr.spawn()
+        rr.spawn(executable_path=find_executable("rerun"))
     rr.log("world/premap/pointcloud", premap.to_rerun(voxel_size=0.05), static=True)
     for probe in probes:
         aligned = PointCloud2.from_numpy(

@@ -762,11 +762,19 @@ class ViserPanelGui:
         return self._state_values_by_name(state)
 
     def _remove_panel_handles(self) -> None:
-        for key, handle in list(self._handles.items()):
+        # Newest first: a folder takes its children with it, and Viser warns about
+        # a child that is removed after its folder.
+        for key, handle in reversed(list(self._handles.items())):
+            if key.startswith("ee_control:"):
+                # The scene owns the target controls and removes them. Viser raises
+                # a KeyError when one is removed twice.
+                if self.scene is not None:
+                    self.scene.remove_target_controls(key.removeprefix("ee_control:"))
+                continue
             remove = getattr(handle, "remove", None)
             if callable(remove):
                 remove()
-            self._handles.pop(key, None)
+        self._handles.clear()
 
     def _sync_preset_dropdown(self) -> None:
         handle = self._handles.get("preset")

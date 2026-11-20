@@ -36,7 +36,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNativeConfig,
 )
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
-from dimos.navigation.global_planner.viz import render_path
+from dimos.navigation.global_planner.viz import render_goal, render_path
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
@@ -101,6 +101,7 @@ def _rerun_config(extra: dict[str, Any] | None = None) -> dict[str, Any]:
             f"world/{SCAN_TOPIC}": _small_points,
             "world/global_map": _small_points,
             "world/local_map": _small_points,
+            "world/goal": render_goal,
             **(extra or {}),
         },
     }

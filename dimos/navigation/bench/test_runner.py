@@ -14,15 +14,14 @@
 
 from __future__ import annotations
 
+import _thread
 from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
-import signal
 import socket
 import subprocess
 import sys
-import threading
 import time
 
 import cv2
@@ -200,6 +199,7 @@ def test_run_scores_every_episode_and_rescores_the_same(
             blueprint="fake",
             procs=3,
             out_dir=tmp_path / "run",
+            min_free_gb=0,
             overrides=(
                 f"--fake-recordings={tmp_path / 'recordings'}",
                 "--set-x=1",
@@ -244,6 +244,7 @@ def test_keeping_failures_drops_the_recordings_of_successes_and_rescores_the_sam
             blueprint="fake",
             procs=3,
             out_dir=tmp_path / "run",
+            min_free_gb=0,
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
             keep="failures",
             command=(sys.executable, str(tmp_path / "fake.py")),
@@ -278,13 +279,14 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
     def interrupt_once_both_hang(progress: Progress) -> None:
         if len(progress.running) == 2 and not interrupted:
             interrupted.append(True)
-            signal.pthread_kill(threading.main_thread().ident or 0, signal.SIGINT)
+            _thread.interrupt_main()
 
     config = RunConfig(
         suite=tmp_path / "suite.json",
         blueprint="fake",
         procs=2,
         out_dir=tmp_path / "run",
+        min_free_gb=0,
         overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
         command=(sys.executable, str(tmp_path / "fake.py")),
     )
@@ -326,6 +328,7 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
             blueprint="fake",
             procs=2,
             out_dir=tmp_path / "run",
+            min_free_gb=0,
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
             command=(sys.executable, str(tmp_path / "fake.py")),
         )

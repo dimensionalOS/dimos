@@ -22,14 +22,10 @@ from typing import Any
 from fastapi import APIRouter
 
 from experimental.gateway import catalog, constants, introspect, launches, responses
+from experimental.gateway.names import check_name
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/catalog")
-
-
-def check_name(name: str) -> None:
-    if not name or name.startswith("-") or any(char.isspace() for char in name):
-        raise ApiError(400, f"bad name: {name}")
 
 
 def picked(answer: dict[str, Any], fields: str | None) -> dict[str, Any]:
@@ -142,6 +138,8 @@ async def everything(
 async def scan_all(
     state: GatewayState, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
 ) -> dict[str, Any]:
+    # an asked-for rescan also rereads what was introspected (a blueprint's config defaults)
+    state.cache = introspect.Cache()
     return {"job": state.scanner.start("requested", timeout).id}
 
 
@@ -150,6 +148,7 @@ async def scan_blueprint(
     state: GatewayState, name: str, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
 ) -> dict[str, Any]:
     await check_blueprint(state, name)
+    state.cache = introspect.Cache()
     return {"job": state.scanner.start_one(name, timeout).id}
 
 

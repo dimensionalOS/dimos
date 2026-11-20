@@ -16,8 +16,8 @@
 //! headway, and the stamped precision profile as the governor's input.
 
 use crate::geom::{
-    arcs_of, body_error, carrot_lerp, clearance_governor, fan_target, progress_index, yaw_command,
-    Params,
+    angle_diff, arcs_of, body_error, carrot_lerp, clearance_governor, fan_target, progress_index,
+    yaw_command, Params,
 };
 use crate::stamps::{ceiling_ahead, decode_ceilings};
 
@@ -42,6 +42,56 @@ pub fn walk_command(want: f64, gain: f64, slip: f64, ramp: f64) -> f64 {
     want + correction * (want / ramp).min(1.0)
 }
 
+/// How far ahead in heading the body is led through a turn in place, in `fan_yaw_done`s.
+const TURN_LEAD: f64 = 2.0;
+
+/// How far off a turn's spot the body may stand and still turn, in tracking precisions.
+const TURN_SPOT: f64 = 1.0;
+
+/// The turn in place the carrot would reach within `look` of arc: its spot and the heading to
+/// hold next. The body walks to the spot facing the way it is, then turns the way the path
+/// turns. None once it faces the turn's last heading.
+fn turn_ahead(
+    pose: (f64, f64, f64),
+    path: &[[f64; 3]],
+    arcs: &[f64],
+    i: usize,
+    look: f64,
+    cfg: &Params,
+) -> Option<([f64; 2], f64)> {
+    let n = path.len();
+    let turns = |k: usize| {
+        arcs[k + 1] - arcs[k] < 1e-6 && angle_diff(path[k + 1][2], path[k][2]).abs() > 1e-6
+    };
+    let first = (i..n - 1)
+        .take_while(|&k| arcs[k] - arcs[i] <= look)
+        .find(|&k| turns(k))?;
+    let mut last = first + 1;
+    while last + 1 < n && arcs[last + 1] - arcs[last] < 1e-6 {
+        last += 1;
+    }
+    let (px, py, pyaw) = pose;
+    let off = |k: usize| angle_diff(path[k][2], pyaw).abs();
+    if off(last) <= cfg.fan_yaw_done {
+        return None;
+    }
+    // Where the body is in the turn: the pose nearest its heading, the first on a tie.
+    let at = (first..=last).fold(first, |at, k| if off(k) < off(at) { k } else { at });
+    let spot = [path[first][0], path[first][1]];
+    if (spot[0] - px).hypot(spot[1] - py) > TURN_SPOT * cfg.speed_floor_clearance {
+        return Some((spot, path[at][2]));
+    }
+    let (mut to, mut turned) = (at, 0.0);
+    while to < last {
+        turned += angle_diff(path[to + 1][2], path[to][2]).abs();
+        if turned > TURN_LEAD * cfg.fan_yaw_done {
+            break;
+        }
+        to += 1;
+    }
+    Some((spot, path[to][2]))
+}
+
 /// One controller tick; `(vx, vy, wz)` in the body frame. `clearance` and `ts`
 /// carry the same room hint (`stamps::decode_ceilings`), either is optional.
 pub fn update(
@@ -58,7 +108,7 @@ pub fn update(
     let base = &cfg.base;
     let (px, py, pyaw) = pose;
     let arcs = arcs_of(path);
-    let i = progress_index(path, &arcs, px, py, pyaw);
+    let i = progress_index(path, px, py, pyaw);
 
     // Governor first, since the lookahead derives from it. Without a clearance
     // array the same ceiling is decoded off the stamps: alternatives, not layers.
@@ -74,8 +124,9 @@ pub fn update(
     let headway = base.lookahead / base.max_speed.max(1e-6);
     let look = (vmax * headway).max(vmax / base.k_pos.abs().max(1e-6));
 
-    let (target_xy, target_yaw) =
-        fan_target(path, &arcs, i, pyaw, base).unwrap_or_else(|| carrot_lerp(path, &arcs, i, look));
+    let (target_xy, target_yaw) = turn_ahead(pose, path, &arcs, i, look, base)
+        .or_else(|| fan_target(path, &arcs, i, pyaw, base))
+        .unwrap_or_else(|| carrot_lerp(path, &arcs, i, look));
 
     let (bx, by) = body_error(px, py, pyaw, target_xy);
     let (mut vx, mut vy) = (base.k_pos * bx, base.k_pos * by);

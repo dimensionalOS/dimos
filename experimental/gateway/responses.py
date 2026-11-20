@@ -567,6 +567,17 @@ class Account(Body):
     login: NotRequired[Login]
 
 
+class UploadSettings(Body, total=False):
+    """An upload's own transfer settings, each over its DIMOS_CLOUD_* default."""
+
+    httpTimeout: float
+    """Seconds one HTTP request may take."""
+    uploadRetries: int
+    """Retries of a failed part."""
+    uploadChunkMb: int
+    """Size of each part but the last, in MB (at least 5, S3's smallest)."""
+
+
 class Upload(Body):
     """One upload in the queue: its progress, and its link once done."""
 
@@ -591,6 +602,7 @@ class Upload(Body):
     startedAt: int | None
     finishedAt: int | None
     link: str | None
+    settings: UploadSettings | None
 
 
 class Uploaded(Body):

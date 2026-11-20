@@ -355,3 +355,13 @@ class PremapModule(Module):
                 server_id=self._server_id,
                 seq_num=self._revision,
             )
+
+    @rpc
+    def location(self, name: str) -> PoseStamped:
+        """The named location's pose in the map frame. Raises LookupError for an unknown name."""
+        with self._lock:
+            pose = self._locations.get(name)
+            if pose is None:
+                known = ", ".join(sorted(self._locations)) or "none"
+                raise LookupError(f"no location named {name!r}, the map has: {known}")
+        return pose

@@ -42,6 +42,7 @@ export type {
 } from "@dimos/shared";
 export { TRACK_ENCODING } from "@dimos/shared/manifest";
 export type { Manifest } from "@dimos/shared/manifest";
+export type { TopicStats } from "./topicAdapt.ts";
 export { TopicError } from "./topics.ts";
 export type { TopicPublisher, TopicPublisherOptions } from "./topicPublishers.ts";
 export type {
@@ -53,10 +54,12 @@ export type {
   TopicPublishReceipt,
   Topics,
   TopicSample,
+  TopicSettings,
   TopicStatus,
   TopicSubscription,
 } from "./topics.ts";
 export type { TopicDescriptor, TopicSourceInfo } from "@dimos/shared";
+export type { TopicVideo, TopicVideoMode, TopicVideoOptions } from "./topicVideo.ts";
 export { type CborData, type CborProjection, projectCbor } from "./decoders/cbor.ts";
 export { TopicMediaDecoder } from "./media.ts";
 export {

@@ -54,6 +54,11 @@ const topicProfileOptions = {
     maxResolution: { kind: "size", min: 16, max: 4096, default: [640, 360] },
     quality: { kind: "int", min: 1, max: 100, default: 60 },
   },
+  "video.h264.v1": {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+    maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
+  },
   "cloud.q16.low.v1": {
     maxHz: { kind: "number", max: 1000, default: 5 },
     keepEvery: { kind: "int", min: 1, max: 64, default: 4 },
@@ -120,6 +125,7 @@ const controlMsgs: Record<string, Msg> = {
       write: false,
       profiles: ["raw", "depth.lossless.v1"],
       guardedPublishers: false,
+      videoReconfigure: false,
     },
   },
   // A media provider advertises the settings each profile accepts; the
@@ -136,6 +142,7 @@ const controlMsgs: Record<string, Msg> = {
       profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
       guardedPublishers: false,
       profileOptions: topicProfileOptions,
+      videoReconfigure: true,
     },
   },
   topic_sources: {
@@ -148,6 +155,7 @@ const controlMsgs: Record<string, Msg> = {
       write: false,
       profiles: ["raw"],
       guardedPublishers: false,
+      videoReconfigure: false,
     }],
   },
   topic_sources_options: {
@@ -161,6 +169,7 @@ const controlMsgs: Record<string, Msg> = {
       profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
       guardedPublishers: false,
       profileOptions: topicProfileOptions,
+      videoReconfigure: true,
     }],
   },
   topic_sub: {
@@ -218,6 +227,36 @@ const controlMsgs: Record<string, Msg> = {
   topic_close: { t: "topic_close", route: "@t:p1", gen: 3 },
   topic_credit: { t: "topic_credit", route: "@t:v2", gen: 3, frames: 40, bytes: 13000 },
   topic_unsub: { t: "topic_unsub", id: "s1" },
+  // Direct topic video (PLAN_2b): the viewer leg names the subscription and
+  // viewer route; the relay forwards the offer with a private peer id, the
+  // provider route and the variant, and maps the replies back.
+  topic_rtc_offer: { t: "topic_rtc_offer", id: "s1", route: "@t:v2", gen: 3, sdp: sdpOffer },
+  topic_rtc_offer_provider: {
+    t: "topic_rtc_offer",
+    id: "r1",
+    route: "@t:p1",
+    gen: 3,
+    sdp: sdpOffer,
+    variant: "v1",
+  },
+  topic_rtc_answer: { t: "topic_rtc_answer", id: "s1", route: "@t:v2", gen: 3, sdp: sdpAnswer },
+  topic_rtc_candidate: {
+    t: "topic_rtc_candidate",
+    id: "s1",
+    route: "@t:v2",
+    gen: 3,
+    candidate: "candidate:1 1 udp 2130706431 192.168.1.20 51234 typ host generation 0",
+    mid: "0",
+  },
+  topic_rtc_candidate_end: {
+    t: "topic_rtc_candidate",
+    id: "r1",
+    route: "@t:p1",
+    gen: 3,
+    candidate: "",
+    mid: "0",
+  },
+  topic_rtc_close: { t: "topic_rtc_close", id: "s1", route: "@t:v2", gen: 3, reason: "rtc_limit" },
   // Settings updates (PLAN_2a): null resets one key to the profile default,
   // the acknowledgement carries the normalized settings in force.
   topic_update: {
@@ -242,7 +281,7 @@ const controlMsgs: Record<string, Msg> = {
     t: "topic_variant",
     route: "@t:p2",
     gen: 3,
-    variant: "v2",
+    variant: "v12",
     settings: { maxHz: 7.5, maxResolution: [640, 360], quality: 40 },
   },
   topic_variant_ready: {
@@ -327,6 +366,19 @@ const controlMsgs: Record<string, Msg> = {
   },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
   pong: { t: "pong", n: 7, ts: 1752576000.5 },
+  topic_bitrate_update: {
+    t: "topic_update",
+    id: "cam",
+    revision: 1,
+    options: { maxBitrate: 10000000 },
+  },
+  topic_bitrate_applied: {
+    t: "topic_applied",
+    id: "cam",
+    revision: 1,
+    settings: { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 2500000 },
+  },
+  pong_aborted: { t: "pong", n: 7, ts: 1752576000.5, aborted: 3 },
   error_version: {
     t: "error",
     code: "version_mismatch",
@@ -1134,6 +1186,10 @@ const manifests = {
 const dir = new URL(".", import.meta.url);
 const invalidTopics = {
   vectors: [
+    ...[-1, 0.5, null, true, 9007199254740992].map((aborted, i) => ({
+      name: `invalid_pong_aborted_${i}`,
+      message: { t: "pong", n: 7, ts: 1752576000.5, aborted },
+    })),
     ...[null, true, 0, -1, 1001, "30"].map((maxHz, i) => ({
       name: `invalid_rate_update_${i}`,
       message: { ...controlMsgs.topic_activate, maxHz },
@@ -1149,11 +1205,22 @@ const invalidTopics = {
       name,
       message: { ...controlMsgs.topic_guard_ready, ...fields as Record<string, unknown> },
     })),
-    ...[null, { read: 1, write: false, profiles: ["raw"] }, {
-      read: true,
-      write: false,
-      profiles: new Array(17).fill("raw"),
-    }, { read: true, write: false, profiles: [""] }].map((topicCapabilities, i) => ({
+    ...[
+      null,
+      { read: 1, write: false, profiles: ["raw"] },
+      {
+        read: true,
+        write: false,
+        profiles: new Array(17).fill("raw"),
+      },
+      { read: true, write: false, profiles: [""] },
+      {
+        read: true,
+        write: false,
+        profiles: ["raw"],
+        videoReconfigure: 1,
+      },
+    ].map((topicCapabilities, i) => ({
       name: `invalid_capabilities_${i}`,
       message: { ...controlMsgs.hello_topic_source, topicCapabilities },
     })),
@@ -1195,8 +1262,12 @@ const invalidTopics = {
       message: { ...controlMsgs.topic_ready, ...fields as Record<string, unknown> },
     })),
     ...[
-      ["unknown_option", { options: { maxBitrate: 1 } }],
+      ["unknown_option", { options: { bandwidth: 1 } }],
       ["negative_keep_every", { options: { keepEvery: -1 } }],
+      ["fractional_bitrate", { options: { maxBitrate: 100000.5 } }],
+      ["negative_bitrate", { options: { maxBitrate: -1 } }],
+      ["unsafe_bitrate", { options: { maxBitrate: 9007199254740992 } }],
+      ["boolean_bitrate", { options: { maxBitrate: true } }],
       ["fractional_quality", { options: { quality: 75.5 } }],
       ["boolean_quality", { options: { quality: true } }],
       ["short_resolution", { options: { maxResolution: [640] } }],
@@ -1222,7 +1293,8 @@ const invalidTopics = {
     })),
     ...[
       ["variant_zero", { variant: "v0" }],
-      ["variant_beyond_bound", { variant: "v5" }],
+      ["variant_beyond_bound", { variant: "v12345678901234567" }],
+      ["variant_leading_zero", { variant: "v01" }],
       ["variant_prefix", { variant: "w1" }],
       ["variant_newline", { variant: "v1\n" }],
       ["variant_null_settings", { settings: null }],
@@ -1259,6 +1331,34 @@ const invalidTopics = {
         },
       },
     })),
+    ...[
+      ["oversized_sdp", { sdp: "v=0\r\n".padEnd(48 * 1024 + 1, "a") }],
+      ["empty_sdp", { sdp: "" }],
+      ["numeric_sdp", { sdp: 1 }],
+      ["rtc_variant_beyond_bound", { variant: "v12345678901234567" }],
+      ["rtc_null_variant", { variant: null }],
+      ["rtc_literal_key_route", { route: "demo/a" }],
+      ["rtc_negative_gen", { gen: -1 }],
+      ["rtc_missing_id", { id: undefined }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_rtc_offer, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["long_candidate", { candidate: "a".repeat(513) }],
+      ["null_candidate", { candidate: null }],
+      ["long_mid", { mid: "0".repeat(17) }],
+      ["numeric_mid", { mid: 0 }],
+      ["candidate_fractional_gen", { gen: 1.5 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_rtc_candidate, ...fields as Record<string, unknown> },
+    })),
+    { name: "rtc_close_empty_reason", message: { ...controlMsgs.topic_rtc_close, reason: "" } },
+    {
+      name: "rtc_close_long_reason",
+      message: { ...controlMsgs.topic_rtc_close, reason: "x".repeat(65) },
+    },
     { name: "oversized_page", message: { ...controlMsgs.topic_list, limit: 33 } },
     { name: "fractional_limit", message: { ...controlMsgs.topic_list, limit: 1.5 } },
     { name: "negative_credit", message: { ...controlMsgs.topic_credit, bytes: -1 } },

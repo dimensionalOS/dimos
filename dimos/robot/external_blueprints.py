@@ -21,7 +21,7 @@ import re
 
 from packaging.utils import canonicalize_name
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 from dimos.core.module import is_module_type
 
 ENTRY_POINT_GROUP = "dimos.blueprints"
@@ -83,7 +83,7 @@ def _external_blueprint_load_error(
 def _invalid_external_blueprint_target_error(name: str, target: object) -> ExternalBlueprintError:
     return ExternalBlueprintError(
         f"External blueprint {name!r} loaded unsupported target {target!r}. "
-        "Entry point targets must be a Blueprint object or a DimOS Module class."
+        "Entry point targets must be a Blueprint or MetaBlueprint object or a DimOS Module class."
     )
 
 
@@ -150,8 +150,8 @@ def list_external_blueprints() -> list[ExternalBlueprintEntry]:
     )
 
 
-def resolve_external_blueprint_by_name(name: str) -> Blueprint:
-    """Resolve a fully-qualified external blueprint name to a Blueprint."""
+def resolve_external_blueprint_by_name(name: str) -> Blueprint | MetaBlueprint:
+    """Load an external blueprint without resolving its choices."""
 
     namespace, sep, local_name = name.partition(".")
     if not sep:
@@ -186,8 +186,8 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
     return _target_to_blueprint(entry.qualified_name, target)
 
 
-def _target_to_blueprint(name: str, target: object) -> Blueprint:
-    if isinstance(target, Blueprint):
+def _target_to_blueprint(name: str, target: object) -> Blueprint | MetaBlueprint:
+    if isinstance(target, (Blueprint, MetaBlueprint)):
         return target
     if is_module_type(target):
         return target.blueprint()
