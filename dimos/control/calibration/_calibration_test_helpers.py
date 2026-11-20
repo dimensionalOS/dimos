@@ -181,8 +181,6 @@ def calibration(**fields: object) -> ArmCalibration:
             fit={"ridge_nm": 0.1, "holdout_poses": ["pose_05"]},
         ),
         "gains": {"shoulder": JointGains(kp=80.0, kd=5.0)},
-        "friction_nm": {"shoulder": 0.21},
-        "checks": {"float": {"passed": True, "drift_mm": 1.2}},
         "notes": "bench run",
     }
     values.update(fields)

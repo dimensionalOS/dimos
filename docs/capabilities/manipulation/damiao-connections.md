@@ -20,7 +20,7 @@ torques) makes connect fail; set `calibration: off` to run without it.
 
 `get_config()` returns, per arm id, an `ArmConfigState`
 (`dimos/control/calibration/schema.py`): the gains each joint is sent with,
-the floating joints, the fitted link masses, the file it runs and whether the
+the floating joints, the fitted link masses, the file it runs, the deadman timeout and whether the
 robot can float a joint. `set_config(patch, save=False)` takes
 `{arm_id: ArmConfigPatch}` and needs `config_writes=True`, which only the
 `<robot>-calibrate` blueprints set, and never with `--simulation`; see

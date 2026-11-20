@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MakerMods Metal calibration: the connection open for config sessions, its coordinator and the calibration module.
+"""MakerMods Metal calibration: its connection with ``config_writes`` and the calibration module.
 
-    dimos run metal-calibrate --metalconnection.can-port can0
+    dimos arm calibrate metal --floor-z-m Z --min-x-m X
 
-The Metal does not compensate gravity, so its joints are never floated.
-Without a workspace guard of its own the arm needs the table height and the
-line its fingertip stays in front of: ``--calibrationmodule.floor-z-m`` and
-``--calibrationmodule.min-x-m``, metres from its base.
-See ``dimos.control.calibration.blueprints``.
+See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint

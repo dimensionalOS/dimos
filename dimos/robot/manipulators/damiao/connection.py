@@ -328,6 +328,7 @@ class DamiaoConnection(ConnectionModule):
                         path=str(item.path), sha256=item.sha256, created=item.calibration.created
                     ),
                     can_float=self.robot.gravity,
+                    deadman_timeout_s=self.config.deadman_timeout_s,
                 ).model_dump(mode="json")
             return states
 

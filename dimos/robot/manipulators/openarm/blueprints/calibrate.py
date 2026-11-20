@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm calibration: the connection open for config sessions, its coordinator and the calibration module.
+"""OpenArm calibration: its connection with ``config_writes`` and the calibration module.
 
-    dimos run openarm-calibrate --openarmconnection.left-can-port can0 --openarmconnection.right-can-port can1 --calibrationmodule.arm left
+    dimos arm calibrate openarm --arm left --floor-z-m Z --min-x-m X
 
-Choose the arm with ``--calibrationmodule.arm``; the other one is held where it is.
-Without a workspace guard of its own the arm needs the table height and the
-line its fingertip stays in front of: ``--calibrationmodule.floor-z-m`` and
-``--calibrationmodule.min-x-m``, metres from its base.
-See ``dimos.control.calibration.blueprints``.
+See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint

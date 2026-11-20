@@ -145,6 +145,7 @@ def test_auto_applies_each_arms_saved_file(start, boundary, calibration_root):
         "links": {},
         "file": None,
         "can_float": True,
+        "deadman_timeout_s": 10.0,
     }
     assert roundtrip(state) == state
 

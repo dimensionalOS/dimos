@@ -140,6 +140,8 @@ class ArmConfigState(BaseConfig):
         links: The fitted link masses the arm runs; empty for the URDF's.
         file: The calibration file it runs, or ``None`` for its defaults.
         can_float: Whether the robot compensates gravity, which floating needs.
+        deadman_timeout_s: How long the connection waits for a command before
+            it holds the arm and undoes the live changes.
     """
 
     gains: dict[str, JointGains]
@@ -147,6 +149,7 @@ class ArmConfigState(BaseConfig):
     links: dict[str, LinkGravity]
     file: AppliedFile | None
     can_float: bool
+    deadman_timeout_s: float
 
 
 class ArmCalibrationError(RuntimeError):

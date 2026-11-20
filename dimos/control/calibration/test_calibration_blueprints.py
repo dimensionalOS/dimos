@@ -12,25 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every Damiao arm has a calibration blueprint: its connection open for config sessions, the
-calibration coordinator driving it through a pass-through task, and the calibration module."""
+"""Every Damiao arm has a calibration blueprint: its connection with config writes, and the calibration module."""
 
 from __future__ import annotations
 
 import pytest
 
-from dimos.control.calibration.coordinator import (
-    CALIBRATION_COMMAND_PORT,
-    CALIBRATION_PASSTHROUGH_TASK,
-    CalibrationCoordinator,
-)
 from dimos.control.calibration.module import CalibrationModule
 from dimos.control.calibration.robots import KNOWN_ROBOTS
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import resolve_module_refs, stream_name_types
 from dimos.core.global_config import global_config
-from dimos.memory.tap import matching
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.get_all_blueprints import load_blueprint
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
@@ -53,55 +46,34 @@ CALIBRATE: dict[str, tuple[type[DamiaoConnection], str, str | None]] = {
 }
 
 
-def test_every_known_robot_has_one():
+def test_every_known_robot_has_one() -> None:
     assert sorted(robot for _, robot, _ in CALIBRATE.values()) == sorted(KNOWN_ROBOTS)
-    assert all_modules["calibration-module"] == (
-        "dimos.control.calibration.module.CalibrationModule"
-    )
+    assert all_modules["calibration-module"] == "dimos.control.calibration.module.CalibrationModule"
 
 
 @pytest.mark.parametrize("name", sorted(CALIBRATE))
-def test_the_blueprint_opens_the_connection_for_config_sessions_and_records(name):
+def test_the_module_commands_the_connection_directly(name: str) -> None:
     connection, robot, arm = CALIBRATE[name]
     assert name in all_blueprints
 
     blueprint = autoconnect(load_blueprint(name)).solidify()
 
-    assert {atom.module for atom in blueprint.blueprints} == {
-        CalibrationCoordinator,
-        connection,
-        CalibrationModule,
-    }
+    assert {atom.module for atom in blueprint.blueprints} == {connection, CalibrationModule}
     [driver] = [atom for atom in blueprint.blueprints if atom.module is connection]
-    assert driver.kwargs["config_sessions"] is True and driver.kwargs["teach"] is False
-    assert driver.kwargs["source"] == "arm"
+    assert driver.kwargs["config_writes"] is True and driver.kwargs["teach"] is False
     [calibration] = [atom for atom in blueprint.blueprints if atom.module is CalibrationModule]
     assert calibration.kwargs == {"robot": robot, **({"arm": arm} if arm else {})}
-    # One pass-through task over every arm joint, fed by the calibration's targets.
-    [coordinator] = [atom for atom in blueprint.blueprints if atom.module is CalibrationCoordinator]
-    assert coordinator.kwargs["instance_name"] == "ControlCoordinator"
-    [task] = coordinator.kwargs["tasks"]
-    assert (task.name, task.type) == (CALIBRATION_PASSTHROUGH_TASK, "passthrough")
-    assert task.joint_names == [f"arm/{joint}" for joint in connection.robot.arm_joint_names]
-    assert task.stream_bind == {"joint_command": CALIBRATION_COMMAND_PORT}
-    assert blueprint.global_config_overrides["record"] == "sqlite"
-    assert blueprint.global_config_overrides["record_engine"] == "python"
-    # Every stream the procedure reads back is recorded, by the names the recorder sees.
-    topics = blueprint.global_config_overrides["record_topics"]
-    names = {name for name, _ in stream_name_types(blueprint)}
-    read_back = {"joint_state", "arm_position_command", "gravity_events", "step_events"}
-    assert read_back | {"float_events", "calibration_events"} <= matching(topics, names)
-    assert CALIBRATION_COMMAND_PORT in names
-    # The module reaches the connection for its config and the coordinator for a hold.
-    assert resolve_module_refs(blueprint) == {
-        (calibration.name, "_connection"): driver.name,
-        (calibration.name, "_coordinator"): coordinator.name,
-    }
+    # The module's targets go to the connection's command port, its readings come back.
+    streams = dict(stream_name_types(blueprint))
+    assert {"position_command", "joint_state"} <= set(streams)
+    assert resolve_module_refs(blueprint) == {(calibration.name, "_connection"): driver.name}
 
 
-def test_calibration_never_runs_on_the_simulated_connection(monkeypatch: pytest.MonkeyPatch):
+def test_calibration_never_runs_on_the_simulated_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(global_config, "simulation", "mujoco")
     with pytest.raises(ValueError, match="calibration drives the real arm"):
-        arm_connection(OpenYamConnection, config_sessions=True)
+        arm_connection(OpenYamConnection, config_writes=True)
     [mock] = arm_connection(OpenYamConnection).blueprints
     assert mock.module is MockJointConnection

@@ -1,121 +1,78 @@
 # Calibrate a Damiao arm
 
-`dimos arm calibrate` is a guided calibration of one Damiao arm. It fits a gravity model and kp/kd gains, and saves one file per arm that the arm loads at start.
-It works with `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `openarm`. A step the arm's connection cannot do is skipped, and the plan says why.
+`dimos arm calibrate` walks one Damiao arm through a calibration from your terminal. It fits the arm's link masses and its kp/kd gains, and saves them to one file per arm that the arm loads every time it starts.
+It works with `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `openarm`.
+
+## Before you start
+
+- Clear the workspace. Stand beside the arm so you can catch it.
+- Measure the table height (`--floor-z-m`) and the line the fingertip must stay in front of (`--min-x-m`), in metres from the arm's base. Both are required. On a two-arm robot each arm also stays on its side of the midline between the two bases.
+- Know the CAN port of every arm on the robot, including the one you are not calibrating.
+- Nothing else may be using the arm. If something is, the connection fails to open the CAN bus and the command shows that error.
 
 ## Run it
 
 ```bash
-dimos arm calibrate dual-openyam --arm left --floor-z-m F --min-x-m X \
-    --dualopenyamconnection.left-can-port follower_l \
-    --dualopenyamconnection.right-can-port follower_r
+dimos arm calibrate dual-openyam --arm left --floor-z-m 0 --min-x-m 0.1 \
+    --dualopenyamconnection.left-can-port can0 \
+    --dualopenyamconnection.right-can-port can1
 ```
 
-Add `--dry-run` first. It prints the exact `dimos run` command and the steps, and starts nothing.
+Add `--dry-run` first. It prints the plan and the exact `dimos run` command, and starts nothing. Flags the command does not know go to `dimos run <robot>-calibrate`, which is how the CAN ports get there. The other robots take `--openyamconnection.can-port`, `--metalconnection.can-port`, `--b601dmconnection.can-port`, or `--dualmetalconnection.` / `--openarmconnection.` with `left-can-port` and `right-can-port`.
 
 | Key | What happens |
 |-----|--------------|
-| Enter | Go on |
-| s | Skip this pose, joint or step |
-| q then Enter, or Ctrl-C | Abort. The arm holds where it is with its motors on |
-| At the end | Enter (or h) goes home, then finishes. k finishes without going home |
+| Enter | Go on (the first choice shown) |
+| s | Skip this move, joint or step |
+| q, or Ctrl-C | Abort. The arm stops and holds where it is, and you are asked whether to go home |
 
-Before you start:
+The command asks before every move. With `--no-confirm-each` it asks only at the start of each step. If the arm is not home when the calibration ends, the command waits for Enter before it stops the robot, because stopping turns the motors off.
 
-- Clear the workspace. Stand beside the arm so you can catch it.
-- OpenYAM arms start folded on their supports. The poses lift them off.
-- Know the CAN port of every arm on the robot, including the one you are not calibrating.
-- No other dimos run is active (`dimos status`).
-- Every arm needs `--floor-z-m` and `--min-x-m` (metres from the base). On a two-arm robot each arm also stays on its side of the midline between the two bases in the URDF.
+## What each step does
 
-Other robots:
+1. **check.** Watches the arm at rest for one rest window to measure its noise and how often readings arrive, checks every joint is inside its limits, then moves home.
+2. **gravity_poses.** Moves to each gravity pose, lets it settle, then nudges each gravity-loaded joint up and down by the dither and lets it settle each time.
+3. **gravity_fit.** Fits the link masses. It shows each joint's gravity torque error for the URDF, the running model and the fit, each pose held out. If the fit is no better, it is not offered. Otherwise Enter saves and applies it.
+4. **float_check.** Each gravity-loaded joint in turn goes limp (kp 0, gravity still compensated) at the pose where it carries the most gravity. It passes if it settles with the fingertip inside the drift limit. Be ready to support the arm. Skipped on robots that do not compensate gravity.
+5. **step_sweep.** At the pose farthest from the joint limits, each joint steps by each step delta at each kp scale (kd times the square root of the scale). A gain that keeps the joint buzzing stops that joint's sweep.
+6. **pick_gains.** Proposes, per joint, the stiffest gains whose steps all passed, with every softer one passing too. Enter saves and applies them.
+7. **confirm_tracking.** Revisits some gravity poses with the new calibration and compares how far each joint rests from its target with the first visit.
+8. **summary.** Shows the file the arm runs now.
 
-| Robot | Connection flags |
-|-------|------------------|
-| `openyam` | `--openyamconnection.can-port can0 --floor-z-m F --min-x-m X` |
-| `metal` | `--metalconnection.can-port can0 --floor-z-m F --min-x-m X` |
-| `dual-metal` | `--dualmetalconnection.left-can-port can0 --dualmetalconnection.right-can-port can1 --arm left --floor-z-m F --min-x-m X` |
-| `b601-dm` | `--b601dmconnection.can-port can0 --floor-z-m F --min-x-m X` |
-| `openarm` | `--openarmconnection.left-can-port can0 --openarmconnection.right-can-port can1 --arm left --floor-z-m F --min-x-m X` |
+A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A step or a float also ends if it stops settling (each window moves as much as the one before), and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
+
+The calibration moves the arm only by streaming targets to its connection, one per reading. While it waits for you or computes a fit, it sends the arm nothing, so the connection holds the arm where it is and undoes any temporary gain change or limp joint. The same happens if the command or the calibration stops.
 
 ## What you get
 
 The file is `~/.local/state/dimos/arms/<arm id>/calibration.json`, for example `~/.local/state/dimos/arms/dual_openyam/left/calibration.json`. The file it replaces goes to `history/` next to it.
 
 ```bash
-dimos arm show dual-openyam --arm left       # path, gains, link masses, checks, history
+dimos arm show dual-openyam --arm left       # path, gains, link masses, replaced files
 dimos arm bake dual-openyam --arm left --urdf in.urdf --out calibrated.urdf
 ```
 
-`bake` writes a copy of the URDF with the fitted masses and centres of mass.
+`bake` writes a copy of the URDF with the fitted masses and centres of mass. It refuses a URDF other than the one the calibration was made with.
 
-The arm's connection reads the file at every start. Its `calibration` setting is `auto`, `off` or a path. For example, `--dualopenyamconnection.calibration off` runs without it.
-If the file was made for a different arm or URDF (the URDF hash does not match), the connection refuses it. `bake` refuses such a URDF too.
-Saving goes through the connection, which always writes `~/.local/state/dimos/arms/<arm id>/calibration.json`, even when it was started with `off` or a path.
+The connection applies the file at every start. Its `calibration` setting is `auto`, `off` or a path; `--dualopenyamconnection.calibration off` runs without it. A file that does not load or does not fit the arm makes the connection fail to start.
 
-## Options you may need
+## Settings
 
-Pass them to the command as flags.
+Each is a flag of `dimos arm calibrate` (and a `--calibrationmodule.` option of the blueprint).
 
-| Option | Meaning |
-|--------|---------|
-| `--arm` | `left` or `right` on a two-arm robot |
-| `--poses N` | Number of gravity poses (default 15) |
-| `--steps a,b,c` | Run only these steps |
-| `hold_s` | Rest time at each pose (default 2.0 s) |
-| `--speed-deg-s S` | Peak joint speed (default 10, at most 30) |
-| `kp_scales` | Multiples of each joint's kp the sweep tries (default 1.0, 1.5, 2.0) |
-| `--floor-z-m`, `--min-x-m` | Table height and the line the fingertip stays in front of |
-| `--no-confirm-each` | Stop asking before every pose and joint. Not for a first run |
-
-Anything else is passed on to `dimos run <robot>-calibrate`. That is how the CAN ports get there.
-
-## How it works
-
-The command starts the robot in the background, talks to it, brings the arm home, then stops that run. Every step asks before it moves.
-
-1. **check.** Connection, joint readings and recorder work. Then move home.
-2. **gravity_poses.** Rest at each pose, nudge each joint up and down.
-3. **gravity_fit.** Fit link masses. Shows `URDF -> running -> new` error per joint. Enter saves and applies.
-4. **float_check.** Each joint goes limp for about ten seconds. Be ready to support the arm.
-5. **step_sweep.** Each joint steps at several stiffnesses at the sweep pose.
-6. **pick_gains.** Shows the proposed gains and every rejected try. Enter saves and applies.
-7. **confirm_tracking.** Revisit the held-out poses and compare rests before and after.
-8. **summary.** Lists the file, the files it replaced and what to do next.
-
-Saves happen with the arm at home. If applying a save would change a joint's gravity torque by more than 2 N m, the connection writes nothing and the wizard asks again: Enter forces it, s saves the file without applying it.
-
-The method:
-
-- Each joint is nudged up and down at every pose. The pair cancels friction, so what is left is gravity.
-- The link masses are fitted by least squares. Held-out poses give the cross validation error.
-- The fit is offered only when it is no worse than the URDF and the running file on every joint.
-- The step sweep picks the stiffest kp and kd that settle without overshoot or buzz, and only when every softer one passed too. kd grows with the square root of the kp multiple.
-- A joint where nothing passes keeps its robot gains.
-- The float check sets kp to 0 for one joint at a time. It fails the joint if it drifts more than 5 degrees or moves faster than 20 degrees per second.
-
-Safety:
-
-- The arm moves only after you confirm.
-- An abort never moves the arm. It holds in place and offers to go home.
-- A joint that lags its target by more than 10 degrees stops the step. So does a fingertip that would cross the guard.
-- `dimos stop` from another terminal gives the run about 5 seconds before it kills it. That is too short to park the arm, so finish through the wizard.
-
-## How the wizard drives the arm
-
-A `<robot>-calibrate` blueprint runs three modules: the arm's connection, a control coordinator and the calibration module.
-
-The calibration module publishes the arm's targets 50 times a second on `calibration_joint_command`. The coordinator's pass-through task sends each one to the connection's `position_command` on its next tick, unchanged: nothing limits, interpolates or smooths it, so a step stays a step. When no target has come for 0.1 s, or the wizard asks it to `hold`, the coordinator sends the arm nothing, and 0.1 s later the connection's deadman holds the arm where it is. If the wizard stops, the arm is held within about 0.2 s.
-
-The wizard changes how the arm is driven through the config contract, four calls every connection has. A patch names a target, the arm id, and values whose keys the connection defines; an arm's keys are those of `ArmConfigPatch` in `dimos/control/calibration/schema.py`:
-
-| Call | What it does |
-|------|--------------|
-| `config_keys` | Says what the connection can read and change. Steps it cannot do are skipped |
-| `config_get` | How each arm is driven now: gains, floating joints, link masses and the file it runs |
-| `config_set` | Changes gains or floats a joint for the session, or saves to the arm's file (`persist`). An empty patch only renews the session's lease |
-| `config_reset` | Undoes every live change and ends the session |
-
-Only a connection started by a `<robot>-calibrate` blueprint changes anything (`config_sessions`). It takes position commands during a session as at any other time. The session has a 2 second lease, which the wizard renews twice a second with an empty `config_set` carrying its id; reading the arm's state does not renew it. When the session ends, because the wizard finished, aborted or stopped, or the robot halted or stopped, the connection undoes every live change: floating joints hold where they are and the gains go back to the file's. The wizard has the coordinator hold the arm first, so the last target does not pull it back.
-
-The joint readings come from the connection's `joint_state` stream. The commands the arm was sent are recorded as `arm_position_command`, and each step is timed from the first command that carries its target.
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--arm` | | `left` or `right` on a two-arm robot |
+| `--floor-z-m`, `--min-x-m` | | Table height, and the line the fingertip stays in front of, m |
+| `--poses` | 12 | Gravity poses to visit (at least 3) |
+| `--speed-deg-s` | 10 | Peak joint speed of every move; at most the URDF velocity limits |
+| `--rest-window-s` | 0.5 | How long the arm sits still to measure its noise, and how long it must stay inside that noise to count as settled |
+| `--dither-deg` | 1 | How far each joint is nudged either way at a gravity pose |
+| `--kp-scales` | 1,1.5,2 | kp multiples the sweep tries; must include 1 |
+| `--step-deltas-deg` | 1,-1,3,-3 | The sweep's steps, in turn |
+| `--max-overshoot-pct` | 20 | A step that overshoots this share of itself fails |
+| `--float-drift-limit-mm` | 5 | How far the fingertip may drift while a joint is limp |
+| `--confirm-poses` | 3 | Poses `confirm_tracking` revisits |
+| `--grid-points` | 3000 | About how many candidate poses the pose search tries |
+| `--steps` | all | Steps to run after check, comma-separated |
+| `--no-confirm-each` | | Ask only at the start of each step. Not for a first run |

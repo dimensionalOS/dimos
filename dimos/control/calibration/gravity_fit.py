@@ -117,7 +117,7 @@ def measure_dither(
         or a.kp != b.kp
         or not a.delta_deg > 0.0 > b.delta_deg
         or a.delta_deg != -b.delta_deg
-        or a.target_after_deg - a.delta_deg != b.target_after_deg - b.delta_deg
+        or not math.isclose(a.target_after_deg - a.delta_deg, b.target_after_deg - b.delta_deg)
     ):
         raise ValueError(f"{pose}: {a} and {b} are not a +d/-d dither pair")
     joint = list(joint_names).index(a.joint)

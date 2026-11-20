@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM calibration: the connection open for config sessions, its coordinator and the calibration module.
+"""Dual OpenYAM calibration: its connection with ``config_writes`` and the calibration module.
 
-    dimos run dual-openyam-calibrate --dualopenyamconnection.left-can-port can0 --dualopenyamconnection.right-can-port can1
+    dimos arm calibrate dual-openyam --arm left --floor-z-m Z --min-x-m X
 
-The left arm is calibrated unless ``--calibrationmodule.arm right``; the other arm
-is held where it is by the coordinator meanwhile. Poses need the table height and
-the front line (``--calibrationmodule.floor-z-m``, ``--calibrationmodule.min-x-m``);
-the midline between the two bases in the URDF keeps each arm on its own half.
-See ``dimos.control.calibration.blueprints``.
+See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint
