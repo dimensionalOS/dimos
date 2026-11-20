@@ -387,7 +387,7 @@ class Blueprint(BlueprintProtocol):
         Instance names, stream names (and so their topics), and RPC topics all get
         the `{prefix}/` prefix, which disconnects the namespaced modules from
         everything outside. TF frame ids follow the instance name
-        (``ModuleBase.frame_id_prefix``).
+        (``ModuleBase.namespace``).
 
         Stream names listed in *shared* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the

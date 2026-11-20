@@ -200,11 +200,6 @@ class ModuleBase(Configurable, CompositeResource):
         return (self.config.instance_name or "").rpartition("/")[0]
 
     @property
-    def frame_id_prefix(self) -> str:
-        """The frames under this module's namespace: ``robot0`` for ``robot0/go2connection``."""
-        return self.namespace
-
-    @property
     def frame_id(self) -> str:
         return self.config.frame_id or self.__class__.__name__
 
