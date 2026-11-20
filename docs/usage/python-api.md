@@ -37,6 +37,9 @@ app.run("keyboard-teleop")  # This will say `KeyboardTeleop is already deployed`
 app.stop()
 ```
 
+The drive and arm keyboard teleop modules open a pygame window on the worker's machine.
+Startup waits for the display to open. Closing the window or stopping the module publishes a zero velocity command.
+
 ## RPC calls
 
 Modules can define `@rpc` methods which you can call. Here's an example:

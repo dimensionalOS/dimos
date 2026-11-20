@@ -31,10 +31,7 @@ Keyboard controls:
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import threading
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -45,20 +42,12 @@ except ImportError:
 if TYPE_CHECKING:
     from pygame.key import _ScancodeWrapper
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
-# Force X11 driver on Linux to avoid OpenGL threading issues. macOS has no X11
-# driver (SDL uses cocoa); forcing x11 there makes pygame.display fail outright.
-if sys.platform.startswith("linux"):
-    os.environ["SDL_VIDEODRIVER"] = "x11"
+from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess
 
 # Default jog speeds
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
@@ -111,70 +100,66 @@ class KeyboardTeleopModule(Module):
     ee_twist_command: Out[TwistStamped]
     gripper_command: Out[Float32]
 
-    _stop_event: threading.Event
-    _thread: threading.Thread | None = None
-    _window: subprocess.Popen[str] | None = None
-    _gripper_opening: float | None = None
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._stop_event = threading.Event()
-        self._gripper_opening = None
+    _window: WindowProcess | None = None
 
     @rpc
     def start(self) -> None:
+        if self._window is not None:
+            return
         if pygame is None:
             raise ImportError(
                 "pygame is required for keyboard teleop. Install it with: pip install pygame"
             )
         super().start()
-        self._stop_event.clear()
-        if sys.platform == "darwin":
-            # macOS only allows windows on a process's main thread, so the loop
-            # runs in a child process and this module publishes what it prints.
-            self._window = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    __name__,
-                    str(self.config.linear_speed),
-                    str(self.config.angular_speed),
-                ],
-                stdout=subprocess.PIPE,
-                text=True,
-            )
-            self._thread = threading.Thread(target=self._publish_window_commands, daemon=True)
-        else:
-            self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
-        self._thread.start()
+        self._window = WindowProcess(
+            __name__,
+            {
+                "linear_speed": self.config.linear_speed,
+                "angular_speed": self.config.angular_speed,
+            },
+            self.outputs,
+            self._publish_stop,
+        )
+
+    def _publish_stop(self) -> None:
+        self.ee_twist_command.publish(TwistStamped())
 
     @rpc
     def stop(self) -> None:
-        self._stop_event.set()
         if self._window is not None:
-            self._window.terminate()
-        if self._thread is not None:
-            self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._window.stop()
+            self._window = None
         super().stop()
 
-    def _pygame_loop(self) -> None:
-        pygame.init()
-        screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
+
+@dataclass
+class _ArmWindow(KeyboardWindow):
+    linear_speed: float
+    angular_speed: float
+    _gripper_opening: float | None = field(init=False, default=None)
+
+    def open(self) -> None:
+        pygame.display.init()
+        pygame.font.init()
+        self._screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
         pygame.display.set_caption("Keyboard Teleop")
-        font = pygame.font.Font(None, 28)
+        self._font = pygame.font.Font(None, 28)
+
+    def run(self) -> None:
+        screen, font = self._screen, self._font
         clock = pygame.time.Clock()
         held_motion_keys: set[int] = set()
         was_moving = False
 
-        while not self._stop_event.is_set():
+        while not self.connection.poll():
             for event in pygame.event.get():
                 if self._handle_pygame_event(event, held_motion_keys):
-                    self._stop_event.set()
+                    return
 
             linear, angular = _twist_from_keys(
                 held_motion_keys,
-                linear_speed=self.config.linear_speed,
-                angular_speed=self.config.angular_speed,
+                linear_speed=self.linear_speed,
+                angular_speed=self.angular_speed,
             )
             linear_x, linear_y, linear_z = linear
             angular_x, angular_y, angular_z = angular
@@ -219,20 +204,6 @@ class KeyboardTeleopModule(Module):
             pygame.display.flip()
             clock.tick(50)
 
-        self._publish_twist()
-        pygame.quit()
-
-    def _publish_window_commands(self) -> None:
-        assert self._window is not None and self._window.stdout is not None
-        for line in self._window.stdout:
-            fields = line.split()
-            if fields[:1] == ["twist"]:
-                x, y, z, roll, pitch, yaw = (float(value) for value in fields[1:])
-                self._publish_twist(linear=(x, y, z), angular=(roll, pitch, yaw))
-            elif fields[:1] == ["gripper"]:
-                self._publish_gripper_command(opening=float(fields[1]))
-        self._publish_twist()
-
     def _handle_pygame_event(
         self,
         event: Any,
@@ -257,8 +228,8 @@ class KeyboardTeleopModule(Module):
             held_motion_keys.discard(event.key)
             linear, angular = _twist_from_keys(
                 held_motion_keys,
-                linear_speed=self.config.linear_speed,
-                angular_speed=self.config.angular_speed,
+                linear_speed=self.linear_speed,
+                angular_speed=self.angular_speed,
             )
             self._publish_twist(linear=linear, angular=angular)
         return False
@@ -269,14 +240,14 @@ class KeyboardTeleopModule(Module):
         linear: TwistVector = (0.0, 0.0, 0.0),
         angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
+        self.publish("ee_twist_command", TwistStamped(linear=list(linear), angular=list(angular)))
 
     def _publish_gripper_command(self, *, opening: float) -> None:
         """Publish a changed normalized gripper opening."""
         if self._gripper_opening == opening:
             return
         self._gripper_opening = opening
-        self.gripper_command.publish(Float32(data=opening))
+        self.publish("gripper_command", Float32(data=opening))
 
 
 def _twist_from_keys(
@@ -308,28 +279,8 @@ def _twist_from_keys(
     return (linear[0], linear[1], linear[2]), (angular[0], angular[1], angular[2])
 
 
-class _WindowProcess:
-    """The macOS child: runs the module's pygame loop and prints its commands."""
-
-    _pygame_loop = KeyboardTeleopModule._pygame_loop
-    _handle_pygame_event = KeyboardTeleopModule._handle_pygame_event
-
-    def __init__(self, linear_speed: float, angular_speed: float) -> None:
-        self.config = KeyboardTeleopConfig(linear_speed=linear_speed, angular_speed=angular_speed)
-        self._stop_event = threading.Event()
-
-    def _publish_twist(
-        self,
-        *,
-        linear: TwistVector = (0.0, 0.0, 0.0),
-        angular: TwistVector = (0.0, 0.0, 0.0),
-    ) -> None:
-        print("twist", *linear, *angular, flush=True)
-
-    def _publish_gripper_command(self, *, opening: float) -> None:
-        print("gripper", opening, flush=True)
-
-
 if __name__ == "__main__":
-    # The module's loop only uses the attributes _WindowProcess provides.
-    _WindowProcess(float(sys.argv[1]), float(sys.argv[2]))._pygame_loop()  # type: ignore[misc]
+    try:
+        _ArmWindow.serve()
+    finally:
+        pygame.quit()
