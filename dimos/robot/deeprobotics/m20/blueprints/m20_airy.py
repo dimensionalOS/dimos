@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's two Airy lidars alone (``dimos run m20-airy`` on AOS): front_lidar, rear_lidar, their IMUs and mount tf."""
+"""The M20's two Airy lidars alone (``dimos run m20-airy`` on AOS): both on ``lidar``, their IMUs on ``lidar_imu``, mounts on tf."""
 
-from dimos.robot.deeprobotics.m20.lidar import m20_airy_lidars
+from dimos.robot.deeprobotics.m20.lidar import m20_lidars
 
-m20_airy = m20_airy_lidars().global_config(n_workers=3, robot_model="m20")
+m20_airy = m20_lidars().global_config(n_workers=3, robot_model="m20")

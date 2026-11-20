@@ -12,58 +12,113 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20 lidar blueprint: two Airys on separate streams and frames, mounted on base_link."""
+"""M20Lidar and the M20 lidar blueprint: two namespaced lidars on one lidar stream, told apart by frame, each mounting
+itself on base_link through the one global tf."""
 
 import math
 
 import numpy as np
+from pydantic import ValidationError
+import pytest
 
-from dimos.hardware.sensors.lidar.robosense.module import Airy
+from dimos.core.coordination.module_coordinator import stream_name_types
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.deeprobotics.m20.constants import FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M
-from dimos.robot.deeprobotics.m20.lidar import (
-    FRONT_AIRY,
-    REAR_AIRY,
-    M20LidarMountTf,
-    m20_airy_lidars,
-)
+from dimos.robot.deeprobotics.m20.lidar import M20Lidar, M20LidarConfig, m20_lidars
+
+FRONT, REAR = "front_lidar/m20lidar", "rear_lidar/m20lidar"
 
 
-def _atoms() -> dict:
-    return {atom.name: atom for atom in m20_airy_lidars(voxel=0.1).solidify().blueprints}
+def _config(**fields: object) -> M20LidarConfig:
+    return M20LidarConfig(
+        **{"frame_id": "f", "imu_frame_id": "f_imu", "mount_parent_frame_id": "body", **fields}
+    )
 
 
-def test_two_airys_on_separate_streams() -> None:
-    blueprint = m20_airy_lidars().solidify()
-    atoms = _atoms()
-    assert atoms[FRONT_AIRY].module is Airy and atoms[REAR_AIRY].module is Airy
-    remap = blueprint.remapping_map
-    assert remap[(FRONT_AIRY, "lidar")] == "front_lidar"
-    assert remap[(REAR_AIRY, "lidar")] == "rear_lidar"
-    assert remap[(FRONT_AIRY, "imu")] == "front_lidar_imu"
-    assert remap[(REAR_AIRY, "imu")] == "rear_lidar_imu"
+def _wire(name: str, **overrides: object) -> dict:
+    atom = {atom.name: atom for atom in m20_lidars(**overrides).solidify().blueprints}[name]
+    kwargs = {key: value for key, value in atom.kwargs.items() if key != "instance_name"}
+    return M20LidarConfig(**kwargs).to_config_dict()
 
 
-def test_each_airy_has_its_own_lidar_and_frame() -> None:
-    front, rear = _atoms()[FRONT_AIRY].kwargs, _atoms()[REAR_AIRY].kwargs
-    assert (front["group"], front["msop_port"], front["difop_port"], front["imu_port"]) == (
+def test_which_lidar_picks_its_network_and_mount() -> None:
+    front, rear = _config(lidar="front"), _config(lidar="rear")
+    assert (front.group, front.msop_port, front.difop_port, front.imu_port) == (
         "224.10.10.201",
         6691,
         7781,
         6681,
     )
-    assert (rear["group"], rear["msop_port"], rear["difop_port"], rear["imu_port"]) == (
+    assert (rear.group, rear.msop_port, rear.difop_port, rear.imu_port) == (
         "224.10.10.202",
         6692,
         7782,
         6682,
     )
-    assert front["frame_id"] == front["imu_frame_id"] == "front_lidar"
-    assert rear["frame_id"] == rear["imu_frame_id"] == "rear_lidar"
-    assert front["voxel"] == rear["voxel"] == 0.1
+    assert (front.mount_xyz, rear.mount_xyz) == (FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M)
+    # anything set explicitly wins over the chosen lidar's
+    assert _config(lidar="front", msop_port=7000).msop_port == 7000
 
 
-def _matrix(transform) -> np.ndarray:
-    q = transform.rotation
+def test_frames_voxel_and_min_distance_are_config() -> None:
+    config = _config(lidar="rear", voxel=0.08)
+    assert (config.frame_id, config.imu_frame_id, config.mount_parent_frame_id) == (
+        "f",
+        "f_imu",
+        "body",
+    )
+    assert (
+        config.voxel,
+        config.min_distance,
+        _config(lidar="rear", min_distance=0.3).min_distance,
+    ) == (
+        0.08,
+        0.1,
+        0.3,
+    )
+    for missing in ("frame_id", "imu_frame_id", "mount_parent_frame_id"):
+        fields = {
+            "lidar": "front",
+            "frame_id": "f",
+            "imu_frame_id": "f",
+            "mount_parent_frame_id": "b",
+        }
+        del fields[missing]
+        with pytest.raises(ValidationError):
+            M20LidarConfig(**fields)
+    # the driver gets the Airy's fields only
+    assert "lidar" not in _config(lidar="front").to_config_dict()
+
+
+def test_both_namespaced_lidars_land_on_lidar_and_the_global_tf() -> None:
+    blueprint = m20_lidars().solidify()
+    assert {atom.name for atom in blueprint.blueprints} == {FRONT, REAR}
+    assert {atom.module for atom in blueprint.blueprints} == {M20Lidar}
+    for name in (FRONT, REAR):
+        assert blueprint.remapping_map[(name, "lidar")] == "lidar"
+        assert blueprint.remapping_map[(name, "imu")] == "lidar_imu"
+        # tf is exposed, never namespaced
+        assert blueprint.remapping_map.get((name, "tf"), "tf") == "tf"
+    assert stream_name_types(blueprint) >= {("tf", TFMessage)}
+    assert {name for name, _ in stream_name_types(blueprint)} == {"lidar", "lidar_imu", "tf"}
+
+
+def test_frames_come_from_config_not_the_namespace() -> None:
+    for name, frame in ((FRONT, "front_lidar"), (REAR, "rear_lidar")):
+        wire = _wire(name, voxel=0.1)
+        assert (wire["frame_id"], wire["imu_frame_id"], wire["mount_parent_frame_id"]) == (
+            frame,
+            frame,
+            "base_link",
+        )
+        assert wire["voxel"] == 0.1
+        assert "frame_id_prefix" not in wire
+
+
+def _matrix(rpy: tuple[float, float, float]) -> np.ndarray:
+    q = Quaternion.from_euler(Vector3(*rpy))
     x, y, z, w = q.x, q.y, q.z, q.w
     return np.array(
         [
@@ -74,17 +129,11 @@ def _matrix(transform) -> np.ndarray:
     )
 
 
-def test_mount_tf() -> None:
-    by_child = {t.child_frame_id: t for t in M20LidarMountTf.transforms(None)}  # type: ignore[arg-type]
-    assert set(by_child) == {"front_lidar", "rear_lidar"}
-    for child, xyz, outward in [
-        ("front_lidar", FRONT_LIDAR_XYZ_M, 1.0),
-        ("rear_lidar", REAR_LIDAR_XYZ_M, -1.0),
-    ]:
-        transform = by_child[child]
-        assert transform.frame_id == "base_link"
-        assert (transform.translation.x, transform.translation.y, transform.translation.z) == xyz
-        rotation = _matrix(transform)
+def test_mounts() -> None:
+    for name, xyz, outward in [(FRONT, FRONT_LIDAR_XYZ_M, 1.0), (REAR, REAR_LIDAR_XYZ_M, -1.0)]:
+        wire = _wire(name)
+        assert tuple(wire["mount_xyz"]) == xyz
+        rotation = _matrix(tuple(wire["mount_rpy"]))
         # lidar x is up (the IMU's gravity reads +x), its spin axis z looks out its end of the body
         assert np.allclose(rotation @ [1, 0, 0], [0, 0, 1], atol=1e-9)
         assert np.allclose(rotation @ [0, 0, 1], [outward, 0, 0], atol=1e-9)
