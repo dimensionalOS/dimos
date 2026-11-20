@@ -157,8 +157,8 @@ def merge_cli(
         ):
             raise BlueprintConfigError(
                 "The legacy -o/--option syntax was removed. "
-                "Use a blueprint option directly, for example "
-                "`--map-file recording_go2`."
+                "Pass the setting directly as `--name=value` or `--module.field VALUE`. "
+                "Use --help to list the available options."
             )
         if not token.startswith("--"):
             raise BlueprintConfigError(

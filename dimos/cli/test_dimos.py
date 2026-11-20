@@ -920,8 +920,7 @@ def test_run_rejects_removed_legacy_option(
     )
 
     assert result.exit_code == 2
-    assert "removed" in result.output.lower()
-    assert "--map-file" in result.output
+    assert "--help" in result.output
     assert "parsed_config" not in stubbed_run
 
 
