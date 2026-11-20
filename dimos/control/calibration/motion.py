@@ -45,7 +45,7 @@ MAX_STEP_DEG = 5.0
 # included), and how much more than it is expected to lag while it ramps.
 MAX_POSE_ERROR_DEG = 10.0
 RAMP_LAG_LIMIT_DEG = 5.0
-MAX_SPEED_DEG_S = 30.0
+MAX_SPEED_DEG_S = 60.0
 DEFAULT_SPEED_DEG_S = 10.0
 # Peak speed of a minimum-jerk ramp over its average speed.
 MIN_JERK_PEAK_RATIO = 1.875

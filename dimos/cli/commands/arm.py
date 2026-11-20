@@ -62,6 +62,7 @@ from dimos.cli.commands.arm_run import (
     run_alive,
     stop_run,
 )
+from dimos.control.calibration.motion import DEFAULT_SPEED_DEG_S, MAX_SPEED_DEG_S
 from dimos.control.calibration.procedure import duration_text
 
 arm_app = typer.Typer(
@@ -1055,7 +1056,9 @@ def calibrate_cmd(
     ),
     steps: str | None = typer.Option(None, "--steps", help="Comma-separated steps to run"),
     speed_deg_s: float | None = typer.Option(
-        None, "--speed-deg-s", help="Peak joint speed, deg/s, at most 30"
+        None,
+        "--speed-deg-s",
+        help=f"Peak joint speed, deg/s, default {DEFAULT_SPEED_DEG_S:g}, at most {MAX_SPEED_DEG_S:g}",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print the command and plan, start nothing"

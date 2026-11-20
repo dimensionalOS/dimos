@@ -271,7 +271,7 @@ def test_stopping_parks_the_arm_before_the_connection_lets_it_go(make_module, le
             r"dual-openyam has several arms; set arm to one of \['left', 'right'\]",
         ),
         ({"robot": "openyam", "floor_z_m": -0.03}, "give both floor_z_m and min_x_m"),
-        ({"robot": "openyam", "speed_deg_s": 45.0}, "less than or equal to 30"),
+        ({"robot": "openyam", "speed_deg_s": 75.0}, "less than or equal to 60"),
         ({"robot": "openyam", "dither_deg": 6.0}, "less than or equal to 5"),
     ],
 )

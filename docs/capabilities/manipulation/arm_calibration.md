@@ -61,9 +61,9 @@ Pass them to the command as flags.
 |--------|---------|
 | `--arm` | `left` or `right` on a two-arm robot |
 | `--poses N` | Number of gravity poses (default 15) |
-| `--steps a,b,c` | Run only these steps |
-| `hold_s` | Rest time at each pose (default 2.0 s) |
-| `--speed-deg-s S` | Peak joint speed (default 10, at most 30) |
+| `--steps a,b,c` | Run only these steps. Gains only: `step_sweep,pick_gains,confirm_tracking`. Model only: `gravity_poses,gravity_fit`. Floats: `float_check` |
+| `hold_s` | Rest time at each pose (default 2.0 s). Each nudge rests 1 s |
+| `--speed-deg-s S` | Peak joint speed (default 10, at most 60) |
 | `kp_scales`, `kd_scales` | Multiples of each joint's kp and kd the sweep tries, every kp with every kd (default 0.6, 1, 1.5 and 1, 2.5, 5; kd at most 5 and at most kp/4, so a 10 deg/s ramp lags at most 2.5 deg) |
 | `--floor-z-m`, `--min-x-m` | Table height and the line the fingertip stays in front of |
 | `--no-confirm-each` | Stop asking before every pose and joint. Not for a first run |

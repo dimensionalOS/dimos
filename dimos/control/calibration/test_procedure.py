@@ -335,6 +335,15 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert json.loads(json.dumps(value)) == value
 
 
+def test_the_defaults_nudge_for_a_second_at_10_deg_s_and_allow_up_to_60() -> None:
+    settings = ProcedureSettings()
+    assert settings.dither_hold_s == 1.0 and settings.hold_s == 2.0
+    assert settings.speed_deg_s == 10.0
+    assert ProcedureSettings(speed_deg_s=60.0).speed_deg_s == 60.0
+    with pytest.raises(ValueError, match="speed must be in"):
+        ProcedureSettings(speed_deg_s=61.0)
+
+
 def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
     poses = generate_poses(arm, count=8).identification
     assert dithered_joints(arm, arm, poses) == LEFT_DITHERED
@@ -1224,7 +1233,7 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
     # Its first joints run at kd 5 already, so kd x 2.5 and 5 add nothing there;
     # its wrists at kd 2 reach the kd limit at x 2.5 already.
     assert "(joint1 3, joint2 3, joint3 3, joint4 6, joint5 6, joint6 6 candidates)" in plan
-    assert "108 steps, about 1.8 min" in plan
+    assert "108 steps, about 2.1 min" in plan
     sweep = rig.procedure.results()["step_sweep"]
     assert set(sweep["joints"]) == set(b601_spec.joint_names)
     assert sweep["pose"].startswith("gravity pose ")
@@ -1295,6 +1304,7 @@ def test_gains_alone_are_tracked_against_a_first_pass_and_then_saved(
     assert status["state"] == "done", status["message"]
     results = rig.procedure.results()
     [start] = [p for p in prompts if p.startswith("The arm will revisit")]
+    assert re.search(r"\(pose_05\), about \d+\.\d min, first with the gains it runs, then", start)
     assert ", first with the gains it runs, then with the proposed gains (left_joint1 kp=" in start
     assert "rests within 1.5 times its baseline, or what its friction allows" in start
     assert any(p.startswith("Baseline pose 1/") for p in prompts)

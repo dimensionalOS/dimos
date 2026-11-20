@@ -697,7 +697,7 @@ def test_a_bad_robot_lists_the_known_ones_and_a_guardless_arm_needs_the_bench_nu
     [
         (["--poses", "0"], "--poses: Input should be greater than or equal to 1"),
         (["--speed-deg-s", "0"], "--speed-deg-s: Input should be greater than 0"),
-        (["--speed-deg-s", "45"], "--speed-deg-s: Input should be less than or equal to 30"),
+        (["--speed-deg-s", "75"], "--speed-deg-s: Input should be less than or equal to 60"),
     ],
 )
 def test_poses_and_speed_are_checked_before_anything_starts(

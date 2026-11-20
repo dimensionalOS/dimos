@@ -1192,6 +1192,7 @@ class StepSweepStep(Step):
             for joint in spec.joint_names
         }
         steps = sum(len(pairs) for pairs in candidates.values()) * len(deltas)
+        travel = 2.0 * _ramp_s(ctx.arm.home, pose, settings.speed_deg_s)
         ctx.confirm(
             f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
             f"deg/s; there each of the {len(spec.joint_names)} joints will step "
@@ -1200,8 +1201,8 @@ class StepSweepStep(Step):
             f"{', '.join(f'{s:g}' for s in settings.kd_scales)}, kd capped at "
             f"kp/{1.0 / KD_PER_KP_LIMIT:g} for ramp tracking "
             f"({', '.join(f'{j} {len(p)}' for j, p in candidates.items())} candidates), "
-            f"{steps} steps, about {_minutes(steps * settings.step_hold_s)}, then it returns "
-            "home. Clear the workspace. Enter to start"
+            f"{steps} steps, about {_minutes(steps * settings.step_hold_s + travel)}, then it "
+            "returns home. Clear the workspace. Enter to start"
         )
         swept: dict[str, list[list[float]]] = {}
         stopped: dict[str, dict[str, str]] = {}
@@ -1408,7 +1409,15 @@ class ConfirmTrackingStep(Step):
         if not poses:
             raise StepUnavailableError("there is no gravity pose to revisit")
         proposed = ctx.run.proposed_gains
-        where = f"{len(poses)} held-out gravity poses ({', '.join(p.name for p in poses)})"
+        stops = [ctx.arm.home, *(np.asarray(p.joints_rad) for p in poses), ctx.arm.home]
+        visit = len(poses) * ctx.settings.hold_s + sum(
+            _ramp_s(a, b, ctx.settings.speed_deg_s) for a, b in itertools.pairwise(stops)
+        )
+        passes = 2 if proposed is not None and not paired else 1
+        where = (
+            f"{len(poses)} held-out gravity poses ({', '.join(p.name for p in poses)}), about "
+            f"{_minutes(passes * visit)}"
+        )
         if proposed is None:
             ctx.confirm(f"The arm will revisit {where}. Enter to start")
         else:

@@ -107,7 +107,7 @@ DEFAULT_KD_SCALES = (1.0, 2.5, 5.0)
 DEFAULT_STEP_DELTAS_DEG = (1.0, -1.0, 3.0, -3.0)
 DEFAULT_DITHER_DEG = 1.0
 DEFAULT_HOLD_S = 2.0
-DEFAULT_DITHER_HOLD_S = 1.5
+DEFAULT_DITHER_HOLD_S = 1.0
 DEFAULT_STEP_HOLD_S = 2.0
 # Damping a floating joint keeps: stops it coasting, still yields to a hand.
 DEFAULT_FLOAT_KD = 0.5
