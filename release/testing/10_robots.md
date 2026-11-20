@@ -67,7 +67,7 @@ Expected result: each teleop window drives only its own robot, and the echo prin
 
 ## 10.5 Go2 over DDS on the Jetson
 
-Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, and a laptop that reaches the Jetson on port 7447.
+Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)), and a laptop that reaches the Jetson on port 7447. Without the Host `go2-nav` stops with `no Host router on this machine`.
 
 ```bash
 # On the Jetson:
