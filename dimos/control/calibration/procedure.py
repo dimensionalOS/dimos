@@ -102,7 +102,8 @@ StepStatusName = Literal[
     "pending", "running", "done", "skipped", "failed", "aborted", "unsupported", "not_selected"
 ]
 
-DEFAULT_KP_SCALES = (1.0, 1.5, 2.0)
+DEFAULT_KP_SCALES = (0.6, 1.0, 1.5)
+DEFAULT_KD_SCALES = (1.0, 2.0, 3.5)
 DEFAULT_STEP_DELTAS_DEG = (1.0, -1.0, 3.0, -3.0)
 DEFAULT_DITHER_DEG = 1.0
 DEFAULT_HOLD_S = 2.0
@@ -151,6 +152,8 @@ class ProcedureSettings:
         speed_deg_s: Peak joint speed of every ramp, at most ``MAX_SPEED_DEG_S``.
         confirm_each: Ask before every pose (and every joint of the gain sweep).
         kp_scales: Multiples of each joint's robot kp the gain sweep tries.
+        kd_scales: Multiples of each joint's robot kd it tries with each kp,
+            clamped to the driver's kd limit.
         step_deltas_deg: The sweep's steps, in order; they sum to zero.
         sweep_pose_deg: Where the gain sweep steps the joints, one angle per arm
             joint in degrees; ``None`` means the gravity pose farthest from
@@ -178,6 +181,7 @@ class ProcedureSettings:
     speed_deg_s: float = DEFAULT_SPEED_DEG_S
     confirm_each: bool = True
     kp_scales: tuple[float, ...] = DEFAULT_KP_SCALES
+    kd_scales: tuple[float, ...] = DEFAULT_KD_SCALES
     step_deltas_deg: tuple[float, ...] = DEFAULT_STEP_DELTAS_DEG
     sweep_pose_deg: tuple[float, ...] | None = None
     float_pose_deg: tuple[float, ...] | None = None
@@ -202,8 +206,9 @@ class ProcedureSettings:
         holds = (self.hold_s, self.dither_hold_s, self.step_hold_s, self.float_window_s)
         if not all(math.isfinite(s) and s > 0.0 for s in holds):
             raise ValueError("holds and windows must be positive")
-        if not self.kp_scales or not all(math.isfinite(s) and s > 0.0 for s in self.kp_scales):
-            raise ValueError(f"kp scales must be positive, got {self.kp_scales}")
+        for name, scales in (("kp", self.kp_scales), ("kd", self.kd_scales)):
+            if not scales or not all(math.isfinite(s) and s > 0.0 for s in scales):
+                raise ValueError(f"{name} scales must be positive, got {scales}")
         if not math.isfinite(self.float_kd) or self.float_kd < 0.0:
             raise ValueError(f"float kd must not be negative, got {self.float_kd}")
         if not self.stream_hz >= MIN_STREAM_HZ:

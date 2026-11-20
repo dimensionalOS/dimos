@@ -420,9 +420,17 @@ def print_results(step_id: str, data: dict[str, Any]) -> None:
         proposals = data.get("proposals") or {}
         if proposals:
             echo("    proposed gains:")
-            rows = [["joint", "kp", "kd", "why"]]
+            rows = [["joint", "kp", "kd", "friction Nm", "why"]]
             for joint, row in proposals.items():
-                rows.append([joint, _f(row.get("kp"), 1), _f(row.get("kd"), 2), row["reason"]])
+                rows.append(
+                    [
+                        joint,
+                        _f(row.get("kp"), 1),
+                        _f(row.get("kd"), 2),
+                        _f(row.get("friction_nm"), 2),
+                        row["reason"],
+                    ]
+                )
             table(rows)
             for joint, row in proposals.items():
                 for tried, why in (row.get("rejected") or {}).items():

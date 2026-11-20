@@ -39,10 +39,12 @@
    skipped, and robots that do not compensate gravity cannot float.
 5. ``step_sweep``: at the sweep pose (the gravity pose farthest from every
    joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
-   at each kp scale of its robot kp, with its robot kd times the square root
-   of the scale, holding after each step.
-6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``) and
-   saves and applies the gains the operator accepts.
+   at each candidate of a grid, kp scales of its robot kp by kd scales of its
+   robot kd (``step_analysis.gain_candidates``), holding after each step.
+6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``),
+   each joint's rest limit from its friction (the larger of what its sweep and
+   its gravity dithers show), and saves and applies the gains the operator
+   accepts.
 7. ``confirm_tracking``: revisits the held-out gravity poses with what is
    applied and compares how well the arm rests there with the gravity sweep's
    own rests at the same poses.
@@ -106,6 +108,7 @@ from dimos.control.calibration.gravity_fit import (
     extract_measurements,
     fit_gravity,
     format_report,
+    median_friction,
     plot_resting_torque,
     recorded_compensation,
     save_refusals,
@@ -147,7 +150,11 @@ from dimos.control.calibration.spec import (
     NoWorkspaceGuardError,
     urdf_limits,
 )
-from dimos.control.calibration.step_analysis import propose_gains
+from dimos.control.calibration.step_analysis import (
+    gain_candidates,
+    propose_gains,
+    sweep_friction_nm,
+)
 from dimos.control.calibration.step_report import (
     REPORT_DIR_NAME as STEP_REPORT_DIR,
     extract_steps,
@@ -1034,24 +1041,24 @@ class FloatCheckStep(Step):
 
 
 class StepSweepStep(Step):
-    """The gain sweep: each joint steps at each kp scale, at a pose clear of every limit.
+    """The gain sweep: each joint steps at each candidate gain pair, at a pose clear of every limit.
 
     Home sits on a joint limit on several arms (the Metal's and B601's
     shoulder and elbow, the OpenArm's elbow), where half the steps would pass
-    the limit, so the sweep runs at :func:`sweep_pose`. At kp scale ``s`` a
-    joint is held with ``kp0 * s`` and ``kd0 * sqrt(s)``, as the bench sweep
-    did, keeping its damping ratio; the connection clamps kd to the MIT
-    frame's 5 N m s/rad, so a joint already at 5 stays there. ``pick_gains``
-    takes a scale only when every lower scale on that joint passed too.
+    the limit, so the sweep runs at :func:`sweep_pose`. A joint's candidates
+    are its robot ``kp0`` times each kp scale by its robot ``kd0`` times each
+    kd scale, kd clamped to the MIT frame's 5 N m s/rad and duplicates
+    dropped (``gain_candidates``); the robot's own gains go first, as
+    ``sweep_friction_nm`` reads the joint's friction off them.
     """
 
     id = "step_sweep"
     title = "Gain sweep"
     instructions = (
         "The arm moves to the sweep pose (clear of every joint limit), and every joint in turn "
-        "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness (multiples of its "
-        "robot kp, its robot kd times the square root of the multiple), resting after each "
-        "step. The gains go back when each joint is done, and the arm returns home."
+        "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness and damping "
+        "(multiples of its robot kp by multiples of its robot kd), resting after each step. "
+        "The gains go back when each joint is done, and the arm returns home."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1061,17 +1068,26 @@ class StepSweepStep(Step):
     def run(self, ctx: StepContext) -> StepResult:
         ctx.require_recording()
         settings, spec = ctx.settings, ctx.spec
-        scales = settings.kp_scales
         deltas = settings.step_deltas_deg
         pose, where = sweep_pose(ctx)
-        per_joint = len(scales) * len(deltas) * settings.step_hold_s
+        applied = _applied_now(ctx)
+        held = {} if applied is None else {j: (g.kp, g.kd) for j, g in applied.gains.items()}
+        candidates = {
+            joint: gain_candidates(
+                *(spec.gains.get(joint) or held[joint]), settings.kp_scales, settings.kd_scales
+            )
+            for joint in spec.joint_names
+        }
+        steps = sum(len(pairs) for pairs in candidates.values()) * len(deltas)
         ctx.confirm(
             f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
             f"deg/s; there each of the {len(spec.joint_names)} joints will step "
             f"{', '.join(f'{d:+g}' for d in deltas)} deg at kp x "
-            f"{', '.join(f'{s:g}' for s in scales)} (kd x the square root), about "
-            f"{_minutes(per_joint * len(spec.joint_names))}, then it returns home. Clear the "
-            "workspace. Enter to start"
+            f"{', '.join(f'{s:g}' for s in settings.kp_scales)} by kd x "
+            f"{', '.join(f'{s:g}' for s in settings.kd_scales)} "
+            f"({', '.join(f'{j} {len(p)}' for j, p in candidates.items())} candidates), "
+            f"{steps} steps, about {_minutes(steps * settings.step_hold_s)}, then it returns "
+            "home. Clear the workspace. Enter to start"
         )
         swept: dict[str, list[list[float]]] = {}
         start: float | None = None
@@ -1084,15 +1100,15 @@ class StepSweepStep(Step):
                     if settings.confirm_each:
                         try:
                             ctx.confirm(
-                                f"{joint}: {len(scales) * len(deltas)} steps. Enter to step it"
+                                f"{joint}: {len(candidates[joint]) * len(deltas)} steps. Enter "
+                                "to step it"
                             )
                         except SkipRequestedError:
                             continue
-                    kp0, kd0 = spec.gains.get(joint, session.gains(joint))
                     swept[joint] = []
                     try:
-                        for scale in scales:
-                            kp, kd = session.set_gains(joint, kp0 * scale, kd0 * math.sqrt(scale))
+                        for pair in candidates[joint]:
+                            kp, kd = session.set_gains(joint, *pair)
                             swept[joint].append([kp, kd])
                             for delta in deltas:
                                 session.step_joint(joint, delta, settings.step_hold_s)
@@ -1107,7 +1123,8 @@ class StepSweepStep(Step):
             session.move_to(ctx.arm.home)
         data = {
             "joints": swept,
-            "kp_scales": list(scales),
+            "kp_scales": list(settings.kp_scales),
+            "kd_scales": list(settings.kd_scales),
             "steps_deg": list(deltas),
             "pose": where,
             "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
@@ -1120,9 +1137,10 @@ class PickGainsStep(Step):
     id = "pick_gains"
     title = "Pick gains"
     instructions = (
-        "Scores every step of the gain sweep (settling time, overshoot, resting error, buzz) "
-        "and proposes, for each joint, the stiffest gains whose steps all passed, with every "
-        "softer one passing too. Accepted gains are saved with the gravity fit and applied."
+        "Scores every step of the gain sweep and proposes, for each joint, the gains that rest "
+        "closest to target for their friction and settle fastest, among those that never stick, "
+        "overshoot more than 20 % or buzz. Accepted gains are saved with the gravity fit and "
+        "applied."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1137,8 +1155,14 @@ class PickGainsStep(Step):
         ctx.say("reading the recording")
         recording.wait_for(span[1])
         steps = recording.steps(span[0], span[1])
-        records = [r for r in extract_steps(steps) if r.event.joint in ctx.spec.joint_names]
+        dither = self._dither_friction(ctx)
+        records = [
+            r
+            for r in extract_steps(steps, dither_friction_nm=dither)
+            if r.event.joint in ctx.spec.joint_names
+        ]
         proposals = propose_gains(record.metrics for record in records)
+        swept = sweep_friction_nm(record.metrics for record in records)
         if recording.directory is not None:
             out = recording.directory / STEP_REPORT_DIR
             out.mkdir(parents=True, exist_ok=True)
@@ -1147,13 +1171,26 @@ class PickGainsStep(Step):
             joint: {
                 "kp": proposal.kp,
                 "kd": proposal.kd,
+                "friction_nm": round(proposal.friction_nm, 3),
                 "reason": proposal.reason,
                 "rejected": dict(proposal.rejected),
             }
             for joint, proposal in sorted(proposals.items())
         }
+        friction = {
+            joint: {
+                "sweep": None if joint not in swept else round(swept[joint], 3),
+                "dither": None if joint not in dither else round(dither[joint], 3),
+            }
+            for joint in sorted(proposals)
+        }
         chosen = {joint: p.gains for joint, p in proposals.items() if p.gains is not None}
-        data: dict[str, Any] = {"proposals": rows, "steps": len(records), "saved": None}
+        data: dict[str, Any] = {
+            "proposals": rows,
+            "friction_nm": friction,
+            "steps": len(records),
+            "saved": None,
+        }
         if not chosen:
             return StepResult("no gains passed every step; nothing to save", data)
         listed = ", ".join(f"{j} kp={g[0]:g} kd={g[1]:g}" for j, g in sorted(chosen.items()))
@@ -1168,6 +1205,14 @@ class PickGainsStep(Step):
         # runs on the file's gains, as it should.
         data.update(_save(ctx, ArmConfigPatch(arm_id=ctx.spec.arm_id, gains=gains)))
         return StepResult(f"saved gains for {sorted(chosen)} to {data['saved']}", data)
+
+    @staticmethod
+    def _dither_friction(ctx: StepContext) -> dict[str, float]:
+        span, recording = ctx.run.gravity_span, ctx.recording
+        if span is None or recording is None:
+            return {}
+        measurements, _, _ = extract_measurements(recording.gravity(*span), ctx.spec)
+        return median_friction(measurements)
 
 
 class ConfirmTrackingStep(Step):

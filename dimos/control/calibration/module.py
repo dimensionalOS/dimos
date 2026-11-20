@@ -76,6 +76,7 @@ from dimos.control.calibration.motion import (
 from dimos.control.calibration.procedure import (
     DEFAULT_DITHER_DEG,
     DEFAULT_HOLD_S,
+    DEFAULT_KD_SCALES,
     DEFAULT_KP_SCALES,
     DEFAULT_PROMPT_TIMEOUT_S,
     MAX_PARK_BUDGET_S,
@@ -155,6 +156,7 @@ class CalibrationModuleConfig(ModuleConfig):
             every joint limit.
         confirm_each: Ask before every pose.
         kp_scales: Multiples of each joint's robot kp the gain sweep tries.
+        kd_scales: Multiples of each joint's robot kd it tries with each kp.
         park_budget_s: How long parking the arm on stop or a prompt timeout
             may take.
         park_speed_deg_s: Peak joint speed of a park.
@@ -174,6 +176,7 @@ class CalibrationModuleConfig(ModuleConfig):
     sweep_pose_deg: list[float] | None = None
     confirm_each: bool = True
     kp_scales: list[float] = Field(default_factory=lambda: list(DEFAULT_KP_SCALES), min_length=1)
+    kd_scales: list[float] = Field(default_factory=lambda: list(DEFAULT_KD_SCALES), min_length=1)
     park_budget_s: float = Field(default=MAX_PARK_BUDGET_S, gt=0.0, le=MAX_PARK_BUDGET_S)
     park_speed_deg_s: float = Field(default=MAX_PARK_SPEED_DEG_S, gt=0.0, le=MAX_PARK_SPEED_DEG_S)
     prompt_timeout_s: float = Field(default=DEFAULT_PROMPT_TIMEOUT_S, gt=0.0)
@@ -208,6 +211,7 @@ class CalibrationModuleConfig(ModuleConfig):
             float_pose_deg=None if self.float_pose_deg is None else tuple(self.float_pose_deg),
             sweep_pose_deg=None if self.sweep_pose_deg is None else tuple(self.sweep_pose_deg),
             kp_scales=tuple(self.kp_scales),
+            kd_scales=tuple(self.kd_scales),
             park_budget_s=self.park_budget_s,
             park_speed_deg_s=self.park_speed_deg_s,
             prompt_timeout_s=self.prompt_timeout_s,

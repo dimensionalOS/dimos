@@ -16,12 +16,16 @@
 
 Everything here works on plain arrays in degrees and seconds, keyed by joint
 name, so it can be tested on synthetic responses and reused by the offline
-report for any arm. A step passes when its whole hold was recorded, every
-sample and metric is finite, and it settles within 0.5 s to within 0.1 deg, overshoots
-less than 20 % and leaves the joint quiet at rest. ``propose_gains`` picks,
-per joint, the stiffest tried gains whose steps all pass in both directions
-and below which every tried candidate (every lower kp scale, whatever its kd)
-passed too; it says why the others did not.
+report for any arm. A joint rests short of its target by its friction over kp
+(the drive has no integrator), so each step's rest limit is
+``max(0.1 deg, 1.5 x friction / kp)``, and its settle time is measured to
+within that limit of where it comes to rest. A step that moved less than half
+its size is stuck: its overshoot and settle time are not measured. A step
+fails when its hold was cut short, a sample or metric is not finite, it is
+stuck, it overshoots more than 20 % or it buzzes at rest. ``propose_gains``
+ranks, per joint, the candidates whose steps all pass in both directions by
+worst rest error over its limit plus worst settle time over 0.5 s, and picks
+the lowest; it says why the others lost.
 """
 
 from __future__ import annotations
@@ -37,8 +41,11 @@ import numpy as np
 
 FIRST_MOTION_DEG = 0.05
 SETTLE_BAND_DEG = 0.1
+FRICTION_REST_FACTOR = 1.5
 SETTLE_TIME_LIMIT_S = 0.5
 OVERSHOOT_LIMIT_PCT = 20.0
+STUCK_FRACTION = 0.5
+KD_LIMIT = 5.0
 # RMS joint velocity over the last part of the hold; a joint at rest reads
 # encoder noise only, a buzzing one oscillates at a few deg/s.
 BUZZ_RMS_LIMIT_DEG_S = 1.0
@@ -81,7 +88,12 @@ class StepMetrics:
     recording) leaves the rest metrics unreliable, and the step fails.
     ``samples`` counts the finite samples the metrics come from;
     ``nonfinite_samples`` those left out for a NaN or infinite value, which
-    fail the step too, as does a step with no samples at all.
+    fail the step too, as does a step with no samples at all. ``moved_deg``
+    is how far the joint came to rest from where it started, along the step;
+    a step that moved less than ``STUCK_FRACTION`` of its size is stuck, and
+    its ``overshoot_pct`` and ``settle_time_s`` are ``None``. The settle time
+    is to within ``rest_limit_deg`` (from the joint's ``friction_nm``) of the
+    rest, ``None`` too when the last sample is outside it.
     """
 
     joint: str
@@ -91,12 +103,15 @@ class StepMetrics:
     samples: int
     first_motion_s: float | None
     settle_time_s: float | None
-    overshoot_pct: float
+    overshoot_pct: float | None
     steady_state_error_deg: float
     buzz_rms_deg_s: float
     hold_s: float
     recorded_s: float
     nonfinite_samples: int = 0
+    moved_deg: float = math.nan
+    rest_limit_deg: float = SETTLE_BAND_DEG
+    friction_nm: float = 0.0
 
     @property
     def hold_complete(self) -> bool:
@@ -104,8 +119,16 @@ class StepMetrics:
         return self.recorded_s >= self.hold_s - HOLD_COMPLETE_TOLERANCE_S
 
     @property
+    def stuck(self) -> bool:
+        return self.samples > 0 and self.moved_deg < STUCK_FRACTION * abs(self.delta_deg)
+
+    @property
     def passed(self) -> bool:
         return not self.failures()
+
+    @property
+    def settled_s(self) -> float:
+        return self.recorded_s if self.settle_time_s is None else self.settle_time_s
 
     def failures(self) -> list[str]:
         """Why this step fails the pass criteria, in plain words; empty when it passes."""
@@ -128,22 +151,20 @@ class StepMetrics:
             finite[name] = value is None or math.isfinite(value)
             if not finite[name]:
                 reasons.append(f"{step} metric {name} is not finite")
-        if self.settle_time_s is None:
-            reasons.append(f"{step} never settled within {SETTLE_BAND_DEG:g} deg")
-        elif finite["settle_time_s"] and self.settle_time_s > SETTLE_TIME_LIMIT_S:
+        if self.stuck:
             reasons.append(
-                f"{step} settled in {self.settle_time_s:.2f} s (limit {SETTLE_TIME_LIMIT_S:g} s)"
+                f"{step} is stuck: moved {self.moved_deg:+.2f} deg "
+                f"(less than {STUCK_FRACTION:.0%} of the step)"
             )
-        if finite["overshoot_pct"] and self.overshoot_pct >= OVERSHOOT_LIMIT_PCT:
+        if (
+            self.overshoot_pct is not None
+            and finite["overshoot_pct"]
+            and self.overshoot_pct > OVERSHOOT_LIMIT_PCT
+        ):
             reasons.append(
                 f"{step} overshot {self.overshoot_pct:.0f} % (limit {OVERSHOOT_LIMIT_PCT:g} %)"
             )
-        if finite["steady_state_error_deg"] and abs(self.steady_state_error_deg) > SETTLE_BAND_DEG:
-            reasons.append(
-                f"{step} rests {self.steady_state_error_deg:+.2f} deg off target "
-                f"(limit {SETTLE_BAND_DEG:g} deg)"
-            )
-        if finite["buzz_rms_deg_s"] and self.buzz_rms_deg_s >= BUZZ_RMS_LIMIT_DEG_S:
+        if finite["buzz_rms_deg_s"] and self.buzz_rms_deg_s > BUZZ_RMS_LIMIT_DEG_S:
             reasons.append(
                 f"{step} buzzes at {self.buzz_rms_deg_s:.1f} deg/s RMS "
                 f"(limit {BUZZ_RMS_LIMIT_DEG_S:g} deg/s)"
@@ -202,6 +223,10 @@ def steady_state_error(
     return float(y[rest_window(t, window_s)].mean() - target)
 
 
+def rest_limit_deg(friction_nm: float, kp: float) -> float:
+    return max(SETTLE_BAND_DEG, math.degrees(FRICTION_REST_FACTOR * friction_nm / kp))
+
+
 def buzz_rms(t: np.ndarray, dy: np.ndarray, window_s: float = REST_WINDOW_S) -> float:
     tail = dy[rest_window(t, window_s)]
     return float(np.sqrt(np.mean(np.square(tail))))
@@ -213,11 +238,13 @@ def analyze_step(
     y_deg: np.ndarray,
     dy_deg_s: np.ndarray,
     y0_deg: float | None = None,
+    friction_nm: float = 0.0,
 ) -> StepMetrics:
     """Metrics of one step from samples ``t`` (seconds since the command), ``y`` and ``dy``.
 
     A sample with a non-finite value is left out of the metrics and fails the
-    step; with no samples left the step fails and its metrics are NaN.
+    step; with no samples left the step fails and its metrics are NaN. The
+    joint's ``friction_nm`` sets the rest limit (``rest_limit_deg``).
     """
     t = np.asarray(t, dtype=np.float64)
     y_deg = np.asarray(y_deg, dtype=np.float64)
@@ -225,6 +252,7 @@ def analyze_step(
     finite = np.isfinite(t) & np.isfinite(y_deg) & np.isfinite(dy_deg_s)
     nonfinite = int(finite.size - finite.sum())
     t, y_deg, dy_deg_s = t[finite], y_deg[finite], dy_deg_s[finite]
+    limit = rest_limit_deg(friction_nm, event.kp)
     if t.size == 0:
         return StepMetrics(
             joint=event.joint,
@@ -240,9 +268,14 @@ def analyze_step(
             hold_s=event.hold_s,
             recorded_s=0.0,
             nonfinite_samples=nonfinite,
+            rest_limit_deg=limit,
+            friction_nm=friction_nm,
         )
     y0 = event.target_before_deg if y0_deg is None else y0_deg
     target = event.target_after_deg
+    error = steady_state_error(t, y_deg, target)
+    moved = (target + error - y0) * math.copysign(1.0, event.delta_deg)
+    stuck = moved < STUCK_FRACTION * abs(event.delta_deg)
     return StepMetrics(
         joint=event.joint,
         delta_deg=event.delta_deg,
@@ -250,14 +283,45 @@ def analyze_step(
         kd=event.kd,
         samples=int(t.size),
         first_motion_s=first_motion_time(t, y_deg, y0),
-        settle_time_s=settle_time(t, y_deg, target),
-        overshoot_pct=overshoot_pct(y_deg, y0, target),
-        steady_state_error_deg=steady_state_error(t, y_deg, target),
+        settle_time_s=None if stuck else settle_time(t, y_deg, target + error, limit),
+        overshoot_pct=None if stuck else overshoot_pct(y_deg, y0, target),
+        steady_state_error_deg=error,
         buzz_rms_deg_s=buzz_rms(t, dy_deg_s),
         hold_s=event.hold_s,
         recorded_s=float(t[-1]),
         nonfinite_samples=nonfinite,
+        moved_deg=moved,
+        rest_limit_deg=limit,
+        friction_nm=friction_nm,
     )
+
+
+def sweep_friction_nm(steps: Iterable[StepMetrics]) -> dict[str, float]:
+    first: dict[str, tuple[float, float]] = {}
+    largest: dict[str, dict[int, StepMetrics]] = defaultdict(dict)
+    for step in steps:
+        gains = first.setdefault(step.joint, (step.kp, step.kd))
+        if (step.kp, step.kd) != gains or step.samples == 0:
+            continue
+        sign = int(math.copysign(1, step.delta_deg))
+        held = largest[step.joint].get(sign)
+        if held is None or abs(step.delta_deg) > abs(held.delta_deg):
+            largest[step.joint][sign] = step
+    friction: dict[str, float] = {}
+    for joint, by_sign in largest.items():
+        if 1 not in by_sign or -1 not in by_sign:
+            continue
+        spread = by_sign[-1].steady_state_error_deg - by_sign[1].steady_state_error_deg
+        friction[joint] = max(0.0, first[joint][0] * math.radians(spread) / 2.0)
+    return friction
+
+
+def gain_candidates(
+    kp0: float, kd0: float, kp_scales: Sequence[float], kd_scales: Sequence[float]
+) -> list[tuple[float, float]]:
+    baseline = (kp0, min(kd0, KD_LIMIT))
+    grid = [(kp0 * p, min(kd0 * d, KD_LIMIT)) for p in kp_scales for d in kd_scales]
+    return list(dict.fromkeys(sorted(grid, key=lambda pair: pair != baseline)))
 
 
 def segment_steps(events: list[StepEvent], t_end: float) -> list[tuple[StepEvent, float, float]]:
@@ -279,22 +343,28 @@ def gain_label(kp: float, kd: float) -> str:
 def format_table(metrics: list[StepMetrics]) -> str:
     """Markdown table, one row per step, grouped by joint then gains."""
     header = (
-        "| joint | kp | kd | step (deg) | first motion (s) | settle (s) | overshoot (%) "
-        "| ss error (deg) | buzz (deg/s) | pass |"
+        "| joint | kp | kd | step (deg) | moved (deg) | first motion (s) | settle (s) "
+        "| overshoot (%) | rest error (deg) | rest limit (deg) | buzz (deg/s) | pass |"
     )
-    lines = [header, "|" + "---|" * 10]
+    lines = [header, "|" + "---|" * 12]
     for m in sorted(metrics, key=lambda m: (m.joint, m.kp, m.kd, -abs(m.delta_deg), m.delta_deg)):
+        settle = "-" if m.stuck else _fmt(m.settle_time_s)
+        overshoot = "-" if m.overshoot_pct is None else f"{m.overshoot_pct:.1f}"
+        verdict = "stuck" if m.stuck else "ok" if m.passed else "FAIL"
         lines.append(
-            f"| {m.joint} | {m.kp:g} | {m.kd:g} | {m.delta_deg:+.1f} "
-            f"| {_fmt(m.first_motion_s)} | {_fmt(m.settle_time_s)} | {m.overshoot_pct:.1f} "
-            f"| {m.steady_state_error_deg:+.3f} | {m.buzz_rms_deg_s:.2f} "
-            f"| {'ok' if m.passed else 'FAIL'} |"
+            f"| {m.joint} | {m.kp:g} | {m.kd:g} | {m.delta_deg:+.1f} | {m.moved_deg:+.2f} "
+            f"| {_fmt(m.first_motion_s)} | {settle} | {overshoot} "
+            f"| {m.steady_state_error_deg:+.3f} | {m.rest_limit_deg:.2f} | {m.buzz_rms_deg_s:.2f} "
+            f"| {verdict} |"
         )
     lines.append("")
     lines.append(
-        f"Pass: settle within {SETTLE_TIME_LIMIT_S} s to {SETTLE_BAND_DEG} deg, "
-        f"overshoot under {OVERSHOOT_LIMIT_PCT:g} %, |ss error| <= {SETTLE_BAND_DEG} deg, "
-        f"buzz RMS under {BUZZ_RMS_LIMIT_DEG_S:g} deg/s over the last {REST_WINDOW_S} s."
+        f"Pass: no step stuck (moved less than {STUCK_FRACTION:.0%} of its size), overshoot "
+        f"at most {OVERSHOOT_LIMIT_PCT:g} %, buzz RMS at most {BUZZ_RMS_LIMIT_DEG_S:g} deg/s "
+        f"over the last {REST_WINDOW_S} s. Passing gains are ranked by worst rest error over "
+        f"the rest limit, max({SETTLE_BAND_DEG:g} deg, {FRICTION_REST_FACTOR:g} x friction / kp), "
+        f"plus worst settle time, to within that limit of the rest, over "
+        f"{SETTLE_TIME_LIMIT_S:g} s; the lowest wins."
     )
     return "\n".join(lines)
 
@@ -312,8 +382,9 @@ class GainProposal:
         kp: The chosen position gain, or ``None`` when no candidate passed.
         kd: The chosen velocity gain, or ``None`` when no candidate passed.
         reason: One line on the choice.
-        rejected: Why each candidate that failed, was not tested or was not
-            accepted was passed over, by ``gain_label``.
+        rejected: Why each candidate that failed, was not tested or lost on
+            its score was passed over, by ``gain_label``.
+        friction_nm: The joint's friction its rest limits come from.
     """
 
     joint: str
@@ -321,6 +392,7 @@ class GainProposal:
     kd: float | None
     reason: str
     rejected: dict[str, str] = field(default_factory=dict)
+    friction_nm: float = 0.0
 
     @property
     def gains(self) -> tuple[float, float] | None:
@@ -333,20 +405,17 @@ def propose_gains(
     step_results: Iterable[StepMetrics],
     candidates: Sequence[tuple[float, float]] | None = None,
 ) -> dict[str, GainProposal]:
-    """Per joint, the highest kp (with its kd) among ``candidates`` that passes, monotonically.
+    """Per joint, the passing candidate among ``candidates`` with the lowest score.
 
     Candidates are ``(kp, kd)`` pairs; by default every pair with a recorded
     step. A candidate passes when it has at least one positive and one
     negative step on the joint and every one of its steps passes (whole hold
-    recorded, finite samples and metrics, settles under 0.5 s to 0.1 deg, overshoots under
-    20 %, rests on target and does not buzz). It is accepted only when every
-    tried candidate with a lower kp passed too, whatever its kd: the sweep
-    scales kd with the square root of the kp scale, so the candidates are
-    ordered by kp alone, and a lucky stiff run above a failing softer one is
-    not chosen. Among accepted candidates the highest kp wins; when several
-    kd values are accepted at that kp, the one with the shortest worst settle
-    time wins, then the lower kd. ``rejected`` explains every candidate that
-    failed, was not tried or was not accepted.
+    recorded, finite samples and metrics, not stuck, overshoots at most 20 %
+    where measured, does not buzz). Its score is its worst rest error over
+    its rest limit plus its worst settle time over 0.5 s; the lowest wins, a
+    tie going to the higher kp, then the lower kd. When none passes and every
+    candidate at the highest kd tried, the driver's ``KD_LIMIT``, overshoots,
+    the reason says to lower kp. ``rejected`` explains every other candidate.
     """
     by_joint: dict[str, dict[tuple[float, float], list[StepMetrics]]] = defaultdict(
         lambda: defaultdict(list)
@@ -358,50 +427,60 @@ def propose_gains(
         pairs = sorted(
             set(by_gains) if candidates is None else {(float(p), float(d)) for p, d in candidates}
         )
-        # Every tried pair counts for the monotone rule, candidate or not.
-        failed = {pair: why for pair, steps in by_gains.items() if (why := _gain_failures(steps))}
-        rejected: list[tuple[float, float, str]] = []
-        accepted: list[tuple[float, float, float]] = []
+        friction = next(iter(by_gains.values()))[0].friction_nm
+        rejected: dict[str, str] = {}
+        scored: list[tuple[float, float, float]] = []
         for kp, kd in pairs:
             steps = by_gains.get((kp, kd), [])
             if not steps:
-                rejected.append((kp, kd, "not tested"))
-                continue
-            if (kp, kd) in failed:
-                rejected.append((kp, kd, failed[(kp, kd)]))
-                continue
-            softer = sorted(pair for pair in failed if pair[0] < kp)
-            if softer:
-                rejected.append(
-                    (kp, kd, f"its steps pass, but {gain_label(*softer[-1])} below it failed")
+                rejected[gain_label(kp, kd)] = "not tested"
+            elif why := _gain_failures(steps):
+                rejected[gain_label(kp, kd)] = why
+            else:
+                scored.append((_score(steps), kp, kd))
+        if not scored:
+            reason = "no candidate passed every step"
+            if _overshoots_at_kd_limit(by_gains):
+                reason = (
+                    f"overshoots more than {OVERSHOOT_LIMIT_PCT:g} % at every kp; kd at the "
+                    f"driver limit {KD_LIMIT:g}; lower kp"
                 )
-                continue
-            worst_settle = max(step.settle_time_s or 0.0 for step in steps)
-            accepted.append((kp, kd, worst_settle))
-        if not accepted:
-            proposals[joint] = GainProposal(
-                joint,
-                None,
-                None,
-                "no candidate passed every step",
-                {gain_label(kp, kd): why for kp, kd, why in rejected},
-            )
+            proposals[joint] = GainProposal(joint, None, None, reason, rejected, friction)
             continue
-        best_kp = max(kp for kp, _, _ in accepted)
-        kp, kd, settle = min(
-            (entry for entry in accepted if entry[0] == best_kp), key=lambda e: (e[2], e[1])
-        )
+        score, kp, kd = min(scored, key=lambda entry: (entry[0], -entry[1], entry[2]))
+        for other, other_kp, other_kd in scored:
+            if (other_kp, other_kd) != (kp, kd):
+                rejected[gain_label(other_kp, other_kd)] = (
+                    f"passes, but scores {other:.2f} against {score:.2f}"
+                )
         steps = by_gains[(kp, kd)]
+        overshoots = [s.overshoot_pct for s in steps if s.overshoot_pct is not None]
         reason = (
-            f"{gain_label(kp, kd)}: highest kp whose {len(steps)} step(s) all pass, both ways, "
-            f"with every softer kp tried passing (worst settle {settle:.2f} s, "
-            f"overshoot {max(s.overshoot_pct for s in steps):.0f} %, "
-            f"buzz {max(s.buzz_rms_deg_s for s in steps):.2f} deg/s)"
+            f"{gain_label(kp, kd)}: lowest score {score:.2f} of {len(scored)} passing "
+            f"candidate(s): rests up to {max(abs(s.steady_state_error_deg) for s in steps):.2f} "
+            f"deg off target (limit {steps[0].rest_limit_deg:.2f} deg, friction "
+            f"{friction:.2f} Nm), settles in {max(s.settled_s for s in steps):.2f} s, "
+            f"overshoot {max(overshoots, default=0.0):.0f} %, "
+            f"buzz {max(s.buzz_rms_deg_s for s in steps):.2f} deg/s"
         )
-        proposals[joint] = GainProposal(
-            joint, kp, kd, reason, {gain_label(p, d): why for p, d, why in rejected}
-        )
+        proposals[joint] = GainProposal(joint, kp, kd, reason, rejected, friction)
     return proposals
+
+
+def _score(steps: Sequence[StepMetrics]) -> float:
+    rest = max(abs(step.steady_state_error_deg) / step.rest_limit_deg for step in steps)
+    return rest + max(step.settled_s for step in steps) / SETTLE_TIME_LIMIT_S
+
+
+def _overshoots_at_kd_limit(by_gains: dict[tuple[float, float], list[StepMetrics]]) -> bool:
+    stiffest = max(kd for _, kd in by_gains)
+    if stiffest < KD_LIMIT - 1e-9:
+        return False
+    return all(
+        any(s.overshoot_pct is not None and s.overshoot_pct > OVERSHOOT_LIMIT_PCT for s in steps)
+        for (_, kd), steps in by_gains.items()
+        if kd == stiffest
+    )
 
 
 def _gain_failures(steps: Sequence[StepMetrics]) -> str:
@@ -415,13 +494,13 @@ def _gain_failures(steps: Sequence[StepMetrics]) -> str:
 
 
 def format_proposals(proposals: dict[str, GainProposal]) -> str:
-    """Markdown list: the chosen gains per joint and why stiffer candidates lost."""
+    """Markdown list: the chosen gains per joint, its friction, and why the others lost."""
     if not proposals:
         return "(no steps)"
     lines: list[str] = []
     for joint in sorted(proposals):
         proposal = proposals[joint]
-        lines.append(f"- {joint}: {proposal.reason}")
+        lines.append(f"- {joint} (friction {proposal.friction_nm:.2f} Nm): {proposal.reason}")
         for label, why in proposal.rejected.items():
             lines.append(f"  - {label} rejected: {why}")
     return "\n".join(lines)

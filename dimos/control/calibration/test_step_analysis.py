@@ -19,14 +19,18 @@ import numpy as np
 import pytest
 
 from dimos.control.calibration.step_analysis import (
+    KD_LIMIT,
     SETTLE_BAND_DEG,
     StepEvent,
     StepMetrics,
     analyze_step,
     format_proposals,
     format_table,
+    gain_candidates,
     propose_gains,
+    rest_limit_deg,
     segment_steps,
+    sweep_friction_nm,
 )
 from dimos.control.calibration.step_report import (
     CommandTrace,
@@ -114,13 +118,31 @@ def test_negative_step_overshoot_is_measured_past_the_target() -> None:
     assert metrics.passed
 
 
-def test_stuck_joint_never_settles_and_reports_the_offset() -> None:
+def test_a_joint_resting_short_settles_to_its_rest_and_is_scored_not_failed() -> None:
     t, y, dy = _first_order(1.0, 0.05)
-    y = y - 0.3  # stiction leaves it 0.3 deg short
+    y = y - 0.3  # friction leaves it 0.3 deg short
     metrics = analyze_step(_event(1.0), t, y, dy)
-    assert metrics.settle_time_s is None
     assert metrics.steady_state_error_deg == pytest.approx(-0.3, abs=1e-3)
-    assert not metrics.passed
+    assert metrics.moved_deg == pytest.approx(0.7, abs=1e-3) and not metrics.stuck
+    assert metrics.settle_time_s == pytest.approx(0.05 * math.log(10.0), abs=2 * DT)
+    assert metrics.passed and metrics.rest_limit_deg == SETTLE_BAND_DEG
+    rubbing = analyze_step(_event(1.0), t, y, dy, friction_nm=0.3)
+    limit = math.degrees(1.5 * 0.3 / 80.0)
+    assert rubbing.rest_limit_deg == pytest.approx(limit) == rest_limit_deg(0.3, 80.0)
+    assert rubbing.settle_time_s == pytest.approx(0.05 * math.log(1.0 / limit), abs=2 * DT)
+    assert rest_limit_deg(0.01, 80.0) == SETTLE_BAND_DEG
+
+
+def test_a_step_that_barely_moves_is_stuck_and_skips_overshoot_and_settle() -> None:
+    t, y, dy = _first_order(-0.2, 0.05)  # commanded -1 deg, moved 0.2
+    metrics = analyze_step(_event(-1.0), t, y, dy)
+    assert metrics.stuck and metrics.moved_deg == pytest.approx(0.2, abs=1e-3)
+    assert metrics.overshoot_pct is None and metrics.settle_time_s is None
+    assert metrics.failures() == [
+        "-1 deg step is stuck: moved +0.20 deg (less than 50% of the step)"
+    ]
+    half = analyze_step(_event(-1.0), *_first_order(-0.55, 0.05))
+    assert not half.stuck and half.passed
 
 
 def test_buzz_is_the_velocity_rms_at_rest() -> None:
@@ -152,7 +174,7 @@ def test_table_lists_every_step_with_a_verdict() -> None:
     table = format_table(rows)
     assert table.count("| left_joint1 |") == 2
     assert "| ok |" in table
-    assert "| FAIL |" in table  # the -1 step evaluated against a +1 response never settles
+    assert "| stuck |" in table  # the -1 step evaluated against a +1 response moved backwards
 
 
 # Gain proposal
@@ -169,39 +191,40 @@ def _sweep_step(joint: str, kp: float, kd: float, delta: float) -> StepMetrics:
     return analyze_step(_event(delta, joint=joint, kp=kp, kd=kd), t, y, dy)
 
 
-def test_propose_gains_picks_the_highest_passing_kp_and_explains_the_rest() -> None:
-    candidates = [(80.0, 5.0), (120.0, 5.0), (160.0, 5.0), (200.0, 5.0)]
+def test_propose_gains_picks_the_lowest_score_and_explains_the_rest() -> None:
+    candidates = [(40.0, 5.0), (80.0, 5.0), (120.0, 5.0), (160.0, 5.0), (200.0, 5.0)]
     steps = [
         _sweep_step("arm/joint2", kp, kd, delta)
-        for kp, kd in candidates[:3]
+        for kp, kd in candidates[:4]
         for delta in (1.0, -1.0, 3.0, -3.0)
     ]
     proposal = propose_gains(steps, candidates)["arm/joint2"]
+    # kp 80 and 120 respond alike: the tie goes to the stiffer one.
     assert proposal.gains == (120.0, 5.0)
-    assert "highest kp" in proposal.reason and "4 step(s) all pass" in proposal.reason
-    assert set(proposal.rejected) == {"kp=160 kd=5", "kp=200 kd=5"}
+    assert proposal.reason.startswith("kp=120 kd=5: lowest score 0.3")
+    assert "of 3 passing candidate(s)" in proposal.reason and "overshoot 0 %" in proposal.reason
+    assert set(proposal.rejected) == {"kp=40 kd=5", "kp=80 kd=5", "kp=160 kd=5", "kp=200 kd=5"}
     assert "overshot" in proposal.rejected["kp=160 kd=5"]
     assert proposal.rejected["kp=200 kd=5"] == "not tested"
+    # Slow is scored, not failed: kp 40 settles in about a second.
+    assert proposal.rejected["kp=40 kd=5"].startswith("passes, but scores 2.")
+    assert proposal.rejected["kp=80 kd=5"].startswith("passes, but scores 0.3")
     # Without explicit candidates every tested pair counts.
     assert propose_gains(steps)["arm/joint2"].gains == (120.0, 5.0)
     text = format_proposals(propose_gains(steps))
-    assert "arm/joint2: kp=120 kd=5" in text and "kp=160 kd=5 rejected" in text
-    # A softer scale that fails (too slow) blocks every stiffer one, whatever its kd.
-    soft = [_sweep_step("arm/joint2", 40.0, 2.0, delta) for delta in (1.0, -1.0)]
-    blocked = propose_gains([*soft, *steps])["arm/joint2"]
-    assert blocked.gains is None
-    assert "settled in" in blocked.rejected["kp=40 kd=2"]
-    assert blocked.rejected["kp=120 kd=5"] == "its steps pass, but kp=40 kd=2 below it failed"
+    assert "arm/joint2 (friction 0.00 Nm): kp=120 kd=5" in text
+    assert "kp=160 kd=5 rejected" in text
 
 
-def test_propose_gains_needs_every_step_to_pass() -> None:
+def test_a_stuck_step_rejects_its_gains() -> None:
     good = [_sweep_step("j", 80.0, 5.0, delta) for delta in (1.0, -1.0)]
-    t, y, dy = _first_order(1.0, 0.05)
-    stuck = analyze_step(_event(-1.0, joint="j", kp=120.0, kd=5.0), t, 10.0 - (y - 10.0) + 0.3, -dy)
-    fine = analyze_step(_event(1.0, joint="j", kp=120.0, kd=5.0), t, y, dy)
+    stuck = analyze_step(_event(-1.0, joint="j", kp=120.0, kd=5.0), *_first_order(-0.2, 0.05))
+    fine = analyze_step(_event(1.0, joint="j", kp=120.0, kd=5.0), *_first_order(1.0, 0.05))
     proposal = propose_gains([*good, stuck, fine])["j"]
     assert proposal.gains == (80.0, 5.0)
-    assert "off target" in proposal.rejected["kp=120 kd=5"]
+    assert proposal.rejected["kp=120 kd=5"] == (
+        "-1 deg step is stuck: moved +0.20 deg (less than 50% of the step)"
+    )
 
 
 def test_propose_gains_prefers_the_faster_kd_at_equal_kp_and_reports_none_passing() -> None:
@@ -274,31 +297,64 @@ def test_propose_gains_needs_a_step_each_way() -> None:
     assert only_up.rejected["kp=80 kd=5"] == "no negative step recorded"
 
 
-def test_propose_gains_does_not_pick_a_stiff_pass_above_a_failing_softer_kp() -> None:
-    def steps(kp: float, tau: float, kd: float = 5.0) -> list[StepMetrics]:
+def test_a_rest_error_counts_against_what_friction_leaves_at_that_kp() -> None:
+    def steps(kp: float, short_deg: float) -> list[StepMetrics]:
+        out = []
+        for delta in (1.0, -1.0):
+            t, y, dy = _first_order(delta, 0.05)
+            event = _event(delta, joint="j", kp=kp, kd=1.0)
+            out.append(analyze_step(event, t, y - delta * short_deg, dy, friction_nm=0.2))
+        return out
+
+    # 0.2 N m of friction leaves 0.86 deg at kp 20 and 0.21 deg at kp 80: kp 20
+    # resting 0.4 deg short beats kp 80 resting 0.3 deg short.
+    proposal = propose_gains([*steps(20.0, 0.4), *steps(80.0, 0.3)])["j"]
+    assert proposal.gains == (20.0, 1.0) and proposal.friction_nm == 0.2
+    assert "rests up to 0.40 deg off target (limit 0.86 deg, friction 0.20 Nm)" in (proposal.reason)
+    assert proposal.rejected["kp=80 kd=1"].startswith("passes, but scores 1.")
+
+
+def test_overshoot_at_the_kd_limit_says_to_lower_kp() -> None:
+    def ringing(kp: float, kd: float) -> list[StepMetrics]:
         return [
-            analyze_step(_event(delta, joint="j", kp=kp, kd=kd), *_first_order(delta, tau))
-            for delta in (1.0, -1.0)
+            analyze_step(_event(d, joint="j", kp=kp, kd=kd), *_second_order(d, 60.0, 0.2))
+            for d in (3.0, -3.0)
         ]
 
-    # kp 120 settles too slowly (a bad run); kp 200 happens to pass above it.
-    results = [*steps(80.0, 0.05), *steps(120.0, 0.3), *steps(200.0, 0.04)]
-    proposal = propose_gains(results)["j"]
-    assert proposal.gains == (80.0, 5.0)
-    assert "settled in" in proposal.rejected["kp=120 kd=5"]
-    assert proposal.rejected["kp=200 kd=5"] == ("its steps pass, but kp=120 kd=5 below it failed")
-    # The sweep scales kd with the kp scale, so the rule holds whatever the kd:
-    # a failing kp 120 at kd 3.67 blocks kp 200 at kd 4.24 ...
-    scaled = propose_gains(
-        [*steps(80.0, 0.05, kd=3.0), *steps(120.0, 0.3, kd=3.67), *steps(200.0, 0.04, kd=4.24)]
+    capped = propose_gains([*ringing(80.0, 2.0), *ringing(80.0, KD_LIMIT), *ringing(120.0, 5.0)])
+    assert capped["j"].gains is None
+    assert capped["j"].reason == (
+        "overshoots more than 20 % at every kp; kd at the driver limit 5; lower kp"
     )
-    assert scaled["j"].gains == (80.0, 3.0)
-    assert scaled["j"].rejected["kp=200 kd=4.24"] == (
-        "its steps pass, but kp=120 kd=3.67 below it failed"
-    )
-    # ... and with every softer scale passing, the stiffest is chosen.
-    clean = propose_gains([*steps(80.0, 0.05, kd=3.0), *steps(200.0, 0.04, kd=4.24)])
-    assert clean["j"].gains == (200.0, 4.24)
+    assert "overshot" in capped["j"].rejected["kp=120 kd=5"]
+    below = propose_gains([*ringing(80.0, 2.0), *ringing(80.0, 3.5)])["j"]
+    assert below.reason == "no candidate passed every step"
+
+
+def test_gain_candidates_are_a_kp_by_kd_grid_with_the_robot_gains_first() -> None:
+    pairs = gain_candidates(80.0, 1.0, (0.6, 1.0, 1.5), (1.0, 2.0, 3.5))
+    assert pairs[0] == (80.0, 1.0) and len(pairs) == 9
+    assert set(pairs) == {(kp, kd) for kp in (48.0, 80.0, 120.0) for kd in (1.0, 2.0, 3.5)}
+    wrist = gain_candidates(10.0, 1.5, (0.6, 1.0, 1.5), (1.0, 2.0, 3.5))
+    assert {kd for _, kd in wrist} == {1.5, 3.0, KD_LIMIT}
+    clamped = gain_candidates(80.0, 5.0, (0.6, 1.0, 1.5), (1.0, 2.0, 3.5))
+    assert clamped == [(80.0, 5.0), (48.0, 5.0), (120.0, 5.0)]
+
+
+def test_friction_comes_from_the_largest_steps_at_the_first_gains() -> None:
+    def step(kp: float, delta: float, error: float) -> StepMetrics:
+        t, y, dy = _first_order(delta, 0.05)
+        event = _event(delta, joint="j", kp=kp, kd=1.0)
+        return analyze_step(event, t, y + error, dy)
+
+    # Friction stops +3 short by 0.6 deg and -3 short by 0.4 deg (a 0.1 deg sag):
+    # kp 80 x 0.5 deg is 0.70 N m; the second gains do not count.
+    swept = [step(80.0, 1.0, -0.3), step(80.0, 3.0, -0.6), step(80.0, -3.0, 0.4)]
+    swept += [step(120.0, 3.0, -2.0), step(120.0, -3.0, 2.0)]
+    assert sweep_friction_nm(swept) == {"j": pytest.approx(80.0 * math.radians(0.5), abs=1e-3)}
+    pushed = [step(80.0, 3.0, 0.2), step(80.0, -3.0, -0.2)]
+    assert sweep_friction_nm(pushed) == {"j": 0.0}
+    assert sweep_friction_nm([step(80.0, 3.0, -0.6)]) == {}
 
 
 def _recorded_step(commands: dict[str, CommandTrace]) -> Recording:
@@ -314,7 +370,7 @@ def _recorded_step(commands: dict[str, CommandTrace]) -> Recording:
     )
 
 
-def test_a_softer_gain_pair_lost_to_a_recording_gap_still_blocks_a_stiffer_one() -> None:
+def test_a_gain_pair_lost_to_a_recording_gap_is_rejected_and_the_rest_compete() -> None:
     hold, tau = HOLD_S - 2 * DT, 0.05
     events = [
         _event(1.0, kp=kp, t0=t0, hold_s=hold)
@@ -343,9 +399,16 @@ def test_a_softer_gain_pair_lost_to_a_recording_gap_still_blocks_a_stiffer_one()
     assert records[0].t.size == 0 and not records[0].metrics.passed
     assert records[2].metrics.passed and records[3].metrics.passed
     proposal = propose_gains(r.metrics for r in records)["left_joint1"]
-    assert proposal.gains is None
+    assert proposal.gains == (200.0, 5.0)
     assert "has no recorded samples" in proposal.rejected["kp=80 kd=5"]
-    assert proposal.rejected["kp=200 kd=5"] == "its steps pass, but kp=80 kd=5 below it failed"
+
+
+def test_a_step_takes_its_joints_dither_friction_when_the_sweep_shows_less() -> None:
+    [alone] = extract_steps(_recorded_step({}))
+    assert alone.metrics.friction_nm == 0.0 and alone.metrics.rest_limit_deg == SETTLE_BAND_DEG
+    [record] = extract_steps(_recorded_step({}), dither_friction_nm={"left_joint1": 0.4})
+    assert record.metrics.friction_nm == 0.4
+    assert record.metrics.rest_limit_deg == pytest.approx(math.degrees(1.5 * 0.4 / 80.0))
 
 
 def test_a_step_window_starts_at_the_first_recorded_command_of_its_target() -> None:

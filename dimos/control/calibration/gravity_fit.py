@@ -97,6 +97,7 @@ from dimos.control.calibration.schema import (
 from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.calibration.step_analysis import (
     REST_WINDOW_S,
+    STUCK_FRACTION,
     rest_window,
     segment_steps,
 )
@@ -126,7 +127,6 @@ COM_BOX_M = 0.05  # a fitted COM may move this far per axis from the URDF COM
 FIT_RANK_TOLERANCE = 1e-2
 HELD_MIN_NM = 1e-3
 DITHER_HOLD_TOLERANCE_S = 0.1
-STUCK_FRACTION = 0.5
 DITHER_SATURATION_FRACTION = 0.95  # friction this close to kp*d/2 means the joint never moved
 DETERMINED_FRACTION = 0.5  # share of a parameter's direction inside the identifiable subspace
 FRICTION_FLAG_RATIO = 2.0

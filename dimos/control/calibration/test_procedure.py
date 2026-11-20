@@ -223,17 +223,26 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert calibration.friction_nm is not None and set(calibration.friction_nm) == set(
         LEFT_MEASURED
     )
-    # The big joints settle at twice their kp; the wrists rest past 0.1 deg
-    # on their friction at every kp tried, so they keep their robot gains.
+    # The big joints rest closest at 1.5 times their kp; the wrists stick on
+    # their friction at the softer kps and rest best at 1.5 times theirs.
     assert calibration.gains is not None
     assert {j: (g.kp, g.kd) for j, g in calibration.gains.items()} == {
-        f"left_joint{i}": (160.0, pytest.approx(math.sqrt(2))) for i in (1, 2, 3)
+        **{f"left_joint{i}": (120.0, 1.0) for i in (1, 2, 3)},
+        **{f"left_joint{i}": (15.0, 3.0) for i in (4, 5, 6)},
     }
     results = rig.procedure.results()
-    wrist = results["pick_gains"]["proposals"]["left_joint4"]
-    # The sweep's kd follows the square root of the kp scale: 1.5, 1.84, 2.12.
-    assert wrist["kp"] is None and "rests" in wrist["rejected"]["kp=10 kd=1.5"]
-    assert set(wrist["rejected"]) == {"kp=10 kd=1.5", "kp=15 kd=1.83712", "kp=20 kd=2.12132"}
+    gains = results["pick_gains"]
+    wrist = gains["proposals"]["left_joint4"]
+    # Its kp x 0.6, 1, 1.5 by kd x 1, 2, 3.5, kd clamped to 5.
+    assert set(wrist["rejected"]) == {
+        f"kp={kp:g} kd={kd:g}" for kp in (6, 10, 15) for kd in (1.5, 3, 5)
+    } - {"kp=15 kd=3"}
+    assert "is stuck" in wrist["rejected"]["kp=6 kd=1.5"]
+    assert wrist["rejected"]["kp=15 kd=5"].startswith("passes, but scores")
+    assert wrist["reason"].startswith("kp=15 kd=3: lowest score")
+    assert 0.05 <= wrist["friction_nm"] <= 0.07
+    assert gains["friction_nm"]["left_joint4"]["sweep"] > 0.0
+    assert gains["friction_nm"]["left_joint1"]["dither"] is None
     assert calibration.checks is not None and set(calibration.checks) == {"float", "tracking"}
     floats = calibration.checks["float"]["joints"]
     assert set(floats) == set(LEFT_MEASURED) and all(row["passed"] for row in floats.values())
@@ -263,7 +272,7 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert fit["holdout_rms_nm"][joint]["after"] < fit["holdout_rms_nm"][joint]["before"]
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
-    assert len(steps) == 8 * 4 * 2 + 6 * 3 * 4
+    assert len(steps) == 8 * 4 * 2 + 6 * 9 * 4
     dither = {
         joint: math.degrees(0.2 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0])
         for joint in LEFT_MEASURED
@@ -1139,21 +1148,30 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
         with pytest.raises(StepFailedError, match="would pass a joint limit"):
             session.step_joint("joint3", 1.0, 0.5)
 
-    status = rig.run(["check", "step_sweep"])
+    prompts: list[str] = []
+    status = rig.run(["check", "step_sweep"], lambda p: prompts.append(p) or "confirm")
 
     assert status["state"] == "done", status["message"]
+    [plan] = [p for p in prompts if p.startswith("The arm will move to")]
+    assert "kp x 0.6, 1, 1.5 by kd x 1, 2, 3.5" in plan
+    # Its first joints run at kd 5 already, so kd x 2 and 3.5 add nothing there.
+    assert "(joint1 3, joint2 3, joint3 3, joint4 9, joint5 9, joint6 9 candidates)" in plan
+    assert "144 steps, about 2.4 min" in plan
     sweep = rig.procedure.results()["step_sweep"]
     assert set(sweep["joints"]) == set(b601_spec.joint_names)
     assert sweep["pose"].startswith("gravity pose ")
     pose = np.radians(sweep["pose_deg"])
     assert math.degrees(limit_margin_rad(pose, lower, upper)) >= 3.0 + 2.0
-    # Back home after the sweep, every step at kp x 1, 1.5, 2 with kd x sqrt.
+    # Back home after the sweep: the robot's gains first, then kp x 0.6, 1,
+    # 1.5 by kd x 1, 2, 3.5 with kd clamped to 5, so a kd of 2 gives 2, 4 and 5.
     assert _far_from_home(rig) < 3.0
-    kp0, kd0 = b601_spec.gains["joint4"]
+    assert b601_spec.gains["joint4"] == (18.0, 2.0)
+    grid = [(kp, kd) for kp in (10.8, 18.0, 27.0) for kd in (2.0, 4.0, 5.0)]
+    expected = [(18.0, 2.0), *(pair for pair in grid if pair != (18.0, 2.0))]
     assert sweep["joints"]["joint4"] == [
-        [pytest.approx(kp0 * s), pytest.approx(min(kd0 * math.sqrt(s), 5.0))]
-        for s in (1.0, 1.5, 2.0)
+        [pytest.approx(kp), pytest.approx(kd)] for kp, kd in expected
     ]
+    assert sweep["kp_scales"] == [0.6, 1.0, 1.5] and sweep["kd_scales"] == [1.0, 2.0, 3.5]
 
 
 def _heavy_forearm(arm: ArmModel, spec: ArmCalibrationSpec, extra_kg: float) -> ArmCalibration:
