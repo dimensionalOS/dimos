@@ -971,7 +971,7 @@ class Procedure:
                 self._set_state("running", "running")
         self.check_abort()
         if not answered:
-            unanswered = f"the prompt went unanswered for {_duration(timeout)}"
+            unanswered = f"the prompt went unanswered for {duration_text(timeout)}"
             logger.warning(f"{self.spec.arm_id}: {unanswered}; aborting and parking: {prompt}")
             self._request_park(unanswered, final=False)
             raise AbortRequestedError(unanswered)
@@ -1189,5 +1189,5 @@ class Procedure:
         )
 
 
-def _duration(seconds: float) -> str:
+def duration_text(seconds: float) -> str:
     return f"{seconds / 60.0:g} min" if seconds >= 60.0 else f"{seconds:g} s"

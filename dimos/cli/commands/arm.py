@@ -62,6 +62,7 @@ from dimos.cli.commands.arm_run import (
     run_alive,
     stop_run,
 )
+from dimos.control.calibration.procedure import duration_text
 
 arm_app = typer.Typer(
     help="Calibrate an arm (gravity, gains, checks), inspect its calibration, bake it into a URDF.",
@@ -533,8 +534,14 @@ class Wizard:
         echo(f"\n? {status['prompt']}")
         deadline = status.get("prompt_deadline")
         if deadline:
-            at = time.strftime("%H:%M", time.localtime(deadline))
-            echo(f"  (no answer by {at} aborts the run and parks the arm)")
+            left = deadline - time.time()
+            if left <= 0:
+                echo("  (answer now: the run aborts and parks the arm)")
+            else:
+                whole = -(-left // 60.0) * 60.0 if left >= 60.0 else -(-left // 1.0)
+                echo(
+                    f"  (no answer within {duration_text(whole)} aborts the run and parks the arm)"
+                )
         echo(PROMPT_KEYS, nl=False)
 
     def _keys(self, status: dict[str, Any]) -> None:
