@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
 
-from dimos.core.module import Module, ModuleConfig, frame_id_prefix
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
@@ -108,7 +108,7 @@ class TfModule(Module):
             frames = _frame_ids(
                 atom.kwargs["tf_frames_local"],
                 atom.kwargs["tf_frames_global"],
-                frame_id_prefix(atom.name),
+                atom.name.rpartition("/")[0],
             )
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 publishers[frames[child_role]][frames[parent_role]].append(atom.name)

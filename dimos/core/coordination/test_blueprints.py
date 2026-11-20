@@ -35,9 +35,9 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module, frame_id_prefix
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.tf_module import TfModule, TfModuleConfig, _frame_ids
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
@@ -379,7 +379,6 @@ def test_namespace_prefixes_names_streams_and_frames() -> None:
     atom_a = next(a for a in blueprint.blueprints if a.module is ModuleA)
     assert atom_a.name == "robot0/modulea"
     assert atom_a.kwargs["instance_name"] == "robot0/modulea"
-    assert frame_id_prefix(atom_a.name) == "robot0"
     # Every stream is remapped under the prefix.
     assert blueprint.remapping_map[("robot0/modulea", "data1")] == "robot0/data1"
     assert blueprint.remapping_map[("robot0/moduleb", "data3")] == "robot0/data3"
@@ -432,7 +431,6 @@ def test_namespace_nesting_composes() -> None:
 
     atom = blueprint.blueprints[0]
     assert atom.name == "fleet/robot0/modulea"
-    assert frame_id_prefix(atom.name) == "fleet/robot0"
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
@@ -446,13 +444,16 @@ class FramePrefixed(TfModule):
 
 def test_namespace_stacks_local_tf_frames() -> None:
     nested = FramePrefixed.blueprint().namespace("robot0").namespace("fleet").blueprints[0]
-    assert frame_id_prefix(nested.name) == "fleet/robot0"
-
     user_set = FramePrefixed.blueprint(tf_frames_local={"body": "custom"}).namespace("robot0")
-    atom = user_set.blueprints[0]
-    assert _frame_ids(atom.kwargs["tf_frames_local"], {}, frame_id_prefix(atom.name)) == {
-        "body": "robot0/custom"
-    }
+    modules = [FramePrefixed(**nested.kwargs), FramePrefixed(**user_set.blueprints[0].kwargs)]
+    try:
+        assert [(module.namespace, module.tf_frames) for module in modules] == [
+            ("fleet/robot0", {"body": "fleet/robot0/base_link"}),
+            ("robot0", {"body": "robot0/custom"}),
+        ]
+    finally:
+        for module in modules:
+            module.stop()
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:

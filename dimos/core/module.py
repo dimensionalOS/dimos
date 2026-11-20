@@ -137,11 +137,6 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
-def frame_id_prefix(instance_name: str | None) -> str:
-    """The namespace in an instance name: frames of ``fleet/robot0/odom`` go under ``fleet/robot0``."""
-    return (instance_name or "").rpartition("/")[0]
-
-
 class ModuleBase(Configurable, CompositeResource):
     config: ModuleConfig
 
@@ -200,9 +195,14 @@ class ModuleBase(Configurable, CompositeResource):
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
     @property
+    def namespace(self) -> str:
+        """The ``Blueprint.namespace`` levels in the instance name: ``fleet/robot0`` for ``fleet/robot0/odom``."""
+        return (self.config.instance_name or "").rpartition("/")[0]
+
+    @property
     def frame_id_prefix(self) -> str:
-        """The namespace in the instance name: ``robot0`` for ``robot0/go2connection``."""
-        return frame_id_prefix(self.config.instance_name)
+        """The frames under this module's namespace: ``robot0`` for ``robot0/go2connection``."""
+        return self.namespace
 
     @property
     def frame_id(self) -> str:
