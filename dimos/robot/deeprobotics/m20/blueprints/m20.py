@@ -20,12 +20,9 @@ the Map Editor, then run with ``--map-file <recording>.db``.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.mapping.relocalization.cloud_relocalizer import MID360_NAV
-from dimos.mapping.relocalization.module import PremapModule
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
+from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack, m20_relocalization
 from dimos.robot.deeprobotics.m20.connection import M20Connection
-from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
 from dimos.robot.urdf_manager import UrdfManager
 
@@ -34,21 +31,7 @@ m20 = autoconnect(
     UrdfManager.blueprint(model=M20_MODEL),
     M20StandingJointState.blueprint(),
     m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
-    PremapModule.blueprint(
-        world_frame=WORLD_FRAME,
-        map_frame="premap",
-        # at 0.2 m live voxels a right office match scores ~0.5-0.7 and a wrong one ~0.25-0.35
-        relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
-        # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
-        live_cloud="lidar",
-        relocalize_once=False,
-        new_map=True,
-        # a standing robot keeps ~6-7k live voxels at 0.2 m, so the first match waits for 2k, under the 20k default
-        min_local_points=2_000,
-        # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
-        live_voxel_m=0.2,
-        match_radius_m=15.0,
-    ).remappings([(PremapModule, "lidar", "slam_body_points")]),
+    m20_relocalization(),
 ).global_config(
     n_workers=5,
     transport="zenoh",

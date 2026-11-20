@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's navigation stack: voxel map, planners and follower over the vendor LIO."""
+"""The M20's navigation stack: voxel map, planners and follower over the M20's odometry (vendor LIO or dimSLAM)."""
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.mapping.relocalization.cloud_relocalizer import MID360_NAV
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
@@ -32,8 +34,8 @@ PLANNER_VIZ_HZ = 2.0
 PLANNER_VIZ_SWEEP_CELLS = 1
 
 
-def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
-    """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s."""
+def m20_nav_stack(embodiment: Embodiment = M20, lidar: str = "slam_body_points") -> MetaBlueprint:
+    """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s; the ray tracer traces the scans on `lidar`."""
     return autoconnect(
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_M,
@@ -44,7 +46,7 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
             global_emit_every=50,
             world_frame=WORLD_FRAME,
             worker_threads=3,
-        ).remappings([(RayTracingVoxelMap, "lidar", "slam_body_points")]),
+        ).remappings([(RayTracingVoxelMap, "lidar", lidar)]),
         MLSPlannerNative.blueprint(
             world_frame=WORLD_FRAME,
             voxel_size=VOXEL_SIZE_M,
@@ -67,3 +69,22 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
         TrajectoryFollowerNative.blueprint(embodiment=embodiment),
         MovementManager.blueprint(),
     )
+
+
+def m20_relocalization(lidar: str = "slam_body_points") -> Blueprint:
+    """Continuous relocalization against the premap, matching a live map built from the scans on `lidar` (each placed by tf at its stamp)."""
+    return PremapModule.blueprint(
+        world_frame=WORLD_FRAME,
+        map_frame="premap",
+        # at 0.2 m live voxels a right office match scores ~0.5-0.7 and a wrong one ~0.25-0.35
+        relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
+        # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
+        live_cloud="lidar",
+        relocalize_once=False,
+        new_map=True,
+        # a standing robot keeps ~6-7k live voxels at 0.2 m, so the first match waits for 2k, under the 20k default
+        min_local_points=2_000,
+        # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
+        live_voxel_m=0.2,
+        match_radius_m=15.0,
+    ).remappings([(PremapModule, "lidar", lidar)])
