@@ -15,6 +15,7 @@
 """A module whose tf frames are declared in its config, so a blueprint can namespace and check them."""
 
 from collections import defaultdict
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
@@ -86,14 +87,14 @@ class TfModule(Module):
     config: TfModuleConfig
     tf: IO[TFMessage]
 
-    @property
+    @cached_property
     def tf_frames(self) -> dict[str, str]:
         """Every role -> frame id, local (under frame_id_prefix) and global together."""
         return _frame_ids(
             self.config.tf_frames_local, self.config.tf_frames_global, self.frame_id_prefix
         )
 
-    @property
+    @cached_property
     def frame(self) -> TfFrames:
         """Frame ids by role, local and global together: ``self.frame.body``."""
         return TfFrames(self.tf_frames, self.config.instance_name or type(self).__name__)
