@@ -54,6 +54,12 @@ pub struct Config {
     charge_enable: bool,
     /// frame_id of every header.
     frame_id: String,
+    /// owner: stop owning the bus (the process exits) on a reply with any joint torque (N m) or speed (rad/s) above
+    /// these, or, once the startup is through, any status word other than 1; a passive owner never moves anything.
+    #[validate(range(exclusive_min = 0.0))]
+    guard_max_torque: f64,
+    #[validate(range(exclusive_min = 0.0))]
+    guard_max_velocity: f64,
     /// Seconds without a frame before warning.
     #[validate(range(exclusive_min = 0.0, max = 3600.0))]
     silence_warning_s: f64,
@@ -241,6 +247,8 @@ fn run_owner(config: &Config, latest: &Latest) {
     let silence = Duration::from_secs_f64(config.silence_warning_s);
     let mut last_reply = std::time::Instant::now();
     let mut started = false;
+    let mut last_statuses: Option<std::collections::BTreeSet<u16>> = None;
+    let mut replies = 0u64;
     loop {
         match bus.tick(None) {
             Ok(Some(sent)) => {
@@ -258,6 +266,48 @@ fn run_owner(config: &Config, latest: &Latest) {
         }
         for frame in bus.drain() {
             last_reply = std::time::Instant::now();
+            if let Ok((_, m20_ecan::Message::JointStates { joints, .. })) =
+                m20_ecan::decode_ethernet(&frame.frame, frame.direction)
+            {
+                let statuses: std::collections::BTreeSet<u16> =
+                    joints.iter().map(|j| j.status_word).collect();
+                let torque = joints.iter().map(|j| j.torque.abs()).fold(0.0f32, f32::max) as f64;
+                let velocity = joints
+                    .iter()
+                    .map(|j| j.velocity.abs())
+                    .fold(0.0f32, f32::max) as f64;
+                if last_statuses.as_ref() != Some(&statuses) {
+                    info!(
+                        ?statuses,
+                        startup = bus.owner.in_startup(),
+                        "joint status words"
+                    );
+                    last_statuses = Some(statuses.clone());
+                }
+                replies += 1;
+                if torque > config.guard_max_torque
+                    || velocity > config.guard_max_velocity
+                    || (!bus.owner.in_startup() && statuses != [1].into())
+                {
+                    tracing::error!(
+                        torque,
+                        velocity,
+                        ?statuses,
+                        replies,
+                        "guard: stopping the bus owner"
+                    );
+                    std::process::exit(2);
+                }
+                if replies % 5000 == 0 {
+                    info!(
+                        replies,
+                        refused = bus.owner.refused,
+                        max_torque = torque,
+                        max_velocity = velocity,
+                        "polling"
+                    );
+                }
+            }
             latest.see(frame.timestamp_ns, frame.direction, &frame.frame);
             if let Some(charge) = charge.as_mut() {
                 if charge.on_frame(frame.direction, &frame.frame) {

@@ -52,6 +52,9 @@ class M20EcanConfig(NativeModuleConfig):
     interface: str = "eth1"
     charge_enable: bool = True
     frame_id: str = "base_link"
+    # owner: stop on a reply showing torque (N m) / joint speed (rad/s) above these, or a status word other than 1
+    guard_max_torque: float = Field(default=1.0, gt=0.0)
+    guard_max_velocity: float = Field(default=0.5, gt=0.0)
     # seconds without a frame before warning that rl_deploy or its shim is not running
     silence_warning_s: float = Field(default=5.0, gt=0.0, le=3600.0)
 

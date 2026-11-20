@@ -12,7 +12,9 @@
     "interface": "eth1",
     "charge_enable": true,
     "frame_id": "base_link",
-    "silence_warning_s": 5.0
+    "silence_warning_s": 5.0,
+    "guard_max_torque": 1.0,
+    "guard_max_velocity": 0.5
   },
   "session": {
     "mode": "client",
