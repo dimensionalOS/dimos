@@ -16,6 +16,7 @@
 
 from collections import defaultdict
 from functools import cached_property
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
@@ -60,27 +61,6 @@ class TfModuleConfig(ModuleConfig):
         return self
 
 
-class TfFrames:
-    """A module's frame ids by role, as attributes: ``self.frame.body``."""
-
-    def __init__(self, frames: dict[str, str], owner: str) -> None:
-        self._frames = frames
-        self._owner = owner
-
-    def __getattr__(self, role: str) -> str:
-        if role.startswith("_"):
-            raise AttributeError(role)
-        return self[role]
-
-    def __getitem__(self, role: str) -> str:
-        if role not in self._frames:
-            raise AttributeError(
-                f"{self._owner} has no tf frame for role {role!r}; "
-                f"declare it in tf_frames_local or tf_frames_global (declared: {sorted(self._frames)})"
-            )
-        return self._frames[role]
-
-
 class TfModule(Module):
     """Its ``tfbuffer`` publishes only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
@@ -95,9 +75,9 @@ class TfModule(Module):
         )
 
     @cached_property
-    def frame(self) -> TfFrames:
+    def frame(self) -> SimpleNamespace:
         """Frame ids by role, local and global together: ``self.frame.body``."""
-        return TfFrames(self.tf_frames, self.config.instance_name or type(self).__name__)
+        return SimpleNamespace(**self.tf_frames)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
