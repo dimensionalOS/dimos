@@ -122,6 +122,8 @@ replay.stream(speed=0.5).pipe(ops.do_action(process)).run()
 
 ### Seeking and Slicing
 
+A replay window includes its start and excludes its end. Consecutive windows therefore play a boundary sample once.
+
 ```python skip
 # Start 10 seconds into the recording
 for ts, frame in replay.iterate_ts(seek=10.0):
