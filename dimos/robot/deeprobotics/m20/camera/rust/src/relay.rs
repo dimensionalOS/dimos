@@ -67,6 +67,11 @@ pub struct Encode {
     /// keyframe interval in frames (the pipeline's `gop`)
     pub gop: u32,
     pub encoder: Encoder,
+    /// Undistort each frame before encoding (rust encoder only): the raw camera at `width` x `height`, and how
+    pub deskew: Option<(
+        rockchip_h264::deskew::Intrinsics,
+        rockchip_h264::deskew::Options,
+    )>,
 }
 
 /// Which implementation of the hardware JPEG decode → H.264 encode a camera runs.
@@ -199,6 +204,13 @@ async fn stream_rust(
             };
             let mut transcoder = rockchip_h264::Transcoder::new(config)
                 .with_context(|| format!("opening the Rockchip hardware for {name}"))?;
+            if let Some((camera, options)) = &encode.deskew {
+                // the remap tables are built on the first frame (and on a size change), never per frame
+                transcoder.set_deskew(Some(rockchip_h264::deskew::Deskew::new(
+                    camera.clone(),
+                    *options,
+                )?));
+            }
             let mut capture = rockchip_h264::v4l2::Capture::open(
                 &device,
                 encode.width,

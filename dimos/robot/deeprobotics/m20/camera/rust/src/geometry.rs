@@ -11,12 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! The cameras' static transforms and pinhole intrinsics.
+//! The cameras' static transforms and intrinsics (raw, and deskewed).
 
 use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
 use dimos_module::Transform;
 use lcm_msgs::sensor_msgs::{CameraInfo, RegionOfInterest};
 use lcm_msgs::std_msgs::{Header, Time};
+use rockchip_h264::deskew::{Intrinsics, Model, Pinhole};
 
 /// Body (REP-103) from optical axes, x y z w.
 const OPTICAL_ROTATION: [f64; 4] = [-0.5, 0.5, -0.5, 0.5];
@@ -44,18 +45,75 @@ pub fn camera_transforms(name: &str, xyz: [f64; 3], yaw_rad: f64, ts: f64) -> [T
     ]
 }
 
-/// A distortion-free pinhole for a `width` x `height` stream, centered, its focal length scaled
-/// from one calibrated at `focal_length_width_px` wide.
-pub fn camera_info(
+/// The capture's camera: centered, its focal length scaled from one calibrated at `focal_length_width_px` wide, and
+/// the lens distortion as configured.
+pub fn intrinsics(
     width: u32,
     height: u32,
     focal_length_px: f64,
     focal_length_width_px: f64,
+    model: Model,
+    coefficients: &[f64],
+) -> Intrinsics {
+    let focal = focal_length_px * width as f64 / focal_length_width_px;
+    Intrinsics {
+        width,
+        height,
+        fx: focal,
+        fy: focal,
+        cx: width as f64 * 0.5,
+        cy: height as f64 * 0.5,
+        model,
+        coefficients: coefficients.to_vec(),
+    }
+}
+
+/// The CameraInfo of raw frames from `camera`.
+pub fn camera_info(camera: &Intrinsics, frame_id: &str, ts: f64) -> CameraInfo {
+    let model = match camera.model {
+        Model::PlumbBob => "plumb_bob",
+        Model::Equidistant => "equidistant",
+    };
+    let size = match camera.model {
+        Model::PlumbBob => 5,
+        Model::Equidistant => 4,
+    };
+    let mut d = camera.coefficients.clone();
+    d.resize(size.max(d.len()), 0.0);
+    info(
+        camera.width,
+        camera.height,
+        [camera.fx, camera.fy, camera.cx, camera.cy],
+        model,
+        d,
+        frame_id,
+        ts,
+    )
+}
+
+/// The CameraInfo of deskewed frames: the new pinhole, no distortion.
+pub fn rectified_camera_info(camera: &Pinhole, frame_id: &str, ts: f64) -> CameraInfo {
+    info(
+        camera.width,
+        camera.height,
+        [camera.fx, camera.fy, camera.cx, camera.cy],
+        "plumb_bob",
+        vec![0.0; 5],
+        frame_id,
+        ts,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn info(
+    width: u32,
+    height: u32,
+    [fx, fy, cx, cy]: [f64; 4],
+    model: &str,
+    d: Vec<f64>,
     frame_id: &str,
     ts: f64,
 ) -> CameraInfo {
-    let focal = focal_length_px * width as f64 / focal_length_width_px;
-    let (cx, cy) = (width as f64 * 0.5, height as f64 * 0.5);
     CameraInfo {
         header: Header {
             seq: 0,
@@ -67,11 +125,11 @@ pub fn camera_info(
         },
         height: height as i32,
         width: width as i32,
-        distortion_model: "plumb_bob".into(),
-        D: vec![0.0; 5],
-        K: [focal, 0.0, cx, 0.0, focal, cy, 0.0, 0.0, 1.0],
+        distortion_model: model.into(),
+        D: d,
+        K: [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
         R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P: [focal, 0.0, cx, 0.0, 0.0, focal, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+        P: [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
         binning_x: 0,
         binning_y: 0,
         roi: RegionOfInterest::default(),
@@ -85,7 +143,8 @@ mod tests {
 
     #[test]
     fn focal_length_scales_with_the_stream_width() {
-        let info = camera_info(800, 600, 607.0, 1280.0, "front_camera_optical", 12.5);
+        let camera = intrinsics(800, 600, 607.0, 1280.0, Model::PlumbBob, &[0.0; 5]);
+        let info = camera_info(&camera, "front_camera_optical", 12.5);
         assert!((info.K[0] - 379.375).abs() < 1e-9);
         assert_eq!(info.K[0], info.K[4]);
         assert_eq!((info.K[2], info.K[5]), (400.0, 300.0));
@@ -98,9 +157,36 @@ mod tests {
 
     #[test]
     fn the_calibrated_width_keeps_its_focal_length() {
-        let info = camera_info(1280, 720, 607.0, 1280.0, "rear_camera_optical", 0.0);
+        let camera = intrinsics(1280, 720, 607.0, 1280.0, Model::PlumbBob, &[]);
+        let info = camera_info(&camera, "rear_camera_optical", 0.0);
         assert_eq!(info.K[0], 607.0);
+        assert_eq!(info.D, vec![0.0; 5]);
         assert_eq!(info.P[0], 607.0);
+        assert_eq!(info.header.frame_id, "rear_camera_optical");
+    }
+
+    #[test]
+    fn a_fisheye_reports_its_model_and_coefficients() {
+        let camera = intrinsics(1280, 720, 486.0, 1280.0, Model::Equidistant, &[0.01]);
+        let info = camera_info(&camera, "rear_camera_optical", 0.0);
+        assert_eq!(info.distortion_model, "equidistant");
+        assert_eq!(info.D, vec![0.01, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn the_deskewed_camera_has_no_distortion_and_its_own_matrix() {
+        let rectified = Pinhole {
+            width: 1280,
+            height: 720,
+            fx: 393.68,
+            fy: 393.68,
+            cx: 640.0,
+            cy: 360.0,
+        };
+        let info = rectified_camera_info(&rectified, "rear_camera_optical", 0.0);
+        assert_eq!(info.distortion_model, "plumb_bob");
+        assert_eq!(info.D, vec![0.0; 5]);
+        assert_eq!((info.K[0], info.P[0], info.K[2]), (393.68, 393.68, 640.0));
         assert_eq!(info.header.frame_id, "rear_camera_optical");
     }
 
