@@ -132,6 +132,17 @@ def test_reuses_marker_detector_and_pose_estimation(marker_image):
     np.testing.assert_allclose(sample.base_from_ee, np.eye(4))
 
 
+def test_low_contrast_marker_keeps_its_pose_and_duplicate_ids_are_rejected(marker_image):
+    image, info, expected = marker_image
+    image.data[:] = 120 + image.data // 64
+    sample = detect_sample(image, info, np.eye(4))
+    np.testing.assert_allclose(sample.camera_from_target[:3, 3], expected[:3, 3], atol=0.005)
+
+    image.data[:] = np.minimum(image.data, np.roll(image.data, 200, axis=1))
+    with pytest.raises(ValueError, match="detected 2"):
+        detect_sample(image, info, np.eye(4))
+
+
 def test_rejects_missing_marker_wrong_resolution_and_distortion(marker_image):
     image, info, _ = marker_image
     with pytest.raises(ValueError, match="exactly one"):

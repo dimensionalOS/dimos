@@ -129,7 +129,7 @@ Use `hand_eye.json` when `validated` is `true`. A failed grade gives a nonzero e
 ## Stop or retry
 
 - In `run`, **Q**, **Esc** or closing the review window stops at the current pose. **Ctrl-C** in the calibration terminal interrupts a move. Repeat the same command with the same setup to resume at the first unsaved view. A fully captured run regrades without motion. Older sessions resume their saved viewpoints. Choose a fresh session directory for the off-axis schedule.
-- If the CLI rejects a frame, **R** retakes the same numbered view in place. Where offered, **H** moves halfway toward home for one retry at that position. **Enter** accepts a frame that passed detection.
+- If the detector finds no tag, it retries once with adjusted grayscale contrast on the same frame. If the CLI still rejects the frame, **R** retakes the same numbered view in place. Where offered, **H** moves halfway toward home for one retry at that position. **Enter** accepts a frame that passed detection.
 - For a missed pose, check the reported error and clearance. For a failed solve or validation, check tag size, flatness, sharpness, mounting rigidity, rotation diversity and timestamps. Start a fresh session after changing the target placement, camera or mount, intrinsics, home or view schedule.
 - `solve` and `validate` work offline. After adding training images repeat both commands. After adding just validation images repeat `validate`.
 

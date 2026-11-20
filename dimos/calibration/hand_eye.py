@@ -132,7 +132,12 @@ def detect_sample(
     check_marker(marker_size_m, marker_id)
     check_image_pixels(image, info)
     k, d = checked_camera_matrices(info)
-    corners, ids, _ = create_aruco_detector(TAG_DICTIONARY).detectMarkers(image.to_opencv())
+    gray = image.to_grayscale().data
+    detector = create_aruco_detector(TAG_DICTIONARY)
+    corners, ids, _ = detector.detectMarkers(gray)
+    if ids is None:
+        # Reflections on a printed tag can wash out the contrast between its cells.
+        corners, ids, _ = detector.detectMarkers(cv2.equalizeHist(gray))
     matches = [] if ids is None else np.flatnonzero(ids.ravel() == marker_id).tolist()
     if len(matches) != 1:
         raise MarkerObservationError(
