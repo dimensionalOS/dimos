@@ -124,7 +124,7 @@ uv run dimos run desk-marker-tf rerun-bridge-module --marker-length-m 0.1
 ```
 
 * Calibration: `<square-m>` is the measured edge of one printed square in meters. Press Space on about 20 sharp views of the board.
-* Markers: hold the tag in front of the webcam.
+* Markers: hold the tag in front of the webcam. Scroll in the 3D view to zoom out: the camera frustum points straight up from the origin, and the feed and the box are drawn at its far end. The box is labelled `DICT_APRILTAG_36h11:0 id=0`.
 
 `desk-marker-tf` uses its bundled `fixtures/camera_info.yaml`, not the file the calibration wrote.
 
