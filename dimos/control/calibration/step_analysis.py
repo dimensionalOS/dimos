@@ -304,20 +304,25 @@ def analyze_step(
 def sweep_friction_nm(steps: Iterable[StepMetrics]) -> dict[str, float]:
     first: dict[str, tuple[float, float]] = {}
     largest: dict[str, dict[int, StepMetrics]] = defaultdict(dict)
+    rests: dict[str, list[float]] = defaultdict(list)
     for step in steps:
         gains = first.setdefault(step.joint, (step.kp, step.kd))
         if (step.kp, step.kd) != gains or step.samples == 0:
             continue
+        if not step.stuck:
+            rests[step.joint].append(abs(step.steady_state_error_deg))
         sign = int(math.copysign(1, step.delta_deg))
         held = largest[step.joint].get(sign)
         if held is None or abs(step.delta_deg) > abs(held.delta_deg):
             largest[step.joint][sign] = step
     friction: dict[str, float] = {}
     for joint, by_sign in largest.items():
-        if 1 not in by_sign or -1 not in by_sign:
-            continue
-        spread = by_sign[-1].steady_state_error_deg - by_sign[1].steady_state_error_deg
-        friction[joint] = max(0.0, first[joint][0] * math.radians(spread) / 2.0)
+        offsets = list(rests[joint])
+        if 1 in by_sign and -1 in by_sign:
+            band = by_sign[-1].steady_state_error_deg - by_sign[1].steady_state_error_deg
+            offsets.append(band / 2.0)
+        if offsets:
+            friction[joint] = first[joint][0] * math.radians(max(0.0, *offsets))
     return friction
 
 

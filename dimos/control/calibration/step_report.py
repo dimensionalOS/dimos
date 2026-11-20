@@ -23,8 +23,10 @@ target when there is one, and writes ``step_report/`` next to it:
 ``propose_gains`` picks per joint), one PNG per joint (a panel per gain set,
 the steps overlaid) and two summary PNGs (settle time and overshoot against kp,
 a panel per joint). Joints are taken by name from the recorded joint states.
-Each joint's friction, which sets its rest limits, comes from the rests of its
-largest steps at the first gains it was swept with (``sweep_friction_nm``).
+Each joint's friction, which sets its rest limits, comes from its rests at the
+first gains it was swept with: half the spread of its largest steps' rests, or
+its largest rest error over the steps that moved, if that is more
+(``sweep_friction_nm``).
 """
 
 from __future__ import annotations

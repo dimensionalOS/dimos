@@ -361,19 +361,24 @@ def test_gain_candidates_are_a_kp_by_kd_grid_with_the_robot_gains_first() -> Non
 
 
 def test_friction_comes_from_the_largest_steps_at_the_first_gains() -> None:
-    def step(kp: float, delta: float, error: float) -> StepMetrics:
-        t, y, dy = _first_order(delta, 0.05)
+    def step(kp: float, delta: float, error: float, moved: float | None = None) -> StepMetrics:
+        t, y, dy = _first_order(delta if moved is None else moved, 0.05)
         event = _event(delta, joint="j", kp=kp, kd=1.0)
         return analyze_step(event, t, y + error, dy)
 
-    # Friction stops +3 short by 0.6 deg and -3 short by 0.4 deg (a 0.1 deg sag):
-    # kp 80 x 0.5 deg is 0.70 N m; the second gains do not count.
-    swept = [step(80.0, 1.0, -0.3), step(80.0, 3.0, -0.6), step(80.0, -3.0, 0.4)]
+    # Friction stops +3 short by 0.5 deg and -3 short by 0.3 deg (a 0.1 deg sag):
+    # kp 80 x half the 0.8 deg band is 0.56 N m; the second gains do not count.
+    swept = [step(80.0, 1.0, -0.2), step(80.0, 3.0, -0.5), step(80.0, -3.0, 0.3)]
     swept += [step(120.0, 3.0, -2.0), step(120.0, -3.0, 2.0)]
     assert sweep_friction_nm(swept) == {"j": pytest.approx(80.0 * math.radians(0.5), abs=1e-3)}
-    pushed = [step(80.0, 3.0, 0.2), step(80.0, -3.0, -0.2)]
-    assert sweep_friction_nm(pushed) == {"j": 0.0}
-    assert sweep_friction_nm([step(80.0, 3.0, -0.6)]) == {}
+    # Sag pulls every rest the same way: the band is no wider than the noise, the
+    # largest rest error over the steps that moved, 0.6 deg, stands for it.
+    sagging = [step(80.0, 3.0, -0.6), step(80.0, -3.0, -0.5), step(80.0, 1.0, -0.9, 0.2)]
+    assert sagging[2].stuck
+    assert sweep_friction_nm(sagging) == {"j": pytest.approx(80.0 * math.radians(0.6), abs=1e-3)}
+    assert sweep_friction_nm([step(80.0, 3.0, -0.6)]) == {
+        "j": pytest.approx(80.0 * math.radians(0.6), abs=1e-3)
+    }
 
 
 def _recorded_step(commands: dict[str, CommandTrace]) -> Recording:
@@ -424,7 +429,8 @@ def test_a_gain_pair_lost_to_a_recording_gap_is_rejected_and_the_rest_compete() 
 
 def test_a_step_takes_its_joints_dither_friction_when_the_sweep_shows_less() -> None:
     [alone] = extract_steps(_recorded_step({}))
-    assert alone.metrics.friction_nm == 0.0 and alone.metrics.rest_limit_deg == SETTLE_BAND_DEG
+    assert alone.metrics.friction_nm == pytest.approx(0.0, abs=1e-9)
+    assert alone.metrics.rest_limit_deg == SETTLE_BAND_DEG
     [record] = extract_steps(_recorded_step({}), dither_friction_nm={"left_joint1": 0.4})
     assert record.metrics.friction_nm == 0.4
     assert record.metrics.rest_limit_deg == pytest.approx(math.degrees(1.5 * 0.4 / 80.0))
