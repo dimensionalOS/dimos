@@ -1,0 +1,7 @@
+{
+  "git+https://github.com/dimensionalOS/dimSLAM?branch=jeff%2Ffeat%2Flio_without_cuvslam#dim_slam@0.1.0": "sha256-pv+fgWus690TyI2aVf/2dyohMlyjKwvKVA5kUKHcmKE=",
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#dimos-lcm@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#lcm-msgs@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
+  "git+https://github.com/dimensionalOS/dimos?rev=9ac42e97ac754f026fc418b5534960dba71c2c0f#dimos-module-macros@0.1.0": "sha256-67ZAh+3TmkgsBxS3ESbfUxA8Y8vgn66j5ezINaxCKdk=",
+  "git+https://github.com/dimensionalOS/dimos?rev=9ac42e97ac754f026fc418b5534960dba71c2c0f#dimos-module@0.1.0": "sha256-67ZAh+3TmkgsBxS3ESbfUxA8Y8vgn66j5ezINaxCKdk="
+}

@@ -269,6 +269,7 @@ all_modules = {
     "detection2-d-module": "dimos.perception.detection.module2D.Detection2DModule",
     "detection3-d-module": "dimos.perception.detection.module3D.Detection3DModule",
     "dim-slam": "dimos.mapping.dim_slam.dim_slam.DimSlam",
+    "dim-slam-lio": "dimos.mapping.dim_slam_lio.dim_slam_lio.DimSlamLio",
     "drone-camera-module": "dimos.robot.drone.camera_module.DroneCameraModule",
     "drone-connection-module": "dimos.robot.drone.connection_module.DroneConnectionModule",
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
