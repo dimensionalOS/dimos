@@ -14,6 +14,8 @@
 
 """Documented and provisional geometry values for the Lynx M20."""
 
+import math
+
 # Documented body dimensions in the vendor hardware guide.
 BODY_LENGTH_M = 0.82
 BODY_WIDTH_M = 0.506
@@ -43,3 +45,9 @@ WORLD_FRAME = "world"
 # its end of the body with its spin axis level.
 FRONT_LIDAR_XYZ_M = (0.32028, 0.0, -0.013)
 REAR_LIDAR_XYZ_M = (-0.32028, 0.0, -0.013)
+
+# The body IMU (Yesense on the AOS board's UART) in base_link: position from the vendor MJCF's imu_site, and
+# its turn as Deep Robotics' yesense_node undoes it (base_link axes = sensor x, -z, y: +90 deg about x).
+IMU_FRAME = "imu_link"
+IMU_XYZ_M = (0.0632, -0.0268, -0.0435)
+IMU_MOUNT_RPY_RAD = (math.pi / 2, 0.0, 0.0)
