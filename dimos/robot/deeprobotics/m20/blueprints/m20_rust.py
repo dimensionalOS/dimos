@@ -27,7 +27,9 @@ on GOS). Each Airy is namespaced but publishes its mount onto the one global tf.
 yesense_node, which holds its serial port in vendor mode. Nothing commands the legs.
 """
 
-from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
+from typing import Any
+
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
 from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
     VOXEL_SIZE_M,
@@ -39,11 +41,26 @@ from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
 from dimos.robot.deeprobotics.m20.imu.module import M20Imu
 from dimos.robot.deeprobotics.m20.lidar import m20_lidars
-from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
+from dimos.robot.deeprobotics.m20.model import (
+    M20_MODEL,
+    M20StandingJointState,
+    M20StandingJointStateConfig,
+)
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # The `dimos host` tag of the board the lidars, IMU, cameras and motor bus are wired to.
 AOS = {"board": "aos"}
+
+
+def _body_filter(**config: Any) -> Blueprint:
+    """The robot's own body cut out of every raw scan, at the joint state nearest its stamp, onto lidar_filtered."""
+    return UrdfManagerPointClearing.blueprint(model=M20_MODEL, **config).remappings(
+        [
+            (UrdfManagerPointClearing, "pointcloud", "lidar"),
+            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar_filtered"),
+        ]
+    )
+
 
 m20_rust = autoconnect(
     # the lidars voxelize at the ray tracer's voxel, the only thinning its scans get
@@ -59,22 +76,22 @@ m20_rust = autoconnect(
         default="relay",
         choices={"relay": M20CameraRelay.blueprint().hosted(tags=AOS), "off": autoconnect()},
     ),
+    # the body filter takes the joint state nearest each scan, so a fixed pose republished every period matches within it
     ChoiceAtom(
         name="M20Joints",
         default="standing",
         choices={
-            "standing": M20StandingJointState.blueprint(),
-            "ecan": M20Ecan.blueprint()
-            .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
-            .hosted(tags=AOS),
+            "standing": autoconnect(
+                M20StandingJointState.blueprint(),
+                _body_filter(state_tolerance_s=M20StandingJointStateConfig().publish_period_s),
+            ),
+            "ecan": autoconnect(
+                M20Ecan.blueprint()
+                .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
+                .hosted(tags=AOS),
+                _body_filter(),
+            ),
         },
-    ),
-    # the robot's own body cut out of every scan, at the joint state (standing pose or ecan) at its stamp
-    UrdfManagerPointClearing.blueprint(model=M20_MODEL).remappings(
-        [
-            (UrdfManagerPointClearing, "pointcloud", "lidar"),
-            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar_filtered"),
-        ]
     ),
     m20_dim_slam().remappings(
         [(DimSlamLio, "lidar", "lidar_filtered"), (DimSlamLio, "imu", "lidar_imu")]

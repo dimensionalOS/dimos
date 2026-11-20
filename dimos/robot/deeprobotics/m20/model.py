@@ -19,10 +19,11 @@ import time
 from typing import Any
 
 import mujoco
+from pydantic import Field
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.mjcf import mjcf_to_urdf
@@ -61,8 +62,15 @@ M20_MODEL = mjcf_to_urdf(mujoco.MjSpec.from_file(str(M20_MJCF))).with_joint_velo
 )
 
 
+class M20StandingJointStateConfig(ModuleConfig):
+    # Seconds between republishes of the fixed pose.
+    publish_period_s: float = Field(default=1.0, gt=0.0)
+
+
 class M20StandingJointState(Module):
     """Publishes the standing pose as the joint state; the M20 bridge does not expose measured joint angles yet."""
+
+    config: M20StandingJointStateConfig
 
     coordinator_joint_state: Out[JointState]
 
@@ -89,7 +97,7 @@ class M20StandingJointState(Module):
                     position=list(STAND_JOINT_POSITIONS.values()),
                 )
             )
-            self._stop_event.wait(1.0)
+            self._stop_event.wait(self.config.publish_period_s)
 
     @rpc
     def stop(self) -> None:

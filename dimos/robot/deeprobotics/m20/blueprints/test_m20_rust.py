@@ -28,6 +28,7 @@ from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 from dimos.robot.deeprobotics.m20.blueprints.m20_rust import m20_rust
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.connection import M20Connection
+from dimos.robot.deeprobotics.m20.model import M20StandingJointStateConfig
 
 _REVISION = "revision-1"
 _HOSTS = (
@@ -154,3 +155,13 @@ def test_navigation_and_relocalization_match_m20() -> None:
         rust_kwargs = {k: v for k, v in rust[name].kwargs.items() if k not in thinning}
         vendor_kwargs = {k: v for k, v in vendor[name].kwargs.items() if k not in thinning}
         assert (rust[name].module, rust_kwargs) == (vendor[name].module, vendor_kwargs)
+
+
+def test_the_body_filter_matches_the_joint_source_it_is_given() -> None:
+    """A fixed pose republished every period is matched within that period; ecan's 1 kHz state keeps the default."""
+    standing = {a.name: a for a in _solid().active_blueprints}["urdfmanagerpointclearing"].kwargs
+    ecan = {a.name: a for a in _solid(M20Joints="ecan").active_blueprints}[
+        "urdfmanagerpointclearing"
+    ].kwargs
+    assert standing["state_tolerance_s"] == M20StandingJointStateConfig().publish_period_s
+    assert "state_tolerance_s" not in ecan
