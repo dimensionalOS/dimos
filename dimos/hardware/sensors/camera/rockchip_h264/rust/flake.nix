@@ -1,5 +1,5 @@
 {
-  description = "Deep Robotics M20 camera relay native module for dimos";
+  description = "Rockchip RK3588 V4L2 camera pair, hardware-encoded to H.264, native module for dimos";
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
@@ -13,7 +13,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        name = "dimos-m20-camera";
+        name = "dimos-rockchip-h264-cameras";
 
         src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };

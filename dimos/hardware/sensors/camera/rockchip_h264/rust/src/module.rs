@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! The M20's front and rear cameras relayed as H.264 `CompressedVideo`, every frame (optionally deskewed), with
+//! A front and a rear V4L2 camera on a Rockchip RK3588 relayed as H.264 `CompressedVideo`, every frame (optionally deskewed), with
 //! their static transforms and a CameraInfo describing what each stream actually sends.
 
 use std::sync::{Arc, Mutex};
@@ -107,8 +107,8 @@ pub struct Config {
 }
 
 #[derive(Module)]
-#[module(name = "m20_camera", setup = start)]
-pub struct M20Camera {
+#[module(name = "rockchip_h264_cameras", setup = start)]
+pub struct RockchipH264Cameras {
     #[output(encode = CompressedVideo::encode)]
     front_camera: Output<CompressedVideo>,
     #[output(encode = CompressedVideo::encode)]
@@ -151,7 +151,7 @@ impl Config {
     }
 }
 
-impl M20Camera {
+impl RockchipH264Cameras {
     async fn start(&mut self) {
         let config = self.config.clone();
         let encoder = config.encoder.parse().unwrap_or(Encoder::Rust);

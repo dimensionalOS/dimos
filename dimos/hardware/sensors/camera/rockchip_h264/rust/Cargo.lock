@@ -577,7 +577,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-m20-camera"
+name = "dimos-rockchip-h264-cameras"
 version = "0.1.0"
 dependencies = [
  "anyhow",

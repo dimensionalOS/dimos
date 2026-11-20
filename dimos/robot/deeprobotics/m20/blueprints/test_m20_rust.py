@@ -15,12 +15,15 @@
 """``m20`` (real mode) builds without hardware: no vendor bridge, the drivers placed on AOS and NOS, and the navigation and
 relocalization m20 ran on the vendor's sensors."""
 
+import math
 import typing
 
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import stream_name_types, verify_no_name_conflicts
+from dimos.hardware.sensors.camera.rockchip_h264.module import RockchipH264CamerasConfig
+from dimos.hardware.sensors.imu.yesense.module import YesenseImuConfig
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
 from dimos.hosted.protocol import HostDescriptor
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -43,7 +46,7 @@ _HOSTS = (
         host_id="nos", name="nos", tags={"board": "nos"}, revision=_REVISION, active_run_ids=()
     ),
 )
-_AOS_DRIVERS = {"m20bodyimusniff", "m20camerarelay"}
+_AOS_DRIVERS = {"m20bodyimusniff", "rockchiph264cameras"}
 # both lidar pairs read the multicast on NOS: the full scans (body cut) for the map, the slices for dimSLAM
 _NOS_LIDARS = {"front_lidar/airy", "rear_lidar/airy"}
 _NOS_SLAM = {"front_lidar_slices/airy", "rear_lidar_slices/airy", "dimslamlio"}
@@ -77,10 +80,10 @@ def test_no_vendor_bridge() -> None:
     [
         ({}, _AOS_DRIVERS),
         ({"M20Joints": "ecan"}, _AOS_DRIVERS | {"m20ecan"}),
-        ({"M20Cameras": "off"}, _AOS_DRIVERS - {"m20camerarelay"}),
+        ({"M20Cameras": "off"}, _AOS_DRIVERS - {"rockchiph264cameras"}),
         (
             {"M20Cameras": "off", "M20BodyImu": "serial"},
-            _AOS_DRIVERS - {"m20camerarelay", "m20bodyimusniff"} | {"yesenseimu"},
+            _AOS_DRIVERS - {"rockchiph264cameras", "m20bodyimusniff"} | {"yesenseimu"},
         ),
         ({"M20BodyImu": "off"}, _AOS_DRIVERS - {"m20bodyimusniff"}),
         ({"M20BodyFilter": "python"}, _AOS_DRIVERS),
@@ -304,3 +307,31 @@ def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None
     assert set(atoms["premapmodule"].kwargs["attempt_after_frames"]) == lidar_frames
     assert atoms["premapmodule"].kwargs["attempt_every_sweeps"] == 10
     assert m20_atoms["premapmodule"].kwargs["attempt_after_frames"] == []
+
+
+def test_the_cameras_get_the_m20s_devices_mounts_and_focal_length() -> None:
+    (atom,) = (a for a in _solid().active_blueprints if a.name == "rockchiph264cameras")
+    config = RockchipH264CamerasConfig(
+        **{k: v for k, v in atom.kwargs.items() if k != "instance_name"}
+    )
+    assert (config.front_device, config.rear_device) == ("/dev/video0", "/dev/video2")
+    assert (config.front_camera_xyz, config.rear_camera_xyz) == (
+        (0.37646, 0.0, 0.03738),
+        (-0.37646, 0.0, 0.03738),
+    )
+    assert (config.front_camera_yaw_rad, config.rear_camera_yaw_rad, config.focal_length_px) == (
+        0.0,
+        math.pi,
+        607.0,
+    )
+
+
+def test_the_serial_body_imu_gets_the_m20s_uart_and_mount() -> None:
+    (atom,) = (a for a in _solid(M20BodyImu="serial").active_blueprints if a.name == "yesenseimu")
+    config = YesenseImuConfig(**{k: v for k, v in atom.kwargs.items() if k != "instance_name"})
+    assert (config.device, config.frame_id, config.imu_xyz) == (
+        "/dev/ttyS9",
+        "imu_link",
+        (0.0632, -0.0268, -0.0435),
+    )
+    assert config.mount_rpy_rad == (math.pi / 2, 0.0, 0.0)

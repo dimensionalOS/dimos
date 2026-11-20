@@ -34,6 +34,7 @@ yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, 
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint, autoconnect
+from dimos.hardware.sensors.camera.rockchip_h264.module import RockchipH264Cameras
 from dimos.hardware.sensors.imu.yesense.module import YesenseImu
 from dimos.hardware.sensors.lidar.robosense.module import Airy
 from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio
@@ -45,7 +46,6 @@ from dimos.robot.deeprobotics.m20.blueprints._nav import (
 )
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.body_imu_sniff.module import M20BodyImuSniff
-from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS, NOS_SLAM_CPUS
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
 from dimos.robot.deeprobotics.m20.model import (
@@ -252,7 +252,16 @@ _m20_real = autoconnect(
     ChoiceAtom(
         name="M20Cameras",
         default="relay",
-        choices={"relay": M20CameraRelay.blueprint().hosted(tags=AOS), "off": autoconnect()},
+        choices={
+            # the AOS board's two cameras, at their centers in base_link from the Deep Robotics docs, with the
+            # provisional M20/Whale focal length at 1280 px wide (the vendor publishes no factory calibration)
+            "relay": RockchipH264Cameras.blueprint(
+                front_camera_xyz=(0.37646, 0.0, 0.03738),
+                rear_camera_xyz=(-0.37646, 0.0, 0.03738),
+                focal_length_px=607.0,
+            ).hosted(tags=AOS),
+            "off": autoconnect(),
+        },
     ),
     # nos: dimSLAM beside its own lidar drivers on NOS, fed 10 ms slices; gos: on GOS, fed AOS's full sweeps
     ChoiceAtom(

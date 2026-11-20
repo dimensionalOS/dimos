@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! Each M20 camera captured straight off its V4L2 device as MJPEG and hardware-encoded to H.264, published as
+//! Each camera captured straight off its V4L2 device as MJPEG and hardware-encoded to H.264, published as
 //! `CompressedVideo` (`h264`) — the direct path that replaces the vendor's RTSP server (a `gst-launch` pipeline into
 //! `mediamtx`). Encoding H.264 at the source means the Desktop gateway passes it through to every browser instead of
 //! decoding the vendor's H.265 and re-encoding H.264, which freed the robot's big cores for navigation.
@@ -106,9 +106,9 @@ pub async fn relay(
     *camera.size.lock().unwrap() = Some((encode.width, encode.height));
     loop {
         match stream(&camera, &encode, stall, stats).await {
-            Ok(()) => warn!(camera = %camera.name, "M20 camera pipeline ended"),
+            Ok(()) => warn!(camera = %camera.name, "camera pipeline ended"),
             Err(error) => {
-                warn!(camera = %camera.name, error = format!("{error:#}"), "M20 camera pipeline failed")
+                warn!(camera = %camera.name, error = format!("{error:#}"), "camera pipeline failed")
             }
         }
         tokio::time::sleep(retry).await;
@@ -231,7 +231,7 @@ async fn stream_rust(
                     }
                     Err(error) => {
                         failed += 1;
-                        warn!(camera = %name, error = format!("{error:#}"), "M20 camera frame dropped");
+                        warn!(camera = %name, error = format!("{error:#}"), "camera frame dropped");
                         if failed >= failed_frames_limit(&encode) {
                             bail!("{failed} frames in a row failed to transcode: {error:#}");
                         }
@@ -241,7 +241,7 @@ async fn stream_rust(
             Ok(())
         }
     });
-    info!(camera = %camera.name, device = %camera.device, "M20 camera encoder started (in-process)");
+    info!(camera = %camera.name, device = %camera.device, "camera encoder started (in-process)");
     let published = publish(camera, encode, stats, queued, &dropped).await;
     // publishing ended (failed, or the worker closed the channel): stop the worker and wait, so the camera and the
     // hardware sessions are closed before a retry opens them again
@@ -267,7 +267,7 @@ async fn stream_gstreamer(
         .spawn()
         .with_context(|| format!("spawning gst-launch-1.0 for {}", camera.name))?;
     let mut stdout = child.stdout.take().context("the pipeline has no stdout")?;
-    info!(camera = %camera.name, device = %camera.device, "M20 camera pipeline started");
+    info!(camera = %camera.name, device = %camera.device, "camera pipeline started");
 
     // Reading the pipeline and publishing are separate tasks on purpose: a publish that waits must never stop the
     // pipe being drained. fdsink blocks on a full pipe, and the Rockchip encoder answers that back pressure by
@@ -339,7 +339,7 @@ async fn publish(
                 keyframes_per_s = f64::from(keyframes) / seconds,
                 mbit_per_s = bytes as f64 * 8e-6 / seconds,
                 dropped = dropped.swap(0, Ordering::Relaxed),
-                "M20 camera stats",
+                "camera stats",
             );
             // The stall timeout only catches a pipeline that stops entirely; a stuck encoder keeps dribbling frames,
             // so watch the rate too and restart on a stream that is up but not delivering.

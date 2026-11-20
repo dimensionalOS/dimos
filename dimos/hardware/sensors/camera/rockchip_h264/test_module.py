@@ -25,21 +25,24 @@ else:
     import tomli as tomllib
 
 from dimos.core.native_module import NativeModuleConfig
-from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay, M20CameraRelayConfig
+from dimos.hardware.sensors.camera.rockchip_h264.module import (
+    RockchipH264Cameras,
+    RockchipH264CamerasConfig,
+)
 
 _RUST = Path(__file__).parent / "rust"
 
 
 def _config_fields() -> set[str]:
-    return set(M20CameraRelayConfig.model_fields) - set(NativeModuleConfig.model_fields)
+    return set(RockchipH264CamerasConfig.model_fields) - set(NativeModuleConfig.model_fields)
 
 
 def test_config_dict_is_the_camera_config() -> None:
-    wire = json.loads(json.dumps(M20CameraRelayConfig().to_config_dict()))
+    wire = json.loads(json.dumps(RockchipH264CamerasConfig().to_config_dict()))
     assert set(wire) == _config_fields()
     assert wire["front_device"] == "/dev/video0"
     assert wire["rear_device"] == "/dev/video2"
-    assert wire["rear_camera_xyz"] == [-0.37646, 0.0, 0.03738]
+    assert wire["rear_camera_xyz"] == [0.0, 0.0, 0.0]
     assert wire["rear_camera_yaw_rad"] == math.pi
     assert wire["encoder"] == "rust"
     assert wire["deskew"] is False
@@ -60,10 +63,10 @@ def test_rust_struct_has_every_config_key() -> None:
 def test_ports_match_registry() -> None:
     ports = {
         name
-        for name, hint in M20CameraRelay.__annotations__.items()
+        for name, hint in RockchipH264Cameras.__annotations__.items()
         if "Out[" in str(hint) or "In[" in str(hint)
     }
     manifest = tomllib.loads((_RUST / "Cargo.toml").read_text())
-    registry = manifest["package"]["metadata"]["dimos"]["module"]["m20_camera"]
+    registry = manifest["package"]["metadata"]["dimos"]["module"]["rockchip_h264_cameras"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
     assert set(registry["outputs"]) | set(registry["inputs"]) == ports

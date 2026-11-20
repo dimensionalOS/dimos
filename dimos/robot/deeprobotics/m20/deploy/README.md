@@ -63,7 +63,7 @@ dimos-viewer \
 The Rerun bridge, mapping, planning, and control modules all run inside the GOS
 control blueprint. The desktop viewer is only a client.
 
-The cameras are not in that blueprint: `m20-camera.service` runs the native
+The cameras are not in that blueprint: `m20-camera.service` runs the native rockchip_h264_cameras
 relay on AOS, where the V4L2 devices are, and publishes `CompressedVideo` on
 zenoh. The Rerun bridge subscribes to every zenoh topic, so it renders those
 streams without owning them, and the Desktop gateway passes the H.264 through
