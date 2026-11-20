@@ -225,8 +225,10 @@ class MemoryReplayAdapter(Generic[T]):
             data = self._autocast(data)
         return cast("T", data)
 
-    def iterate_ts(
+    def _iterate_ts(
         self,
+        *,
+        order_by_ts: bool,
         seek: float | None = None,
         duration: float | None = None,
         from_timestamp: float | None = None,
@@ -263,7 +265,8 @@ class MemoryReplayAdapter(Generic[T]):
 
         while True:
             emitted = False
-            for obs in bound:
+            rows = bound.order_by("ts") if order_by_ts else bound
+            for obs in rows:
                 emitted = True
                 yield (obs.ts, self._decode(obs))
             if not loop or not emitted:
@@ -272,6 +275,21 @@ class MemoryReplayAdapter(Generic[T]):
     def iterate(self) -> Iterator[T]:
         for _, data in self.iterate_ts():
             yield data
+
+    def iterate_ts(
+        self,
+        seek: float | None = None,
+        duration: float | None = None,
+        from_timestamp: float | None = None,
+        loop: bool = False,
+    ) -> Iterator[tuple[float, T]]:
+        return self._iterate_ts(
+            order_by_ts=False,
+            seek=seek,
+            duration=duration,
+            from_timestamp=from_timestamp,
+            loop=loop,
+        )
 
     def first_timestamp(self) -> float | None:
         try:
@@ -329,10 +347,15 @@ class MemoryReplayAdapter(Generic[T]):
     ) -> Observable[T]:
         """Real-time scheduled playback as an RxPY Observable."""
         return timed_playback(
-            lambda: self.iterate_ts(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+            lambda: self._iterate_ts(
+                order_by_ts=True,
+                seek=seek,
+                duration=duration,
+                from_timestamp=from_timestamp,
+                loop=loop,
             ),
             speed=speed,
+            detect_loop=loop,
         )
 
 

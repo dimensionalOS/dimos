@@ -226,7 +226,7 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 |-------------------------------------------------------|-----------------------------------|
 | `iterate()`                                           | Iterate frames (no timing)        |
 | `iterate_ts(seek, duration, from_timestamp, loop)`    | Iterate with absolute timestamps  |
-| `stream(speed, seek, duration, from_timestamp, loop)` | Observable with original timing   |
+| `stream(speed, seek, duration, from_timestamp, loop)` | Observable in source-timestamp order, with original spacing |
 | `find_closest(timestamp, tolerance=1.0)`              | First frame within tolerance of an absolute timestamp |
 | `find_closest_seek(seconds)`                          | Find frame by relative time       |
 | `first()`                                             | Get first frame                   |

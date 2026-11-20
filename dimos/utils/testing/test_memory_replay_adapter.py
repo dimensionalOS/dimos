@@ -14,8 +14,10 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from reactivex.testing import TestScheduler
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.testing.replay import MemoryReplayAdapter
@@ -29,6 +31,22 @@ def replay(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[MemoryRe
             stream.append(i, ts=ts)
         monkeypatch.setattr("dimos.utils.testing.replay._get_store", lambda _: store)
         yield MemoryReplayAdapter("recording/odom")
+
+
+def test_timed_stream_preserves_source_order_and_spacing(
+    replay: MemoryReplayAdapter[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = TestScheduler()
+    monkeypatch.setattr(
+        "dimos.utils.testing.replay.time", SimpleNamespace(time=lambda: clock.clock)
+    )
+    seen: list[tuple[float, int]] = []
+    with replay.stream(speed=2).subscribe(
+        lambda value: seen.append((clock.clock, value)), scheduler=clock
+    ):
+        clock.advance_by(1)
+
+    assert seen == [(0, 1), (0.005, 2), (0.01, 0)]
 
 
 def test_first_timestamp_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int]) -> None:
