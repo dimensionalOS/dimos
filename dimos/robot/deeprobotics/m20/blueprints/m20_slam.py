@@ -18,12 +18,14 @@ base_link -> lidar mount tf), out as ``slam_odom`` and map -> base_link on tf.""
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.mapping.dim_slam_lio.dim_slam_lio import (
-    DimSlamLio,
+from dimos.mapping.dim_slam.dim_slam import (
+    DimSlam,
     ImuConfig,
+    InitialStds,
     LidarConfig,
     ProcessNoise,
 )
@@ -39,18 +41,38 @@ def m20_dim_slam(
 ) -> Blueprint:
     """``imu_frames``: the first drives and levels the filter. The rear Airy's IMU, its gyro bias
     ~0.006 rad/s against the front's ~0.043; both together ran under real time on the GOS RK3588."""
-    return DimSlamLio.blueprint(
+    return DimSlam.blueprint(
+        # no cameras: lidar-inertial only
+        camera_mode=None,
         odom_frame_id=MAP_FRAME,
         output_frame_id="base_link",
         # m^2: Point-LIO's 0.01 jittered 4 mm per scan at rest on the Airys; 0.05 steadied it to 1.1 mm
         lidars=[LidarConfig(frame_id=frame, point_variance=0.05) for frame in lidar_frames],
         # an Airy IMU at rest (90 s, 200 Hz): gyro variance ~5e-7 rad^2/s^2, accel ~1e-4 m^2/s^4 per axis
         imus=[
-            ImuConfig(frame_id=frame, gyro_variance=1e-6, accel_variance=1e-4)
+            # Point-LIO's leveling: 100 samples, no gyro gate
+            ImuConfig(
+                frame_id=frame,
+                gyro_variance=1e-6,
+                accel_variance=1e-4,
+                init_samples=100,
+                init_gyro_limit=0.0,
+            )
             for frame in imu_frames
         ],
         # a walking dog's body changes motion far slower than Point-LIO's handheld defaults allow
         process_noise=ProcessNoise(velocity=2.0, angular_velocity=100.0, specific_force=50.0),
+        # Point-LIO's starting covariance (variance 0.01 per block, biases 1e-3) and gravity, its 99% chi-squared gate
+        # on sources, and no runaway gate: what this filter was tuned with
+        initial_stds=InitialStds(
+            position=math.sqrt(0.01),
+            velocity=math.sqrt(0.01),
+            rotation=math.sqrt(0.01),
+            bias=math.sqrt(0.001),
+        ),
+        initial_gravity_estimate=9.81,
+        outlier_rejection_allowed_variance=-1.0,
+        max_position_m=0.0,
         cpus=list(cpus),
         **overrides,
-    ).remappings([(DimSlamLio, "odometry", "slam_odom")])
+    ).remappings([(DimSlam, "odometry", "slam_odom")])

@@ -14,7 +14,7 @@ BRANCH=m20_rust_rustmode     # jeff/feat/m20_rust pushed here before the run
 LAUNCH=/tmp/launch_m20_rust_rustmode.json
 VENDOR_LAUNCH=/tmp/launch3.json
 SAVED_PATCH=~/gos_revert_20261120/uncommitted.patch
-SLAM_BIN=/var/opt/robot/data/user_home/e1_slam/target_mod/release/dim_slam_lio
+SLAM_BIN=/tmp/dim_slam_nos   # dimos/mapping/dim_slam cross-built for the RK3588 (zigbuild aarch64-unknown-linux-gnu.2.31), copied here
 AIRY_BIN=/tmp/airy_native_body_filter
 SNIFF_BIN=/tmp/m20_body_imu_sniff
 IMU_BIN=/tmp/m20_imu
@@ -174,7 +174,7 @@ git stash push -u -q -m "gos-revert-20261120 rustmode" && STASHED=1
 GIT_LFS_SKIP_SMUDGE=1 git -c advice.detachedHead=false checkout -q $BRANCH
 place() { mkdir -p "$1/$2" && install -m 755 "$3" "$1/$2/$4"; }
 for root in "$HOME/dimos" $STAGE; do
-    place $root dimos/mapping/dim_slam_lio/rust/result/bin $SLAM_BIN dim_slam_lio
+    place $root dimos/mapping/dim_slam/rust/result/bin $SLAM_BIN dim_slam
     place $root dimos/hardware/sensors/lidar/robosense/rust/result/bin $AIRY_BIN airy_native
     place $root dimos/robot/deeprobotics/m20/body_imu_sniff/rust/result/bin $SNIFF_BIN m20_body_imu_sniff
     place $root dimos/robot/deeprobotics/m20/imu/rust/result/bin $IMU_BIN m20_imu

@@ -151,8 +151,8 @@ def sdk_variant() -> str:
     if hardware == "darwin-intel":
         raise RuntimeError("cuVSLAM has no Intel-mac build; it needs Apple silicon.")
     if hardware == "linux-arm-no-nvidia":
-        # non-Jetson ARM: the CPU-fallback build
-        return "aarch64"
+        # non-Jetson ARM (an RK3588, a Pi): the build with no CUDA at all
+        return "cpu"
     if hardware == "linux-x86-no-nvidia":
         # same derivation as x86_64-cuda12 (ENFORCE_GPU=OFF, so it runs without a
         # driver); the alias exists so the choice reads as deliberate

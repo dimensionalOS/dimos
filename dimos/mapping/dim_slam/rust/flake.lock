@@ -62,15 +62,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1788061359,
-        "narHash": "sha256-nO9tQNKxCvvoeRhy5/BwB6sl9E4dUK+tXCif5uofTxQ=",
+        "lastModified": 1795196085,
+        "narHash": "sha256-Viw90KyxryjmcLiq0hoJcMLaW6WghR0cCA88XC97y3M=",
         "owner": "jeff-hykin",
         "repo": "cu_vslam_rs",
-        "rev": "6b0a6bd05be61eed33e3d2ee351398a7dcd3b654",
+        "rev": "d9ba9642a7b0e7968f71ca27dc183e5bd8beba9f",
         "type": "github"
       },
       "original": {
         "owner": "jeff-hykin",
+        "ref": "alt_support",
         "repo": "cu_vslam_rs",
         "type": "github"
       }

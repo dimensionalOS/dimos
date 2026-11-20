@@ -46,7 +46,7 @@ _HOSTS = (
 _AOS_DRIVERS = {"m20bodyimusniff", "m20camerarelay"}
 # both lidar pairs read the multicast on NOS: the full scans (body cut) for the map, the slices for dimSLAM
 _NOS_LIDARS = {"front_lidar/m20lidar", "rear_lidar/m20lidar"}
-_NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslamlio"}
+_NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslam"}
 
 
 def _solid(**choices: str) -> Blueprint:
@@ -98,12 +98,12 @@ def test_drivers_on_aos_lidars_and_dimslam_on_nos_and_the_rest_where_the_run_sta
 def test_dimslam_on_gos_stays_selectable() -> None:
     blueprint = _solid(M20Slam="gos")
     placement = _placement(blueprint)
-    assert placement["dimslamlio"] == "gos"
+    assert placement["dimslam"] == "gos"
     assert {name for name, host in placement.items() if host == "nos"} == _NOS_LIDARS
-    assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
-    assert _topic(blueprint, "dimslamlio", "imu") == "lidar_imu"
+    assert _readers(blueprint, "lidar") == {"dimslam", "raytracingvoxelmap", "premapmodule"}
+    assert _topic(blueprint, "dimslam", "imu") == "lidar_imu"
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    assert atoms["dimslamlio"].kwargs["cpus"] == list(GOS_SLAM_CPUS)
+    assert atoms["dimslam"].kwargs["cpus"] == list(GOS_SLAM_CPUS)
 
 
 def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
@@ -122,11 +122,11 @@ def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
         assert kwargs["voxel"] == atoms["front_lidar/m20lidar"].kwargs["voxel"]
     # each lidar is the same frame in both pairs: dimSLAM's lidar and IMU frames are the slices'
     assert {atoms[n].kwargs["frame_id"] for n in slices} == {"front_lidar", "rear_lidar"}
-    assert _readers(blueprint, "lidar_slices") == {"dimslamlio"}
-    assert _readers(blueprint, "lidar_slices_imu") == {"dimslamlio"}
+    assert _readers(blueprint, "lidar_slices") == {"dimslam"}
+    assert _readers(blueprint, "lidar_slices_imu") == {"dimslam"}
     assert _readers(blueprint, "lidar") == {"raytracingvoxelmap", "premapmodule"}
-    assert _topic(blueprint, "dimslamlio", "odometry") == "slam_odom"
-    slam = atoms["dimslamlio"].kwargs
+    assert _topic(blueprint, "dimslam", "odometry") == "slam_odom"
+    slam = atoms["dimslam"].kwargs
     assert slam["cpus"] == list(NOS_SLAM_CPUS)
     assert slam["publish_every"] >= 1
 
@@ -225,7 +225,7 @@ def test_dimslams_slices_keep_every_field_at_the_ray_tracers_voxel() -> None:
 def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
     """The shared streams carry every frame; dimSLAM keeps the ones m20_dim_slam lists, which the lidars publish."""
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    slam = atoms["dimslamlio"].kwargs
+    slam = atoms["dimslam"].kwargs
     expected = m20_dim_slam().blueprints[0].kwargs
     assert (slam["lidars"], slam["imus"]) == (expected["lidars"], expected["imus"])
     lidar_frames = {
@@ -264,7 +264,7 @@ def test_the_python_filter_matches_the_joint_source_it_is_given() -> None:
 
 def test_dimslam_runs_on_nos_a76_cores() -> None:
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    assert atoms["dimslamlio"].kwargs["cpus"] == list(NOS_SLAM_CPUS)
+    assert atoms["dimslam"].kwargs["cpus"] == list(NOS_SLAM_CPUS)
     assert all(4 <= cpu <= 7 for cpu in NOS_SLAM_CPUS)
 
 

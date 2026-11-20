@@ -34,7 +34,7 @@ yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, 
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
-from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio
+from dimos.mapping.dim_slam.dim_slam import DimSlam
 from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
     VOXEL_SIZE_M,
@@ -84,9 +84,7 @@ def _dim_slam_on_nos() -> Blueprint:
             # a pose per slice is ~200/s: every 4th keeps the newest pose at most 40 ms stale for its readers
             publish_every=4,
         )
-        .remappings(
-            [(DimSlamLio, "lidar", "lidar_slices"), (DimSlamLio, "imu", "lidar_slices_imu")]
-        )
+        .remappings([(DimSlam, "lidar", "lidar_slices"), (DimSlam, "imu", "lidar_slices_imu")])
         .hosted(tags=NOS),
     )
 
@@ -174,7 +172,7 @@ m20_rust = autoconnect(
         default="nos",
         choices={
             "nos": _dim_slam_on_nos(),
-            "gos": m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings([(DimSlamLio, "imu", "lidar_imu")]),
+            "gos": m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings([(DimSlam, "imu", "lidar_imu")]),
         },
     ),
     # the robot's links on tf and its model for viewers, from whichever joint state the run has, as m20
