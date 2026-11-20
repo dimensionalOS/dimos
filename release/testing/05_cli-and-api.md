@@ -154,7 +154,7 @@ uv run dimos host describe lab
 uv run dimos host ls
 ```
 
-Expected result: `doctor` passes every check but two. Reachability warns because the Host listens only on loopback, and the systemd unit check fails because only `dimos host install` sets it up. `ls` shows `lab` with the `release-test` tag next to the detected ones such as `arch` and `ram_gb`. `describe lab` prints its Host ID, name, tags, revision and runs. After Ctrl+C on `start`, `ls` prints "No dimos Hosts answered".
+Expected result: `doctor` prints `OK` for every check but four. Reachability warns because the Host listens only on loopback, the systemd unit check fails because only `dimos host install` sets it up, and the two checks that depend on that unit are skipped. `ls` shows `lab` with the `release-test` tag next to the detected ones such as `arch` and `ram_gb`. `describe lab` prints its Host ID, name, tags, revision and runs. After Ctrl+C on `start`, `ls` prints "No dimos Hosts answered".
 
 ## 5.11 Native module examples
 
