@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_m20_camera::module::M20Camera;
+use dimos_rockchip_h264_cameras::module::RockchipH264Cameras;
 
 #[tokio::main]
 async fn main() {
-    dimos_module::run_with_transport::<M20Camera>().await;
+    dimos_module::run_with_transport::<RockchipH264Cameras>().await;
 }

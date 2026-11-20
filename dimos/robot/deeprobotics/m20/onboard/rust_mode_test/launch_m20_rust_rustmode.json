@@ -1,6 +1,6 @@
 {
   "args": [
-    "m20-rust",
+    "m20",
     "--choice",
     "M20Cameras=off",
     "--choice",

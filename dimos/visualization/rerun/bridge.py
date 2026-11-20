@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable
+from collections.abc import Callable
 from dataclasses import field
 import functools
-import itertools
 from operator import attrgetter
 import os
 import signal
@@ -160,25 +159,6 @@ def is_keyed_by_seq(renderer: object) -> bool:
     while isinstance(renderer, functools.partial):
         renderer = renderer.func
     return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_seq
-
-
-def every_message(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic must arrive whole and in order, like inter-frame video."""
-    renderer.every_message = True  # type: ignore[attr-defined]
-    return renderer
-
-
-def is_every_message(renderer: object) -> bool:
-    """Whether a renderer, or the function under a partial, is marked every_message."""
-    while isinstance(renderer, functools.partial):
-        renderer = renderer.func
-    return getattr(renderer, "every_message", False) is True
-
-
-def _arrival_order() -> Callable[[Any], int]:
-    """A key that differs for every message, so a keyed subscription drops none."""
-    counter = itertools.count()
-    return lambda _msg: next(counter)
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
@@ -438,13 +418,13 @@ class RerunBridgeModule(Module):
         self._override_cache[entity_path] = composed
         return composed
 
-    def _keyed_topics(self, marked: Callable[[object], bool] = is_keyed_by_seq) -> list[str]:
-        """Channels whose renderer is `marked`: by default those keying entities by seq, so every seq must arrive."""
+    def _keyed_topics(self) -> list[str]:
+        """Channels whose renderer keys entities by seq, so every seq must arrive."""
         prefix = f"{self.config.entity_prefix}/"
         return [
             str(path).removeprefix(prefix)
             for path, renderer in self.config.visual_override.items()
-            if marked(renderer)
+            if is_keyed_by_seq(renderer)
         ]
 
     def _get_entity_path(self, topic: Any) -> str:
@@ -626,10 +606,7 @@ class RerunBridgeModule(Module):
         """
         if not self.config.topics:
             if isinstance(pubsub, Zenoh):
-                keyed: dict[str, Callable[[Any], Hashable]] = {
-                    name: attrgetter("seq") for name in self._keyed_topics()
-                }
-                keyed |= {name: _arrival_order() for name in self._keyed_topics(is_every_message)}
+                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
                 return pubsub.subscribe_all(self._on_message, keyed=keyed)
             return pubsub.subscribe_all(self._on_message)
 

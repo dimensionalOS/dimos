@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20 on its own Rust drivers, with no vendor DrDDS stack: ``m20`` with dimSLAM in place of the vendor LIO.
+"""The real M20 (``m20``'s default mode) on its own Rust drivers, with no vendor DrDDS stack: dimSLAM in place of the vendor LIO.
 
 AOS (a ``dimos host`` tagged ``board=aos``) runs the hardware: both Airys, the Yesense body IMU, the cameras and,
 with ``--choice M20Joints=ecan``, the motor-bus joint state and batteries (needs rl_deploy with the ecan shim).
@@ -33,7 +33,10 @@ yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, 
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint, autoconnect
+from dimos.hardware.sensors.camera.rockchip_h264.module import RockchipH264Cameras
+from dimos.hardware.sensors.imu.yesense.module import YesenseImu
+from dimos.hardware.sensors.lidar.robosense.module import Airy
 from dimos.mapping.dim_slam.dim_slam import DimSlam
 from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
@@ -43,13 +46,11 @@ from dimos.robot.deeprobotics.m20.blueprints._nav import (
 )
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.body_imu_sniff.module import M20BodyImuSniff
-from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS, NOS_SLAM_CPUS
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
-from dimos.robot.deeprobotics.m20.imu.module import M20Imu
-from dimos.robot.deeprobotics.m20.lidar import m20_lidars
 from dimos.robot.deeprobotics.m20.model import (
     M20_MODEL,
+    STAND_JOINT_POSITIONS,
     M20StandingJointState,
     M20StandingJointStateConfig,
 )
@@ -61,6 +62,79 @@ AOS = {"board": "aos"}
 NOS = {"board": "nos"}
 
 
+def _airy(
+    frame: str,
+    group: str,
+    lidar_ip: str,
+    ports: tuple[int, int, int],
+    mount_xyz: tuple[float, float, float],
+    mount_rpy: tuple[float, float, float],
+    lidar: str = "lidar",
+    imu: str = "lidar_imu",
+    suffix: str = "",
+    publish_mount: bool = True,
+    **settings: Any,
+) -> MetaBlueprint:
+    """One of the M20's Airys onto `lidar` and `imu`, namespaced by its frame + `suffix` (tf and the joint state global)."""
+    msop_port, difop_port, imu_port = ports
+    return (
+        Airy.blueprint(
+            frame_id=frame,
+            # the IMU samples are rotated into the lidar's axes, so they share its frame
+            imu_frame_id=frame,
+            group=group,
+            lidar_ip=lidar_ip,
+            msop_port=msop_port,
+            difop_port=difop_port,
+            imu_port=imu_port,
+            # a second pair on the same lidars leaves the mount to the first, so each mount has one publisher
+            mount_parent_frame_id="base_link" if publish_mount else None,
+            mount_xyz=mount_xyz,
+            mount_rpy=mount_rpy,
+            # the vendor driver's config.yaml: 0.1 to 60 m, PTP-synced lidar clock
+            min_distance=0.1,
+            max_distance=60.0,
+            use_lidar_clock=True,
+            **settings,
+        )
+        .remappings(
+            [
+                (Airy, "lidar", lidar),
+                (Airy, "imu", imu),
+                (Airy, "joint_state", "coordinator_joint_state"),
+            ]
+        )
+        .namespace(frame + suffix, expose={lidar, imu, "coordinator_joint_state", "tf"})
+    )
+
+
+def _airys(front: dict[str, Any], rear: dict[str, Any], **both: Any) -> MetaBlueprint:
+    """Both Airys at their mounts, `both` settings to each and `front` / `rear` to one."""
+    c = constants
+    return autoconnect(
+        _airy(
+            c.FRONT_LIDAR_FRAME,
+            c.FRONT_LIDAR_GROUP,
+            c.FRONT_LIDAR_IP,
+            c.FRONT_LIDAR_PORTS,
+            c.FRONT_LIDAR_XYZ_M,
+            c.FRONT_LIDAR_RPY,
+            **both,
+            **front,
+        ),
+        _airy(
+            c.REAR_LIDAR_FRAME,
+            c.REAR_LIDAR_GROUP,
+            c.REAR_LIDAR_IP,
+            c.REAR_LIDAR_PORTS,
+            c.REAR_LIDAR_XYZ_M,
+            c.REAR_LIDAR_RPY,
+            **both,
+            **rear,
+        ),
+    )
+
+
 def _dim_slam_on_nos() -> Blueprint:
     """dimSLAM on NOS, next to its own pair of Airy drivers. NOS's lidar NIC gets the multicast as early as AOS (13.8 ms
     after the lidar's stamp on both), so the slices never cross a board, and each 10 ms slice is fused as soon as it is
@@ -69,12 +143,13 @@ def _dim_slam_on_nos() -> Blueprint:
     return autoconnect(
         # the lidars' own stream (body cut, full sweeps) still feeds the map and relocalization from AOS; this pair
         # is dimSLAM's alone: raw slices of ~179 blocks (10 ms of a 10 Hz sweep), voxelized as the ray tracer's
-        m20_lidars(
+        _airys(
+            {},
+            {},
             lidar="lidar_slices",
             imu="lidar_slices_imu",
-            namespace_suffix="_slices",
-            # AOS's pair publishes the mounts
-            publish_mounts=False,
+            suffix="_slices",
+            publish_mount=False,
             body_filter=False,
             voxel=VOXEL_SIZE_M,
             split_blocks=179,
@@ -111,18 +186,23 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
     # the lidars' voxel thins the scans on the wire: the rear Airy sees ~5x the front's points at
     # the ray tracer's voxel, so it voxelizes coarser to keep both under m20's one vendor cloud; x, y, z and
     # offset_time on the wire (nothing past the body cut reads intensity or ring)
-    thinning: dict[str, Any] = {
-        "voxel": VOXEL_SIZE_M,
-        "point_format": "minimal",
-        "per_lidar": {"rear": {"voxel": 0.12}},
-    }
+    front, rear = {"voxel": VOXEL_SIZE_M}, {"voxel": 0.12}
     # on NOS, which takes the Airys' multicast on its own lidar NIC like AOS (and its cores 0-3 are idle), so the
-    # scans skip the AOS -> NOS hop; ecan's joint state still comes from AOS over zenoh
-    in_driver = m20_lidars(
-        body_filter_joint_source="fixed" if joints == "standing" else "joint_state", **thinning
+    # scans skip the AOS -> NOS hop; ecan's joint state still comes from AOS over zenoh. The body is the URDF's
+    # collision geometry, at the standing pose unless ecan's joint state poses it
+    in_driver = _airys(
+        front,
+        rear,
+        point_format="minimal",
+        body_filter=True,
+        body_filter_urdf=M20_MODEL.load().xml,
+        body_filter_joint_positions=dict(STAND_JOINT_POSITIONS),
+        body_filter_joint_source="fixed" if joints == "standing" else "joint_state",
     ).hosted(tags=NOS)
     python = autoconnect(
-        m20_lidars(lidar="lidar_raw", body_filter=False, **thinning).hosted(tags=NOS),
+        _airys(front, rear, lidar="lidar_raw", point_format="minimal", body_filter=False).hosted(
+            tags=NOS
+        ),
         joint_source,
         # a fixed pose republished every period is matched within that period
         _python_body_filter(state_tolerance_s=M20StandingJointStateConfig().publish_period_s)
@@ -140,7 +220,7 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
     )
 
 
-m20_rust = autoconnect(
+_m20_real = autoconnect(
     # the body pose comes from the standing pose or the motor bus (ecan, needs rl_deploy with the shim)
     ChoiceAtom(
         name="M20Joints",
@@ -157,14 +237,29 @@ m20_rust = autoconnect(
         default="sniff",
         choices={
             "sniff": M20BodyImuSniff.blueprint().hosted(tags=AOS),
-            "serial": M20Imu.blueprint().hosted(tags=AOS),
+            # the Yesense on AOS's 16550 UART, at its mount on the M20
+            "serial": YesenseImu.blueprint(
+                device="/dev/ttyS9",
+                frame_id=constants.IMU_FRAME,
+                imu_xyz=constants.IMU_XYZ_M,
+                mount_rpy_rad=constants.IMU_MOUNT_RPY_RAD,
+            ).hosted(tags=AOS),
             "off": autoconnect(),
         },
     ),
     ChoiceAtom(
         name="M20Cameras",
         default="relay",
-        choices={"relay": M20CameraRelay.blueprint().hosted(tags=AOS), "off": autoconnect()},
+        choices={
+            # the AOS board's two cameras, at their centers in base_link from the Deep Robotics docs, with the
+            # provisional M20/Whale focal length at 1280 px wide (the vendor publishes no factory calibration)
+            "relay": RockchipH264Cameras.blueprint(
+                front_camera_xyz=(0.37646, 0.0, 0.03738),
+                rear_camera_xyz=(-0.37646, 0.0, 0.03738),
+                focal_length_px=607.0,
+            ).hosted(tags=AOS),
+            "off": autoconnect(),
+        },
     ),
     # nos: dimSLAM beside its own lidar drivers on NOS, fed 10 ms slices; gos: on GOS, fed AOS's full sweeps
     ChoiceAtom(

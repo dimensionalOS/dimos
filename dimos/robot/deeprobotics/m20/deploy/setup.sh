@@ -9,7 +9,7 @@
 #
 #   M20_NAVIGATION_HOST   NOS ssh target        (default user@10.21.31.106)
 #   M20_CAMERA_HOST       AOS ssh target        (default user@10.21.31.103)
-#   M20_CAMERA_BINARY     the aarch64 relay     (default camera/rust/result/bin/m20_camera)
+#   M20_CAMERA_BINARY     the aarch64 relay     (default dimos/hardware/sensors/camera/rockchip_h264/rust/result/bin/rockchip_h264_cameras)
 #   M20_CAMERA_SUDO_PASS  AOS sudo password     (the vendor board isn't passwordless; NOS and GOS are)
 set -euo pipefail
 
@@ -17,10 +17,10 @@ deploy_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bridge_dir="$deploy_dir/../onboard/drdds-zenoh-bridge/cpp"
 navigation_host="${M20_NAVIGATION_HOST:-user@10.21.31.106}"
 camera_host="${M20_CAMERA_HOST:-user@10.21.31.103}"
-camera_rust_dir="$deploy_dir/../camera/rust"
+camera_rust_dir="$deploy_dir/../../../../hardware/sensors/camera/rockchip_h264/rust"
 # The native camera relay is a cross-compiled aarch64 binary (AOS has no Rust toolchain). Point
-# M20_CAMERA_BINARY at it, or drop it at camera/rust/result/bin/m20_camera (e.g. a nix build on a dev box).
-camera_binary="${M20_CAMERA_BINARY:-$camera_rust_dir/result/bin/m20_camera}"
+# M20_CAMERA_BINARY at it, or drop it at dimos/hardware/sensors/camera/rockchip_h264/rust/result/bin/rockchip_h264_cameras (e.g. a nix build on a dev box).
+camera_binary="${M20_CAMERA_BINARY:-$camera_rust_dir/result/bin/rockchip_h264_cameras}"
 # GOS is the DimOS compute board and the LAN time master the other boards sync their clocks to.
 master_ip="10.21.31.104"
 # AOS's sudo wants a password (the vendor board); NOS and GOS are passwordless. Fed to `sudo -A` through a one-shot
@@ -53,7 +53,7 @@ sudo -n true 2>/dev/null || die "GOS sudo should be passwordless but isn't."
 
 [[ -x "$camera_binary" ]] || die "camera relay binary not found at $camera_binary.
   Build it for aarch64 (cargo zigbuild --target aarch64-unknown-linux-gnu.2.17 in $camera_rust_dir) and set
-  M20_CAMERA_BINARY, or place it at camera/rust/result/bin/m20_camera."
+  M20_CAMERA_BINARY, or place it at dimos/hardware/sensors/camera/rockchip_h264/rust/result/bin/rockchip_h264_cameras."
 
 for pair in "NOS:$navigation_host" "AOS:$camera_host"; do
   name="${pair%%:*}"; host="${pair#*:}"

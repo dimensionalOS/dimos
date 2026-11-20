@@ -1,26 +1,26 @@
 [package]
-name = "dimos-m20-imu"
+name = "dimos-yesense-imu"
 version = "0.1.0"
 edition = "2021"
-description = "Native Rust module: the Deep Robotics M20's body IMU (Yesense, on the AOS board's /dev/ttyS9) as sensor_msgs Imu"
+description = "Native Rust module: a Yesense IMU on a serial port as sensor_msgs Imu"
 license = "Apache-2.0"
 
 [lib]
-name = "dimos_m20_imu"
+name = "dimos_yesense_imu"
 path = "src/lib.rs"
 
 [[bin]]
-name = "m20_imu"
-path = "src/bin/m20_imu.rs"
+name = "yesense_imu"
+path = "src/bin/yesense_imu.rs"
 
-[package.metadata.dimos.module.m20_imu]
-path = "dimos_m20_imu::module::M20Imu"
-python = "dimos.robot.deeprobotics.m20.imu.module:M20Imu"
+[package.metadata.dimos.module.yesense_imu]
+path = "dimos_yesense_imu::module::YesenseImu"
+python = "dimos.hardware.sensors.imu.yesense.module:YesenseImu"
 
-[package.metadata.dimos.module.m20_imu.inputs]
+[package.metadata.dimos.module.yesense_imu.inputs]
 tf = "tf2_msgs.TFMessage"
 
-[package.metadata.dimos.module.m20_imu.outputs]
+[package.metadata.dimos.module.yesense_imu.outputs]
 imu = "sensor_msgs.Imu"
 
 [dependencies]

@@ -28,13 +28,19 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.tf.tf import TF
-from dimos.robot.deeprobotics.m20.lidar import M20LidarConfig
+from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, STAND_JOINT_POSITIONS
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # Points in base_link on the standing body (trunk centre, trunk front and back) and well clear of it.
 _BODY = [[0.0, 0.0, 0.0], [0.2, 0.0, 0.0], [-0.2, 0.0, 0.05]]
 _CLEAR = [[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [-3.0, 0.0, 1.0]]
+
+
+_MOUNTS = {
+    constants.FRONT_LIDAR_FRAME: (constants.FRONT_LIDAR_XYZ_M, constants.FRONT_LIDAR_RPY),
+    constants.REAR_LIDAR_FRAME: (constants.REAR_LIDAR_XYZ_M, constants.REAR_LIDAR_RPY),
+}
 
 
 @pytest.fixture
@@ -44,12 +50,10 @@ def body_filter() -> Iterator[tuple[UrdfManagerPointClearing, dict[str, np.ndarr
     mounts = {}
     for which in ("front", "rear"):
         frame = f"{which}_lidar"
-        config = M20LidarConfig(
-            lidar=which, frame_id=frame, imu_frame_id=frame, mount_parent_frame_id="base_link"
-        )
+        xyz, rpy = _MOUNTS[frame]
         mount = Transform(
-            translation=Vector3(*config.mount_xyz),
-            rotation=Quaternion.from_euler(Vector3(*config.mount_rpy)),
+            translation=Vector3(*xyz),
+            rotation=Quaternion.from_euler(Vector3(*rpy)),
             frame_id="base_link",
             child_frame_id=frame,
             ts=1.0,

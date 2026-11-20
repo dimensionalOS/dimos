@@ -12,108 +12,85 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""M20Lidar and the M20 lidar blueprint: two namespaced lidars on one lidar stream, told apart by frame, each mounting
-itself on base_link through the one global tf."""
+"""The M20's two Airys in ``m20``: one lidar stream told apart by frame, each at its network and mount, the body cut in
+the driver, each mounting itself on base_link through the one global tf."""
 
 import math
 
 import numpy as np
-from pydantic import ValidationError
-import pytest
 
-from dimos.core.coordination.module_coordinator import stream_name_types
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.hardware.sensors.lidar.robosense.module import Airy, AiryConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 from dimos.robot.deeprobotics.m20.constants import FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M
-from dimos.robot.deeprobotics.m20.lidar import M20Lidar, M20LidarConfig, m20_lidars
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, STAND_JOINT_POSITIONS
 
-FRONT, REAR = "front_lidar/m20lidar", "rear_lidar/m20lidar"
+FRONT, REAR = "front_lidar/airy", "rear_lidar/airy"
 
 
-def _config(**fields: object) -> M20LidarConfig:
-    return M20LidarConfig(
-        **{"frame_id": "f", "imu_frame_id": "f_imu", "mount_parent_frame_id": "body", **fields}
-    )
+def _real(**choices: str) -> Blueprint:
+    return m20.solidify(choices={"M20Mode": "real", **choices})
 
 
-def _wire(name: str, **overrides: object) -> dict:
-    atom = {atom.name: atom for atom in m20_lidars(**overrides).solidify().blueprints}[name]
-    kwargs = {key: value for key, value in atom.kwargs.items() if key != "instance_name"}
-    return M20LidarConfig(**kwargs).to_config_dict()
+def _wire(name: str, **choices: str) -> dict:
+    atom = {atom.name: atom for atom in _real(**choices).active_blueprints}[name]
+    return AiryConfig(
+        **{key: value for key, value in atom.kwargs.items() if key != "instance_name"}
+    ).to_config_dict()
 
 
-def test_which_lidar_picks_its_network_and_mount() -> None:
-    front, rear = _config(lidar="front"), _config(lidar="rear")
-    assert (front.group, front.msop_port, front.difop_port, front.imu_port) == (
+def test_each_lidar_has_its_network_and_the_vendor_drivers_range_and_clock() -> None:
+    front, rear = _wire(FRONT), _wire(REAR)
+    assert (
+        front["group"],
+        front["lidar_ip"],
+        front["msop_port"],
+        front["difop_port"],
+        front["imu_port"],
+    ) == (
         "224.10.10.201",
+        "10.21.33.201",
         6691,
         7781,
         6681,
     )
-    assert (rear.group, rear.msop_port, rear.difop_port, rear.imu_port) == (
+    assert (
+        rear["group"],
+        rear["lidar_ip"],
+        rear["msop_port"],
+        rear["difop_port"],
+        rear["imu_port"],
+    ) == (
         "224.10.10.202",
+        "10.21.33.202",
         6692,
         7782,
         6682,
     )
-    assert (front.mount_xyz, rear.mount_xyz) == (FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M)
-    # anything set explicitly wins over the chosen lidar's
-    assert _config(lidar="front", msop_port=7000).msop_port == 7000
-
-
-def test_frames_voxel_and_min_distance_are_config() -> None:
-    config = _config(lidar="rear", voxel=0.08)
-    assert (config.frame_id, config.imu_frame_id, config.mount_parent_frame_id) == (
-        "f",
-        "f_imu",
-        "body",
-    )
-    assert (
-        config.voxel,
-        config.min_distance,
-        _config(lidar="rear", min_distance=0.3).min_distance,
-    ) == (
-        0.08,
-        0.1,
-        0.3,
-    )
-    for missing in ("frame_id", "imu_frame_id", "mount_parent_frame_id"):
-        fields = {
-            "lidar": "front",
-            "frame_id": "f",
-            "imu_frame_id": "f",
-            "mount_parent_frame_id": "b",
-        }
-        del fields[missing]
-        with pytest.raises(ValidationError):
-            M20LidarConfig(**fields)
-    # the driver gets the Airy's fields only
-    assert "lidar" not in _config(lidar="front").to_config_dict()
+    for wire in (front, rear):
+        assert (wire["min_distance"], wire["max_distance"], wire["use_lidar_clock"]) == (
+            0.1,
+            60.0,
+            True,
+        )
 
 
 def test_both_namespaced_lidars_land_on_lidar_and_the_global_tf() -> None:
-    blueprint = m20_lidars().solidify()
-    assert {atom.name for atom in blueprint.blueprints} == {FRONT, REAR}
-    assert {atom.module for atom in blueprint.blueprints} == {M20Lidar}
+    blueprint = _real()
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
     for name in (FRONT, REAR):
+        assert atoms[name].module is Airy
         assert blueprint.remapping_map[(name, "lidar")] == "lidar"
         assert blueprint.remapping_map[(name, "imu")] == "lidar_imu"
         # tf is exposed, never namespaced
         assert blueprint.remapping_map.get((name, "tf"), "tf") == "tf"
         # the body filter's joint state is exposed too
         assert blueprint.remapping_map[(name, "joint_state")] == "coordinator_joint_state"
-    assert stream_name_types(blueprint) >= {("tf", TFMessage)}
-    assert {name for name, _ in stream_name_types(blueprint)} == {
-        "lidar",
-        "lidar_imu",
-        "tf",
-        "coordinator_joint_state",
-    }
 
 
-def test_the_body_is_cut_in_the_driver_at_the_standing_pose_by_default() -> None:
+def test_the_body_is_cut_in_the_driver_at_the_standing_pose_or_ecans_joint_state() -> None:
     for name in (FRONT, REAR):
         wire = _wire(name)
         assert wire["body_filter"] is True
@@ -122,23 +99,19 @@ def test_the_body_is_cut_in_the_driver_at_the_standing_pose_by_default() -> None
         assert wire["body_filter_urdf"] == M20_MODEL.load().xml
         # the URDF's root is the frame the lidar is mounted in, which places the body around the lidar
         assert wire["mount_parent_frame_id"] == M20_MODEL.load().root_link
-        live = _wire(name, body_filter_joint_source="joint_state")
-        assert live["body_filter_joint_source"] == "joint_state"
-    off = _wire(FRONT, body_filter=False)
-    assert off["body_filter"] is False
-    assert off["body_filter_urdf"] is None
+        assert _wire(name, M20Joints="ecan")["body_filter_joint_source"] == "joint_state"
+        # the Python filter cuts the raw scans instead
+        assert _wire(name, M20BodyFilter="python")["body_filter"] is False
 
 
-def test_frames_come_from_config_not_the_namespace() -> None:
+def test_frames_come_from_the_blueprint_not_the_namespace() -> None:
     for name, frame in ((FRONT, "front_lidar"), (REAR, "rear_lidar")):
-        wire = _wire(name, voxel=0.1)
+        wire = _wire(name)
         assert (wire["frame_id"], wire["imu_frame_id"], wire["mount_parent_frame_id"]) == (
             frame,
             frame,
             "base_link",
         )
-        assert wire["voxel"] == 0.1
-        assert "frame_id_prefix" not in wire
 
 
 def _matrix(rpy: tuple[float, float, float]) -> np.ndarray:
@@ -162,18 +135,3 @@ def test_mounts() -> None:
         assert np.allclose(rotation @ [1, 0, 0], [0, 0, 1], atol=1e-9)
         assert np.allclose(rotation @ [0, 0, 1], [outward, 0, 0], atol=1e-9)
         assert math.isclose(np.linalg.det(rotation), 1.0)
-
-
-def test_a_resolved_lidar_config_needs_no_mujoco(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The board running the lidars has no mujoco: a config the blueprint resolved must not load the model again."""
-    import sys
-
-    atom = next(iter(m20_lidars().solidify().blueprints))
-    kwargs = {key: value for key, value in atom.kwargs.items() if key != "instance_name"}
-    monkeypatch.setitem(sys.modules, "mujoco", None)
-    monkeypatch.setattr("dimos.robot.deeprobotics.m20.lidar._m20_body", _no_model)
-    M20LidarConfig(**kwargs)
-
-
-def _no_model() -> None:
-    raise AssertionError("the lidar config loaded the robot model")

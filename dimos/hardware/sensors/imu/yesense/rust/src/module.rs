@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//! The M20's body IMU (a Yesense on the AOS board's UART) read straight off the serial port as `sensor_msgs/Imu`,
+//! A Yesense IMU read straight off its serial port as `sensor_msgs/Imu`,
 //! every frame, with base_link -> imu frame published alongside.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -21,7 +21,7 @@ use dimos_module::{native_config, Module, Output, Tf, Transform};
 use lcm_msgs::sensor_msgs::Imu;
 use tokio::runtime::Handle;
 use tracing::{info, warn};
-use yesense_imu::{DecoderConfig, Imu as YesenseImu};
+use yesense_imu::{DecoderConfig, Imu as YesenseDevice};
 
 use crate::mount::{imu_message, mount_rotation};
 
@@ -56,8 +56,8 @@ pub struct Config {
 }
 
 #[derive(Module)]
-#[module(name = "m20_imu", setup = start)]
-pub struct M20Imu {
+#[module(name = "yesense_imu", setup = start)]
+pub struct YesenseImu {
     #[output(encode = Imu::encode)]
     imu: Output<Imu>,
     #[tf]
@@ -67,7 +67,7 @@ pub struct M20Imu {
     config: Config,
 }
 
-impl M20Imu {
+impl YesenseImu {
     async fn start(&mut self) {
         let config = self.config.clone();
         let output = self.imu.clone();
@@ -97,7 +97,7 @@ fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
         },
     };
     loop {
-        match YesenseImu::open(&serial) {
+        match YesenseDevice::open(&serial) {
             Ok(mut imu) => {
                 info!(device = %config.device, baud = config.baud, "reading the IMU");
                 let error = loop {

@@ -23,7 +23,7 @@ import numpy as np
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.deeprobotics.m20.lidar import M20LidarConfig
+from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.model import M20_MODEL
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 
@@ -59,16 +59,12 @@ def _records(path: Path) -> list[tuple[str, dict[str, float], np.ndarray, np.nda
 
 
 def _roboplan_on_body(frame: str, joints: dict[str, float], points: np.ndarray) -> np.ndarray:
-    lidar = M20LidarConfig(
-        lidar="front" if frame == "front_lidar" else "rear",
-        frame_id=frame,
-        imu_frame_id=frame,
-        mount_parent_frame_id="base_link",
-        body_filter=False,
-    )
+    front = frame == constants.FRONT_LIDAR_FRAME
+    xyz = constants.FRONT_LIDAR_XYZ_M if front else constants.REAR_LIDAR_XYZ_M
+    rpy = constants.FRONT_LIDAR_RPY if front else constants.REAR_LIDAR_RPY
     mount = Transform(
-        translation=Vector3(*lidar.mount_xyz),
-        rotation=Quaternion.from_euler(Vector3(*lidar.mount_rpy)),
+        translation=Vector3(*xyz),
+        rotation=Quaternion.from_euler(Vector3(*rpy)),
         frame_id="base_link",
         child_frame_id=frame,
     ).to_matrix()

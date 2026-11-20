@@ -14,7 +14,7 @@
 
 """The M20's body IMU copied passively off the vendor ``yesense_node``'s DDS samples by the native ``m20_body_imu_sniff``.
 
-Unlike ``M20Imu`` it leaves the serial port to the vendor node and runs beside it: a receive-only raw capture on
+Unlike ``YesenseImu`` (``--choice M20BodyImu=serial``) it leaves the serial port to the vendor node and runs beside it: a receive-only raw capture on
 loopback (no DDS participant, nothing sent) picks the participant named ``participant`` out of the SPDP
 announcements and decodes its ``sensor_msgs/Imu`` samples, which are already in base_link's axes and stamped by the
 vendor. The capture needs CAP_NET_RAW, so the host running it needs that capability.

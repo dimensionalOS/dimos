@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's two cameras captured off V4L2 (MJPEG) and hardware-encoded to H.264, every frame, by the native ``m20_camera`` module — the direct path that replaces the vendor RTSP server.
+"""A front and a rear camera on a Rockchip RK3588, captured off V4L2 (MJPEG) and hardware-encoded to H.264, every frame, by the native ``rockchip_h264_cameras`` module (on the M20, the direct path that replaces the vendor RTSP server).
 
 Each ``CompressedVideo`` is one H.264 Annex-B access unit, so a stream holds P-frames and decodes only
 in order. The SPS/PPS go in front of every keyframe, so a late
@@ -37,13 +37,13 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
-class M20CameraRelayConfig(NativeModuleConfig):
-    source_dir: str | None = "dimos/robot/deeprobotics/m20/camera/rust"
-    executable: str = "result/bin/m20_camera"
+class RockchipH264CamerasConfig(NativeModuleConfig):
+    source_dir: str | None = "dimos/hardware/sensors/camera/rockchip_h264/rust"
+    executable: str = "result/bin/rockchip_h264_cameras"
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
-    # V4L2 device nodes of the two cameras on the vendor AOS board (MJPEG up to 1080p30)
+    # V4L2 device nodes of the two cameras (MJPEG)
     front_device: str = "/dev/video0"
     rear_device: str = "/dev/video2"
     # capture + encode: the pipeline forces these caps and the Rockchip H.264 encoder's bitrate and GOP
@@ -55,15 +55,28 @@ class M20CameraRelayConfig(NativeModuleConfig):
     # "rust" (default): in-process, the rockchip-h264 crate driving the RK3588's JPEG decoder and H.264 encoder directly.
     # "gstreamer" (fallback): a gst-launch child per camera (the vendor mpp plugin, which leaks a dmabuf fd per frame).
     encoder: Literal["rust", "gstreamer"] = "rust"
-    # Camera centers in base_link from the Deep Robotics docs, and their turn about z.
-    front_camera_xyz: tuple[float, float, float] = (0.37646, 0.0, 0.03738)
+    # Camera centers in base_link, and their turn about z (the rear one looks back).
+    front_camera_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     front_camera_yaw_rad: float = 0.0
-    rear_camera_xyz: tuple[float, float, float] = (-0.37646, 0.0, 0.03738)
+    rear_camera_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rear_camera_yaw_rad: float = math.pi
-    # The provisional M20/Whale focal length at 1280 px wide, scaled to each stream's width. The
-    # vendor publishes no factory calibration.
+    # The lenses' focal length at focal_length_width_px wide, scaled to each stream's width.
     focal_length_px: float = Field(default=607.0, gt=0.0)
     focal_length_width_px: int = Field(default=1280, ge=1)
+    # The lenses' distortion as CameraInfo names it: "plumb_bob" (k1, k2, p1, p2, k3) or "equidistant" (fisheye,
+    # k1..k4), at the focal length above. Uncalibrated: the lenses are fisheyes, and a plumb-line fit to one rear
+    # frame gives equidistant, focal 486 px at 1280 wide, k1..k4 = 0 (an estimate, not a calibration).
+    distortion_model: Literal["plumb_bob", "equidistant"] = "plumb_bob"
+    distortion_coefficients: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
+    # Undistort every frame on the robot before encoding (rust encoder only). CameraInfo then describes the
+    # deskewed frames: their new pinhole matrix, no distortion, the same frame_id.
+    deskew: bool = False
+    # Deskewed frame size; 0 keeps the capture's.
+    deskew_width: int = Field(default=0, ge=0)
+    deskew_height: int = Field(default=0, ge=0)
+    # 0 keeps only what every edge of the frame saw (no black borders), 1 the whole field of view.
+    deskew_balance: float = Field(default=0.0, ge=0.0, le=1.0)
+    deskew_interpolation: Literal["bilinear", "nearest"] = "bilinear"
     retry_s: float = Field(default=2.0, ge=0.1, le=60.0)
     # Without an answer or a frame for this long, the stream is dropped and reopened.
     stall_timeout_s: float = Field(default=2.0, ge=0.1, le=60.0)
@@ -73,10 +86,10 @@ class M20CameraRelayConfig(NativeModuleConfig):
     stats_period_s: float = Field(default=10.0, ge=0.1, le=3600.0)
 
 
-class M20CameraRelay(NativeModule):
-    """Relay both M20 cameras as H.264 ``CompressedVideo`` (direct V4L2 capture), every frame."""
+class RockchipH264Cameras(NativeModule):
+    """Both cameras as H.264 ``CompressedVideo`` (direct V4L2 capture), every frame."""
 
-    config: M20CameraRelayConfig
+    config: RockchipH264CamerasConfig
 
     front_camera: Out[CompressedVideo]
     rear_camera: Out[CompressedVideo]
@@ -86,4 +99,4 @@ class M20CameraRelay(NativeModule):
 
 
 if TYPE_CHECKING:
-    M20CameraRelay()
+    RockchipH264Cameras()

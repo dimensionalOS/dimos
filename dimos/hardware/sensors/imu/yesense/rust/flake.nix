@@ -1,5 +1,5 @@
 {
-  description = "Deep Robotics M20 body IMU native module for dimos";
+  description = "Yesense IMU native module for dimos";
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
@@ -13,7 +13,7 @@
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        name = "dimos-m20-imu";
+        name = "dimos-yesense-imu";
 
         src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };

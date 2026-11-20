@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live check of an m20-rust run: rates, frames, sources, DimSLAM odometry, tf chain, relocalization fitness, self-hits.
+"""Live check of an m20 run: rates, frames, sources, DimSLAM odometry, tf chain, relocalization fitness, self-hits.
 
 usage: verify_run.py <run_id> [seconds] [router]
 """

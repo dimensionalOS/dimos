@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""m20-rust builds without hardware: no vendor bridge, the drivers placed on AOS, and m20's navigation and relocalization."""
+"""``m20`` (real mode) builds without hardware: no vendor bridge, the drivers placed on AOS and NOS, and the navigation and
+relocalization m20 ran on the vendor's sensors."""
 
+import math
 import typing
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import stream_name_types, verify_no_name_conflicts
+from dimos.hardware.sensors.camera.rockchip_h264.module import RockchipH264CamerasConfig
+from dimos.hardware.sensors.imu.yesense.module import YesenseImuConfig
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
 from dimos.hosted.protocol import HostDescriptor
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -27,7 +31,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack, m20_relocalization
 from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
-from dimos.robot.deeprobotics.m20.blueprints.m20_rust import m20_rust
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS, NOS_SLAM_CPUS
@@ -43,14 +46,18 @@ _HOSTS = (
         host_id="nos", name="nos", tags={"board": "nos"}, revision=_REVISION, active_run_ids=()
     ),
 )
-_AOS_DRIVERS = {"m20bodyimusniff", "m20camerarelay"}
+_AOS_DRIVERS = {"m20bodyimusniff", "rockchiph264cameras"}
 # both lidar pairs read the multicast on NOS: the full scans (body cut) for the map, the slices for dimSLAM
-_NOS_LIDARS = {"front_lidar/m20lidar", "rear_lidar/m20lidar"}
-_NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslam"}
+_NOS_LIDARS = {"front_lidar/airy", "rear_lidar/airy"}
+_NOS_SLAM = {"front_lidar_slices/airy", "rear_lidar_slices/airy", "dimslam"}
+
+
+# m20 on the vendor's sensors was these with the vendor bridge; the real mode keeps their settings
+_VENDOR_NAV = autoconnect(m20_nav_stack(), m20_relocalization())
 
 
 def _solid(**choices: str) -> Blueprint:
-    blueprint = m20_rust.solidify(choices=choices)
+    blueprint = m20.solidify(choices={"M20Mode": "real", **choices})
     verify_no_name_conflicts(blueprint)
     return blueprint
 
@@ -73,10 +80,10 @@ def test_no_vendor_bridge() -> None:
     [
         ({}, _AOS_DRIVERS),
         ({"M20Joints": "ecan"}, _AOS_DRIVERS | {"m20ecan"}),
-        ({"M20Cameras": "off"}, _AOS_DRIVERS - {"m20camerarelay"}),
+        ({"M20Cameras": "off"}, _AOS_DRIVERS - {"rockchiph264cameras"}),
         (
             {"M20Cameras": "off", "M20BodyImu": "serial"},
-            _AOS_DRIVERS - {"m20camerarelay", "m20bodyimusniff"} | {"m20imu"},
+            _AOS_DRIVERS - {"rockchiph264cameras", "m20bodyimusniff"} | {"yesenseimu"},
         ),
         ({"M20BodyImu": "off"}, _AOS_DRIVERS - {"m20bodyimusniff"}),
         ({"M20BodyFilter": "python"}, _AOS_DRIVERS),
@@ -109,7 +116,7 @@ def test_dimslam_on_gos_stays_selectable() -> None:
 def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
     blueprint = _solid()
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    slices = ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar")
+    slices = ("front_lidar_slices/airy", "rear_lidar_slices/airy")
     for name in slices:
         kwargs = atoms[name].kwargs
         assert (_topic(blueprint, name, "lidar"), _topic(blueprint, name, "imu")) == (
@@ -119,7 +126,7 @@ def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
         # raw slices, ~10 ms of the 10 Hz sweep each, at the same voxel as the full sweeps
         assert kwargs["split_blocks"] == 179
         assert kwargs["body_filter"] is False
-        assert kwargs["voxel"] == atoms["front_lidar/m20lidar"].kwargs["voxel"]
+        assert kwargs["voxel"] == atoms["front_lidar/airy"].kwargs["voxel"]
     # each lidar is the same frame in both pairs: dimSLAM's lidar and IMU frames are the slices'
     assert {atoms[n].kwargs["frame_id"] for n in slices} == {"front_lidar", "rear_lidar"}
     assert _readers(blueprint, "lidar_slices") == {"dimslam"}
@@ -138,10 +145,10 @@ def test_every_lidar_mount_has_one_publisher(joints: str) -> None:
     publishers = [
         atoms[name].kwargs["frame_id"]
         for name in atoms
-        if name.endswith("m20lidar") and atoms[name].kwargs.get("mount_parent_frame_id")
+        if name.endswith("/airy") and atoms[name].kwargs.get("mount_parent_frame_id")
     ]
     assert sorted(publishers) == ["front_lidar", "rear_lidar"]
-    for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for name in ("front_lidar/airy", "rear_lidar/airy"):
         assert atoms[name].kwargs["mount_parent_frame_id"] == "base_link"
 
 
@@ -162,7 +169,7 @@ def _readers(blueprint: Blueprint, topic: str) -> set[str]:
 def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: str) -> None:
     blueprint = _solid(M20Joints=joints)
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for lidar in ("front_lidar/airy", "rear_lidar/airy"):
         assert (_topic(blueprint, lidar, "lidar"), _topic(blueprint, lidar, "imu")) == (
             "lidar",
             "lidar_imu",
@@ -173,8 +180,8 @@ def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: s
         )
         assert _topic(blueprint, lidar, "joint_state") == "coordinator_joint_state"
     assert {
-        atoms["front_lidar/m20lidar"].kwargs["frame_id"],
-        atoms["rear_lidar/m20lidar"].kwargs["frame_id"],
+        atoms["front_lidar/airy"].kwargs["frame_id"],
+        atoms["rear_lidar/airy"].kwargs["frame_id"],
     } == {
         "front_lidar",
         "rear_lidar",
@@ -192,7 +199,7 @@ def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: s
 def test_the_python_filter_stays_selectable_between_lidar_raw_and_lidar(joints: str) -> None:
     blueprint = _solid(M20Joints=joints, M20BodyFilter="python")
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for lidar in ("front_lidar/airy", "rear_lidar/airy"):
         assert _topic(blueprint, lidar, "lidar") == "lidar_raw"
         assert atoms[lidar].kwargs["body_filter"] is False
     assert _readers(blueprint, "lidar_raw") == {"urdfmanagerpointclearing"}
@@ -204,9 +211,9 @@ def test_the_lidars_thin_at_or_above_the_ray_tracers_voxel_and_it_subsamples_as_
     """The lidars thin their own scans (no finer than the map's voxel) and send only x, y, z and offset_time; the ray
     tracer then subsamples them as m20's does the vendor cloud."""
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    m20_atoms = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    m20_atoms = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     voxel = atoms["raytracingvoxelmap"].kwargs["voxel_size"]
-    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for lidar in ("front_lidar/airy", "rear_lidar/airy"):
         assert atoms[lidar].kwargs["voxel"] >= voxel
         assert atoms[lidar].kwargs["point_format"] == "minimal"
     for key in ("pre_trace_subsample", "ray_subsample"):
@@ -217,7 +224,7 @@ def test_the_lidars_thin_at_or_above_the_ray_tracers_voxel_and_it_subsamples_as_
 
 def test_dimslams_slices_keep_every_field_at_the_ray_tracers_voxel() -> None:
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    for lidar in ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar"):
+    for lidar in ("front_lidar_slices/airy", "rear_lidar_slices/airy"):
         assert atoms[lidar].kwargs["voxel"] == atoms["raytracingvoxelmap"].kwargs["voxel_size"]
         assert "point_format" not in atoms[lidar].kwargs
 
@@ -230,7 +237,7 @@ def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
     assert (slam["lidars"], slam["imus"]) == (expected["lidars"], expected["imus"])
     lidar_frames = {
         atoms[name].kwargs["imu_frame_id"]
-        for name in ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar")
+        for name in ("front_lidar_slices/airy", "rear_lidar_slices/airy")
     }
     assert {imu.frame_id for imu in slam["imus"]} <= lidar_frames
     assert {lidar.frame_id for lidar in slam["lidars"]} == lidar_frames
@@ -238,7 +245,7 @@ def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
 
 def test_navigation_and_relocalization_match_m20() -> None:
     rust = {atom.name: atom for atom in _solid().active_blueprints}
-    vendor = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    vendor = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     shared = {atom.name for atom in m20_nav_stack().solidify().active_blueprints} | {
         atom.name for atom in m20_relocalization().active_blueprints
     }
@@ -289,14 +296,42 @@ def test_every_module_config_m20_rust_builds_validates_as_its_board_will_parse_i
 def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None:
     """Each Airy publishes its own cloud per sweep, so the ray tracer emits every 2nd and the relocalizer waits for both."""
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    m20_atoms = {atom.name: atom for atom in m20.solidify().active_blueprints}
+    m20_atoms = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     assert (
         atoms["raytracingvoxelmap"].kwargs["emit_every"]
         == 2 * m20_atoms["raytracingvoxelmap"].kwargs["emit_every"]
     )
     lidar_frames = {
-        atoms[name].kwargs["frame_id"] for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar")
+        atoms[name].kwargs["frame_id"] for name in ("front_lidar/airy", "rear_lidar/airy")
     }
     assert set(atoms["premapmodule"].kwargs["attempt_after_frames"]) == lidar_frames
     assert atoms["premapmodule"].kwargs["attempt_every_sweeps"] == 10
     assert m20_atoms["premapmodule"].kwargs["attempt_after_frames"] == []
+
+
+def test_the_cameras_get_the_m20s_devices_mounts_and_focal_length() -> None:
+    (atom,) = (a for a in _solid().active_blueprints if a.name == "rockchiph264cameras")
+    config = RockchipH264CamerasConfig(
+        **{k: v for k, v in atom.kwargs.items() if k != "instance_name"}
+    )
+    assert (config.front_device, config.rear_device) == ("/dev/video0", "/dev/video2")
+    assert (config.front_camera_xyz, config.rear_camera_xyz) == (
+        (0.37646, 0.0, 0.03738),
+        (-0.37646, 0.0, 0.03738),
+    )
+    assert (config.front_camera_yaw_rad, config.rear_camera_yaw_rad, config.focal_length_px) == (
+        0.0,
+        math.pi,
+        607.0,
+    )
+
+
+def test_the_serial_body_imu_gets_the_m20s_uart_and_mount() -> None:
+    (atom,) = (a for a in _solid(M20BodyImu="serial").active_blueprints if a.name == "yesenseimu")
+    config = YesenseImuConfig(**{k: v for k, v in atom.kwargs.items() if k != "instance_name"})
+    assert (config.device, config.frame_id, config.imu_xyz) == (
+        "/dev/ttyS9",
+        "imu_link",
+        (0.0632, -0.0268, -0.0435),
+    )
+    assert config.mount_rpy_rad == (math.pi / 2, 0.0, 0.0)
