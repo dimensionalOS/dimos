@@ -28,6 +28,9 @@ from dimos.robot.deeprobotics.m20.imu_estop.imu_estop import (
     Estop,
     EstopConfig,
     HighGLatch,
+    _spdp_name,
+    _udp_payload,
+    main,
     parse_airy_imu,
     parse_relay_line,
     soft_estop_frame,
@@ -180,3 +183,26 @@ def test_the_relay_feeds_the_latch_and_a_dead_relay_is_restarted_up_to_its_limit
     for sample in samples[: config.consecutive_samples]:
         estop.on_sample("body_dimos", *sample)
     assert estop.latch.tripped is not None and estop.latch.tripped["stream"] == "body_dimos"
+
+
+def test_truncated_capture_frames_and_spdp_names_are_ignored_not_raised() -> None:
+    assert _udp_payload(b"") == b""
+    assert _udp_payload(bytes(14) + b"\x45" + bytes(5)) == b""
+    # an entity name whose size runs past its parameter, and one cut short
+    assert _spdp_name(b"\x00\x03\x00\x00" + b"\x62\x00\x04\x00" + b"\xff\x00\x00\x00" + b"x") == ""
+    assert _spdp_name(b"\x00\x03\x00\x00" + b"\x62\x00\x02\x00" + b"\x01\x00") is None
+
+
+def test_a_torn_latch_file_still_starts_latched(tmp_path: Path) -> None:
+    config = EstopConfig(state_dir=str(tmp_path))
+    Path(config.latch_file).write_text('{"stream": "bo')
+    assert Estop(config).latch.tripped is not None
+
+
+def test_reset_clears_the_latch_file_without_waiting(tmp_path: Path, capsys) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"state_dir": str(tmp_path)}))
+    (tmp_path / "tripped.json").write_text("{}")
+    main(["reset", "--config", str(config_path)])
+    assert not (tmp_path / "tripped.json").exists()
+    assert "latched: False" in capsys.readouterr().out

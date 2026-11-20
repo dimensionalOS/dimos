@@ -42,7 +42,7 @@ class M20ImuConfig(NativeModuleConfig):
 
     # The Yesense on the vendor AOS board: a 16550 UART, 200 Hz frames of accel, gyro and Euler angles.
     device: str = "/dev/ttyS9"
-    baud: int = Field(default=115200, ge=1)
+    baud: int = Field(default=115200, ge=1, le=4294967295)
     frame_id: str | None = IMU_FRAME
     parent_frame_id: str = "base_link"
     imu_xyz: tuple[float, float, float] = IMU_XYZ_M

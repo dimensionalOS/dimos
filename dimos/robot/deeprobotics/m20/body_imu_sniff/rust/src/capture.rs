@@ -21,6 +21,10 @@
 
 use std::ffi::CString;
 use std::io;
+use std::time::Duration;
+
+/// Ethernet header + the largest IPv4 datagram (protocol limits): a received frame never truncates.
+const MAX_FRAME_BYTES: usize = 14 + 65535;
 
 /// What a capture keeps; datagrams shorter than `min_udp_bytes` (UDP header included) never reach us.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,14 +58,9 @@ pub fn filter_program(filter: &Filter) -> Vec<libc::sock_filter> {
     ];
     if let Some(prefix) = filter.prefix {
         // the RTPS header's GUID prefix: UDP payload bytes 8..20
-        for (i, word) in prefix.chunks(4).enumerate() {
+        for (i, &[b0, b1, b2, b3]) in prefix.as_chunks::<4>().0.iter().enumerate() {
             ops.push((0x40, 30 + 4 * i as u32, false, false)); // ld [x+30+4i]
-            ops.push((
-                0x15,
-                u32::from_be_bytes(word.try_into().unwrap()),
-                false,
-                true,
-            ));
+            ops.push((0x15, u32::from_be_bytes([b0, b1, b2, b3]), false, true));
         }
     }
     let drop_at = ops.len() + 1;
@@ -69,6 +68,7 @@ pub fn filter_program(filter: &Filter) -> Vec<libc::sock_filter> {
         .iter()
         .enumerate()
         .map(|(i, &(code, k, drop_if_true, drop_if_false))| {
+            // at most 20 ops, so the jump always fits a u8
             let to_drop = (drop_at - i - 1) as u8;
             libc::sock_filter {
                 code,
@@ -101,26 +101,21 @@ pub struct Capture {
 impl Capture {
     /// Needs CAP_NET_RAW. Opens on `interface` only.
     pub fn open(interface: &str, filter: &Filter, recv_buffer_bytes: usize) -> io::Result<Self> {
-        let protocol = (libc::ETH_P_IP as u16).to_be() as libc::c_int;
-        let fd = unsafe {
-            libc::socket(
-                libc::AF_PACKET,
-                libc::SOCK_RAW | libc::SOCK_CLOEXEC,
-                protocol,
-            )
-        };
+        let protocol = (libc::ETH_P_IP as u16).to_be();
+        // protocol 0 receives nothing until bind, so no unfiltered datagram is queued before the filter is on
+        let fd = unsafe { libc::socket(libc::AF_PACKET, libc::SOCK_RAW | libc::SOCK_CLOEXEC, 0) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
         let capture = Self {
             fd,
-            buffer: vec![0; 65536],
+            buffer: vec![0; MAX_FRAME_BYTES],
         };
         capture.set_filter(filter)?;
         // loopback hands a packet socket every datagram twice (sent and received): keep the received copy only
         capture.set(libc::SOL_PACKET, libc::PACKET_IGNORE_OUTGOING, 1)?;
         // past net.core.rmem_max only with CAP_NET_ADMIN; without it the kernel's cap applies
-        let size = recv_buffer_bytes as libc::c_int;
+        let size = libc::c_int::try_from(recv_buffer_bytes).unwrap_or(libc::c_int::MAX);
         if capture
             .set(libc::SOL_SOCKET, libc::SO_RCVBUFFORCE, size)
             .is_err()
@@ -135,7 +130,7 @@ impl Capture {
         }
         let mut address: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
         address.sll_family = libc::AF_PACKET as u16;
-        address.sll_protocol = protocol as u16;
+        address.sll_protocol = protocol;
         address.sll_ifindex = index as i32;
         check(unsafe {
             libc::bind(
@@ -213,10 +208,15 @@ impl Capture {
                 )
             };
             if size < 0 {
-                return Err(io::Error::last_os_error());
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(error);
             }
-            if let Some((start, end)) = udp_payload_range(&self.buffer[..size as usize]) {
-                return Ok(&self.buffer[start..end]);
+            let frame = self.buffer.get(..size as usize).unwrap_or_default();
+            if let Some((start, end)) = udp_payload_range(frame) {
+                return Ok(self.buffer.get(start..end).unwrap_or_default());
             }
         }
     }
@@ -236,27 +236,40 @@ fn check(result: libc::c_int) -> io::Result<()> {
     }
 }
 
-/// Blocks until one of `captures` has a datagram; returns their readiness in order.
-pub fn wait_readable(captures: &[&Capture]) -> io::Result<Vec<bool>> {
-    let mut fds: Vec<libc::pollfd> = captures
-        .iter()
-        .map(|c| libc::pollfd {
-            fd: c.fd,
-            events: libc::POLLIN,
-            revents: 0,
-        })
-        .collect();
-    check(unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) })?;
-    Ok(fds.iter().map(|f| f.revents & libc::POLLIN != 0).collect())
+/// Blocks until one of `captures` has a datagram or an error to report (a recv then returns it), or `timeout`
+/// passes (None: no timeout); returns their readiness in order, retrying on EINTR.
+pub fn wait_readable<const N: usize>(
+    captures: [&Capture; N],
+    timeout: Option<Duration>,
+) -> io::Result<[bool; N]> {
+    let mut fds = captures.map(|c| libc::pollfd {
+        fd: c.fd,
+        events: libc::POLLIN,
+        revents: 0,
+    });
+    let timeout_ms = timeout.map_or(-1, |t| {
+        libc::c_int::try_from(t.as_millis()).unwrap_or(libc::c_int::MAX)
+    });
+    loop {
+        match check(unsafe { libc::poll(fds.as_mut_ptr(), N as libc::nfds_t, timeout_ms) }) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        }
+        // POLLERR / POLLHUP / POLLNVAL never set POLLIN; counting them makes the recv surface the error instead of spinning
+        let ready = libc::POLLIN | libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+        return Ok(fds.map(|f| f.revents & ready != 0));
+    }
 }
 
 /// Where the UDP payload sits in an Ethernet + IPv4 + UDP frame.
 pub fn udp_payload_range(frame: &[u8]) -> Option<(usize, usize)> {
     let ip = frame.get(14..)?;
-    if ip.first()? >> 4 != 4 || *ip.get(9)? != 17 {
+    let version_ihl = *ip.first()?;
+    let header = usize::from(version_ihl & 0x0f) * 4;
+    // IPv4, a legal header length (20..=60), UDP
+    if version_ihl >> 4 != 4 || header < 20 || *ip.get(9)? != 17 {
         return None;
     }
-    let header = ((ip[0] & 0x0f) as usize) * 4;
     let udp_length = u16::from_be_bytes([*ip.get(header + 4)?, *ip.get(header + 5)?]) as usize;
     let start = 14 + header + 8;
     let end = (14 + header + udp_length).min(frame.len());
@@ -413,5 +426,32 @@ mod tests {
         ));
         let (start, end) = udp_payload_range(&frame(7475, imu)).unwrap();
         assert_eq!(end - start, imu.len());
+    }
+
+    #[test]
+    fn a_hung_up_fd_wakes_the_wait_instead_of_spinning() {
+        let mut ends = [0; 2];
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+        unsafe { libc::close(ends[1]) };
+        // only POLLHUP is set (no POLLIN), which the wait used to ignore and so spin on
+        let hung_up = Capture {
+            fd: ends[0],
+            buffer: Vec::new(),
+        };
+        let ready = wait_readable([&hung_up], Some(Duration::from_secs(5))).unwrap();
+        assert_eq!(ready, [true]);
+    }
+
+    #[test]
+    fn short_or_bogus_frames_have_no_payload() {
+        let good = frame(7475, &[1, 2, 3]);
+        for cut in 0..good.len() {
+            if let Some((start, end)) = udp_payload_range(&good[..cut]) {
+                assert!(start <= end && end <= cut);
+            }
+        }
+        let mut bad_ihl = good.clone();
+        bad_ihl[14] = 0x41;
+        assert_eq!(udp_payload_range(&bad_ihl), None);
     }
 }

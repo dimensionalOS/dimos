@@ -22,22 +22,30 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 fn main() -> std::io::Result<()> {
-    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use dimos_m20_body_imu_sniff::capture::{wait_readable, SniffCaptures};
     use dimos_m20_body_imu_sniff::rtps::Sniffer;
 
     let args: Vec<String> = std::env::args().collect();
+    let (Some(interface), Some(participant)) = (args.get(1), args.get(2)) else {
+        eprintln!("usage: sniff_stats <interface> <participant> <seconds> [min_udp_bytes]");
+        std::process::exit(2);
+    };
     let seconds: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10.0);
     let min_udp_bytes = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(200);
-    let mut captures = SniffCaptures::open(&args[1], 7400, 7400, 7700, min_udp_bytes, 4 << 20)?;
-    let mut sniffer = Sniffer::new(&args[2]);
+    // the module's defaults: domain 0's SPDP port, the user port range, a 4 MiB receive buffer
+    let mut captures = SniffCaptures::open(interface, 7400, 7400, 7700, min_udp_bytes, 4 << 20)?;
+    let mut sniffer = Sniffer::new(participant);
     let (start, mut first) = (Instant::now(), None::<Instant>);
     let (mut discovery_datagrams, mut datagrams, mut stamps, mut latencies_ms, mut max_accel) =
         (0u64, 0u64, Vec::new(), Vec::new(), 0.0f64);
-    while start.elapsed().as_secs_f64() < seconds {
-        let ready = wait_readable(&[&captures.discovery, &captures.data])?;
-        if ready[0] {
+    let deadline = start + Duration::from_secs_f64(seconds.max(0.0));
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        // wake at the deadline even when nothing arrives
+        let [discovery_ready, data_ready] =
+            wait_readable([&captures.discovery, &captures.data], Some(left))?;
+        if discovery_ready {
             discovery_datagrams += 1;
             let known = sniffer.prefix();
             drop(sniffer.feed(captures.discovery.next_udp_payload()?));
@@ -45,7 +53,7 @@ fn main() -> std::io::Result<()> {
                 captures.follow(prefix)?;
             }
         }
-        if !ready[1] {
+        if !data_ready {
             continue;
         }
         datagrams += 1;

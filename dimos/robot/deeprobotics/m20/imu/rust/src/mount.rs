@@ -43,9 +43,16 @@ pub fn imu_message(
         }
     };
     let mut orientation_covariance = [0.0; 9];
-    let orientation = match frame.orientation() {
-        Some([w, x, y, z]) => {
-            let q = UnitQuaternion::from_quaternion(Quaternion::new(w, x, y, z));
+    // a zero or non-finite quaternion (no fusion yet) would normalize to NaN: treat it as missing
+    let unit = frame.orientation().and_then(|[w, x, y, z]| {
+        let q = Quaternion::new(w, x, y, z);
+        let finite = [w, x, y, z].iter().all(|v| v.is_finite());
+        finite
+            .then(|| UnitQuaternion::try_new(q, f64::EPSILON))
+            .flatten()
+    });
+    let orientation = match unit {
+        Some(q) => {
             let q = if body_axes { q * mount.inverse() } else { q };
             geometry_msgs::Quaternion {
                 x: q.i,
@@ -192,5 +199,21 @@ mod tests {
         assert_eq!(msg.orientation_covariance[0], -1.0);
         assert_eq!(msg.angular_velocity_covariance[0], -1.0);
         assert_eq!(msg.linear_acceleration_covariance[0], -1.0);
+    }
+
+    #[test]
+    fn a_zero_quaternion_is_flagged_missing_not_nan() {
+        let msg = imu_message(
+            &Frame {
+                quaternion: Some([0.0; 4]),
+                ..Frame::default()
+            },
+            &UnitQuaternion::identity(),
+            true,
+            "imu_link",
+            0.0,
+        );
+        assert_eq!(msg.orientation_covariance[0], -1.0);
+        assert_eq!(msg.orientation.w, 1.0);
     }
 }

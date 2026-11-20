@@ -23,6 +23,7 @@ body IMU sniffer (vendor mode) or the Yesense serial module (rust mode). Line: `
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -46,18 +47,26 @@ def main(router: str = "tcp/127.0.0.1:7447") -> None:
     config.insert_json5("connect/endpoints", f'["{router}"]')
     config.insert_json5("scouting/multicast/enabled", "false")
     lock = threading.Lock()
+    reader_gone = threading.Event()
 
     def on_sample(sample: zenoh.Sample) -> None:
         text = line(sample.payload.to_bytes())
         with lock:
-            sys.stdout.write(text)
-            sys.stdout.flush()
+            try:
+                sys.stdout.write(text)
+                sys.stdout.flush()
+            except (BrokenPipeError, ValueError):
+                # imu_estop closed the pipe: an exception here would stay in zenoh's thread, so wake main to exit
+                reader_gone.set()
 
     session = zenoh.open(config)
     subscribers = [session.declare_subscriber(key, on_sample) for key in KEYS]
-    # runs until imu_estop closes the pipe (a write then fails) or kills it
-    threading.Event().wait()
+    # runs until imu_estop closes the pipe (the next write fails) or kills it
+    reader_gone.wait()
     del subscribers
+    session.close()
+    # stdout is already broken: skip the interpreter's final flush of it
+    os._exit(0)
 
 
 if __name__ == "__main__":

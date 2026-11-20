@@ -3795,9 +3795,9 @@ dependencies = [
 
 [[package]]
 name = "yesense-imu"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05952f1270525e862d6f89ec75c5cf403a9123910e698f2b9241c4a13e620370"
+checksum = "1610d6021c2225d6036822db0700785847a4494ada5f5dd2dcccd35ec435a0b0"
 dependencies = [
  "libc",
 ]
