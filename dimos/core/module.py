@@ -838,7 +838,19 @@ class Module(ModuleBase):
         try:
             hints = get_type_hints(cls, include_extras=True)
         except (NameError, AttributeError, TypeError):
+            # An unrelated forward reference can hide a bare port. Look up named
+            # classes without evaluating expressions or initializing deferred ports.
             hints = {}
+            for base in reversed(cls.__mro__):
+                module_vars = getattr(sys.modules.get(base.__module__), "__dict__", {})
+                for name, hint in inspect.get_annotations(base).items():
+                    if isinstance(hint, str):
+                        root, *path = hint.strip().strip("'\"").split(".")
+                        root = root.strip()
+                        hint = module_vars.get(root, vars(base).get(root))
+                        for part in path:
+                            hint = inspect.getattr_static(hint, part.strip(), None)
+                    hints[name] = hint if isinstance(hint, type) else None
 
         for name, ann in hints.items():
             origin = get_origin(ann)
@@ -846,6 +858,10 @@ class Module(ModuleBase):
                 # Set class-level attribute if not already set.
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
+            elif ann is In or ann is Out or ann is IO:
+                raise TypeError(
+                    f"{cls.__name__}.{name} needs a message type: use {ann.__name__}[MessageType]"
+                )
 
     def __init__(self, **kwargs: Any) -> None:
         self.ref = None
