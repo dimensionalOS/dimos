@@ -55,7 +55,7 @@ DIMOS_MID360_PCAP=<pcap-path> uv run dimos run mid360-pointlio-replay
 uv run dimos run mid360-pointlio-voxels --lidar-ip <lidar-ip>
 ```
 
-* Replay: the capture lasts about two minutes and ends with the log line `packet source ended`.
+* Replay: Rerun draws only the current scan, no map accumulates. The capture walks down about 7 m of stairs, so the scan sinks below the ground grid. It lasts two minutes and ends with the log line `packet source ended`. The stack then stays up idle until Ctrl+C.
 * Live: carry the sensor around the room.
 
 Expected result: in replay the scan follows the moving sensor while walls and stairs stay in place. Live, the log shows `mid360 configured and streaming` and `world/global_map` grows without smearing or drifting.
