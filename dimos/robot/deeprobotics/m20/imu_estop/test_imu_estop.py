@@ -20,6 +20,7 @@ from pathlib import Path
 import struct
 
 from dimos.robot.deeprobotics.m20.imu_estop.imu_estop import (
+    BodyImuSniffer,
     Estop,
     EstopConfig,
     HighGLatch,
@@ -126,3 +127,19 @@ def test_soft_estop_frame_is_motion_state_two() -> None:
     assert (magic.hex(), message_id, encoding, length) == ("eb91eb90", 7, 1, len(frame) - 16)
     device = json.loads(frame[16:])["PatrolDevice"]
     assert (device["Type"], device["Command"], device["Items"]) == (2, 22, {"MotionParam": 2})
+
+
+def test_body_imu_sniffer_decodes_the_vendor_sample_once() -> None:
+    """A real yesense_node SPDP announcement and Imu DATA captured on AOS loopback (2026-11-20)."""
+    here = Path(__file__).parent
+    spdp, imu = (
+        (here / "vendor_yesense_spdp_rtps.bin").read_bytes(),
+        (here / "vendor_imu_rtps.bin").read_bytes(),
+    )
+    sniffer = BodyImuSniffer("yesense")
+    assert list(sniffer.feed(imu)) == []
+    assert list(sniffer.feed(spdp)) == []
+    [(accel_g, gyro)] = list(sniffer.feed(imu))
+    assert abs(math.sqrt(sum(v * v for v in accel_g)) - 1.0) < 0.02
+    assert max(abs(v) for v in gyro) < 0.05
+    assert list(sniffer.feed(imu)) == []
