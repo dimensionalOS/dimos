@@ -106,6 +106,8 @@ class DimSlamLioConfig(NativeModuleConfig):
     # defaults); the filter's cost is linear in what is left.
     keep_every: int = Field(default=3, ge=1)
     scan_cube: float = Field(default=0.2, gt=0)
+    # Publish every Nth pose the filter makes (1 = all): lidars split into short slices make a pose per slice.
+    publish_every: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def _frames_are_distinct(self) -> DimSlamLioConfig:

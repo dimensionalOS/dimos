@@ -119,10 +119,14 @@ def m20_lidars(
     lidar: str = "lidar",
     imu: str = "lidar_imu",
     joint_state: str = "coordinator_joint_state",
+    namespace_suffix: str = "",
+    publish_mounts: bool = True,
     **overrides: Any,
 ) -> MetaBlueprint:
-    """Both M20Lidars, each namespaced, onto `lidar` and `imu` (their body filter reading `joint_state`); tf stays
-    global. `overrides` (e.g. voxel=0.1, body_filter_joint_source="joint_state") go to both."""
+    """Both M20Lidars, each namespaced (its frame + `namespace_suffix`), onto `lidar` and `imu` (their body filter
+    reading `joint_state`); tf stays global. A second pair on the same lidars takes a suffix and
+    `publish_mounts=False`, so each mount has one publisher. `overrides` (e.g. voxel=0.1,
+    body_filter_joint_source="joint_state") go to both."""
     if overrides.get("body_filter", True):
         # resolved here, where the blueprint is built, so the board running the lidars never loads the model
         urdf, standing = _m20_body()
@@ -139,7 +143,7 @@ def m20_lidars(
                 frame_id=frame,
                 # the samples are rotated into the lidar's axes, so they share its frame
                 imu_frame_id=frame,
-                mount_parent_frame_id="base_link",
+                mount_parent_frame_id="base_link" if publish_mounts else None,
                 **overrides,
             )
             .remappings(
@@ -149,6 +153,6 @@ def m20_lidars(
                     (M20Lidar, "joint_state", joint_state),
                 ]
             )
-            .namespace(frame, expose={lidar, imu, joint_state, "tf"})
+            .namespace(frame + namespace_suffix, expose={lidar, imu, joint_state, "tf"})
         )
     return autoconnect(*fragments)

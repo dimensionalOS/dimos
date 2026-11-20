@@ -42,6 +42,9 @@ struct DimSlamLioConfig {
     /// Scan thinning before fusion: every `keep_every`th usable point, then one per `scan_cube` m cube.
     keep_every: u32,
     scan_cube: f32,
+    /// Publish every this many poses the filter makes (1 = all), for lidars split into short slices.
+    #[validate(range(min = 1))]
+    publish_every: u64,
 }
 
 /// What `stats_every_scans` reports: handler seconds and arrival ages, per input, since the last report.
@@ -76,6 +79,7 @@ struct DimSlamLio {
 
     slam: Option<DimSlamCore>,
     stats: Stats,
+    poses: u64,
 }
 
 impl DimSlamLio {
@@ -142,6 +146,10 @@ impl DimSlamLio {
         let Some(estimate) = self.slam.as_mut().expect("setup ran").maybe_publish() else {
             return;
         };
+        self.poses += 1;
+        if self.poses % self.config.publish_every != 0 {
+            return;
+        }
         self.odometry
             .publish(&to_odometry_msg(&estimate))
             .await

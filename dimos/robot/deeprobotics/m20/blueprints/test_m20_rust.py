@@ -28,6 +28,7 @@ from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 from dimos.robot.deeprobotics.m20.blueprints.m20_rust import m20_rust
 from dimos.robot.deeprobotics.m20.blueprints.m20_slam import m20_dim_slam
 from dimos.robot.deeprobotics.m20.connection import M20Connection
+from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS, NOS_SLAM_CPUS
 from dimos.robot.deeprobotics.m20.model import M20StandingJointStateConfig
 
 _REVISION = "revision-1"
@@ -41,6 +42,7 @@ _HOSTS = (
     ),
 )
 _AOS_DRIVERS = {"front_lidar/m20lidar", "rear_lidar/m20lidar", "m20bodyimusniff", "m20camerarelay"}
+_NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslamlio"}
 
 
 def _solid(**choices: str) -> Blueprint:
@@ -82,8 +84,59 @@ def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(
 ) -> None:
     placement = _placement(_solid(**choices))
     assert {name for name, host in placement.items() if host == "aos"} == on_aos
-    assert {host for name, host in placement.items() if name not in on_aos} == {"gos"}
-    assert len(compile_fragments(_solid(**choices), placement, run_id="r", revision=_REVISION)) == 2
+    assert {name for name, host in placement.items() if host == "nos"} == _NOS_SLAM
+    assert {host for name, host in placement.items() if name not in on_aos | _NOS_SLAM} == {"gos"}
+    assert len(compile_fragments(_solid(**choices), placement, run_id="r", revision=_REVISION)) == 3
+
+
+def test_dimslam_on_gos_stays_selectable() -> None:
+    blueprint = _solid(M20Slam="gos")
+    placement = _placement(blueprint)
+    assert placement["dimslamlio"] == "gos"
+    assert "nos" not in placement.values()
+    assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
+    assert _topic(blueprint, "dimslamlio", "imu") == "lidar_imu"
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+    assert atoms["dimslamlio"].kwargs["cpus"] == list(GOS_SLAM_CPUS)
+
+
+def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
+    blueprint = _solid()
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+    slices = ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar")
+    for name in slices:
+        kwargs = atoms[name].kwargs
+        assert (_topic(blueprint, name, "lidar"), _topic(blueprint, name, "imu")) == (
+            "lidar_slices",
+            "lidar_slices_imu",
+        )
+        # raw slices, ~10 ms of the 10 Hz sweep each, at the same voxel as the full sweeps
+        assert kwargs["split_blocks"] == 179
+        assert kwargs["body_filter"] is False
+        assert kwargs["voxel"] == atoms["front_lidar/m20lidar"].kwargs["voxel"]
+    # each lidar is the same frame in both pairs: dimSLAM's lidar and IMU frames are the slices'
+    assert {atoms[n].kwargs["frame_id"] for n in slices} == {"front_lidar", "rear_lidar"}
+    assert _readers(blueprint, "lidar_slices") == {"dimslamlio"}
+    assert _readers(blueprint, "lidar_slices_imu") == {"dimslamlio"}
+    assert _readers(blueprint, "lidar") == {"raytracingvoxelmap", "premapmodule"}
+    assert _topic(blueprint, "dimslamlio", "odometry") == "slam_odom"
+    slam = atoms["dimslamlio"].kwargs
+    assert slam["cpus"] == list(NOS_SLAM_CPUS)
+    assert slam["publish_every"] >= 1
+
+
+@pytest.mark.parametrize("joints", ["standing", "ecan"])
+def test_every_lidar_mount_has_one_publisher(joints: str) -> None:
+    """Both pairs read the same two Airys; only AOS's publishes base_link -> lidar, so tf has one writer per edge."""
+    atoms = {atom.name: atom for atom in _solid(M20Joints=joints).active_blueprints}
+    publishers = [
+        atoms[name].kwargs["frame_id"]
+        for name in atoms
+        if name.endswith("m20lidar") and atoms[name].kwargs.get("mount_parent_frame_id")
+    ]
+    assert sorted(publishers) == ["front_lidar", "rear_lidar"]
+    for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+        assert atoms[name].kwargs["mount_parent_frame_id"] == "base_link"
 
 
 def _topic(blueprint: Blueprint, module: str, stream: str) -> object:
@@ -122,11 +175,10 @@ def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: s
     }
     # no separate filter: dimSLAM, the ray tracer and relocalization read the lidars' own stream
     assert "urdfmanagerpointclearing" not in atoms
-    assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
-    assert _topic(blueprint, "dimslamlio", "imu") == "lidar_imu"
+    assert _readers(blueprint, "lidar") == {"raytracingvoxelmap", "premapmodule"}
     streams = stream_name_types(blueprint)
     assert {("lidar", PointCloud2), ("lidar_imu", Imu), ("tf", TFMessage)} <= streams
-    assert not any(name.startswith(("front_lidar/", "rear_lidar/")) for name, _ in streams)
+    assert not any(name.startswith(("front_lidar", "rear_lidar")) for name, _ in streams)
     assert "lidar_raw" not in {name for name, _ in streams}
 
 
@@ -139,7 +191,7 @@ def test_the_python_filter_stays_selectable_between_lidar_raw_and_lidar(joints: 
         assert atoms[lidar].kwargs["body_filter"] is False
     assert _readers(blueprint, "lidar_raw") == {"urdfmanagerpointclearing"}
     assert _topic(blueprint, "urdfmanagerpointclearing", "filtered_pointcloud") == "lidar"
-    assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
+    assert _readers(blueprint, "lidar") == {"raytracingvoxelmap", "premapmodule"}
 
 
 def test_the_only_thinning_is_the_lidars_voxel_at_the_ray_tracers_voxel() -> None:
@@ -161,7 +213,7 @@ def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
     assert (slam["lidars"], slam["imus"]) == (expected["lidars"], expected["imus"])
     lidar_frames = {
         atoms[name].kwargs["imu_frame_id"]
-        for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar")
+        for name in ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar")
     }
     assert {imu.frame_id for imu in slam["imus"]} <= lidar_frames
     assert {lidar.frame_id for lidar in slam["lidars"]} == lidar_frames
@@ -192,8 +244,7 @@ def test_the_python_filter_matches_the_joint_source_it_is_given() -> None:
     assert "state_tolerance_s" not in ecan
 
 
-def test_dimslam_runs_alone_on_its_gos_cores() -> None:
-    from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS
-
+def test_dimslam_runs_on_nos_a76_cores() -> None:
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    assert atoms["dimslamlio"].kwargs["cpus"] == list(GOS_SLAM_CPUS)
+    assert atoms["dimslamlio"].kwargs["cpus"] == list(NOS_SLAM_CPUS)
+    assert all(4 <= cpu <= 7 for cpu in NOS_SLAM_CPUS)
