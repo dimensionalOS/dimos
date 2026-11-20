@@ -248,3 +248,16 @@ def test_dimslam_runs_on_nos_a76_cores() -> None:
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
     assert atoms["dimslamlio"].kwargs["cpus"] == list(NOS_SLAM_CPUS)
     assert all(4 <= cpu <= 7 for cpu in NOS_SLAM_CPUS)
+
+
+@pytest.mark.parametrize("slam", ["nos", "gos"])
+def test_every_lidar_config_m20_rust_builds_validates_as_its_board_will_parse_it(slam: str) -> None:
+    """A Host validates each module's config when it starts the fragment; nothing the blueprint sets may fail there."""
+    from dimos.robot.deeprobotics.m20.lidar import M20Lidar, M20LidarConfig
+
+    lidars = [atom for atom in _solid(M20Slam=slam).active_blueprints if atom.module is M20Lidar]
+    assert lidars
+    for atom in lidars:
+        M20LidarConfig(
+            **{key: value for key, value in atom.kwargs.items() if key != "instance_name"}
+        )

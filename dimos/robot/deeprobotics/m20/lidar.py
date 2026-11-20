@@ -57,7 +57,7 @@ class M20LidarConfig(AiryConfig):
     # The scans' frame, the IMU samples' frame, and the frame the mount is published from.
     frame_id: str
     imu_frame_id: str
-    mount_parent_frame_id: str
+    mount_parent_frame_id: str | None
     # Returns nearer than this (m) are dropped.
     min_distance: float = Field(default=0.1, ge=0)
     # The vendor driver's config.yaml: up to 60 m, PTP-synced lidar clock.
