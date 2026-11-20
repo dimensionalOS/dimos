@@ -46,6 +46,8 @@ class ImuConfig(BaseModel):
     # Random-walk variances of the gyro and accelerometer biases, per s^2.
     gyro_bias_random_walk: float = 0.0001
     accel_bias_random_walk: float = 0.0001
+    # s added to this IMU's stamps to put them on the lidars' clock (e.g. a host-stamped IMU next to PTP lidars).
+    time_offset_s: float = 0.0
 
 
 class LidarConfig(BaseModel):
