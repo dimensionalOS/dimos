@@ -45,10 +45,6 @@ class TopicCatalog:
         self._epoch = secrets.token_hex(6)
         self._revision = 0
 
-    def record(self, descriptor: TopicDescriptor) -> None:
-        """Record only data observed through an explicitly requested subscription."""
-        self.observe(descriptor.key, descriptor.encoding, descriptor.type)
-
     def _trim(self) -> None:
         while len(self._entries) > self._capacity:
             key, entry = self._entries.popitem(last=False)

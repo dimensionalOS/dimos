@@ -17,8 +17,10 @@
 import math
 import threading
 import time
+from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.transport_factory import make_transport
 from dimos.memory.store.memory import MemoryStore
@@ -272,6 +274,108 @@ class TestTBuffer:
 
 
 class TestMultiTBuffer:
+    @pytest.mark.parametrize(
+        ("parent_frame", "child_frame"),
+        [("world", "camera_optical"), ("camera_optical", "world")],
+    )
+    @pytest.mark.parametrize("forward_tolerance", [0.0, 0.001])
+    def test_lookup_before_first_transform_logs_debug(
+        self,
+        mocker: MockerFixture,
+        parent_frame: str,
+        child_frame: str,
+        forward_tolerance: float,
+    ) -> None:
+        logger = mocker.patch("dimos.protocol.tf.tf.logger")
+        buffer = MultiTBuffer()
+        buffer.receive_tfmessage(TFMessage())
+
+        assert (
+            buffer.get(
+                parent_frame, child_frame, time_point=T0, forward_tolerance=forward_tolerance
+            )
+            is None
+        )
+        logger.debug.assert_called_once()
+        logger.warning.assert_not_called()
+
+        logger.reset_mock()
+        buffer.receive_tfmessage(
+            TFMessage(_t(parent_frame, "base_link", 1.0, T0), _t("base_link", child_frame, 2.0, T0))
+        )
+        result = buffer.get(parent_frame, child_frame, time_point=T0)
+
+        assert result is not None
+        assert result.translation.x == pytest.approx(3.0)
+        assert logger.mock_calls == []
+
+    def test_first_transform_after_lookup_does_not_promote_startup_miss(
+        self, mocker: MockerFixture
+    ) -> None:
+        logger = mocker.patch("dimos.protocol.tf.tf.logger")
+
+        class PublishOnUnlockCondition(threading.Condition):
+            """Deliver TF at the first opportunity after a lookup releases its lock."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.depth = 0
+                self.published = False
+
+            def __enter__(self) -> bool:
+                acquired = super().__enter__()
+                self.depth += 1
+                return acquired
+
+            def __exit__(self, *args: Any) -> None:
+                self.depth -= 1
+                super().__exit__(*args)
+                if self.depth == 0 and not self.published:
+                    self.published = True
+                    buffer.receive_transform(_t("world", "camera_optical", 1.0, T0))
+
+        condition_factory = mocker.patch(
+            "dimos.protocol.tf.tf.threading.Condition", side_effect=PublishOnUnlockCondition
+        )
+        buffer = MultiTBuffer()
+        mocker.stop(condition_factory)
+
+        assert buffer.get("world", "camera_optical", time_point=T0) is None
+        logger.debug.assert_called_once()
+        logger.warning.assert_not_called()
+
+        result = buffer.get("world", "camera_optical", time_point=T0)
+        assert result is not None
+        assert result.translation.x == 1.0
+
+    @pytest.mark.parametrize(
+        ("child_frame", "time_offset"),
+        [("missing", 0.0), ("camera_optical", 20.0)],
+    )
+    def test_lookup_failure_after_first_transform_logs_warning(
+        self, mocker: MockerFixture, child_frame: str, time_offset: float
+    ) -> None:
+        logger = mocker.patch("dimos.protocol.tf.tf.logger")
+        buffer = MultiTBuffer()
+        buffer.receive_transform(_t("world", "camera_optical", 1.0, T0))
+
+        assert buffer.get("world", child_frame, time_point=T0 + time_offset) is None
+        logger.warning.assert_called_once()
+        logger.debug.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "transforms", [(), (Transform(frame_id="world", child_frame_id="camera_optical"),)]
+    )
+    def test_lookup_warn_false_suppresses_logs(
+        self, mocker: MockerFixture, transforms: tuple[Transform, ...]
+    ) -> None:
+        logger = mocker.patch("dimos.protocol.tf.tf.logger")
+        buffer = MultiTBuffer()
+        buffer.receive_transform(*transforms)
+
+        assert buffer.get("world", "missing", time_point=T0, warn=False) is None
+        assert logger.mock_calls == []
+
     def test_multiple_frame_pairs(self) -> None:
         ttbuffer = MultiTBuffer(buffer_size=10.0)
 
@@ -793,6 +897,17 @@ class TestStreamTF:
         assert tf.get_frames() == set()
         tf.get("map", "base", time_point=T0 + 5.0)
         assert tf.get_frames() == {"world", "map", "base"}
+
+    def test_cache_eviction_preserves_lookup_warnings(
+        self, store: MemoryStore, mocker: MockerFixture
+    ) -> None:
+        logger = mocker.patch("dimos.protocol.tf.tf.logger")
+        tf = StreamTF(store.stream("tf", TFMessage))
+        assert tf.get("map", "base", time_point=T0) is not None
+
+        assert tf.get("map", "base", time_point=T0 + 1000.0) is None
+        logger.warning.assert_called_once()
+        logger.debug.assert_not_called()
 
     def test_read_only(self, store) -> None:  # type: ignore[no-untyped-def]
         tf = StreamTF(store.stream("tf", TFMessage))

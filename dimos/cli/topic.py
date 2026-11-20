@@ -18,7 +18,7 @@ import importlib
 import pkgutil
 import re
 import time
-from typing import NoReturn
+from typing import NoReturn, TypeAlias
 
 import typer
 import zenoh
@@ -27,8 +27,13 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic, zenoh_prefix
 from dimos.msgs.helpers import resolve_msg_type
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+
+_MAX_LIST_ITEMS = 8
+
+_Field: TypeAlias = "DimosMsg | str | bytes | int | float | list[_Field] | tuple[_Field, ...]"
 
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",
@@ -82,12 +87,42 @@ def _split_topic(topic: str) -> tuple[str, type | None]:
     return name, msg_type
 
 
-def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
+def _decode_typed_lcm_message(channel: str, data: bytes) -> DimosMsg:
     _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
     cls = resolve_msg_type(msg_name)
     if cls is None:
         raise ValueError(f"Could not resolve message type from channel: {channel}")
     return cls.lcm_decode(data)
+
+
+def _format_message(msg: DimosMsg) -> str:
+    """Render a message as str() when its class defines one, else as TypeName(field=value, ...)."""
+    cls = type(msg)
+    if cls.__str__ is not object.__str__ or cls.__repr__ is not object.__repr__:
+        return str(msg)
+    names = [name for klass in reversed(cls.__mro__) for name in getattr(klass, "__slots__", ())]
+    names += getattr(msg, "__dict__", {})
+    fields = ", ".join(
+        f"{name}={_format_field(getattr(msg, name))}"
+        for name in dict.fromkeys(names)
+        if not name.startswith("_")
+    )
+    return f"{cls.__name__}({fields})"
+
+
+def _format_field(value: _Field) -> str:
+    if isinstance(value, (list, tuple)):
+        items = [_format_field(item) for item in value[:_MAX_LIST_ITEMS]]
+        if len(value) > _MAX_LIST_ITEMS:
+            items.append(f"... ({len(value) - _MAX_LIST_ITEMS} more)")
+        return "[" + ", ".join(items) + "]"
+    if isinstance(value, bytes):
+        return f"<{len(value)} bytes>"
+    if isinstance(value, str):
+        return repr(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    return _format_message(value)
 
 
 def _listen_forever(listening_msg: str) -> None:
@@ -107,9 +142,9 @@ def topic_echo(topic: str, type_name: str | None) -> None:
 
     # Typed mode: backend chosen by make_transport from global_config.
     if msg_type is not None:
-        transport: PubSubTransport[object] = make_transport(topic, msg_type)
+        transport: PubSubTransport[DimosMsg] = make_transport(topic, msg_type)
         with transport:
-            transport.subscribe(lambda msg: print(msg, flush=True))
+            transport.subscribe(lambda msg: print(_format_message(msg), flush=True))
             _listen_forever(
                 f"Listening on {topic} for {msg_type.__name__} messages... (Ctrl+C to stop)"
             )
@@ -131,7 +166,7 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
     typed_pattern = rf"^{re.escape(topic)}#.*"
 
     def on_msg(channel: str, data: bytes) -> None:
-        print(_decode_typed_lcm_message(channel, data), flush=True)
+        print(_format_message(_decode_typed_lcm_message(channel, data)), flush=True)
 
     bus = LCMPubSubBase()
     try:
@@ -156,7 +191,10 @@ def _topic_echo_inferred_zenoh(topic: str) -> None:
     bus = Zenoh()
     try:
         bus.start()
-        bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg, flush=True))  # type: ignore[arg-type]
+        bus.subscribe(
+            Topic(f"{key}/**"),  # type: ignore[arg-type]
+            lambda msg, _topic: print(_format_message(msg), flush=True),
+        )
 
         _listen_forever(
             f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "

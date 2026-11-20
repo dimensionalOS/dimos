@@ -20,6 +20,8 @@ from pathlib import Path
 
 import typer
 
+from dimos.utils.executable import find_executable
+
 
 def main(
     path: Path = typer.Argument(..., help="Recording (.db/.mcap) whose last map cloud to view"),
@@ -36,7 +38,11 @@ def main(
         None, "--out", help="Write a .rrd instead of opening the viewer"
     ),
 ) -> None:
-    """Load a recording's last map cloud and display it in rerun."""
+    """Load a recording's last map cloud and display it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.mapping.relocalization.module import load_premap
@@ -49,7 +55,7 @@ def main(
     if out is not None:
         rr.save(str(out))
     else:
-        rr.spawn()
+        rr.spawn(executable_path=find_executable("rerun"))
     rr.log(
         f"world/{path.name.split('.')[0]}/pointcloud",
         cloud.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),

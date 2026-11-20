@@ -23,7 +23,7 @@ from dimos.robot.manipulators.makermods_metal.blueprints.planning import (
 
 
 def test_planner_joint_names_gripper_task_and_can_selection_match():
-    blueprint = makermods_metal_planner_coordinator
+    blueprint = makermods_metal_planner_coordinator.solidify()
     parsed = BlueprintConfigParser(blueprint).parse(["--can-port", "serial123"], environ={})
     [planner] = [a for a in blueprint.blueprints if a.module is ManipulationModule]
     [coordinator] = [a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator)]

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.dim_slam.dim_slam import (
     CameraConfig,
@@ -148,7 +148,7 @@ def vis_nav(
     )
 
 
-def _d455_viewer() -> Blueprint:
+def _d455_viewer() -> MetaBlueprint:
     shared = _alfred_rerun_config()
     return vis_module(
         global_config.viewer,

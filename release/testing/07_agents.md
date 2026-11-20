@@ -7,7 +7,7 @@ Agent checks need the configured LLM credentials. Most run on replay data or in 
 Needs Ollama running (`ollama serve`) and `OPENAI_API_KEY`, since `SpeakSkill` speaks through OpenAI TTS. Run each stage below separately: `agent-send` returns when the message is sent, before the model has finished responding.
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3-vl:8b
 uv run dimos --replay run unitree-go2-agentic-ollama --daemon
 ```
 
@@ -50,21 +50,28 @@ Type these prompts in `humancli`, one at a time:
 
 Expected result: the first prompt shows two live tool boxes that stream at the same time. The second returns `Cannot start 'turn_in_place': capability 'movement' is held by 'start_patrol'. Call the appropriate stop tool first, then retry.` and the agent reports it without stopping the patrol. After the third the patrol box closes and the turn completes.
 
-## 7.3 Point navigation skill
+## 7.3 Point navigation RPC
 
 Needs the Habitat setup from the [Habitat check](08_navigation.md#87-habitat-simulation).
 
 ```bash
-uv run dimos run habitat-nav mcp-server
+uv run dimos run habitat-nav
 # In another terminal:
-uv run dimos mcp call go_to --arg x=<x> --arg y=<y>
-uv run dimos mcp call go_to --arg x=<x2> --arg y=<y2>
-uv run dimos mcp call stop_navigation
+uv run dimos shell
 ```
 
-* For each `<x>` and `<y>`, hover over a free spot on the planner surface a few metres away in Rerun and read its coordinates. Send the second goal after the robot arrives, and stop it on the way.
+* For each goal, hover over a free spot on the planner surface a few metres away in Rerun and read its coordinates. Send the second goal after the robot arrives, and stop it on the way.
 
-Expected result: each `go_to` prints a line starting with "Navigating." and draws a path. The robot stops at the first point, and `stop_navigation` prints "Stopped." and halts it short of the second.
+...in the shell:
+
+```python
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+app.MLSPlannerNative.go_to(PoseStamped(position=(<x>, <y>, <z>), frame_id="world"))
+app.MLSPlannerNative.go_to(PoseStamped(position=(<x2>, <y2>, <z2>), frame_id="world"))
+app.MLSPlannerNative.stop_navigation()
+```
+
+Expected result: each `go_to` draws a path. The robot stops at the first point, and `stop_navigation` halts it short of the second.
 
 ## 7.4 TypeSafe navigation agent
 
@@ -130,7 +137,7 @@ The live case needs the DimSim assets from the [DimSim check](02_replay-and-simu
 ```bash
 uv run dimos evals list
 uv run dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.question_answer
-DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
+DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.agent_adapter --set 'modules=["unitree-go2-agentic"]'
 ```
 
 Expected result: `list` prints the suites. The examples run prints `PASS` for both cases and a summary line that ends in the run directory, which holds `results.jsonl` and `summary.json`. In the live run the robot tours the apartment and drives to the bed, and `dimsim_go_to_bed` passes.

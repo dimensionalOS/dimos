@@ -714,6 +714,7 @@ mod tests {
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Mcap {
                 path: file.path().to_string_lossy().into_owned(),
+                attachments: vec![],
             },
             &[(*samples).clone()],
             1,
@@ -839,7 +840,10 @@ mod tests {
             let config = if sqlite {
                 store::RecordingStoreConfig::Sqlite { path }
             } else {
-                store::RecordingStoreConfig::Mcap { path }
+                store::RecordingStoreConfig::Mcap {
+                    path,
+                    attachments: vec![],
+                }
             };
             let mut store = store::open(&config, &[(*stream).clone()], 1).unwrap();
             store.write_batch(&observations).unwrap();

@@ -37,6 +37,7 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.webxr.controller_types import (
     BUTTON_ALIASES,
@@ -355,9 +356,9 @@ class Go2TeleopModule(WebXRTeleopModule):
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
 
-    def _on_joy_bytes(self, data: bytes) -> bool:
+    def _on_joy(self, msg: Joy) -> bool:
         try:
-            valid = super()._on_joy_bytes(data)
+            valid = super()._on_joy(msg)
         except ValueError:
             self._publish_safe_command()
             raise

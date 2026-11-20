@@ -67,6 +67,7 @@ def test_source_path_joining_defers_checkout(
     package_path = source / "packages" / "testbot_description"
 
     assert isinstance(model_path, RobotDescriptionPath)
+    assert not isinstance(model_path, dict)
     assert git_cache.resolve_calls == []
 
     assert str(model_path).endswith("robots/testbot/model.urdf")

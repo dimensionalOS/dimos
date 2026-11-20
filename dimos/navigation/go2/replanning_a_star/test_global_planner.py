@@ -13,14 +13,17 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star import global_planner
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
+from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner
 
 
 def test_find_wide_path_with_start_inside_inflation() -> None:
@@ -76,3 +79,62 @@ def test_replan_near_the_goal_ignores_the_height_of_the_robot() -> None:
     planner._replan_path()
 
     assert planner.is_goal_reached()
+
+
+@pytest.fixture
+def planner():
+    planner = GlobalPlanner(robot_width=0.3, robot_rotation_diameter=0.6)
+    yield planner
+    planner.stop()
+
+
+def test_first_goal_does_not_log_cancellation_but_explicit_cancel_does(planner, mocker):
+    log = mocker.patch.object(global_planner.logger, "info")
+    goal = PoseStamped(position=[1.0, 2.0, 0.0])
+
+    planner.handle_goal_request(goal)
+
+    log.assert_called_once_with("Got new goal", goal=str(goal))
+
+    planner.cancel_goal()
+
+    log.assert_called_with("Cancelling goal.", but_will_try_again=False, arrived=False)
+
+
+@pytest.mark.parametrize("distance", [0.3, 2.0], ids=["near", "far"])
+def test_goal_before_first_costmap_fails_and_can_be_retried(
+    planner: GlobalPlanner, mocker: MockerFixture, distance: float
+) -> None:
+    start_planning = mocker.patch.object(LocalPlanner, "start_planning")
+    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
+    goal = PoseStamped(position=[1.0 + distance, 1.0, 0.3], frame_id="world")
+    outcomes: list[bool] = []
+
+    with planner.goal_reached.subscribe(lambda msg: outcomes.append(msg.data)):
+        planner.handle_goal_request(goal)
+
+        assert outcomes == [False]
+        assert planner.get_state() == NavigationState.IDLE
+        assert not planner.is_goal_reached()
+        start_planning.assert_not_called()
+        # The failed goal must be cleared, not left pending until a map arrives.
+        planner.cancel_goal()
+        assert outcomes == [False]
+
+        planner.handle_global_costmap(
+            OccupancyGrid(
+                grid=np.zeros((50, 50), dtype=np.int8),
+                resolution=0.1,
+                origin=Pose(),
+                frame_id="world",
+            )
+        )
+        start_planning.assert_not_called()
+
+        planner.handle_goal_request(goal)
+
+        start_planning.assert_called_once()
+        path = start_planning.call_args.args[0]
+        assert path.poses[-1].x == pytest.approx(goal.x)
+        assert path.poses[-1].y == pytest.approx(goal.y)
+        assert outcomes == [False]

@@ -71,15 +71,15 @@ def _verify_sdk() -> str:
     return str(a1z.__file__)
 
 
-def _verify_adapter_import() -> str:
+def _verify_connection_import() -> str:
     try:
-        adapter = importlib.import_module("dimos.hardware.manipulators.galaxea_a1z.adapter")
+        connection = importlib.import_module("dimos.robot.manipulators.a1z.connection")
     except Exception as exc:
         raise RuntimeError(
-            f"A1Z adapter unavailable: {exc}. Install DimOS manipulation dependencies as "
+            f"A1Z connection unavailable: {exc}. Install DimOS manipulation dependencies as "
             f"described in {_A1Z_GUIDE}."
         ) from exc
-    return str(adapter.__file__)
+    return str(connection.__file__)
 
 
 def _verify_linux_dependencies() -> str:
@@ -97,9 +97,7 @@ def _macos_usb_modules() -> tuple[Any, Any, Any]:
         usb_backend = importlib.import_module("usb.backend.libusb1")
         usb_core = importlib.import_module("usb.core")
         importlib.import_module("gs_usb.gs_usb")
-        gs_usb_module = importlib.import_module(
-            "dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus"
-        )
+        gs_usb_module = importlib.import_module("dimos.robot.manipulators.a1z.gs_usb_bus")
     except Exception as exc:
         raise RuntimeError(
             f"macOS USB-CAN dependencies unavailable: {exc}. Install pyusb and gs-usb as "
@@ -284,7 +282,7 @@ def _verify_macos_can() -> str:
 def _doctor_checks(system: str, software_only: bool, interface: str) -> list[_Check]:
     checks: list[_Check] = [
         ("A1Z SDK", _verify_sdk),
-        ("DimOS A1Z adapter", _verify_adapter_import),
+        ("DimOS A1Z connection", _verify_connection_import),
     ]
     if system == "Linux":
         checks.append(("can-utils", _verify_linux_dependencies))

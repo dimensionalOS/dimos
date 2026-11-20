@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
@@ -35,7 +35,7 @@ _GRIPPERS = [
 ]
 
 
-def openarm_connection_control_blueprint() -> Blueprint:
+def openarm_connection_control_blueprint() -> MetaBlueprint:
     """Trajectories and the grippers, with the robot model served to clients."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
