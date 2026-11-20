@@ -56,8 +56,8 @@ JOINT_NAMES = [
 ]
 FIELDS = ("q", "dq", "q_cmd", "dq_cmd", "kp", "kd", "word")
 # the body IMU on the AOS board's DDS: a 56-byte sample (sec, nsec stamps, roll / pitch / yaw in degrees, gyro rad/s,
-# accelerometer m/s^2) published at 200 Hz to UDP 7441
-IMU_PORT = 7441
+# accelerometer m/s^2). In the 11-20 recordings it went to UDP 7441, a port that follows the reader's participant id,
+# so any port is taken (deduplicated by stamp)
 IMU_SAMPLE_BYTES = 56
 # velocity commands seen on the AOS board's DDS from NOS, by writer entity id: (x, y, yaw, z float index, metric).
 # The operator's /NAV_CMD (stamp, then x, y, yaw f32) is m/s and rad/s (rl_deploy's /REAL_STEER path, divided by the
@@ -149,9 +149,7 @@ def load_imu(session: Path, cache: Path) -> dict[str, np.ndarray]:
     if path.exists():
         return dict(np.load(path))
     rows: dict[float, tuple] = {}
-    for t, dport, p in pcap_udp(session / "net.pcap"):
-        if dport != IMU_PORT:
-            continue
+    for t, _dport, p in pcap_udp(session / "net.pcap"):
         for d in rtps_data(p):
             if len(d) != IMU_SAMPLE_BYTES:
                 continue

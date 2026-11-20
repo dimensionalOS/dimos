@@ -112,6 +112,8 @@ unwrap() {
 record() {
     local seconds=$1 stamp session start_ns end_ns tcpdump_pid rl_offset bs_offset bs_since
     shim_loaded || { echo "shim not loaded; run: $0 install" >&2; exit 1; }
+    # since 2026-11-21 yesense_node hands /IMU_DATA to rl_deploy over shared memory, which no capture sees
+    echo "note: the body IMU may be missing from net.pcap (vendor shared memory)" >&2
     stamp=$(date +%Y%m%d_%H%M%S)
     session="$dir/session_$stamp"
     mkdir -p "$session"
