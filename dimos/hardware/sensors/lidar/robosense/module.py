@@ -34,9 +34,10 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
@@ -94,11 +95,36 @@ class AiryConfig(NativeModuleConfig):
     imu_queue: int = Field(default=8, ge=1)
     # SO_RCVBUF for the point socket in bytes. None keeps the OS default.
     recv_buffer_bytes: int | None = None
+    # Cut the robot's own body (the URDF's collision geometry) out of each scan before it is published.
+    body_filter: bool = False
+    # The URDF's XML; its root link must be mount_parent_frame_id (the mount places the body around the lidar).
+    body_filter_urdf: str | None = None
+    # Distance (m) around the collision geometry that is cut too.
+    body_filter_padding_m: float = Field(default=0.01, ge=0.0)
+    # Only these links' collision geometry; None takes every link's.
+    body_filter_links: list[str] | None = None
+    # "fixed": body_filter_joint_positions for every scan; "joint_state": the joint_state sample nearest each scan.
+    body_filter_joint_source: Literal["fixed", "joint_state"] = "fixed"
+    body_filter_joint_positions: dict[str, float] = Field(default_factory=dict)
+    # How far (s) a joint state may be from a scan's stamp; a scan with none that close is dropped.
+    body_filter_state_tolerance_s: float = Field(default=0.02, ge=0.0)
+    # Seconds of joint states kept behind the newest.
+    body_filter_state_history_s: float = Field(default=5.0, gt=0.0)
+    # Scans between body-filter summary log lines; 0 logs none.
+    body_filter_stats_every: int = Field(default=100, ge=0)
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
         # The rust struct has every key. None crosses as an explicit null.
-        for key in ("group", "host_ip", "lidar_ip", "recv_buffer_bytes", "mount_parent_frame_id"):
+        for key in (
+            "group",
+            "host_ip",
+            "lidar_ip",
+            "recv_buffer_bytes",
+            "mount_parent_frame_id",
+            "body_filter_urdf",
+            "body_filter_links",
+        ):
             config[key] = getattr(self, key)
         # JSON arrays, as the rust [f64; 3] reads them
         for key in ("mount_xyz", "mount_rpy"):
@@ -119,6 +145,8 @@ class Airy(NativeModule, perception.Lidar, perception.IMU):
     lidar: Out[PointCloud2]
     imu: Out[Imu]
     tf: Out[TFMessage]
+    # the body filter's joint positions, with body_filter_joint_source="joint_state"
+    joint_state: In[JointState]
 
     @rpc
     def start(self) -> None:

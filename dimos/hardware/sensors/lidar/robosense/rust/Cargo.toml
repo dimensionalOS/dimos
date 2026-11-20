@@ -18,6 +18,7 @@ python = "dimos.hardware.sensors.lidar.robosense.module:Airy"
 
 [package.metadata.dimos.module.airy.inputs]
 tf = "tf2_msgs.TFMessage"
+joint_state = "sensor_msgs.JointState"
 
 [package.metadata.dimos.module.airy.outputs]
 lidar = "sensor_msgs.PointCloud2"
@@ -25,6 +26,7 @@ imu = "sensor_msgs.Imu"
 
 [dependencies]
 robosense-airy = "0.1"
+urdf-body-filter = "0.1"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }

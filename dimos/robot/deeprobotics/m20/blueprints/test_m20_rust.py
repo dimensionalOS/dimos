@@ -54,7 +54,11 @@ def _placement(blueprint: Blueprint) -> dict[str, str]:
 
 
 def test_no_vendor_bridge() -> None:
-    for blueprint in (_solid(), _solid(M20Joints="ecan", M20Cameras="off")):
+    for blueprint in (
+        _solid(),
+        _solid(M20Joints="ecan", M20Cameras="off"),
+        _solid(M20BodyFilter="python"),
+    ):
         assert M20Connection not in {atom.module for atom in blueprint.active_blueprints}
 
 
@@ -69,6 +73,8 @@ def test_no_vendor_bridge() -> None:
             _AOS_DRIVERS - {"m20camerarelay", "m20bodyimusniff"} | {"m20imu"},
         ),
         ({"M20BodyImu": "off"}, _AOS_DRIVERS - {"m20bodyimusniff"}),
+        ({"M20BodyFilter": "python"}, _AOS_DRIVERS),
+        ({"M20Joints": "ecan", "M20BodyFilter": "python"}, _AOS_DRIVERS | {"m20ecan"}),
     ],
 )
 def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(
@@ -84,10 +90,18 @@ def _topic(blueprint: Blueprint, module: str, stream: str) -> object:
     return blueprint.remapping_map.get((module, stream), stream)
 
 
-def test_raw_lidar_goes_only_into_the_body_filter_and_everything_else_takes_the_filtered_cloud() -> (
-    None
-):
-    blueprint = _solid()
+def _readers(blueprint: Blueprint, topic: str) -> set[str]:
+    return {
+        atom.name
+        for atom in blueprint.active_blueprints
+        for stream in atom.streams
+        if stream.direction == "in" and _topic(blueprint, atom.name, stream.name) == topic
+    }
+
+
+@pytest.mark.parametrize("joints", ["standing", "ecan"])
+def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: str) -> None:
+    blueprint = _solid(M20Joints=joints)
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
     for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
         assert (_topic(blueprint, lidar, "lidar"), _topic(blueprint, lidar, "imu")) == (
@@ -95,6 +109,10 @@ def test_raw_lidar_goes_only_into_the_body_filter_and_everything_else_takes_the_
             "lidar_imu",
         )
         assert _topic(blueprint, lidar, "tf") == "tf"
+        assert atoms[lidar].kwargs["body_filter_joint_source"] == (
+            "fixed" if joints == "standing" else "joint_state"
+        )
+        assert _topic(blueprint, lidar, "joint_state") == "coordinator_joint_state"
     assert {
         atoms["front_lidar/m20lidar"].kwargs["frame_id"],
         atoms["rear_lidar/m20lidar"].kwargs["frame_id"],
@@ -102,25 +120,26 @@ def test_raw_lidar_goes_only_into_the_body_filter_and_everything_else_takes_the_
         "front_lidar",
         "rear_lidar",
     }
-    readers_of_lidar = {
-        atom.name
-        for atom in blueprint.active_blueprints
-        for stream in atom.streams
-        if stream.direction == "in" and _topic(blueprint, atom.name, stream.name) == "lidar"
-    }
-    assert readers_of_lidar == {"urdfmanagerpointclearing"}
-    assert _topic(blueprint, "urdfmanagerpointclearing", "filtered_pointcloud") == "lidar_filtered"
-    for consumer in ("dimslamlio", "raytracingvoxelmap", "premapmodule"):
-        assert _topic(blueprint, consumer, "lidar") == "lidar_filtered"
+    # no separate filter: dimSLAM, the ray tracer and relocalization read the lidars' own stream
+    assert "urdfmanagerpointclearing" not in atoms
+    assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
     assert _topic(blueprint, "dimslamlio", "imu") == "lidar_imu"
     streams = stream_name_types(blueprint)
-    assert {
-        ("lidar", PointCloud2),
-        ("lidar_filtered", PointCloud2),
-        ("lidar_imu", Imu),
-        ("tf", TFMessage),
-    } <= streams
+    assert {("lidar", PointCloud2), ("lidar_imu", Imu), ("tf", TFMessage)} <= streams
     assert not any(name.startswith(("front_lidar/", "rear_lidar/")) for name, _ in streams)
+    assert "lidar_raw" not in {name for name, _ in streams}
+
+
+@pytest.mark.parametrize("joints", ["standing", "ecan"])
+def test_the_python_filter_stays_selectable_between_lidar_raw_and_lidar(joints: str) -> None:
+    blueprint = _solid(M20Joints=joints, M20BodyFilter="python")
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+        assert _topic(blueprint, lidar, "lidar") == "lidar_raw"
+        assert atoms[lidar].kwargs["body_filter"] is False
+    assert _readers(blueprint, "lidar_raw") == {"urdfmanagerpointclearing"}
+    assert _topic(blueprint, "urdfmanagerpointclearing", "filtered_pointcloud") == "lidar"
+    assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
 
 
 def test_the_only_thinning_is_the_lidars_voxel_at_the_ray_tracers_voxel() -> None:
@@ -161,10 +180,12 @@ def test_navigation_and_relocalization_match_m20() -> None:
         assert (rust[name].module, rust_kwargs) == (vendor[name].module, vendor_kwargs)
 
 
-def test_the_body_filter_matches_the_joint_source_it_is_given() -> None:
+def test_the_python_filter_matches_the_joint_source_it_is_given() -> None:
     """A fixed pose republished every period is matched within that period; ecan's 1 kHz state keeps the default."""
-    standing = {a.name: a for a in _solid().active_blueprints}["urdfmanagerpointclearing"].kwargs
-    ecan = {a.name: a for a in _solid(M20Joints="ecan").active_blueprints}[
+    standing = {a.name: a for a in _solid(M20BodyFilter="python").active_blueprints}[
+        "urdfmanagerpointclearing"
+    ].kwargs
+    ecan = {a.name: a for a in _solid(M20Joints="ecan", M20BodyFilter="python").active_blueprints}[
         "urdfmanagerpointclearing"
     ].kwargs
     assert standing["state_tolerance_s"] == M20StandingJointStateConfig().publish_period_s

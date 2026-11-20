@@ -1,0 +1,395 @@
+<robot name="M20">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.00355105878 0.00165075792 -0.00346462147" rpy="0 0 0" />
+      <mass value="15.882" />
+      <inertia ixx="0.087919" iyy="0.533522" izz="0.563492" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.75 0.09 0.14" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0.045 0" rpy="0 1.57079633 0" />
+      <geometry>
+        <cylinder radius="0.07" length="0.75" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -0.045 0" rpy="0 1.57079633 0" />
+      <geometry>
+        <cylinder radius="0.07" length="0.75" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="fl_hipx">
+    <inertial>
+      <origin xyz="-0.0111893 0.00891693 0.000405666" rpy="1.46779074 0.09726668 1.42898865" />
+      <mass value="0.259964" />
+      <inertia ixx="0.000374402" iyy="0.000286289" izz="0.000179309" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0.055 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.048" length="0.14" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_hipx_joint" type="revolute">
+    <origin xyz="0.3141 0.0685 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="fl_hipx" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.436" upper="0.611" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="fl_hipy">
+    <inertial>
+      <origin xyz="-0.00199375 0.098439 -0.130664" rpy="0.01493342 0.167744761 1.65331156" />
+      <mass value="2.618" />
+      <inertia ixx="0.0410181" iyy="0.0408067" izz="0.00297328" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="-0.01 0.11 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.07 0.02 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0.11 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.09" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_hipy_joint" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="fl_hipx" />
+    <child link="fl_hipy" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.286" upper="2.583" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="fl_knee">
+    <inertial>
+      <origin xyz="0.00341917 0.00269124 -0.181265" rpy="0.00901427203 0.139120739 1.7663415" />
+      <mass value="1.145" />
+      <inertia ixx="0.0121304" iyy="0.0117245" izz="0.000948105" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0.015 -0.015 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.06 0.025 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0.02 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.04" length="0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_knee_joint" type="revolute">
+    <origin xyz="0 0.0984 -0.25" rpy="0 0 0" />
+    <parent link="fl_hipy" />
+    <child link="fl_knee" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.809" upper="2.792" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="fl_wheel">
+    <inertial>
+      <origin xyz="-3.11398e-07 0.000279002 5.70329e-07" rpy="0 0 1.57079633" />
+      <mass value="0.638" />
+      <inertia ixx="0.002853" iyy="0.001535" izz="0.001535" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.09" length="0.054" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_wheel_joint" type="continuous">
+    <origin xyz="0 0.059676 -0.25" rpy="0 0 0" />
+    <parent link="fl_knee" />
+    <child link="fl_wheel" />
+    <axis xyz="0 -1 0" />
+    <limit effort="21.6" velocity="79.3" />
+  </joint>
+  <link name="fr_hipx">
+    <inertial>
+      <origin xyz="-0.0110901 -0.00875035 0.000521421" rpy="1.46779074 -0.09726668 1.712604" />
+      <mass value="0.259964" />
+      <inertia ixx="0.000374402" iyy="0.000286289" izz="0.000179309" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 -0.055 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.048" length="0.14" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_hipx_joint" type="revolute">
+    <origin xyz="0.3141 -0.0685 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="fr_hipx" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.611" upper="0.436" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="fr_hipy">
+    <inertial>
+      <origin xyz="-0.00229992 -0.0989709 -0.130925" rpy="-0.0021281273 -0.166288086 1.59429172" />
+      <mass value="2.618" />
+      <inertia ixx="0.0407542" iyy="0.040538" izz="0.00301281" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="-0.01 -0.11 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.07 0.02 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -0.11 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.09" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_hipy_joint" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="fr_hipx" />
+    <child link="fr_hipy" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.286" upper="2.583" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="fr_knee">
+    <inertial>
+      <origin xyz="0.00354945 -0.00247884 -0.180089" rpy="0.00872157377 -0.138176761 1.38004189" />
+      <mass value="1.145" />
+      <inertia ixx="0.0122564" iyy="0.0118448" izz="0.000951718" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0.015 0.015 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.06 0.025 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -0.02 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.04" length="0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_knee_joint" type="revolute">
+    <origin xyz="0 -0.0984 -0.25" rpy="0 0 0" />
+    <parent link="fr_hipy" />
+    <child link="fr_knee" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.809" upper="2.792" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="fr_wheel">
+    <inertial>
+      <origin xyz="-6.47327e-07 -0.000279012 -4.6242e-08" rpy="0 0 1.57079633" />
+      <mass value="0.638" />
+      <inertia ixx="0.002853" iyy="0.001535" izz="0.001535" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.09" length="0.054" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_wheel_joint" type="continuous">
+    <origin xyz="0 -0.059676 -0.25" rpy="0 0 0" />
+    <parent link="fr_knee" />
+    <child link="fr_wheel" />
+    <axis xyz="0 -1 0" />
+    <limit effort="21.6" velocity="79.3" />
+  </joint>
+  <link name="hl_hipx">
+    <inertial>
+      <origin xyz="0.0110901 0.00875014 0.000524884" rpy="1.67380191 0.09726668 1.712604" />
+      <mass value="0.259964" />
+      <inertia ixx="0.000374402" iyy="0.000286289" izz="0.000179309" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0.055 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.048" length="0.14" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hl_hipx_joint" type="revolute">
+    <origin xyz="-0.3141 0.0685 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="hl_hipx" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.436" upper="0.611" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="hl_hipy">
+    <inertial>
+      <origin xyz="0.00204343 0.0990227 -0.130697" rpy="-0.0229720599 0.16520595 1.43454499" />
+      <mass value="2.618" />
+      <inertia ixx="0.0408376" iyy="0.0406211" izz="0.00299727" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0.01 0.11 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.07 0.02 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0.11 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.09" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hl_hipy_joint" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="hl_hipx" />
+    <child link="hl_hipy" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.583" upper="2.286" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="hl_knee">
+    <inertial>
+      <origin xyz="-0.00354945 0.00247885 -0.180089" rpy="-0.00872157377 0.138176761 1.38004189" />
+      <mass value="1.145" />
+      <inertia ixx="0.0122564" iyy="0.0118448" izz="0.000951718" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="-0.015 0.015 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.06 0.025 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0.02 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.04" length="0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hl_knee_joint" type="revolute">
+    <origin xyz="0 0.0984 -0.25" rpy="0 0 0" />
+    <parent link="hl_hipy" />
+    <child link="hl_knee" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.792" upper="2.809" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="hl_wheel">
+    <inertial>
+      <origin xyz="-6.07889e-07 0.000279009 2.1049e-07" rpy="0 0 1.57079633" />
+      <mass value="0.638" />
+      <inertia ixx="0.002853" iyy="0.001535" izz="0.001535" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.09" length="0.054" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hl_wheel_joint" type="continuous">
+    <origin xyz="0 0.059676 -0.25" rpy="0 0 0" />
+    <parent link="hl_knee" />
+    <child link="hl_wheel" />
+    <axis xyz="0 -1 0" />
+    <limit effort="21.6" velocity="79.3" />
+  </joint>
+  <link name="hr_hipx">
+    <inertial>
+      <origin xyz="0.0110902 -0.00875012 0.000524937" rpy="1.67380191 -0.09726668 1.42898865" />
+      <mass value="0.259964" />
+      <inertia ixx="0.000374402" iyy="0.000286289" izz="0.000179309" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 -0.055 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.048" length="0.14" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hr_hipx_joint" type="revolute">
+    <origin xyz="-0.3141 -0.0685 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="hr_hipx" />
+    <axis xyz="-1 0 0" />
+    <limit lower="-0.611" upper="0.436" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="hr_hipy">
+    <inertial>
+      <origin xyz="0.001992 -0.0983704 -0.130561" rpy="-0.0143427058 -0.167976914 1.64971466" />
+      <mass value="2.618" />
+      <inertia ixx="0.0410109" iyy="0.0408028" izz="0.00297526" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0.01 -0.11 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.07 0.02 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -0.11 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.09" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hr_hipy_joint" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="hr_hipx" />
+    <child link="hr_hipy" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.583" upper="2.286" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="hr_knee">
+    <inertial>
+      <origin xyz="-0.00341053 -0.00270202 -0.181287" rpy="-0.00862347022 -0.139184921 1.76352037" />
+      <mass value="1.145" />
+      <inertia ixx="0.0121352" iyy="0.0117289" izz="0.000948904" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="-0.015 0.015 -0.125" rpy="0 0 0" />
+      <geometry>
+        <box size="0.06 0.025 0.25" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -0.02 -0.25" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.04" length="0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hr_knee_joint" type="revolute">
+    <origin xyz="0 -0.0984 -0.25" rpy="0 0 0" />
+    <parent link="hr_hipy" />
+    <child link="hr_knee" />
+    <axis xyz="0 -1 0" />
+    <limit lower="-2.792" upper="2.809" effort="76.4" velocity="79.3" />
+  </joint>
+  <link name="hr_wheel">
+    <inertial>
+      <origin xyz="6.09746e-07 -0.000279009 2.01314e-07" rpy="0 0 1.57079633" />
+      <mass value="0.638" />
+      <inertia ixx="0.002853" iyy="0.001535" izz="0.001535" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079633 0 0" />
+      <geometry>
+        <cylinder radius="0.09" length="0.054" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hr_wheel_joint" type="continuous">
+    <origin xyz="0 -0.059676 -0.25" rpy="0 0 0" />
+    <parent link="hr_knee" />
+    <child link="hr_wheel" />
+    <axis xyz="0 -1 0" />
+    <limit effort="21.6" velocity="79.3" />
+  </joint>
+</robot>
