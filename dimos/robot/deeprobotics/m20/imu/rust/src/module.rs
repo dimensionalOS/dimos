@@ -30,7 +30,7 @@ use crate::mount::{imu_message, mount_rotation};
 pub struct Config {
     /// Serial device and rate the Yesense streams on.
     device: String,
-    #[validate(range(min = 1))]
+    #[validate(range(min = 1, max = 4_294_967_295_i64))]
     baud: i64,
     /// The frame the samples are published in, and its parent.
     frame_id: String,
@@ -87,12 +87,13 @@ fn wall_s(time: SystemTime) -> f64 {
 /// Open the device, publish every frame stamped with its host receive time, reopen after an error.
 fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
     let mount = mount_rotation(config.mount_rpy_rad);
+    // the validator bounds these; a value that still does not fit falls back to the smallest legal one
     let serial = yesense_imu::Config {
         path: config.device.clone(),
-        baud: config.baud as u32,
-        read_chunk_bytes: config.read_chunk_bytes as usize,
+        baud: u32::try_from(config.baud).unwrap_or(1),
+        read_chunk_bytes: usize::try_from(config.read_chunk_bytes).unwrap_or(1),
         decoder: DecoderConfig {
-            max_buffered_bytes: config.max_buffered_bytes as usize,
+            max_buffered_bytes: usize::try_from(config.max_buffered_bytes).unwrap_or(0),
         },
     };
     loop {
@@ -120,6 +121,7 @@ fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
             }
             Err(error) => warn!(%error, device = %config.device, "cannot open the IMU"),
         }
+        // retry backoff, not load-bearing: the UART node is fixed, so there is no appearance to watch for
         std::thread::sleep(Duration::from_secs_f64(config.retry_s));
     }
 }

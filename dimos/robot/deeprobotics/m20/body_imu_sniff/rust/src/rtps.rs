@@ -33,6 +33,10 @@ pub struct Data<'a> {
     pub payload: &'a [u8],
 }
 
+fn array_at<const N: usize>(bytes: &[u8], at: usize) -> Option<[u8; N]> {
+    bytes.get(at..at.checked_add(N)?)?.try_into().ok()
+}
+
 fn u16_at(bytes: &[u8], at: usize, little: bool) -> Option<u16> {
     let b: [u8; 2] = bytes.get(at..at + 2)?.try_into().ok()?;
     Some(if little {
@@ -63,37 +67,47 @@ fn f64_at(bytes: &[u8], at: usize, little: bool) -> Option<f64> {
 /// Every DATA submessage in one RTPS message (an empty list for anything that is not RTPS).
 pub fn data_submessages(message: &[u8]) -> Vec<Data<'_>> {
     let mut found = Vec::new();
-    if message.len() < 20 || &message[..4] != b"RTPS" {
+    // RTPS header: "RTPS", version, vendor, GUID prefix (bytes 8..20)
+    let (Some(b"RTPS"), Some(mut prefix)) = (message.get(..4), array_at::<12>(message, 8)) else {
         return found;
-    }
-    let mut prefix: [u8; 12] = message[8..20].try_into().unwrap();
+    };
     let mut at = 20;
-    while at + 4 <= message.len() {
-        let (id, flags) = (message[at], message[at + 1]);
+    while let Some([id, flags]) = array_at::<2>(message, at) {
+        // E flag: this submessage's own endianness
         let little = flags & 1 == 1;
         let Some(length) = u16_at(message, at + 2, little) else {
             break;
         };
+        // length 0: the submessage runs to the end of the message (RTPS 9.4.5.1.3)
         let body_end = if length == 0 {
             message.len()
         } else {
-            (at + 4 + length as usize).min(message.len())
+            (at + 4 + usize::from(length)).min(message.len())
         };
-        let body = &message[at + 4..body_end];
+        let body = message.get(at + 4..body_end).unwrap_or_default();
         match id {
-            SUBMESSAGE_INFO_SRC if body.len() >= 20 => prefix = body[8..20].try_into().unwrap(),
+            // INFO_SRC: unused (4), version (2), vendor (2), GUID prefix (12)
+            SUBMESSAGE_INFO_SRC => {
+                if let Some(source) = array_at::<12>(body, 8) {
+                    prefix = source;
+                }
+            }
+            // DATA: extraFlags (2), octetsToInlineQos (2), readerId (4), writerId (4), writerSN high (4) low (4)
             SUBMESSAGE_DATA if body.len() >= 20 => {
                 let inline_qos = flags & 0x02 != 0;
                 let has_payload = flags & 0x0c != 0;
-                if let (false, true, Some(to_qos)) =
-                    (inline_qos, has_payload, u16_at(body, 2, little))
-                {
-                    let high = u32_at(body, 12, little).unwrap_or(0) as i32 as i64;
-                    let low = u32_at(body, 16, little).unwrap_or(0) as i64;
-                    if let Some(payload) = body.get(4 + to_qos as usize..) {
+                if let (false, true, Some(to_qos), Some(writer)) = (
+                    inline_qos,
+                    has_payload,
+                    u16_at(body, 2, little),
+                    array_at::<4>(body, 8),
+                ) {
+                    let high = i64::from(u32_at(body, 12, little).unwrap_or(0) as i32);
+                    let low = i64::from(u32_at(body, 16, little).unwrap_or(0));
+                    if let Some(payload) = body.get(4 + usize::from(to_qos)..) {
                         found.push(Data {
                             prefix,
-                            writer: body[8..12].try_into().unwrap(),
+                            writer,
                             sequence: (high << 32) | low,
                             payload,
                         });
@@ -112,22 +126,24 @@ pub fn data_submessages(message: &[u8]) -> Vec<Data<'_>> {
 
 /// The participant name (PID_ENTITY_NAME) an SPDP DATA carries.
 pub fn participant_name(data: &Data) -> Option<String> {
-    if data.writer != SPDP_WRITER || data.payload.len() < 4 {
+    if data.writer != SPDP_WRITER {
         return None;
     }
     // PL_CDR_BE = 0x0002, PL_CDR_LE = 0x0003
-    let little = data.payload[1] == 0x03;
-    let list = &data.payload[4..];
+    let little = *data.payload.get(1)? == 0x03;
+    let list = data.payload.get(4..)?;
     let mut at = 0;
     while at + 4 <= list.len() {
         let id = u16_at(list, at, little)?;
-        let length = u16_at(list, at + 2, little)? as usize;
+        let length = usize::from(u16_at(list, at + 2, little)?);
         if id == PID_SENTINEL {
             return None;
         }
         if id == PID_ENTITY_NAME {
-            let size = u32_at(list, at + 4, little)? as usize;
-            let text = list.get(at + 8..at + 8 + size)?;
+            // a CDR string (u32 size, bytes) that must stay inside its own parameter
+            let parameter = list.get(at + 4..at + 4 + length)?;
+            let size = usize::try_from(u32_at(parameter, 0, little)?).ok()?;
+            let text = parameter.get(4..4usize.checked_add(size)?)?;
             return Some(
                 String::from_utf8_lossy(text)
                     .trim_end_matches('\0')
@@ -161,15 +177,17 @@ pub fn decode_imu(payload: &[u8]) -> Option<ImuSample> {
         [0x00, 0x00] => false,
         _ => return None,
     };
-    let cdr = &payload[4..];
+    let cdr = payload.get(4..)?;
     let stamp_sec = u32_at(cdr, 0, little)? as i32;
     let stamp_nanosec = u32_at(cdr, 4, little)?;
-    let name_size = u32_at(cdr, 8, little)? as usize;
-    let name = cdr.get(12..12 + name_size)?;
+    let name_size = usize::try_from(u32_at(cdr, 8, little)?).ok()?;
+    let name_end = 12usize.checked_add(name_size)?;
+    let name = cdr.get(12..name_end)?;
     let frame_id = String::from_utf8_lossy(name)
         .trim_end_matches('\0')
         .to_string();
-    let mut at = (12 + name_size + 7) & !7;
+    // CDR aligns the doubles to 8 bytes from the start of the body
+    let mut at = name_end.checked_add(7)? & !7;
     let mut doubles = |n: usize| -> Option<Vec<f64>> {
         let values = (0..n)
             .map(|i| f64_at(cdr, at + 8 * i, little))
@@ -245,7 +263,9 @@ impl Sniffer {
             }
             if let Some(sample) = decode_imu(data.payload) {
                 if last > 0 {
-                    self.missed += data.sequence - last - 1;
+                    self.missed = self
+                        .missed
+                        .saturating_add(data.sequence.saturating_sub(last).saturating_sub(1));
                 }
                 self.last_sequence.insert(data.writer, data.sequence);
                 samples.push(sample);
@@ -316,5 +336,49 @@ mod tests {
     fn other_payloads_are_not_imu() {
         assert!(decode_imu(&[0, 1, 0, 0, 1, 2, 3]).is_none());
         assert!(data_submessages(b"not rtps").is_empty());
+    }
+
+    #[test]
+    fn truncated_or_bogus_input_never_panics() {
+        // payloads shorter than the encapsulation header used to slice past their end
+        for short in [&[0u8, 1][..], &[0, 0, 0], &[0, 1, 0, 0]] {
+            assert!(decode_imu(short).is_none());
+        }
+        // every prefix of the fixtures
+        for message in [IMU, SPDP] {
+            for cut in 0..message.len() {
+                for data in data_submessages(&message[..cut]) {
+                    let _ = participant_name(&data);
+                    let _ = decode_imu(data.payload);
+                }
+            }
+        }
+        // a huge frame_id length and an entity name longer than its parameter
+        assert!(
+            decode_imu(&[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff]).is_none()
+        );
+        let data = Data {
+            prefix: [0; 12],
+            writer: SPDP_WRITER,
+            sequence: 1,
+            payload: &[0, 3, 0, 0, 0x62, 0, 4, 0, 0xff, 0, 0, 0, b'x'],
+        };
+        assert_eq!(participant_name(&data), None);
+    }
+
+    #[test]
+    fn a_wild_sequence_jump_saturates_the_miss_count() {
+        let mut sniffer = Sniffer::new("yesense");
+        sniffer.feed(SPDP);
+        sniffer.missed = i64::MAX - 1;
+        let data = data_submessages(IMU);
+        let imu = data
+            .iter()
+            .find(|d| decode_imu(d.payload).is_some())
+            .unwrap();
+        assert!(imu.sequence > 3, "{}", imu.sequence);
+        sniffer.last_sequence.insert(imu.writer, 1);
+        assert_eq!(sniffer.feed(IMU).len(), 1);
+        assert_eq!(sniffer.missed, i64::MAX);
     }
 }

@@ -15,6 +15,11 @@
 //! The M20's body IMU sniffed passively off the vendor yesense_node's DDS samples (receive-only raw capture: no
 //! DDS participant, nothing sent, the serial port untouched).
 
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 #[cfg(target_os = "linux")]
 pub mod capture;
 pub mod module;

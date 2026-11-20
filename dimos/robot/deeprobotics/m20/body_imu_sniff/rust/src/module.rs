@@ -51,7 +51,7 @@ pub struct Config {
     /// The sensor's position in base_link (the samples are already base_link-aligned).
     imu_xyz: [f64; 3],
     /// The capture socket's receive buffer.
-    #[validate(range(min = 65536))]
+    #[validate(range(min = 65536, max = 2147483647))]
     recv_buffer_bytes: i64,
     /// Seconds between attempts to (re)open the capture.
     #[validate(range(min = 0.1, max = 60.0))]
@@ -97,7 +97,7 @@ pub fn imu_message(sample: &ImuSample, frame_id: &str) -> Imu {
             seq: 0,
             stamp: Time {
                 sec: sample.stamp_sec,
-                nsec: sample.stamp_nanosec as i32,
+                nsec: i32::try_from(sample.stamp_nanosec).unwrap_or(i32::MAX),
             },
             frame_id: frame_id.into(),
         },
@@ -118,23 +118,26 @@ fn sniff_forever(config: Config, output: Output<Imu>, handle: Handle) {
 
     loop {
         let mut sniffer = Sniffer::new(&config.participant);
+        // the validator bounds these to their ranges, so the fallbacks never apply
+        let port = |value: i64| u16::try_from(value).unwrap_or(u16::MAX);
         let opened = SniffCaptures::open(
             &config.interface,
-            config.discovery_port as u16,
-            config.port_min as u16,
-            config.port_max as u16,
-            config.min_udp_bytes as u16,
-            config.recv_buffer_bytes as usize,
+            port(config.discovery_port),
+            port(config.port_min),
+            port(config.port_max),
+            port(config.min_udp_bytes),
+            usize::try_from(config.recv_buffer_bytes).unwrap_or(0),
         );
         let error = match opened {
             Ok(mut captures) => {
                 info!(interface = %config.interface, participant = %config.participant, "capturing the vendor IMU samples");
                 loop {
-                    let ready = match wait_readable(&[&captures.discovery, &captures.data]) {
-                        Ok(ready) => ready,
-                        Err(error) => break error,
-                    };
-                    if ready[0] {
+                    let [discovery_ready, data_ready] =
+                        match wait_readable([&captures.discovery, &captures.data], None) {
+                            Ok(ready) => ready,
+                            Err(error) => break error,
+                        };
+                    if discovery_ready {
                         let known = sniffer.prefix();
                         match captures.discovery.next_udp_payload() {
                             Ok(payload) => drop(sniffer.feed(payload)),
@@ -148,7 +151,7 @@ fn sniff_forever(config: Config, output: Output<Imu>, handle: Handle) {
                             }
                         }
                     }
-                    if ready[1] {
+                    if data_ready {
                         let payload = match captures.data.next_udp_payload() {
                             Ok(payload) => payload,
                             Err(error) => break error,
@@ -166,6 +169,7 @@ fn sniff_forever(config: Config, output: Output<Imu>, handle: Handle) {
             Err(error) => error,
         };
         warn!(%error, "capture failed (it needs CAP_NET_RAW), reopening");
+        // retry backoff, not load-bearing: a missing capability or interface has no event to watch for
         std::thread::sleep(Duration::from_secs_f64(config.retry_s));
     }
 }

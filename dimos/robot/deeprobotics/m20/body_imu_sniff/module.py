@@ -52,7 +52,7 @@ class M20BodyImuSniffConfig(NativeModuleConfig):
     frame_id: str | None = IMU_FRAME
     parent_frame_id: str = "base_link"
     imu_xyz: tuple[float, float, float] = IMU_XYZ_M
-    recv_buffer_bytes: int = Field(default=4 << 20, ge=65536)
+    recv_buffer_bytes: int = Field(default=4 << 20, ge=65536, le=2147483647)
     retry_s: float = Field(default=2.0, ge=0.1, le=60.0)
     # Period of the static base_link -> imu_link transform.
     tf_period_s: float = Field(default=1.0, ge=0.01, le=60.0)

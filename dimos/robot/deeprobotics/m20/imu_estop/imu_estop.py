@@ -45,7 +45,6 @@ import socket
 import struct
 import subprocess
 import sys
-import time
 
 AIRY_IMU_LEN = 51
 AIRY_IMU_ID = bytes([0xAA, 0x55, 0x5A, 0x05])
@@ -195,8 +194,12 @@ def _spdp_name(payload: bytes) -> str | None:
         if pid == 0x0001:
             return None
         if pid == 0x0062:
-            size = struct.unpack(order + "I", payload[at + 4 : at + 8])[0]
-            return payload[at + 8 : at + 8 + size].rstrip(b"\0").decode(errors="replace")
+            # a CDR string (u32 size, bytes) inside its own parameter; a truncated one is no name
+            parameter = payload[at + 4 : at + 4 + length]
+            if len(parameter) < 4:
+                return None
+            size = struct.unpack(order + "I", parameter[:4])[0]
+            return parameter[4 : 4 + size].rstrip(b"\0").decode(errors="replace")
         at += 4 + length
     return None
 
@@ -296,9 +299,15 @@ def _open_capture(config: EstopConfig, odd_ports: bool, prefix: bytes | None) ->
 
 
 def _udp_payload(frame: bytes) -> bytes:
+    """The UDP payload of an Ethernet + IPv4 + UDP frame; empty for anything shorter."""
     ip = frame[14:]
+    if not ip:
+        return b""
     header = (ip[0] & 0x0F) * 4
-    length = struct.unpack(">H", ip[header + 4 : header + 6])[0]
+    length_bytes = ip[header + 4 : header + 6]
+    if header < 20 or len(length_bytes) < 2:
+        return b""
+    length = struct.unpack(">H", length_bytes)[0]
     return ip[header + 8 : header + length]
 
 
@@ -354,7 +363,12 @@ class Estop:
         os.makedirs(config.state_dir, exist_ok=True)
         if os.path.exists(config.latch_file):
             with open(config.latch_file) as f:
-                self.latch.tripped = json.load(f)
+                text = f.read()
+            try:
+                self.latch.tripped = json.loads(text)
+            except ValueError:
+                # a torn write still means a trip happened: stay latched
+                self.latch.tripped = {"unreadable_latch_file": text}
             self.log({"event": "start_latched", "tripped": self.latch.tripped})
 
     def log(self, record: dict) -> None:
@@ -555,14 +569,14 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "run":
         run(config)
         return
+    # clear the file here, so the result below never races the running e-stop; SIGUSR1 then clears its memory
+    if os.path.exists(config.latch_file):
+        os.remove(config.latch_file)
     try:
         with open(config.pid_file) as f:
             os.kill(int(f.read()), signal.SIGUSR1)
     except (OSError, ValueError):
-        # not running: clearing the file is the whole reset
-        if os.path.exists(config.latch_file):
-            os.remove(config.latch_file)
-    time.sleep(0.2)
+        pass  # not running: clearing the file is the whole reset
     print("latched:", os.path.exists(config.latch_file))
 
 
