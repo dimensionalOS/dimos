@@ -22,6 +22,14 @@
    (``gravity_poses.generate_poses``) the pose is marked, the arm ramps there
    (through home when the straight ramp would dip), holds, and dithers each
    measured joint +d then -d, holding after each; an end marker closes it.
+   The joints dithered are the spec's measured joints and every joint whose
+   gravity torque, with the masses the arm runs or with one column scale of
+   correction of a fitted link, varies by more than ``DITHER_MIN_SPAN_NM``
+   over the poses; the pose markers record them, and the fit measures them.
+   Each joint's d is 0.3 of its torque limit over its kp, so the spring
+   beats its friction, from ``dither_deg`` up to ``MAX_STEP_DEG``. A pair the
+   joint followed less than halfway is redone once at twice d, at most
+   ``MAX_STEP_DEG``.
    What the arm runs meanwhile is taken from the connection (``config_get``),
    not from the file on disk.
 3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``) against the
@@ -30,16 +38,19 @@
    than either on any joint and the operator agrees. It refuses to fit when
    the arm's calibration file on disk holds other masses than the arm runs.
 4. ``float_check``: floats each measured joint at up to two gravity poses
-   where its model gravity torque is largest and it is clear of its limits
-   (or at ``float_pose_deg``), and measures how far the fingertip drifts
-   (``float_analysis``); a joint with no gravity load anywhere is skipped,
-   and robots that do not compensate gravity cannot float.
+   where the gravity torque of the masses the arm runs is largest and it is
+   clear of its limits (or at ``float_pose_deg``), after resting there
+   ``hold_s``, and measures how far the fingertip drifts from the first limp
+   sample (``float_analysis``); a joint with no gravity load anywhere is
+   skipped, and robots that do not compensate gravity cannot float.
 5. ``step_sweep``: at the sweep pose (the gravity pose farthest from every
    joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
-   at each kp scale of its robot kp, with its robot kd times the square root
-   of the scale, holding after each step.
-6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``) and
-   saves and applies the gains the operator accepts.
+   at each candidate of a grid, kp scales of its robot kp by kd scales of its
+   robot kd (``step_analysis.gain_candidates``), holding after each step.
+6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``),
+   each joint's rest limit from its friction (the larger of what its sweep and
+   its gravity dithers show), and saves and applies the gains the operator
+   accepts.
 7. ``confirm_tracking``: revisits the held-out gravity poses with what is
    applied and compares how well the arm rests there with the gravity sweep's
    own rests at the same poses.
@@ -77,7 +88,7 @@ import uuid
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
     ArmSession,
@@ -94,14 +105,18 @@ from dimos.control.calibration.float_analysis import (
 )
 from dimos.control.calibration.gravity_fit import (
     COMPENSATION_KEY,
+    DITHERED_KEY,
+    END_LABEL,
     REPORT_DIR_NAME as GRAVITY_REPORT_DIR,
     Compensation,
     FitResult,
     calibration_from_fit,
     default_holdout,
+    dithered_arm,
     extract_measurements,
     fit_gravity,
     format_report,
+    median_friction,
     plot_resting_torque,
     recorded_compensation,
     save_refusals,
@@ -110,6 +125,7 @@ from dimos.control.calibration.gravity_fit import (
 )
 from dimos.control.calibration.gravity_poses import ArmModel, Pose, generate_poses
 from dimos.control.calibration.motion import (
+    MAX_STEP_DEG,
     MIN_JERK_PEAK_RATIO,
     joint_limits,
     limit_error,
@@ -142,7 +158,12 @@ from dimos.control.calibration.spec import (
     NoWorkspaceGuardError,
     urdf_limits,
 )
-from dimos.control.calibration.step_analysis import propose_gains
+from dimos.control.calibration.step_analysis import (
+    STUCK_FRACTION,
+    gain_candidates,
+    propose_gains,
+    sweep_friction_nm,
+)
 from dimos.control.calibration.step_report import (
     REPORT_DIR_NAME as STEP_REPORT_DIR,
     extract_steps,
@@ -150,7 +171,6 @@ from dimos.control.calibration.step_report import (
 )
 from dimos.control.connection.module_config import ConfigApplied, ConfigKeys
 
-END_LABEL = "end"
 # A reading this far past a joint limit fails the check.
 LIMIT_TOLERANCE_DEG = 2.0
 # The sweep pose keeps every joint this much farther from its limits than the
@@ -163,6 +183,8 @@ FLOAT_POSES_PER_JOINT = 2
 FLOAT_LIMIT_MARGIN_DEG = 5.0
 MIN_FLOAT_GRAVITY_NM = 0.2
 NO_GRAVITY_LOAD = "no gravity load to test"
+DITHER_TORQUE_FRACTION = 0.3
+DITHER_MIN_SPAN_NM = 0.1
 # Two link masses differ when any value differs by more than this.
 SAME_MASS_TOLERANCE = 1e-9
 
@@ -432,6 +454,46 @@ def _rms_table(
     }
 
 
+def dither_deg(kp: float | None, torque_limit_nm: float | None, smallest_deg: float) -> float:
+    if not kp or not torque_limit_nm:
+        return smallest_deg
+    spring_deg = math.degrees(DITHER_TORQUE_FRACTION * torque_limit_nm / kp)
+    return min(max(spring_deg, smallest_deg), MAX_STEP_DEG)
+
+
+def dithered_joints(arm: ArmModel, runs: ArmModel, poses: Sequence[Pose]) -> list[str]:
+    qs = [np.asarray(pose.joints_rad, dtype=np.float64) for pose in poses]
+    torque = np.array([runs.gravity(q) for q in qs])
+    sensitivity = np.array([arm.scaled_regressor(q, range(arm.dof)) for q in qs])
+    span = np.maximum(
+        torque.max(axis=0) - torque.min(axis=0),
+        (sensitivity.max(axis=0) - sensitivity.min(axis=0)).max(axis=1),
+    )
+    return [
+        name
+        for name, varies in zip(arm.joint_names, span, strict=True)
+        if name in arm.measured_joints or varies > DITHER_MIN_SPAN_NM
+    ]
+
+
+def dithers(
+    ctx: StepContext, applied: ArmConfigState | None, joints: Sequence[str]
+) -> dict[str, float]:
+    gains = {} if applied is None else applied.gains
+    return {
+        joint: dither_deg(
+            gains[joint].kp if joint in gains else ctx.spec.gains.get(joint, (None, None))[0],
+            ctx.spec.max_torque_nm[joint],
+            ctx.settings.dither_deg,
+        )
+        for joint in joints
+    }
+
+
+def _dithering(dither: Mapping[str, float]) -> str:
+    return ", ".join(f"{joint} by {round(d, 1):g} deg" for joint, d in dither.items())
+
+
 def gravity_poses(ctx: StepContext) -> list[Pose]:
     """This run's gravity identification poses, generated once when the sweep did not run."""
     run: RunState = ctx.run
@@ -518,8 +580,9 @@ def float_plan(
     """Per measured joint, where to float it: up to ``FLOAT_POSES_PER_JOINT`` of (name, pose, torque).
 
     The candidates are ``float_pose_deg`` when set, else this run's gravity
-    poses. Each joint floats where its model gravity torque is largest, with
-    it at least ``FLOAT_LIMIT_MARGIN_DEG`` from its limits. A joint whose
+    poses. Each joint floats where the gravity torque of the masses the arm
+    runs now (``config_get``) is largest, with it at least
+    ``FLOAT_LIMIT_MARGIN_DEG`` from its limits. A joint whose
     torque stays under ``MIN_FLOAT_GRAVITY_NM`` at every candidate, or that
     has no candidate clear of its limits, is returned in the second dict
     with why.
@@ -535,7 +598,10 @@ def float_plan(
         ]
     lower, upper = joint_limits(ctx.spec)
     margin = math.radians(FLOAT_LIMIT_MARGIN_DEG)
-    torques = [(name, q, arm.gravity(arm.q(q))) for name, q in candidates]
+    model = arm.model.copy()
+    apply_inertial_overrides(model, _links_of(_applied_now(ctx)))
+    applied = ArmModel(ctx.spec, model)
+    torques = [(name, q, applied.gravity(applied.q(q))) for name, q in candidates]
     plan: dict[str, list[tuple[str, Vector, float]]] = {}
     skipped: dict[str, str] = {}
     for joint in arm.measured_joints:
@@ -667,8 +733,9 @@ class GravityPosesStep(Step):
     instructions = (
         "Visits the gravity identification poses, ramping slowly and through home when the "
         "straight way would come close to the table. At each pose the arm rests, then every "
-        "joint that carries gravity moves a little up and back down, resting after each move, "
-        "so the fit can tell the model's error from friction. Keep clear of the arm."
+        "joint that carries gravity moves a little up and back down, far enough for its spring "
+        "to beat its friction, resting after each move, so the fit can tell the model's error "
+        "from friction. Keep clear of the arm."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -684,19 +751,25 @@ class GravityPosesStep(Step):
         poses = pose_set.identification
         applied = _applied_now(ctx)
         compensation = Compensation(_compensates_gravity(ctx.keys()), _links_of(applied))
-        dithers = len(arm.measured_joints) * 2 * settings.dither_hold_s
+        model = arm.model.copy()
+        apply_inertial_overrides(model, compensation.links)
+        dither = dithers(ctx, applied, dithered_joints(arm, ArmModel(ctx.spec, model), poses))
+        dithering = len(dither) * 2 * settings.dither_hold_s
         stops = [arm.home, *(np.asarray(p.joints_rad) for p in poses), arm.home]
         travel = sum(_ramp_s(a, b, settings.speed_deg_s) for a, b in itertools.pairwise(stops))
-        expected = travel + len(poses) * (settings.hold_s + dithers)
+        expected = travel + len(poses) * (settings.hold_s + dithering)
+        redone = expected + len(poses) * dithering
         ctx.confirm(
-            f"The arm will visit {len(poses)} poses, about {_minutes(expected)} of motion, "
-            f"dithering {', '.join(arm.measured_joints)} by {settings.dither_deg:g} deg at each. "
-            "Clear the workspace. Enter to start"
+            f"The arm will visit {len(poses)} poses, about {_minutes(expected)} of motion "
+            f"({_minutes(redone)} if every dither is redone), "
+            f"dithering {_dithering(dither)} at each. Clear the workspace. Enter to start"
         )
         log = TrackingLog(ctx.spec.joint_names)
         visited: list[Vector] = []
         skipped: list[str] = []
         unreachable: list[str] = []
+        retried: list[str] = []
+        pairs = 0
         first: float | None = None
         with ctx.session() as session:
             session.move_to(arm.home)
@@ -723,6 +796,7 @@ class GravityPosesStep(Step):
                             "index": index,
                             "targets_deg": [math.degrees(v) for v in target],
                             COMPENSATION_KEY: compensation.as_data(),
+                            DITHERED_KEY: list(dither),
                         },
                     )
                     first = t0 if first is None else first
@@ -731,10 +805,14 @@ class GravityPosesStep(Step):
                         session.ramp_to(waypoint, log)
                     visited.append(target)
                     session.hold(settings.hold_s, log)
-                    for joint in arm.measured_joints:
-                        for sign in (1.0, -1.0):
-                            session.step_joint(
-                                joint, sign * settings.dither_deg, settings.dither_hold_s
+                    for joint, d in dither.items():
+                        pairs += 1
+                        if self._pair(session, joint, d, settings.dither_hold_s) < (
+                            STUCK_FRACTION * d
+                        ):
+                            retried.append(f"{pose.name} {joint}")
+                            self._pair(
+                                session, joint, min(2.0 * d, MAX_STEP_DEG), settings.dither_hold_s
                             )
             finally:
                 if first is not None:
@@ -748,6 +826,8 @@ class GravityPosesStep(Step):
         data = {
             "poses": len(visited),
             "planned": len(poses),
+            "dither_deg": {joint: round(d, 3) for joint, d in dither.items()},
+            "retried": retried,
             "skipped": skipped,
             "unreachable": unreachable,
             "rank": pose_set.rank,
@@ -757,7 +837,19 @@ class GravityPosesStep(Step):
             "calibration": None if file is None else file.path,
             "calibration_sha256": None if file is None else file.sha256,
         }
-        return StepResult(f"visited {len(visited)} of {len(poses)} poses", data)
+        return StepResult(
+            f"visited {len(visited)} of {len(poses)} poses, dithering {_dithering(dither)}; "
+            f"redid {len(retried)} of {pairs} dither pairs at twice the amplitude",
+            data,
+        )
+
+    @staticmethod
+    def _pair(session: ArmSession, joint: str, d: float, hold_s: float) -> float:
+        i = session.joint_names.index(joint)
+        session.step_joint(joint, d, hold_s)
+        up = float(session.measured[i])
+        session.step_joint(joint, -d, hold_s)
+        return math.degrees(up - float(session.measured[i]))
 
 
 class GravityFitStep(Step):
@@ -789,18 +881,21 @@ class GravityFitStep(Step):
         ctx.say("reading the recording")
         recording.wait_for(span[1])
         grec = recording.gravity(span[0], span[1])
-        measurements, incomplete = extract_measurements(grec, ctx.spec)
+        arm = dithered_arm(ctx.arm, grec)
+        measurements, incomplete, stuck = extract_measurements(grec, arm.spec)
         if not measurements:
-            raise StepFailedError("the recording holds no paired dithers to fit")
+            raise StepFailedError(
+                f"the recording holds no paired dithers to fit ({len(incomplete)} incomplete)"
+            )
         compensation = recorded_compensation(grec)
         if compensation is None:
             raise StepFailedError("the recording does not say what gravity the poses ran with")
         try:
-            errors = to_urdf_error(ctx.arm, measurements, compensation)
+            errors = to_urdf_error(arm, measurements, compensation)
         except ValueError as error:
             raise StepFailedError(f"cannot model the masses the sweep ran: {error}")
         ctx.say(f"fitting {len(measurements)} measurements")
-        result = fit_gravity(ctx.arm, errors, incomplete_pairs=incomplete)
+        result = fit_gravity(arm, errors, incomplete_pairs=incomplete, stuck_pairs=stuck)
         ctx.check_abort()
         # The raw resting torque is the error of the masses the arm ran.
         running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)
@@ -824,6 +919,8 @@ class GravityFitStep(Step):
             "holdout_poses": list(result.holdout_poses),
             "measurements": len(measurements),
             "incomplete_pairs": len(incomplete),
+            "stuck_pairs": len(stuck),
+            "held_joints": {joint: round(v, 4) for joint, v in result.held_joints.items()},
             "report": None,
             "saved": None,
         }
@@ -833,8 +930,14 @@ class GravityFitStep(Step):
             f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
             for joint, row in holdout.items()
         )
+        left_out = "".join(
+            [
+                f"; {len(stuck)} stuck dither pairs kept" if stuck else "",
+                f"; {len(incomplete)} incomplete dither pairs left out" if incomplete else "",
+            ]
+        )
         if refusals:
-            return StepResult(f"not saved: {'; '.join(refusals)}", data)
+            return StepResult(f"not saved: {'; '.join(refusals)}{left_out}", data)
         bounds = f"; at bounds: {'; '.join(result.at_bounds)}" if result.at_bounds else ""
         try:
             ctx.confirm(
@@ -858,7 +961,9 @@ class GravityFitStep(Step):
         )
         data.update(_save(ctx, patch))
         outcome = "applied" if data["applied"] else "not applied"
-        return StepResult(f"saved {data['saved']} and {outcome}; held-out RMS {table}", data)
+        return StepResult(
+            f"saved {data['saved']} and {outcome}; held-out RMS {table}{left_out}", data
+        )
 
     @staticmethod
     def _write_report(
@@ -880,7 +985,8 @@ class FloatCheckStep(Step):
     instructions = (
         "Each joint that carries gravity goes limp in turn, held up by gravity compensation "
         "alone, at the gravity poses where it carries the most (or at the float pose, if one "
-        "is set), and the fingertip's drift is measured; a good gravity model keeps it under "
+        "is set). The arm rests at the pose first; the fingertip's drift is measured from the "
+        "moment the joint goes limp, and a good gravity model keeps it under "
         f"{DRIFT_LIMIT_MM:g} mm. A joint with no gravity load anywhere is skipped. You confirm "
         "each move. Be ready to support the arm: a joint that drifts or speeds up is held "
         "again at once."
@@ -908,7 +1014,7 @@ class FloatCheckStep(Step):
             skipped = f"; {', '.join(no_load)} skipped ({NO_GRAVITY_LOAD})" if no_load else ""
             ctx.confirm(
                 f"{floats} floats of {', '.join(plan)} at {where}, "
-                f"{settings.float_settle_s + settings.float_window_s:g} s each{skipped}. You "
+                f"{settings.hold_s + settings.float_window_s:g} s each{skipped}. You "
                 "confirm each move. Clear the workspace. Enter to start"
             )
             last: str | None = None
@@ -935,6 +1041,7 @@ class FloatCheckStep(Step):
                             rows.append({**row, "skipped": True})
                             continue
                         session.move_to(pose)
+                        session.hold(settings.hold_s)
                         last = name
                         # Ending the float holds the joint again where it is; the next
                         # move takes every joint to the next pose.
@@ -982,8 +1089,6 @@ class FloatCheckStep(Step):
         settings = ctx.settings
         try:
             with session.floating(joint, settings.float_kd) as kd:
-                if settings.float_settle_s > 0.0:
-                    session.float_window(joint, settings.float_settle_s)
                 event = session.mark_float(ctx.side, index, settings.float_window_s, kd)
                 t, q = session.float_window(joint, settings.float_window_s)
         except JointDriftedError as drifted:
@@ -993,24 +1098,24 @@ class FloatCheckStep(Step):
 
 
 class StepSweepStep(Step):
-    """The gain sweep: each joint steps at each kp scale, at a pose clear of every limit.
+    """The gain sweep: each joint steps at each candidate gain pair, at a pose clear of every limit.
 
     Home sits on a joint limit on several arms (the Metal's and B601's
     shoulder and elbow, the OpenArm's elbow), where half the steps would pass
-    the limit, so the sweep runs at :func:`sweep_pose`. At kp scale ``s`` a
-    joint is held with ``kp0 * s`` and ``kd0 * sqrt(s)``, as the bench sweep
-    did, keeping its damping ratio; the connection clamps kd to the MIT
-    frame's 5 N m s/rad, so a joint already at 5 stays there. ``pick_gains``
-    takes a scale only when every lower scale on that joint passed too.
+    the limit, so the sweep runs at :func:`sweep_pose`. A joint's candidates
+    are its robot ``kp0`` times each kp scale by its robot ``kd0`` times each
+    kd scale, kd clamped to the MIT frame's 5 N m s/rad and duplicates
+    dropped (``gain_candidates``); the robot's own gains go first, as
+    ``sweep_friction_nm`` reads the joint's friction off them.
     """
 
     id = "step_sweep"
     title = "Gain sweep"
     instructions = (
         "The arm moves to the sweep pose (clear of every joint limit), and every joint in turn "
-        "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness (multiples of its "
-        "robot kp, its robot kd times the square root of the multiple), resting after each "
-        "step. The gains go back when each joint is done, and the arm returns home."
+        "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness and damping "
+        "(multiples of its robot kp by multiples of its robot kd), resting after each step. "
+        "The gains go back when each joint is done, and the arm returns home."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1020,17 +1125,26 @@ class StepSweepStep(Step):
     def run(self, ctx: StepContext) -> StepResult:
         ctx.require_recording()
         settings, spec = ctx.settings, ctx.spec
-        scales = settings.kp_scales
         deltas = settings.step_deltas_deg
         pose, where = sweep_pose(ctx)
-        per_joint = len(scales) * len(deltas) * settings.step_hold_s
+        applied = _applied_now(ctx)
+        held = {} if applied is None else {j: (g.kp, g.kd) for j, g in applied.gains.items()}
+        candidates = {
+            joint: gain_candidates(
+                *(spec.gains.get(joint) or held[joint]), settings.kp_scales, settings.kd_scales
+            )
+            for joint in spec.joint_names
+        }
+        steps = sum(len(pairs) for pairs in candidates.values()) * len(deltas)
         ctx.confirm(
             f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
             f"deg/s; there each of the {len(spec.joint_names)} joints will step "
             f"{', '.join(f'{d:+g}' for d in deltas)} deg at kp x "
-            f"{', '.join(f'{s:g}' for s in scales)} (kd x the square root), about "
-            f"{_minutes(per_joint * len(spec.joint_names))}, then it returns home. Clear the "
-            "workspace. Enter to start"
+            f"{', '.join(f'{s:g}' for s in settings.kp_scales)} by kd x "
+            f"{', '.join(f'{s:g}' for s in settings.kd_scales)} "
+            f"({', '.join(f'{j} {len(p)}' for j, p in candidates.items())} candidates), "
+            f"{steps} steps, about {_minutes(steps * settings.step_hold_s)}, then it returns "
+            "home. Clear the workspace. Enter to start"
         )
         swept: dict[str, list[list[float]]] = {}
         start: float | None = None
@@ -1043,15 +1157,15 @@ class StepSweepStep(Step):
                     if settings.confirm_each:
                         try:
                             ctx.confirm(
-                                f"{joint}: {len(scales) * len(deltas)} steps. Enter to step it"
+                                f"{joint}: {len(candidates[joint]) * len(deltas)} steps. Enter "
+                                "to step it"
                             )
                         except SkipRequestedError:
                             continue
-                    kp0, kd0 = spec.gains.get(joint, session.gains(joint))
                     swept[joint] = []
                     try:
-                        for scale in scales:
-                            kp, kd = session.set_gains(joint, kp0 * scale, kd0 * math.sqrt(scale))
+                        for pair in candidates[joint]:
+                            kp, kd = session.set_gains(joint, *pair)
                             swept[joint].append([kp, kd])
                             for delta in deltas:
                                 session.step_joint(joint, delta, settings.step_hold_s)
@@ -1066,7 +1180,8 @@ class StepSweepStep(Step):
             session.move_to(ctx.arm.home)
         data = {
             "joints": swept,
-            "kp_scales": list(scales),
+            "kp_scales": list(settings.kp_scales),
+            "kd_scales": list(settings.kd_scales),
             "steps_deg": list(deltas),
             "pose": where,
             "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
@@ -1079,9 +1194,10 @@ class PickGainsStep(Step):
     id = "pick_gains"
     title = "Pick gains"
     instructions = (
-        "Scores every step of the gain sweep (settling time, overshoot, resting error, buzz) "
-        "and proposes, for each joint, the stiffest gains whose steps all passed, with every "
-        "softer one passing too. Accepted gains are saved with the gravity fit and applied."
+        "Scores every step of the gain sweep and proposes, for each joint, the gains that rest "
+        "closest to target for their friction and settle fastest, among those that never stick, "
+        "overshoot more than 20 % or buzz. Accepted gains are saved with the gravity fit and "
+        "applied."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1096,8 +1212,14 @@ class PickGainsStep(Step):
         ctx.say("reading the recording")
         recording.wait_for(span[1])
         steps = recording.steps(span[0], span[1])
-        records = [r for r in extract_steps(steps) if r.event.joint in ctx.spec.joint_names]
+        dither = self._dither_friction(ctx)
+        records = [
+            r
+            for r in extract_steps(steps, dither_friction_nm=dither)
+            if r.event.joint in ctx.spec.joint_names
+        ]
         proposals = propose_gains(record.metrics for record in records)
+        swept = sweep_friction_nm(record.metrics for record in records)
         if recording.directory is not None:
             out = recording.directory / STEP_REPORT_DIR
             out.mkdir(parents=True, exist_ok=True)
@@ -1106,13 +1228,26 @@ class PickGainsStep(Step):
             joint: {
                 "kp": proposal.kp,
                 "kd": proposal.kd,
+                "friction_nm": round(proposal.friction_nm, 3),
                 "reason": proposal.reason,
                 "rejected": dict(proposal.rejected),
             }
             for joint, proposal in sorted(proposals.items())
         }
+        friction = {
+            joint: {
+                "sweep": None if joint not in swept else round(swept[joint], 3),
+                "dither": None if joint not in dither else round(dither[joint], 3),
+            }
+            for joint in sorted(proposals)
+        }
         chosen = {joint: p.gains for joint, p in proposals.items() if p.gains is not None}
-        data: dict[str, Any] = {"proposals": rows, "steps": len(records), "saved": None}
+        data: dict[str, Any] = {
+            "proposals": rows,
+            "friction_nm": friction,
+            "steps": len(records),
+            "saved": None,
+        }
         if not chosen:
             return StepResult("no gains passed every step; nothing to save", data)
         listed = ", ".join(f"{j} kp={g[0]:g} kd={g[1]:g}" for j, g in sorted(chosen.items()))
@@ -1127,6 +1262,15 @@ class PickGainsStep(Step):
         # runs on the file's gains, as it should.
         data.update(_save(ctx, ArmConfigPatch(arm_id=ctx.spec.arm_id, gains=gains)))
         return StepResult(f"saved gains for {sorted(chosen)} to {data['saved']}", data)
+
+    @staticmethod
+    def _dither_friction(ctx: StepContext) -> dict[str, float]:
+        span, recording = ctx.run.gravity_span, ctx.recording
+        if span is None or recording is None:
+            return {}
+        grec = recording.gravity(*span)
+        measurements, _, _ = extract_measurements(grec, dithered_arm(ctx.arm, grec).spec)
+        return median_friction(measurements)
 
 
 class ConfirmTrackingStep(Step):
