@@ -22,6 +22,10 @@
    (``gravity_poses.generate_poses``) the pose is marked, the arm ramps there
    (through home when the straight ramp would dip), holds, and dithers each
    measured joint +d then -d, holding after each; an end marker closes it.
+   The joints dithered are the spec's measured joints and every joint whose
+   gravity torque, with the masses the arm runs or with one column scale of
+   correction of a fitted link, varies by more than ``DITHER_MIN_SPAN_NM``
+   over the poses; the pose markers record them, and the fit measures them.
    Each joint's d is 0.3 of its torque limit over its kp, so the spring
    beats its friction, from ``dither_deg`` up to ``MAX_STEP_DEG``. A pair the
    joint followed less than halfway is redone once at twice d, at most
@@ -101,12 +105,14 @@ from dimos.control.calibration.float_analysis import (
 )
 from dimos.control.calibration.gravity_fit import (
     COMPENSATION_KEY,
+    DITHERED_KEY,
     END_LABEL,
     REPORT_DIR_NAME as GRAVITY_REPORT_DIR,
     Compensation,
     FitResult,
     calibration_from_fit,
     default_holdout,
+    dithered_arm,
     extract_measurements,
     fit_gravity,
     format_report,
@@ -178,6 +184,7 @@ FLOAT_LIMIT_MARGIN_DEG = 5.0
 MIN_FLOAT_GRAVITY_NM = 0.2
 NO_GRAVITY_LOAD = "no gravity load to test"
 DITHER_TORQUE_FRACTION = 0.3
+DITHER_MIN_SPAN_NM = 0.1
 # Two link masses differ when any value differs by more than this.
 SAME_MASS_TOLERANCE = 1e-9
 
@@ -454,7 +461,24 @@ def dither_deg(kp: float | None, torque_limit_nm: float | None, smallest_deg: fl
     return min(max(spring_deg, smallest_deg), MAX_STEP_DEG)
 
 
-def dithers(ctx: StepContext, applied: ArmConfigState | None) -> dict[str, float]:
+def dithered_joints(arm: ArmModel, runs: ArmModel, poses: Sequence[Pose]) -> list[str]:
+    qs = [np.asarray(pose.joints_rad, dtype=np.float64) for pose in poses]
+    torque = np.array([runs.gravity(q) for q in qs])
+    sensitivity = np.array([arm.scaled_regressor(q, range(arm.dof)) for q in qs])
+    span = np.maximum(
+        torque.max(axis=0) - torque.min(axis=0),
+        (sensitivity.max(axis=0) - sensitivity.min(axis=0)).max(axis=1),
+    )
+    return [
+        name
+        for name, varies in zip(arm.joint_names, span, strict=True)
+        if name in arm.measured_joints or varies > DITHER_MIN_SPAN_NM
+    ]
+
+
+def dithers(
+    ctx: StepContext, applied: ArmConfigState | None, joints: Sequence[str]
+) -> dict[str, float]:
     gains = {} if applied is None else applied.gains
     return {
         joint: dither_deg(
@@ -462,7 +486,7 @@ def dithers(ctx: StepContext, applied: ArmConfigState | None) -> dict[str, float
             ctx.spec.max_torque_nm[joint],
             ctx.settings.dither_deg,
         )
-        for joint in ctx.arm.measured_joints
+        for joint in joints
     }
 
 
@@ -727,7 +751,9 @@ class GravityPosesStep(Step):
         poses = pose_set.identification
         applied = _applied_now(ctx)
         compensation = Compensation(_compensates_gravity(ctx.keys()), _links_of(applied))
-        dither = dithers(ctx, applied)
+        model = arm.model.copy()
+        apply_inertial_overrides(model, compensation.links)
+        dither = dithers(ctx, applied, dithered_joints(arm, ArmModel(ctx.spec, model), poses))
         dithering = len(dither) * 2 * settings.dither_hold_s
         stops = [arm.home, *(np.asarray(p.joints_rad) for p in poses), arm.home]
         travel = sum(_ramp_s(a, b, settings.speed_deg_s) for a, b in itertools.pairwise(stops))
@@ -770,6 +796,7 @@ class GravityPosesStep(Step):
                             "index": index,
                             "targets_deg": [math.degrees(v) for v in target],
                             COMPENSATION_KEY: compensation.as_data(),
+                            DITHERED_KEY: list(dither),
                         },
                     )
                     first = t0 if first is None else first
@@ -854,7 +881,8 @@ class GravityFitStep(Step):
         ctx.say("reading the recording")
         recording.wait_for(span[1])
         grec = recording.gravity(span[0], span[1])
-        measurements, incomplete, stuck = extract_measurements(grec, ctx.spec)
+        arm = dithered_arm(ctx.arm, grec)
+        measurements, incomplete, stuck = extract_measurements(grec, arm.spec)
         if not measurements:
             raise StepFailedError(
                 f"the recording holds no paired dithers to fit ({len(incomplete)} incomplete)"
@@ -863,11 +891,11 @@ class GravityFitStep(Step):
         if compensation is None:
             raise StepFailedError("the recording does not say what gravity the poses ran with")
         try:
-            errors = to_urdf_error(ctx.arm, measurements, compensation)
+            errors = to_urdf_error(arm, measurements, compensation)
         except ValueError as error:
             raise StepFailedError(f"cannot model the masses the sweep ran: {error}")
         ctx.say(f"fitting {len(measurements)} measurements")
-        result = fit_gravity(ctx.arm, errors, incomplete_pairs=incomplete, stuck_pairs=stuck)
+        result = fit_gravity(arm, errors, incomplete_pairs=incomplete, stuck_pairs=stuck)
         ctx.check_abort()
         # The raw resting torque is the error of the masses the arm ran.
         running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)
@@ -1240,7 +1268,8 @@ class PickGainsStep(Step):
         span, recording = ctx.run.gravity_span, ctx.recording
         if span is None or recording is None:
             return {}
-        measurements, _, _ = extract_measurements(recording.gravity(*span), ctx.spec)
+        grec = recording.gravity(*span)
+        measurements, _, _ = extract_measurements(grec, dithered_arm(ctx.arm, grec).spec)
         return median_friction(measurements)
 
 

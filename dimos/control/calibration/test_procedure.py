@@ -79,13 +79,16 @@ from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     WorkspaceGuard,
 )
-from dimos.control.calibration.steps import calibration_steps, dither_deg
+from dimos.control.calibration.steps import calibration_steps, dither_deg, dithered_joints
 from dimos.control.connection.module_config import ConfigPatch
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.makermods_metal.config import METAL
 
 STEP_IDS = [step.id for step in calibration_steps()]
 LEFT_MEASURED = [f"left_joint{i}" for i in (2, 3, 4, 5)]
+# The spec measures joints 2 to 5; the wrist roll's torque varies with the
+# gripper's centre of mass, so it is dithered too. The yaw carries nothing.
+LEFT_DITHERED = [*LEFT_MEASURED, "left_joint6"]
 # Short holds and fast ramps: a full run is about 4 simulated minutes.
 FAST = {
     "poses": 8,
@@ -221,7 +224,7 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert urdf_error > 1.0
     assert fitted_error_nm(arm, truth, to_inertial_overrides(calibration)) < 0.2 * urdf_error
     assert calibration.friction_nm is not None and set(calibration.friction_nm) == set(
-        LEFT_MEASURED
+        LEFT_DITHERED
     )
     # The big joints rest closest at 1.5 times their kp; the wrists rest best
     # at 1.5 times theirs, where their 1 deg steps still stick now and then.
@@ -274,25 +277,29 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert fit["holdout_rms_nm"][joint]["after"] < fit["holdout_rms_nm"][joint]["before"]
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
-    assert len(steps) == 8 * 4 * 2 + 6 * 9 * 4
+    assert len(steps) == 8 * 5 * 2 + 6 * 9 * 4
     dither = {
         joint: min(
             math.degrees(0.3 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0]), 5.0
         )
-        for joint in LEFT_MEASURED
+        for joint in LEFT_DITHERED
     }
     assert dither["left_joint2"] == pytest.approx(2.149, abs=1e-3)
     assert dither["left_joint4"] == 5.0
     assert rig.messages()["gravity_poses"].startswith(
         "visited 8 of 8 poses, dithering left_joint2 by 2.1 deg, left_joint3 by 2.1 deg, "
-        "left_joint4 by 5 deg, left_joint5 by 5 deg; redid "
+        "left_joint4 by 5 deg, left_joint5 by 5 deg, left_joint6 by 5 deg; redid 0 of 40 "
+    )
+    assert all(
+        m["data"]["dithered"] == LEFT_DITHERED for m in rig.recording.markers["gravity_events"][:-1]
     )
     assert results["gravity_poses"]["dither_deg"] == pytest.approx(dither, abs=1e-3)
     first, end = results["gravity_poses"]["span"]
     dithered = {m["joint"]: abs(m["delta_deg"]) for m in steps if first <= m["t0"] <= end}
     assert dithered == pytest.approx(dither)
     assert fit["stuck_pairs"] == 0 and fit["incomplete_pairs"] == 0
-    assert fit["held_joints"] == {"left_joint6": 0.0}
+    assert fit["held_joints"] == {}
+    assert set(fit["holdout_rms_nm"]) == set(LEFT_DITHERED)
     assert len(rig.recording.markers["float_events"]) == 8
     # The fit was scored against the URDF, the masses the arm ran (the URDF's
     # here) and itself.
@@ -320,6 +327,12 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert json.loads(json.dumps(value)) == value
 
 
+def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
+    poses = generate_poses(arm, count=8).identification
+    assert dithered_joints(arm, arm, poses) == LEFT_DITHERED
+    assert dithered_joints(arm, arm, poses[:1]) == LEFT_MEASURED
+
+
 def test_each_joint_dithers_by_0_3_of_its_torque_limit_over_its_kp() -> None:
     assert dither_deg(80.0, 10.0, 1.0) == pytest.approx(math.degrees(0.0375))
     assert dither_deg(20.0, 3.57, 1.0) == pytest.approx(math.degrees(0.05355))
@@ -345,7 +358,7 @@ def test_a_dither_pair_the_joint_did_not_follow_is_redone_once_at_twice_the_ampl
     d = result["dither_deg"]["left_joint2"]
     retried = result["retried"]
     assert retried and all(pair.endswith(" left_joint2") for pair in retried)
-    pairs = result["poses"] * len(LEFT_MEASURED)
+    pairs = result["poses"] * len(LEFT_DITHERED)
     assert rig.messages()["gravity_poses"].endswith(
         f"; redid {len(retried)} of {pairs} dither pairs at twice the amplitude"
     )
@@ -1290,7 +1303,7 @@ def test_a_fit_worse_than_the_running_file_is_not_saved(
     refused = {refusal.split(" ")[0] for refusal in fit["refusals"]}
     for joint, row in fit["holdout_rms_nm"].items():
         # URDF -> running -> new: the fit beats the URDF, not what the arm runs.
-        assert row["after"] < row["before"], joint
+        assert row["after"] < row["before"] or row["before"] < 1e-3, joint
         assert row["running"] <= row["after"] or joint not in refused, joint
     assert load_for_spec(left_spec, root_path) == saved
 

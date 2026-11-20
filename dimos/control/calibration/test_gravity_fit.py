@@ -34,6 +34,7 @@ from dimos.control.calibration._inertial import LinkInertial, apply_inertial_ove
 from dimos.control.calibration.gravity_fit import (
     COM_BOX_M,
     COMPENSATION_KEY,
+    DITHERED_KEY,
     FIT_RANK_TOLERANCE,
     AssumedCompensation,
     Compensation,
@@ -628,6 +629,34 @@ def test_a_pair_the_joint_did_not_follow_is_kept_and_listed_as_stuck(
     assert LEFT_MEASURED[3] not in calibration.friction_nm
     report = (out / "report.md").read_text()
     assert f"Warning: friction not cancelled on {LEFT_MEASURED[3]}, raise the dither." in report
+
+
+def test_the_fit_measures_the_joints_the_markers_say_were_dithered(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    joints = [*LEFT_MEASURED, "left_joint6"]
+    wrist = ArmModel(replace(left_spec, measured_joints=joints), arm.model)
+    truth = perturbed_model(arm, {"left_gripper": (0.25, np.array([-0.02, 0.01, -0.01]))})
+    poses = [home_pose(arm), *pose_set.identification]
+    grec = _synthetic_recording(wrist, poses, "", truth)
+    recorded = replace(
+        grec, markers=[replace(m, data={**m.data, DITHERED_KEY: joints}) for m in grec.markers]
+    )
+    monkeypatch.setattr(gravity_fit, "calibration_path", lambda arm_id: tmp_path / "none.json")
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: recorded)
+    result, _, _ = generate_gravity_report(tmp_path, left_spec, arm=arm)
+    assert result.measured_joints == tuple(joints) and result.held_joints == {}
+    before = result.rms_by_joint(holdout=True, after=False)
+    after = result.rms_by_joint(holdout=True, after=True)
+    assert before["left_joint6"] > 0.01 and after["left_joint6"] < 0.5 * before["left_joint6"]
+    # A recording that does not say dithered the spec's joints: the wrist roll is held.
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: grec)
+    result, _, _ = generate_gravity_report(tmp_path, left_spec, arm=arm)
+    assert result.measured_joints == LEFT_MEASURED and set(result.held_joints) == {"left_joint6"}
 
 
 def test_the_fit_takes_the_resting_torque_against_what_was_compensated(

@@ -27,7 +27,9 @@ or the next step came early) may still be moving, so its pair is left out and
 the report counts it. A pair whose two rests lie less than half the dither
 apart is stuck: friction held the joint, so the pair does not cancel it. It
 stays in the fit and is listed, and the held-out error judges the result.
-The pose markers record that compensation
+The pose markers record the joints dithered (``DITHERED_KEY``; a
+recording that does not say dithered the spec's measured joints), which are
+the joints the fit measures, and that compensation
 (``Compensation``: none, the URDF or the masses of a calibration file), which
 turns the PD torque into the error of the URDF; a recording that does not say
 needs ``--compensation`` (``urdf`` or ``none``) and is refused without it. The
@@ -113,6 +115,7 @@ import matplotlib.pyplot as plt
 
 GRAVITY_EVENTS_STREAM = "gravity_events"
 COMPENSATION_KEY = "compensation"
+DITHERED_KEY = "dithered"
 END_LABEL = "end"
 REPORT_DIR_NAME = "gravity_report"
 DEFAULT_RIDGE_NM = 0.05  # torque-equivalent weight of one column scale of correction
@@ -127,6 +130,7 @@ COM_BOX_M = 0.05  # a fitted COM may move this far per axis from the URDF COM
 # parameter by ten column scales).
 FIT_RANK_TOLERANCE = 1e-2
 HELD_MIN_NM = 1e-3
+SAVE_TOLERANCE_NM = 1e-4
 DITHER_HOLD_TOLERANCE_S = 0.1
 DITHER_SATURATION_FRACTION = 0.95  # friction this close to kp*d/2 means the joint never moved
 DETERMINED_FRACTION = 0.5  # share of a parameter's direction inside the identifiable subspace
@@ -449,6 +453,20 @@ def recorded_compensation(grec: GravityRecording) -> Compensation | None:
         if COMPENSATION_KEY in marker.data:
             return Compensation.from_data(marker.data[COMPENSATION_KEY])
     return None
+
+
+def recorded_dithered(grec: GravityRecording) -> list[str] | None:
+    for marker in grec.markers:
+        if DITHERED_KEY in marker.data:
+            return [str(joint) for joint in marker.data[DITHERED_KEY]]
+    return None
+
+
+def dithered_arm(arm: ArmModel, grec: GravityRecording) -> ArmModel:
+    joints = recorded_dithered(grec)
+    if joints is None or tuple(joints) == arm.measured_joints:
+        return arm
+    return ArmModel(replace(arm.spec, measured_joints=joints), arm.model)
 
 
 def to_urdf_error(
@@ -870,8 +888,9 @@ def save_refusals(result: FitResult, running_rms: Mapping[str, float] | None = N
     nothing about whether the fit is right: it must improve, or at least not
     worsen, the resting error at poses it never saw, on every measured joint,
     compared with the URDF and, given ``running_rms`` (the held-out RMS of the
-    masses the arm ran while recording, by joint), with those too. A fit
-    pressed against a bound (``at_bounds``) is not refused for that alone.
+    masses the arm ran while recording, by joint), with those too, by more
+    than ``SAVE_TOLERANCE_NM``. A fit pressed against a bound
+    (``at_bounds``) is not refused for that alone.
     """
     if not result.holdout_poses:
         return ["no pose was held out, so the fit was never scored on poses it did not see"]
@@ -882,12 +901,12 @@ def save_refusals(result: FitResult, running_rms: Mapping[str, float] | None = N
         if joint not in before:
             reasons.append(f"{joint} has no held-out measurement")
             continue
-        if after[joint] > before[joint]:
+        if after[joint] > before[joint] + SAVE_TOLERANCE_NM:
             reasons.append(
                 f"{joint} held-out RMS rose from {before[joint]:.3f} to {after[joint]:.3f} Nm"
             )
         running = None if running_rms is None else running_rms.get(joint)
-        if running is not None and after[joint] > running:
+        if running is not None and after[joint] > running + SAVE_TOLERANCE_NM:
             reasons.append(
                 f"{joint} held-out RMS {after[joint]:.3f} Nm is worse than the running "
                 f"calibration's {running:.3f} Nm"
@@ -1249,7 +1268,8 @@ def generate_gravity_report(
             "compensation it ran with (--compensation urdf or none) or record the poses again "
             "with the calibration procedure"
         )
-    paired, incomplete, stuck = extract_measurements(grec, spec)
+    arm = dithered_arm(arm, grec)
+    paired, incomplete, stuck = extract_measurements(grec, arm.spec)
     if not paired:
         raise ValueError(
             f"{recording_dir} holds no dither pair to fit: {len(incomplete)} incomplete"

@@ -88,7 +88,7 @@ Saves happen with the arm at home. If applying a save would change a joint's gra
 The method:
 
 - Each joint is nudged up and down at every pose, by 0.3 of its torque limit over its kp, 1 to 5 degrees. The pair cancels friction, so what is left is gravity. A pair the joint follows less than halfway is redone once at twice the nudge. One that still sticks stays in the fit and is listed; the held-out error judges the fit.
-- The link masses are fitted by least squares. Held-out poses give the cross validation error. A joint that is never nudged keeps its URDF gravity torque.
+- The link masses are fitted by least squares. Held-out poses give the cross validation error. Every joint whose gravity torque can change by more than 0.1 N m over the poses is nudged; one that is not keeps its URDF gravity torque.
 - The fit is offered only when it is no worse than the URDF and the running file on every joint.
 - The step sweep rejects a kp and kd pair when a 3 degree step sticks (moves less than half its size), a step overshoots more than 20 % or buzzes. A stuck 1 degree step is listed and does not count. Of the rest it picks the lowest worst rest error over max(0.1 deg, 1.5 x friction / kp) plus worst settle time over 0.5 s. Each joint's friction comes from its 3 degree steps and its nudges.
 - A joint where nothing passes keeps its robot gains.
