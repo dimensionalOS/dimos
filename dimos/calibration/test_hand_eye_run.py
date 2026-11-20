@@ -372,6 +372,37 @@ def test_low_endpoint_behind_the_tag_stops_before_leaving_home(
     assert commands == [HOME]
 
 
+def test_requested_halfway_move_replaces_only_the_rejected_validation_view(
+    tmp_path, automatic_run, observations, orbit_mount, mocker
+):
+    run, commands, images = automatic_run
+    _, mount_from_camera, world_from_tag = observations
+
+    def detect(image, info, measured, marker_size, marker_id):
+        if image.data.flat[0] == 10:  # Validation 3/4.
+            raise MarkerObservationError("Tag not detected")
+        return HandEyeSample(
+            measured, np.linalg.solve(measured @ mount_from_camera, world_from_tag), 0.1
+        )
+
+    mocker.patch("dimos.calibration.hand_eye_session.detect_sample", side_effect=detect)
+    review = mocker.Mock(side_effect=["accept"] * 11 + ["quit"])
+    rejected = mocker.Mock(return_value="halfway")
+    assert run(review, review_rejected=rejected, orbit_camera=orbit_mount) is None
+    samples = load_session(tmp_path)["samples"]
+    assert [s["role"] for s in samples] == ["train"] * 8 + ["validation"] * 3
+    assert [s["image_timestamp"] for s in samples] == [image.ts for image in images[:10]] + [
+        images[11].ts
+    ]
+    assert "Validation 3/4" in rejected.call_args.args[1]
+    assert "Validation 3/4" in review.call_args_list[-2].args[1]
+    assert "Validation 4/4" in review.call_args_list[-1].args[1]
+    home = world_from_tag @ np.linalg.inv(samples[0]["camera_from_target"])
+    full_goal = Transform.from_pose("tip", commands[10]).to_matrix() @ orbit_mount.to_matrix()
+    retry = _home_relative_offsets(samples[-1:], samples[0], world_from_tag)[0]
+    np.testing.assert_allclose(retry, 0.5 * (full_goal[:3, 3] - home[:3, 3]), atol=1e-8)
+
+
 @pytest.mark.parametrize(
     ("space", "initial_views", "rise"),
     [
@@ -535,27 +566,84 @@ def test_unreviewed_run_collects_and_validates_both_rings(tmp_path, automatic_ru
 
 
 @pytest.mark.parametrize(
-    ("view", "label"),
-    [(1, "Train 1/8 (home)"), (2, "Train 2/8"), (10, "Validation 2/4")],
+    ("view", "attempts", "label"),
+    [
+        (1, 1, "Train 1/8 (home)"),
+        (2, 2, "Train 2/8 (halfway retry)"),
+        (10, 2, "Validation 2/4 (halfway retry)"),
+    ],
 )
-def test_unreviewed_run_stops_at_first_rejected_view(
-    tmp_path, automatic_run, observations, mocker, view, label
+def test_unreviewed_run_stops_at_home_or_after_one_rejected_retry(
+    tmp_path, automatic_run, observations, mocker, view, attempts, label
 ):
     run, commands, images = automatic_run
     samples, _, _ = observations
     error = MarkerObservationError("Expected exactly one tag36h11 ID 0; detected 0")
     mocker.patch(
         "dimos.calibration.hand_eye_session.detect_sample",
-        side_effect=[*samples[: view - 1], error],
+        side_effect=[*samples[: view - 1], *([error] * attempts)],
     )
 
     with pytest.raises(MarkerObservationError) as caught:
         run(None)
 
     assert str(caught.value) == f"{label}: {error}"
-    assert len(commands) == len(images) == view
+    assert len(commands) == len(images) == view - 1 + attempts
     assert len(load_session(tmp_path)["samples"]) == view - 1
     assert len(list(tmp_path.glob("*.png"))) == view - 1
+
+
+def test_unattended_sweep_recovers_training_and_validation_views(
+    tmp_path, automatic_run, observations, orbit_mount, tip_from_mount, home_tool_pose, mocker
+):
+    run, commands, images = automatic_run
+    _, mount_from_camera, world_from_tag = observations
+
+    def detect(image, info, measured, marker_size, marker_id):
+        if image.data.flat[0] == 9:  # Training 10/12.
+            raise MarkerObservationError("Tag not detected")
+        if image.data.flat[0] == 15:  # Validation 3/4, after the extra training exposure.
+            raise MarkerObservationError("Marker reprojection error exceeds 2 px")
+        return HandEyeSample(
+            measured, np.linalg.solve(measured @ mount_from_camera, world_from_tag), 0.1
+        )
+
+    mocker.patch("dimos.calibration.hand_eye_session.detect_sample", side_effect=detect)
+    result = run(None, count=12, tip_from_mount=tip_from_mount)
+
+    assert result["validated"]
+    samples = load_session(tmp_path)["samples"]
+    assert [s["role"] for s in samples] == ["train"] * 12 + ["validation"] * 4
+    assert [s["image_timestamp"] for s in samples] == [
+        image.ts for i, image in enumerate(images) if i not in (9, 15)
+    ]
+    tool_camera = orbit_mount.to_matrix()
+    home_camera = Transform.from_pose("tip", home_tool_pose).to_matrix() @ tool_camera
+    for rejected, slot in [(9, 9), (15, 14)]:
+        requested = Transform.from_pose("tip", commands[rejected]).to_matrix() @ tool_camera
+        observed = _home_relative_offsets(samples[slot : slot + 1], samples[0], world_from_tag)[0]
+        np.testing.assert_allclose(
+            observed, 0.5 * (requested[:3, 3] - home_camera[:3, 3]), atol=1e-8
+        )
+
+
+def test_stop_after_rejection_prevents_retry_move(tmp_path, automatic_run, observations, mocker):
+    run, commands, images = automatic_run
+    samples, _, _ = observations
+    mocker.patch(
+        "dimos.calibration.hand_eye_session.detect_sample",
+        side_effect=[samples[0], MarkerObservationError("Missing tag")],
+    )
+
+    def check_cancelled():
+        if len(images) == 2:
+            raise InterruptedError("Stop requested")
+
+    with pytest.raises(InterruptedError, match="Stop requested"):
+        run(None, check_cancelled=check_cancelled)
+
+    assert len(commands) == len(images) == 2
+    assert len(load_session(tmp_path)["samples"]) == 1
 
 
 def test_stop_during_stationary_capture_prevents_save_and_next_move(tmp_path, automatic_run):
@@ -586,16 +674,13 @@ def test_resume_before_first_accepted_image_uses_remeasured_home(
 
 
 @pytest.mark.parametrize("bad_sample", [8, 12], ids=["failed_training", "failed_validation"])
-def test_returns_to_zero_when_quality_checks_fail(automatic_run, observations, bad_sample):
+def test_returns_to_zero_when_quality_checks_fail(automatic_run, observations, mocker, bad_sample):
     run, commands, images = automatic_run
-    _, _, base_from_target = observations
+    samples, _, _ = observations
+    samples[bad_sample - 1].camera_from_target[0, 3] += 0.1
+    mocker.patch("dimos.calibration.hand_eye_session.detect_sample", side_effect=samples)
 
-    def review(image, label):
-        if len(images) == bad_sample:
-            base_from_target[0, 3] += 0.1
-        return "accept"
-
-    result = run(review)
+    result = run(mocker.Mock(return_value="accept"))
 
     assert not result["validated"]
     assert len(images) == bad_sample
@@ -686,23 +771,30 @@ def test_motion_failure_stops_before_review_or_further_motion(tmp_path, marker_i
     assert load_session(tmp_path)["samples"] == []
 
 
-def test_missing_tag_halves_tilt_once_and_saves_fresh_image(
-    tmp_path, marker_image, home_tool_pose, mocker
+@pytest.mark.parametrize("orbit_axis", [None, "x"])
+def test_missing_tag_holds_tilt_until_operator_requests_halfway_and_saves_fresh_image(
+    tmp_path, marker_image, home_tool_pose, mocker, orbit_axis
 ):
     template, info, _ = marker_image
-    images = [template.copy() for _ in range(5)]
+    images = [template.copy() for _ in range(6)]
     for index, image in enumerate(images):
         image.ts += index
-    images[1].data.fill(255)
-    images[2].data.fill(255)
+    for image in images[1:4]:
+        image.data.fill(255)
     capture = mocker.Mock(
         side_effect=[
             (image, Transform(frame_id="base", child_frame_id="mount", ts=image.ts))
             for image in images
         ]
     )
-    review = mocker.Mock(side_effect=["accept", "accept", "accept", "accept", "quit"])
+    review = mocker.Mock(side_effect=["accept", "accept", "quit"])
     move_pose = mocker.Mock()
+    rejected = []
+    decisions = iter(["retry", "halfway", "retry"])
+
+    def review_rejected(image, label, can_move_halfway):
+        rejected.append((image.ts, label, can_move_halfway, move_pose.call_count))
+        return next(decisions)
 
     result = run_hand_eye(
         tmp_path,
@@ -716,9 +808,20 @@ def test_missing_tag_halves_tilt_once_and_saves_fresh_image(
         move_pose=move_pose,
         capture=capture,
         review=review,
+        review_rejected=review_rejected,
+        # At this printed size the synthetic tag is about 26 cm away.
+        marker_size_m=0.065,
+        orbit_axis=orbit_axis,
     )
 
     assert result is None
+    assert [call.args[0].ts for call in review.call_args_list] == [images[i].ts for i in (0, 4, 5)]
+    assert [(ts, can_move, moves) for ts, _, can_move, moves in rejected] == [
+        (images[1].ts, True, 1),
+        (images[2].ts, True, 1),
+        (images[3].ts, False, 2),
+    ]
+    assert all("Train 2/8" in label and "detected 0" in label for _, label, _, _ in rejected)
     missed, recovered, next_view = [call.args[0] for call in move_pose.call_args_list]
     assert home_tool_pose.orientation.angle_to(missed.orientation) == pytest.approx(
         math.radians(11)
@@ -726,8 +829,14 @@ def test_missing_tag_halves_tilt_once_and_saves_fresh_image(
     assert home_tool_pose.orientation.angle_to(recovered.orientation) == pytest.approx(
         math.radians(5.5)
     )
+    # A half-angle recovery shortens both the rotation and the distance along the circular arc.
+    assert home_tool_pose.position.distance(recovered.position) == pytest.approx(
+        home_tool_pose.position.distance(missed.position)
+        * math.sin(math.radians(5.5 / 2))
+        / math.sin(math.radians(11 / 2))
+    )
     assert next_view.orientation != recovered.orientation
     assert [s["image_timestamp"] for s in load_session(tmp_path)["samples"]] == [
         images[0].ts,
-        images[3].ts,
+        images[4].ts,
     ]

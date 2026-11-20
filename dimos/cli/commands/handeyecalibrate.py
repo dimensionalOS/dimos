@@ -87,7 +87,7 @@ def run(
     """Aim from the first five training views, sweep around the tag, solve, validate and park."""
     # Load camera, GUI and planner dependencies only for the motion-enabled command.
     from dimos.calibration.hand_eye_run import run_live_hand_eye
-    from dimos.cli.hand_eye_preview import hand_eye_preview
+    from dimos.cli.hand_eye_preview import hand_eye_preview, review_rejected
 
     try:
         result = run_live_hand_eye(
@@ -105,6 +105,7 @@ def run(
             tf_topic=tf_topic,
             timeout_sec=timeout_sec,
             preview=hand_eye_preview,
+            review_rejected=review_rejected,
             report=typer.echo,
         )
     except (ValueError, RuntimeError, OSError) as exc:

@@ -139,6 +139,12 @@ def record_sample(
     callers are responsible for stationary, timestamp-matched observations.
     """
     data = load_session(directory)
+    sample = observe_sample(data, image, base_from_ee)
+    return save_observation(directory, data, image, sample, validation=validation)
+
+
+def observe_sample(data: dict[str, Any], image: Image, base_from_ee: Transform) -> HandEyeSample:
+    """Check the stationary image/pose pair and measure the tag before operator review."""
     settings = data["settings"]
     if (base_from_ee.frame_id, base_from_ee.child_frame_id) != (
         settings["base_frame"],
@@ -149,13 +155,19 @@ def record_sample(
         raise ValueError("Image optical frame is missing or changed")
     if not np.isfinite(image.ts) or any(s["image_timestamp"] == image.ts for s in data["samples"]):
         raise ValueError("Each observation must have a new, finite image timestamp")
-    sample = detect_sample(
+    return detect_sample(
         image,
         CameraInfo(**settings["intrinsics"]),
         base_from_ee.to_matrix(),
         settings["marker_size_m"],
         settings["marker_id"],
     )
+
+
+def save_observation(
+    directory: Path, data: dict[str, Any], image: Image, sample: HandEyeSample, *, validation: bool
+) -> dict[str, Any]:
+    """Save the exact frame and measurement accepted for this single-writer session."""
     number = int(data["samples"][-1]["id"]) + 1 if data["samples"] else 1
     # An interrupted save can leave a PNG ahead of the manifest. Preserve it on resume.
     while (image_path := directory / f"{number:04d}.png").exists():

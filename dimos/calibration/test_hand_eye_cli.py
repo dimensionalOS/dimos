@@ -252,6 +252,7 @@ def test_run_cli_uses_planner_group_and_supplied_mount(
     info, _ = live_color_stream
     run = mocker.spy(hand_eye_run, "run_hand_eye")
     preview = mocker.patch("dimos.cli.hand_eye_preview.hand_eye_preview")
+    rejected = mocker.patch("dimos.cli.hand_eye_preview.review_rejected")
     review = preview.return_value.__enter__.return_value
     review.side_effect = ["accept", "quit"]
     home = [0, 1, -1, 1.1, 0, 0, -0.1]
@@ -286,6 +287,7 @@ def test_run_cli_uses_planner_group_and_supplied_mount(
     source.tip_from_mount.assert_called_once_with("tcp", marker_image[0].ts)
     assert run.call_args.kwargs["tip_from_mount"] is source.tip_from_mount.return_value
     assert run.call_args.kwargs["orbit_camera"] is None
+    assert run.call_args.kwargs["review_rejected"] is rejected
     assert run.call_args.kwargs["return_joints"] == connected_arm.return_joints
     connected_arm.move_joints.assert_called_once()
     assert list(connected_arm.move_joints.call_args.args[0]) == home

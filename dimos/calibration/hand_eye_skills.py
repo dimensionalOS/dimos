@@ -95,7 +95,7 @@ class HandEyeCalibrationSkills(Module):
         """Move the arm and calibrate once the operator has placed the fixed target and asked to start.
 
         By default, home and four training tilts aim the camera for the two sweeps.
-        A rejected stationary view ends the run.
+        A rejected marker observation away from home gets one retry halfway toward home.
         A completion update reports the grade or failure reason and session path.
 
         Args:

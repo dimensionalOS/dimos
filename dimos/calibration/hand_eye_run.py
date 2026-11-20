@@ -40,9 +40,10 @@ from dimos.calibration.hand_eye import MIN_ROTATION_DEG, MarkerObservationError,
 from dimos.calibration.hand_eye_session import (
     estimate_aiming_mount,
     load_session,
+    observe_sample,
     open_session,
-    record_sample,
     save_home_tool_pose,
+    save_observation,
     solve_session,
     validate_session,
 )
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
 
 Review = Callable[["Image", str], Literal["accept", "retry", "quit"]]
+ReviewRejected = Callable[["Image", str, bool], Literal["retry", "halfway", "quit"]]
 _ORBIT_RADII_M = {"train": 0.055, "validation": 0.040}
 
 
@@ -148,6 +150,7 @@ def run_hand_eye(
     move_pose: Callable[[PoseStamped], None],
     capture: Callable[[], tuple[Image, Transform]],
     review: Review | None = None,
+    review_rejected: ReviewRejected | None = None,
     orbit_axis: str | None = None,
     orbit_camera: Transform | None = None,
     tip_from_mount: Transform | None = None,
@@ -162,7 +165,7 @@ def run_hand_eye(
 ) -> dict[str, Any] | None:
     """Move, fit and independently validate. Return None when the operator quits.
 
-    Without a reviewer, the first rejected observation ends the run at that pose.
+    Without a reviewer, a marker rejection away from home gets one halfway retry.
     With the rigid tip-to-mount TF, five initial training views estimate the camera
     mount for aiming the wide and return sweeps. A supplied orbit_camera skips these tilts.
     The motion callbacks block until arrival. A joint move returns the measured world
@@ -338,6 +341,30 @@ def run_hand_eye(
                 hand_eye_capture.check_color_frame(image, info)
                 if orbit_camera is not None and image.frame_id != orbit_camera.child_frame_id:
                     raise ValueError("Image optical frame differs from the orbit calibration.")
+                capture_session = load_session(directory)
+                try:
+                    sample = observe_sample(capture_session, image, pose)
+                except MarkerObservationError as error:
+                    reason = f"{label}: {error}"
+                    report(f"Image rejected. {reason}")
+                    if review is None:
+                        if view_pose is None:
+                            raise MarkerObservationError(reason) from error
+                        rejected = "halfway"
+                    elif review_rejected is None:
+                        rejected = "quit" if review(image, reason) == "quit" else "retry"
+                    else:
+                        rejected = review_rejected(image, reason, view_pose is not None)
+                    if rejected == "quit":
+                        report("Stopped at the current pose. Accepted observations are saved.")
+                        return None
+                    if rejected == "halfway" and view_pose is not None:
+                        label += " (halfway retry)"
+                        report(f"Moving to {label} after rejection: {error}")
+                        check_cancelled()
+                        move_pose(view_pose(0.5))
+                        view_pose = None
+                    continue
                 choice = review(image, label) if review is not None else "accept"
                 if choice == "quit":
                     report("Stopped at the current pose. Accepted observations are saved.")
@@ -347,20 +374,9 @@ def run_hand_eye(
                 if choice != "accept":
                     raise ValueError(f"Unknown image review choice {choice!r}")
                 check_cancelled()
-                try:
-                    entry = record_sample(directory, image, pose, validation=role == "validation")
-                except MarkerObservationError as error:
-                    if review is None:
-                        raise MarkerObservationError(f"{label}: {error}") from error
-                    report(f"Image rejected. {error}")
-                    if view_pose is not None:
-                        report("Moving halfway back toward home for a fresh view.")
-                        check_cancelled()
-                        move_pose(view_pose(0.5))
-                        view_pose = None
-                    else:
-                        label = f"{role.capitalize()} {index + 1}: {error}"
-                    continue
+                entry = save_observation(
+                    directory, capture_session, image, sample, validation=role == "validation"
+                )
                 report(f"Saved {entry['image']} ({entry['reprojection_error_px']:.3f} px)")
                 if at_home and tag_sweep:
                     camera_from_tag = checked_transform(entry["camera_from_target"])
@@ -413,12 +429,13 @@ def run_live_hand_eye(
     timeout_sec: float = 10.0,
     report: Callable[[str], None] = print,
     preview: Callable[[], AbstractContextManager[Review | None]] = nullcontext,
+    review_rejected: ReviewRejected | None = None,
     check_cancelled: Callable[[], None] = lambda: None,
 ) -> dict[str, Any] | None:
     """Check the camera and measured TF before the first move, then run both sweeps.
 
-    Supply a preview for operator review and retakes. Without one, each stationary
-    view must contain a usable observation on its first capture.
+    Supply a preview for operator review and retakes. Without one, retry a rejected
+    non-home observation once from the halfway pose.
     """
     # The callback-based runner also works offline without loading the planner SDK.
     from dimos.calibration.hand_eye_motion import connect_calibration_arm
@@ -480,6 +497,7 @@ def run_live_hand_eye(
                 move_pose=arm.move_pose,
                 capture=partial(arm.capture_at_view, capture_pair),
                 review=review,
+                review_rejected=review_rejected,
                 report=report,
                 check_cancelled=check_cancelled,
             )

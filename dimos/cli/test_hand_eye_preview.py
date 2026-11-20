@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import pytest
 
-from dimos.cli.hand_eye_preview import hand_eye_preview
+from dimos.cli.hand_eye_preview import hand_eye_preview, review_rejected
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 
@@ -46,18 +46,59 @@ def view(mocker, monkeypatch):
 )
 def test_reviews_display_copy_and_ignores_prior_enter(view, key, expected):
     keys, shown, closed = view
-    keys.side_effect = [13, -1, key, -1]
+    keys.side_effect = [13, -1, key, -1, -1]
     pixels = np.full((35, 47, 3), 41, dtype=np.uint8)
     image = Image(data=pixels, format=ImageFormat.BGR)
 
     with hand_eye_preview() as review:
         assert review(image, "Training 2/8") == expected
 
-    _, displayed = shown.call_args.args
+    _, displayed = shown.call_args_list[0].args
     np.testing.assert_array_equal(displayed[0, 0], (41, 41, 41))
     np.testing.assert_array_equal(displayed[17, 23], (255, 255, 255))
     np.testing.assert_array_equal(image.data, np.full_like(pixels, 41))
     closed.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("key", "status"), [(13, "Waiting for next capture"), (ord("r"), "Retaking at this pose")]
+)
+def test_clears_reviewed_image_before_runner_can_move_or_recapture(view, key, status):
+    keys, shown, _ = view
+    keys.side_effect = [-1, key, -1, -1]
+    pixels = np.full((120, 320, 3), 73, dtype=np.uint8)
+    image = Image(data=pixels, format=ImageFormat.BGR)
+
+    with hand_eye_preview() as review:
+        review(image, "Validation 3/4")
+        _, waiting = shown.call_args.args
+        np.testing.assert_array_equal(waiting[60:, :], 0)
+        assert waiting[:60].max() > 0
+        assert cv2.setWindowTitle.call_args.args[1] == status
+
+
+@pytest.mark.parametrize(
+    ("can_move_halfway", "presses", "expected"),
+    [
+        (True, [13, ord("r")], "retry"),
+        (True, [10, ord("H")], "halfway"),
+        (False, [13, ord("h"), ord("R")], "retry"),
+        (False, [13, 27], "quit"),
+    ],
+)
+def test_rejected_review_requires_an_available_action(view, can_move_halfway, presses, expected):
+    keys, shown, _ = view
+    keys.side_effect = [-1, *presses, -1, -1]
+    image = Image(data=np.full((120, 320, 3), 73, dtype=np.uint8), format=ImageFormat.BGR)
+    label = "Validation 3/4 - tag not detected"
+
+    with hand_eye_preview():
+        assert review_rejected(image, label, can_move_halfway) == expected
+
+    assert label in cv2.setWindowTitle.call_args_list[0].args[1]
+    if expected != "quit":
+        _, waiting = shown.call_args.args
+        np.testing.assert_array_equal(waiting[60:, :], 0)
 
 
 def test_closing_window_discards_even_if_accept_was_queued(view, mocker):

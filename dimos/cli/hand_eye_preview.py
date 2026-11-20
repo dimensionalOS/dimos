@@ -19,14 +19,17 @@ from contextlib import contextmanager, suppress
 import os
 import sys
 import threading
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import cv2
+import numpy as np
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
 
 ReviewChoice = Literal["accept", "retry", "quit"]
+RejectedChoice = Literal["retry", "halfway", "quit"]
+_Choice = TypeVar("_Choice", bound=str)
 _WINDOW = "DimOS hand-eye calibration"
 _QUIT_KEYS = (27, ord("q"), ord("Q"))
 
@@ -39,7 +42,9 @@ def _window_visibility() -> float:
         return -1.0
 
 
-def _review(image: Image, label: str) -> ReviewChoice:
+def _prompt(
+    image: Image, label: str, controls: str, actions: dict[int, _Choice]
+) -> _Choice | Literal["quit"]:
     # Cocoa processes one event per 10 ms. Allow time for mouse and keyboard
     # events queued during motion before showing the next image.
     while (key := cv2.waitKey(120)) != -1:
@@ -48,23 +53,66 @@ def _review(image: Image, label: str) -> ReviewChoice:
     if _window_visibility() < 1:
         return "quit"
 
-    preview = image.to_opencv().copy()
+    preview = cv2.copyMakeBorder(image.to_opencv(), 0, 32, 0, 0, cv2.BORDER_CONSTANT)
     center = (image.width // 2, image.height // 2)
     cv2.drawMarker(preview, center, (0, 0, 0), cv2.MARKER_CROSS, 15, 3)
     cv2.drawMarker(preview, center, (255, 255, 255), cv2.MARKER_CROSS, 15, 1)
+    cv2.putText(
+        preview,
+        controls,
+        (8, image.height + 22),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
     cv2.imshow(_WINDOW, preview)
-    accept_key = "Return" if sys.platform == "darwin" else "Enter"
-    cv2.setWindowTitle(_WINDOW, f"{label}   |   {accept_key}: accept   R: retake   Q/Esc: quit")
+    cv2.setWindowTitle(_WINDOW, label)
     while True:
         key = cv2.waitKey(50) & 0xFF
-        if _window_visibility() < 1:
+        if _window_visibility() < 1 or key in _QUIT_KEYS:
             return "quit"
-        if key in (10, 13):
-            return "accept"
-        if key in (ord("r"), ord("R")):
-            return "retry"
-        if key in _QUIT_KEYS:
-            return "quit"
+        if key in actions:
+            break
+
+    # The main thread blocks while the arm moves and waits for a stationary image.
+    # Paint the waiting state before handing control back to the runner.
+    waiting = np.zeros_like(preview)
+    choice = actions[key]
+    status = {"halfway": "Moving halfway toward home", "retry": "Retaking at this pose"}.get(
+        choice, "Waiting for next capture"
+    )
+    cv2.putText(
+        waiting, status, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA
+    )
+    cv2.imshow(_WINDOW, waiting)
+    cv2.setWindowTitle(_WINDOW, status)
+    if cv2.waitKey(20) & 0xFF in _QUIT_KEYS or _window_visibility() < 1:
+        return "quit"
+    return choice
+
+
+def _review(image: Image, label: str) -> ReviewChoice:
+    accept_key = "Return" if sys.platform == "darwin" else "Enter"
+    controls = f"{accept_key}: accept   R: retake   Q/Esc: quit"
+    actions: dict[int, ReviewChoice] = {
+        10: "accept",
+        13: "accept",
+        ord("r"): "retry",
+        ord("R"): "retry",
+    }
+    return _prompt(image, label, controls, actions)
+
+
+def review_rejected(image: Image, label: str, can_move_halfway: bool) -> RejectedChoice:
+    """Review a rejected capture without letting Enter accept it or move the arm."""
+    controls = "R: retake here"
+    actions: dict[int, RejectedChoice] = {ord("r"): "retry", ord("R"): "retry"}
+    if can_move_halfway:
+        controls += "   H: move halfway toward home"
+        actions.update({ord("h"): "halfway", ord("H"): "halfway"})
+    return _prompt(image, f"Rejected - {label}", controls + "   Q/Esc: quit", actions)
 
 
 @contextmanager

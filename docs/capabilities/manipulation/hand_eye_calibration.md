@@ -47,7 +47,9 @@ dimos mcp call start_hand_eye_calibration \
 dimos mcp call hand_eye_calibration_status
 ```
 
-Each start creates a session under `./hand-eye-sessions/`. Home counts as the first of **8 training views**. At each stationary pose, the first captured image must contain the expected tag and pass the quality checks below. A rejection stops the run at that pose and reports the reason. After solving, the skill takes **4 held-out views**, saves the grade and requests the return move. The status includes the errors and absolute path to `hand_eye.json`.
+Each start creates a session under `./hand-eye-sessions/`. Home counts as the first of **8 training views** and must yield a usable tag observation before the arm proceeds. At any later training or validation stop, if tag detection or pose estimation fails its checks, the skill moves halfway toward home and takes one fresh stationary image. On a sweep this halves the lens offset from home and re-aims at the tag. On a tilt it halves the requested angle. A successful retry fills the same numbered view using its measured pose. A second rejection stops the run at the retry pose and reports the reason.
+
+After solving, the skill takes **4 held-out views**, saves the grade and requests the return move. The status includes the errors and absolute path to `hand_eye.json`.
 
 While calibration holds the arm, MCP rejects another start. Use `dimos mcp call hand_eye_calibration_status` to check the active run. To stop it, call `dimos mcp call stop_hand_eye_calibration`. A move already executing can finish. If the planner is still computing a move when the stop arrives, calibration skips execution. Wait for the final status before starting again. After a failure, correct the setup and start a fresh run.
 
@@ -127,7 +129,7 @@ Use `hand_eye.json` when `validated` is `true`. A failed grade gives a nonzero e
 ## Stop or retry
 
 - In `run`, **Q**, **Esc** or closing the review window stops at the current pose. **Ctrl-C** in the calibration terminal interrupts a move. Repeat the same command with the same setup to resume at the first unsaved view. A fully captured run regrades without motion.
-- In the operator-reviewed CLI, a rejected tag away from home triggers one retry halfway toward home.
+- If the CLI rejects a frame, **R** retakes the same numbered view in place. Where offered, **H** moves halfway toward home for one retry at that position. **Enter** accepts a frame that passed detection.
 - For a missed pose, check the reported error and clearance. For a failed solve or validation, check tag size, flatness, sharpness, mounting rigidity, rotation diversity and timestamps. Start a fresh session after changing the target placement, camera or mount, intrinsics, home or view schedule.
 - `solve` and `validate` work offline. After adding training images repeat both commands. After adding just validation images repeat `validate`.
 
