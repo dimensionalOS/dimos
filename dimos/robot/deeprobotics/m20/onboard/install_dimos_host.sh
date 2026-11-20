@@ -21,7 +21,7 @@
 # the robot LAN (~95 MB/s): AOS dials NOS's lidar-network port 7448 (NOS's Host listens there in both
 # modes, and the drdds bridge never does), NOS dials GOS:7447 (a Host there, when it runs; zenoh keeps
 # redialing), and AOS listens only on the lidar network so nothing routes over its USB link.
-# NOS:7447 is the router everything else dials (GOS's ZENOH_CONNECT, AOS's m20-camera). In
+# NOS:7447 is the router everything else dials (GOS's ZENOH_CONNECT). In
 # vendor mode the drdds-zenoh-bridge owns it and NOS's Host is dimos-host.service on :7448,
 # unlinked from the bridge. In rust mode (bridge stopped) NOS's Host is
 # dimos-host-router.service on :7447 and takes over as that router. The two units conflict;

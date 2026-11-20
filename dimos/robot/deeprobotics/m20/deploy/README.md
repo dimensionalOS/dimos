@@ -1,20 +1,8 @@
 # M20 deployment
 
-Run setup and the complete DimOS stack, including the Rerun bridge, on GOS
-(`10.21.31.104`). Setup builds and installs the NOS bridge, runs the RoboSense
-driver beside vendor LIO on NOS, and disables the competing lidar driver and
-planner by masking their systemd units. These service choices persist across
-reboots even when the vendor boot controller explicitly tries to start them.
-
-## Layout on GOS
-
-GOS runs Ubuntu 20.04 (glibc 2.31) and has no internet on the robot hotspot, so
-everything is built off the robot and copied over:
-
-- `/var/opt/robot/data/dimos-m20`: the checkout, its `.venv`, and the native
-  modules prebuilt for aarch64 and glibc 2.31.
-- `/var/opt/robot/data/m20-deps`: Python 3.12, `uv`, the wheelhouse, zenoh-c and
-  the `dimos-lcm` headers.
+DimOS runs on the M20's three boards: GOS (`10.21.31.104`, where `dimos run m20` starts and the navigation runs),
+AOS (`10.21.31.103`: the body IMU, the cameras and the motor bus) and NOS (`10.21.31.106`: the lidars' network and
+dimSLAM). Each board runs a `dimos host` that takes the modules the blueprint places on it.
 
 A laptop on the robot hotspot reaches GOS through AOS:
 
@@ -22,62 +10,22 @@ A laptop on the robot hotspot reaches GOS through AOS:
 sudo ip route add 10.21.31.0/24 via 10.21.41.1
 ```
 
-## One-time setup
+## Setup
 
-From the laptop, with agent forwarding so GOS can reach NOS with the laptop's key:
+1. Robot setup (clocks, the vendor services DimOS replaces, the ecan shim): `m20tool setup`.
+2. The dimos Hosts, from the dimos checkout on GOS (re-run after changing the checkout, so the boards run the same
+   revision):
 
-```bash
-ssh -A user@10.21.31.104 'cd /var/opt/robot/data/dimos-m20 && source .venv/bin/activate && ./dimos/robot/deeprobotics/m20/deploy/setup.sh'
-```
+   ```bash
+   bash dimos/robot/deeprobotics/m20/onboard/install_dimos_host.sh gos aos nos
+   ```
 
-The script prompts for any `sudo` or NOS SSH password it needs. It is safe to
-run again.
-
-## Start DimOS
-
-The robot stands up when `m20` starts and sits down when it stops, so clear
-the space around it first.
+## Run
 
 ```bash
-cd /var/opt/robot/data/dimos-m20
-source .venv/bin/activate
-dimos --robot-ip 10.21.31.106 \
-  run m20 --rerunbridgemodule.host 0.0.0.0 \
-  --rerunwebsocketserver.host 0.0.0.0 --daemon
+dimos run m20
 ```
 
-`--robot-ip` names the NOS Zenoh bridge. `M20Connection` still uses the
-documented AOS endpoints at `10.21.31.103`.
-
-Follow the log with `dimos log -f`. `dimos stop` sits the robot down and stops
-DimOS.
-
-Connect the operator viewer directly to the Rerun bridge on GOS:
-
-```bash
-dimos-viewer \
-  --connect rerun+http://10.21.31.104:9877/proxy \
-  --ws-url ws://10.21.31.104:3030/ws
-```
-
-The Rerun bridge, mapping, planning, and control modules all run inside the GOS
-control blueprint. The desktop viewer is only a client.
-
-The cameras are not in that blueprint: `m20-camera.service` runs the native rockchip_h264_cameras
-relay on AOS, where the V4L2 devices are, and publishes `CompressedVideo` on
-zenoh. The Rerun bridge subscribes to every zenoh topic, so it renders those
-streams without owning them, and the Desktop gateway passes the H.264 through
-to the browser.
-
-Attach the control shell:
-
-```bash
-source .venv/bin/activate
-dimos shell
-```
-
-```python
-app.M20Connection.standup()
-app.M20Connection.set_navigation_terrain("stairs")
-app.M20Connection.liedown()
-```
+`--choice M20Mode=sim` runs the same navigation on the simulated M20 instead (no robot needed). The real mode's own
+choices (body filter, joint source, body IMU, cameras, where dimSLAM runs) are in
+`dimos/robot/deeprobotics/m20/blueprints/m20.py`. Nothing in the real mode commands the legs.
