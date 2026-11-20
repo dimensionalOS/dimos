@@ -17,7 +17,9 @@
 At each pose every measured joint is dithered to +d and -d. At rest the motor torque is the
 compensated gravity plus ``kp (target - q)`` plus friction, so the PD torque averaged over the
 pair is the error of the compensated model (Coulomb friction flips sign with the approach and
-cancels) and half the difference is the friction. Adding what was compensated beyond the URDF
+cancels) and half the difference is the friction. A pair the joint followed less than a share of
+the way is stuck: friction held it, so the pair cancels less than its friction; it stays in the
+fit, flagged. Adding what was compensated beyond the URDF
 gives the URDF's error, fitted with pinocchio's torque regressor as ridge least squares for
 corrections of ``(m, m*c)`` of the fitted links, inside the directions the poses identify and
 inside physical bounds (mass >= 0, COM within the arm's reach of its joint). The ridge is
@@ -66,7 +68,8 @@ class DitherHold:
 
 @dataclass(frozen=True)
 class Measurement:
-    """Resting PD torque of one joint at one pose, from a +d/-d dither pair."""
+    """Resting PD torque of one joint at one pose, from a +d/-d dither pair (``stuck``: see
+    ``measure_dither``)."""
 
     pose: str
     joint: str
@@ -75,6 +78,7 @@ class Measurement:
     q_rad: dict[str, float]
     tau_pd_nm: float
     friction_nm: float
+    stuck: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,13 +107,20 @@ class GravityFit:
 
 
 def measure_dither(
-    pose: str, joint_names: Sequence[str], plus: DitherHold, minus: DitherHold, noise: RestNoise
+    pose: str,
+    joint_names: Sequence[str],
+    plus: DitherHold,
+    minus: DitherHold,
+    noise: RestNoise,
+    *,
+    stuck_fraction: float,
 ) -> Measurement:
     """The measurement of one dither pair; ``noise`` is the dithered joint's at rest.
 
-    Each hold's rest is its last ``noise.window_s``. Raises ``ValueError`` for a mismatched
-    pair, a hold whose samples stop short, or a joint that did not move between the two rests
-    by more than its noise band (stiction beat the dither, so the pair cancels nothing).
+    Each hold's rest is its last ``noise.window_s``. The pair is stuck when the joint moved
+    between the two rests less than ``stuck_fraction`` of the way between the two targets
+    (stiction held it, so the pair does not cancel its friction). Raises ``ValueError`` for a
+    mismatched pair or a hold whose samples stop short.
     """
     a, b = plus.event, minus.event
     if (
@@ -131,10 +142,7 @@ def measure_dither(
         if t.size < 2 or not np.isfinite(q).all():
             raise ValueError(f"{pose} {a.joint}: the dither hold has too few or non-finite samples")
         rests.append(q[rest_window(t, end, noise.window_s)].mean(axis=0))
-    if rests[0][joint] - rests[1][joint] <= math.radians(noise.band_deg):
-        raise ValueError(
-            f"{pose} {a.joint}: the joint did not move between the dithers; raise the dither or kp"
-        )
+    moved = rests[0][joint] - rests[1][joint]
     tau = [
         hold.event.kp * (math.radians(hold.event.target_after_deg) - rest[joint])
         for hold, rest in zip((plus, minus), rests, strict=True)
@@ -147,7 +155,25 @@ def measure_dither(
         q_rad={name: float(0.5 * (x + y)) for name, x, y in zip(joint_names, *rests, strict=True)},
         tau_pd_nm=0.5 * (tau[0] + tau[1]),
         friction_nm=0.5 * (tau[0] - tau[1]),
+        stuck=bool(moved < stuck_fraction * math.radians(a.delta_deg - b.delta_deg)),
     )
+
+
+def dither_friction_nm(measurements: Sequence[Measurement]) -> dict[str, float]:
+    """Per joint, the median friction of its pairs that are not stuck, never below zero."""
+    by_joint: dict[str, list[float]] = {}
+    for m in measurements:
+        if not m.stuck:
+            by_joint.setdefault(m.joint, []).append(m.friction_nm)
+    return {joint: max(0.0, float(np.median(values))) for joint, values in by_joint.items()}
+
+
+def stuck_pairs(measurements: Sequence[Measurement]) -> tuple[list[str], list[str]]:
+    """The stuck pairs ("<pose> <joint>"), and the joints whose every pair is stuck."""
+    pairs = [f"{m.pose} {m.joint}" for m in measurements if m.stuck]
+    joints = dict.fromkeys(m.joint for m in measurements)
+    unfollowed = [j for j in joints if all(m.stuck for m in measurements if m.joint == j)]
+    return pairs, unfollowed
 
 
 def _solve(a: np.ndarray, b: np.ndarray, ridge: float, g: np.ndarray, h: np.ndarray) -> np.ndarray:
@@ -312,6 +338,7 @@ def fit_stats(fit: GravityFit) -> dict[str, Any]:
         "singular_values": list(fit.singular_values),
         "poses": list(dict.fromkeys(m.pose for m in fit.measurements)),
         "measurements": len(fit.measurements),
+        "stuck_pairs": stuck_pairs(fit.measurements)[0],
         "rms_nm": {
             joint: {kind: rms[joint] for kind, rms in by_kind.items()} for joint in by_kind["urdf"]
         },

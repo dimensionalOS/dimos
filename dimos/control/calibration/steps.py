@@ -29,10 +29,13 @@ from dimos.control.calibration.float_analysis import analyze_float
 from dimos.control.calibration.gravity_fit import (
     Compensation,
     DitherHold,
+    Measurement,
+    dither_friction_nm,
     fit_gravity,
     fit_stats,
     measure_dither,
     refusals,
+    stuck_pairs,
 )
 from dimos.control.calibration.gravity_poses import Pose, generate_poses
 from dimos.control.calibration.schema import gravity_links_from_inertial
@@ -96,6 +99,44 @@ def _rest_error(run: Calibration, rest: Motion, target: np.ndarray) -> np.ndarra
     return error
 
 
+def _dither_deg(run: Calibration, joint: str) -> float:
+    spring = run.config.dither_torque_fraction * run.spec.max_torque_nm[joint] / run.gains(joint)[0]
+    return min(max(math.degrees(spring), run.config.dither_deg), run.config.max_dither_deg)
+
+
+def _dither(
+    run: Calibration, pose: str, target: np.ndarray, joint: str, dither: float
+) -> Measurement:
+    i = run.arm.joint_names.index(joint)
+    kp, kd = run.gains(joint)
+    holds = []
+    for sign in (1.0, -1.0):
+        dithered = target.copy()
+        dithered[i] += math.radians(sign * dither)
+        hold = run.stream(run.motion([dithered], "converge"))
+        if hold.ended != "settled":
+            raise RuntimeError(f"{joint} is {hold.ended} in its dither at {pose}")
+        event = StepEvent(
+            joint,
+            sign * dither,
+            kp,
+            kd,
+            hold.t[0],
+            hold.t[-1] - hold.t[0],
+            math.degrees(target[i]),
+            math.degrees(dithered[i]),
+        )
+        holds.append(DitherHold(event, np.asarray(hold.t), np.asarray(hold.q)))
+    return measure_dither(
+        pose,
+        run.arm.joint_names,
+        holds[0],
+        holds[1],
+        run.noise[joint],
+        stuck_fraction=run.config.stuck_fraction,
+    )
+
+
 def _gravity_poses(run: Calibration) -> list[Pose]:
     if run.poses is None:
         pose_set = generate_poses(
@@ -148,12 +189,16 @@ def check(run: Calibration) -> str:
 
 
 def gravity_poses(run: Calibration) -> str:
-    poses, measured, dither = _gravity_poses(run), run.arm.measured_joints, run.config.dither_deg
+    poses, measured = _gravity_poses(run), run.arm.measured_joints
+    dithers = {joint: _dither_deg(run, joint) for joint in measured}
     run.confirm(
-        f"The arm visits {len(poses)} poses and dithers {', '.join(measured)} by "
-        f"+-{dither:g} deg at each, then returns home."
+        f"The arm visits {len(poses)} poses and dithers "
+        f"{', '.join(f'{j} by +-{d:.1f}' for j, d in dithers.items())} deg at each, redoing "
+        "once at twice the dither a pair the joint followed less than "
+        f"{run.config.stuck_fraction:.0%} of the way, then returns home."
     )
     visited: list[np.ndarray] = []
+    redone = 0
     for pose in poses:
         target = np.asarray(pose.joints_rad)
         try:
@@ -162,32 +207,26 @@ def gravity_poses(run: Calibration) -> str:
             continue
         visited.append(target)
         run.baseline[pose.name] = _rest_error(run, rest, target)
-        for joint in measured:
-            i = run.arm.joint_names.index(joint)
-            kp, kd = run.gains(joint)
-            holds = []
-            for sign in (1.0, -1.0):
-                dithered = target.copy()
-                dithered[i] += math.radians(sign * dither)
-                hold = run.stream(run.motion([dithered], "converge"))
-                if hold.ended != "settled":
-                    raise RuntimeError(f"{joint} is {hold.ended} in its dither at {pose.name}")
-                event = StepEvent(
-                    joint,
-                    sign * dither,
-                    kp,
-                    kd,
-                    hold.t[0],
-                    hold.t[-1] - hold.t[0],
-                    math.degrees(target[i]),
-                    math.degrees(dithered[i]),
-                )
-                holds.append(DitherHold(event, np.asarray(hold.t), np.asarray(hold.q)))
-            run.measurements.append(
-                measure_dither(pose.name, run.arm.joint_names, holds[0], holds[1], run.noise[joint])
-            )
+        for joint, dither in dithers.items():
+            measurement = _dither(run, pose.name, target, joint, dither)
+            if measurement.stuck:
+                redone += 1
+                wider = min(2.0 * dither, run.config.max_dither_deg)
+                measurement = _dither(run, pose.name, target, joint, wider)
+            run.measurements.append(measurement)
     run.home(visited)
-    return f"{len(visited)} of {len(poses)} poses, {len(run.measurements)} dither pairs"
+    stuck, unfollowed = stuck_pairs(run.measurements)
+    if stuck:
+        run.show(
+            f"Stuck dither pairs, kept in the fit: {', '.join(stuck)}"
+            + "".join(
+                f"\n  {joint}: every pair stuck, friction not cancelled" for joint in unfollowed
+            )
+        )
+    return (
+        f"{len(visited)} of {len(poses)} poses, {len(run.measurements)} dither pairs, "
+        f"{redone} redone at twice the dither, {len(stuck)} stuck"
+    )
 
 
 def gravity_fit(run: Calibration) -> str:
@@ -214,6 +253,7 @@ def gravity_fit(run: Calibration) -> str:
         {
             "links": {name: link.model_dump(mode="json") for name, link in fitted.items()},
             "fit": fit_stats(fit),
+            "friction_nm": dither_friction_nm(run.measurements),
         },
         save=True,
     )

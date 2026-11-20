@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -56,7 +57,8 @@ def calibration(
 
 
 def test_a_full_run_saves_the_fit_and_the_gains_and_ends_home(arm: ArmModel) -> None:
-    fake, operator = FakeArm(arm, true_links=TRUE_LINKS), FakeOperator()
+    fake = FakeArm(arm, true_links=TRUE_LINKS, friction_nm=dict.fromkeys(arm.joint_names, 0.02))
+    operator = FakeOperator()
     run = calibration(arm, operator, fake)
     run.run()
 
@@ -158,6 +160,44 @@ def test_a_buzzing_gain_fails_its_steps_and_is_not_picked(arm: ArmModel) -> None
     assert {m.kp for m in run.step_metrics} == {40.0, 60.0}
     saved = {g["kp"] for g in fake.file["gains"].values()}
     assert saved == {40.0}
+
+
+@pytest.mark.parametrize(
+    "kp, dither_deg", [(40.0, math.degrees(0.3 * 10.0 / 40.0)), (200.0, 1.0), (10.0, 5.0)]
+)
+def test_each_joint_dithers_by_a_share_of_its_torque_over_kp_from_the_smallest_to_5_deg(
+    arm: ArmModel, kp: float, dither_deg: float
+) -> None:
+    run = calibration(arm, FakeOperator(), FakeArm(arm, kp=kp), steps=["gravity_poses"])
+    run.run()
+
+    assert {m.joint: m.dither_deg for m in run.measurements} == {
+        joint: pytest.approx(dither_deg) for joint in arm.measured_joints
+    }
+    assert not any(m.stuck for m in run.measurements)
+
+
+def test_a_pair_the_joint_did_not_follow_is_redone_at_twice_the_dither_and_kept_if_still_stuck(
+    arm: ArmModel,
+) -> None:
+    operator = FakeOperator()
+    run = calibration(
+        arm, operator, FakeArm(arm, friction_nm={"elbow": 1.6}), steps=["gravity_poses"]
+    )
+    run.run()
+    elbow = [m for m in run.measurements if m.joint == "elbow"]
+    assert len(elbow) == 4 and {m.dither_deg for m in elbow} == {5.0}
+    assert not any(m.stuck for m in run.measurements)
+    assert operator.done is not None and "4 redone at twice the dither, 0 stuck" in operator.done[1]
+
+    operator = FakeOperator()
+    run = calibration(
+        arm, operator, FakeArm(arm, friction_nm={"elbow": 3.0}), steps=["gravity_poses"]
+    )
+    run.run()
+    assert operator.done is not None and operator.done[0], operator.done
+    assert [m.pose for m in run.measurements if m.stuck] == [p.name for p in run.poses or []]
+    assert any("elbow: every pair stuck, friction not cancelled" in text for text in operator.shown)
 
 
 def test_the_plan_skips_what_cannot_run() -> None:

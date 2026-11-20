@@ -25,10 +25,12 @@ from dimos.control.calibration.gravity_fit import (
     DitherHold,
     Measurement,
     _solve,
+    dither_friction_nm,
     fit_gravity,
     fit_stats,
     measure_dither,
     refusals,
+    stuck_pairs,
 )
 from dimos.control.calibration.gravity_poses import ArmModel, generate_poses
 from dimos.control.calibration.step_analysis import RestNoise, StepEvent
@@ -81,7 +83,9 @@ def dithers(
                     )
                 pair.append(hold(arm, joint, rest, target, sign))
             measurements.append(
-                measure_dither(f"pose_{index}", arm.joint_names, pair[0], pair[1], NOISE)
+                measure_dither(
+                    f"pose_{index}", arm.joint_names, pair[0], pair[1], NOISE, stuck_fraction=0.5
+                )
             )
     return measurements
 
@@ -153,15 +157,34 @@ def test_a_fit_no_better_than_the_running_model_is_refused(
     assert reasons and all("worse than the running model" in reason for reason in reasons)
 
 
-def test_a_joint_that_did_not_move_between_dithers_raises(
+def test_a_pair_the_joint_followed_less_than_halfway_is_kept_stuck(
     arm: ArmModel, poses: list[np.ndarray]
 ) -> None:
-    joint = arm.measured_joints[0]
-    plus, minus = (hold(arm, joint, poses[0], math.degrees(poses[0][1]) + s, s) for s in (1, -1))
-    with pytest.raises(ValueError, match="did not move"):
-        measure_dither("p", arm.joint_names, plus, minus, NOISE)
+    joint, row = arm.measured_joints[0], arm.joint_names.index(arm.measured_joints[0])
+    target = math.degrees(poses[0][row])
+
+    def pair(moved_deg: float) -> Measurement:
+        plus, minus = (
+            hold(
+                arm,
+                joint,
+                poses[0] + np.eye(3)[row] * math.radians(s * moved_deg / 2),
+                target + s,
+                s,
+            )
+            for s in (1, -1)
+        )
+        return measure_dither("p", arm.joint_names, plus, minus, NOISE, stuck_fraction=0.5)
+
+    assert pair(0.9).stuck and pair(0.0).stuck and not pair(1.1).stuck
+    held = pair(0.0)
+    assert held.friction_nm == pytest.approx(KP * math.radians(DITHER_DEG))
+    assert dither_friction_nm([held, pair(1.1)]) == {joint: pytest.approx(KP * math.radians(0.45))}
+    assert stuck_pairs([held, pair(1.1)]) == (["p shoulder"], [])
+    assert stuck_pairs([held]) == (["p shoulder"], ["shoulder"])
+    plus = hold(arm, joint, poses[0], target + 1, 1)
     with pytest.raises(ValueError, match="not a"):
-        measure_dither("p", arm.joint_names, plus, plus, NOISE)
+        measure_dither("p", arm.joint_names, plus, plus, NOISE, stuck_fraction=0.5)
 
 
 def test_too_few_poses_raise(arm: ArmModel, poses: list[np.ndarray]) -> None:

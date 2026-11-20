@@ -14,8 +14,9 @@
 
 """A fake Damiao arm for the calibration tests, stepped by the test: no clock, no threads.
 
-``tick`` advances first-order PD physics, ``(b + kd) dq = kp (target - q) + g_comp - g_true``,
-by one reading period and hands the reading (quantized, with a little noise) to ``listener``.
+``tick`` advances first-order PD physics, ``(b + kd) dq = kp (target - q) + g_comp - g_true``
+less each joint's Coulomb ``friction_nm`` (it moves only while that torque is larger), by one
+reading period and hands the reading (quantized, with a little noise) to ``listener``.
 A joint held stiffer than ``buzz_above_kp`` buzzes once a step of ``buzz_after_rad`` or more
 excites it.
 Its ``get_config``/``set_config`` follow the Damiao connection's: all or nothing, live gains
@@ -24,7 +25,7 @@ undone when no command arrives within the deadman, a save applied at once.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import copy
 import math
 import threading
@@ -53,11 +54,13 @@ class FakeArm:
         damping: float = 2.0,
         buzz_above_kp: float = math.inf,
         buzz_after_rad: float = math.radians(2.0),
+        friction_nm: Mapping[str, float] | None = None,
     ) -> None:
         self.arm, self.period_s, self.deadman_s = arm, period_s, deadman_s
         self.quantum, self.speed_noise, self.damping = quantum_rad, speed_noise_rad_s, damping
         self.buzz_above_kp, self.buzz_after_rad = buzz_above_kp, buzz_after_rad
         self.excited = np.zeros(arm.dof, dtype=bool)
+        self.friction = np.asarray([(friction_nm or {}).get(j, 0.0) for j in arm.joint_names])
         self.truth = arm.model.copy()
         apply_inertial_overrides(self.truth, true_links or {})
         self.t, self.q = 0.0, arm.home.copy()
@@ -156,7 +159,9 @@ class FakeArm:
             },
         )
         torque = kp * (self.target - self.q) + self._gravity(compensated, self.q)
-        dq = (torque - self._gravity(self.truth, self.q)) / (self.damping + kd)
+        net = torque - self._gravity(self.truth, self.q)
+        net = np.sign(net) * np.maximum(np.abs(net) - self.friction, 0.0)
+        dq = net / (self.damping + kd)
         self.q = self.q + dq * self.period_s
         self.t += self.period_s
         noise = self._rng.uniform(-0.3, 0.3, self.q.size) * self.quantum

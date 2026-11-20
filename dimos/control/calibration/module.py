@@ -69,7 +69,12 @@ class CalibrationModuleConfig(ModuleConfig):
         rest_window_s: How long the arm sits still to measure its noise; a hold is settled
             once one window of samples stays inside that noise. Long enough to catch the
             noise's peaks: the buzz check compares a step against them.
-        dither_deg: How far each measured joint is dithered either way at a gravity pose.
+        dither_deg: The smallest dither of a measured joint either way at a gravity pose.
+        max_dither_deg: The largest dither, also the farthest a pose's dithers turn a joint.
+        dither_torque_fraction: Each joint dithers by this share of its torque cap over its
+            kp, so its spring beats its friction, within ``dither_deg`` and ``max_dither_deg``.
+        stuck_fraction: A dither pair the joint followed less than this share of the way is
+            stuck; it is redone once at twice the dither (at most ``max_dither_deg``).
         kp_scales: Multiples of each joint's kp the gain sweep tries (kd times the square
             root); must include 1, the baseline.
         step_deltas_deg: The gain sweep's steps, applied in turn; both signs needed.
@@ -89,6 +94,9 @@ class CalibrationModuleConfig(ModuleConfig):
     speed_deg_s: float = Field(default=10.0, gt=0.0)
     rest_window_s: float = Field(default=0.5, gt=0.0)
     dither_deg: float = Field(default=1.0, gt=0.0)
+    max_dither_deg: float = Field(default=5.0, gt=0.0)
+    dither_torque_fraction: float = Field(default=0.3, gt=0.0)
+    stuck_fraction: float = Field(default=0.5, gt=0.0, lt=1.0)
     kp_scales: list[float] = Field(default_factory=lambda: [1.0, 1.5, 2.0])
     step_deltas_deg: list[float] = Field(default_factory=lambda: [1.0, -1.0, 3.0, -3.0])
     max_overshoot_pct: float = Field(default=20.0, gt=0.0)
@@ -105,6 +113,8 @@ class CalibrationModuleConfig(ModuleConfig):
         unknown = set(self.steps) - set(steps.STEPS)
         if unknown:
             raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(steps.STEPS)}")
+        if self.dither_deg > self.max_dither_deg:
+            raise ValueError("dither_deg must not exceed max_dither_deg")
         if 1.0 not in self.kp_scales or min(self.kp_scales) <= 0.0:
             raise ValueError("kp_scales must be positive and include 1, the baseline")
         if not (min(self.step_deltas_deg) < 0.0 < max(self.step_deltas_deg)):
@@ -161,7 +171,10 @@ class Calibration:
         self.spec, self.arm, self.config, self.connection = spec, ArmModel(spec), config, connection
         # The farthest a pose's dithers and steps turn a joint; a floating joint may drift on top.
         self.excursion_rad = math.radians(
-            max(config.dither_deg, *(abs(x) for x in itertools.accumulate(config.step_deltas_deg)))
+            max(
+                config.max_dither_deg,
+                *(abs(x) for x in itertools.accumulate(config.step_deltas_deg)),
+            )
         )
         self.arm.clearance_m = (
             self.arm.reach_m * self.excursion_rad + config.float_drift_limit_mm / 1e3
