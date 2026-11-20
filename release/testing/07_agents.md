@@ -176,7 +176,7 @@ Expected result: `scan` prints `Scan complete: <n> object(s) present` with a con
 
 ## 7.11 Depth2DepthCloud
 
-Needs a Go2 whose Jetson has a dimos checkout and nix. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
+Needs a Go2 whose Jetson has a dimos checkout and nix, and the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)). Without it the run stops with `no Host router on this machine`. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
 
 ```bash
 # On the Jetson:
