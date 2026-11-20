@@ -15,7 +15,6 @@
 """The python config and ports agree with the rust struct and registry."""
 
 import json
-import math
 from pathlib import Path
 import sys
 
@@ -25,23 +24,21 @@ else:
     import tomli as tomllib
 
 from dimos.core.native_module import NativeModuleConfig
-from dimos.robot.deeprobotics.m20.imu.module import M20Imu, M20ImuConfig
+from dimos.hardware.sensors.imu.yesense.module import YesenseImu, YesenseImuConfig
 
 _RUST = Path(__file__).parent / "rust"
 
 
 def _config_fields() -> set[str]:
-    return set(M20ImuConfig.model_fields) - set(NativeModuleConfig.model_fields) | {"frame_id"}
+    return set(YesenseImuConfig.model_fields) - set(NativeModuleConfig.model_fields) | {"frame_id"}
 
 
 def test_config_dict_is_the_imu_config() -> None:
-    wire = json.loads(json.dumps(M20ImuConfig().to_config_dict()))
+    wire = json.loads(json.dumps(YesenseImuConfig().to_config_dict()))
     assert set(wire) == _config_fields()
-    assert wire["device"] == "/dev/ttyS9"
     assert wire["baud"] == 115200
     assert wire["frame_id"] == "imu_link"
-    assert wire["imu_xyz"] == [0.0632, -0.0268, -0.0435]
-    assert wire["mount_rpy_rad"] == [math.pi / 2, 0.0, 0.0]
+    assert wire["imu_xyz"] == [0.0, 0.0, 0.0]
     assert wire["body_axes"] is True
 
 
@@ -59,10 +56,10 @@ def test_rust_struct_has_every_config_key() -> None:
 def test_ports_match_registry() -> None:
     ports = {
         name
-        for name, hint in M20Imu.__annotations__.items()
+        for name, hint in YesenseImu.__annotations__.items()
         if "Out[" in str(hint) or "In[" in str(hint)
     }
     manifest = tomllib.loads((_RUST / "Cargo.toml").read_text())
-    registry = manifest["package"]["metadata"]["dimos"]["module"]["m20_imu"]
+    registry = manifest["package"]["metadata"]["dimos"]["module"]["yesense_imu"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
     assert set(registry["outputs"]) | set(registry["inputs"]) == ports

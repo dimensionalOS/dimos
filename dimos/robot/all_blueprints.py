@@ -329,7 +329,6 @@ all_modules = {
     "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.module.M20CameraRelay",
     "m20-connection": "dimos.robot.deeprobotics.m20.connection.M20Connection",
     "m20-ecan": "dimos.robot.deeprobotics.m20.ecan.module.M20Ecan",
-    "m20-imu": "dimos.robot.deeprobotics.m20.imu.module.M20Imu",
     "m20-lidar": "dimos.robot.deeprobotics.m20.lidar.M20Lidar",
     "m20-standing-joint-state": "dimos.robot.deeprobotics.m20.model.M20StandingJointState",
     "manipulation-localize": "dimos.manipulation.manipulation_localize.ManipulationLocalize",
@@ -440,5 +439,6 @@ all_modules = {
     "x-arm-connection": "dimos.robot.manipulators.xarm.connection.XArmConnection",
     "x-arm-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic.XArmCoordinator",
     "x-arm-twist-coordinator": "dimos.robot.manipulators.xarm.blueprints.teleop.XArmTwistCoordinator",
+    "yesense-imu": "dimos.hardware.sensors.imu.yesense.module.YesenseImu",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

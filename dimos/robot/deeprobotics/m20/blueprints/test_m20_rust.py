@@ -80,7 +80,7 @@ def test_no_vendor_bridge() -> None:
         ({"M20Cameras": "off"}, _AOS_DRIVERS - {"m20camerarelay"}),
         (
             {"M20Cameras": "off", "M20BodyImu": "serial"},
-            _AOS_DRIVERS - {"m20camerarelay", "m20bodyimusniff"} | {"m20imu"},
+            _AOS_DRIVERS - {"m20camerarelay", "m20bodyimusniff"} | {"yesenseimu"},
         ),
         ({"M20BodyImu": "off"}, _AOS_DRIVERS - {"m20bodyimusniff"}),
         ({"M20BodyFilter": "python"}, _AOS_DRIVERS),

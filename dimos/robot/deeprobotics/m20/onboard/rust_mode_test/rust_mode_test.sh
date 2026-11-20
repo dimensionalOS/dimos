@@ -17,7 +17,7 @@ SAVED_PATCH=~/gos_revert_20261120/uncommitted.patch
 SLAM_BIN=/var/opt/robot/data/user_home/e1_slam/target_mod/release/dim_slam_lio
 AIRY_BIN=/tmp/airy_native_body_filter
 SNIFF_BIN=/tmp/m20_body_imu_sniff
-IMU_BIN=/tmp/m20_imu
+IMU_BIN=/tmp/yesense_imu
 ECAN_BIN=/tmp/m20_ecan
 STAGE=/var/opt/robot/data/dimos_host
 OUT=/tmp/m20_rustmode_test
@@ -162,7 +162,7 @@ for root in "$HOME/dimos" $STAGE; do
     place $root dimos/mapping/dim_slam_lio/rust/result/bin $SLAM_BIN dim_slam_lio
     place $root dimos/hardware/sensors/lidar/robosense/rust/result/bin $AIRY_BIN airy_native
     place $root dimos/robot/deeprobotics/m20/body_imu_sniff/rust/result/bin $SNIFF_BIN m20_body_imu_sniff
-    place $root dimos/robot/deeprobotics/m20/imu/rust/result/bin $IMU_BIN m20_imu
+    place $root dimos/hardware/sensors/imu/yesense/rust/result/bin $IMU_BIN yesense_imu
     place $root dimos/robot/deeprobotics/m20/ecan/rust/result/bin $ECAN_BIN m20_ecan
 done
 log "checkout $(git log -1 --oneline | cut -c1-60)"

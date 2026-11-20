@@ -34,6 +34,7 @@ yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, 
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
+from dimos.hardware.sensors.imu.yesense.module import YesenseImu
 from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio
 from dimos.robot.deeprobotics.m20 import constants
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
@@ -46,7 +47,6 @@ from dimos.robot.deeprobotics.m20.body_imu_sniff.module import M20BodyImuSniff
 from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.constants import GOS_SLAM_CPUS, NOS_SLAM_CPUS
 from dimos.robot.deeprobotics.m20.ecan.module import M20Ecan
-from dimos.robot.deeprobotics.m20.imu.module import M20Imu
 from dimos.robot.deeprobotics.m20.lidar import m20_lidars
 from dimos.robot.deeprobotics.m20.model import (
     M20_MODEL,
@@ -159,7 +159,13 @@ _m20_real = autoconnect(
         default="sniff",
         choices={
             "sniff": M20BodyImuSniff.blueprint().hosted(tags=AOS),
-            "serial": M20Imu.blueprint().hosted(tags=AOS),
+            # the Yesense on AOS's 16550 UART, at its mount on the M20
+            "serial": YesenseImu.blueprint(
+                device="/dev/ttyS9",
+                frame_id=constants.IMU_FRAME,
+                imu_xyz=constants.IMU_XYZ_M,
+                mount_rpy_rad=constants.IMU_MOUNT_RPY_RAD,
+            ).hosted(tags=AOS),
             "off": autoconnect(),
         },
     ),

@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's body IMU read straight off its UART by the native ``m20_imu`` module (the yesense-imu crate), every frame, in place of the vendor ``yesense_node``.
+"""A Yesense IMU read straight off its serial port by the native ``yesense_imu`` module (the yesense-imu crate), every frame.
 
-The device owns one serial port, so this module and the vendor ``yesense_node`` cannot run at once: stop the
-vendor node first. Samples are stamped with their host receive time. With ``body_axes`` (the default) the
-vectors and orientation are rotated into base_link's axes as the vendor driver does, and ``imu_link`` is
-base_link-aligned; without it they stay in the sensor's axes and the mount rotation goes into the transform.
+The device owns its serial port, so nothing else may read it at once (on the M20, stop the vendor ``yesense_node``
+first). Samples are stamped with their host receive time. With ``body_axes`` (the default) the vectors and orientation
+are rotated into the parent frame's axes by the mount, and the frame is parent-aligned; without it they stay in the
+sensor's axes and the mount rotation goes into the transform.
 """
 
 from __future__ import annotations
@@ -30,23 +30,23 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.deeprobotics.m20.constants import IMU_FRAME, IMU_MOUNT_RPY_RAD, IMU_XYZ_M
 
 
-class M20ImuConfig(NativeModuleConfig):
-    source_dir: str | None = "dimos/robot/deeprobotics/m20/imu/rust"
-    executable: str = "result/bin/m20_imu"
+class YesenseImuConfig(NativeModuleConfig):
+    source_dir: str | None = "dimos/hardware/sensors/imu/yesense/rust"
+    executable: str = "result/bin/yesense_imu"
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
 
-    # The Yesense on the vendor AOS board: a 16550 UART, 200 Hz frames of accel, gyro and Euler angles.
-    device: str = "/dev/ttyS9"
+    # The serial port the Yesense streams its frames of accel, gyro and Euler angles on, and its rate.
+    device: str = "/dev/ttyUSB0"
     baud: int = Field(default=115200, ge=1, le=4294967295)
-    frame_id: str | None = IMU_FRAME
+    frame_id: str | None = "imu_link"
     parent_frame_id: str = "base_link"
-    imu_xyz: tuple[float, float, float] = IMU_XYZ_M
-    mount_rpy_rad: tuple[float, float, float] = IMU_MOUNT_RPY_RAD
+    # The sensor's position (m) and roll, pitch, yaw (rad) in parent_frame_id.
+    imu_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    mount_rpy_rad: tuple[float, float, float] = (0.0, 0.0, 0.0)
     body_axes: bool = True
     read_chunk_bytes: int = Field(default=256, ge=1)
     # Bytes the decoder holds waiting for a frame before dropping the oldest.
@@ -56,14 +56,14 @@ class M20ImuConfig(NativeModuleConfig):
     tf_period_s: float = Field(default=1.0, ge=0.01, le=60.0)
 
 
-class M20Imu(NativeModule):
-    """The M20's body IMU as ``sensor_msgs/Imu``, every frame, plus its static transform."""
+class YesenseImu(NativeModule):
+    """A Yesense IMU as ``sensor_msgs/Imu``, every frame, plus its static transform."""
 
-    config: M20ImuConfig
+    config: YesenseImuConfig
 
     imu: Out[Imu]
     tf: Out[TFMessage]
 
 
 if TYPE_CHECKING:
-    M20Imu()
+    YesenseImu()

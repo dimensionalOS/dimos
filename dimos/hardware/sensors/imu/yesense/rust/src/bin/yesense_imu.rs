@@ -17,9 +17,9 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-use dimos_m20_imu::module::M20Imu;
+use dimos_yesense_imu::module::YesenseImu;
 
 #[tokio::main]
 async fn main() {
-    dimos_module::run_with_transport::<M20Imu>().await;
+    dimos_module::run_with_transport::<YesenseImu>().await;
 }

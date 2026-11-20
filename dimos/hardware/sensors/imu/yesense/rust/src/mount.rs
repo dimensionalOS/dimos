@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn resting_sensor_on_its_side_reads_level_in_body_axes() {
-        // the M20's sensor rests at roll 90 deg with gravity on its +y
+        // a sensor mounted at roll 90 deg (as on the M20) rests with gravity on its +y
         let mount = mount_rotation([FRAC_PI_2, 0.0, 0.0]);
         let msg = imu_message(
             &frame([0.0, 90.0, 0.0], [0.0, 9.8, 0.0], [0.0; 3]),

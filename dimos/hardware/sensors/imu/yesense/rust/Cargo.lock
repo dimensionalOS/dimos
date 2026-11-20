@@ -611,7 +611,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-m20-imu"
+name = "dimos-yesense-imu"
 version = "0.1.0"
 dependencies = [
  "dimos-module",
