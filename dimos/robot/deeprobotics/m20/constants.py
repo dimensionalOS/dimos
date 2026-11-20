@@ -14,6 +14,8 @@
 
 """Documented and provisional geometry values for the Lynx M20."""
 
+import math
+
 # Documented body dimensions in the vendor hardware guide.
 BODY_LENGTH_M = 0.82
 BODY_WIDTH_M = 0.506
@@ -43,3 +45,19 @@ WORLD_FRAME = "world"
 # its end of the body with its spin axis level.
 FRONT_LIDAR_XYZ_M = (0.32028, 0.0, -0.013)
 REAR_LIDAR_XYZ_M = (-0.32028, 0.0, -0.013)
+
+# Lidar mount rotations in base_link (roll, pitch, yaw), from the vendor driver's
+# /opt/robot/share/node_driver/config/config.yaml (pitch -1.57079, yaw -3.14159 / 0):
+# each Airy's x axis points up and its z (spin) axis out its end of the body.
+FRONT_LIDAR_RPY = (0.0, -math.pi / 2, math.pi)
+REAR_LIDAR_RPY = (0.0, -math.pi / 2, 0.0)
+FRONT_LIDAR_FRAME = "front_lidar"
+REAR_LIDAR_FRAME = "rear_lidar"
+
+# The Airys' streams on AOS's eth0 (vendor config.yaml): multicast group, lidar address, MSOP/DIFOP/IMU ports.
+FRONT_LIDAR_GROUP = "224.10.10.201"
+REAR_LIDAR_GROUP = "224.10.10.202"
+FRONT_LIDAR_IP = "10.21.33.201"
+REAR_LIDAR_IP = "10.21.33.202"
+FRONT_LIDAR_PORTS = (6691, 7781, 6681)
+REAR_LIDAR_PORTS = (6692, 7782, 6682)
