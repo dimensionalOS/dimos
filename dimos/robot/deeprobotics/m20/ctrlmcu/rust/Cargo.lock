@@ -616,6 +616,7 @@ version = "0.1.0"
 dependencies = [
  "dimos-module",
  "lcm-msgs",
+ "libc",
  "m20-ctrlmcu",
  "serde",
  "serde_json",
@@ -1515,9 +1516,9 @@ dependencies = [
 
 [[package]]
 name = "m20-ctrlmcu"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "016d3eeb38525f5253298eb161901b28847a33514ec56153cacfdecb3e6ab937"
+checksum = "46e7fd32be2163401eb16b699434db6d9776ffd2c8fb9ae368701ab3eff34813"
 dependencies = [
  "libc",
 ]
