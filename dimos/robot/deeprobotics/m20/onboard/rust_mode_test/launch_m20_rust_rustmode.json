@@ -1,0 +1,19 @@
+{
+  "args": [
+    "m20-rust",
+    "--choice",
+    "M20Cameras=off",
+    "--choice",
+    "M20BodyImu=serial",
+    "--choice",
+    "M20Joints=ecan",
+    "--m20ecan.mode=owner",
+    "--zenoh-connect",
+    "tcp/127.0.0.1:7447",
+    "--premapmodule.map-file=/var/opt/robot/data/recordings/controller/controller_1794171225.mcap",
+    "--premapmodule.relocalize.fitness-threshold=0.65",
+    "--premapmodule.live-voxel-m=0.2",
+    "--premapmodule.match-radius-m=15",
+    "--premapmodule.min-local-points=2000"
+  ]
+}
