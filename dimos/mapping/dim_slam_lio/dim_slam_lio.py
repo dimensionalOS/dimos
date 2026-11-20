@@ -98,6 +98,12 @@ class DimSlamLioConfig(NativeModuleConfig):
     process_noise: ProcessNoise = Field(default_factory=ProcessNoise)
     # Every this many scans, log the handlers' time and the inputs' age on arrival (lidar clock vs host); 0 never.
     stats_every_scans: int = Field(default=100, ge=0)
+    # CPUs the process runs on (Linux); empty leaves it to the scheduler.
+    cpus: list[int] = Field(default_factory=list)
+    # Scan thinning before fusion: every keep_every-th usable point, then one point per scan_cube m cube (Point-LIO's
+    # defaults); the filter's cost is linear in what is left.
+    keep_every: int = Field(default=3, ge=1)
+    scan_cube: float = Field(default=0.2, gt=0)
 
     @model_validator(mode="after")
     def _frames_are_distinct(self) -> DimSlamLioConfig:
