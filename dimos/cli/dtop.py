@@ -36,6 +36,7 @@ from textual.widgets import Static
 
 from dimos.cli import theme
 from dimos.core.global_config import global_config
+from dimos.core.resource_monitor.logger import RESOURCE_STATS_TOPIC
 from dimos.core.transport_factory import make_transport
 
 if TYPE_CHECKING:
@@ -211,7 +212,7 @@ class ResourceSpyApp(App[None]):
 
     BINDINGS = [("q", "quit"), ("ctrl+c", "quit")]
 
-    def __init__(self, topic_name: str = "/resource_stats", db_path: str | None = None) -> None:
+    def __init__(self, topic_name: str = RESOURCE_STATS_TOPIC, db_path: str | None = None) -> None:
         super().__init__()
         self._topic_name = topic_name
         # Warn about missing system config before entering TUI raw mode.
@@ -568,7 +569,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dtop", description="Live TUI for per-worker resource stats."
     )
-    parser.add_argument("--topic", default="/resource_stats", help="Topic to subscribe to.")
+    parser.add_argument("--topic", default=RESOURCE_STATS_TOPIC, help="Topic to subscribe to.")
     parser.add_argument(
         "--transport",
         choices=["lcm", "zenoh"],

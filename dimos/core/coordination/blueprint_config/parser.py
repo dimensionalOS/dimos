@@ -45,6 +45,7 @@ from dimos.core.coordination.blueprint_config.fields import (
     nested_get,
     prepare_model_input,
     safe_field_default,
+    validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.merging import (
     merge_cli,
@@ -223,10 +224,18 @@ class BlueprintConfigParser:
         if global_overrides is not None:
             deep_merge(global_values, plain_mapping(global_overrides))
 
-        parsed_modules = self._validate_modules(module_values, schema)
         resolved_global = global_schema_defaults()
         deep_merge(resolved_global, global_values)
         parsed_global = validate_global_values(resolved_global)
+        # Hosted fragments resolve their own environment on each Host. Their
+        # complete configs are validated there, after compilation removes placements.
+        parsed_modules = (
+            plain_mapping(module_values)
+            if self.blueprint.hosted_placements
+            else self._validate_modules(
+                module_values, schema, GlobalConfig.model_validate(parsed_global)
+            )
+        )
         # Pick the validated values of the explicitly-set fields, translating
         # alias keys (e.g. DIMOS_TRANSPORT) to field names first.
         field_names = global_environment_names()
@@ -423,20 +432,14 @@ class BlueprintConfigParser:
             )
 
     def _validate_modules(
-        self, module_values: Mapping[str, Mapping[str, Any]], schema: ParserSchema
+        self,
+        module_values: Mapping[str, Mapping[str, Any]],
+        schema: ParserSchema,
+        g: GlobalConfig,
     ) -> dict[str, Any]:
         parsed: dict[str, Any] = {}
         for module in schema.modules:
-            values = prepare_model_input(
-                module.config_cls,
-                module_values[module.atom.name],
-            )
-            try:
-                model = module.config_cls.model_validate(values)
-            except ValidationError as error:
-                raise BlueprintConfigError(
-                    format_validation_error(module.atom.name, error)
-                ) from error
+            model = validate_module_config(module.atom, module_values[module.atom.name], g)
             dumped = plain(model, exclude_unset=True)
             dumped.pop("g", None)
             dumped.pop("instance_name", None)

@@ -26,7 +26,7 @@ def test_catalog_is_empty_until_observed_and_pages_do_not_imply_liveness():
     catalog = TopicCatalog()
     assert catalog.page("", "", 32) == ([], "")
     for key in ("demo/b", "other", "demo/a"):
-        catalog.record(descriptor(key))
+        catalog.observe(key, "application/json")
     first, cursor = catalog.page("demo/", "", 1)
     assert first == [descriptor("demo/a")]
     assert catalog.page("demo/", cursor, 1) == ([descriptor("demo/b")], "")
@@ -34,12 +34,12 @@ def test_catalog_is_empty_until_observed_and_pages_do_not_imply_liveness():
 
 def test_catalog_evicts_at_capacity_and_rejects_stale_or_foreign_cursors():
     catalog = TopicCatalog(capacity=2)
-    catalog.record(descriptor("a"))
-    catalog.record(descriptor("b"))
+    catalog.observe("a", "application/json")
+    catalog.observe("b", "application/json")
     _, cursor = catalog.page("", "", 1)
     with pytest.raises(ValueError, match="cursor invalid"):
         TopicCatalog().page("", cursor, 1)
-    catalog.record(descriptor("c"))
+    catalog.observe("c", "application/json")
     with pytest.raises(ValueError, match="catalog changed"):
         catalog.page("", cursor, 1)
     assert catalog.page("", "", 32) == ([descriptor("b"), descriptor("c")], "")
@@ -48,7 +48,7 @@ def test_catalog_evicts_at_capacity_and_rejects_stale_or_foreign_cursors():
 def test_catalog_cursors_are_bound_to_the_requested_prefix():
     catalog = TopicCatalog()
     for key in ("a/1", "a/2", "b/1", "b/2"):
-        catalog.record(descriptor(key))
+        catalog.observe(key, "application/json")
     _, cursor = catalog.page("a/", "", 1)
     with pytest.raises(ValueError, match="cursor invalid"):
         catalog.page("b/", cursor, 1)

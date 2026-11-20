@@ -79,6 +79,7 @@ def test_missing_runtime_reports_expected_path(tmp_path, monkeypatch, manifest):
 def test_runtime_uses_shared_checkout(tmp_path, monkeypatch, installed):
     checkout = tmp_path / "repo"
     (checkout / ".git").mkdir(parents=True)
+    (checkout / ".git" / "index").touch()  # a finished clone has an index
     project = checkout / Contract.project_dir
     project.mkdir(parents=True)
     (project / "pyproject.toml").touch()

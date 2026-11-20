@@ -118,6 +118,8 @@ class StubSession:
         self.welcomed = asyncio.Event()
         self.relay_error: Error | None = None
         self.sent_msgs: list[Msg] = []
+        self.sent_control: list[Msg] = []
+        self.has_control_stream = False
         self.sent_frames: list[tuple[FrameHeader, bytes]] = []
         self.resets: list[int] = []
         # Stream ids reported as still in flight (empty = instant delivery).
@@ -154,6 +156,14 @@ class StubSession:
             waiter = self.pong_waiters.get(msg.n)
             if waiter is not None:
                 waiter.set_result(Pong(n=msg.n, ts=msg.ts))
+
+    def open_control_stream(self) -> int:
+        self.has_control_stream = True
+        return 0
+
+    def send_control(self, msg: Msg) -> None:
+        assert self.has_control_stream
+        self.sent_control.append(msg)
 
     def register_pong_waiter(self, n: int) -> asyncio.Future[Pong]:
         waiter: asyncio.Future[Pong] = asyncio.get_running_loop().create_future()
@@ -600,13 +610,22 @@ async def test_robot_hello_cancellation_is_prompt_and_retires_stream() -> None:
     assert session.in_flight == set()
 
 
-async def test_viewer_hello_rides_datagrams() -> None:
+async def test_viewer_hello_rides_the_control_stream_once() -> None:
+    # The viewer's control plane is the persistent stream the browser SDK
+    # uses: reliable, so the hello is not resent, and the relay's replies
+    # (a topic_sources snapshot can exceed a datagram) come back on it.
     session = StubSession()
-    session.welcomed.set()
     client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
-    await client.hello()
-    assert session.sent_msgs == [Hello(v=PROTOCOL_VERSION, role="viewer")]
+    task = asyncio.create_task(client.hello())
+    await asyncio.sleep(0.45)
+    assert session.sent_control == [Hello(v=PROTOCOL_VERSION, role="viewer")]
+    session.welcomed.set()
+    await asyncio.wait_for(task, 1)
+    assert session.sent_msgs == []
     assert session.sent_frames == []
+    client.send_control(Sub(ch="odom"))
+    assert session.sent_control[-1] == Sub(ch="odom")
+    assert session.sent_msgs == []
 
 
 async def test_viewer_hello_carries_the_token() -> None:
@@ -614,7 +633,7 @@ async def test_viewer_hello_carries_the_token() -> None:
     session.welcomed.set()
     client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
     await client.hello(token="viewer-token-0123456789abcdef")
-    assert session.sent_msgs == [
+    assert session.sent_control == [
         Hello(v=PROTOCOL_VERSION, role="viewer", token="viewer-token-0123456789abcdef")
     ]
 
@@ -631,13 +650,12 @@ async def test_overlong_token_is_refused_without_echoing_it() -> None:
     assert session.sent_msgs == []
 
 
-async def test_viewer_hello_oversized_datagram_refused() -> None:
-    # An unsendable datagram wedges aioquic's whole datagram queue, so an
-    # oversized viewer hello is refused before anything is queued.
+async def test_viewer_hello_over_the_control_cap_refused() -> None:
     session = StubSession()
     client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
-    with pytest.raises(ProtocolError, match="hello datagram"):
-        await client.hello(manifest={"pad": "a" * 2000})
+    with pytest.raises(ProtocolError, match="hello control payload"):
+        await client.hello(manifest={"pad": "a" * MAX_CONTROL_PAYLOAD_BYTES})
+    assert session.sent_control == []
     assert session.sent_msgs == []
 
 

@@ -75,7 +75,7 @@ def mcp_shared(mcp_url: str, mcp_port: int) -> Iterator[ModuleCoordinator]:
     bp = autoconnect(
         StressTestModule.blueprint(),
         McpServer.blueprint(port=mcp_port),
-    )
+    ).solidify()
     coord = ModuleCoordinator.build(bp)
     ready = McpAdapter(url=mcp_url).wait_for_ready()
     yield coord
@@ -189,6 +189,18 @@ class TestMCPCLICommands:
         tool_names = {t["name"] for t in tools}
         assert "echo" in tool_names
         assert "ping" in tool_names
+
+    def test_cli_falls_back_to_unrecorded_server(
+        self, mcp_entry: RunEntry, mcp_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mcp_entry.mcp_url = None
+        mcp_entry.save()
+        monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.DEFAULT_MCP_URL", mcp_url)
+
+        result = CliRunner().invoke(main, ["mcp", "list-tools"])
+
+        assert result.exit_code == 0, result.output
+        assert "echo" in {tool["name"] for tool in json.loads(result.output)}
 
     def test_cli_call_echo(self, mcp_shared: ModuleCoordinator) -> None:
         """dimos mcp call echo --arg message=hello should return hello."""
@@ -325,14 +337,18 @@ class TestDaemonMCPRecovery:
         global_config.update(viewer="none", n_workers=1)
 
         # First run
-        bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+        bp1 = autoconnect(
+            StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+        ).solidify()
         coord1 = ModuleCoordinator.build(bp1)
         assert adapter.wait_for_ready(), "First MCP start failed"
         coord1.stop()
         assert adapter.wait_for_down(), "MCP didn't stop"
 
         # Second run -- should work without port conflicts
-        bp2 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+        bp2 = autoconnect(
+            StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+        ).solidify()
         coord2 = ModuleCoordinator.build(bp2)
         assert adapter.wait_for_ready(), "Second MCP start failed (port conflict?)"
         coord2.stop()
@@ -373,7 +389,9 @@ class TestMCPRapidRestart:
         global_config.update(viewer="none", n_workers=1)
 
         for cycle in range(3):
-            bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+            bp = autoconnect(
+                StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+            ).solidify()
             coord = ModuleCoordinator.build(bp)
             assert adapter.wait_for_ready(timeout=15), f"MCP failed to start on cycle {cycle}"
 
@@ -390,20 +408,11 @@ class TestMCPNoServer:
     def test_mcp_dead_after_stop(self, adapter: McpAdapter, mcp_port: int) -> None:
         """After coordinator.stop(), MCP should stop responding."""
         global_config.update(viewer="none", n_workers=1)
-        bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+        bp = autoconnect(
+            StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+        ).solidify()
         coord = ModuleCoordinator.build(bp)
         assert adapter.wait_for_ready(), "MCP server did not start"
 
         coord.stop()
         assert adapter.wait_for_down(), "MCP server did not stop"
-
-    def test_cli_no_server_error(self) -> None:
-        """dimos mcp list-tools with no server should exit with error."""
-        result = CliRunner().invoke(main, ["mcp", "list-tools"])
-        assert result.exit_code == 1
-        assert "no running" in result.output.lower() or "error" in result.output.lower()
-
-    def test_agent_send_cli_no_server(self) -> None:
-        """dimos agent-send with no server should exit with error."""
-        result = CliRunner().invoke(main, ["agent-send", "hello"])
-        assert result.exit_code == 1
