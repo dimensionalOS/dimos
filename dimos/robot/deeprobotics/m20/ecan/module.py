@@ -59,6 +59,8 @@ class M20EcanConfig(NativeModuleConfig):
     guard_max_velocity: float = Field(default=0.5, gt=0.0)
     # seconds without a frame before warning that rl_deploy or its shim is not running
     silence_warning_s: float = Field(default=5.0, gt=0.0, le=3600.0)
+    # owner: board replies between progress log lines
+    progress_log_replies: int = Field(default=5000, ge=1)
 
 
 class M20Ecan(NativeModule):

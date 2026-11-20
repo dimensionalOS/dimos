@@ -63,6 +63,43 @@ pub struct Config {
     /// Seconds without a frame before warning.
     #[validate(range(exclusive_min = 0.0, max = 3600.0))]
     silence_warning_s: f64,
+    /// owner: board replies between progress log lines.
+    #[validate(range(min = 1))]
+    progress_log_replies: u64,
+}
+
+/// The owner's guard: a reply showing a torque or speed above the limits (or not a number), or, once the startup is
+/// through, a status word other than 1 (or no joints). Returns the largest |torque| and |speed| seen, and whether to stop.
+pub fn guard(
+    joints: &[m20_ecan::JointState],
+    max_torque: f64,
+    max_velocity: f64,
+    in_startup: bool,
+) -> (f64, f64, bool) {
+    // f32::max drops NaN, so a non-finite reading counts as infinite
+    let largest = |values: &mut dyn Iterator<Item = f32>| {
+        values
+            .map(|v| {
+                if v.is_finite() {
+                    v.abs()
+                } else {
+                    f32::INFINITY
+                }
+            })
+            .fold(0.0f32, f32::max) as f64
+    };
+    let torque = largest(&mut joints.iter().map(|j| j.torque));
+    let velocity = largest(&mut joints.iter().map(|j| j.velocity));
+    let status_bad = !in_startup
+        && (joints.is_empty()
+            || joints
+                .iter()
+                .any(|j| j.status_word != m20_ecan::joint::STATUS_OK));
+    (
+        torque,
+        velocity,
+        torque > max_torque || velocity > max_velocity || status_bad,
+    )
 }
 
 #[derive(Module)]
@@ -249,16 +286,26 @@ fn run_owner(config: &Config, latest: &Latest) {
     let mut started = false;
     let mut last_statuses: Option<std::collections::BTreeSet<u16>> = None;
     let mut replies = 0u64;
+    let mut send_failing = false;
     loop {
         match bus.tick(None) {
-            Ok(Some(sent)) => {
-                latest.see(sent.timestamp_ns, sent.direction, &sent.frame);
-                if let Some(charge) = charge.as_mut() {
-                    charge.on_frame(sent.direction, &sent.frame);
+            Ok(sent) => {
+                if std::mem::take(&mut send_failing) {
+                    info!("motor-bus sends work again");
+                }
+                if let Some(sent) = sent {
+                    latest.see(sent.timestamp_ns, sent.direction, &sent.frame);
+                    if let Some(charge) = charge.as_mut() {
+                        charge.on_frame(sent.direction, &sent.frame);
+                    }
                 }
             }
-            Ok(None) => {}
-            Err(error) => warn!(%error, "motor-bus send failed"),
+            // once per failing stretch, not 1000 times a second
+            Err(error) if !send_failing => {
+                warn!(%error, "motor-bus send failed");
+                send_failing = true;
+            }
+            Err(_) => {}
         }
         if !started && !bus.owner.in_startup() {
             info!("startup sent; polling");
@@ -271,11 +318,12 @@ fn run_owner(config: &Config, latest: &Latest) {
             {
                 let statuses: std::collections::BTreeSet<u16> =
                     joints.iter().map(|j| j.status_word).collect();
-                let torque = joints.iter().map(|j| j.torque.abs()).fold(0.0f32, f32::max) as f64;
-                let velocity = joints
-                    .iter()
-                    .map(|j| j.velocity.abs())
-                    .fold(0.0f32, f32::max) as f64;
+                let (torque, velocity, stop) = guard(
+                    &joints,
+                    config.guard_max_torque,
+                    config.guard_max_velocity,
+                    bus.owner.in_startup(),
+                );
                 if last_statuses.as_ref() != Some(&statuses) {
                     info!(
                         ?statuses,
@@ -285,10 +333,7 @@ fn run_owner(config: &Config, latest: &Latest) {
                     last_statuses = Some(statuses.clone());
                 }
                 replies += 1;
-                if torque > config.guard_max_torque
-                    || velocity > config.guard_max_velocity
-                    || (!bus.owner.in_startup() && statuses != [1].into())
-                {
+                if stop {
                     tracing::error!(
                         torque,
                         velocity,
@@ -298,10 +343,13 @@ fn run_owner(config: &Config, latest: &Latest) {
                     );
                     std::process::exit(2);
                 }
-                if replies % 5000 == 0 {
+                if replies % config.progress_log_replies == 0 {
+                    let (receive_errors, last_receive_error) = bus.receive_errors();
                     info!(
                         replies,
                         refused = bus.owner.refused,
+                        receive_errors,
+                        last_receive_error = ?last_receive_error,
                         max_torque = torque,
                         max_velocity = velocity,
                         "polling"
@@ -329,4 +377,39 @@ fn run_owner(config: &Config, latest: &Latest) {
 #[cfg(not(target_os = "linux"))]
 fn run_owner(_: &Config, _: &Latest) {
     warn!("owner mode needs Linux (the vendor motor-bus socket)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use m20_ecan::{JointId, JointState};
+
+    fn joints(torque: f32, velocity: f32, status_word: u16) -> Vec<JointState> {
+        JointId::all()
+            .map(|joint| JointState {
+                board_id: 0x79,
+                joint,
+                position: 0.0,
+                velocity,
+                torque,
+                motor_temperature_c: 30.0,
+                driver_temperature_c: 30.0,
+                status_word,
+                data_id: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn guard_trips_on_limits_status_and_nan() {
+        assert!(!guard(&joints(0.1, 0.1, 1), 1.0, 0.5, false).2);
+        assert!(guard(&joints(1.5, 0.1, 1), 1.0, 0.5, false).2);
+        assert!(guard(&joints(0.1, -0.6, 1), 1.0, 0.5, false).2);
+        assert!(guard(&joints(0.1, 0.1, 0x21), 1.0, 0.5, false).2);
+        assert!(!guard(&joints(0.1, 0.1, 0x21), 1.0, 0.5, true).2);
+        // a NaN reading used to fold away to 0 and pass
+        assert!(guard(&joints(f32::NAN, 0.1, 1), 1.0, 0.5, false).2);
+        assert!(guard(&joints(0.1, f32::INFINITY, 1), 1.0, 0.5, false).2);
+        assert!(guard(&[], 1.0, 0.5, false).2);
+    }
 }

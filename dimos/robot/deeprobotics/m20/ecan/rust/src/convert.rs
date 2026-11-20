@@ -21,8 +21,9 @@ use m20_ecan::{Calibration, JointCommand, JointId};
 
 pub fn stamp(timestamp_ns: u64) -> Time {
     Time {
-        sec: (timestamp_ns / 1_000_000_000) as i32,
-        nsec: (timestamp_ns % 1_000_000_000) as i32,
+        // i32 seconds (the message's type) saturate in 2038 instead of wrapping negative
+        sec: i32::try_from(timestamp_ns / 1_000_000_000).unwrap_or(i32::MAX),
+        nsec: i32::try_from(timestamp_ns % 1_000_000_000).unwrap_or(0),
     }
 }
 
@@ -95,6 +96,7 @@ pub fn commanded(
     )
 }
 
+/// JBD protection-state bits that name a temperature fault (protocol constant: m20_battery::PROTECTION_NAMES).
 const TEMPERATURE_BITS: [(usize, i8); 4] = [
     (4, BatteryState::POWER_SUPPLY_HEALTH_OVERHEAT),
     (6, BatteryState::POWER_SUPPLY_HEALTH_OVERHEAT),
@@ -244,6 +246,13 @@ mod tests {
     use m20_ecan::{decode_ethernet, tap, Direction, Message};
 
     const CAPTURE: &[u8] = include_bytes!("../tests/sitting_docked_20261120_125557.pcapng");
+
+    #[test]
+    fn stamp_saturates_past_2038() {
+        let t = stamp(1_795_166_480_118_884_300);
+        assert_eq!((t.sec, t.nsec), (1_795_166_480, 118_884_300));
+        assert_eq!(stamp(u64::MAX).sec, i32::MAX);
+    }
 
     #[test]
     fn joint_states_from_a_real_capture() {

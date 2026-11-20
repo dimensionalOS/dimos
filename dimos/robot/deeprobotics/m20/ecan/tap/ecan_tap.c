@@ -149,8 +149,8 @@ ssize_t sendto(int fd, const void* buf, size_t len, int flags, const struct sock
             atomic_fetch_add_explicit(&dropped_charge_enable, 1, memory_order_relaxed);
             return (ssize_t)len;
         }
-        if (atomic_load_explicit(&inject_pending, memory_order_relaxed) > 0 && f[ETH_LEN + 5] == 0x89 &&
-            !is_passive_joint_command(f, len)) {
+        if (atomic_load_explicit(&inject_pending, memory_order_relaxed) > 0 && len >= ETH_LEN + 10 &&
+            f[ETH_LEN + 5] == 0x89 && !is_passive_joint_command(f, len)) {
             atomic_store_explicit(&inject_pending, 0, memory_order_relaxed);  // gains on: cancel, never inject later
         }
         if (atomic_load_explicit(&inject_pending, memory_order_relaxed) > 0 && is_passive_joint_command(f, len)) {
@@ -322,6 +322,8 @@ static void* writer_main(void* unused) {
     int close_file = 0;
     FILE* out = NULL;
     uint64_t written = 0;
+    // after capturing stops: drain every slot claimed before that (each claimed slot is always published)
+    uint64_t drain_until = 0;
     long ticks_per_check = control_poll_us / poll_us > 0 ? control_poll_us / poll_us : 1;
     long poll_ticks = ticks_per_check;
     for (;;) {
@@ -352,12 +354,16 @@ static void* writer_main(void* unused) {
                 atomic_store(&capturing, 1);
             } else if (!on && atomic_load(&capturing)) {
                 atomic_store(&capturing, 0);
-                usleep(2000);  // let a capture() that saw the flag finish its slot before the drain below
+                drain_until = atomic_load(&next_seq);
             }
         }
         for (;;) {
             Slot* slot = &slots[consumed_seq % SLOT_COUNT];
             if (atomic_load_explicit(&slot->ready_seq, memory_order_acquire) != consumed_seq) {
+                if (consumed_seq < drain_until) {
+                    sched_yield();  // a capture() that claimed this slot is mid-memcpy
+                    continue;
+                }
                 break;
             }
             if (slot->len > 0) {
@@ -387,6 +393,7 @@ static void* writer_main(void* unused) {
                 fclose(sf);
             }
         }
+        // polled on purpose: a wake-up from capture() would put a syscall on rl_deploy's 1 kHz real-time path
         usleep((useconds_t)poll_us);
     }
     return NULL;

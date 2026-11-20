@@ -1489,9 +1489,9 @@ dependencies = [
 
 [[package]]
 name = "m20-ecan"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "596ba043dcbdffa386ad45729c40b0b140be8bb9ef3be0fd05c0b01deacb347b"
+checksum = "dfa26ed71847cf1ee5736706c5d69dcb66d5044c50cd99eb6458412838bfb654"
 dependencies = [
  "libc",
 ]
