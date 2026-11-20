@@ -15,6 +15,7 @@ dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
+libc = "0.2"
 # native_config expands to ::serde and ::validator derives, so both must be direct deps.
 serde = { version = "1", features = ["derive"] }
 validator = { version = "0.21", features = ["derive"] }

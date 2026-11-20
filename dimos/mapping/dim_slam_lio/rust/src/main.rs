@@ -37,6 +37,11 @@ struct DimSlamLioConfig {
     process_noise: ProcessNoise,
     /// Every this many scans, log the handlers' time and the inputs' age on arrival; 0 never.
     stats_every_scans: u64,
+    /// CPUs the process runs on (Linux); empty leaves it to the scheduler.
+    cpus: Vec<usize>,
+    /// Scan thinning before fusion: every `keep_every`th usable point, then one per `scan_cube` m cube.
+    keep_every: u32,
+    scan_cube: f32,
 }
 
 /// What `stats_every_scans` reports: handler seconds and arrival ages, per input, since the last report.
@@ -75,6 +80,7 @@ struct DimSlamLio {
 
 impl DimSlamLio {
     async fn init(&mut self) {
+        pin_to(&self.config.cpus);
         let slam = DimSlamCore::new(DimSlamCoreConfig {
             odom_frame_id: self.config.odom_frame_id.clone(),
             output_frame_id: self.config.output_frame_id.clone(),
@@ -82,6 +88,8 @@ impl DimSlamLio {
             lidars: self.config.lidars.clone(),
             odom_sources: self.config.odom_sources.clone(),
             process_noise: self.config.process_noise,
+            keep_every: self.config.keep_every,
+            scan_cube: self.config.scan_cube,
             ..Default::default()
         });
         self.slam = Some(slam.unwrap_or_else(|error| panic!("{error}")));
@@ -165,6 +173,34 @@ impl DimSlamLio {
         if let Some(slam) = &self.slam {
             slam.report();
         }
+    }
+}
+
+/// Every thread this process starts from here on inherits the set (the runtime's workers too, as they spawn lazily).
+#[cfg(target_os = "linux")]
+fn pin_to(cpus: &[usize]) {
+    if cpus.is_empty() {
+        return;
+    }
+    // SAFETY: a zeroed cpu_set_t is the empty set; CPU_SET writes within it; pid 0 is this thread.
+    let result = unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for &cpu in cpus {
+            libc::CPU_SET(cpu, &mut set);
+        }
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set)
+    };
+    if result == 0 {
+        tracing::info!(?cpus, "pinned");
+    } else {
+        tracing::warn!(?cpus, error = %std::io::Error::last_os_error(), "could not pin");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pin_to(cpus: &[usize]) {
+    if !cpus.is_empty() {
+        tracing::warn!(?cpus, "cpus is Linux-only; ignored");
     }
 }
 
