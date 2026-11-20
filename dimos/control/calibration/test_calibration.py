@@ -44,7 +44,6 @@ def calibration(
         robot="openyam",
         poses=4,
         speed_deg_s=50.0,
-        rest_window_s=0.1,
         grid_points=400,
         confirm_poses=2,
         **settings,

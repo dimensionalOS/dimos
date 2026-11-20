@@ -16,10 +16,10 @@
 
 Each sample gives the next target: a minimum-jerk path whose fastest joint peaks at the speed,
 by the sample's measured time, then a hold at the path's end. A hold ends one window after it
-starts (``fixed``), once the arm is settled (``settle``), or also once it stops converging
-(``converge``: the latest window's spread is no smaller than the one before, and more than an
-encoder step over the noise band). Settled means every joint's spread over the latest window
-is inside its noise band, or within one encoder step (the smallest change it reads). A joint farther from
+starts (``fixed``), or once the arm is settled or stops converging (``converge``: the latest
+window's spread is outside the noise band and no smaller than the one before, while the joint
+ends the window where it began: it oscillates in place rather than creeps). Settled means every joint's spread over the latest window
+is inside its noise band plus one encoder step (the smallest change it reads). A joint farther from
 its target than its ``stall_rad`` (its motor's torque limit over kp: the motor cannot push
 through) or a point of the arm at the table or in a keep-out region stops the motion with an
 error. Joint vectors are radians in
@@ -28,6 +28,7 @@ the spec's joint order.
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass, field
 import math
 import threading
@@ -40,7 +41,7 @@ from dimos.control.calibration.gravity_poses import ArmModel
 # Peak over mean speed of the minimum-jerk blend, 15/8.
 MIN_JERK_PEAK_RATIO = 1.875
 
-HoldMode = Literal["fixed", "settle", "converge"]
+HoldMode = Literal["fixed", "converge"]
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,7 @@ class Motion:
     dq: list[np.ndarray] = field(default_factory=list)
     _t0: float | None = None
     _tip0: np.ndarray | None = None
+    _quantum: np.ndarray = field(default_factory=lambda: np.asarray(np.inf))
 
     def __post_init__(self) -> None:
         self._durations = [
@@ -132,31 +134,39 @@ class Motion:
         return None
 
     def _hold_ended(self) -> str | None:
-        times, q = np.asarray(self.t), np.asarray(self.q)
-        elapsed = times[-1] - times[0]
+        if len(self.q) > 1:
+            step = np.abs(self.q[-1] - self.q[-2])
+            self._quantum = np.where(step > 0.0, np.minimum(self._quantum, step), self._quantum)
+        elapsed = self.t[-1] - self.t[0]
         if self.mode == "fixed":
             return "rested" if elapsed >= self.window_s else None
         if self.floating is not None:
             if self._tip0 is None:
-                self._tip0 = self.arm.fingertip(q[0])
-            if np.linalg.norm(self.arm.fingertip(q[-1]) - self._tip0) > self.drift_limit_m:
+                self._tip0 = self.arm.fingertip(self.q[0])
+            if np.linalg.norm(self.arm.fingertip(self.q[-1]) - self._tip0) > self.drift_limit_m:
                 return "drifted"
         if elapsed <= self.window_s:
             return None
-        steps = np.abs(np.diff(q, axis=0))
-        quantum = np.where(steps > 0.0, steps, np.inf).min(axis=0)
-        quantum = np.where(np.isfinite(quantum), quantum, 0.0)
+        tail = bisect.bisect_right(self.t, self.t[-1] - 2.0 * self.window_s)
+        times, q = np.asarray(self.t[tail:]), np.asarray(self.q[tail:])
+        quantum = np.where(np.isfinite(self._quantum), self._quantum, 0.0)
         tolerance = np.maximum(self.tolerance_rad, quantum)
-        spread = np.ptp(q[times > times[-1] - self.window_s], axis=0)
+        latest = q[times > times[-1] - self.window_s]
+        # A spread is a difference of two readings: allow their rounding, one ulp each.
+        spread = np.ptp(latest, axis=0) - 2.0 * np.spacing(np.abs(latest).max(axis=0))
         if (spread <= tolerance).all():
             return "settled"
-        if self.mode == "converge" and elapsed > 2.0 * self.window_s:
-            earlier = (times > times[-1] - 2.0 * self.window_s) & (
-                times <= times[-1] - self.window_s
-            )
-            unsettled = spread > tolerance + quantum
-            if (spread[unsettled] >= np.ptp(q[earlier], axis=0)[unsettled]).any():
-                return "not converging"
+        if elapsed <= 2.0 * self.window_s:
+            return None
+        earlier = (times > times[-1] - 2.0 * self.window_s) & (times <= times[-1] - self.window_s)
+        # Stopped: back where the window began and no calmer than the window before.
+        stopped = (np.abs(latest[-1] - latest[0]) <= tolerance) & (
+            spread >= np.ptp(q[earlier], axis=0)
+        )
+        if (stopped & (spread > tolerance + quantum)).any():
+            return "not converging"
+        if (stopped | (spread <= tolerance)).all():
+            return "settled"
         return None
 
     def _guard(self, q: np.ndarray, target: np.ndarray) -> str | None:

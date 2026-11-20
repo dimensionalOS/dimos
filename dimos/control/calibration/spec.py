@@ -76,37 +76,22 @@ class HalfSpace:
 class WorkspaceGuard:
     """Where an arm may go during calibration.
 
-    The clearances are operator settings: how far above the floor every checked point stays at
-    a pose and along the ramps between poses. ``explicit`` is False for the guard a spec gets
+    ``explicit`` is False for the guard a spec gets
     when nobody described the surroundings (floor at the model root, nothing else); nothing
     moves an arm with it. ``clearance_frames`` None means derived from the model.
     """
 
     floor_z_m: float = 0.0
-    pose_clearance_m: float = 0.15
-    transition_clearance_m: float = 0.11
     min_x_m: float | None = None
     keep_out: tuple[HalfSpace, ...] = ()
     clearance_frames: tuple[str, ...] | None = None
     point_offset_m: Vector3 = (0.0, 0.0, 0.0)
     explicit: bool = True
 
-    def __post_init__(self) -> None:
-        if self.pose_clearance_m <= 0.0 or self.transition_clearance_m <= 0.0:
-            raise ValueError("workspace clearances must be positive")
-
     @classmethod
     def for_bench(cls, floor_z_m: float, min_x_m: float, **fields: object) -> WorkspaceGuard:
         """An explicit guard: the table height and the line the fingertip stays in front of."""
         return cls(floor_z_m=floor_z_m, min_x_m=min_x_m, **fields)  # type: ignore[arg-type]
-
-    @property
-    def min_pose_z_m(self) -> float:
-        return self.floor_z_m + self.pose_clearance_m
-
-    @property
-    def min_transition_z_m(self) -> float:
-        return self.floor_z_m + self.transition_clearance_m
 
 
 @dataclass(frozen=True)

@@ -119,6 +119,8 @@ class ArmModel:
             + np.linalg.norm(self.model.frames[self._tip].placement.translation)
             + np.linalg.norm(self._tip_offset)
         )
+        # How far above the floor every point stays at a pose and along ramps; the caller sets it.
+        self.clearance_m = 0.0
         self.fitted_joint_ids = tuple(body_joint_id(self.model, name) for name in self.fitted_links)
         self.param_columns = tuple(
             (joint_id - 1) * PARAMS_PER_BODY + k
@@ -175,7 +177,7 @@ class ArmModel:
         """Clear of the floor and keep-outs, in front when asked, and no joint over its cap."""
         q = self.q(joints)
         tip, others = self.points(q)
-        limit = self.workspace.min_pose_z_m
+        limit = self.workspace.floor_z_m + self.clearance_m
         if tip[2] <= limit or (others[:, 2] <= limit).any() or not self._clear(tip, others):
             return False
         min_x = self.workspace.min_x_m
@@ -184,7 +186,7 @@ class ArmModel:
         return bool((np.abs(self.gravity(q)) <= self.max_torque).all())
 
     def transition_ok(self, a: Joints, b: Joints) -> bool:
-        """Whether a joint-space ramp from ``a`` to ``b`` keeps the transition clearance.
+        """Whether a joint-space ramp from ``a`` to ``b`` keeps the clearance.
 
         A point may run lower only where an end of the ramp has it, never below both ends. The
         ramp is checked often enough that no point moves more than twice its margin to the
@@ -195,7 +197,7 @@ class ArmModel:
             np.concatenate([[tip[2]], others[:, 2]])
             for tip, others in map(self.points, (start, end))
         ]
-        floor = np.minimum(self.workspace.min_transition_z_m, np.minimum(*ends))
+        floor = np.minimum(self.workspace.floor_z_m + self.clearance_m, np.minimum(*ends))
         margin = float((floor - self.workspace.floor_z_m).min())
         if margin <= 0.0:
             return False

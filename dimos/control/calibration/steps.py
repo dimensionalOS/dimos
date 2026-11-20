@@ -98,11 +98,10 @@ def _rest_error(run: Calibration, rest: Motion, target: np.ndarray) -> np.ndarra
 
 def _gravity_poses(run: Calibration) -> list[Pose]:
     if run.poses is None:
-        excursion = max(abs(x) for x in itertools.accumulate(run.config.step_deltas_deg))
         pose_set = generate_poses(
             run.arm,
             count=run.config.poses,
-            margin_rad=math.radians(max(run.config.dither_deg, excursion)),
+            margin_rad=run.excursion_rad,
             grid_points=run.config.grid_points,
         )
         for note in pose_set.notes:
@@ -170,7 +169,9 @@ def gravity_poses(run: Calibration) -> str:
             for sign in (1.0, -1.0):
                 dithered = target.copy()
                 dithered[i] += math.radians(sign * dither)
-                hold = run.stream(run.motion([dithered], "settle"))
+                hold = run.stream(run.motion([dithered], "converge"))
+                if hold.ended != "settled":
+                    raise RuntimeError(f"{joint} is {hold.ended} in its dither at {pose.name}")
                 event = StepEvent(
                     joint,
                     sign * dither,

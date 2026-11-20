@@ -25,6 +25,7 @@ stays held. ``abort`` stops streaming at once and offers to go home.
 from __future__ import annotations
 
 from collections.abc import Callable
+import itertools
 import math
 import threading
 from typing import Any, Protocol
@@ -66,7 +67,8 @@ class CalibrationModuleConfig(ModuleConfig):
         poses: How many gravity poses to visit.
         speed_deg_s: Peak joint speed of every move; at most the URDF velocity limits.
         rest_window_s: How long the arm sits still to measure its noise; a hold is settled
-            once one window of samples stays inside that noise.
+            once one window of samples stays inside that noise. Long enough to catch the
+            noise's peaks: the buzz check compares a step against them.
         dither_deg: How far each measured joint is dithered either way at a gravity pose.
         kp_scales: Multiples of each joint's kp the gain sweep tries (kd times the square
             root); must include 1, the baseline.
@@ -157,6 +159,13 @@ class Calibration:
         block: Callable[[threading.Event], Any] = threading.Event.wait,
     ) -> None:
         self.spec, self.arm, self.config, self.connection = spec, ArmModel(spec), config, connection
+        # The farthest a pose's dithers and steps turn a joint; a floating joint may drift on top.
+        self.excursion_rad = math.radians(
+            max(config.dither_deg, *(abs(x) for x in itertools.accumulate(config.step_deltas_deg)))
+        )
+        self.arm.clearance_m = (
+            self.arm.reach_m * self.excursion_rad + config.float_drift_limit_mm / 1e3
+        )
         self._call, self._publish, self._block = call, publish, block
         self._torque_limit = torque_limit_nm
         self._lock = threading.Lock()
@@ -309,7 +318,9 @@ class Calibration:
         if ask and self.config.confirm_each:
             degrees = ", ".join(f"{math.degrees(v):.1f}" for v in target)
             self.confirm(f"Move to {what} [{degrees}] deg?")
-        motion = self.stream(self.motion(plan_path(self.arm, self.measured(), target), "settle"))
+        motion = self.stream(self.motion(plan_path(self.arm, self.measured(), target), "converge"))
+        if motion.ended != "settled":
+            raise RuntimeError(f"the arm is {motion.ended} at {what}")
         self.at_home = what == "home"
         return motion
 

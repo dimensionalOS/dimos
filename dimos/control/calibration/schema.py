@@ -570,9 +570,7 @@ def _set_inertial(link: ET.Element, mass: float, com: np.ndarray) -> None:
     inertial = link.find("inertial")
     if inertial is None:
         inertial = ET.SubElement(link, "inertial")
-        ET.SubElement(
-            inertial, "inertia", ixx="1e-6", ixy="0", ixz="0", iyy="1e-6", iyz="0", izz="1e-6"
-        )
+        ET.SubElement(inertial, "inertia", ixx="0", ixy="0", ixz="0", iyy="0", iyz="0", izz="0")
     origin = inertial.find("origin")
     if origin is None:
         origin = ET.Element("origin", rpy="0 0 0")

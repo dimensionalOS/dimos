@@ -53,8 +53,8 @@ TOY_URDF = f"""<?xml version="1.0"?>
 
 
 def toy_arm() -> ArmModel:
-    guard = WorkspaceGuard.for_bench(
-        floor_z_m=-0.45, min_x_m=-1.0, pose_clearance_m=0.05, transition_clearance_m=0.02
-    )
+    guard = WorkspaceGuard.for_bench(floor_z_m=-0.45, min_x_m=-1.0)
     model = RobotModel.from_urdf_string(TOY_URDF)
-    return ArmModel(build_arm_spec("toy", model, ["yaw", "shoulder", "elbow"], workspace=guard))
+    arm = ArmModel(build_arm_spec("toy", model, ["yaw", "shoulder", "elbow"], workspace=guard))
+    arm.clearance_m = 0.02
+    return arm
