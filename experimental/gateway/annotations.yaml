@@ -857,6 +857,12 @@ robots:
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
+        metal-calibrate:
+          title: Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: metalconnection, field: can_port, label: CAN port or USB serial}
     dual_makermods_metal:
       name: Dual MakerMods Metal
       description: Two Metal arms in one planning and collision world.
@@ -871,6 +877,13 @@ robots:
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
           description: Coordinated motion planning, execution, and Viser for two Metal arms.
+        dual-metal-calibrate:
+          title: Dual Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial}
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -919,6 +932,12 @@ robots:
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.
+        openyam-calibrate:
+          title: OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openyamconnection, field: can_port, label: CAN port or USB serial}
     dual_openyam:
       name: Dual OpenYAM
       description: Two OpenYAM arms as one robot.
@@ -947,6 +966,13 @@ robots:
         learning-collect-leader-dual-openyam:
           title: Dual OpenYAM leader demonstration recording
           description: Drive both OpenYAM arms from the leader arms and record demonstrations.
+        dual-openyam-calibrate:
+          title: Dual OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualopenyamconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualopenyamconnection, field: right_can_port, label: Right CAN port or USB serial}
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
@@ -992,6 +1018,13 @@ robots:
         openarm-mini-follower-collection:
           title: OpenArm Mini follower recording
           description: Record demonstrations on the robot machine while the Mini leaders run on another.
+        openarm-calibrate:
+          title: OpenArm calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial}
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -1013,6 +1046,12 @@ robots:
         coordinator-seeed-b601-dm:
           title: B601-DM coordinator
           description: A B601-DM behind a ControlCoordinator (a building block).
+        b601-dm-calibrate:
+          title: B601-DM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: b601dmconnection, field: can_port, label: CAN port, placeholder: /dev/ttyACM0}
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
