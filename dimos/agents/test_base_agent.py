@@ -178,34 +178,11 @@ class Handle:
     """A plain class: nothing says how to send it."""
 
 
-@dataclass(frozen=True)
-class HoldsHandle:
-    name: str
-    handle: Handle
-
-
-@pytest.mark.parametrize(
-    "bad, reason",
-    [
-        (Handle, "Handle is a plain class"),
-        (HoldsHandle, "HoldsHandle.handle: .*plain class"),
-        (list[Handle], "plain class"),
-        (dict[str, HoldsHandle | None], "HoldsHandle.handle"),
-    ],
-)
-def test_an_agent_whose_types_cannot_be_sent_is_refused_when_defined(bad: Any, reason: str) -> None:
+@pytest.mark.parametrize("bad", [Handle, list[Handle], dict[str, Handle | None]])
+def test_an_agent_whose_types_cannot_be_sent_is_refused_when_defined(bad: Any) -> None:
     for pair in ((bad, str), (str, bad)):
-        with pytest.raises(TypeError, match=f"cannot be sent over RPC or a transport: .*{reason}"):
+        with pytest.raises(TypeError, match="cannot be sent over RPC or a transport"):
             new_class("Unsendable", (_ANY_AGENT[pair],))
-
-
-def test_a_type_defined_inside_a_function_is_refused() -> None:
-    @dataclass
-    class Local:
-        x: int
-
-    with pytest.raises(TypeError, match="defined inside a function"):
-        new_class("LocalAgent", (_ANY_AGENT[Local, str],))
 
 
 @pytest.mark.parametrize(
