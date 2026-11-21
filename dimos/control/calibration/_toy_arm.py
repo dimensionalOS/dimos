@@ -28,22 +28,26 @@ def _link(name: str, mass: float, com_x: float) -> str:
     )
 
 
-def _joint(name: str, parent: str, child: str, axis: str, x: float) -> str:
+def _joint(name: str, parent: str, child: str, axis: str, x: float, roll: float = 0.0) -> str:
+    rpy = f' rpy="{roll!r} 0 0"' if roll else ""
     return (
         f'<joint name="{name}" type="revolute"><parent link="{parent}"/><child link="{child}"/>'
-        f'<origin xyz="{x} 0 0"/><axis xyz="{axis}"/>'
+        f'<origin xyz="{x} 0 0"{rpy}/><axis xyz="{axis}"/>'
         '<limit lower="-1.5" upper="1.5" effort="10" velocity="1"/></joint>'
     )
 
 
-TOY_URDF = f"""<?xml version="1.0"?>
+def toy_urdf(tilt_rad: float = 0.0) -> str:
+    """The toy URDF, its base rolled by ``tilt_rad`` (a URDF that writes pi/2 as 1.5708 tilts
+    by 3.7e-6 rad)."""
+    return f"""<?xml version="1.0"?>
 <robot name="toy">
   <link name="base"/>
   {_link("turntable", 0.4, 0.0)}
   {_link("upper", 1.0, 0.15)}
   {_link("fore", 0.5, 0.1)}
   <link name="tcp"/>
-  {_joint("yaw", "base", "turntable", "0 0 1", 0.0)}
+  {_joint("yaw", "base", "turntable", "0 0 1", 0.0, tilt_rad)}
   {_joint("shoulder", "turntable", "upper", "0 1 0", 0.0)}
   {_joint("elbow", "upper", "fore", "0 1 0", 0.3)}
   <joint name="tcp_mount" type="fixed"><parent link="fore"/><child link="tcp"/>
@@ -52,9 +56,20 @@ TOY_URDF = f"""<?xml version="1.0"?>
 """
 
 
-def toy_arm() -> ArmModel:
+TOY_URDF = toy_urdf()
+
+
+def toy_arm(tilt_rad: float = 0.0) -> ArmModel:
+    """The toy arm on a bench; its yaw, tilted or not, is never measured."""
     guard = WorkspaceGuard.for_bench(floor_z_m=-0.45, min_x_m=-1.0)
-    model = RobotModel.from_urdf_string(TOY_URDF)
-    arm = ArmModel(build_arm_spec("toy", model, ["yaw", "shoulder", "elbow"], workspace=guard))
+    model = RobotModel.from_urdf_string(toy_urdf(tilt_rad))
+    spec = build_arm_spec(
+        "toy",
+        model,
+        ["yaw", "shoulder", "elbow"],
+        measured_joints=["shoulder", "elbow"],
+        workspace=guard,
+    )
+    arm = ArmModel(spec)
     arm.clearance_m = 0.02
     return arm

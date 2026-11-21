@@ -18,6 +18,7 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
+from dimos.control.calibration._calibration_test_helpers import PERTURBATION, perturbed_model
 from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration._toy_arm import toy_arm
 from dimos.control.calibration.gravity_fit import (
@@ -36,11 +37,13 @@ from dimos.control.calibration.gravity_fit import (
     totals,
 )
 from dimos.control.calibration.gravity_poses import ArmModel, generate_poses
+from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.calibration.step_analysis import RestNoise, StepEvent
 
 KP, DITHER_DEG, FRICTION_NM, HOLD_S = 40.0, 1.0, 0.05, 1.0
 NOISE = RestNoise(window_s=0.3, band_deg=0.01, speed_peak_deg_s=0.1)
 TRUE_LINKS = {"fore": LinkInertial(mass_kg=0.7, com_m=(0.13, 0.0, 0.02))}
+TILT_RAD = 3.7e-6
 
 
 def true_model(arm: ArmModel) -> pin.Model:
@@ -217,6 +220,53 @@ def test_a_joint_that_was_not_dithered_keeps_its_urdf_torque(
     assert held.rms(held.held_out_error)["shoulder"] < 0.6 * held.rms(held.urdf_error)["shoulder"]
     assert fit_stats(held)["held_joints"] == held.held_joints
     assert "elbow has no measurement" in refusals(free)
+
+
+@pytest.mark.parametrize("skipped", [None, "pose_3"])
+def test_a_joint_a_rounding_off_vertical_is_not_held_and_the_fit_finds_the_truth(
+    poses: list[np.ndarray], skipped: str | None
+) -> None:
+    tilted = toy_arm(TILT_RAD)
+    measurements = [m for m in dithers(tilted, Compensation(True), poses) if m.pose != skipped]
+    fit = fit_gravity(tilted, measurements, Compensation(True))
+    at_rounding = fit_gravity(tilted, measurements, Compensation(True), hold_nm=0.0)
+
+    assert fit.held_joints == {} and fit.rank == 4
+    assert totals(fit)["held_out"] < 1e-3 < 0.1 < totals(fit)["urdf"]
+    assert fit.urdf_links["fore"].mass_kg < fit.links["fore"].mass_kg < TRUE_LINKS["fore"].mass_kg
+    fitted = tilted.model.copy()
+    apply_inertial_overrides(fitted, fit.links)
+    truth = true_model(tilted)
+    for q in poses:
+        assert pin.computeGeneralizedGravity(fitted, fitted.createData(), q) == pytest.approx(
+            pin.computeGeneralizedGravity(truth, truth.createData(), q), abs=1e-3
+        )
+    assert "yaw" in at_rounding.held_joints and at_rounding.rank == 0
+    assert totals(at_rounding)["held_out"] == pytest.approx(totals(at_rounding)["urdf"])
+
+
+def test_the_left_openyam_fit_is_not_held_by_its_joint1_and_finds_the_truth(
+    left_spec: ArmCalibrationSpec,
+) -> None:
+    arm = ArmModel(left_spec)
+    arm.clearance_m = 0.02
+    poses = generate_poses(arm, count=12, margin_rad=0.05, grid_points=200).identification[:-1]
+    truth, dithered = perturbed_model(arm, PERTURBATION), arm.joint_names[1:]
+    measurements = []
+    for pose in poses:
+        q = np.asarray(pose.joints_rad)
+        left_over = pin.computeGeneralizedGravity(truth, truth.createData(), q) - arm.gravity(q)
+        measurements += [
+            Measurement(
+                pose.name, joint, KP, DITHER_DEG, pose.as_targets(), float(left_over[i]), 0.0
+            )
+            for i, joint in enumerate(arm.joint_names)
+            if joint in dithered
+        ]
+    fit = fit_gravity(arm, measurements, Compensation(True), dithered)
+
+    assert fit.held_joints == {} and fit.rank == 10
+    assert totals(fit)["held_out"] < 1e-6 < 0.1 < totals(fit)["urdf"]
 
 
 def test_too_few_poses_raise(arm: ArmModel, poses: list[np.ndarray]) -> None:

@@ -81,15 +81,8 @@ def calibration(arm: ArmModel, operator: Operator, fake: FakeArm, **settings: An
     return run
 
 
-def test_a_full_run_saves_the_fit_and_the_gains_and_ends_home(arm: ArmModel) -> None:
-    fake = FakeArm(arm, true_links=TRUE_LINKS, friction_nm=dict.fromkeys(arm.joint_names, 0.02))
-    operator = FakeOperator()
-    run = calibration(arm, operator, fake)
-    run.run()
-
-    assert operator.done is not None
-    ok, text, home = operator.done
-    assert ok and home, text
+def assert_the_saved_fit_finds_the_truth(arm: ArmModel, fake: FakeArm, run: Calibration) -> None:
+    """The saved links give the true gravity at every pose and beat the URDF held out."""
     assert set(fake.file["links"]) == set(arm.fitted_links)
     fitted = arm.model.copy()
     apply_inertial_overrides(
@@ -102,6 +95,20 @@ def test_a_full_run_saves_the_fit_and_the_gains_and_ends_home(arm: ArmModel) -> 
         assert pin.computeGeneralizedGravity(fitted, fitted.createData(), q) == pytest.approx(
             expected, abs=0.01
         )
+    total = fake.file["fit"]["total_rms_nm"]
+    assert total["held_out"] < total["urdf"]
+
+
+def test_a_full_run_saves_the_fit_and_the_gains_and_ends_home(arm: ArmModel) -> None:
+    fake = FakeArm(arm, true_links=TRUE_LINKS, friction_nm=dict.fromkeys(arm.joint_names, 0.02))
+    operator = FakeOperator()
+    run = calibration(arm, operator, fake)
+    run.run()
+
+    assert operator.done is not None
+    ok, text, home = operator.done
+    assert ok and home, text
+    assert_the_saved_fit_finds_the_truth(arm, fake, run)
     assert set(fake.file["gains"]) == set(arm.joint_names)
     # The fit made the floats pass, and the tracking compared both visits.
     assert "2 of 2 floated joints ended within 2 mm" in text
@@ -425,6 +432,26 @@ def test_a_pose_that_oscillates_is_skipped_and_named_and_the_fit_uses_the_others
     assert {m.pose for m in run.measurements} == {"pose_01", "pose_03", "pose_04"}
     assert len(fake.halts) == 1
     assert fake.file["fit"]["poses"] == ["pose_01", "pose_03", "pose_04"]
+    assert_the_saved_fit_finds_the_truth(arm, fake, run)
+
+
+@pytest.mark.parametrize("skipped", [None, 1])
+def test_a_base_a_rounding_off_level_holds_no_joint_and_the_fit_finds_the_truth(
+    skipped: int | None,
+) -> None:
+    tilted = toy_arm(tilt_rad=3.7e-6)
+    fake, operator = FakeArm(tilted, true_links=TRUE_LINKS), FakeOperator()
+    run = calibration(tilted, operator, fake, steps=["gravity_poses", "gravity_fit"], poses=5)
+    if skipped is not None:
+        shaken_at(fake, run, skipped)
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    fit = fake.file["fit"]
+    assert len(fit["poses"]) == (5 if skipped is None else 4)
+    assert fit["held_joints"] == {}
+    assert fit["total_rms_nm"]["held_out"] < 0.2 * fit["total_rms_nm"]["urdf"]
+    assert_the_saved_fit_finds_the_truth(tilted, fake, run)
 
 
 def test_too_few_poses_measured_fails_gravity_poses(arm: ArmModel) -> None:
