@@ -18,7 +18,8 @@
 subscribe across all streams pins a single ``(wall_t0, replay_t0)`` anchor;
 subsequent subscribers schedule emissions against the same anchor, so
 ``replay.streams.lidar.observable()`` and ``replay.streams.odom.observable()``
-advance together. Late subscribers skip past data already behind wall time.
+advance together. Looped streams repeat on one period across the replay window.
+Late subscribers skip past data already behind wall time.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterable, Iterator
 
     from dimos.memory.stream import Stream
 
@@ -74,6 +75,7 @@ class Replay(Configurable):
     def __init__(self, store: Store, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
+        self._loop_duration: float | None = None
         self._first_ts: float | None = None
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
@@ -111,6 +113,31 @@ class Replay(Configurable):
             if candidates:
                 self._first_ts = min(candidates)
         return self._first_ts
+
+    def set_window_duration(self, streams: Iterable[ReplayStream[Any]]) -> float:
+        """Measure the source window of the selected streams for reporting and looping."""
+        bounds = []
+        for stream in streams:
+            try:
+                bounds.append((stream.first_ts(), stream.last_ts()))
+            except (ImportError, AttributeError):
+                # An unrelated recorded type may be unavailable on this machine.
+                continue
+        starts = [start for start, _ in bounds if start is not None]
+        ends = [end for _, end in bounds if end is not None]
+        duration = max(ends) - min(starts) if starts else 0.0
+        with self._anchor_lock:
+            if self._loop_duration is None:
+                self._loop_duration = duration
+        return duration
+
+    def _loop_period(self) -> float:
+        if self._loop_duration is None:
+            # A standalone Replay covers the recording. Module players supply
+            # their selected timed streams, excluding republished static data.
+            self.set_window_duration(self.stream(name) for name in self.list_streams())
+        assert self._loop_duration is not None
+        return self._loop_duration + _LOOP_GAP * self.config.speed
 
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
         """Pin (wall_t0, replay_t0) on first call; return shared anchor."""
@@ -279,8 +306,8 @@ class ReplayStream(Generic[T]):
             emission_lock = threading.RLock()
             pending = SerialDisposable()
 
-            def make_iterator() -> Generator[tuple[float, Any, bool], None, None]:
-                wrapped = False
+            def make_iterator() -> Generator[tuple[float, Any], None, None]:
+                offset = 0.0
                 while True:
                     emitted = False
                     obs: Any
@@ -288,15 +315,18 @@ class ReplayStream(Generic[T]):
                     try:
                         for obs in rows:
                             emitted = True
-                            yield (obs.ts, obs, wrapped)
-                            wrapped = False
+                            yield obs.ts + offset, obs
                     finally:
                         close = getattr(rows, "close", None)
                         if close is not None:
                             close()
                     if not loop or not emitted:
                         break
-                    wrapped = True
+                    period = replay._loop_period()
+                    offset += period
+                    # Jump over whole passes if a subscriber joins far into playback.
+                    if skip_late and obs.ts + offset < skip_before:
+                        offset += ((skip_before - obs.ts - offset) // period) * period
 
             iterator = make_iterator()
 
@@ -318,7 +348,7 @@ class ReplayStream(Generic[T]):
                     observer.on_error(error)
 
             try:
-                first_ts, first_data, _ = next(iterator)
+                first_ts, first_data = next(iterator)
             except StopIteration:
                 terminate()
                 return Disposable()
@@ -329,40 +359,25 @@ class ReplayStream(Generic[T]):
             wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
             now_replay = replay_t0 + (time.time() - wall_t0) * speed
 
-            # Late-subscribe skip: drop frames behind the wall clock. Stop
-            # if the iterator wraps (ts < prev) — that means we've exhausted
-            # one full pass without finding a forward frame.
-            wrap_offset = 0.0
-            prev_skip = first_ts
-            while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
+            skip_before = now_replay - _LATE_TOLERANCE
+            while skip_late and first_ts < skip_before:
                 try:
-                    cand_ts, cand_data, wrapped = next(iterator)
+                    first_ts, first_data = next(iterator)
                 except StopIteration:
                     terminate()
                     return Disposable()
                 except Exception as error:
                     terminate(error)
                     return Disposable()
-                if wrapped or cand_ts < prev_skip:
-                    wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
-                    first_ts, first_data = cand_ts, cand_data
-                    break
-                first_ts, first_data = cand_ts, cand_data
-                prev_skip = cand_ts
 
-            prev_ts = first_ts
-
-            def schedule(message: tuple[float, Any, bool], wrap_off: float, prev: float) -> None:
+            def schedule(message: tuple[float, Any]) -> None:
                 if disposed.is_set():
                     return
-                ts, data, wrapped = message
-                if wrapped or ts < prev:
-                    wrap_off += (prev - ts) + _LOOP_GAP
-                target = wall_t0 + ((ts + wrap_off) - replay_t0) / speed
+                ts, data = message
+                target = wall_t0 + (ts - replay_t0) / speed
                 delay = max(0.0, target - time.time())
 
                 def emit(_s: SchedulerBase, _state: object) -> DisposableBase | None:
-                    nonlocal wrap_offset, prev_ts
                     with emission_lock:
                         if disposed.is_set():
                             return None
@@ -384,9 +399,7 @@ class ReplayStream(Generic[T]):
                         except Exception as error:
                             terminate(error)
                             return None
-                        wrap_offset = wrap_off
-                        prev_ts = ts
-                        schedule(nxt, wrap_offset, prev_ts)
+                        schedule(nxt)
                     return None
 
                 # A zero-delay callback can schedule its successor before this
@@ -396,7 +409,7 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            schedule((first_ts, first_data, False), wrap_offset, prev_ts)
+            schedule((first_ts, first_data))
 
             return Disposable(dispose)
 

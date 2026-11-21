@@ -53,14 +53,11 @@ class ReplayProgress:
         path: str | None = None,
     ) -> None:
         """Log the selected replay window's duration in source seconds."""
-        bounds = [(stream.first_ts(), stream.last_ts()) for stream in streams]
-        starts = [start for start, _ in bounds if start is not None]
-        ends = [end for _, end in bounds if end is not None]
         logger.info(
             "Replay started",
             source=self._source,
             path=path or self._source,
-            duration_s=max(ends) - min(starts) if starts else 0.0,
+            duration_s=replay.set_window_duration(streams),
             speed=replay.config.speed,
             loop=replay.config.loop,
         )
