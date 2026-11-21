@@ -43,19 +43,23 @@ from __future__ import annotations
 
 import enum
 import functools
+import hashlib
 import json
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
 from typing import IO, Any
 
+from filelock import FileLock
 from pydantic import Field, model_validator
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import CACHE_DIR, DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -63,7 +67,6 @@ from dimos.core.transport_factory import session_config
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES, ZenohConfig
-from dimos.utils.data import get_project_root
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -140,6 +143,33 @@ def _check_legacy_cwd(values: Any) -> Any:
     return values
 
 
+def _native_source_root() -> Path:
+    """Use the local checkout or unpack the installed release into a writable build tree."""
+    bundle = DIMOS_PROJECT_ROOT / "dimos/native_sources.tar"
+    if (DIMOS_PROJECT_ROOT / ".git").exists() or (
+        (DIMOS_PROJECT_ROOT / "pyproject.toml").is_file() and not bundle.is_file()
+    ):
+        return DIMOS_PROJECT_ROOT
+
+    if not bundle.is_file():
+        raise FileNotFoundError(
+            f"Native build sources are missing from this installation: {bundle}"
+        )
+    cache = CACHE_DIR / "native"
+    cache.mkdir(parents=True, exist_ok=True)
+    with bundle.open("rb") as stream:
+        root = cache / hashlib.sha256(stream.read()).hexdigest()
+        with FileLock(cache / f"{root.name}.lock"):
+            if not root.exists():
+                stream.seek(0)
+                with tempfile.TemporaryDirectory(dir=cache) as temporary:
+                    staged = Path(temporary) / "sources"
+                    with tarfile.open(fileobj=stream) as archive:
+                        archive.extractall(staged, filter="data")
+                    staged.rename(root)
+    return root
+
+
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native subprocess module."""
 
@@ -190,8 +220,9 @@ class NativeModuleConfig(ModuleConfig):
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
-            root = get_project_root()
-            build_cwd = root / self.source_dir
+            build_cwd = _native_source_root() / self.source_dir
+            if not build_cwd.is_dir():
+                raise FileNotFoundError(f"Native build directory is missing: {build_cwd}")
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)

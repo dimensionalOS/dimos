@@ -352,7 +352,7 @@ def test_duplicate_remapped_stream_names_fail_before_launch(
 
 def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder, mocker):
     fetch = mocker.patch(
-        "dimos.core.native_module.get_project_root", side_effect=AssertionError("fetch")
+        "dimos.core.native_module._native_source_root", side_effect=AssertionError("fetch")
     )
     spawn = mocker.patch(
         "dimos.core.native_module.subprocess.Popen", side_effect=AssertionError("spawn")

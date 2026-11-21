@@ -82,7 +82,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 | Field              | Type             | Default       | Description                                                 |
 |--------------------|------------------|---------------|-------------------------------------------------------------|
-| `source_dir` | `str \| None` | `None` | Build directory relative to the shared project checkout; required for source builds |
+| `source_dir` | `str \| None` | `None` | Build directory relative to the project root; required for source builds |
 | `executable` | `str` | *(required)* | Source mode: relative to `source_dir`, inside the checkout. External mode: supplied binary path |
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
@@ -281,17 +281,19 @@ autoconnect(
 
 ## Native sources in pip installations
 
-An editable checkout uses its local sources. An installed wheel uses the same
-`get_project_root()` checkout as data downloads: clone `main` on first use,
-then reuse the existing checkout without automatically updating it. This checkout
-can differ from the installed Python version. Git and network access are needed
-on first use; the clone skips LFS assets.
+A Git checkout builds in place. Wheels and source distributions carry the native
+build projects from their release. The build includes tracked files under each
+flake in `dimos/` and `examples/native-modules/`, plus the Python files used by
+the standalone Habitat process. On the first source build, dimOS unpacks them into
+`$XDG_CACHE_HOME/dimos/native/<digest>/` (normally `~/.cache/dimos/native/`).
+Later builds reuse that writable tree. A change to a bundled input selects a
+fresh tree. Nix still needs its usual dependencies or access to its caches.
 
-Source builds declare `source_dir` relative to the shared checkout and an
-`executable` relative to that directory. Configuration rejects absolute source
-paths, absolute build executables, and artifact paths that
-escape the checkout. Cargo workspace outputs can use `../` within the checkout.
-These paths do not depend on the Python file or a subclass's location.
+Declare `source_dir` relative to the project root and `executable` relative to
+that directory. Cargo workspace outputs can use `../` within the project.
+Absolute source paths, absolute build executables, and paths that escape the
+project are rejected. If a build directory is missing from the wheel, use an
+editable checkout containing the project.
 
 For an externally provisioned binary, set `source_dir=None`,
 `build_command=None`, and `executable="/path/to/binary"`. The process runs from
@@ -302,10 +304,6 @@ on PATH. No checkout is fetched in this mode.
 The `cwd` config field was removed. Use `source_dir` for source builds. For an
 external binary, pass absolute resource paths or use a launcher script if the
 program needs a different working directory. Passing `cwd` raises a migration error.
-Data downloads and IsolatedPython behavior are unchanged.
-
-Nix-based modules still require Nix and their normal build dependencies. This
-change does not establish additional platform or hardware support.
 
 ## Auto Building
 

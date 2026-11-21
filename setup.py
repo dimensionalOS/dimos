@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import fnmatch
 import os
 from pathlib import Path
+import shutil
 import struct
+import subprocess
 import sys
+import tarfile
 
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
+from setuptools.command.sdist import sdist as _sdist
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -82,22 +87,82 @@ RELAY_DIST_SOURCES = (
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 
 
+def bundle_native_sources(output_root: str) -> None:
+    """Keep the native build trees together, with the same paths and modes as the release."""
+    bundle = Path("dimos/native_sources.tar")
+    destination = Path(output_root) / bundle
+    if bundle.is_file() and not Path(".git").exists():
+        # Building a wheel from an sdist uses the exact archive it shipped.
+        shutil.copyfile(bundle, destination)
+        return
+
+    roots = ("dimos", "examples/native-modules")
+    if Path(".git").exists():
+        # Like bin/native-modules, use tracked flakes. Package working-tree
+        # contents so a local wheel includes edits, but never its build outputs.
+        tracked = subprocess.check_output(
+            ["git", "-c", f"safe.directory={Path.cwd()}", "ls-files", "-z", "--", *roots]
+        )
+        paths = [Path(os.fsdecode(name)) for name in tracked.split(b"\0") if name]
+    else:
+        # A downloaded source tree need not have Git metadata.
+        paths = []
+        for root in roots:
+            for directory, dirs, names in os.walk(root):
+                here = Path(directory)
+                dirs[:] = [
+                    name
+                    for name in dirs
+                    if name
+                    not in {".git", ".venv", "__pycache__", "target", "build", "node_modules"}
+                    and not name.startswith("result")
+                    and here / name != Path("dimos/data")
+                ]
+                paths.extend(here / name for name in names if not name.endswith((".pyc", ".o")))
+
+    projects = {path.parent for path in paths if path.name == "flake.nix"}
+    # The Habitat installer starts ../server.py in its own Python environment.
+    inputs = {
+        Path("dimos/simulation/habitat/server.py"),
+        Path("dimos/simulation/habitat/frames.py"),
+    }
+    inputs.update(path for path in paths if projects.intersection(path.parents))
+    with tarfile.open(destination, "w") as archive:
+        for path in sorted(inputs):
+            with path.open("rb") as stream:
+                # Location, mtime and package-install permissions are not build inputs.
+                info = tarfile.TarInfo(path.as_posix())
+                info.size = path.stat().st_size
+                info.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
+                archive.addfile(info, stream)
+
+
+class sdist(_sdist):
+    def make_release_tree(self, base_dir: str, files: list[str]) -> None:
+        super().make_release_tree(base_dir, files)
+        bundle_native_sources(base_dir)
+
+
 class build_py(_build_py):
-    def find_package_modules(self, package, package_dir):
+    def find_package_modules(self, package: str, package_dir: str) -> list[tuple[str, str, str]]:
+        find_modules: Callable[[str, str], list[tuple[str, str, str]]] = (
+            super().find_package_modules
+        )
         return [
             (pkg, mod, filepath)
-            for pkg, mod, filepath in super().find_package_modules(package, package_dir)
+            for pkg, mod, filepath in find_modules(package, package_dir)
             if not any(
                 fnmatch.fnmatch(os.path.basename(filepath), pat) for pat in TEST_MODULE_PATTERNS
             )
         ]
 
-    def run(self):
+    def run(self) -> None:
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
+            bundle_native_sources(self.build_lib)
 
-    def _copy_relay_dist(self):
+    def _copy_relay_dist(self) -> None:
         src = Path(__file__).parent / "web"
         if not (src / "relay" / "main.ts").is_file():
             raise RuntimeError(f"relay sources missing at {src}; refusing to build the wheel")
@@ -168,5 +233,5 @@ setup(
     packages=find_packages(),
     package_dir={"": "."},
     ext_modules=ext_modules,
-    cmdclass={"build_ext": build_ext, "build_py": build_py},
+    cmdclass={"build_ext": build_ext, "build_py": build_py, "sdist": sdist},
 )

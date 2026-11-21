@@ -336,7 +336,7 @@ def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
     executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
     executable.parent.mkdir(parents=True)
     executable.touch()
-    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
     build = mocker.patch.object(rust_cli_recorder.subprocess, "Popen")
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     build.assert_not_called()
@@ -344,7 +344,8 @@ def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
 
 def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
-    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    mocker.patch("dimos.core.native_module._native_source_root", return_value=tmp_path)
+    (tmp_path / "dimos/experimental/memory/rust").mkdir(parents=True)
     process = mocker.Mock()
     process.stdout = []
     process.returncode = 0
