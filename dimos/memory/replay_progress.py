@@ -20,6 +20,7 @@ from typing import Any, TypeVar
 
 from reactivex import Observable, defer, operators as ops
 from reactivex.abc import SchedulerBase
+from reactivex.subject import AsyncSubject
 
 from dimos.memory.replay import Replay, ReplayStream
 from dimos.utils.logging_config import setup_logger
@@ -44,6 +45,8 @@ class ReplayProgress:
         self._completed = 0
         self._sealed = False
         self._finished = False
+        self._ready: AsyncSubject[None] = AsyncSubject()
+        self._anchor: tuple[Replay, float] | None = None
 
     def start(
         self,
@@ -52,10 +55,12 @@ class ReplayProgress:
         *,
         path: str | None = None,
     ) -> None:
-        """Log the selected replay window's duration in source seconds."""
+        """Select the first source timestamp without starting the playback clock."""
         bounds = [(stream.first_ts(), stream.last_ts()) for stream in streams]
         starts = [start for start, _ in bounds if start is not None]
         ends = [end for _, end in bounds if end is not None]
+        if starts:
+            self._anchor = (replay, min(starts))
         logger.info(
             "Replay started",
             source=self._source,
@@ -64,6 +69,17 @@ class ReplayProgress:
             speed=replay.config.speed,
             loop=replay.config.loop,
         )
+
+    def play(self, stream: ReplayStream[T]) -> Observable[T]:
+        """Start initial subscribers together and let later subscribers join the running clock."""
+
+        def factory(_scheduler: SchedulerBase | None) -> Observable[T]:
+            with self._lock:
+                if self._sealed:
+                    return stream.observable()
+            return stream.observable(skip_late=False, start_on=self._ready)
+
+        return self.track(defer(factory))
 
     def track(self, source: Observable[T]) -> Observable[T]:
         def factory(_scheduler: SchedulerBase | None) -> Observable[T]:
@@ -81,7 +97,14 @@ class ReplayProgress:
         With no timed subscriptions, playback is already complete.
         """
         with self._lock:
+            if self._sealed:
+                return
+            if self._anchor is not None:
+                replay, ts = self._anchor
+                replay.pin_anchor(ts)
             self._sealed = True
+        self._ready.on_next(None)
+        self._ready.on_completed()
         self._maybe_finish()
 
     def _stream_completed(self) -> None:

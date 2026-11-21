@@ -277,15 +277,12 @@ class ReplayConnection(CompositeResource):
                 return name
         raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
 
-    def _tracked(self, source: Observable[_T]) -> Observable[_T]:
-        return self._progress.track(source)
-
     def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
         self._pending_streams.append(stream)
-        return self._tracked(stream.observable())
+        return self._progress.play(stream)
 
     def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
+        """Start the selected sensor subscriptions together on their earliest recorded timestamp."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
@@ -430,8 +427,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             self._camera_info_thread.start()
 
         if isinstance(self.connection, ReplayConnection):
-            # Every replay subscription is wired; completion can now be reported
-            # and optionally shut the run down (--go2connection.replay-exit).
+            # Start the replay clock once all enabled sensor subscriptions are wired.
             self.connection.seal_subscriptions()
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):

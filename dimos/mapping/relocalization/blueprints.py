@@ -76,8 +76,8 @@ class RecordingPlayer(Module):
         tf: ReplayStream[TFMessage] = replay.stream("tf")
         progress = ReplayProgress(str(path))
         progress.start(replay, [lidar, tf])
-        subscriptions.add(progress.track(lidar.observable()).subscribe(self.lidar.publish))
-        subscriptions.add(progress.track(tf.observable()).subscribe(self.tf.publish))
+        subscriptions.add(progress.play(lidar).subscribe(self.lidar.publish))
+        subscriptions.add(progress.play(tf).subscribe(self.tf.publish))
         progress.seal()
 
 

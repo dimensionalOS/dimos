@@ -97,9 +97,6 @@ class G1Replay(Module):
                 streams[name] = replay.stream(name)
 
         progress = ReplayProgress(str(path))
-        progress.start(replay, streams.values())
-        starts = [t for s in streams.values() if (t := s.first_ts()) is not None]
-        replay.pin_anchor(min(starts) if starts else None)
 
         for info_name in ("realsense_camera_info", "realsense_depth_camera_info"):
             if info_name in streams:
@@ -111,6 +108,7 @@ class G1Replay(Module):
                         timer(0.5).subscribe(partial(_publish_once, port, first_info))
                     )
 
+        progress.start(replay, streams.values())
         for name, stream in streams.items():
             port = getattr(self, name)
             logger.info(
@@ -120,7 +118,7 @@ class G1Replay(Module):
                 stream.count(),
                 self.config.speed,
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+            self.register_disposable(progress.play(stream).subscribe(port.publish))
         progress.seal()
 
     @rpc

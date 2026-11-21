@@ -185,16 +185,11 @@ class ReplayModule(Module):
             replay.set_relative_window(
                 min(timed_starts), seek=self.config.seek, duration=self.config.duration
             )
-            # Pin the wall clock to the first frame inside the requested window.
-            timed_starts = [
-                ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
-            ]
         for name, message in static.items():
             if isinstance(message, TFMessage):
                 outputs[name].publish(message)
         progress = ReplayProgress(str(path))
         progress.start(replay, timed_streams.values())
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
         for name, port in outputs.items():
             logger.info("Replaying %s -> %s", name, port)
             if name in static:
@@ -202,11 +197,7 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, static[name]))
                 )
             if name in timed_streams:
-                self.register_disposable(
-                    progress.track(timed_streams[name].observable(skip_late=False)).subscribe(
-                        port.publish
-                    )
-                )
+                self.register_disposable(progress.play(timed_streams[name]).subscribe(port.publish))
         progress.seal()
 
     @rpc

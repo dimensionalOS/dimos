@@ -96,7 +96,7 @@ class DepthCameraFeed(Module):
             logger.info(
                 f"feed: {path.name}:{name} ({stream.count()} frames at {self.config.speed}x)"
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+            self.register_disposable(progress.play(stream).subscribe(port.publish))
         progress.seal()
 
 
