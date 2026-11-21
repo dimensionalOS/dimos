@@ -53,7 +53,7 @@ class A750Config(ConnectionConfig):
             of the joint's top speed, from 0 to 1.
     """
 
-    device_path: str
+    device_path: str = Field(pattern=r"\S")
     source: str = "arm"
     joint_commands: dict[str, tuple[Interface, ...]] = {}
     velocity_ratio: float = Field(default=1.0, gt=0.0, le=1.0)

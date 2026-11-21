@@ -31,6 +31,8 @@ from typing import Any
 import pytest
 
 from dimos.control.contract.limits import limits
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.piper import connection
@@ -234,6 +236,12 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
     yield build
     for each in made:
         each.module.stop()
+
+
+def test_blank_can_port_fails_blueprint_validation(tmp_path: Path) -> None:
+    parser = BlueprintConfigParser(PiperConnection.blueprint(model=piper_like_model(tmp_path)))
+    with pytest.raises(BlueprintConfigError, match="can_port"):
+        parser.parse(["--can-port", " \t "], environ={})
 
 
 def test_start_resets_the_arm_turns_its_motors_on_and_sends_it_home(
