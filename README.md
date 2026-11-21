@@ -182,7 +182,7 @@ Activate the environment using the command printed by the installer, then run:
 
 ```bash
 # Replay a recorded quadruped session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
+# NOTE: The Rerun window may stay black while the first run downloads the recording (about 84 MB).
 dimos --replay run unitree-go2
 ```
 
@@ -211,7 +211,7 @@ dimos run unitree-go2
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay (requires `dimos[drone]` extra) |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay, requires `dimos[drone]` extra) |
-| `dimos run demo-camera` | Webcam demo — no hardware needed |
+| `dimos run demo-camera` | Live video from a connected webcam |
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
 
