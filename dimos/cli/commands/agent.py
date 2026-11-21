@@ -28,10 +28,10 @@ import sys
 from typing import NoReturn
 
 import click
-from dotenv import dotenv_values, find_dotenv
 import typer
 from typer.core import TyperCommand, TyperGroup
 
+from dimos.cli.project_env import load_project_dotenv
 from dimos.constants import CONFIG_DIR, DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.core.run_registry import REGISTRY_DIR
 
@@ -347,7 +347,7 @@ def _node_environment() -> dict[str, str]:
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.sources import global_environment_names
 
-    dotenv = dotenv_values(find_dotenv())
+    dotenv = load_project_dotenv()
     settings = global_environment_names()
     environment = {
         name: value
