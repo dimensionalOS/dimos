@@ -344,6 +344,18 @@ def test_connected_output_forwards_to_input_transport(configure_first: bool) -> 
     transport.publish.assert_called_once_with(1)
 
 
+def test_stopping_input_during_output_publish_skips_pending_forward() -> None:
+    source: Out[int] = Out(int, "numbers")
+    transport = Mock(spec=Transport)
+    sink: In[int] = In(int, "numbers", transport=transport)
+    source.subscribe(lambda _: sink.stop())
+    sink.connect(source)
+
+    source.publish(1)
+
+    transport.publish.assert_not_called()
+
+
 def test_module_stream_crosses_processes_as_a_remote_handle() -> None:
     owner = SimpleNamespace(ref=Actor(None, None, worker_id=1, module_id=2))
     out = Out(Odometry, "odom", owner=owner)

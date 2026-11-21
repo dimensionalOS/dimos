@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import enum
+import threading
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -351,6 +352,7 @@ class In(Stream[T], ObservableMixin[T]):
         super().__init__(type, name, owner, transport)
         self._local: Subject[T] = Subject()
         self._connections = CompositeDisposable()
+        self._forward_lock = threading.RLock()
 
     def __str__(self) -> str:
         mystr = super().__str__()
@@ -381,14 +383,19 @@ class In(Stream[T], ObservableMixin[T]):
         """Forward a local output until this input stops."""
 
         def forward(msg: T) -> None:
-            if (transport := self.transport) is not None:
-                transport.publish(msg)
+            # Out.publish may have copied this callback before the input stopped.
+            with self._forward_lock:
+                if self._connections.is_disposed:
+                    return
+                if (transport := self.transport) is not None:
+                    transport.publish(msg)
             self._local.on_next(msg)
 
         self._connections.add(Disposable(value.subscribe(forward)))
 
     def stop(self) -> None:
-        self._connections.dispose()
+        with self._forward_lock:
+            self._connections.dispose()
         self._local.on_completed()
         super().stop()
 
