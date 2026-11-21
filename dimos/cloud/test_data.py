@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import errno
 import hashlib
 import json
 import os
@@ -208,7 +209,9 @@ def test_directory_upload(
     assert uploaded["kind"] == "dataset"
     assert uploaded["part_size"] == 2**20
     name = source.name
-    assert uploaded["filename"].startswith(f"{name}.tar")
+    assert uploaded["filename"] == f"{name}.tar.lz4"
+    assert uploaded["content_encoding"] == "lz4"
+    assert uploaded["blob"].startswith(b"\x04\x22\x4d\x18")  # LZ4 frame magic
     if mode != "in_tree":  # Pull still uses the configured staging directory.
         pulled = cloud.pull(uid)
         assert pulled.name.endswith(f"{name}.tar")
@@ -225,7 +228,7 @@ def test_directory_upload(
     assert len(tar_paths) == 2 and not list(scratch.iterdir())
 
 
-def test_directory_upload_checks_space_before_opening_tar(
+def test_directory_upload_cleans_up_after_tar_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tree = tmp_path / "tree"
@@ -239,12 +242,14 @@ def test_directory_upload_checks_space_before_opening_tar(
         assert path.is_relative_to(staging)
         return shutil._ntuple_diskusage(10, 6, 4)  # type: ignore[attr-defined]
 
-    def unexpected_tar(*args: Any, **kwargs: Any) -> None:
-        pytest.fail("opened the tar before checking space")
+    def fail_add(tar: tarfile.TarFile, *args: Any, **kwargs: Any) -> None:
+        assert tar.fileobj is not None
+        tar.fileobj.write(b"partial tar")
+        raise OSError(errno.ENOSPC, "No space left on device")
 
     monkeypatch.setattr(shutil, "disk_usage", disk_usage)
-    monkeypatch.setattr(tarfile, "open", unexpected_tar)
-    with pytest.raises(RuntimeError, match="free, need"):
+    monkeypatch.setattr(tarfile.TarFile, "add", fail_add)
+    with pytest.raises(OSError, match="No space left on device"):
         cloud.upload(tree)
     assert not transport.uploads and not list(staging.iterdir())
 

@@ -30,7 +30,6 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
-import stat
 import sys
 import tarfile
 import tempfile
@@ -141,7 +140,6 @@ class MultipartBackend:
             if root is not None:
                 name = path.name if path.name not in ("", "..") else root.name or "root"
                 path = Path(tmp) / f"{name}.tar"
-                _require_space(Path(tmp), _tar_size(root, name))
                 with tarfile.open(path, "w") as tar:
                     tar.add(root, arcname=name)
             manifest = _manifest(path)
@@ -329,10 +327,11 @@ class CloudData:
     ) -> dict[str, Any]:
         path = path.expanduser()
         is_dir = path.is_dir()
-        if not is_dir and not path.is_file():
-            raise FileNotFoundError(path)
-        if not is_dir and _is_sidecar(path):
-            raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
+        if not is_dir:
+            if not path.is_file():
+                raise FileNotFoundError(path)
+            if _is_sidecar(path):
+                raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
         if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
         chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
@@ -407,29 +406,6 @@ def kind_of(path: Path) -> str:
     if path.suffix == ".mcap" or _manifest(path) is not None:
         return "recording"
     return "blob"
-
-
-def _tar_size(path: Path, name: str) -> int:
-    """Conservative preflight for a plain tar, without following nested symlinks."""
-    block = tarfile.BLOCKSIZE
-
-    def padded(size: int, unit: int) -> int:
-        return ((size + unit - 1) // unit) * unit
-
-    def member_size(member: Path, arcname: str) -> int:
-        info = member.lstat()
-        names = len(os.fsencode(arcname))
-        if stat.S_ISLNK(info.st_mode):
-            names += len(os.fsencode(os.readlink(member)))
-        # Member header, PAX headers/metadata and padding, including long names.
-        size = 4 * block + padded(names, block)
-        if stat.S_ISREG(info.st_mode):
-            size += padded(info.st_size, block)
-        elif stat.S_ISDIR(info.st_mode):
-            size += sum(member_size(child, f"{arcname}/{child.name}") for child in member.iterdir())
-        return size
-
-    return padded(member_size(path, name) + 2 * block, tarfile.RECORDSIZE)
 
 
 def _require_space(where: Path, need: int) -> None:
