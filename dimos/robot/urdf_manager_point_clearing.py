@@ -29,8 +29,11 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import LoadedRobotModel
+from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
+from dimos.robot.joint_tf import MULTI_DOF_JOINT_TYPES
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
+from dimos.robot.urdf_manager import UrdfManager, UrdfManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
 from dimos.utils.logging_config import setup_logger
 
@@ -59,12 +62,25 @@ class UrdfManagerPointClearing(UrdfManager):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
-            self._description, self.config.padding_m
+            self._filter_description(), self.config.padding_m
         )
         self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+
+    def _filter_description(self) -> LoadedRobotModel:
+        kept = self._description.urdf()
+        if kept is not None:
+            return kept
+        # The root matters: RoboPlan is handed this XML and nothing else, so the mesh names in
+        # it have to be absolute, and they are only because opening the layer anchored at the
+        # USD's own directory is what makes USD resolve them. See the test.
+        return LoadedRobotModel(
+            usd_to_urdf(self._description.usd, root=self._description._asset_root()),
+            self._description.source_path,
+            {},
+        )
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
@@ -156,7 +172,7 @@ class UrdfManagerPointClearing(UrdfManager):
         """Each floating/planar joint's motion past its URDF origin, from capture-time tf (they have no scalar
         JointState); None when one is missing."""
         motions = {}
-        for joint in self._joints.values():
+        for joint in self._joint_tf.joints.values():
             if joint.type in MULTI_DOF_JOINT_TYPES:
                 parent_from_child = self._tf_at(joint.parent_link, joint.child_link, stamp)
                 if parent_from_child is None:
@@ -164,10 +180,13 @@ class UrdfManagerPointClearing(UrdfManager):
                 motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
         return motions
 
+    def _published(self, frame: str) -> str:
+        return self.frame(frame) if frame in self._own_frame_names() else frame
+
     def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
         return self.tfbuffer.get(
-            parent,
-            child,
+            self._published(parent),
+            self._published(child),
             time_point=stamp,
             time_tolerance=self.config.tf_tolerance_s,
             forward_tolerance=self.config.tf_forward_tolerance_s,
@@ -183,6 +202,7 @@ class RobotBodyFilter(Protocol):
         joint_positions: Mapping[str, float],
         joint_motions: Mapping[str, NDArray[np.float64]],
     ) -> NDArray[np.bool_] | None:
-        """One keep flag per point (points in the URDF root frame, input order), or None when the state lacks a
-        joint the backend needs. joint_motions holds each floating/planar joint's 4x4 motion past its URDF origin."""
+        """One keep flag per point (points in the URDF root frame, input order), or None when the
+        state lacks a joint the backend needs. joint_motions holds each floating/planar joint's 4x4
+        motion past its URDF origin."""
         ...

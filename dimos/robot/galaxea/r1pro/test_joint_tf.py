@@ -60,7 +60,7 @@ def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
 
 def test_motor_states_joint_names_all_exist_in_the_model(fk: UrdfManager) -> None:
     """A mismatch is silent: unknown joints are skipped and the camera never moves."""
-    assert set(R1PRO_UPPER_BODY_JOINTS) <= set(fk._joints)
+    assert set(R1PRO_UPPER_BODY_JOINTS) <= set(fk.joints)
 
 
 def test_head_camera_moves_when_the_torso_bends(fk: UrdfManager) -> None:
