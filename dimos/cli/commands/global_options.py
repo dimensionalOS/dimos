@@ -51,10 +51,9 @@ def _configure_callback(command: click.Command) -> None:
     @wraps(callback)
     def configured(*args: Any, **kwargs: Any) -> Any:
         ctx = click.get_current_context()
-        # An external parser (e.g. lerobot-train) owns its forwarded help.
-        delegated_help = not ctx.help_option_names and any(
-            arg in {"--help", "-h"} for arg in ctx.args
-        )
+        # Click consumes the help flag it handles. One left among the forwarded
+        # arguments belongs to the tool that receives them (e.g. lerobot-train).
+        delegated_help = any(arg in {"--help", "-h"} for arg in ctx.args)
         if ctx.invoked_subcommand is None and not delegated_help:
             try:
                 get_global_config(**ctx.find_root().obj)
