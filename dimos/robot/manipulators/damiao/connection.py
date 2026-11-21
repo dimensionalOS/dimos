@@ -325,7 +325,9 @@ class DamiaoConnection(ConnectionModule):
                     file=None
                     if item is None
                     else AppliedFile(
-                        path=str(item.path), sha256=item.sha256, created=item.calibration.created
+                        path=str(item.path),
+                        sha256=item.sha256,
+                        created=item.calibration.created.isoformat(),
                     ),
                     can_float=self.robot.gravity,
                     deadman_timeout_s=self.config.deadman_timeout_s,
