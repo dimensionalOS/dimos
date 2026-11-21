@@ -1,5 +1,7 @@
 from pygame import Surface
 
+def init() -> None: ...
+
 class Font:
     def __init__(self, filename: str | None, size: int) -> None: ...
     def render(

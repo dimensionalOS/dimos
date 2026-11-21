@@ -15,13 +15,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from multiprocessing import Pipe
 
 import pytest
 
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
-    KeyboardTeleopModule,
+    _ArmWindow,
     _twist_from_keys,
 )
 
@@ -35,34 +36,32 @@ class PressedKeys:
 
 
 @pytest.fixture
-def module() -> Iterator[KeyboardTeleopModule]:
-    module = KeyboardTeleopModule()
-    try:
-        yield module
-    finally:
-        module.stop()
+def window() -> Iterator[_ArmWindow]:
+    receiver, sender = Pipe()
+    with receiver, sender:
+        yield _ArmWindow(sender, linear_speed=0.05, angular_speed=0.5)
 
 
-def test_publish_twist_emits_unaddressed_twist_stamped(
-    module: KeyboardTeleopModule, mocker
-) -> None:
-    publish = mocker.patch.object(module.ee_twist_command, "publish")
+def test_publish_twist_emits_unaddressed_twist_stamped(window: _ArmWindow, mocker) -> None:
+    publish = mocker.patch.object(window, "publish")
 
-    module._publish_twist(linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6))
+    window._publish_twist(linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6))
 
-    msg = publish.call_args.args[0]
+    name, msg = publish.call_args.args
+    assert name == "ee_twist_command"
     assert isinstance(msg, TwistStamped)
     assert msg.frame_id == ""  # no task-name address in the payload
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.1, 0.2, 0.3]
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.4, 0.5, 0.6]
 
 
-def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.ee_twist_command, "publish")
+def test_publish_twist_defaults_to_zero_twist(window: _ArmWindow, mocker) -> None:
+    publish = mocker.patch.object(window, "publish")
 
-    module._publish_twist()
+    window._publish_twist()
 
-    msg = publish.call_args.args[0]
+    name, msg = publish.call_args.args
+    assert name == "ee_twist_command"
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
 
@@ -89,49 +88,49 @@ def test_twist_from_keys_maps_rotation_keys_to_eef_angular_twist() -> None:
     assert angular == (0.5, -0.5, 0.5)
 
 
-def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.ee_twist_command, "publish")
+def test_final_key_release_publishes_zero_velocity(window: _ArmWindow, mocker) -> None:
+    publish = mocker.patch.object(window, "publish")
     held = {keyboard_mod.pygame.K_w}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    assert not module._handle_pygame_event(event, held)
+    assert not window._handle_pygame_event(event, held)
 
     assert held == set()
     assert publish.call_count == 1
-    msg = publish.call_args.args[0]
+    name, msg = publish.call_args.args
+    assert name == "ee_twist_command"
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
 
 
-def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.ee_twist_command, "publish")
+def test_keyup_preserves_remaining_motion_key(window: _ArmWindow, mocker) -> None:
+    publish = mocker.patch.object(window, "publish")
     held = {keyboard_mod.pygame.K_w, keyboard_mod.pygame.K_a}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    module._handle_pygame_event(event, held)
+    window._handle_pygame_event(event, held)
 
     assert held == {keyboard_mod.pygame.K_a}
     assert publish.call_count == 1
-    msg = publish.call_args.args[0]
+    name, msg = publish.call_args.args
+    assert name == "ee_twist_command"
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.05, 0.0]
 
 
-def test_keyup_publishes_directly_without_timeout_wait(
-    module: KeyboardTeleopModule, mocker
-) -> None:
-    publish = mocker.patch.object(module.ee_twist_command, "publish")
+def test_keyup_publishes_directly_without_timeout_wait(window: _ArmWindow, mocker) -> None:
+    publish = mocker.patch.object(window, "publish")
     held = {keyboard_mod.pygame.K_w}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    module._handle_pygame_event(event, held)
+    window._handle_pygame_event(event, held)
 
     publish.assert_called_once()
 
 
 def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
-    module: KeyboardTeleopModule, mocker
+    window: _ArmWindow, mocker
 ) -> None:
-    publish = mocker.patch.object(module.gripper_command, "publish")
+    publish = mocker.patch.object(window, "publish")
     held: set[int] = set()
     open_event = keyboard_mod.pygame.event.Event(
         keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_LEFTBRACKET
@@ -140,14 +139,16 @@ def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
         keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_RIGHTBRACKET
     )
 
-    module._handle_pygame_event(open_event, held)
+    window._handle_pygame_event(open_event, held)
     publish.assert_called_once()
-    assert publish.call_args.args[0].data == pytest.approx(1.0)
+    assert publish.call_args.args[0] == "gripper_command"
+    assert publish.call_args.args[1].data == pytest.approx(1.0)
 
     publish.reset_mock()
-    module._handle_pygame_event(open_event, held)
+    window._handle_pygame_event(open_event, held)
     publish.assert_not_called()
 
-    module._handle_pygame_event(close_event, held)
+    window._handle_pygame_event(close_event, held)
     publish.assert_called_once()
-    assert publish.call_args.args[0].data == pytest.approx(0.0)
+    assert publish.call_args.args[0] == "gripper_command"
+    assert publish.call_args.args[1].data == pytest.approx(0.0)
