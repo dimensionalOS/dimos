@@ -71,6 +71,7 @@ logger = setup_logger()
 SCHEMA_VERSION: Literal[1] = 1
 CALIBRATION_FILENAME = "calibration.json"
 HISTORY_DIR_NAME = "history"
+TRACKING_CHECK = "tracking"
 ARMS_STATE_DIR = STATE_DIR / "arms"
 
 PositiveFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
@@ -412,17 +413,21 @@ def merge_patch(
 ) -> ArmCalibration:
     """``stored`` with what ``patch`` gives changed, written at ``created``.
 
-    Gains merge by joint. Links replace the stored set as a whole, with the
-    patch's fit, else the stored fit if the links are unchanged, else none;
-    the stored checks ran with the old links, so they stay only when the links
-    are unchanged. Fit alone replaces the stored fit; friction replaces the
-    stored friction; checks merge by name; notes replace the stored notes.
+    Gains merge by joint; the stored tracking check ran with the old gains,
+    so it stays only when the gains are unchanged. Links replace the stored
+    set as a whole, with the patch's fit, else the stored fit if the links are
+    unchanged, else none; the stored checks ran with the old links, so they
+    stay only when the links are unchanged. Fit alone replaces the stored fit;
+    friction replaces the stored friction; checks merge by name; notes replace
+    the stored notes.
 
     Raises:
         ValueError: A fit without links, stored or given, to go with it.
     """
     gains = stored.gains if patch.gains is None else {**(stored.gains or {}), **patch.gains}
     gravity, checks = stored.gravity, stored.checks
+    if checks is not None and (gains or {}) != (stored.gains or {}):
+        checks = {name: check for name, check in checks.items() if name != TRACKING_CHECK}
     if patch.links is not None:
         same = gravity is not None and gravity.links == patch.links
         fit = patch.fit if patch.fit is not None else (gravity.fit if same and gravity else {})

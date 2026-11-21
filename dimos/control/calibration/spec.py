@@ -67,9 +67,14 @@ class HalfSpace:
     offset_m: float
     name: str = "keep-out"
 
-    def violated_by(self, points: np.ndarray) -> bool:
+    def distance_m(self, points: np.ndarray) -> np.ndarray:
+        """Signed distance of each point to the boundary, negative inside the keep-out."""
         values = np.atleast_2d(np.asarray(points, dtype=np.float64)) @ np.asarray(self.normal)
-        return bool((values > self.offset_m).any())
+        distance: np.ndarray = (self.offset_m - values) / float(np.linalg.norm(self.normal))
+        return distance
+
+    def violated_by(self, points: np.ndarray) -> bool:
+        return bool((self.distance_m(points) < 0.0).any())
 
 
 @dataclass(frozen=True)

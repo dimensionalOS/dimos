@@ -41,7 +41,7 @@ from dimos.control.calibration.gravity_fit import (
     totals,
 )
 from dimos.control.calibration.gravity_poses import ArmModel, Pose, generate_poses
-from dimos.control.calibration.schema import gravity_links_from_inertial
+from dimos.control.calibration.schema import TRACKING_CHECK, gravity_links_from_inertial
 from dimos.control.calibration.step_analysis import (
     StepEvent,
     StepMetrics,
@@ -646,7 +646,7 @@ def confirm_tracking(run: Calibration) -> str:
     if worse:
         run.configure({"gains": held})
         return f"{compared}; gains not saved: {'; '.join(worse)}"
-    patch: dict[str, Any] = {"checks": {"tracking": check}}
+    patch: dict[str, Any] = {"checks": {TRACKING_CHECK: check}}
     if proposed:
         patch["gains"] = proposed
     run.configure(patch, save=True)
