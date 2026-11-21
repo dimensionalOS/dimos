@@ -126,6 +126,8 @@ def _run_hosted(
     from dimos.hosted.client import root_rpc
     from dimos.hosted.deploy import deployed, log_printer, wait_for_hosts
     from dimos.hosted.machine import local_host
+    from dimos.hosted.protocol import run_coordinator_rpc_name
+    from dimos.hosted.run_coordinator import serve_hosted_run_coordinator
     from dimos.protocol.service.zenohservice import split_csv
 
     local = local_host()
@@ -158,10 +160,21 @@ def _run_hosted(
                     typer.echo(f"{host:>16}  {module}")
                 typer.echo("Running; Ctrl-C stops every fragment")
                 entry.save()
+                served = None
+                if global_config.serve_coordinator_rpc:
+                    placed = set(placement.values())
+                    served = serve_hosted_run_coordinator(
+                        run_coordinator_rpc_name(entry.run_id, d.host_id)
+                        for d in descriptors
+                        if d.name in placed
+                    )
                 try:
                     stop.wait()
                 except KeyboardInterrupt:
                     pass
+                finally:
+                    if served is not None:
+                        served.stop()
     except (RuntimeError, TimeoutError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
