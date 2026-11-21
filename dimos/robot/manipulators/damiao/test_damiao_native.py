@@ -34,13 +34,17 @@ def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, bound
     module, commands, readings = make_rig()
     native = boundary[0]
     commands.publish(JointState(name=["arm/joint2", "arm/left_finger"], position=[-0.5, 0.032]))
+    # Writes are enqueued and executed by the connection's owning thread.
+    wait_until(lambda: native.groups["right_gripper"].commands, timeout=2)
     np.testing.assert_equal(
         native.groups["left_arm"].commands[-1], [[80, 5, 0.2, 0, 0], [10, 1.5, -0.5, 0, 0]]
     )
     np.testing.assert_equal(native.groups["right_arm"].commands[-1], [[20, 0.6, 0.2, 0, 0]])
     assert native.groups["left_gripper"].commands == [pytest.approx(0.8)]
     assert native.groups["right_gripper"].commands == [pytest.approx(0.4)]
+    written = len(native.groups["left_arm"].commands)
     commands.publish(JointState(name=["arm/joint1"], position=[0.6]))
+    wait_until(lambda: len(native.groups["left_arm"].commands) > written, timeout=2)
     assert native.groups["left_arm"].commands[-1][1, 2] == -0.5
     assert readings.sent[-1].name == [
         "arm/joint1",
@@ -58,9 +62,9 @@ def test_feedback_failure_disables_latches_and_blocks_commands(make_rig, boundar
     module, commands, _ = make_rig()
     boundary[0].refresh_error = RuntimeError("lost feedback")
     wait_until(lambda: module._fault is not None, timeout=2)
+    wait_until(lambda: "disable" in boundary[0].events, timeout=2)
     commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
     assert boundary[0].groups["left_arm"].commands == []
-    assert "disable" in boundary[0].events
     assert "feedback" in module.status().last_error
 
 
@@ -69,7 +73,7 @@ def test_nonfinite_feedback_disables(make_rig, boundary, field):
     module, _, _ = make_rig()
     getattr(boundary[0].groups["left_arm"], field)[0] = float("nan")
     wait_until(lambda: module._fault is not None, timeout=2)
-    assert "disable" in boundary[0].events
+    wait_until(lambda: "disable" in boundary[0].events, timeout=2)
 
 
 def test_gross_feedback_fault_disables_even_if_disable_fails(make_rig, boundary):
@@ -77,7 +81,7 @@ def test_gross_feedback_fault_disables_even_if_disable_fails(make_rig, boundary)
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].groups["left_arm"].q[0] = float("nan")
     wait_until(lambda: module._fault is not None, timeout=2)
-    assert not module._arm.active
+    wait_until(lambda: not module._arm.active, timeout=2)
     boundary[0].disable_error = None
 
 
@@ -98,6 +102,7 @@ def test_gravity_is_added_from_measured_q(make_rig, boundary, mocker):
         module._arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0])
     )
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    wait_until(lambda: boundary[0].groups["right_arm"].commands, timeout=2)
     np.testing.assert_equal(gravity.call_args.args[0], [0.2, 0.2, 0.2])
     np.testing.assert_equal(boundary[0].groups["left_arm"].commands[-1][:, 4], [1.0, 2.0])
     assert boundary[0].groups["right_arm"].commands[-1][0, 4] == 3.0
@@ -140,7 +145,7 @@ def test_write_failure_attempts_measured_hold(make_rig, boundary, mocker):
     arm = boundary[0].groups["left_arm"]
     send = mocker.patch.object(arm, "mit_control", side_effect=[RuntimeError("send refused"), None])
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
-    assert send.call_count == 2
+    wait_until(lambda: send.call_count == 2, timeout=2)
     np.testing.assert_equal(send.call_args.args[0][:, 2], [0.2, 0.2])
     assert "send refused" in module.status().last_error
 
@@ -207,7 +212,7 @@ def test_invalid_second_arm_gain_prevents_all_native_sends(make_rig, boundary, g
     buses[1] = replace(buses[1], **{gain: values})
     module._arm._robot = replace(robot, buses=buses)
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
-    assert "non-finite" in module.status().last_error
+    wait_until(lambda: "non-finite" in (module.status().last_error or ""), timeout=2)
     assert boundary[0].groups["left_arm"].commands == []
     assert boundary[0].groups["right_arm"].commands == []
     assert boundary[0].groups["left_gripper"].commands == []
@@ -224,6 +229,7 @@ def test_teach_mode_sends_zero_stiffness_teaching_damping_and_gravity(make_rig, 
 
     with unittest.mock.patch.object(module._arm._physical, "gravity", return_value=gravity):
         commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+        wait_until(lambda: boundary[0].groups["right_arm"].commands, timeout=2)
     left = boundary[0].groups["left_arm"].commands[-1]
     right = boundary[0].groups["right_arm"].commands[-1]
     np.testing.assert_equal(left[:, 0], [0.0, 0.0])

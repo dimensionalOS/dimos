@@ -131,6 +131,7 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
             )
         )
         first_bus = robot.buses[0]
+        wait_until(lambda: native.groups[jaw.name].commands, timeout=2)
         rows = native.groups[first_bus.name].commands[-1]
         np.testing.assert_equal(rows[0, :2], [first_bus.kp[0], first_bus.kd[0]])
         assert rows[0, 2] == pytest.approx(pose[0])
@@ -168,7 +169,7 @@ def test_fake_feedback_fault_disables_each_arm(connection_type, ports, boundary,
         )
         wait_until(lambda: module._fault is not None, timeout=2)
         assert "feedback failed" in module._fault
-        assert "disable" in native.events
+        wait_until(lambda: "disable" in native.events, timeout=2)
         sent = sum(len(getattr(group, "commands", [])) for group in native.groups.values())
         commands.publish(
             JointState(name=[f"arm/{connection_type.robot.arm_joint_names[0]}"], position=[0.1])

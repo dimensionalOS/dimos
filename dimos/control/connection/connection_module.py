@@ -138,6 +138,10 @@ class ConnectionModule(Module, ABC):
         # was accepted after the one that armed it.
         self._command_seq = 0
         self._last_command_time: float | None = None
+        #: Monotonic instant at which the last command that reached the
+        #: hardware became eligible (its receipt), never the instant a slow
+        #: SDK call returned; the deadman deadline is anchored to it.
+        self._last_authorized = 0.0
         self._deadman_fired = False
         self._last_rejection: str | None = None
         self._last_error: str | None = None
@@ -192,12 +196,26 @@ class ConnectionModule(Module, ABC):
             if self._stopping:
                 return
             self._stopping = True
+        try:
+            self._shutdown_hardware()
+        finally:
+            self._on_loop(self._disarm_deadman)
+            super().stop()
+
+    def _shutdown_hardware(self) -> None:
+        """Halt and close the hardware once. Called by ``stop``.
+
+        The default runs on the calling thread, under the hardware lock. A
+        connection whose SDK is owned by one thread overrides this to close
+        on that thread and to give the join a bound instead of waiting for
+        the hardware lock forever.
+        """
         with self._hardware_lock:
-            if self._connected:
-                self._call_halt()
-            self._connected = False
-        self._on_loop(self._disarm_deadman)
-        super().stop()
+            try:
+                if self._connected:
+                    self._call_halt()
+            finally:
+                self._connected = False
 
     @rpc
     def status(self) -> ConnectionStatus:
@@ -212,18 +230,22 @@ class ConnectionModule(Module, ABC):
                 last_error=self._last_error,
             )
 
-    def command(self, values: Values) -> None:
+    def command(self, values: Values, *, ts: float | None = None) -> None:
         """Check one command against the limits table and send it to the hardware.
 
         Call it from a port subscription, on any thread. A refused command
         (an unknown key, a value past a limit that does not clamp) is dropped
         and shown in ``status()``; an accepted one restarts the deadman and
-        goes to ``write``. If ``write`` raises, the robot is halted.
+        goes to ``_accept``, which by default calls ``write`` at once. If
+        ``write`` raises, the robot is halted.
 
         Args:
             values: Named values in each key's unit, e.g.
                 ``{"arm/joint1/position": 0.3}``. Keys of other robots are
                 skipped; a command with none of this robot's does nothing.
+            ts: The command message's source timestamp in Unix seconds, when
+                it carries one. Only connections whose ``_accept`` checks
+                command age use it.
         """
         prefix = f"{self.config.source}{SEPARATOR}"
         own = {key: value for key, value in values.items() if key.startswith(prefix)}
@@ -233,21 +255,52 @@ class ConnectionModule(Module, ABC):
         if isinstance(result, Rejected):
             self._report(f"{result.reason}: {result.detail}", rejection=True)
             return
+        self._accept(result.values, ts=ts)
+
+    def _accept(self, values: Values, *, ts: float | None = None) -> None:
+        """Dispatch one validated command. The default writes it at once.
+
+        The write happens here, on the caller's thread, under the hardware
+        lock, so the caller waits for any other SDK call in progress. A
+        connection with a single I/O-owning thread overrides this to enqueue
+        the command and wake that thread instead; such a connection must
+        document its enqueue-versus-write boundary itself.
+
+        Args:
+            values: The command's validated values, within their limits.
+            ts: The command's source timestamp; unused by the default.
+        """
         with self._hardware_lock:
             if not self._connected:
                 return
-            with self._lock:
-                self._last_command_time = time.time()
-                self._deadman_fired = False
-                self._command_seq += 1
-                seq = self._command_seq
-            self._on_loop(lambda: self._arm_deadman(seq))
+            self._record_command()
             try:
-                self.write(result.values)
+                self.write(values)
             except Exception as error:
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
+
+    def _record_command(self, *, authorized_at: float | None = None) -> None:
+        """Bookkeep one command that reached the hardware: stamp it and
+        restart the deadman from the instant it became eligible.
+
+        ``authorized_at`` is the command's local receipt (a monotonic
+        instant), carried from the eligibility check - not the instant a
+        slow SDK call happened to return. A connection with a single I/O
+        owner passes the receipt of the target it wrote so a call that
+        completes after the authority expired cannot grant a fresh budget;
+        the default writes synchronously and passes nothing.
+        """
+        now = time.monotonic()
+        with self._lock:
+            self._last_command_time = time.time()
+            self._last_authorized = now if authorized_at is None else min(authorized_at, now)
+            self._deadman_fired = False
+            self._command_seq += 1
+            seq = self._command_seq
+            deadline = self._last_authorized + self.config.deadman_timeout_s
+        self._on_loop(lambda: self._arm_deadman(seq, deadline))
 
     def frame(self, name: str) -> str:
         """The frame to stamp a reading with: ``name`` behind the config's
@@ -260,11 +313,17 @@ class ConnectionModule(Module, ABC):
         if self._loop is not None:
             self._loop.call_soon_threadsafe(step)
 
-    def _arm_deadman(self, seq: int) -> None:
+    def _arm_deadman(self, seq: int, deadline: float | None = None) -> None:
         self._disarm_deadman()
-        self._deadman = asyncio.get_running_loop().call_later(
-            self.config.deadman_timeout_s, self._deadman_expired, seq
+        # Anchor the timer to the absolute authorisation instant: if the
+        # event loop is late, the remaining delay shrinks instead of the
+        # deadline being pushed back by however long the loop was busy.
+        delay = (
+            self.config.deadman_timeout_s
+            if deadline is None
+            else max(0.0, deadline - time.monotonic())
         )
+        self._deadman = asyncio.get_running_loop().call_later(delay, self._deadman_expired, seq)
 
     def _disarm_deadman(self) -> None:
         if self._deadman is not None:
@@ -273,20 +332,42 @@ class ConnectionModule(Module, ABC):
 
     def _deadman_expired(self, seq: int) -> None:
         self._deadman = None
+        with self._lock:
+            if seq != self._command_seq or not self._connected:
+                return
+        if self._defer_halt(seq, deadman=True):
+            return
+        self._halt_if_current(seq, deadman=True)
+
+    def _halt_if_current(self, seq: int, *, deadman: bool) -> None:
+        """Halt now, unless a newer command reached the hardware meanwhile."""
         with self._hardware_lock:
             with self._lock:
-                # A newer command was accepted while this timer was due: its
+                # A newer command was accepted while this halt was due: its
                 # own timer is armed or queued, so this one has nothing to say.
                 if seq != self._command_seq or not self._connected:
                     return
-            logger.warning(
-                f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting"
-            )
+            if deadman:
+                logger.warning(
+                    f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting"
+                )
             self._call_halt()
             # Set only once halted, so a status that says it fired means the
             # robot was told to stop.
-            with self._lock:
-                self._deadman_fired = True
+            if deadman:
+                with self._lock:
+                    self._deadman_fired = True
+
+    def _defer_halt(self, seq: int, *, deadman: bool) -> bool:
+        """Take over a due halt on the connection's I/O owner thread.
+
+        Return True when the halt was queued for a thread that owns the SDK,
+        so this caller must not touch the hardware; the default runs it
+        here. An owner must re-check ``seq`` and the connection lifecycle
+        when it executes the request, and must not let a stale request halt
+        a robot that has since been commanded again.
+        """
+        return False
 
     def _call_halt(self) -> None:
         try:
