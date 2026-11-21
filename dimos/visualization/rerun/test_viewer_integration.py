@@ -20,13 +20,19 @@ import subprocess
 import threading
 from unittest.mock import ANY
 
+import psutil
 import pytest
 import rerun as rr
 
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun import bridge
-from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs, _start_save_client
+from dimos.visualization.rerun.bridge import (
+    Config,
+    RerunBridgeModule,
+    _resolve_pubsubs,
+    _start_save_client,
+)
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 from dimos.visualization.rerun.init import _VIEWER_RUST_LOG, spawn_viewer
 
@@ -184,3 +190,74 @@ class TestBridgePubsubResolution:
         pubsubs = _resolve_pubsubs(config)
 
         assert pubsubs == [custom]
+
+
+class TestMemoryLimits:
+    @pytest.mark.parametrize(
+        ("ram_gib", "limit"),
+        [(8, "2048MiB"), (16, "4096MiB"), (128, "4096MiB")],
+    )
+    def test_default_viewer_limit_is_a_quarter_of_ram_up_to_a_cap(self, mocker, ram_gib, limit):
+        mocker.patch.object(psutil, "virtual_memory").return_value.total = ram_gib * 2**30
+
+        assert Config().memory_limit == limit
+
+    def test_replay_buffer_does_not_take_the_viewer_limit(self, mocker):
+        server_uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
+        init = mocker.patch.object(bridge, "rerun_init", return_value=server_uri)
+        spawn = mocker.patch.object(bridge, "spawn_viewer", return_value=True)
+        module = RerunBridgeModule(
+            pubsubs=[ExplicitPubSubOverride()], blueprint=None, memory_limit="8GB"
+        )
+
+        try:
+            module.start()
+        finally:
+            module.stop()
+
+        assert init.call_args.kwargs["grpc_config"]["server_memory_limit"] == "1GiB"
+        assert spawn.call_args.args[1] == "8GB"
+
+
+@pytest.fixture
+def connect_hints(mocker):
+    mocker.patch.object(bridge, "get_local_ips", return_value=[("192.0.2.1", "eth0")])
+    mocker.patch.object(bridge, "rerun_init", return_value="rerun+http://127.0.0.1:9877/proxy")
+    log = mocker.patch.object(bridge.logger, "info")
+
+    def hints(**settings):
+        module = RerunBridgeModule(
+            pubsubs=[ExplicitPubSubOverride()], blueprint=None, rerun_open="none", **settings
+        )
+        try:
+            module.start()
+        finally:
+            module.stop()
+        return next(
+            call.args[0] for call in log.call_args_list if "Connect a viewer:" in call.args[0]
+        )
+
+    return hints
+
+
+def test_remote_connect_hint_computes_the_cap_on_the_viewer_machine(connect_hints, mocker):
+    viewer_mib = min(4096, psutil.virtual_memory().total // 4 // 2**20)
+    mocker.patch.object(psutil, "virtual_memory").return_value.total = 4 * 2**30
+    lines = connect_hints().splitlines()
+
+    assert next(line for line in lines if "--connect" in line).endswith("--memory-limit 1024MiB")
+    assert next(line for line in lines if "# eth0" in line).endswith(
+        '--memory-limit "$viewer_limit"  # eth0'
+    )
+    assignment = next(line for line in lines if "viewer_limit=" in line)
+    output = subprocess.check_output(
+        ["sh", "-c", assignment + '\nprintf "%s" "$viewer_limit"'], text=True
+    )
+    assert output == f"{viewer_mib}MiB"
+
+
+def test_remote_connect_hint_preserves_an_explicit_limit(connect_hints):
+    lines = connect_hints(memory_limit="10%").splitlines()
+
+    assert next(line for line in lines if "# eth0" in line).endswith("--memory-limit 10%  # eth0")
+    assert all("viewer_limit=" not in line for line in lines)

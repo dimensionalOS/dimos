@@ -21,6 +21,7 @@ from dataclasses import field
 import functools
 from operator import attrgetter
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -42,6 +43,7 @@ from typing import (
 from urllib.parse import quote, urlparse
 
 import numpy as np
+import psutil
 from pydantic import Field
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -54,6 +56,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import transport_topic
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
@@ -73,6 +76,7 @@ from dimos.visualization.rerun.constants import (
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
 from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
+from dimos.visualization.rerun.static_log import StaticLog
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -270,6 +274,17 @@ def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:
     return _default_pubsubs(getattr(config, "g", config))
 
 
+# A viewer spends its memory on timeline history, so a machine with more RAM
+# does not need a bigger limit.
+VIEWER_MEMORY_CAP_MIB = 4096
+
+
+def _default_memory_limit() -> str:
+    """A quarter of RAM, capped."""
+    quarter_mib = psutil.virtual_memory().total // 4 // 2**20
+    return f"{min(quarter_mib, VIEWER_MEMORY_CAP_MIB)}MiB"
+
+
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule.
 
@@ -296,7 +311,10 @@ class Config(ModuleConfig):
     host: str = Field(default_factory=lambda m: m["g"].listen_host)
     # None: the RerunWebSocketServer in this blueprint, or the default without one.
     websocket_url: str | None = None
-    memory_limit: str = "25%"
+    # The viewer drops its oldest data past this.
+    memory_limit: str = Field(default_factory=_default_memory_limit)
+    # What the bridge keeps in its own process to replay to a viewer that connects late.
+    server_memory_limit: str = "1GiB"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
     rerun_save: bool = False
@@ -345,6 +363,7 @@ class RerunBridgeModule(Module):
         self._camera_infos: dict[str, CameraInfo] = {}
         self._image_entities: set[str] = set()
         self._min_intervals: dict[str, float] = {}
+        self._static_log = StaticLog(self.config.server_memory_limit)
         self._tf_lock = threading.Lock()
         self._tf_tree = self._new_tf_tree()
 
@@ -354,6 +373,7 @@ class RerunBridgeModule(Module):
         return TfFrameTree(
             axis_length=self.config.tf_axes,
             root=f"{self.config.entity_prefix}/tf",
+            log_static=functools.partial(self._static_log.log, once=True),
         )
 
     @property
@@ -470,29 +490,37 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
-        # TFMessage for example returns list of (entity_path, archetype) tuples
-        if is_rerun_multi(rerun_data):
-            for entry in rerun_data:
-                rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
-            # Pin the base entity to the message frame once, so child entities
-            # follow it the way a single archetype does below.
-            frame_id = getattr(msg, "frame_id", None)
-            if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+        frame_id = getattr(msg, "frame_id", None)
+        attachment = []
+        if frame_id and not isinstance(rerun_data, rr.Transform3D):
+            parent = f"tf#/{frame_id}"
+            attachment.append(rr.Transform3D(parent_frame=parent))
+            if self._frame_attached.get(entity_path) != frame_id:
+                # Rerun supports a static fallback and a temporal transform for the
+                # same child frame on separate paths. The temporal one wins at its
+                # timestamps, even after a later change updates the fallback.
+                path = entity_path.lstrip("/")
+                self._static_log.log(
+                    f"frame_attachments/{path}",
+                    rr.Transform3D(child_frame=f"tf#/{path}", parent_frame=parent),
+                    once=True,
+                )
                 self._frame_attached[entity_path] = frame_id
+                if isinstance(msg, Image) and frame_id in self._camera_infos:
+                    rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+
+        if is_rerun_multi(rerun_data):
+            if attachment:
+                rr.log(entity_path, attachment[0])
+            for entry in rerun_data:
+                if isinstance(entry, RerunEntry) and entry.static:
+                    self._static_log.log(entry.path, entry.archetype)
+                else:
+                    rr.log(entry[0], entry[1])
         else:
-            rr.log(entity_path, cast("Archetype", rerun_data))
+            rr.log(entity_path, cast("Archetype", rerun_data), *attachment)
             if isinstance(msg, Image):
                 self._image_entities.add(entity_path)
-            # if source msg carries a frame_id, attach the entity to that TF frame
-            # should skip if archetype is a Transform3D
-            if not isinstance(rerun_data, rr.Transform3D):
-                frame_id = getattr(msg, "frame_id", None)
-                if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
-                    self._frame_attached[entity_path] = frame_id
-                    if isinstance(msg, Image) and frame_id in self._camera_infos:
-                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
 
     def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
@@ -536,10 +564,12 @@ class RerunBridgeModule(Module):
             start_grpc=True,
             grpc_config={
                 "connect_url": connect_url,
-                "server_memory_limit": self.config.memory_limit,
+                "server_memory_limit": self.config.server_memory_limit,
             },
         )
         assert server_uri is not None  # start_grpc=True guarantees a URI
+        # rerun_init logged it already. Going through the static log keeps it replayed.
+        self._static_log.log("/", colormap_annotation("turbo"), once=True)
 
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -633,6 +663,8 @@ class RerunBridgeModule(Module):
         local_ips = get_local_ips()
         local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
         local_ws = self._websocket_url
+        # Without it a viewer started by hand takes Rerun's default, 75% of RAM.
+        local_limit = shlex.quote(self.config.memory_limit)
         hostname = socket.gethostname()
 
         columns = 60
@@ -642,8 +674,21 @@ class RerunBridgeModule(Module):
             "Rerun gRPC server running (no viewer opened)",
             "",
             "Connect a viewer:",
-            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws}",
+            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws} --memory-limit {local_limit}",
         ]
+        remote_limit = local_limit
+        if local_ips and "memory_limit" not in self.config.model_fields_set:
+            # Remote users may have only the standalone viewer installed.
+            ram = 'os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")'
+            calc = f"import os; print(min({VIEWER_MEMORY_CAP_MIB}, {ram} // 4 // 2**20))"
+            lines.extend(
+                [
+                    "",
+                    "On the viewer machine:",
+                    f"  viewer_limit=$(python3 -c {shlex.quote(calc)})MiB",
+                ]
+            )
+            remote_limit = '"$viewer_limit"'
         for ip, iface in local_ips:
             remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
             remote_ws = self._websocket_url
@@ -652,7 +697,9 @@ class RerunBridgeModule(Module):
                 host = f"[{ip}]" if ":" in ip else ip
                 netloc = f"{host}:{ws.port}" if ws.port is not None else host
                 remote_ws = ws._replace(netloc=netloc).geturl()
-            lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
+            lines.append(
+                f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws} --memory-limit {remote_limit}  # {iface}"
+            )
         lines.append("")
         lines.append(f"  hostname: {hostname}")
         lines.append("=" * columns)
@@ -672,7 +719,7 @@ class RerunBridgeModule(Module):
                     archetypes=[type(entry[1]).__name__ for entry in data],
                 )
                 for entry in data:
-                    rr.log(entry[0], entry[1], static=True)
+                    self._static_log.log(entry[0], entry[1], once=True)
                 continue
 
             if isinstance(data, list):
@@ -682,14 +729,14 @@ class RerunBridgeModule(Module):
                     archetypes=[type(archetype).__name__ for archetype in data],
                 )
                 for archetype in data:
-                    rr.log(entity_path, archetype, static=True)
+                    self._static_log.log(entity_path, archetype, once=True)
             else:
                 logger.info(
                     "Rerun static entity",
                     entity_path=entity_path,
                     archetypes=[type(data).__name__],
                 )
-                rr.log(entity_path, data, static=True)
+                self._static_log.log(entity_path, data, once=True)
 
     @rpc
     def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
@@ -743,7 +790,7 @@ class RerunBridgeModule(Module):
         if not node_ids:
             return
 
-        rr.log(
+        self._static_log.log(
             "blueprint",
             rr.GraphNodes(
                 node_ids=node_ids,
@@ -754,7 +801,7 @@ class RerunBridgeModule(Module):
                 show_labels=True,
             ),
             rr.GraphEdges(edges=edges, graph_type="directed"),
-            static=True,
+            once=True,
         )
 
     @rpc

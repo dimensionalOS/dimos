@@ -145,6 +145,27 @@ PGOVoxelMapper.blueprint(emit_every=5, voxel_size=0.1),  # 10cm voxels
 - Larger voxels = fewer voxels = faster updates
 - But slightly less detail in the map
 
+### Limit Memory
+
+Rerun keeps what the bridge logs in two places. Each has its own limit:
+
+| Flag | Default | What it limits |
+|------|---------|----------------|
+| `--rerunbridgemodule.memory-limit` | A quarter of RAM, at most 4 GiB | The native viewer. Past the limit it drops its oldest data, so the timeline gets shorter. Browser viewers do not take this limit. |
+| `--rerunbridgemodule.server-memory-limit` | `1GiB` | The replay buffer in the bridge's worker. A viewer that connects late starts from what is in it. |
+
+Both limits take a size (`2GB`) or a share of RAM (`10%`). For a remote
+viewer, run the printed `viewer_limit` assignment on the viewer machine. An
+explicit viewer limit appears directly in the connection command.
+
+Set the server limit to `0` to stream live with no replay, or `unlimited` to
+keep the full recording. With a finite budget, the proxy drops the oldest
+timeline data first and then the oldest static data. The bridge periodically
+resends configured static entities, the colormap, the blueprint graph, and
+the latest frame attachments. Size the buffer to fit those entities together
+with the topic history you want to replay. Recorded samples keep the frame
+they had when they arrived.
+
 ---
 
 ## Direct Visualization from a Module
