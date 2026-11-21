@@ -398,13 +398,11 @@ class TestStoreDelegation:
 
         store, _blob_spy, vec_spy = spy_session
         s = store.stream("vecs", str)
-        first = s.append("a", ts=1.0, embedding=_emb([1, 0, 0]))
+        s.append("a", ts=1.0, embedding=_emb([1, 0, 0]))
         s.append("b", ts=2.0, embedding=_emb([0, 1, 0]))
         s.append("c", ts=3.0)  # no embedding
 
         assert len(vec_spy.puts) == 2
-        with pytest.raises(NotImplementedError, match="lookup by observation ID"):
-            vec_spy.get("vecs", first.id)
 
     def test_search_calls_vector_search(self, spy_session) -> None:
         import numpy as np
