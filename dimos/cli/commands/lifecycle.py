@@ -17,14 +17,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
+import shutil
 import signal
+import subprocess
 import sys
 import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+import psutil
 from pydantic import ValidationError
 import typer
 
@@ -33,13 +37,19 @@ from dimos.core.coordination.coordinator_rpc import CoordinatorAlreadyRunningErr
 from dimos.core.daemon import (
     DAEMON_STATUS_FD_ENV,
     fork_daemon,
+    python_command,
     read_daemon_status,
     redirect_stdio_to_devnull,
     run_coordinator,
     write_daemon_status,
 )
 from dimos.core.global_config import global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.run_registry import (
+    get_most_recent,
+    is_pid_alive,
+    stop_entry,
+    without_secret_options,
+)
 from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
@@ -55,6 +65,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "config"
+_RESTART_ENV = "_DIMOS_RESTART_PREVIOUS_RUN"
 
 
 def _reject_legacy_config() -> None:
@@ -204,6 +215,9 @@ def run(
 ) -> None:
     """Start a robot blueprint"""
 
+    working_directory = os.getcwd()
+    directory_stat = os.stat(".")
+    command, source = python_command()
     # Log this at the start so that people get immediate feedback that the program has started.
     logger.info("Starting DimOS")
 
@@ -336,6 +350,10 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
+    # A daemon executes its wrapper again in the background. Only the final
+    # invocation can confirm which project the wrapper actually entered.
+    if not daemon or DAEMON_STATUS_FD_ENV in os.environ:
+        _stop_previous_run(blueprint_name, directory_stat)
     # A daemon re-execs this command. Preserve the launcher's run/log
     # identity rather than generating a second one in the fresh interpreter.
     inherited_run_id = (
@@ -360,7 +378,10 @@ def run(
         log_dir=str(log_dir),
         cli_args=list(blueprint_names),
         config_overrides=global_option_overrides,
-        original_argv=sys.argv,
+        original_argv=[source, *sys.argv[1:]],
+        working_directory=working_directory,
+        working_directory_id=[directory_stat.st_dev, directory_stat.st_ino],
+        python_argv=command if source not in ("", "-", "-c") else [],
     )
     if blueprint.hosted_placements:
         if daemon:
@@ -517,6 +538,76 @@ def log_cmd(
             typer.echo(format_line(line, json_output=json_output))
 
 
+def _check_module_source(argv: list[str], source: Path) -> None:
+    # Only inspect Python options. A script or an option value can itself contain "-m".
+    args = iter(enumerate(argv[1:], 1))
+    for position, arg in args:
+        if arg == "--check-hash-based-pycs":
+            next(args, None)
+            continue
+        if not arg.startswith("-") or arg in ("-", "--"):
+            return
+        for offset, flag in enumerate(arg[1:], 1):
+            if flag not in "WXcm":
+                continue
+            value = arg[offset + 1 :] or next(args, (0, ""))[1]
+            if flag in "WX":
+                break
+            if flag == "c":
+                return
+            # Ask the saved interpreter with its own flags, cwd and import path.
+            # Resolving a package with -m selects its __main__ submodule.
+            options = argv[:position]
+            if offset > 1:
+                options.append(arg[:offset])
+            probe = (
+                "from importlib.util import find_spec\n"
+                "import os, sys\n"
+                "name, source = sys.argv[1:]\n"
+                "spec = find_spec(name)\n"
+                "if spec and spec.submodule_search_locations is not None:\n"
+                "    spec = find_spec(name + '.__main__')\n"
+                "if spec and spec.origin and os.path.samefile(spec.origin, source):\n"
+                "    os.write(1, b'\\0')"
+            )
+            result = subprocess.run(
+                [*options, "-c", probe, value, str(source)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode or not result.stdout.endswith(b"\0"):
+                raise OSError(
+                    f"the original Python module {value!r} cannot be resolved to {source}"
+                )
+            return
+
+
+def _stop_previous_run(blueprint: str, directory: os.stat_result) -> None:
+    pending = os.environ.pop(_RESTART_ENV, None)
+    if pending is None:
+        return
+    run_id, pid, device, inode, force = json.loads(pending)
+    if (directory.st_dev, directory.st_ino) != (device, inode):
+        typer.echo("Cannot restart: the launcher entered a different working directory", err=True)
+        raise typer.Exit(1)
+    entry = get_most_recent(alive_only=True)
+    if entry is None or (entry.run_id, entry.pid, entry.blueprint) != (run_id, pid, blueprint):
+        typer.echo("Cannot restart: the running instance or blueprint has changed", err=True)
+        raise typer.Exit(1)
+    msg, ok = stop_entry(entry, force=force)
+    typer.echo(f"  {msg}")
+
+    if not ok:
+        raise typer.Exit(1)
+
+    # Wait for the old process to fully exit so ports are released.
+    for _ in range(20):  # up to 2s
+        if not is_pid_alive(pid):
+            break
+        time.sleep(0.1)
+
+
 def restart(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
 ) -> None:
@@ -530,23 +621,52 @@ def restart(
         typer.echo("Cannot restart: run entry missing original command", err=True)
         raise typer.Exit(1)
 
-    # Save argv and pid before stopping (stop removes the entry)
-    argv = entry.original_argv
+    source = entry.original_argv[0]
+    if source in ("", "-", "-c"):
+        typer.echo("Cannot restart a run launched from standard input or inline code", err=True)
+        raise typer.Exit(1)
+
     old_pid = entry.pid
+    try:
+        # A released registry contains only sys.argv. Read its missing context
+        # while the process is still alive, then apply the usual argument filter.
+        directory = entry.working_directory or psutil.Process(old_pid).cwd()
+        os.chdir(directory)
+        current = os.stat(".")
+        if entry.working_directory_id is not None and entry.working_directory_id != [
+            current.st_dev,
+            current.st_ino,
+        ]:
+            raise OSError("the original launch directory was replaced")
+        source_path = Path(source)
+        candidates = (
+            [source_path / "__main__.py", source_path / "__main__.pyc"]
+            if source_path.is_dir()
+            else [source_path]
+        )
+        if not any(path.is_file() and os.access(path, os.R_OK) for path in candidates):
+            raise OSError(f"original Python source is unavailable: {source}")
+        argv = (
+            without_secret_options(psutil.Process(old_pid).cmdline())
+            if entry.python_argv is None
+            else entry.python_argv
+        )
+        if not argv or shutil.which(argv[0]) is None:
+            raise OSError("original command is unavailable")
+        _check_module_source(argv, source_path)
+    except (OSError, psutil.Error) as exc:
+        typer.echo(f"Cannot restart: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
-    msg, _ok = stop_entry(entry, force=force)
-    typer.echo(f"  {msg}")
-
-    # Wait for the old process to fully exit so ports are released.
-    for _ in range(20):  # up to 2s
-        if not is_pid_alive(old_pid):
-            break
-        time.sleep(0.1)
-
     typer.echo(f"  Running: {' '.join(argv)}")
     try:
+        os.environ[_RESTART_ENV] = json.dumps(
+            [entry.run_id, old_pid, current.st_dev, current.st_ino, force]
+        )
         os.execvp(argv[0], argv)
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)
+    finally:
+        os.environ.pop(_RESTART_ENV, None)
