@@ -79,7 +79,10 @@ def a1z_coordinator() -> MetaBlueprint:
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
 coordinator_a1z = a1z_coordinator().remappings(A1Z_REMAPS)
+_planner_model = make_a1z_model_config(robot="arm")
+# Eye-in-hand capture pairs the camera image with the measured final-link pose.
+_planner_model.tf_extra_links = ["base_link", "arm_link6"]
 a1z_planner_coordinator = autoconnect(
-    planner(model=make_a1z_model_config(robot="arm"), gripper_tasks={"manipulator": "arm_gripper"}),
+    planner(model=_planner_model, gripper_tasks={"manipulator": "arm_gripper"}),
     a1z_coordinator(),
 ).remappings(A1Z_REMAPS)

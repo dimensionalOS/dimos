@@ -62,6 +62,7 @@ from dimos.cli.commands.data import data_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
 from dimos.cli.commands.graph import graph
+from dimos.cli.commands.handeyecalibrate import handeyecalibrate_app
 from dimos.cli.commands.host import host_app
 from dimos.cli.commands.imitation import imitation_app
 from dimos.cli.commands.info import list_blueprints, show_config
@@ -160,6 +161,7 @@ evals_app.add_typer(vqa_app, name="vqa")
 main.add_typer(evals_app, name="evals")
 
 main.command()(cameracalibrate)
+main.add_typer(handeyecalibrate_app, name="handeyecalibrate")
 main.command()(apriltag)
 main.command(
     name="rerun-bridge", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}

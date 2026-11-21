@@ -80,6 +80,7 @@ class SkillInfo:
     args_schema: str
     uses: tuple[str, ...] = ()
     lifecycle: str = "instant"
+    allow_reentry: bool = True
 
 
 # Skill metadata derives from the class, so one build serves every instance.
@@ -545,6 +546,7 @@ class ModuleBase(Configurable, CompositeResource):
                     args_schema=schema,
                     uses=uses,
                     lifecycle=lifecycle,
+                    allow_reentry=getattr(attr, "__skill_allow_reentry__", True),
                 )
             )
         return skills

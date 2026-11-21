@@ -14,9 +14,13 @@
 
 """The python config and the rust struct/registry agree field for field."""
 
+from io import BytesIO
 import json
 from pathlib import Path
+import subprocess
 import sys
+
+import pytest
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -27,6 +31,54 @@ from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera, RealSenseCameraConfig
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
+
+
+@pytest.mark.parametrize(
+    ("platform", "overrides", "command", "artifact"),
+    [
+        (
+            "darwin",
+            {},
+            "cargo build --release --locked --target-dir target",
+            "target/release/realsense_native",
+        ),
+        ("linux", {}, "nix build -L path:.", "result/bin/realsense_native"),
+        (
+            "darwin",
+            {"build_command": "custom-build", "executable": "bin/custom-camera"},
+            "custom-build",
+            "bin/custom-camera",
+        ),
+    ],
+)
+def test_build_uses_platform_toolchain_and_artifact(
+    platform, overrides, command, artifact, tmp_path, mocker, monkeypatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    source = tmp_path / "dimos/hardware/sensors/camera/realsense/rust"
+    executable = source / artifact
+
+    def build_artifact(*args, **kwargs):
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        return mocker.Mock(stdout=BytesIO(), returncode=0)
+
+    build = mocker.patch("dimos.core.native_module.subprocess.Popen", side_effect=build_artifact)
+    camera = RealSenseCamera(**overrides)
+    try:
+        camera.build()
+        build.assert_called_once_with(
+            command,
+            shell=True,
+            cwd=str(source),
+            env=mocker.ANY,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert camera.config.resolve_paths() == (str(source), str(executable))
+    finally:
+        camera.stop()
 
 
 def _camera_fields() -> set[str]:

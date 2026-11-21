@@ -16,6 +16,7 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "a1z-hand-eye-calibration-agent": "dimos.robot.manipulators.a1z.blueprints.hand_eye_calibration_agentic:a1z_hand_eye_calibration_agent",
     "a1z-keyboard-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_keyboard_teleop",
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
     "a1z-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_teleop",
@@ -310,6 +311,7 @@ all_modules = {
     "grasp-generator-module": "dimos.manipulation.grasping.grasp_generator_module.GraspGeneratorModule",
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
     "habitat-connection": "dimos.simulation.habitat.connection.HabitatConnection",
+    "hand-eye-calibration-skills": "dimos.calibration.hand_eye_skills.HandEyeCalibrationSkills",
     "hand-teleop-module": "dimos.teleop.webxr.extensions.HandTeleopModule",
     "harness-runtime": "dimos.agents.harness.runtime.harness_runtime.HarnessRuntime",
     "head-camera-info": "dimos.robot.galaxea.r1pro.head_cameras.HeadCameraInfo",
