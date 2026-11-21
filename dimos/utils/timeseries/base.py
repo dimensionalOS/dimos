@@ -23,13 +23,38 @@ import reactivex as rx
 from reactivex import operators as ops
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from reactivex.observable import Observable
 
     from dimos.types.timestamped import Timestamped
 
 T = TypeVar("T", bound="Timestamped")
+U = TypeVar("U")
+
+LOOP_GAP = 0.05  # wall seconds between passes of timed playback
+
+
+def playback_frames(
+    source: Callable[[], Iterator[tuple[float, U]]], loop: bool
+) -> Iterator[tuple[float, U, bool]]:
+    """Yield recorded frames and mark the first frame of each repeated pass."""
+    wrapped = False
+    while True:
+        rows = source()
+        emitted = False
+        try:
+            for ts, data in rows:
+                emitted = True
+                yield ts, data, wrapped
+                wrapped = False
+        finally:
+            close = getattr(rows, "close", None)
+            if close is not None:
+                close()
+        if not loop or not emitted:
+            return
+        wrapped = True
 
 
 class TimeSeriesStore(Generic[T], ABC):
@@ -267,12 +292,14 @@ class TimeSeriesStore(Generic[T], ABC):
         loop: bool = False,
     ) -> Iterator[T]:
         """Iterate data, sleeping to match original timing."""
+
+        def items() -> Iterator[tuple[float, T]]:
+            return self.iterate_items(seek=seek, duration=duration, from_timestamp=from_timestamp)
+
         prev_ts: float | None = None
-        for ts, data in self.iterate_items(
-            seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-        ):
+        for ts, data, wrapped in playback_frames(items, loop):
             if prev_ts is not None:
-                delay = (ts - prev_ts) / speed
+                delay = LOOP_GAP if wrapped else (ts - prev_ts) / speed
                 if delay > 0:
                     time.sleep(delay)
             prev_ts = ts
@@ -293,9 +320,8 @@ class TimeSeriesStore(Generic[T], ABC):
         from dimos.utils.testing.replay import timed_playback
 
         return timed_playback(
-            lambda: self.iterate_items(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            ),
+            lambda: self.iterate_items(seek=seek, duration=duration, from_timestamp=from_timestamp),
             speed=speed,
+            loop=loop,
             detect_loop=loop,
         )

@@ -14,8 +14,12 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pytest_mock import MockerFixture
+from reactivex import operators as ops
+from reactivex.testing import TestScheduler
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.testing.replay import MemoryReplayAdapter
@@ -45,3 +49,24 @@ def test_duration_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int
 
 def test_find_closest_seek_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int]) -> None:
     assert replay.find_closest_seek(0.005) == 0
+
+
+def test_equal_timestamp_frames_stay_together_on_each_pass(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    with SqliteStore(path=str(tmp_path / "camera.db")) as sqlite_store:
+        stream = sqlite_store.stream("camera", int)
+        for value in (1, 2):
+            stream.append(value, ts=10.0)
+        mocker.patch("dimos.utils.testing.replay._get_store", return_value=sqlite_store)
+        clock = TestScheduler()
+        mocker.patch("dimos.utils.testing.replay.time", SimpleNamespace(time=lambda: clock.clock))
+        replay = MemoryReplayAdapter[int]("recording/camera")
+        events = []
+        with (
+            replay.stream(loop=True)
+            .pipe(ops.take(4))
+            .subscribe(lambda value: events.append((clock.clock, value)), scheduler=clock)
+        ):
+            clock.advance_to(1)
+        assert events == [(0, 1), (0, 2), (0.05, 1), (0.05, 2)]

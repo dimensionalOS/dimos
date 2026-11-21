@@ -154,6 +154,8 @@ frame = replay.find_closest(timestamp, tolerance=0.1)
 ### Observable Stream
 
 The `.stream()` method returns an Observable that emits frames with original timing.
+Looping inserts a 50 ms pause between passes, including a one-frame clip. Frames
+with identical timestamps within a pass are emitted together.
 `subscribe()` delivers the first frame before returning; subsequent frames arrive
 on timer threads. Keep the program alive while listening, and dispose the
 subscription when finished. For finite playback in a script, use the blocking
