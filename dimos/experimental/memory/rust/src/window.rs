@@ -89,7 +89,7 @@ pub(crate) struct SegmentWriter {
     pub records: u64,
     pub first_ts: f64,
     newest_ts: f64,
-    bytes: u64,
+    pub bytes: u64,
     path: PathBuf,
     file: BufWriter<File>,
 }

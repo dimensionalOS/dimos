@@ -18,6 +18,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -113,6 +114,7 @@ pub(crate) struct EventWriter {
     trigger: String,
     stream_indexes: HashMap<String, u16>,
     segment: SegmentWriter,
+    gate: WindowGate,
     syncer: Syncer,
     events: Option<Sender<WindowEvent>>,
     store_thread: Option<JoinHandle<Result<()>>>,
@@ -153,19 +155,23 @@ impl EventWriter {
             Duration::from_secs_f64(config.sync_s),
         )?;
 
+        let periods: Vec<f64> = streams
+            .iter()
+            .map(|stream| config.periods[&stream.name])
+            .collect();
+        let max_window_bytes = (config.max_window_mib * BYTES_PER_MIB) as u64;
+        let window_bytes = Arc::new(AtomicU64::new(0));
         let (events, receiver) = unbounded();
         let store_writer = StoreWriter {
             store,
             streams: streams.iter().cloned().map(Arc::new).collect(),
-            periods: streams
-                .iter()
-                .map(|stream| config.periods[&stream.name])
-                .collect(),
+            periods: periods.clone(),
             last_kept: vec![f64::NEG_INFINITY; streams.len()],
             stored: vec![0; streams.len()],
             clips: Clips::new(config.pre_s, config.post_s, config.max_clip_s),
             pre_s: config.pre_s,
-            max_window_bytes: (config.max_window_mib * BYTES_PER_MIB) as u64,
+            max_window_bytes,
+            window_bytes: Arc::clone(&window_bytes),
             dir: dir.clone(),
         };
         let store_thread = thread::Builder::new()
@@ -183,6 +189,7 @@ impl EventWriter {
                 .map(|(index, stream)| (stream.name.clone(), index as u16))
                 .collect(),
             segment,
+            gate: WindowGate::new(periods, max_window_bytes, window_bytes),
             syncer,
             events: Some(events),
             store_thread: Some(store_thread),
@@ -191,6 +198,7 @@ impl EventWriter {
     }
 
     /// Appends one observation to the open segment, handing the segment off first if it timed out.
+    /// A full window only takes what the stream's period would keep outside a clip.
     fn append(&mut self, observation: &Observation) -> Result<()> {
         if self.segment_timed_out(observation.monotonic_ts) {
             self.hand_off_segment()?;
@@ -199,8 +207,13 @@ impl EventWriter {
             .stream_indexes
             .get(&observation.stream.name)
             .with_context(|| format!("unknown stream {:?}", observation.stream.name))?;
-        self.segment.write(index, observation)?;
         self.clock = self.clock.max(observation.monotonic_ts);
+        if self
+            .gate
+            .admits(index, observation.monotonic_ts, self.segment.bytes)
+        {
+            self.segment.write(index, observation)?;
+        }
         Ok(())
     }
 
@@ -220,6 +233,9 @@ impl EventWriter {
     fn send_open_segment(&mut self) -> Result<()> {
         let segment = self.segment.seal()?;
         if segment.records > 0 {
+            self.gate
+                .window_bytes
+                .fetch_add(segment.bytes, Ordering::SeqCst);
             self.send_to_store(WindowEvent::Segment(segment))?;
         }
         Ok(())
@@ -286,6 +302,55 @@ impl RecordingStore for EventWriter {
     }
 }
 
+/// Holds the window to `max_bytes`: closed segments waiting for the store thread plus the open
+/// one. Over it, each stream is thinned to its period before anything reaches the window.
+struct WindowGate {
+    periods: Vec<f64>,
+    last_admitted: Vec<f64>,
+    max_bytes: u64,
+    window_bytes: Arc<AtomicU64>,
+    full: bool,
+}
+
+impl WindowGate {
+    fn new(periods: Vec<f64>, max_bytes: u64, window_bytes: Arc<AtomicU64>) -> Self {
+        Self {
+            last_admitted: vec![f64::NEG_INFINITY; periods.len()],
+            periods,
+            max_bytes,
+            window_bytes,
+            full: false,
+        }
+    }
+
+    /// Whether an observation of `stream` at `time` goes into the window, given the open
+    /// segment's `open_bytes`.
+    fn admits(&mut self, stream: u16, time: f64, open_bytes: u64) -> bool {
+        let stream = usize::from(stream);
+        let bytes = self.window_bytes.load(Ordering::SeqCst) + open_bytes;
+        let full = bytes >= self.max_bytes;
+        if full != self.full {
+            self.full = full;
+            if full {
+                warn!(
+                    window_mib = bytes as f64 / BYTES_PER_MIB,
+                    "event window full; thinning new data until the store catches up"
+                );
+            } else {
+                info!(
+                    window_mib = bytes as f64 / BYTES_PER_MIB,
+                    "event window has room again; recording at full rate"
+                );
+            }
+        }
+        if full && time - self.last_admitted[stream] < self.periods[stream] {
+            return false;
+        }
+        self.last_admitted[stream] = time;
+        true
+    }
+}
+
 /// Merged full-rate time ranges on the monotonic clock, in start order.
 struct Clips {
     pre_s: f64,
@@ -334,6 +399,7 @@ struct StoreWriter {
     clips: Clips,
     pre_s: f64,
     max_window_bytes: u64,
+    window_bytes: Arc<AtomicU64>,
     dir: PathBuf,
 }
 
@@ -343,7 +409,6 @@ impl StoreWriter {
     /// A writer that stops without `Finish` leaves the window behind.
     fn run(mut self, events: Receiver<WindowEvent>) -> Result<()> {
         let mut segments: VecDeque<ClosedSegment> = VecDeque::new();
-        let mut window_bytes = 0;
         let mut clock = f64::NEG_INFINITY;
         'events: loop {
             let Ok(next) = events.recv() else {
@@ -352,25 +417,22 @@ impl StoreWriter {
             for event in std::iter::once(next).chain(events.try_iter()) {
                 match event {
                     WindowEvent::Trigger(time) => self.clips.add_trigger(time),
-                    WindowEvent::Segment(segment) => {
-                        window_bytes += segment.bytes;
-                        segments.push_back(segment);
-                    }
+                    WindowEvent::Segment(segment) => segments.push_back(segment),
                     WindowEvent::Clock(time) => clock = time,
                     WindowEvent::Finish => break 'events,
                 }
             }
             while let Some(segment) = segments.front() {
+                let window_bytes = self.window_bytes.load(Ordering::SeqCst);
                 let over_cap = window_bytes > self.max_window_bytes;
                 if !over_cap && clock <= segment.newest_ts + self.pre_s {
                     break;
                 }
                 let segment = segments.pop_front().expect("front segment exists");
-                window_bytes -= segment.bytes;
                 if over_cap {
                     warn!(
                         segment = segment.index,
-                        window_mib = (window_bytes + segment.bytes) as f64 / BYTES_PER_MIB,
+                        window_mib = window_bytes as f64 / BYTES_PER_MIB,
                         "event window over its cap; storing the oldest segment thinned"
                     );
                 }
@@ -420,7 +482,9 @@ impl StoreWriter {
         }
         .write(&self.dir)?;
         fs::remove_file(&segment.path)
-            .with_context(|| format!("failed to delete {}", segment.path.display()))
+            .with_context(|| format!("failed to delete {}", segment.path.display()))?;
+        self.window_bytes.fetch_sub(segment.bytes, Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -566,14 +630,40 @@ mod tests {
     #[test]
     fn a_window_over_its_cap_stores_its_oldest_segments_thinned() {
         // A cap below one segment stores every closed segment at once, so only the open one waits.
+        // The window is full from the first few records on, so the clip is thinned too.
         let (cloud, odom, clip_that) = record_events(0.0001, 1);
-        let expected: Vec<f64> = times()
-            .into_iter()
-            .filter(|&time| time.fract() == 0.0)
-            .collect();
-        assert_eq!(cloud, expected);
+        assert_eq!(cloud.len(), 400);
+        assert!(cloud.windows(2).all(|pair| pair[1] - pair[0] >= 1.0));
         assert_eq!(odom, 3200);
         assert_eq!(clip_that, 1);
+    }
+
+    #[test]
+    fn a_full_window_takes_only_what_each_period_keeps_until_the_store_catches_up() {
+        let window_bytes = Arc::new(AtomicU64::new(0));
+        let mut gate = WindowGate::new(vec![1.0, 0.0], 100, Arc::clone(&window_bytes));
+        let admitted = |gate: &mut WindowGate, stream: u16| -> Vec<f64> {
+            times()[..16]
+                .iter()
+                .copied()
+                .filter(|&time| gate.admits(stream, time, 0))
+                .collect()
+        };
+
+        assert_eq!(admitted(&mut gate, 0).len(), 16);
+
+        // Segments waiting for the store fill the window, so cloud drops to one per second.
+        window_bytes.store(100, Ordering::SeqCst);
+        let mut gate = WindowGate::new(vec![1.0, 0.0], 100, Arc::clone(&window_bytes));
+        assert_eq!(admitted(&mut gate, 0), vec![0.0, 1.0]);
+        assert_eq!(admitted(&mut gate, 1).len(), 16);
+
+        // The open segment counts toward the window too.
+        window_bytes.store(60, Ordering::SeqCst);
+        let mut gate = WindowGate::new(vec![1.0, 0.0], 100, Arc::clone(&window_bytes));
+        assert!(gate.admits(0, 0.0, 40));
+        assert!(!gate.admits(0, 0.5, 40));
+        assert!(gate.admits(0, 0.75, 39));
     }
 
     #[test]
