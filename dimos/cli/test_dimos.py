@@ -13,11 +13,13 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from importlib.util import spec_from_file_location
 import os
 from pathlib import Path
 import re
 import signal
 import sys
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -1041,7 +1043,16 @@ def restart_entry(stubbed_run, tmp_path, monkeypatch, mocker):
     mocker.patch.object(lifecycle, "is_pid_alive", return_value=False)
     execute = mocker.patch.object(lifecycle.os, "execvp")
 
-    def capture(source, prefix, *, legacy=False, raw_args=None, extra_args=()):
+    def capture(source, prefix, *, launch_file=None, legacy=False, raw_args=None, extra_args=()):
+        # Model the launcher, including when pytest itself runs in a fileless xdist worker.
+        launcher = ModuleType("__main__")
+        if source not in ("-", "-c"):
+            launcher.__file__ = str(launch_file or source)
+            if "-m" in prefix:
+                launcher.__spec__ = spec_from_file_location(
+                    prefix[prefix.index("-m") + 1], launcher.__file__
+                )
+        monkeypatch.setitem(sys.modules, "__main__", launcher)
         args = ["--replay-db", "replay.db", "run", "alpha", *extra_args]
         monkeypatch.setattr(sys, "argv", [source, *args])
         monkeypatch.setattr(sys, "orig_argv", [*prefix, *(args if raw_args is None else raw_args)])
@@ -1120,14 +1131,14 @@ def test_restart_restores_wrapper_command(restart_entry, tmp_path, monkeypatch, 
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.chdir(project)
-    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(script))
-    monkeypatch.setattr(sys.modules["__main__"], "__spec__", None)
     source = str(script) if kind == "absolute-injected" else script.name
     # The interpreter option and the program may have the same spelling.
     options = ["-X", script.name, "-u"] if kind == "interpreter-option" else ["-u"]
     raw_args = ["--replay-db", "replay.db", "run", "alpha"] if kind == "interpreter-option" else []
     prefix = [sys.executable, *options]
-    runner, _, execute, _ = restart_entry(source, [*prefix, source], raw_args=raw_args)
+    runner, _, execute, _ = restart_entry(
+        source, [*prefix, source], raw_args=raw_args, launch_file=script
+    )
     monkeypatch.chdir(tmp_path)
 
     assert runner.invoke(main, ["restart"]).exit_code == 0
@@ -1141,10 +1152,8 @@ def test_restart_keeps_wrapper_with_ambiguous_relative_source(restart_entry, tmp
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.chdir(project)
-    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(script))
-    monkeypatch.setattr(sys.modules["__main__"], "__spec__", None)
     prefix = [sys.executable, "-X", script.name, "-u", script.name]
-    runner, stop, execute, _ = restart_entry(script.name, prefix, raw_args=[])
+    runner, stop, execute, _ = restart_entry(script.name, prefix, raw_args=[], launch_file=script)
 
     result = runner.invoke(main, ["restart", "--force"])
 
