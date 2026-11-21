@@ -476,6 +476,7 @@ fn run_policy(
         {
             tracing::error!(
                 error = format!("{error:#}"),
+                fix = REALTIME_FIX,
                 "the policy thread is not real-time; refusing to run"
             );
             std::process::exit(1);
