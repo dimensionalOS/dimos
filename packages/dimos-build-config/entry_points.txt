@@ -1,0 +1,5 @@
+[scikit-build-core.config.default]
+dimos = dimos_build_config:config
+
+[dynamic_metadata.provider]
+dimos = dimos_build_config.metadata

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-build-config"
+version = "0.1.0"
+description = "Source-only packaging and blueprint metadata for DimOS packages"
+requires-python = ">=3.10"
+dependencies = ["tomli>=2; python_version < '3.11'"]
+dynamic = ["entry-points"]
+
+# The upstream config group contains hyphens, which PEP 621 table validation
+# rejects. Setuptools' supported entry-point file preserves its exact spelling.
+[tool.setuptools.dynamic]
+entry-points = {file = "entry_points.txt"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["test_*.py"]
