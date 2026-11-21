@@ -78,18 +78,23 @@ def test_svg_reports_graphviz_rendering_errors(tmp_path: Path, mocker: MockerFix
         to_svg(ModuleInfo(name="Example"), str(tmp_path / "graph.svg"))
 
 
-class Camera(Module):
-    image: Out[bytes]
+@pytest.fixture
+def camera_display() -> tuple[Blueprint, type[Module]]:
+    class Camera(Module):
+        image: Out[bytes]
+
+    class Display(Module):
+        image: In[bytes]
+        camera: Camera
+
+    return autoconnect(Camera.blueprint(), Display.blueprint()).solidify(), Display
 
 
-class Display(Module):
-    image: In[bytes]
-    camera: Camera
-
-
-def test_blueprint_graph_keeps_each_instances_stream_and_rpc() -> None:
-    camera_display = autoconnect(Camera.blueprint(), Display.blueprint()).solidify()
-    blueprint = autoconnect(camera_display.namespace("left"), camera_display.namespace("right"))
+def test_blueprint_graph_keeps_each_instances_stream_and_rpc(
+    camera_display: tuple[Blueprint, type[Module]],
+) -> None:
+    pair, _ = camera_display
+    blueprint = autoconnect(pair.namespace("left"), pair.namespace("right"))
     graph = render(blueprint.solidify())
 
     for side in ("left", "right"):
@@ -105,9 +110,11 @@ def test_blueprint_graph_keeps_each_instances_stream_and_rpc() -> None:
         assert f'{contract[1]} -> "module:{other}/camera"' not in graph
 
 
-def test_disabled_modules_do_not_add_stream_nodes_or_edges() -> None:
-    blueprint = autoconnect(Camera.blueprint(), Display.blueprint()).disabled_modules(Display)
-    graph = render(blueprint.solidify())
+def test_disabled_modules_do_not_add_stream_nodes_or_edges(
+    camera_display: tuple[Blueprint, type[Module]],
+) -> None:
+    pair, display = camera_display
+    graph = render(pair.disabled_modules(display))
     assert '"module:camera"' in graph
     assert '"module:display"' not in graph
     assert "image:bytes" not in graph

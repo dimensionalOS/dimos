@@ -14,6 +14,7 @@
 
 """Custom viewer launch, stock Rerun fallback, and bridge integration."""
 
+from collections.abc import Iterator
 import os
 import shutil
 import subprocess
@@ -190,7 +191,16 @@ class TestBridgePubsubResolution:
         assert pubsubs == [custom]
 
 
-def test_bridge_logs_named_graph_nodes_and_edges(mocker: MockerFixture) -> None:
+@pytest.fixture
+def viewer() -> Iterator[bridge.RerunBridgeModule]:
+    module = bridge.RerunBridgeModule()
+    yield module
+    module.stop()
+
+
+def test_bridge_logs_named_graph_nodes_and_edges(
+    mocker: MockerFixture, viewer: bridge.RerunBridgeModule
+) -> None:
     layout = (
         'node "module:front camera" 1 2 1 1 "front camera" filled box "#112233" "#445566"\n'
         'node channel_0 1 3 1 1 image filled note "#112233" "#445566"\n'
@@ -198,7 +208,6 @@ def test_bridge_logs_named_graph_nodes_and_edges(mocker: MockerFixture) -> None:
     )
     mocker.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, layout))
     log = mocker.patch.object(rr, "log")
-    viewer = bridge.RerunBridgeModule.__new__(bridge.RerunBridgeModule)
     viewer.log_blueprint_graph("digraph {}", ["module:front camera"])
 
     _, nodes, edges = log.call_args.args
@@ -211,12 +220,13 @@ def test_bridge_logs_named_graph_nodes_and_edges(mocker: MockerFixture) -> None:
 
 
 @pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz computes the Rerun layout")
-def test_rerun_keeps_distinct_escaped_module_names(mocker: MockerFixture) -> None:
+def test_rerun_keeps_distinct_escaped_module_names(
+    mocker: MockerFixture, viewer: bridge.RerunBridgeModule
+) -> None:
     names = ["front\nleft", r"front\nleft", "front%0Aleft"]
     blueprint = autoconnect(*(Module.blueprint(instance_name=name) for name in names)).solidify()
     module_ids = ["module:front%0Aleft", "module:front%5Cnleft", "module:front%250Aleft"]
     log = mocker.patch.object(rr, "log")
-    viewer = bridge.RerunBridgeModule.__new__(bridge.RerunBridgeModule)
 
     viewer.log_blueprint_graph(render(blueprint), module_ids)
 
