@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from typing import Any, TypeVar
 
 import pytest
@@ -22,6 +23,7 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.experimental.memory.rust_cli_recorder import prepare_rust_recorder
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -370,3 +372,58 @@ def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder
     spawn.assert_not_called()
     start.assert_called_once_with(recorder)
     assert not path.exists()
+
+
+@pytest.mark.parametrize("launch", ["cli", "module"])
+def test_managed_recorder_checks_sources_before_reusing_a_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_recorder: Any, launch: str
+) -> None:
+    source = tmp_path / "checkout"
+    source.mkdir()
+    (source / "Cargo.lock").write_text("locked input")
+    package = tmp_path / "package"
+    executable = package / "bin/dimos-memory-recorder"
+    executable.parent.mkdir(parents=True)
+    executable.touch(mode=0o755)
+    (source / "result").symlink_to(package, target_is_directory=True)
+    managed = source / "result/bin/dimos-memory-recorder"
+    monkeypatch.setattr(
+        RustRecorderConfig, "resolve_paths", lambda self: (str(source), str(managed))
+    )
+    monkeypatch.setenv("PATH", str(tmp_path / "no-nix"))
+    recorder = make_recorder(RustRecorder)
+
+    def prepare() -> Path:
+        if launch == "cli":
+            return prepare_rust_recorder()
+        recorder.build()
+        return Path(recorder._argv({})[0])
+
+    # A managed executable from before the source check carries no provenance.
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+    shutil.copytree(source, package / "recorder-source", ignore=shutil.ignore_patterns("result"))
+    (source / "result-tests").symlink_to(package, target_is_directory=True)
+    pinned = prepare()
+    assert pinned == executable
+    (source / "result").unlink()
+    (source / "result").symlink_to(tmp_path / "replacement", target_is_directory=True)
+    assert pinned.is_file()
+    (source / "result").unlink()
+    (source / "result").symlink_to(package, target_is_directory=True)
+    executable.chmod(0o644)
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+    executable.chmod(0o755)
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare_rust_recorder(build_native=True)
+
+    # A newly added input and an edited lockfile each invalidate the same package.
+    added = source / "build.rs"
+    added.write_text("fn main() {}")
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()
+    added.unlink()
+    (source / "Cargo.lock").write_text("edited input")
+    with pytest.raises(RuntimeError, match="exit 127"):
+        prepare()

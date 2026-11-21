@@ -595,16 +595,20 @@ mod tests {
         assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
     }
 
-    #[test]
-    fn writer_restores_arrival_order_after_parallel_encoding() {
-        let file = NamedTempFile::new().unwrap();
-        let config = RecorderConfig {
+    fn sqlite_config(path: &std::path::Path) -> RecorderConfig {
+        RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
-                path: file.path().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
             },
             encoding_threads: 2,
             streams: vec![(*stream("samples", Codec::Lcm, false)).clone()],
-        };
+        }
+    }
+
+    #[test]
+    fn writer_restores_arrival_order_after_parallel_encoding() {
+        let file = NamedTempFile::new().unwrap();
+        let config = sqlite_config(file.path());
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
         let store = store::open(&config.store, &config.streams, config.encoding_threads).unwrap();
@@ -756,14 +760,7 @@ mod tests {
     #[test]
     fn invalid_store_fails_before_engine_start_returns() {
         let directory = tempfile::tempdir().unwrap();
-        let config = RecorderConfig {
-            store: store::RecordingStoreConfig::Mcap {
-                path: directory.path().to_string_lossy().into_owned(),
-                attachments: vec![],
-            },
-            encoding_threads: 1,
-            streams: vec![],
-        };
+        let config = sqlite_config(directory.path());
         let error = match RecorderEngine::start(config) {
             Err(error) => error,
             Ok(engine) => {
@@ -771,7 +768,7 @@ mod tests {
                 panic!("engine reported success before opening the store");
             }
         };
-        assert!(error.to_string().contains("failed to create"));
+        assert!(error.to_string().contains("failed to open"));
     }
 
     #[test]

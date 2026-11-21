@@ -74,7 +74,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--ch
 | Option | Description |
 |--------|-------------|
 | `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
-| `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
+| `--daemon`, `-d` | Wait for startup, then run in the background |
 | `--disable` | A module to exclude, by its registry name such as `speak-skill`; repeat the flag for each module |
 | `--choice` | Select a named blueprint alternative with `NAME=OPTION`; repeat for multiple choices. Choices without defaults are required. See [Choices](/docs/usage/blueprints.md#choices). |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--pgovoxelmapper.voxel-size=1` |
@@ -133,11 +133,10 @@ and must be lowercase kebab-case, for example `keyboard-teleop`.
 
 Heavy replay workloads can be unreliable over LCM UDP, which is one reason `zenoh` is the default transport; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
-When `--daemon` is used, the process:
-1. Builds and starts all modules (foreground, so you see errors)
-2. Runs a health check (polls worker PIDs)
-3. Forks to background, writes a run registry entry
-4. Prints run ID, PID, log path, and MCP endpoint
+With `--daemon`, the launcher waits while the background process builds and starts
+the blueprint. If recording was requested, the recorder must start and the workers
+must pass their health check before the run registers. The launcher then prints
+the run ID and log path. A startup failure exits with an error.
 
 #### Adding a New Blueprint
 

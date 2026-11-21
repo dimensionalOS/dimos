@@ -134,7 +134,9 @@ class TransportRecorder:
 
 
 @contextmanager
-def recording(coordinator: ModuleCoordinator) -> Iterator[None]:
+def recording(
+    coordinator: ModuleCoordinator, *, rust_executable: Path | None = None
+) -> Iterator[None]:
     """Record streams while ``--record`` is set.
 
     The Python engine follows runtime additions to the coordinator.
@@ -151,7 +153,7 @@ def recording(coordinator: ModuleCoordinator) -> Iterator[None]:
         )
 
         session = RustRecordingSession(make_plan(dict(transports)))
-        session.start()
+        session.start(rust_executable)
         try:
             yield
         finally:

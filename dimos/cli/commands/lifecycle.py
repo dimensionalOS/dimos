@@ -181,7 +181,12 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        "-d",
+        help="Wait for startup, including any recorder, then run in the background",
+    ),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     choice: list[str] = typer.Option(
         [], "--choice", help="Select a blueprint alternative as NAME=OPTION; may be repeated"

@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.core import native_module
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
@@ -230,14 +231,19 @@ def test_process_exit_before_ready_fails_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess(stdout=b"", returncode=3)
+    process.stderr = BytesIO(
+        b'failed to create capture.mcap\n{"level":"ERROR","fields":{"message":"cause:\\nPermission denied"}}\n'
+    )
     monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: tmp_path / "recorder")
     monkeypatch.setattr(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
     )
 
-    with pytest.raises(RuntimeError, match="startup failed: process exited with status 3"):
+    with pytest.raises(RuntimeError, match="startup failed: process exited with status 3") as exc:
         RustRecordingSession(_plan(tmp_path)).start()
+    assert "failed to create capture.mcap" in str(exc.value).splitlines()[0]
+    assert "Permission denied" in str(exc.value).splitlines()[0]
 
 
 def test_readiness_timeout_fails_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -324,6 +330,58 @@ def test_external_lcm_connection_is_rejected():
         transport.stop()
 
 
+def test_build_failure_reports_build_output_at_error_level(tmp_path, mocker):
+    mocker.patch.object(
+        rust_cli_recorder.RustRecorderConfig,
+        "resolve_paths",
+        return_value=(str(tmp_path), str(tmp_path / "recorder")),
+    )
+    process = mocker.Mock()
+    lines = [f"build line {index:02d}" for index in range(25)]
+    lines.append("error: experimental Nix feature 'flakes' is disabled")
+    process.stdout = [f"{line}\n".encode() for line in lines]
+    process.wait.return_value = 1
+    popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", return_value=process)
+    error = mocker.patch.object(native_module.logger, "error")
+
+    with pytest.raises(RuntimeError, match="Rust recorder build failed") as exc:
+        rust_cli_recorder.prepare_rust_recorder()
+
+    assert "experimental Nix feature 'flakes' is disabled" in str(exc.value)
+    assert "exit 1" in str(exc.value)
+    summary, command, preceding, *context = str(exc.value).splitlines()
+    assert summary.endswith(lines[-1])
+    assert command == f"Command: {popen.call_args.args[0]}"
+    assert preceding == "Preceding build output:"
+    assert context == lines[-20:-1]
+    error.assert_called_once_with(str(exc.value), module="Rust recorder")
+
+
+@pytest.mark.parametrize(
+    "level,directives",
+    [
+        ("ERROR", f"error,{ZENOH_LOG_DIRECTIVES},dimos_memory_recorder=info"),
+        ("WARNING", f"warn,{ZENOH_LOG_DIRECTIVES},dimos_memory_recorder=info"),
+        ("DEBUG", f"debug,{ZENOH_LOG_DIRECTIVES}"),
+    ],
+)
+def test_launch_keeps_readiness_enabled_at_restrictive_log_levels(
+    tmp_path, monkeypatch, mocker, level, directives
+):
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", level)
+    mocker.patch.object(
+        rust_cli_recorder, "prepare_rust_recorder", return_value=tmp_path / "recorder"
+    )
+    process = _FakeProcess()
+    popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", return_value=process)
+    session = RustRecordingSession(_plan(tmp_path))
+    try:
+        session.start()
+        assert popen.call_args.kwargs["env"]["RUST_LOG"] == directives
+    finally:
+        session.stop()
+
+
 def test_preparation_failure_does_not_create_artifact(tmp_path, mocker):
     mocker.patch.object(
         rust_cli_recorder, "prepare_rust_recorder", side_effect=RuntimeError("build failed")
@@ -339,6 +397,8 @@ def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
     executable.touch()
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     build = mocker.patch.object(rust_cli_recorder.subprocess, "Popen")
+    executable.chmod(0o755)
+    (executable.parents[1] / "recorder-source").mkdir()
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     build.assert_not_called()
 
@@ -353,49 +413,11 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
 
     def build(*args, **kwargs):
         executable.parent.mkdir(parents=True)
-        executable.touch()
+        executable.touch(mode=0o755)
+        (executable.parents[1] / "recorder-source").mkdir()
         return process
 
     popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", side_effect=build)
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
     assert popen.call_args.args[0] == "nix build -L path:."
-
-
-def test_build_failure_reports_build_output_at_error_level(tmp_path, mocker):
-    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
-    process = mocker.Mock()
-    lines = [f"build line {index:02d}" for index in range(25)]
-    lines.append("error: experimental Nix feature 'flakes' is disabled")
-    process.stdout = [f"{line}\n".encode() for line in lines]
-    process.wait.return_value = 1
-    mocker.patch.object(rust_cli_recorder.subprocess, "Popen", return_value=process)
-    error = mocker.patch.object(rust_cli_recorder.logger, "error")
-
-    with pytest.raises(RuntimeError, match="Rust recorder build failed") as exc:
-        rust_cli_recorder.prepare_rust_recorder()
-
-    assert "experimental Nix feature 'flakes' is disabled" in str(exc.value)
-    assert "exit 1" in str(exc.value)
-    assert str(exc.value).splitlines()[1:] == lines[-20:]
-    error.assert_called_once_with(str(exc.value), module="rust-recorder-build")
-
-
-@pytest.mark.parametrize("level,recorder_level", [("error", "info"), ("debug", "debug")])
-def test_launch_keeps_readiness_enabled_at_restrictive_log_levels(
-    tmp_path, monkeypatch, mocker, level, recorder_level
-):
-    monkeypatch.setenv("DIMOS_LOG_LEVEL", level)
-    mocker.patch.object(
-        rust_cli_recorder, "prepare_rust_recorder", return_value=tmp_path / "recorder"
-    )
-    process = _FakeProcess()
-    popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", return_value=process)
-    session = RustRecordingSession(_plan(tmp_path))
-    try:
-        session.start()
-        assert popen.call_args.kwargs["env"]["RUST_LOG"] == (
-            f"{level},{ZENOH_LOG_DIRECTIVES},dimos_memory_recorder={recorder_level}"
-        )
-    finally:
-        session.stop()
