@@ -117,19 +117,19 @@ def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     ],
 )
 def test_mcp_values_reach_adapter(
-    monkeypatch: pytest.MonkeyPatch, args: list[str], expected: dict[str, Any]
+    mocker: MockerFixture, args: list[str], expected: dict[str, Any]
 ) -> None:
-    calls: list[tuple[str, dict[str, Any]]] = []
+    mocker.patch.object(run_registry, "list_runs", return_value=[])
+    post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
+    post.return_value.json.return_value = {
+        "result": {"content": [{"type": "text", "text": "fixture result"}]}
+    }
 
-    class Adapter:
-        def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-            calls.append((name, arguments))
-            return {"content": [{"text": "fixture result"}]}
-
-    monkeypatch.setattr(mcp, "_get_adapter", lambda timeout: Adapter())
     result = CliRunner().invoke(main, ["mcp", "call", "inspect", *args])
+
     assert result.exit_code == 0, result.output + repr(result.exception)
-    assert calls == [("inspect", expected)]
+    post.assert_called_once()
+    assert post.call_args.kwargs["json"]["params"] == {"name": "inspect", "arguments": expected}
     assert "fixture result" in result.output
 
 

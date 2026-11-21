@@ -117,7 +117,7 @@ def mcp_call_tool(
         None, "--timeout", "-t", help="Seconds to wait for the tool (default: 30 seconds)"
     ),
 ) -> None:
-    """Call an MCP tool by name."""
+    """Call an MCP tool by name. Exit with status 1 if the tool fails."""
     arguments: dict[str, Any] = {}
     if json_args:
         try:
@@ -133,37 +133,29 @@ def mcp_call_tool(
             raise typer.Exit(1)
 
     with _mcp_request(timeout) as adapter:
-        result = adapter.call_tool(tool_name, arguments)
+        content = adapter.call_tool_texts(tool_name, arguments)
+    typer.echo("\n".join(content) if content else "(no output)")
 
-    content = result.get("content", [])
-    if not content:
-        typer.echo("(no output)")
-        return
-    for item in content:
-        typer.echo(item.get("text", str(item)))
+
+def _show_json_tool(name: str) -> None:
+    with _mcp_request() as adapter:
+        data = adapter.call_tool_text(name)
+    try:
+        typer.echo(json.dumps(json.loads(data), indent=2))
+    except ValueError:
+        typer.echo(data)
 
 
 @mcp_app.command("status")
 def mcp_status() -> None:
     """Show MCP server status (modules, skills)."""
-    with _mcp_request() as adapter:
-        data = adapter.call_tool_text("server_status")
-    # server_status returns JSON string -- pretty-print it
-    try:
-        typer.echo(json.dumps(json.loads(data), indent=2))
-    except (json.JSONDecodeError, ValueError):
-        typer.echo(data)
+    _show_json_tool("server_status")
 
 
 @mcp_app.command("modules")
 def mcp_modules() -> None:
     """List deployed modules and their skills."""
-    with _mcp_request() as adapter:
-        data = adapter.call_tool_text("list_modules")
-    try:
-        typer.echo(json.dumps(json.loads(data), indent=2))
-    except (json.JSONDecodeError, ValueError):
-        typer.echo(data)
+    _show_json_tool("list_modules")
 
 
 def agent_send_cmd(

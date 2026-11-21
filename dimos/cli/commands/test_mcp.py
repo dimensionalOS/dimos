@@ -165,3 +165,45 @@ def test_mcp_protocol_errors_keep_the_server_message(command: list[str], post: M
 
     assert result.exit_code == 1
     assert result.output == "Error: Unknown method\n"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["mcp", "call", "ping"],
+        ["mcp", "status"],
+        ["mcp", "modules"],
+        ["agent-send", "hello"],
+    ],
+)
+def test_tool_failures_reach_stderr_and_set_exit_status(args: list[str], post: MagicMock) -> None:
+    post.side_effect = None
+    post.return_value.json.return_value = {
+        "result": {
+            "content": [{"type": "text", "text": t} for t in ("refused", "busy")],
+            "isError": True,
+        }
+    }
+
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 1
+    assert "busy" in result.stderr
+
+
+def test_tool_status_comes_from_flag_independently_of_text(post: MagicMock) -> None:
+    post.side_effect = None
+    post.return_value.json.return_value = {
+        "result": {
+            "content": [
+                {"type": "text", "text": "Error: last run failed"},
+                {"type": "text", "text": "Retry succeeded"},
+            ],
+            "isError": False,
+        }
+    }
+
+    result = CliRunner().invoke(main, ["mcp", "call", "history"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Error: last run failed\nRetry succeeded\n"
