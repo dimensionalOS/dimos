@@ -25,7 +25,7 @@ from reactivex.testing import TestScheduler
 
 from dimos.types.timestamped import Timestamped
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
-from dimos.utils.timeseries.base import TimeSeriesStore
+from dimos.utils.timeseries.base import TimeSeriesStore, playback_frames
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 
@@ -422,3 +422,10 @@ def test_realtime_iterator_waits_between_single_frame_passes(mocker: MockerFixtu
     sleep = mocker.patch("dimos.utils.timeseries.base.time.sleep")
     assert [frame.ts for frame in islice(store.iterate_realtime(loop=True), 3)] == [10] * 3
     assert [call.args[0] for call in sleep.call_args_list] == pytest.approx([0.05, 0.05])
+
+
+def test_playback_frames_marks_repeated_passes_and_stops_after_an_empty_one() -> None:
+    clip = [(10.0, "a"), (10.5, "b")]
+    passes = iter([clip, clip, []])
+    frames = list(playback_frames(lambda: iter(next(passes)), loop=True))
+    assert frames == [(10.0, "a", False), (10.5, "b", False), (10.0, "a", True), (10.5, "b", False)]
