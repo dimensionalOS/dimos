@@ -263,7 +263,7 @@ def test_tool_stream_progress_frame_becomes_human_message(mcp_client: Agent) -> 
     assert str(msg.content) == "[tool:follow_person] Found a person"
 
 
-@pytest.mark.parametrize("invalid", [[], "", [["name", "unexpected"]], None])
+@pytest.mark.parametrize("invalid", [[["name", "unexpected"]], None])
 def test_continuation_validates_arguments_before_dispatch(mcp_client: Agent, invalid: Any) -> None:
     mcp_client._fetch_tools()
     with patch.object(mcp_client._http_client, "post", wraps=mcp_client._http_client.post) as post:

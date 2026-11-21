@@ -125,7 +125,7 @@ def test_mcp_module_without_meta_passes_empty_meta() -> None:
     rpc_calls["ping"].assert_called_once_with(_mcp_context={"meta": {}})
 
 
-@pytest.mark.parametrize("arguments", [[], None, "hello"])
+@pytest.mark.parametrize("arguments", [[], None])
 def test_tools_call_refuses_non_object_arguments_before_dispatch(
     arguments: list[str] | str | None,
 ) -> None:

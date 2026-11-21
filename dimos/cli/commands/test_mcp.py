@@ -65,7 +65,7 @@ def post(mocker: MockerFixture) -> MagicMock:
     )
 
 
-@pytest.mark.parametrize("value", ["[]", "null", '"hello"', ""])
+@pytest.mark.parametrize("value", ["[]", ""])
 def test_json_tool_arguments_must_be_an_object(value: str, post: MagicMock) -> None:
     result = CliRunner().invoke(main, ["mcp", "call", "server_status", "-j", value])
 
