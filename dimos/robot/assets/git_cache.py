@@ -122,6 +122,9 @@ class GitAssetCache:
             return checkout_path
 
         try:
+            # An immutable pin already at HEAD needs no network refresh.
+            if repo.head.is_detached and repo.head.commit.hexsha == ref:
+                return checkout_path
             repo.remotes.origin.fetch(tags=True)
             protection_reason = _git_protection_reason(repo)
             if protection_reason is not None:

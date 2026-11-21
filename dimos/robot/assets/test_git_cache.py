@@ -16,8 +16,9 @@
 
 from pathlib import Path
 
-from git import Repo
+from git import Remote, Repo
 import pytest
+from pytest_mock import MockerFixture
 from structlog.testing import capture_logs
 
 from dimos.robot.assets.git_cache import GitAssetCache, GitAssetCacheWarning
@@ -91,3 +92,14 @@ def test_refresh_updates_clean_checkout(tmp_path: Path) -> None:
     assert original_commit != updated_commit
     assert Repo(checkout).head.commit.hexsha == updated_commit
     assert (checkout / "model.urdf").read_text() == "updated"
+
+
+def test_cached_commit_needs_no_fetch(tmp_path: Path, mocker: MockerFixture) -> None:
+    remote_path, author = _make_remote(tmp_path)
+    pin = author.head.commit.hexsha
+    cache = GitAssetCache(tmp_path / "cache")
+    checkout = cache.resolve(str(remote_path), pin)
+    fetch = mocker.patch.object(Remote, "fetch", side_effect=AssertionError("offline"))
+
+    assert cache.resolve(str(remote_path), pin) == checkout
+    fetch.assert_not_called()

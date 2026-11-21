@@ -12,47 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Locate mujoco_playground's mujoco_menagerie checkout without importing the package."""
+"""Resolve the pinned MuJoCo Menagerie used by the Unitree simulator."""
 
 import importlib.util
 from pathlib import Path
-import shutil
 
-from filelock import FileLock
+from dimos.robot.assets.git_cache import GitAssetCache
 
 SIM_INSTALL_HINT = "Simulation dependencies are not installed. Run `uv sync --extra sim --inexact` to install them."
+_MENAGERIE_COMMIT = "1b86ece576591213e2b666ebf59508454200ca97"
 
 
 def menagerie_path() -> Path:
-    # Same location as mujoco_playground._src.mjx_env.MENAGERIE_PATH, found without
-    # importing mujoco_playground (a 4 s import: torch, jax, mjx).
+    """Reuse an existing Playground checkout or resolve the models in the DimOS cache."""
     spec = importlib.util.find_spec("mujoco_playground")
-    if spec is None or not spec.submodule_search_locations:
-        raise ImportError(SIM_INSTALL_HINT)
-    package_dir = Path(next(iter(spec.submodule_search_locations)))
-    return package_dir / "external_deps" / "mujoco_menagerie"
+    if spec and spec.submodule_search_locations:
+        for location in spec.submodule_search_locations:
+            legacy = Path(location) / "external_deps" / "mujoco_menagerie"
+            head = legacy / ".git" / "HEAD"
+            if head.is_file() and head.read_text().strip() == _MENAGERIE_COMMIT:
+                return legacy
 
-
-def _is_cloned(path: Path) -> bool:
-    # mujoco_playground clones the menagerie, then checks out a pinned commit. git
-    # detaches HEAD at the end of that checkout, so a download that was stopped
-    # part-way is still on a branch.
-    head = path / ".git" / "HEAD"
-    return head.is_file() and not head.read_text().startswith("ref:")
-
-
-def ensure_menagerie() -> None:
-    """Clone the menagerie on first use, and again if the last clone did not finish."""
-    path = menagerie_path()
-    if _is_cloned(path):
-        return
-    # A second launch waits here for the first one to finish cloning.
-    with FileLock(path.with_suffix(".lock")):
-        if _is_cloned(path):
-            return
-        # mujoco_playground: 4 s import (torch, jax, mjx), only needed to clone.
-        from mujoco_playground._src import mjx_env
-
-        # The mujoco_playground helper skips a directory that exists, even an unfinished clone.
-        shutil.rmtree(path, ignore_errors=True)
-        mjx_env.ensure_menagerie_exists()
+    return GitAssetCache().resolve(
+        "https://github.com/google-deepmind/mujoco_menagerie.git", _MENAGERIE_COMMIT
+    )
