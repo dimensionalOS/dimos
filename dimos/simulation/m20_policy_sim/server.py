@@ -21,7 +21,11 @@ Little-endian. Request: u8 op, then
   2 STATE  nothing                                              -> STATE
   3 RESET  u32 length + JSON {"terrain": {...Terrain}, "pose": [16] | "lie", "height_map": {rows, cols}}
                                                                 -> STATE
-  4 TRUTH  nothing  -> u32 9 + 9 f64: base x, y, z, body vx, vy, yaw rate, tilt (rad), trunk contact (0/1), time
+  4 TRUTH  nothing  -> u32 10 + 10 f64: base x, y, z, body vx, vy, yaw rate, tilt (rad), trunk contact (0/1), time,
+                     yaw (rad)
+  5 LIDAR  u32 length + JSON {"mount_xyz": [3], "mount_rpy": [3], "elevations_deg": [..], "azimuths_deg": [..],
+                     "range_noise_m": f, "seed": n}
+                                                -> u32 4n + n x (x, y, z, intensity) f64, in the lidar's frame
 STATE reply: u32 n + n f64: stamp, quat (w, x, y, z), gyro 3, accel 3, q 16, dq 16, tau 16, then the height map.
 """
 
@@ -63,6 +67,8 @@ class Session:
     def __init__(self, cfg: dict) -> None:
         self.cfg = cfg
         self.height_map: dict | None = None
+        self.rng: np.random.Generator | None = None
+        self.seed: int | None = None
         self.world = World(Terrain(), torque_limit=np.tile(cfg["robot"]["torque_limit"], 4))
         self.reset({})
 
@@ -96,7 +102,23 @@ class Session:
         g = projected_gravity(quat)
         tilt = math.acos(max(-1.0, min(1.0, -g[2])))
         contact = float(self.world.body_contacts_ground())
-        return pack(np.array([*pos, *v, tilt, contact, self.world.time]))
+        w, x, y, z = quat
+        yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+        return pack(np.array([*pos, *v, tilt, contact, self.world.time, yaw]))
+
+    def lidar(self, req: dict) -> bytes:
+        if self.rng is None or ("seed" in req and req["seed"] != self.seed):
+            self.seed = req.get("seed", 0)
+            self.rng = np.random.default_rng(self.seed)
+        points = self.world.lidar_scan(
+            tuple(req["mount_xyz"]),
+            tuple(req["mount_rpy"]),
+            np.asarray(req["elevations_deg"], np.float64),
+            np.asarray(req["azimuths_deg"], np.float64),
+            float(req.get("range_noise_m", 0.0)),
+            self.rng,
+        )
+        return pack(points.ravel())
 
     def handle(self, conn: socket.socket) -> None:
         while True:
@@ -116,6 +138,9 @@ class Session:
                 conn.sendall(self.state())
             elif op == 4:
                 conn.sendall(self.truth())
+            elif op == 5:
+                (n,) = struct.unpack("<I", recv_exact(conn, 4))
+                conn.sendall(self.lidar(json.loads(recv_exact(conn, n))))
             else:
                 raise ValueError(f"unknown op {op}")
 

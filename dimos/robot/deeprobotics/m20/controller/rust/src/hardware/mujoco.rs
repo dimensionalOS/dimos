@@ -35,6 +35,8 @@ pub struct Truth {
     pub tilt: f64,
     pub trunk_contact: bool,
     pub time: f64,
+    /// heading (rad, world z)
+    pub yaw: f64,
 }
 
 pub struct MujocoSim {
@@ -96,7 +98,7 @@ impl MujocoSim {
     pub fn truth(&mut self) -> Result<Truth> {
         self.stream.write_all(&[4])?;
         let v = self.read_doubles()?;
-        if v.len() != 9 {
+        if v.len() != 10 {
             bail!("sim truth has {} values", v.len());
         }
         Ok(Truth {
@@ -105,7 +107,26 @@ impl MujocoSim {
             tilt: v[6],
             trunk_contact: v[7] > 0.5,
             time: v[8],
+            yaw: v[9],
         })
+    }
+
+    /// One lidar sweep (server.py's LIDAR request: mount, beam pattern, noise, seed) as (x, y, z, intensity) in the
+    /// lidar's frame.
+    pub fn lidar(&mut self, request: &serde_json::Value) -> Result<Vec<[f32; 4]>> {
+        let body = serde_json::to_vec(request)?;
+        self.stream.write_all(&[5])?;
+        self.stream.write_all(&(body.len() as u32).to_le_bytes())?;
+        self.stream.write_all(&body)?;
+        let v = self.read_doubles()?;
+        if v.len() % 4 != 0 {
+            bail!("sim lidar sent {} values", v.len());
+        }
+        Ok(v.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32])
+            .collect())
     }
 }
 

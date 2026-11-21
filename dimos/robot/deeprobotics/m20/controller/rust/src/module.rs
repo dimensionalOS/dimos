@@ -22,6 +22,9 @@
 //!     (metric, through each runner's REAL_STEER divisor), `motion_cmd` (passive, stand, rl_control, lie_down,
 //!     joint_damping) and `gait_cmd` (vendor gait code), on the body IMU from `imu`. Gains reach the motors only
 //!     with `allow_gains`; off (the default) every command that holds a joint goes out as the sitting command.
+//!   - docking (policy on): `dock_cmd` ("dock", "undock", "cancel") runs charge_manager's sequence (crate::dock)
+//!     on the dock pose from `dock_pose` (m20_dock_detector_module) and the packs' charge MOS; `dock_state` is its
+//!     status as JSON.
 //!
 //! Every frame is published as it arrives; a publish still in flight when newer data lands makes the older data be
 //! skipped (latest wins).
@@ -31,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dimos_module::{native_config, Input, Module, Output};
-use lcm_msgs::geometry_msgs::Twist;
+use lcm_msgs::geometry_msgs::{PoseStamped, Twist};
 use lcm_msgs::sensor_msgs::{BatteryState, Imu, JointState};
 use lcm_msgs::std_msgs::{self, Bool, UInt32};
 use m20_ecan::tap::{TapRecord, TapSocket};
@@ -39,6 +42,8 @@ use m20_ecan::Direction;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+use crate::dock::docking::{DockFeed, Request};
+use crate::dock::{ChargeReading, DockPose};
 use crate::hardware::ecan::{ImuSample, ImuSource};
 use crate::publish::frames::{Batteries, FrameHandler, Published};
 use crate::types::{Target, UserCommand};
@@ -109,6 +114,12 @@ pub struct M20Controller {
     motion_cmd: Input<std_msgs::String>,
     #[input(decode = UInt32::decode, handler = on_gait_cmd)]
     gait_cmd: Input<UInt32>,
+    /// the dock in base_link, from m20_dock_detector_module (one per sweep that sees it)
+    #[input(decode = PoseStamped::decode, handler = on_dock_pose)]
+    dock_pose: Input<PoseStamped>,
+    /// "dock", "undock" or "cancel"
+    #[input(decode = std_msgs::String::decode, handler = on_dock_cmd)]
+    dock_cmd: Input<std_msgs::String>,
 
     #[output(encode = JointState::encode)]
     joint_state: Output<JointState>,
@@ -126,6 +137,9 @@ pub struct M20Controller {
     /// policy: the state machine's state, and its fault if any.
     #[output(encode = std_msgs::String::encode)]
     controller_state: Output<std_msgs::String>,
+    /// policy: the docking sequence's status (JSON: phase, active, result, error, charging, packs, fine_point)
+    #[output(encode = std_msgs::String::encode)]
+    dock_state: Output<std_msgs::String>,
 
     #[config]
     config: Config,
@@ -142,6 +156,10 @@ pub struct Shared {
     command: Mutex<Option<UserCommand>>,
     imu: Mutex<Option<(ImuSample, std::time::Instant)>>,
     stop: AtomicBool,
+    /// docking's inputs (dock pose, battery reading, requests)
+    dock: Arc<DockFeed>,
+    /// dock poses received
+    dock_poses: std::sync::atomic::AtomicU64,
 }
 
 /// The body IMU as the loop reads it: the newest sample, if it is fresh.
@@ -321,6 +339,8 @@ impl M20Controller {
             self.command_ready.clone(),
             self.controller_state.clone(),
         );
+        let (dock_status, dock_status_rx) = watch::channel(None::<std_msgs::String>);
+        forward(dock_status_rx, self.dock_state.clone(), "dock_state");
         let latest = Latest {
             joint_state,
             joint_command,
@@ -336,7 +356,7 @@ impl M20Controller {
         let spawned = if config.mode == "owner" && config.policy {
             std::thread::Builder::new()
                 .name("m20-controller".into())
-                .spawn(move || run_policy(&config, latest, shared, status))
+                .spawn(move || run_policy(&config, latest, shared, status, dock_status))
         } else if config.mode == "owner" {
             std::thread::Builder::new()
                 .name("m20-ecan-owner".into())
@@ -389,6 +409,7 @@ impl M20Controller {
             Some(target) => {
                 info!(motion = %msg.data, "motion command");
                 self.current.target = target;
+                self.current.motion_seq += 1;
                 // a state change starts from standing still
                 self.current.velocity = None;
                 self.send_command();
@@ -402,8 +423,48 @@ impl M20Controller {
     async fn on_gait_cmd(&mut self, msg: UInt32) {
         info!(gait = format!("{:#x}", msg.data as u32), "gait command");
         self.current.gait = msg.data as u32;
+        self.current.motion_seq += 1;
         self.current.velocity = None;
         self.send_command();
+    }
+
+    async fn on_dock_pose(&mut self, msg: PoseStamped) {
+        let q = &msg.pose.orientation;
+        let pose = DockPose {
+            x: msg.pose.position.x,
+            y: msg.pose.position.y,
+            yaw: (2.0 * (q.w * q.z + q.x * q.y)).atan2(1.0 - 2.0 * (q.y * q.y + q.z * q.z)),
+        };
+        if ![pose.x, pose.y, pose.yaw].iter().all(|v| v.is_finite()) {
+            warn!(?pose, "non-finite dock pose; ignored");
+            return;
+        }
+        let seq = self.shared.dock_poses.fetch_add(1, Ordering::Relaxed) + 1;
+        *self
+            .shared
+            .dock
+            .pose
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some((pose, seq));
+    }
+
+    async fn on_dock_cmd(&mut self, msg: std_msgs::String) {
+        match Request::parse(&msg.data) {
+            Some(request) => {
+                info!(?request, "dock command");
+                if !(self.config.mode == "owner" && self.config.policy) {
+                    warn!("docking needs mode = owner with the policy on; ignored");
+                    return;
+                }
+                *self
+                    .shared
+                    .dock
+                    .request
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(request);
+            }
+            None => warn!(command = %msg.data, "unknown dock command (dock, undock, cancel)"),
+        }
     }
 
     async fn on_imu(&mut self, msg: Imu) {
@@ -441,7 +502,9 @@ fn run_policy(
     latest: Latest,
     shared: Arc<Shared>,
     status: watch::Sender<Option<Status>>,
+    dock_status: watch::Sender<Option<std_msgs::String>>,
 ) {
+    use crate::dock::docking::{Docking, DockingCommands};
     use crate::hardware::bus::{BusHardware, Sink};
     use crate::policy::{RunnerSet, ThreadedPolicy};
     use crate::rt::{self, Pacing};
@@ -496,6 +559,8 @@ fn run_policy(
     let tripped = Arc::new(AtomicBool::new(false));
     let (guard_shared, guard_startup, guard_tripped) =
         (shared.clone(), startup_done.clone(), tripped.clone());
+    let charge_feed = shared.dock.clone();
+    let mut battery_reports = 0u64;
     let (max_torque, max_velocity) = (config.guard_max_torque, config.guard_max_velocity);
     let sink: Sink = Box::new(move |t, direction, frame| {
         if let Ok((_, m20_ecan::Message::JointStates { joints, .. })) =
@@ -519,6 +584,12 @@ fn run_policy(
                     "guard: stopping the controller"
                 );
                 guard_shared.stop.store(true, Ordering::Relaxed);
+            }
+        }
+        if let Some(reading) = charge_reading(direction, frame, battery_reports + 1) {
+            battery_reports += 1;
+            if let Ok(mut slot) = charge_feed.charge.try_lock() {
+                *slot = Some(reading);
             }
         }
         latest.see(t, direction, frame);
@@ -561,9 +632,19 @@ fn run_policy(
         allow_gains = cfg.ecan.allow_gains,
         "owning the motor bus with the walking policy: rl_deploy's startup, then 1 kHz"
     );
-    let mut commands = SharedCommands {
-        shared: shared.clone(),
-    };
+    let docking = Docking::new(&cfg, cfg.ecan.charge_enable);
+    let mut commands = DockingCommands::new(
+        SharedCommands {
+            shared: shared.clone(),
+        },
+        docking,
+        shared.dock.clone(),
+        Box::new(move |s| {
+            info!(phase = ?s.phase, result = %s.result, error = s.error, charging = s.charging, "docking");
+            let data = serde_json::to_string(s).unwrap_or_default();
+            dock_status.send_replace(Some(std_msgs::String { data }));
+        }),
+    );
     let mut controller = Controller::new(cfg.clone());
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let mut last: Option<Status> = None;
@@ -603,8 +684,33 @@ fn run_policy(
     }
 }
 
+/// The packs' charge state from a battery frame off the board, as docking reads it.
+pub fn charge_reading(direction: Direction, frame: &[u8], seq: u64) -> Option<ChargeReading> {
+    let (_, message) = m20_ecan::decode_ethernet(frame, direction).ok()?;
+    if !matches!(message, m20_ecan::Message::Battery(_)) {
+        return None;
+    }
+    let report = m20_battery::BatteryReport::from_message(&message).ok()?;
+    let packs = report.packs();
+    let present: Vec<_> = packs.iter().filter(|p| p.voltage_v > 0.0).collect();
+    Some(ChargeReading {
+        seq,
+        packs_present: present.len() as u8,
+        packs_charge_mos_on: present.iter().filter(|p| p.charge_mos_on()).count() as u8,
+        charger_connected: present
+            .iter()
+            .any(|p| m20_battery::charge::charger_connected(p)),
+    })
+}
+
 #[cfg(not(target_os = "linux"))]
-fn run_policy(_: &Config, _: Latest, _: Arc<Shared>, _: watch::Sender<Option<Status>>) {
+fn run_policy(
+    _: &Config,
+    _: Latest,
+    _: Arc<Shared>,
+    _: watch::Sender<Option<Status>>,
+    _: watch::Sender<Option<std_msgs::String>>,
+) {
     warn!("the policy on the motor bus needs Linux (the vendor motor-bus socket)");
 }
 
@@ -838,6 +944,39 @@ mod tests {
         let set = controller_config(&module_config(0.3)).unwrap();
         assert_eq!(set.safety.command_timeout_s, 0.3);
         assert!(!set.ecan.allow_gains);
+    }
+
+    /// A battery frame off the board with both packs at `mos` (bit 0 = charge MOS), charge-detect `detect`.
+    fn battery_frame(mos: u8, detect: u8) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for _ in 0..2 {
+            let mut record = [0u8; m20_ecan::message::BATTERY_PACK_LEN];
+            record[0..2].copy_from_slice(&8300u16.to_le_bytes());
+            record[20] = mos;
+            record[112..114].copy_from_slice(&8400u16.to_le_bytes());
+            record[114] = detect;
+            payload.extend_from_slice(&record);
+        }
+        let body =
+            m20_ecan::frame::encode(0, 6, 0x21, m20_ecan::FrameType::Battery, &payload).unwrap();
+        m20_ecan::ethernet::wrap([2, 0, 0, 0, 0, 1], &body)
+    }
+
+    #[test]
+    fn docking_reads_each_packs_charge_mos_from_the_battery_frames() {
+        let charging = charge_reading(Direction::FromBoard, &battery_frame(3, 0), 7).unwrap();
+        assert_eq!(
+            (
+                charging.seq,
+                charging.packs_present,
+                charging.packs_charge_mos_on,
+                charging.charger_connected
+            ),
+            (7, 2, 2, true)
+        );
+        let off = charge_reading(Direction::FromBoard, &battery_frame(2, 1), 8).unwrap();
+        assert_eq!(off.packs_charge_mos_on, 0);
+        assert!(charge_reading(Direction::FromBoard, &[0u8; 20], 9).is_none());
     }
 
     #[test]

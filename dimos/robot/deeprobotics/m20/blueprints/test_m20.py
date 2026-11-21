@@ -64,6 +64,8 @@ _AOS_DRIVERS = {"m20bodyimusniff", "rockchiph264cameras"}
 # both lidar pairs read the multicast on NOS: the full scans (body cut) for the map, the slices for dimSLAM
 _NOS_LIDARS = {"front_lidar/airy", "rear_lidar/airy"}
 _NOS_SLAM = {"front_lidar_slices/airy", "rear_lidar_slices/airy", "dimslam"}
+# with the controller walking: the dock detector and its own front-Airy driver (intensity on the wire)
+_NOS_DOCK = {"front_lidar_dock/airy", "m20dockdetector"}
 
 
 # m20 on the vendor's sensors was these with the vendor bridge; the real mode keeps their settings
@@ -111,12 +113,21 @@ def test_drivers_on_aos_lidars_and_dimslam_on_nos_and_the_rest_where_the_run_sta
     choices: dict[str, str], on_aos: set[str]
 ) -> None:
     placement = _placement(_solid(**choices))
+    on_nos = (
+        _NOS_LIDARS | _NOS_SLAM | (_NOS_DOCK if choices.get("M20Walker") == "controller" else set())
+    )
     assert {name for name, host in placement.items() if host == "aos"} == on_aos
-    assert {name for name, host in placement.items() if host == "nos"} == _NOS_LIDARS | _NOS_SLAM
-    assert {
-        host for name, host in placement.items() if name not in on_aos | _NOS_LIDARS | _NOS_SLAM
-    } == {"gos"}
+    assert {name for name, host in placement.items() if host == "nos"} == on_nos
+    assert {host for name, host in placement.items() if name not in on_aos | on_nos} == {"gos"}
     assert len(compile_fragments(_solid(**choices), placement, run_id="r", revision=_REVISION)) == 3
+
+
+def test_the_dock_detector_reads_its_own_front_lidar_with_intensity() -> None:
+    blueprint = _solid(M20Walker="controller")
+    assert _readers(blueprint, "dock_lidar") == {"m20dockdetector"}
+    assert _readers(blueprint, "dock_pose") == {"m20controller"}
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+    assert atoms["front_lidar_dock/airy"].kwargs["point_format"] == "full"
 
 
 def test_dimslam_on_gos_stays_selectable() -> None:

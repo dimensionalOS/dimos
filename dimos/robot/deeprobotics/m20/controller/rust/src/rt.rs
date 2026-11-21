@@ -231,6 +231,7 @@ pub fn run<H: Hardware + ?Sized>(
             effective.velocity = effective.velocity.map(|_| [0.0; 3]);
         }
         let cmd = controller.tick(&state, &effective, policy);
+        commands.observe(controller);
         match hardware.exchange(&cmd) {
             Ok(s) => {
                 state = s;

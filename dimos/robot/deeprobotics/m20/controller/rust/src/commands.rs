@@ -28,6 +28,8 @@ pub trait CommandSource: Send {
     fn expires(&self) -> bool {
         true
     }
+    /// The controller after each tick (a source that sequences the controller, like docking, watches it here).
+    fn observe(&mut self, _controller: &crate::state_machine::Controller) {}
 }
 
 /// Non-blocking UDP: each datagram is one JSON UserCommand; the newest one per tick wins.

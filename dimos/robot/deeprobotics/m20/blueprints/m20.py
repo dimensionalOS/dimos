@@ -79,6 +79,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     WALL_CLEARANCE_M,
     WORLD_FRAME,
 )
+from dimos.robot.deeprobotics.m20.controller.dock_detector import M20DockDetector
 from dimos.robot.deeprobotics.m20.controller.module import M20Controller
 from dimos.robot.deeprobotics.m20.model import (
     M20_MODEL,
@@ -252,11 +253,8 @@ def _airy(
             mount_parent_frame_id="base_link" if publish_mount else None,
             mount_xyz=mount_xyz,
             mount_rpy=mount_rpy,
-            # the vendor driver's config.yaml: 0.1 to 60 m, PTP-synced lidar clock
-            min_distance=0.1,
-            max_distance=60.0,
-            use_lidar_clock=True,
-            **settings,
+            # the vendor driver's config.yaml: 0.1 to 60 m, PTP-synced lidar clock (settings may narrow the range)
+            **{"min_distance": 0.1, "max_distance": 60.0, "use_lidar_clock": True, **settings},
         )
         .remappings(
             [
@@ -321,6 +319,35 @@ def _dim_slam_on_nos() -> Blueprint:
             publish_every=4,
         )
         .remappings([(DimSlam, "lidar", "lidar_slices"), (DimSlam, "imu", "lidar_slices_imu")])
+        .hosted(tags=NOS),
+    )
+
+
+def _dock_detector_on_nos() -> Blueprint:
+    """The controller's dock pose: a driver of the front Airy of its own (the shared stream drops intensity, which the
+    reflector posts are found by), out to the detector's range, and the detector beside it, so its full-intensity sweeps
+    never leave NOS; only ~10 small poses a second cross to the controller on AOS."""
+    c = constants
+    return autoconnect(
+        _airy(
+            c.FRONT_LIDAR_FRAME,
+            c.FRONT_LIDAR_GROUP,
+            c.FRONT_LIDAR_IP,
+            c.FRONT_LIDAR_PORTS,
+            c.FRONT_LIDAR_XYZ_M,
+            c.FRONT_LIDAR_RPY,
+            lidar="dock_lidar",
+            imu="dock_lidar_imu",
+            suffix="_dock",
+            publish_mount=False,
+            point_format="full",
+            body_filter=False,
+            enable_imu=False,
+            # the detector looks 3.5 m out at most ([dock.detector] max_range_m)
+            max_distance=4.0,
+        ).hosted(tags=NOS),
+        M20DockDetector.blueprint()
+        .remappings([(M20DockDetector, "lidar", "dock_lidar")])
         .hosted(tags=NOS),
     )
 
@@ -402,12 +429,16 @@ _m20_real = autoconnect(
         choices={
             "off": autoconnect(),
             "rl_deploy": M20CmdVel.blueprint().hosted(tags=AOS),
-            "controller": M20Controller.blueprint(
-                mode="owner",
-                policy=True,
-                # tolerates one late or lost 10 Hz trajectory_follower tick
-                command_timeout_s=0.3,
-            ).hosted(tags=AOS),
+            "controller": autoconnect(
+                M20Controller.blueprint(
+                    mode="owner",
+                    policy=True,
+                    # tolerates one late or lost 10 Hz trajectory_follower tick
+                    command_timeout_s=0.3,
+                ).hosted(tags=AOS),
+                # dock(): the reflector posts' pose from the front lidar
+                _dock_detector_on_nos(),
+            ),
         },
     ),
     # sniff: the vendor yesense_node's samples copied off its DDS traffic (needs it running); serial: the UART read

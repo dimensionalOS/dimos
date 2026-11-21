@@ -24,6 +24,7 @@
 
 pub mod commands;
 pub mod config;
+pub mod dock;
 pub mod frames;
 pub mod hardware;
 #[cfg(feature = "module")]

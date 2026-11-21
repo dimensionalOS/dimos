@@ -35,6 +35,8 @@ pub struct Config {
     pub ecan: Ecan,
     #[serde(default)]
     pub command_input: CommandInput,
+    /// docking: the reflector-post detector and charge_manager's dock / undock sequence
+    pub dock: crate::dock::config::DockConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -585,6 +587,16 @@ impl Config {
                     "runner {name}: obs blocks add up to {size}, frame is {}",
                     r.frame
                 );
+            }
+        }
+        self.dock.validate()?;
+        for gait in [
+            self.dock.sequence.approach_gait,
+            self.dock.sequence.finetune_gait,
+            self.dock.sequence.exit_gait,
+        ] {
+            if !self.runners.values().any(|r| r.gaits.contains(&gait)) {
+                bail!("dock.sequence gait {gait:#x} has no runner");
             }
         }
         Ok(())

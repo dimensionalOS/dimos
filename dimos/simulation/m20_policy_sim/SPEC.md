@@ -589,6 +589,36 @@ policies match to float precision once their state lines up. Rules this settled 
 - The body IMU is a 56-byte DDS sample on UDP 7441 (200 Hz): stamp, roll / pitch / yaw in degrees, gyro rad/s,
   accelerometer m/s^2; rotation from ZYX roll-pitch-yaw.
 
+## Docking (charge_manager's sequence in the Rust controller)
+
+`cargo test --release --test sim_sequence dock` docks the Rust controller in the sim: world.py's `charge_dock` (two
+retro-reflective posts, intensity 250 against 30 for everything else) seen by a ray-cast front Airy (96 beams over
+0-90 deg, 0.4 deg azimuth, 1 cm range noise) through the post detector at 10 Hz, and battery packs whose charge MOS
+comes on when the robot lies with base_link within 3 cm (along the dock's axis) and 2 cm (across) of the docked
+point (an assumption about the pads; lying down settles base_link 1.4-2 cm back from where it stood). From
+~2 m out with a lateral offset and a turned dock it reaches the fine point within charge_manager's 6 mm / 3 mm /
+3 deg, lies down, confirms charging and undocks 1.3 m back; with no charge it retries twice from the staging point and
+backs off. FinetuneStand's pose inputs move the standing body (sim: dx, dy, yaw 0.5 -> -5.6 cm, -5.9 cm, -11 deg), but
+lying down re-centres the body over the feet (14 cm off after 4 s of adjustment), so the in-place adjustment is off
+(`finetune_adjust`) and the lying pose is what NaviCharge's approach left.
+
+Checked against a vendor dock (NOS dock_rec 2026-11-21: tcpdump of both Airys' multicast, charge_manager's log),
+`examples/dock_pcap.rs` + `dock_compare.py`. The posts return intensity 200-255 (the floor 100-150), stand ~0.6 m,
+0.374 m apart; docked, base_link is 0.735 m out from them (sd 0.2 mm lying). Saturated, they bloom to 0.25 m across
+and trail ghosts up to 0.36 m behind themselves at 2 m (hence the depth band and the median-then-circle centre).
+charge_manager's logged poses are the robot relative to the docked point (x 0 docked; staging "reached" at x 0.99).
+Ours minus charge_manager's (median / MAD; x, y mm, yaw mrad), robot this far out from the docked point:
+
+| run | 0-0.12 m | 0.25 m | 0.5 m | 0.75 m | 1.0 m |
+|---|---|---|---|---|---|
+| dock 13:27:49 (598/599 sweeps found) | +1.0/0.5, -0.3/1.4, -0.4/2.3 | -0.1/0.5, +5.3/4.1, +4.3/4.0 | -2.4/0.9, +23/8, +19/5 | -2.6/1.8, +19/12, +11/8 | -4.0/1.1, +17/5, +11/4 |
+| undock 13:22:06 (179/180 after standing) | +3.0/0.7, -0.8/1.6, +3.1/0.9 | +2.7/0.8, -5.8/2.7, -5.1/2.9 | +2.8/0.9, -4.4/5.7, -4.3/4.6 | +1.3/1.2, -3.9/8.4, -4.4/4.7 | -2.4/1.4, +2.0/9.5, -0.3/5.4 |
+
+At the fine point the two agree to about a millimetre. The approach's +2 cm across, +1-2 deg, while the robot walked
+in from 0.2 m to the side, is not explained by a frame convention; the likeliest cause is the body's roll while
+stepping sideways (the detector takes base_link as level; the sim shows the same few-mm effect standing).
+charge_manager's own detector glitched on 5 of 67 undock poses (0.45-0.5 m across for one sweep).
+
 ## Building the controller for the robot
 
     cd dimos/robot/deeprobotics/m20/controller/rust
@@ -606,7 +636,9 @@ optimizer (it mis-shapes their command Tile) and run the typed graph, at about 0
 - CarMove, JointTest, SetZero, SdkControl internals; StartDamping gains.
 - StepMove's vx rate limit (`limit_target_v`); the exact command fields `update_gait_freq` reads.
 - HeightGap map offset, grid spacing and orientation.
-- The charge manager's dock / undock velocities (outside rl_deploy; NaviCharge is a plain velocity policy). The sim
-  docks with a P controller capped at 0.3 m/s, backing onto a wall 1 m behind the start.
+- The charge manager's compiled-in numbers: its docked target distance, its staging tolerance and steer gains, and
+  reflective_column_node's intensity threshold, post spacing and radius. The Rust controller's docking
+  (`rust/src/dock`, `[dock]` in m20_controller.toml) copies every number charge_manager.toml has and sets these for
+  the sim's reflector-post dock (world.py `charge_dock`); they need the real dock measured and vendor dock recordings.
 - On the motor bus: per-joint position offset and direction (the TX/RX positions differ while damping), kp / kd
   scaling (x10 assumed from ECAN2DDS), leg order of `can_ch`, and what the board does when commands stop.

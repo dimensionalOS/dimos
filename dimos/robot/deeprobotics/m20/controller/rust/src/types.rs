@@ -78,6 +78,10 @@ pub struct UserCommand {
     /// force a runner by name (for runners no gait code selects)
     #[serde(default)]
     pub runner: Option<String>,
+    /// counts the operator's motion and gait commands: a change says this command asks for a new target or gait
+    /// (velocity-only commands keep it), which is what cancels a docking sequence
+    #[serde(default)]
+    pub motion_seq: u64,
 }
 
 pub fn rotation(q: &[f64; 4]) -> [[f64; 3]; 3] {

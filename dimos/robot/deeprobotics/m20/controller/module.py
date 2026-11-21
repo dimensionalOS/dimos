@@ -27,10 +27,14 @@ calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
   rl_control, lie_down, joint_damping) and ``gait_cmd`` (vendor gait code), on the body IMU from ``imu``. Gains reach
   the motors only with ``allow_gains=True``; off (the default) every command that holds a joint goes out as the
   sitting command, so the state machine runs but nothing moves. Never turn it on without an operator's go.
+- Docking (owner + policy): ``dock()`` / ``undock()`` run the vendor charge_manager's sequence inside the controller
+  (``rust/src/dock``) on the dock pose from ``M20DockDetector`` (``dock_pose``) and the packs' charge MOS;
+  ``charge_status()`` is its latest status.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -40,6 +44,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -115,6 +120,8 @@ class M20Controller(NativeModule):
     imu: In[Imu]
     motion_cmd: In[String]
     gait_cmd: In[UInt32]
+    dock_pose: In[PoseStamped]
+    dock_cmd: In[String]
     joint_state: Out[JointState]
     joint_command: Out[JointState]
     battery: Out[BatteryState]
@@ -122,17 +129,29 @@ class M20Controller(NativeModule):
     battery_right: Out[BatteryState]
     command_ready: Out[Bool]
     controller_state: Out[String]
+    dock_state: Out[String]
 
     @rpc
     def start(self) -> None:
         self._state = ""
+        self._dock_state: dict[str, Any] = {}
         self._navigate_once_walking: int | None = None
         self._state_lock = threading.Lock()
         # before the native process starts: it publishes the state only when it changes, so its first one would be missed
         self.register_disposable(
             Disposable(self.controller_state.subscribe(self._on_controller_state))
         )
+        self.register_disposable(Disposable(self.dock_state.subscribe(self._on_dock_state)))
         super().start()
+
+    def _on_dock_state(self, msg: String) -> None:
+        try:
+            state = json.loads(msg.data)
+        except json.JSONDecodeError:
+            logger.warning(f"M20 dock_state is not JSON: {msg.data!r}")
+            return
+        with self._state_lock:
+            self._dock_state = state
 
     def _on_controller_state(self, msg: String) -> None:
         with self._state_lock:
@@ -212,21 +231,55 @@ class M20Controller(NativeModule):
         with self._state_lock:
             return self._state
 
+    def _can_sequence(self, what: str) -> bool:
+        if self.config.mode != "owner" or not self.config.policy:
+            logger.error(
+                f"M20 {what}: needs mode='owner' with policy=True (the controller drives the robot)"
+            )
+            return False
+        return True
+
     @rpc
     def dock(self) -> bool:
-        """Not available on the pure-Rust stack: docking is the vendor charge_manager's (vendor mode, M20Connection.dock)."""
-        logger.error(
-            "M20 dock: the pure-Rust stack has no charge manager; switch to the vendor stack (m20_vendor) to dock"
-        )
-        return False
+        """Dock and charge: from standing in rl_control with the dock (its two reflector posts) in sight ahead.
+
+        The controller runs charge_manager's sequence: NaviCharge to the staging point and the fine point,
+        FinetuneStand, lie down, confirm every pack's charge MOS, retry by backing off. Returns whether the request
+        was sent; the controller may still refuse it (charge_status()["result"] says why)."""
+        if not self._can_sequence("dock"):
+            return False
+        with self._state_lock:
+            state, self._navigate_once_walking = self._state, None
+        if state != "RlControl":
+            logger.error(
+                f"M20 dock: needs the robot standing in rl_control (controller state {state!r})"
+            )
+            return False
+        self.dock_cmd.transport.publish(String("dock"))
+        return True
 
     @rpc
     def undock(self) -> bool:
-        """Not available on the pure-Rust stack: undocking is the vendor charge_manager's (vendor mode, M20Connection.undock)."""
-        logger.error(
-            "M20 undock: the pure-Rust stack has no charge manager; switch to the vendor stack (m20_vendor) to undock"
-        )
-        return False
+        """Stand up on NaviCharge, back 1.3 m off the dock, switch to BasicFlat. Returns whether the request was sent."""
+        if not self._can_sequence("undock"):
+            return False
+        with self._state_lock:
+            self._navigate_once_walking = None
+        self.dock_cmd.transport.publish(String("undock"))
+        return True
+
+    @rpc
+    def cancel_dock(self) -> bool:
+        """Stop a dock / undock where it is (zero velocity; lying stays lying)."""
+        self.dock_cmd.transport.publish(String("cancel"))
+        return True
+
+    @rpc
+    def charge_status(self) -> dict[str, Any]:
+        """The docking sequence's latest status: phase, active, result, error, charging, packs_present,
+        packs_charge_mos_on, retries, fine_point ({} before the controller has published one)."""
+        with self._state_lock:
+            return dict(self._dock_state)
 
 
 if TYPE_CHECKING:

@@ -590,6 +590,97 @@ obs = [
 ]
 action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset", leg_scale = [0.25], wheel_scale = 10.0 }
 
+# ---------------------------------------------------------------------------------------------------------------
+# Docking (src/dock): charge_manager v4.0.30's dock / undock sequence and reflective_column_node's post detector, both
+# from NOS /opt/robot/share/charge_manager. "toml:" = charge_manager.toml's key; "log:" = charge_manager's own strings
+# and change_log.md; "sim:" = not in the vendor config (compiled into the binaries), set for the sim dock
+# (world.py charge_dock) and to be measured on the real dock.
+[dock.detector]
+# recording (NOS dock_rec 2026-11-21, front Airy, robot on the dock): the posts return 200-255 (mostly 255), the
+# floor around them 100-150
+min_intensity = 180.0
+# sim: the approach starts ~2 m out (toml has no detection range); the Airy's own minimum is 0.1 m
+max_range_m = 3.5
+min_range_m = 0.1
+# base_link heights kept: the posts stand ~0.6 m (recording) and base_link is ~0.45 m up standing, ~0.2 m lying
+min_z_m = -0.55
+max_z_m = 0.4
+# toml lidar_yaw = 60.0: the sector (deg either side) charge_manager looks into ahead
+half_angle_deg = 60.0
+# sim: bounds the clustering (a 0.8 m post 0.3 m from the lidar gives ~20000 returns at the Airy's 0.2 deg)
+max_points = 100000
+# sim: returns closer than this (m) are one post; toml cluster_points_count_min = 10 (its obstacle clusters)
+cluster_distance_m = 0.1
+min_cluster_points = 10
+# a post-sized cluster (m): recording, a post's saturated returns bloom to 0.25 m across at 1.9 m; below the spacing
+max_cluster_width_m = 0.35
+# recording: a post 2 m out trailed ghost returns 0.36 m behind it along the ray; a 5 cm post's own front is shallower
+max_post_depth_m = 0.08
+# recording: the posts 0.374 m apart centre to centre docked (186 sweeps, sd 0.3 mm), 0.36-0.41 m as seen from 2 m;
+# the slack on a pair; each post's radius (m; sim; it shifts every distance alike, so docked_x_m measured with it
+# cancels it)
+post_spacing_m = 0.374
+spacing_tolerance_m = 0.05
+post_radius_m = 0.025
+
+[dock.sequence]
+# log: "Enable Charge Gait" (0x3001 NaviCharge), the in-place adjustment on 0x3004 FinetuneStand, "Enable BasicFlat
+# Gait" (0x1001) after undocking
+approach_gait = 0x3001
+finetune_gait = 0x3004
+exit_gait = 0x1001
+# toml pre_point_x = 1.0, out from the docked point (charge_manager's target poses are the robot relative to the
+# docked point: x 0.0 docked, "reached the staging point" at x 0.99; 2026-11-21 13:27 dock log)
+staging_x_m = 1.0
+# recording: base_link 0.735 m out from the posts' midpoint docked, both lying on the dock (186 sweeps, sd 0.2 mm) and
+# fitted to charge_manager's poses while it undocked (its x is the robot relative to the docked point); with
+# post_radius_m 0.025, which shifts every distance alike. charge_manager's own target is compiled in
+docked_x_m = 0.735
+# toml DistanceCompensationX = 0.0 (cm, positive = further forward)
+distance_compensation_x_m = 0.0
+# toml exit_pile_distance_x = 1.3 (back_way = "auto": back to where docking started; ours backs this far)
+exit_distance_m = 1.3
+# toml delta_x = 6, delta_y = 3 (mm), delta_yaw = 3 (deg)
+tolerance = [0.006, 0.003, 3.0]
+# toml ext_delta_x = 90, ext_delta_y = 90 (mm), ext_delta_yaw = 70 (no unit given; read as deg, so the exit barely
+# checks its heading); the staging point uses the same (its own tolerance is compiled in)
+staging_tolerance = [0.09, 0.09, 70.0]
+exit_tolerance = [0.09, 0.09, 70.0]
+# toml min_speed_x / _y / _yaw = 180 / 250 / 100 and ext_min_speed_* = 200 / 250 / 140 ("normalized /1000")
+min_axes = [0.18, 0.25, 0.10]
+exit_min_axes = [0.20, 0.25, 0.14]
+# sim (m20_policy_sim run_all DOCK, the sim dock that passed at 0.005 m): P gain 1 /s on x and y, 2 /s on yaw, capped at
+# 0.3 m/s, 0.1 m/s, 0.3 rad/s = these normalized by NaviCharge's command_max (0.5, 0.3, 0.5)
+gain = [1.0, 1.0, 2.0]
+max_axes = [0.6, 0.34, 0.6]
+# sim: sweeps (10 Hz) standing still that must agree a goal is reached; the first after stopping is not counted
+settle_sweeps = 3
+# toml tag_receive_timeout = 2 (s without the dock pose); log v4.0.16: a target timeout lies the robot down
+dock_lost_s = 2.0
+# log: "Get into charging pile more than 1 min, so return GOTOSTACKFAILED"
+approach_limit_s = 60.0
+# log v4.0.19: "after switching gait, wait two seconds before sending velocity"
+gait_settle_s = 2.0
+# sim: a stand-up (3 s) or gait switch (its 1.5 s stand-in) not done in this long fails
+transition_limit_s = 10.0
+# 81 vendor docks (charge_manager logs): FinetuneStand adjusts in place for up to 4 s, then lies down regardless
+# (log v4.0.16: "on an in-place adjustment timeout, lie down and try charging")
+finetune_limit_s = 4.0
+# sim: off. The pose inputs shift the body over the feet and lying down puts it back over them: after 4 s of
+# adjustment the robot lay 14 cm off the fine point it had reached, without it 0.8 cm (sim_sequence dock tests)
+finetune_adjust = false
+# sim (scratch run of finetune_stand, pose input 0.5 each): base_link moved -0.056 m, -0.059 m, -11 deg (-0.19 rad)
+# per 0.5 of dx, dy, yaw; rl_deploy's /STEER on 0x3004 feeds them as -24 x, -18 y, 7 yaw (SPEC.md)
+finetune_body_per_param = [-0.112, -0.118, -0.384]
+# toml first_detection_current_timeout = 5 (s after lying down)
+charge_confirm_s = 5.0
+# toml adjust_posture_times = 2, NoChargePlug_way = "goBack", RetryMethod_InPlace = false
+retries = 2
+# toml mos_detection = true, all_battery_charge = true (current_detection = false)
+all_packs_charge = true
+# sim: refuse to start with the dock farther than this (log: "the distance from the charging pile is a bit far")
+max_start_distance_m = 3.0
+
 # The eth1 motor bus (backends "ecan" and "bus"); everything not set here takes the values seen on the robot.
 [ecan]
 # backend "bus": commands carrying kp / kd reach the motors only with this on; off, the controller runs but every

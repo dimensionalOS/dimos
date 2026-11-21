@@ -664,6 +664,7 @@ dependencies = [
  "libc",
  "m20-battery",
  "m20-ecan",
+ "robosense-airy",
  "serde",
  "serde_json",
  "tokio",
@@ -2697,6 +2698,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7043b63bd0cd1aaa628e476b80e6d4023a3b50eb32789f2728908107bd0c793a"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "robosense-airy"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d50195fe3bffae6808897335941172457b7bfd85938a2f7f2b59f9173b8a6ad"
+dependencies = [
+ "libc",
+ "socket2 0.6.5",
 ]
 
 [[package]]

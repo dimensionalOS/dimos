@@ -399,3 +399,369 @@ fn realtime_stand_walk_lie() {
     navi_flat(Mode::Realtime);
     basic_flat(Mode::Realtime);
 }
+
+// ------------------------------------------------------------------------------------------------- docking
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use m20_controller::dock::detector::{detect, Detection, Mount};
+use m20_controller::dock::docking::{DockFeed, Docking, DockingCommands, Phase, Request, Status};
+use m20_controller::dock::{wrap, ChargeReading};
+
+/// The sim's charging dock (world.py charge_dock): the posts' midpoint in the world and the dock's turn.
+#[derive(Clone, Copy)]
+struct DockScene {
+    post_x: f64,
+    post_y: f64,
+    post_yaw: f64,
+}
+
+impl DockScene {
+    /// The robot's truth pose in the dock frame (x out along the axis, y left of it, yaw 0 = facing the posts).
+    fn robot(&self, t: &Truth) -> [f64; 3] {
+        let axis = self.post_yaw + std::f64::consts::PI;
+        let (dx, dy) = (t.position[0] - self.post_x, t.position[1] - self.post_y);
+        let (s, c) = axis.sin_cos();
+        [
+            c * dx + s * dy,
+            -s * dx + c * dy,
+            wrap(t.yaw - axis - std::f64::consts::PI),
+        ]
+    }
+}
+
+/// How the sim's batteries answer: the charge MOS comes on lying with the legs passive (when m20-battery's rule has
+/// sent the request) and base_link within `contact` (m, x and y in the dock frame) of the docked point; never with
+/// `contact` None.
+struct DockRun {
+    scene: DockScene,
+    contact: Option<[f64; 2]>,
+    /// seconds of controller time to run at most
+    seconds: f64,
+}
+
+struct DockResult {
+    /// every status change with the controller time and the truth pose in the dock frame
+    statuses: Vec<(f64, Status, [f64; 3])>,
+    controller: Controller,
+    trace: Vec<Sample>,
+}
+
+fn front_mount() -> ([f64; 3], [f64; 3]) {
+    // dimos/robot/deeprobotics/m20/constants.py FRONT_LIDAR_XYZ_M / FRONT_LIDAR_RPY
+    (
+        [0.32028, 0.0, -0.013],
+        [0.0, -std::f64::consts::FRAC_PI_2, std::f64::consts::PI],
+    )
+}
+
+/// Stand up on NaviCharge, dock(), and once it ends (charging or not) undock(); stop when that ends.
+fn dock_run(run: DockRun) -> Option<DockResult> {
+    let dir = common::policy_dir()?;
+    let (_server, port) = start_server()?;
+    let cfg = common::config();
+    let mut sim = MujocoSim::connect(&format!("127.0.0.1:{port}")).unwrap();
+    let s = run.scene;
+    sim.reset(&serde_json::json!({
+        "pose": "lie",
+        "terrain": {"kind": "charge_dock", "post_x": s.post_x, "post_y": s.post_y, "post_yaw": s.post_yaw,
+                    "post_spacing": cfg.dock.detector.post_spacing_m, "post_radius": cfg.dock.detector.post_radius_m},
+    }))
+    .unwrap();
+    let threaded = ThreadedPolicy::spawn(RunnerSet::load(&cfg, &dir).unwrap(), || {}).unwrap();
+    let mut policy = Lockstep {
+        inner: threaded,
+        pending: false,
+    };
+    let mut lie = step(0.0, Target::Passive, 0x3001, [0.0; 3]);
+    lie.command.motion_seq = 1;
+    let mut stand = step(2.0, Target::RlControl, 0x3001, [0.0; 3]);
+    stand.command.motion_seq = 2;
+    let feed = Arc::new(DockFeed::default());
+    let now = Arc::new(AtomicU64::new(0));
+    let changes: Arc<Mutex<Vec<(u64, Status)>>> = Arc::default();
+    let (now_cb, changes_cb) = (now.clone(), changes.clone());
+    let mut commands = DockingCommands::new(
+        ScriptedCommands::new(vec![lie, stand]),
+        Docking::new(&cfg, true),
+        feed.clone(),
+        Box::new(move |status| {
+            let tick = now_cb.load(Ordering::Relaxed);
+            println!("{:7.2} s dock {:?}", tick as f64 / 1000.0, status);
+            changes_cb.lock().unwrap().push((tick, status.clone()));
+        }),
+    );
+    let mut controller = Controller::new(cfg.clone());
+    let stop = AtomicBool::new(false);
+    let (xyz, rpy) = front_mount();
+    let mount = Mount::from_xyz_rpy(xyz, rpy);
+    let elevations: Vec<f64> = (0..96)
+        .map(|b| b as f64 * 90.0 / 95.0)
+        .filter(|e| *e >= 25.0)
+        .collect();
+    let azimuths: Vec<f64> = (0..900).map(|k| k as f64 * 0.4).collect();
+    let docked_x = cfg.dock.sequence.docked_x_m;
+    let lie_ticks = (2.0 * cfg.states.lie_down.phase_s * cfg.timing.control_hz) as u64;
+    let (mut sweeps, mut reports, mut lying_ticks) = (0u64, 0u64, 0u64);
+    let (mut dock_asked, mut undock_asked) = (false, false);
+    let mut statuses = Vec::new();
+    let mut seen = 0usize;
+    let mut trace = Vec::new();
+    rt::run(
+        &cfg,
+        &mut sim,
+        &mut controller,
+        &mut policy,
+        &mut commands,
+        Pacing::Free,
+        &stop,
+        |hw, tick| {
+            let c = tick.controller;
+            let ticks = tick.stats.ticks;
+            now.store(ticks, Ordering::Relaxed);
+            let truth = hw.truth().unwrap();
+            if ticks % 20 == 0 {
+                trace.push(Sample {
+                    t: c.time(),
+                    state: c.state,
+                    runner: c.current_runner().map(String::from),
+                    truth,
+                });
+            }
+            // the front Airy at 10 Hz through the detector, as m20_dock_detector_module does
+            if ticks % 100 == 0 {
+                let request = serde_json::json!({
+                    "mount_xyz": xyz, "mount_rpy": rpy, "elevations_deg": elevations,
+                    "azimuths_deg": azimuths, "range_noise_m": 0.01, "seed": 1,
+                });
+                let points = hw.lidar(&request).unwrap();
+                if let Detection::Found { pose, .. } = detect(points, &mount, &cfg.dock.detector) {
+                    sweeps += 1;
+                    *feed.pose.lock().unwrap() = Some((pose, sweeps));
+                }
+            }
+            // the battery packs at 1 Hz
+            lying_ticks = if c.state == State::LieDown {
+                lying_ticks + 1
+            } else {
+                0
+            };
+            if ticks % 1000 == 0 {
+                reports += 1;
+                let r = s.robot(&truth);
+                let on_contacts = run
+                    .contact
+                    .is_some_and(|w| (r[0] - docked_x).abs() <= w[0] && r[1].abs() <= w[1]);
+                let charging = on_contacts && lying_ticks >= lie_ticks;
+                *feed.charge.lock().unwrap() = Some(ChargeReading {
+                    seq: reports,
+                    packs_present: 2,
+                    packs_charge_mos_on: if charging { 2 } else { 0 },
+                    charger_connected: charging,
+                });
+            }
+            let changed: Vec<(u64, Status)> = changes.lock().unwrap()[seen..].to_vec();
+            seen += changed.len();
+            for (at, status) in changed {
+                statuses.push((at as f64 / 1000.0, status, s.robot(&truth)));
+            }
+            let phase = statuses.last().map(|(_, st, _)| st.phase);
+            if dock_asked && ticks % 500 == 0 && std::env::var_os("M20_DOCK_TRACE").is_some() {
+                let r = s.robot(&truth);
+                println!(
+                    "{:7.2} s {:?} {:?} axes {:+.3?} truth x {:+.4} y {:+.4} yaw {:+.2} deg",
+                    c.time(),
+                    phase,
+                    c.current_runner(),
+                    tick.user.axes,
+                    r[0] - docked_x,
+                    r[1],
+                    r[2].to_degrees()
+                );
+            }
+            // stood up (no stand-in on a 0x3001 entry): dock
+            if !dock_asked && c.state == State::RlControl && c.time() > 8.0 {
+                *feed.request.lock().unwrap() = Some(Request::Dock);
+                dock_asked = true;
+            }
+            let ended = |p: Option<Phase>| matches!(p, Some(Phase::Charging) | Some(Phase::Idle));
+            let docking_started = statuses
+                .iter()
+                .any(|(_, st, _)| st.phase == Phase::EnterGait);
+            if docking_started && !undock_asked && ended(phase) {
+                let at = statuses.last().map_or(0.0, |s| s.0);
+                // a moment of lying (charging) or standing first
+                if c.time() > at + 2.0 {
+                    *feed.request.lock().unwrap() = Some(Request::Undock);
+                    undock_asked = true;
+                }
+            }
+            let undock_started = statuses.iter().any(|(_, st, _)| st.phase == Phase::StandUp);
+            let done = undock_asked && undock_started && phase == Some(Phase::Idle);
+            if done || c.time() >= run.seconds {
+                stop.store(true, Ordering::Relaxed);
+            }
+        },
+    )
+    .unwrap();
+    Some(DockResult {
+        statuses,
+        controller,
+        trace,
+    })
+}
+
+fn no_fall(result: &DockResult) {
+    for s in result.trace.iter().filter(|s| s.state == State::RlControl) {
+        assert!(
+            !s.truth.trunk_contact && s.truth.tilt < 1.0,
+            "fell at {:.2} s: {:?}",
+            s.t,
+            s.truth
+        );
+    }
+    assert!(
+        result.controller.fault.is_none(),
+        "fault {:?}",
+        result.controller.fault
+    );
+}
+
+/// The first status in `phase`, and the robot (dock frame) then.
+fn entered(result: &DockResult, phase: Phase) -> Option<&(f64, Status, [f64; 3])> {
+    result.statuses.iter().find(|(_, s, _)| s.phase == phase)
+}
+
+fn dock_and_undock(scene: DockScene) {
+    let cfg = common::config();
+    let seq = &cfg.dock.sequence;
+    // the sim's contact pads: 3 cm along the dock's axis and 2 cm across it either way of the docked point (an
+    // assumption; the real pads are not measured). Lying down settles base_link 1.4-2 cm back from where it stood.
+    let Some(result) = dock_run(DockRun {
+        scene,
+        contact: Some([0.03, 0.02]),
+        seconds: 150.0,
+    }) else {
+        return;
+    };
+    no_fall(&result);
+    let fine = entered(&result, Phase::Finetune).expect("never reached the fine point");
+    let e = [
+        fine.2[0] - seq.docked_x_m,
+        fine.2[1],
+        fine.2[2].to_degrees(),
+    ];
+    println!(
+        "fine point at {:.1} s: truth error x {:+.4} m y {:+.4} m yaw {:+.2} deg; measured {:?}",
+        fine.0, e[0], e[1], e[2], fine.1.fine_point
+    );
+    let lying = entered(&result, Phase::ConfirmCharge).expect("never lay down");
+    println!(
+        "lying at {:.1} s: x {:+.4} m y {:+.4} m yaw {:+.2} deg from the docked point",
+        lying.0,
+        lying.2[0] - seq.docked_x_m,
+        lying.2[1],
+        lying.2[2].to_degrees()
+    );
+    let charging = entered(&result, Phase::Charging).expect("never charging");
+    assert!(charging.1.charging && charging.1.packs_charge_mos_on == 2);
+    let last = result.statuses.last().unwrap();
+    println!(
+        "undocked at {:.1} s: {:.4} m out ({:+.4} m from docked + {}), y {:+.4} m, yaw {:+.2} deg; {:?}",
+        last.0,
+        last.2[0],
+        last.2[0] - seq.docked_x_m - seq.exit_distance_m,
+        seq.exit_distance_m,
+        last.2[1],
+        last.2[2].to_degrees(),
+        last.1
+    );
+    // the fine point as the sequence measured it within the vendor's tolerances (charge_manager delta_x / _y / _yaw),
+    // and the truth within them plus the sim detector's bias there: up to ~4 mm (the standing body's 1-2 deg of tilt
+    // through the lidar's 0.45 m above the posts, and beam quantization; the detector takes base_link as level)
+    let measured = fine.1.fine_point.expect("no fine point measured");
+    for k in 0..3 {
+        assert!(
+            measured[k].abs() <= seq.tolerance[k],
+            "measured fine point {measured:?}"
+        );
+    }
+    const SIM_DETECTOR_BIAS_M: f64 = 0.004;
+    assert!(
+        e[0].abs() <= seq.tolerance[0] + SIM_DETECTOR_BIAS_M,
+        "fine x {:+.4}",
+        e[0]
+    );
+    assert!(
+        e[1].abs() <= seq.tolerance[1] + SIM_DETECTOR_BIAS_M,
+        "fine y {:+.4}",
+        e[1]
+    );
+    assert!(e[2].abs() <= seq.tolerance[2], "fine yaw {:+.2}", e[2]);
+    assert_eq!(last.1.phase, Phase::Idle);
+    assert!(!last.1.error, "{}", last.1.result);
+    assert_eq!(last.1.result, "undocked");
+    let out = last.2[0] - seq.docked_x_m - seq.exit_distance_m;
+    assert!(out.abs() <= seq.exit_tolerance[0], "undock {out:+.3} m off");
+    assert_eq!(result.controller.current_runner(), Some("basic_flat"));
+}
+
+/// ~2 m in front of the dock with a lateral offset and a heading error: dock, charge, undock.
+#[test]
+fn dock_charge_undock_offset() {
+    dock_and_undock(DockScene {
+        post_x: 2.6,
+        post_y: 0.15,
+        post_yaw: 8f64.to_radians(),
+    });
+}
+
+/// The other side: offset right, dock turned the other way.
+#[test]
+fn dock_charge_undock_offset_other_side() {
+    dock_and_undock(DockScene {
+        post_x: 2.5,
+        post_y: -0.2,
+        post_yaw: -6f64.to_radians(),
+    });
+}
+
+/// The charge MOS never comes on: lie down, stand, back to the staging point and retry twice, then back off.
+#[test]
+fn dock_without_charge_retries_then_backs_off() {
+    let cfg = common::config();
+    let seq = &cfg.dock.sequence;
+    let Some(result) = dock_run(DockRun {
+        scene: DockScene {
+            post_x: 2.6,
+            post_y: 0.05,
+            post_yaw: 0.0,
+        },
+        contact: None,
+        seconds: 300.0,
+    }) else {
+        return;
+    };
+    no_fall(&result);
+    let lie_downs = result
+        .statuses
+        .windows(2)
+        .filter(|w| w[0].1.phase != Phase::ConfirmCharge && w[1].1.phase == Phase::ConfirmCharge)
+        .count();
+    let last = result.statuses.last().unwrap();
+    println!("{lie_downs} tries; {:?}", last.1);
+    assert_eq!(lie_downs as u32, seq.retries + 1);
+    assert!(entered(&result, Phase::StandForRetry).is_some());
+    assert!(entered(&result, Phase::Charging).is_none());
+    assert!(
+        last.1.error && last.1.result.starts_with("no charge"),
+        "{}",
+        last.1.result
+    );
+    let out = last.2[0] - seq.docked_x_m - seq.exit_distance_m;
+    assert!(
+        out.abs() <= seq.exit_tolerance[0],
+        "backed off {out:+.3} m off"
+    );
+}
