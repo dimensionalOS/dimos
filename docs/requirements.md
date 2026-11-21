@@ -61,9 +61,9 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 Both the old `gtsam-extended` distribution and upstream `gtsam` install files under `gtsam/`. In an existing environment, remove the fork **before** installing the updated mapping extra. From a checkout, with that environment active:
 
 ```sh
-uv pip uninstall gtsam-extended
-uv pip install --reinstall-package gtsam '.[mapping]'
-python -c 'from gtsam import Pose3; print(Pose3().translation())'
+uv pip uninstall gtsam-extended &&
+  uv pip install --reinstall-package gtsam -e '.[mapping]' &&
+  python -c 'from gtsam import Pose3; print(Pose3().translation())'
 ```
 
 The reinstall also restores shared files if the fork was removed after an upgrade. Keep any other extras you use in the install command.
