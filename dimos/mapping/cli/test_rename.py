@@ -127,3 +127,19 @@ def test_rename_preserves_selected_external_embeddings_at_new_ids(tmp_path: Path
         hits = notes.search(y, k=3).to_list()
         assert [obs.data for obs in hits] == ["selected"]
         assert hits[0].similarity == pytest.approx(1.0)
+
+
+def test_failed_rename_leaves_no_partial_copy(tmp_path: Path) -> None:
+    source, destination = tmp_path / "source.db", tmp_path / "copy.db"
+    with SqliteStore(path=source) as src:
+        blobs = FileBlobStore(root=str(tmp_path / "blobs"))
+        notes = src.stream("notes", str, blob_store=blobs)
+        notes.append("copied", ts=1.0)
+        blobs.delete("notes", notes.append("lost", ts=2.0).id)
+
+    app = typer.Typer()
+    app.command()(main)
+    result = CliRunner().invoke(app, [str(source), "--out", str(destination)])
+
+    assert result.exit_code != 0
+    assert list(tmp_path.glob("copy.db*")) == []

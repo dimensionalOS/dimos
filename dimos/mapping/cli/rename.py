@@ -29,7 +29,7 @@ from typing import Any
 
 import typer
 
-from dimos.mapping.cli.recording_copy import copy_recorded_stream
+from dimos.mapping.cli.recording_copy import copy_recorded_stream, new_recording
 from dimos.memory.codecs.base import resolve_payload_type
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
@@ -154,8 +154,7 @@ def main(
     src = SqliteStore(path=str(src_path))
     with src:
         window = RecordingWindow.from_store(src, seek, duration)
-        dst = SqliteStore(path=str(out))
-        with dst:
+        with new_recording(out) as dst:
             for src_name, dst_name in kept.items():
                 ptype = payload_types[src_name]
                 src_s: Stream[Any] = window.apply(src.stream(src_name, ptype))

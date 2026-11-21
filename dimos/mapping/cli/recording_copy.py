@@ -16,14 +16,34 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from dimos.memory.backend import Backend
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.memory.type.observation import Observation
+
+
+@contextmanager
+def new_recording(path: str | Path) -> Iterator[SqliteStore]:
+    """Create the recording a copy is written to. *path* must not exist yet.
+
+    A copy that fails part-way is removed: left behind, it would pass for a
+    recording and block the retry, which refuses an existing destination.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+
+    try:
+        with SqliteStore(path=str(path)) as store:
+            yield store
+    except BaseException:
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{path}{suffix}").unlink(missing_ok=True)
+        raise
 
 
 def copy_recorded_stream(

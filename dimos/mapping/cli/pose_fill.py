@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
-from dimos.mapping.cli.recording_copy import copy_recorded_stream
+from dimos.mapping.cli.recording_copy import copy_recorded_stream, new_recording
 from dimos.memory.utils.time_window import RecordingWindow
 
 # Heavy dimos imports are deferred (TYPE_CHECKING / inside functions) so that
@@ -128,7 +128,7 @@ def pose_fill_db(
 
         window = RecordingWindow.from_store(src, seek, duration)
         # Validate the full selection before creating a destination that would block retries.
-        with SqliteStore(path=str(dest_path)) as dest:
+        with new_recording(dest_path) as dest:
             for name in names:
                 if name == target:
                     rows: Iterable[Observation[Any]] = pose_fill(

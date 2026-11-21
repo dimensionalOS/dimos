@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from dimos.mapping.cli.pose_fill import pose_fill, pose_fill_db
+from dimos.memory.blobstore.file import FileBlobStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -114,6 +115,21 @@ def test_pose_fill_db_rejected_run_leaves_no_destination(
         )
 
     assert not dest.exists()
+
+
+def test_pose_fill_db_failed_copy_leaves_no_destination(tmp_path):
+    src, dest = tmp_path / "memory.db", tmp_path / "memory_posed.db"
+    with SqliteStore(path=str(src)) as store:
+        blobs = FileBlobStore(root=str(tmp_path / "blobs"))
+        notes = store.stream("notes", str, blob_store=blobs)
+        notes.append("copied", ts=1.0)
+        blobs.delete("notes", notes.append("lost", ts=2.0).id)
+        store.stream("odom", Transform).append(Transform(), ts=1.0)
+
+    with pytest.raises(KeyError, match="No blob"):
+        pose_fill_db(src, dest, target="odom", pose_source="odom")
+
+    assert list(tmp_path.glob("memory_posed.db*")) == []
 
 
 def test_pose_fill_db_copies_selected_streams(pose_fill_source, tmp_path):
