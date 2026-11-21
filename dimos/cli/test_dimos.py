@@ -75,6 +75,14 @@ class RunModuleB(Module):
     config: RunConfigB
 
 
+class RunConfigKey(ModuleConfig):
+    api_key: str
+
+
+class RunModuleKey(Module):
+    config: RunConfigKey
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
@@ -1126,6 +1134,41 @@ def test_restart_restores_command_and_relative_recording(
         sys.executable, [*prefix, "--replay-db", "replay.db", "run", "alpha"]
     )
     stop.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("shell", "code", "key"),
+    [({}, 2, "launch-key"), ({"RUNMODULEKEY__API_KEY": "shell-key"}, 0, "shell-key")],
+    ids=["missing", "exported"],
+)
+def test_restart_resolves_an_unsaved_credential_before_stopping_the_run(
+    restart_entry, stubbed_run, tmp_path, monkeypatch, shell, code, key
+):
+    monkeypatch.setattr(
+        get_all_blueprints, "get_by_name_or_exit", lambda name: RunModuleKey.blueprint()
+    )
+    monkeypatch.chdir(tmp_path)
+    prefix = [sys.executable, "-m", "dimos.cli.dimos"]
+    runner, stop, execute, entry = restart_entry(
+        sys.modules["dimos.cli.dimos"].__file__,
+        prefix,
+        extra_args=["--runmodulekey.api-key", "launch-key"],
+    )
+    replacements = []
+    execute.side_effect = lambda program, args: replacements.append(
+        runner.invoke(main, args[len(prefix) :])
+    )
+    for name, value in shell.items():
+        monkeypatch.setenv(name, value)
+
+    result = runner.invoke(main, ["restart"])
+
+    (replacement,) = replacements
+    assert replacement.exit_code == code
+    assert ("runmodulekey.api_key: Field required" in replacement.output) is (code == 2)
+    assert stop.call_count == int(code == 0)
+    assert stubbed_run["parsed_config"].module_kwargs("runmodulekey")["api_key"] == key
+    assert "launch-key" not in entry.registry_path.read_text() + result.output
 
 
 def test_restart_keeps_run_if_python_cannot_resolve_original_module(
