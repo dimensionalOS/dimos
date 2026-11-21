@@ -116,7 +116,7 @@ replay.stream(speed=2.0).pipe(ops.do_action(process)).run()
 replay.stream(speed=0.5).pipe(ops.do_action(process)).run()
 ```
 
-`.run()` raises `SequenceContainsNoElementsError` if the replay has no frames, and never returns with `stream(loop=True)`. For background playback, see [Observable Stream](#observable-stream) below.
+`.run()` raises `SequenceContainsNoElementsError` if the replay has no frames, and keeps playing a nonempty selection with `stream(loop=True)`. For background playback, see [Observable Stream](#observable-stream) below.
 
 `LegacyPickleStore` also has `iterate_realtime(speed=...)`, which blocks between frames.
 
