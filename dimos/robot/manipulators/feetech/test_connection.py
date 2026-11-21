@@ -16,6 +16,10 @@ from typing import Any
 
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.get_all_blueprints import get_by_name
 from dimos.robot.manipulators.feetech.connection import GUARDED_JOINT_FRAME_ID, FeetechConnection
 from dimos.robot.manipulators.feetech.robot import (
     FeetechBus,
@@ -23,6 +27,20 @@ from dimos.robot.manipulators.feetech.robot import (
     FeetechRobot,
     FeetechTrigger,
 )
+
+
+@pytest.mark.parametrize(
+    ("blueprint", "valid"),
+    [
+        ("teleop-openarm-mini-leader", ["--right-serial-port", "/dev/example"]),
+        ("dual-open-yam-leader-connection", ["--mock-positions", "{}"]),
+    ],
+)
+def test_leader_requires_a_port_or_mock_positions(blueprint: str, valid: list[str]) -> None:
+    parser = BlueprintConfigParser(autoconnect(get_by_name(blueprint)).solidify())
+    with pytest.raises(BlueprintConfigError, match="serial port"):
+        parser.parse(["--left-serial-port", " "], environ={})
+    parser.parse(valid, environ={})
 
 
 class _Leaders(FeetechConnection):
