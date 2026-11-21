@@ -193,7 +193,7 @@ class LiveEnvironment(Environment):
             self._wait_mcp(mcp_url, proc, deadline)
         self.setup_scene()
         path = self._wait_recording(deadline, pid)
-        self._recording = SqliteStore(path=str(path), must_exist=True)
+        self._recording = SqliteStore(path=str(path), read_only=True)
         self._resources.callback(self._recording.stop)
         artifacts = {"recording": path}
         artifacts.update(self.prepare_recording(self._recording, path, deadline))

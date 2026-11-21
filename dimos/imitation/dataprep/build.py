@@ -58,7 +58,7 @@ def _open_recording(path: str | Path) -> Store:
     """Open a native collection artifact through its read-only Store interface."""
     source = Path(path)
     if source.suffix == ".db":
-        return SqliteStore(path=str(source), must_exist=True)
+        return SqliteStore(path=str(source), read_only=True)
     if source.suffix == ".mcap":
         return McapStore(path=str(source), decode_metadata=True)
     raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")

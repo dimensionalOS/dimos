@@ -32,6 +32,9 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
 # These drive the real CLI against an LFS recording (CPU voxel accumulation,
 # multi-second runs) — self-hosted runner only.
 pytestmark = pytest.mark.self_hosted
@@ -254,3 +257,16 @@ def test_view_map_cloud(tmp_path: Path) -> None:
     assert res.returncode == 0, res.stderr
     assert "256 points" in res.stdout
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_replay_odometry_without_creating_camera_or_lidar(tmp_path: Path) -> None:
+    path = tmp_path / "odom.db"
+    with SqliteStore(path=path) as store:
+        odom = store.stream("odom", PoseStamped)
+        odom.append(PoseStamped(), ts=1.0, pose=(1.0, 0.0, 0.0))
+    out = tmp_path / "odom.rrd"
+    result = _run("replay", str(path), "--no-gui", "--out", str(out))
+    assert result.returncode == 0, result.stderr
+    assert "/world/odom" in _entity_paths(out)
+    with SqliteStore(path=path, must_exist=True) as store:
+        assert store.list_streams() == ["odom"]

@@ -61,7 +61,7 @@ class RecordingPlayer(Module):
     def start(self) -> None:
         super().start()
         path = resolve_named_path(self.config.dataset, ".db")
-        store = SqliteStore(path=str(path), must_exist=True)
+        store = SqliteStore(path=str(path), read_only=True)
         subscriptions = CompositeDisposable()
         # One disposer drains the subscriptions before closing their store,
         # even when stop() is called concurrently or setup fails partway through.

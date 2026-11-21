@@ -234,7 +234,7 @@ def main(
     premap_cloud = load_premap(premap)
     _init_recording(db_path.stem, out)
     print(f"relocalizing {db_path.name} against {premap} ({len(premap_cloud)} points, {preset})")
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), must_exist=True, read_only=not write_loaded_map_stream)
     with store:
         result = replay(
             store,

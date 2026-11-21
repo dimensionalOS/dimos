@@ -86,7 +86,7 @@ def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
     if s.endswith(".db"):
         from dimos.memory.store.sqlite import SqliteStore
 
-        return SqliteStore(path=s, must_exist=True)
+        return SqliteStore(path=s, read_only=True)
     raise ValueError(f"unsupported dataset {s!r}: expected a .db or .mcap path")
 
 
@@ -140,6 +140,17 @@ def resolve_dataset(dataset: str | Path, *, suffix: str | None = None) -> Path:
         f"{data.get_data_dir()} (including LFS), {constants.RECORDINGS_DIR}, "
         f"and {constants.DOWNLOADS_DIR}."
     )
+
+
+def open_cli_dataset(dataset: str | Path, *, param_hint: str = "DATASET") -> tuple[Path, Store]:
+    """Resolve and open CLI input, reporting a bad recording at its argument."""
+    import typer
+
+    try:
+        path = resolve_dataset(dataset)
+        return path, open_store(path)
+    except (FileNotFoundError, AmbiguousDatasetError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint=param_hint) from exc
 
 
 def open_dataset(dataset: str | Path) -> Store:

@@ -45,6 +45,7 @@ class SqliteStoreConfig(StoreConfig):
     ] = "memory.db"
     page_size: int = 256
     must_exist: bool = False
+    read_only: bool = False
 
 
 class SqliteStore(Store):
@@ -54,11 +55,7 @@ class SqliteStore(Store):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        if self.config.must_exist and not os.path.exists(self.config.path):
-            raise FileNotFoundError(
-                f"SQLite database not found: {os.path.abspath(self.config.path)}"
-            )
-        if not self.config.must_exist:
+        if not (self.config.must_exist or self.config.read_only):
             parent = os.path.dirname(self.config.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -67,11 +64,30 @@ class SqliteStore(Store):
         self._registry = RegistryStore(conn=self._registry_conn)
         self._stopped = False
 
-    def _open_connection(self) -> sqlite3.Connection:
-        """Open a new WAL-mode connection with sqlite-vec loaded."""
-        disposable, connection = open_disposable_sqlite_connection(self.config.path)
+    def _open_connection(self, path: str | None = None) -> sqlite3.Connection:
+        disposable, connection = open_disposable_sqlite_connection(
+            self.config.path if path is None else path,
+            existing_recording=path is None and (self.config.must_exist or self.config.read_only),
+            read_only=self.config.read_only,
+        )
         self.register_disposable(disposable)
         return connection
+
+    def _restore_component(
+        self,
+        stored: dict[str, Any] | None,
+        default: type[SqliteBlobStore] | type[SqliteVectorStore],
+        conn: sqlite3.Connection,
+    ) -> Any:
+        if stored is None:
+            return default(conn=conn)
+        if stored["class"] == qual(default):
+            path = stored.get("config", {}).get("path")
+            if path is None:
+                return default(conn=conn)
+            if self.config.read_only:
+                return default(conn=self._open_connection(path))
+        return deserialize_component(stored)
 
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
         """Reconstruct a Backend from a stored config dict."""
@@ -85,26 +101,8 @@ class SqliteStore(Store):
 
         backend_conn = self._open_connection()
 
-        # Reconstruct components from serialized config
-        bs_data = stored.get("blob_store")
-        if bs_data is not None:
-            bs_cfg = bs_data.get("config", {})
-            if bs_cfg.get("path") is None and bs_data["class"] == qual(SqliteBlobStore):
-                bs: Any = SqliteBlobStore(conn=backend_conn)
-            else:
-                bs = deserialize_component(bs_data)
-        else:
-            bs = SqliteBlobStore(conn=backend_conn)
-
-        vs_data = stored.get("vector_store")
-        if vs_data is not None:
-            vs_cfg = vs_data.get("config", {})
-            if vs_cfg.get("path") is None and vs_data["class"] == qual(SqliteVectorStore):
-                vs: Any = SqliteVectorStore(conn=backend_conn)
-            else:
-                vs = deserialize_component(vs_data)
-        else:
-            vs = SqliteVectorStore(conn=backend_conn)
+        bs = self._restore_component(stored.get("blob_store"), SqliteBlobStore, backend_conn)
+        vs = self._restore_component(stored.get("vector_store"), SqliteVectorStore, backend_conn)
 
         notifier_data = stored.get("notifier")
         if notifier_data is not None:
@@ -169,6 +167,9 @@ class SqliteStore(Store):
                         f"but opened with {actual_module}"
                     )
             return self._assemble_backend(name, stored)
+
+        if self.config.read_only:
+            raise KeyError(f"No stream {name!r}. Available: {self.list_streams()}")
 
         # Create path: inject conn-shared defaults, then delegate to base
         if payload_type is None:
