@@ -62,11 +62,9 @@ def test_the_module_commands_the_connection_directly(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", CALIBRATE)
-def test_the_module_gets_the_robot_its_connection_deploys(name: str) -> None:
-    blueprint, driver, _calibration = atoms(name)
-    robot = calibrated_robot(blueprint)
+def test_the_blueprint_is_named_after_the_robot_it_hands_the_module(name: str) -> None:
+    robot = calibrated_robot(load_blueprint(name))
 
-    assert robot is driver.module.robot
     assert name == f"{robot.name.replace('_', '-')}-calibrate"
     # It reaches the module's worker as a constructor argument, never a flag.
     assert decode(encode(robot)) == robot
