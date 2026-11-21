@@ -269,7 +269,8 @@ dimos restart [--force]
 Restart uses the original Python command and working directory, so relative settings
 and recording paths still resolve from the launch project. For a run started by
 an older version, restart gets the missing context from the live process.
-If the directory was replaced, the source or interpreter is unavailable, or the
+If the directory was replaced, the source or interpreter is unavailable, a Python
+module no longer resolves to its original file, or the
 run came from Python standard input or `-c`, restart leaves the instance running.
 These checks also apply to `--force`.
 

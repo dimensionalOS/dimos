@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -531,6 +532,51 @@ def log_cmd(
             typer.echo(format_line(line, json_output=json_output))
 
 
+def _check_module_source(argv: list[str], source: Path) -> None:
+    # Only inspect Python options. A script or an option value can itself contain "-m".
+    args = iter(enumerate(argv[1:], 1))
+    for position, arg in args:
+        if arg == "--check-hash-based-pycs":
+            next(args, None)
+            continue
+        if not arg.startswith("-") or arg in ("-", "--"):
+            return
+        for offset, flag in enumerate(arg[1:], 1):
+            if flag not in "WXcm":
+                continue
+            value = arg[offset + 1 :] or next(args, (0, ""))[1]
+            if flag in "WX":
+                break
+            if flag == "c":
+                return
+            # Ask the saved interpreter with its own flags, cwd and import path.
+            # Resolving a package with -m selects its __main__ submodule.
+            options = argv[:position]
+            if offset > 1:
+                options.append(arg[:offset])
+            probe = (
+                "from importlib.util import find_spec\n"
+                "import os, sys\n"
+                "name, source = sys.argv[1:]\n"
+                "spec = find_spec(name)\n"
+                "if spec and spec.submodule_search_locations is not None:\n"
+                "    spec = find_spec(name + '.__main__')\n"
+                "if spec and spec.origin and os.path.samefile(spec.origin, source):\n"
+                "    os.write(1, b'\\0')"
+            )
+            result = subprocess.run(
+                [*options, "-c", probe, value, str(source)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode or not result.stdout.endswith(b"\0"):
+                raise OSError(
+                    f"the original Python module {value!r} cannot be resolved to {source}"
+                )
+            return
+
+
 def restart(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
 ) -> None:
@@ -576,6 +622,7 @@ def restart(
         )
         if not argv or shutil.which(argv[0]) is None:
             raise OSError("original command is unavailable")
+        _check_module_source(argv, source_path)
     except (OSError, psutil.Error) as exc:
         typer.echo(f"Cannot restart: {exc}", err=True)
         raise typer.Exit(1) from exc

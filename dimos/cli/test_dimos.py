@@ -1075,7 +1075,7 @@ def test_restart_restores_command_and_relative_recording(
     (launch / "replay.db").write_text("original")
     (tmp_path / "replay.db").write_text("different")
     monkeypatch.chdir(launch)
-    source = str(Path(lifecycle.__file__))
+    source = sys.modules["dimos.cli.dimos"].__file__
     prefix = [sys.executable, "-u", "-m", "dimos.cli.dimos"]
     runner, stop, execute, entry = restart_entry(
         source, prefix, legacy=legacy, extra_args=["--runmodulea.api-key=private-value"]
@@ -1095,6 +1095,22 @@ def test_restart_restores_command_and_relative_recording(
         sys.executable, [*prefix, "--replay-db", "replay.db", "run", "alpha"]
     )
     stop.assert_called_once()
+
+
+def test_restart_keeps_run_if_python_cannot_resolve_original_module(
+    restart_entry, tmp_path, monkeypatch
+):
+    source = tmp_path / "project_launcher.py"
+    source.touch()
+    project = tmp_path / "working"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    runner, stop, _, _ = restart_entry(str(source), [sys.executable, "-m", source.stem])
+
+    result = runner.invoke(main, ["restart", "--force"])
+
+    assert result.exit_code == 1
+    stop.assert_not_called()
 
 
 @pytest.mark.parametrize("kind", ["interpreter-option", "relative-injected", "absolute-injected"])
