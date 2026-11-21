@@ -70,7 +70,8 @@ class FeetechConnectionConfig(ConnectionConfig):
             as it is.
         mock_positions: Follower joint angles to publish when no serial port
             is given, in radians, e.g. {"left_joint1": 0.3}; joints left out
-            read 0. None makes a serial port required.
+            read 0. The paired leaders require a left or right serial port unless
+            mock positions are supplied. An empty map selects zero for all joints.
     """
 
     source: str = "arm"
@@ -83,6 +84,29 @@ class FeetechConnectionConfig(ConnectionConfig):
     def _read_only(self) -> Self:
         if self.joint_commands:
             raise ValueError("Feetech connections only read; they take no commands")
+        return self
+
+    def configured_ports(self, ports: dict[str, str]) -> dict[str, str]:
+        selected = {bus: port for bus, port in ports.items() if port.strip()}
+        if not selected and self.mock_positions is None:
+            raise ValueError(
+                "Give a serial port for at least one Feetech bus or set mock_positions"
+            )
+        return selected
+
+
+class DualFeetechConnectionConfig(FeetechConnectionConfig):
+    """Serial ports for a pair of leaders. An empty port leaves that side unread."""
+
+    left_serial_port: str = ""
+    right_serial_port: str = ""
+
+    def serial_ports(self) -> dict[str, str]:
+        return {"left": self.left_serial_port, "right": self.right_serial_port}
+
+    @model_validator(mode="after")
+    def _require_port_or_mock(self) -> Self:
+        self.configured_ports(self.serial_ports())
         return self
 
 
@@ -116,12 +140,10 @@ class FeetechConnection(ConnectionModule):
 
     def connect(self) -> None:
         """Load each bus's calibration and open its serial port, or start the mock."""
-        ports = {bus: port for bus, port in self.serial_ports().items() if port.strip()}
+        ports = self.config.configured_ports(self.serial_ports())
         arm: FeetechArm | MockFeetechArm
         if not ports:
-            if self.config.mock_positions is None:
-                raise ValueError("give a serial port for at least one Feetech bus")
-            arm = MockFeetechArm(self.robot, self.config.mock_positions)
+            arm = MockFeetechArm(self.robot, self.config.mock_positions or {})
         else:
             calibrations = {
                 bus: load_calibration(
