@@ -108,9 +108,7 @@ def _collection_components(
     camera = next(
         atom
         for atom in producers.active_blueprints
-        if any(
-            stream.name == "color_image" and stream.direction == "out" for stream in atom.streams
-        )
+        if any(stream.name == "color_image" and stream.can_publish for stream in atom.streams)
     )
     camera_config = cast("CameraConfig", module_config_cls(camera)(**camera.kwargs))
     state = FeatureSpec(
