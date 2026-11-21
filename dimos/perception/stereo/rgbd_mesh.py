@@ -28,6 +28,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from pydantic import Field
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
@@ -70,13 +71,13 @@ def _transform_to_matrix(transform: Transform) -> NDArray[np.float64]:
 
 class RgbdMeshConfig(ModuleConfig):
     world_frame: str = "world"
-    voxel_size: float = 0.02
+    voxel_size: float = Field(default=0.02, gt=0.0, allow_inf_nan=False)
     depth_min: float = 0.3
     depth_max: float = 3.5
     min_fill: float = 0.10
-    region_m: float = 3.0
-    emit_every: int = 3
-    min_emit_interval_s: float = 0.20
+    region_m: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
+    emit_every: int = Field(default=3, gt=0)
+    min_emit_interval_s: float = Field(default=0.20, ge=0.0, allow_inf_nan=False)
     pair_tolerance_s: float = 0.02
     tf_tolerance_s: float = 0.25
     tf_wait_s: float = 0.15
