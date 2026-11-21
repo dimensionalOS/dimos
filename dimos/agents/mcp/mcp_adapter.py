@@ -47,11 +47,24 @@ logger = setup_logger()
 
 
 class McpError(Exception):
-    """Raised when the MCP server returns a JSON-RPC error."""
+    """Raised when an MCP request or tool call fails."""
 
     def __init__(self, message: str, code: int | None = None) -> None:
         self.code = code
         super().__init__(message)
+
+
+def tool_content_text(content: list[dict[str, Any]]) -> str:
+    """Join the text blocks of an MCP response in wire order."""
+    return "\n".join(item.get("text", "") for item in content if item.get("type") == "text")
+
+
+def checked_tool_content(name: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return content blocks on success and raise with the tool's diagnostic on failure."""
+    content: list[dict[str, Any]] = result.get("content", [])
+    if result.get("isError"):
+        raise McpError(tool_content_text(content) or f"Tool '{name}' failed")
+    return content
 
 
 class McpAdapter:
@@ -95,12 +108,14 @@ class McpAdapter:
         return self._unwrap(self.call("tools/call", {"name": name, "arguments": arguments or {}}))
 
     def call_tool_text(self, name: str, arguments: dict[str, Any] | None = None) -> str:
-        """Call a tool and return just the first text content item."""
+        """Return the first content item as text, raising McpError if the tool failed."""
+        texts = self.call_tool_texts(name, arguments)
+        return texts[0] if texts else ""
+
+    def call_tool_texts(self, name: str, arguments: dict[str, Any] | None = None) -> list[str]:
+        """Return all content items as text, raising McpError if the tool failed."""
         result = self.call_tool(name, arguments)
-        content = result.get("content", [])
-        if not content:
-            return ""
-        return content[0].get("text", str(content[0]))  # type: ignore[no-any-return]
+        return [item.get("text", str(item)) for item in checked_tool_content(name, result)]
 
     def wait_for_ready(self, timeout: float = 10.0, interval: float = 0.5) -> bool:
         """Poll until the MCP server responds, or return False on timeout."""

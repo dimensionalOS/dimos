@@ -50,6 +50,8 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools. A blueprint with no `McpServer` and no `mcp_server_url` gives the agent no tools.
 
+When an MCP skill reports failure, its LangChain tool message has status `error`. A failed continuation sends the diagnostic to the agent’s message queue.
+
 ## Skills
 
 Skills are methods decorated with `@skill` on any `Module`. The agent discovers them automatically at startup.

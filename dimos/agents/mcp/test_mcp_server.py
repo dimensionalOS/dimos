@@ -292,6 +292,7 @@ def test_refusal_message_distinguishes_holder_lifecycle() -> None:
             # The requester is refused, so its RPC never runs.
             rpc_calls["follow_person"].assert_not_called()
             assert response is not None
+            assert response["result"]["isError"] is True
             return response["result"]["content"][0]["text"]
         finally:
             app.state.skills_by_name = saved_skills

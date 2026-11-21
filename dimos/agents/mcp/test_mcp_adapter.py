@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from dimos.agents.mcp.constants import DEFAULT_MCP_TIMEOUT, mcp_url
-from dimos.agents.mcp.mcp_adapter import McpAdapter
+from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.core.run_registry import RunEntry
 
 
@@ -37,6 +37,20 @@ def test_call_sends_config_timeout_unless_overridden(monkeypatch: pytest.MonkeyP
     McpAdapter(url="http://127.0.0.1:9/mcp", timeout=7).call("initialize")
 
     assert posted == [DEFAULT_MCP_TIMEOUT, 7]
+
+
+@pytest.mark.parametrize("messages", [["busy", "try later"], []])
+def test_call_tool_text_raises_on_tool_failure(
+    monkeypatch: pytest.MonkeyPatch, messages: list[str]
+) -> None:
+    adapter = McpAdapter()
+    reply = {"isError": True, "content": [{"type": "text", "text": text} for text in messages]}
+    monkeypatch.setattr(adapter, "call_tool", lambda name, arguments: reply)
+
+    with pytest.raises(McpError) as exc:
+        adapter.call_tool_text("echo")
+
+    assert ("\n".join(messages) or "echo") in str(exc.value)
 
 
 def test_adapter_uses_the_endpoint_persisted_by_the_running_server(mocker, tmp_path) -> None:
