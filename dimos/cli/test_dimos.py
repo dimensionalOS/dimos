@@ -707,12 +707,20 @@ def test_daemon_reuses_identity_only_for_exec_handoff(
     else:
         monkeypatch.delenv("_DIMOS_DAEMON_STATUS_FD", raising=False)
     monkeypatch.setattr(lifecycle, "fork_daemon", lambda path: (123, 7))
-    monkeypatch.setattr(lifecycle, "read_daemon_status", lambda fd: {"ok": True, "n_modules": 1})
+    daemon_status = {
+        "ok": True,
+        "n_modules": 1,
+        "pid": 4567,
+        "mcp_url": None,
+    }
+    monkeypatch.setattr(lifecycle, "read_daemon_status", lambda fd: daemon_status)
 
     result = CliRunner().invoke(main, ["run", "alpha", "--daemon"])
 
     assert result.exit_code == 0, result.output
     assert f"Run ID:    {expected_run_id}" in result.output
+    assert "4567" in result.output
+    assert "MCP:" not in result.output
 
 
 def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any]) -> None:
