@@ -21,10 +21,12 @@ from mcap.writer import Writer
 import pytest
 from reactivex.testing import TestScheduler
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 
 
@@ -133,3 +135,24 @@ def test_failed_camera_decode_closes_started_replay(tmp_path, mocker):
         stop_store.assert_called_once()
     finally:
         module.stop()
+
+
+def test_mesh_replay_warns_about_missing_inputs_and_delivers_odometry(tmp_path, mocker):
+    path = tmp_path / "odom.db"
+    with SqliteStore(path=path) as store:
+        store.stream("pointlio_odometry", Odometry).append(Odometry(ts=1.0), ts=1.0)
+    blueprint = autoconnect(get_blueprint_by_name("unitree-g1-replay-mesh")).solidify()
+    source = next(atom for atom in blueprint.active_blueprints if atom.module is G1Replay)
+    replay = G1Replay(dataset=str(path), **source.kwargs)
+    seen = threading.Event()
+    warning = mocker.patch("dimos.robot.unitree.g1.g1_replay.logger.warning")
+    replay.pointlio_odometry.subscribe(lambda _: seen.set())
+    with replay:
+        assert seen.wait(5)
+        warning.assert_called_once()
+        assert set(warning.call_args.kwargs["missing"]) == {
+            "color_image",
+            "realsense_camera_info",
+            "realsense_depth_image",
+            "tf",
+        }

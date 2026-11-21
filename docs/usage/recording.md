@@ -120,6 +120,8 @@ enabled output stream. For example, a G1 recording containing only
 `--g1replay.replay-lidar true`. Go2, G1 and Spot check the decoded type of each
 enabled input before subscribing. For example, a G1 `pointlio_odometry` stream
 must carry `Odometry` messages.
+The G1 mesh blueprint warns when a recording lacks color, depth, camera calibration,
+or TF. It continues to publish the available streams, including odometry.
 
 ## Spatial queries
 

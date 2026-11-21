@@ -57,6 +57,9 @@ class G1ReplayConfig(ModuleConfig):
     seek: float | None = None
     duration: float | None = None
     replay_lidar: bool = False
+    expected_streams: tuple[str, ...] = Field(
+        default=(), description="Warn if these blueprint inputs are missing from playback."
+    )
 
 
 class G1Replay(Module):
@@ -95,6 +98,14 @@ class G1Replay(Module):
                 },
                 source=path,
             )
+
+            missing = sorted(set(self.config.expected_streams).difference(streams))
+            if missing:
+                logger.warning(
+                    "Recording is missing inputs expected by this blueprint. Replaying available streams",
+                    source=str(path),
+                    missing=missing,
+                )
 
             super().start()
             progress = ReplayProgress(str(path))
