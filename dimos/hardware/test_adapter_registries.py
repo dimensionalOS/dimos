@@ -51,7 +51,6 @@ EXPECTED_NAMES = {
         "xarm",
     },
     "drive_trains": {
-        "flowbase",
         "mock_twist_base",
         "unitree_go2",
     },
