@@ -1,0 +1,1258 @@
+[
+ {
+  "task": "AnimalsInBinTask",
+  "instruction": "Put the lizards in the bin",
+  "episode_s": 90,
+  "scene": "toys_cleanup",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "AppleAndYogurtInBowlTask",
+  "instruction": "Put the apple and yogurt in the bowl",
+  "episode_s": 120,
+  "scene": "workdesk_snacks",
+  "attributes": [
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "BagelsOnPlateTask",
+  "instruction": "Put the bagels on the plate",
+  "episode_s": 60,
+  "scene": "bagel_plate_banana_bowl",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BananaInBowlTask",
+  "instruction": "Pick up the banana and place it in the bowl",
+  "episode_s": 50,
+  "scene": "banana_bowl",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BananaOnPlateTask",
+  "instruction": "Pick up the banana and put it on the plate",
+  "episode_s": 40,
+  "scene": "bagel_plate_banana_bowl",
+  "attributes": [],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BananasInBinOneMoreTask",
+  "instruction": "Put one (1) more bananas in the grey bin.",
+  "episode_s": 60,
+  "scene": "bananas_5_grey_bin",
+  "attributes": [
+   "semantics",
+   "counting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "BananasInBinThreeTotalTask",
+  "instruction": "Make sure there are 3 (three) bananas in the grey bin.",
+  "episode_s": 60,
+  "scene": "bananas_5_grey_bin",
+  "attributes": [
+   "semantics",
+   "counting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "BananasInCrateTask",
+  "instruction": "Put 2 bananas in the crate",
+  "episode_s": 60,
+  "scene": "bananas_5_in_crate",
+  "attributes": [
+   "counting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "BananasOutOfBinTask",
+  "instruction": "Take the bananas out",
+  "episode_s": 90,
+  "scene": "bananas_5_grey_bin",
+  "attributes": [
+   "semantics",
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "BananaThenRubiksCubeTask",
+  "instruction": "put the banana then the cube in the bowl",
+  "episode_s": 60,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BBQSauceInBinTask",
+  "instruction": "Put the red BBQ sauce bottles in the grey bin",
+  "episode_s": 90,
+  "scene": "bin_condiments",
+  "attributes": [
+   "color",
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BigPumpkinInBinTask",
+  "instruction": "Put the bigger pumpkin in the bin",
+  "episode_s": 60,
+  "scene": "clutter_fruit_bottle_bluebin",
+  "attributes": [
+   "size"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BlackItemsInBinTask",
+  "instruction": "Put the black items in the grey bin",
+  "episode_s": 120,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "color",
+   "sorting"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "BlocksInBinTask",
+  "instruction": "Sort all colored blocks into the bin",
+  "episode_s": 150,
+  "scene": "toys_cleanup",
+  "attributes": [
+   "sorting"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "BlockStackingOrderAgnosticTask",
+  "instruction": "Stack the blocks into a tower",
+  "episode_s": 90,
+  "scene": "colored_blocks",
+  "attributes": [
+   "stacking"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "BlockStackingSpecifiedOrderTask",
+  "instruction": "Stack the blocks in the order from bottom to top: red, blue, green, yellow",
+  "episode_s": 90,
+  "scene": "colored_blocks",
+  "attributes": [
+   "stacking",
+   "color"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "BowlInBinTask",
+  "instruction": "put the bowl in the grey bin",
+  "episode_s": 60,
+  "scene": "bin_mug_mustard_marker_bowl",
+  "attributes": [],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BowlStackingLeftOnRightTask",
+  "instruction": "Stack the left bowl on the right bowl",
+  "episode_s": 20,
+  "scene": "bowls_2_table",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "BowlStackingRightOnLeftTask",
+  "instruction": "Stack the right bowl on the left bowl",
+  "episode_s": 20,
+  "scene": "bowls_2_table",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "ButterAboveRaisinTask",
+  "instruction": "Pick up the butter box and place it on top of the raisin box",
+  "episode_s": 40,
+  "scene": "butter_raisin_box",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "CannedFoodInBinTask",
+  "instruction": "Put the canned food in the grey bin",
+  "episode_s": 60,
+  "scene": "bin_condiments",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "ClampInRightBinTask",
+  "instruction": "Put the spring clamp in the right bin",
+  "episode_s": 60,
+  "scene": "tools_container",
+  "attributes": [
+   "semantics",
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "CleanUpToysTask",
+  "instruction": "Clean up all the smaller toys and leave the birdhouse on the table",
+  "episode_s": 300,
+  "scene": "toys_cleanup",
+  "attributes": [
+   "sorting",
+   "semantics"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "ClearOrganicObjectsTask",
+  "instruction": "Clear away the organic objects",
+  "episode_s": 240,
+  "scene": "clutter_fruit_bottle_bluebin",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "ClutterPlasticTask",
+  "instruction": "Put all plastic bottles away in the bin",
+  "episode_s": 180,
+  "scene": "clutter_fruit_bottle_bluebin",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ClutterPumpkinTask",
+  "instruction": "Put all the pumpkins away in the bin",
+  "episode_s": 90,
+  "scene": "clutter_fruit_bottle_bluebin",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "CoffeePotInBinTask",
+  "instruction": "Put the coffee pot in the grey bin",
+  "episode_s": 60,
+  "scene": "bin_condiments",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "CondimentsInBinTask",
+  "instruction": "Sort the sauce condiments into the grey bin",
+  "episode_s": 180,
+  "scene": "bin_condiments",
+  "attributes": [
+   "semantics",
+   "sorting"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "CookingClearPlateTask",
+  "instruction": "Put the two measuring cups outside of the plate",
+  "episode_s": 180,
+  "scene": "cooking_table",
+  "attributes": [
+   "color",
+   "sorting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "CookingPickPastaToolTask",
+  "instruction": "Move the pink tool from this utensil container to the other utensil holder",
+  "episode_s": 60,
+  "scene": "cooking_table",
+  "attributes": [
+   "spatial",
+   "vague",
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "CubesAndBlocksInBinTask",
+  "instruction": "Put all the cubes and blocks in the bin",
+  "episode_s": 240,
+  "scene": "toys_cleanup",
+  "attributes": [
+   "sorting",
+   "conjunction"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "DishesInBinTask",
+  "instruction": "Put the dishware in the grey bin",
+  "episode_s": 180,
+  "scene": "mugs2_bananas2_ketchup_rubiks3_bin",
+  "attributes": [
+   "vague",
+   "semantics"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ElectronicsInBinTask",
+  "instruction": "Put the electronic devices in the grey bin",
+  "episode_s": 180,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "semantics",
+   "sorting"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "FoodPacking1BoxesTask",
+  "instruction": "Pack boxed foods into the bin",
+  "episode_s": 60,
+  "scene": "foodpacking_1bin_1box_1can",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FoodPacking1CansTask",
+  "instruction": "Pack canned foods into the bin",
+  "episode_s": 60,
+  "scene": "foodpacking_1bin_1box_1can",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FoodPacking2BoxesTask",
+  "instruction": "Pack boxed foods into the bin",
+  "episode_s": 180,
+  "scene": "foodpacking_1bin_2box_2can",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FoodPacking2CansTask",
+  "instruction": "Pack canned foods into the bin",
+  "episode_s": 180,
+  "scene": "foodpacking_1bin_2box_2can",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FoodPacking3BoxesTask",
+  "instruction": "Pack boxed foods into the bin",
+  "episode_s": 240,
+  "scene": "foodpacking_1bin_3box_3can",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "FoodPacking3CansTask",
+  "instruction": "Pack canned foods into the bin",
+  "episode_s": 240,
+  "scene": "foodpacking_1bin_3box_3can",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "FoodPackingByColorTask",
+  "instruction": "Pack yellow objects in right container and blue object in the left container",
+  "episode_s": 120,
+  "scene": "food_packing",
+  "attributes": [
+   "spatial",
+   "sorting",
+   "color"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "FruitsGreenLimesOnPlateTask",
+  "instruction": "Put all the green fruit on the plate",
+  "episode_s": 90,
+  "scene": "fruits_out_of_basket",
+  "attributes": [
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FruitsMovingOrangeOrLimeTask",
+  "instruction": "Move an orange or a lime to the wood bowl",
+  "episode_s": 60,
+  "scene": "fruits_in_basket",
+  "attributes": [
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FruitsMovingTask",
+  "instruction": "Move an orange to the white bowl",
+  "episode_s": 60,
+  "scene": "fruits_in_basket",
+  "attributes": [
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FruitsOnionTask",
+  "instruction": "Put the onion in the wood bowl",
+  "episode_s": 60,
+  "scene": "fruits_in_basket",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FruitsOnionToPlateTask",
+  "instruction": "Put the onion on the plate",
+  "episode_s": 60,
+  "scene": "fruits_in_basket",
+  "attributes": [
+   "semantics",
+   "vague"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "FruitsOnPlate3Task",
+  "instruction": "Put three (3) fruits on the plate",
+  "episode_s": 200,
+  "scene": "fruits_out_of_basket",
+  "attributes": [
+   "semantics",
+   "vague",
+   "counting"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "FruitsOnPlateTask",
+  "instruction": "Put all the fruits on the plate",
+  "episode_s": 300,
+  "scene": "fruits_out_of_basket",
+  "attributes": [
+   "semantics",
+   "vague"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "FruitsOrangesOnPlateTask",
+  "instruction": "Put all the oranges on the plate",
+  "episode_s": 90,
+  "scene": "fruits_out_of_basket",
+  "attributes": [
+   "counting",
+   "vague",
+   "semantics"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "GrabABagelTask",
+  "instruction": "Grab a bagel",
+  "episode_s": 30,
+  "scene": "breakfast_table",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "GrabAFruitTask",
+  "instruction": "Pick up a fruit",
+  "episode_s": 30,
+  "scene": "breakfast_table",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "GreenSpoonsInPotTask",
+  "instruction": "Put the green spoons in the pot",
+  "episode_s": 180,
+  "scene": "ladle_pot",
+  "attributes": [
+   "reorientation",
+   "color"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "HammersInLeftBinTask",
+  "instruction": "Put the red hammer and black hammer in the left bin",
+  "episode_s": 180,
+  "scene": "tools_container",
+  "attributes": [
+   "semantics",
+   "spatial",
+   "color"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "JugsOnShelfTask",
+  "instruction": "Put all the jugs on the shelf",
+  "episode_s": 120,
+  "scene": "shelf_with_cleaning_products",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "KeyboardOutOfBinTask",
+  "instruction": "Take the keyboard out of the bin and put it on the table",
+  "episode_s": 60,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "LargerObjectRaisinBoxInBinTask",
+  "instruction": "Place the larger object in the grey bin.",
+  "episode_s": 30,
+  "scene": "butter_raisin_box_grey_bin",
+  "attributes": [
+   "size"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "MarkerInMugTask",
+  "instruction": "Put the whiteboard marker in the mug",
+  "episode_s": 40,
+  "scene": "workdesk",
+  "attributes": [
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "MouseOnKeyboardTask",
+  "instruction": "Put the computer mouse on the keyboard",
+  "episode_s": 60,
+  "scene": "workdesk",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "MoveBananaToBagelPlateTask",
+  "instruction": "Move the bananas to the bagel plate",
+  "episode_s": 90,
+  "scene": "breakfast_table",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "MustardAboveRaisinTask",
+  "instruction": "Place the mustard on the raisin box. ",
+  "episode_s": 40,
+  "scene": "mustard_raisin_box",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "MustardInLeftBinTask",
+  "instruction": "Put the mustard in the left bin",
+  "episode_s": 30,
+  "scene": "two_bin",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "MustardInRightBinTask",
+  "instruction": "Put the mustard in the right bin",
+  "episode_s": 30,
+  "scene": "two_bin",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "NonHammerToolsInRightBinTask",
+  "instruction": "Put the non-hammer tools in the right bin",
+  "episode_s": 180,
+  "scene": "tools_container",
+  "attributes": [
+   "semantics",
+   "spatial",
+   "sorting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "OneBottleInSquarePailTask",
+  "instruction": "Put any white plastic bottle in the square pail",
+  "episode_s": 60,
+  "scene": "shelf_with_cleaning_products",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "OneBottleOnShelfTask",
+  "instruction": "Put any white plastic bottle on the shelf",
+  "episode_s": 60,
+  "scene": "shelf_with_cleaning_products",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PhoneOrRemoteInBinTask",
+  "instruction": "Put the phone or the remote in the grey bin",
+  "episode_s": 60,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PickDrillTask",
+  "instruction": "Pick up the cordless drill.",
+  "episode_s": 40,
+  "scene": "mugs4_measuringcup_drill_bowl",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PickGlassesTask",
+  "instruction": "Pick up the eye glasses",
+  "episode_s": 30,
+  "scene": "workdesk",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PickOrangeObjectTask",
+  "instruction": "Pick up the orange measuring cup",
+  "episode_s": 60,
+  "scene": "cooking_table",
+  "attributes": [
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PickUpBluePitcherTask",
+  "instruction": "Pick up the large blue pitcher",
+  "episode_s": 30,
+  "scene": "blue",
+  "attributes": [
+   "color",
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "PickUpGreenObjectTask",
+  "instruction": "Pick up the green vegetable block",
+  "episode_s": 30,
+  "scene": "green",
+  "attributes": [
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PinkSpoonInPotTask",
+  "instruction": "Put the pink spaghetti spoon in the pot",
+  "episode_s": 60,
+  "scene": "ladle_pot",
+  "attributes": [
+   "color",
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "PlasticBottlesInSquarePailTask",
+  "instruction": "Put all the small plastic bottles in the square pail",
+  "episode_s": 180,
+  "scene": "shelf_with_cleaning_products",
+  "attributes": [
+   "semantics",
+   "sorting",
+   "size"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "PutBowlOnShelfTopTask",
+  "instruction": "Put the serving bowl anywhere on the shelf in front of you",
+  "episode_s": 60,
+  "scene": "shelf_mugs_jug_bowl",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "PutMugsOnShelfTask",
+  "instruction": "Put the two mugs on the shelf",
+  "episode_s": 180,
+  "scene": "shelf_mugs_jug_bowl",
+  "attributes": [
+   "affordance",
+   "spatial",
+   "counting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "PutTwoMugsOnShelfTask",
+  "instruction": "Put two (2) mugs on the wire shelf",
+  "episode_s": 180,
+  "scene": "wire_shelf_mugs_plate_spatula",
+  "attributes": [
+   "affordance",
+   "spatial",
+   "counting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RecycleCartonsOnBoxTask",
+  "instruction": "Put the cartons that can be recycled on the box",
+  "episode_s": 90,
+  "scene": "cartons_on_box",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "RecycleCartonsVerticalCrateTask",
+  "instruction": "Put the cartons that can be recycled in the vertical crate",
+  "episode_s": 90,
+  "scene": "cartons_in_vertical_crate",
+  "attributes": [
+   "semantics",
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RecycleCartonTask",
+  "instruction": "Put the recyclable cartons in the grey bin",
+  "episode_s": 90,
+  "scene": "cartons_in_crate",
+  "attributes": [
+   "semantics",
+   "vague"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "RedDishesInBinTask",
+  "instruction": "Put the red dishware in the grey bin",
+  "episode_s": 60,
+  "scene": "rubiks_cube_banana_bowl_mug_bin",
+  "attributes": [
+   "color",
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "RedItemsInBinTask",
+  "instruction": "Put all the red things in the grey bin",
+  "episode_s": 60,
+  "scene": "rubiks_cube_banana_bowl_mug_bin",
+  "attributes": [
+   "color",
+   "sorting"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ReorientAllMugsTask",
+  "instruction": "Reorient all the mugs upright so that the opening is facing upwards.",
+  "episode_s": 90,
+  "scene": "mugs4_measuringcup_drill_bowl",
+  "attributes": [
+   "reorientation"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "ReorientJugTask",
+  "instruction": "Stand the jug upright",
+  "episode_s": 60,
+  "scene": "shelf_with_cleaning_products",
+  "attributes": [
+   "semantics",
+   "reorientation",
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ReorientRedMugTask",
+  "instruction": "Put the red mug upright so that the opening is facing upwards.",
+  "episode_s": 60,
+  "scene": "mugs4_measuringcup_drill_bowl",
+  "attributes": [
+   "reorientation",
+   "color"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ReorientWhiteMugsTask",
+  "instruction": "Make sure all the white mugs are upright so that the opening is facing upwards.",
+  "episode_s": 60,
+  "scene": "mugs4_measuringcup_drill_bowl_v2",
+  "attributes": [
+   "reorientation",
+   "color"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RubiksCubeAndBananaTask",
+  "instruction": "Put the cube and the banana in the bowl",
+  "episode_s": 60,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "RubiksCubeBehindBowlTask",
+  "instruction": "Put the rubiks cube behind the bowl",
+  "episode_s": 30,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RubiksCubeInFrontOfBowlTask",
+  "instruction": "Put the rubiks cube in front of the bowl",
+  "episode_s": 30,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RubiksCubeLeftOfBowlTask",
+  "instruction": "Put the rubiks cube to the left of the bowl",
+  "episode_s": 30,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RubiksCubeOrBananaTask",
+  "instruction": "Put the cube or the banana in the bowl",
+  "episode_s": 30,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "RubiksCubeRightOfBowlTask",
+  "instruction": "Put the rubiks cube to the right of the bowl",
+  "episode_s": 30,
+  "scene": "rubiks_cube_banana_bowl_mug_bin",
+  "attributes": [
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "RubiksCubesInBinTask",
+  "instruction": "Sort all rubiks cubes into the bin",
+  "episode_s": 120,
+  "scene": "toys_cleanup",
+  "attributes": [
+   "sorting"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "RubiksCubeTask",
+  "instruction": "Put the cube in the bowl",
+  "episode_s": 40,
+  "scene": "rubiks_cube_bowl",
+  "attributes": [],
+  "difficulty": "simple"
+ },
+ {
+  "task": "RubiksCubeThenBananaTask",
+  "instruction": "Put the cube then the banana in the bowl",
+  "episode_s": 60,
+  "scene": "rubiks_cube_banana_bowl",
+  "attributes": [
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "SauceBottlesCrateTask",
+  "instruction": "Put the red bbq sauce bottle in the crate",
+  "episode_s": 40,
+  "scene": "bottles_crate",
+  "attributes": [
+   "color",
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "SmallerObjectButterInBinTask",
+  "instruction": "Place the smaller object in the grey bin.",
+  "episode_s": 30,
+  "scene": "butter_raisin_box_grey_bin",
+  "attributes": [
+   "size"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "SmallPumpkinInBinTask",
+  "instruction": "Put the small pumpkin in the bin",
+  "episode_s": 60,
+  "scene": "clutter_fruit_bottle_bluebin",
+  "attributes": [
+   "size"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "SmartphoneInBinTask",
+  "instruction": "Put the smartphone in the grey bin",
+  "episode_s": 60,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "SpoonInMugTask",
+  "instruction": "Put the metal spoon that's in the wooden bowl in the mug",
+  "episode_s": 60,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "affordance",
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "SpoonsInPotTask",
+  "instruction": "Put all of the serving spoons with no holes in the pot",
+  "episode_s": 180,
+  "scene": "ladle_pot",
+  "attributes": [
+   "reorientation",
+   "semantics",
+   "affordance"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "Stack3RubiksCubeTask",
+  "instruction": "Stack the rubiks cubes in a tower",
+  "episode_s": 60,
+  "scene": "rubiks_cube_3",
+  "attributes": [
+   "stacking"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "StackWhiteMugsTask",
+  "instruction": "Stack the white mugs on top of each other.",
+  "episode_s": 60,
+  "scene": "mugs4_measuringcup_drill_bowl",
+  "attributes": [
+   "stacking",
+   "color"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "StackYellowOnRedTask",
+  "instruction": "Stack the yellow block on the red block",
+  "episode_s": 60,
+  "scene": "toys_cleanup",
+  "attributes": [
+   "stacking"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "TakeMeasuringSpoonOutTask",
+  "instruction": "Take the white colored measuring spoon out of the red bowl and put it on the table.",
+  "episode_s": 40,
+  "scene": "mugs4_measuringcup_drill_bowl_v2",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "TakeMugsOffOfShelfTask",
+  "instruction": "Take the mugs off the shelf",
+  "episode_s": 180,
+  "scene": "mugs_on_shelf",
+  "attributes": [
+   "semantics",
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "TakeSpatulaOffShelfTask",
+  "instruction": "Take the spatula off the shelf and put it on the table",
+  "episode_s": 60,
+  "scene": "wire_shelf_mugs_plate_spatula",
+  "attributes": [
+   "affordance",
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ThrowAwayAppleTask",
+  "instruction": "Throw away the apple",
+  "episode_s": 60,
+  "scene": "workdesk_snacks",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "ThrowAwaySnacksTask",
+  "instruction": "Put away the snacks in the bin",
+  "episode_s": 120,
+  "scene": "workdesk_snacks",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "ToolOrganizationBothTask",
+  "instruction": "Put hammers in the right bin and do not touch anything else",
+  "episode_s": 180,
+  "scene": "tools_container",
+  "attributes": [
+   "semantics",
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ToolOrganizationTask",
+  "instruction": "Put the red hammer and black hammer in the left bin",
+  "episode_s": 180,
+  "scene": "tools_container",
+  "attributes": [
+   "semantics",
+   "spatial",
+   "color"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "ToolsPickingAllHammersTask",
+  "instruction": "Take out all the hammers and put them on the table",
+  "episode_s": 240,
+  "scene": "tools_picking",
+  "attributes": [
+   "semantics",
+   "spatial"
+  ],
+  "difficulty": "complex"
+ },
+ {
+  "task": "ToolsPickingDrillTask",
+  "instruction": "Select the cordless drill and put it on the table",
+  "episode_s": 60,
+  "scene": "tools_picking",
+  "attributes": [
+   "spatial",
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "ToolsPickingHammerTask",
+  "instruction": "Select the blue hammer and put it on the table",
+  "episode_s": 60,
+  "scene": "tools_picking",
+  "attributes": [
+   "semantics",
+   "spatial",
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "ToyInBinTask",
+  "instruction": "Put the lizard away in the bin",
+  "episode_s": 60,
+  "scene": "workdesk_bin",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "UnstackRubiksCubeTask",
+  "instruction": "Unstack the rubiks cube tower",
+  "episode_s": 90,
+  "scene": "mug_banana_ketchup_bowl_rubiks3_bin",
+  "attributes": [
+   "stacking"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "UtensilsInMugTask",
+  "instruction": "Put the fork and spoon in the ceramicmug",
+  "episode_s": 90,
+  "scene": "breakfast_table",
+  "attributes": [
+   "semantics",
+   "affordance"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "WhiteMugInCenterOfTableTask",
+  "instruction": "Put the white mug in the center of the table.",
+  "episode_s": 30,
+  "scene": "objects_around_table",
+  "attributes": [
+   "color",
+   "spatial"
+  ],
+  "difficulty": "moderate"
+ },
+ {
+  "task": "WhiteMugsInBinTask",
+  "instruction": "Clean up the white mugs",
+  "episode_s": 60,
+  "scene": "mugs2_bananas2_ketchup_rubiks3_bin",
+  "attributes": [
+   "color"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "WoodSpatulaToBowlTask",
+  "instruction": "Put the wooden spatula in the bowl",
+  "episode_s": 60,
+  "scene": "fruits_in_basket",
+  "attributes": [
+   "semantics"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "YellowAndWhiteObjectsInBinTask",
+  "instruction": "Put all white objects and yellow objects in the grey bin",
+  "episode_s": 60,
+  "scene": "mug_banana_ketchup_bowl_rubiks3_bin",
+  "attributes": [
+   "color",
+   "conjunction"
+  ],
+  "difficulty": "simple"
+ },
+ {
+  "task": "YogurtInBowlTask",
+  "instruction": "Put the small red yogurt in the red bowl",
+  "episode_s": 40,
+  "scene": "breakfast_table",
+  "attributes": [
+   "color",
+   "size"
+  ],
+  "difficulty": "simple"
+ }
+]

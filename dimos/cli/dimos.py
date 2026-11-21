@@ -81,7 +81,7 @@ main = typer.Typer(
     no_args_is_help=True,
 )
 
-SIMULATORS = ("mujoco", "dimsim")
+SIMULATORS = ("mujoco", "dimsim", "robolab")
 RECORDERS = ("sqlite", "mcap")
 
 # Flags with an optional value; bare `--flag` means the first choice.
