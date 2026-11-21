@@ -287,9 +287,9 @@ def gravity_fit(run: Calibration) -> str:
             f"The fit is worse over all the dithered joints than the running model "
             f"({total['running']:.3f} -> {total['held_out']:.3f} N m RMS).{listed} "
             "Keep what the arm runs, or save and apply the fit anyway?",
-            ["keep", "save anyway"],
+            ["keep", "save"],
         )
-        if answer != "save anyway":
+        if answer != "save":
             return (
                 f"not saved: worse over all than the running model, {total['running']:.3f} -> "
                 f"{total['held_out']:.3f} N m RMS"

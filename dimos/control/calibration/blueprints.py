@@ -14,9 +14,9 @@
 
 """The ``<robot>-calibrate`` blueprints: a Damiao connection that takes ``set_config``, and the calibration module.
 
-The module's ``position_command`` and the connection's ``joint_state`` connect by name;
-``dimos arm calibrate <robot>`` runs these blueprints and answers the module, and reads the
-robot they calibrate off them (``calibrated_robot``).
+The module's ``position_command`` and the connection's ``joint_state`` connect by name.
+``dimos run <robot>-calibrate`` runs one and ``dimos shell`` drives the module's RPCs;
+``calibrated_robot`` reads the robot a blueprint calibrates off it.
 """
 
 from __future__ import annotations

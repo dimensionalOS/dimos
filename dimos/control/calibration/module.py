@@ -14,31 +14,38 @@
 
 """Calibrates one arm of a Damiao robot, in the same ``dimos run`` as its connection.
 
-The steps (``steps``) run on one thread. A motion streams one target per ``joint_state``
-sample on ``position_command`` and the thread waits for it to end; while it asks the operator
-or computes, nothing is sent, so the connection's deadman holds the arm and undoes live
-changes. The operator is reached through the ``ArmCalibrateOperator/show``, ``/ask`` and
-``/done`` RPCs that ``dimos arm calibrate`` serves; unanswered, the module waits and the arm
-stays held. ``abort`` stops streaming at once and offers to go home.
+``run`` starts the steps (``steps``) on one thread and returns. A motion streams one target per
+``joint_state`` sample on ``position_command`` and the thread waits for it to end; while it asks
+the operator or computes, nothing is sent, so the connection's deadman holds the arm and undoes
+live changes. The operator, in ``dimos shell`` or a program, reads ``status`` and replies with
+``answer``; unanswered, the thread waits and the arm stays held. ``abort`` stops streaming at once
+and offers to go home.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 import itertools
 import math
+from pathlib import Path
 import threading
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
-from dimos.control.calibration import steps
 from dimos.control.calibration.gravity_fit import Measurement
 from dimos.control.calibration.gravity_poses import ArmModel, Pose
 from dimos.control.calibration.motion import HoldMode, Motion, Sample, plan_path
+from dimos.control.calibration.schema import (
+    AppliedFile,
+    ArmCalibrationError,
+    bake_into_urdf,
+    load_for_spec,
+)
 from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     arm_name,
@@ -46,19 +53,29 @@ from dimos.control.calibration.spec import (
     specs_from_damiao_robot,
 )
 from dimos.control.calibration.step_analysis import RestNoise, StepMetrics
-from dimos.control.calibration.steps import AbortedError, SkippedError, StalledError
+from dimos.control.calibration.steps import (
+    STEPS,
+    TITLES,
+    AbortedError,
+    SkippedError,
+    StalledError,
+    plan,
+)
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-OPERATOR = "ArmCalibrateOperator"
-Call = Callable[[str, list[Any], Callable[[Any], None]], Any]
+LOG_SIZE = 50
+NOT_HOME = "The arm is not home: support it before stopping the run, which turns its motors off."
+RunState = Literal["idle", "running", "waiting", "done", "failed", "aborted"]
+StepState = Literal["pending", "running", "done", "skipped", "failed", "aborted"]
 
 
 class CalibrationModuleConfig(ModuleConfig):
@@ -135,14 +152,14 @@ class CalibrationModuleConfig(ModuleConfig):
     confirm_poses: int = Field(default=3, ge=1)
     tracking_rest_ratio: float = Field(default=1.5, gt=0.0)
     grid_points: int = Field(default=3000, ge=1)
-    steps: list[str] = Field(default_factory=lambda: list(steps.STEPS))
+    steps: list[str] = Field(default_factory=lambda: list(STEPS))
     confirm_each: bool = True
 
     @model_validator(mode="after")
     def _check(self) -> Self:
-        unknown = set(self.steps) - set(steps.STEPS)
+        unknown = set(self.steps) - set(STEPS)
         if unknown:
-            raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(steps.STEPS)}")
+            raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(STEPS)}")
         if self.dither_deg > self.max_dither_deg:
             raise ValueError("dither_deg must not exceed max_dither_deg")
         if self.max_hold_s <= 2.0 * self.rest_window_s:
@@ -193,6 +210,140 @@ class ArmConfigSpec(Spec, Protocol):
     def set_config(self, patch: dict[str, Any], save: bool = False) -> dict[str, Any]: ...
 
 
+class StepRow(BaseConfig):
+    """One step of the plan: what it does until it ends, then its one-line result."""
+
+    name: str
+    state: StepState
+    result: str
+
+
+class CalibrationStatus(BaseConfig):
+    """What the run does and asks, all an operator needs to answer it; ``print`` it.
+
+    Attributes:
+        state: "idle" before the first run, "running", "waiting" on ``question``, then how the
+            run ended: "done", "failed" or "aborted".
+        arm: The arm's id.
+        step: The step running, or the last one that ran.
+        steps: Every step of the plan in order, with its state and result.
+        message: The latest progress the run showed.
+        question: What the run waits on, or None.
+        answers: The words ``answer`` takes for ``question``.
+        file: The calibration file the arm runs, as the run last read it.
+        summary: Each step's result, or why the run ended, once it has.
+        log: The last messages, questions (``?``) and answers (``>``), oldest first.
+    """
+
+    state: RunState
+    arm: str
+    step: str | None = None
+    steps: list[StepRow]
+    message: str = ""
+    question: str | None = None
+    answers: list[str] = Field(default_factory=list)
+    file: AppliedFile | None = None
+    summary: str = ""
+    log: list[str] = Field(default_factory=list)
+
+    def __str__(self) -> str:
+        lines = [f"{self.arm}: {self.state}" + (f" at {self.step}" if self.step else "")]
+        lines += [f"  {row.name:<17} {row.state:<8} {row.result}" for row in self.steps]
+        if self.file is not None:
+            lines.append(f"runs {self.file.path}")
+        if self.message:
+            lines.append(self.message)
+        if self.question is not None:
+            lines += [f"? {self.question}", "  answer: " + " | ".join(self.answers)]
+        return "\n".join(lines)
+
+
+def _rows(steps: list[tuple[str, str | None]]) -> list[StepRow]:
+    return [
+        StepRow(name=step, state="pending", result=TITLES[step])
+        if reason is None
+        else StepRow(name=step, state="skipped", result=reason)
+        for step, reason in steps
+    ]
+
+
+class Operator:
+    """The run's operator: the status ``show`` and ``ask`` keep, and the answer the run waits on.
+
+    ``ask`` poses a question and returns the event ``answer`` sets; the run waits on it with
+    ``Calibration.wait``, so ``abort`` and ``stop`` wake it too.
+
+    Args:
+        arm: The arm's id.
+        steps: The plan, as ``steps.plan`` gives it.
+    """
+
+    def __init__(self, arm: str, steps: list[tuple[str, str | None]]) -> None:
+        self._lock = threading.Lock()
+        self._log: deque[str] = deque(maxlen=LOG_SIZE)
+        self._status = CalibrationStatus(state="idle", arm=arm, steps=_rows(steps))
+        self._answered = threading.Event()
+        self.reply = ""
+
+    def status(self) -> CalibrationStatus:
+        with self._lock:
+            return self._status.model_copy(update={"log": list(self._log)}, deep=True)
+
+    def begin(self, steps: list[tuple[str, str | None]]) -> None:
+        """A new run of the plan ``steps``; the log goes on."""
+        with self._lock:
+            self._status = CalibrationStatus(
+                state="running", arm=self._status.arm, steps=_rows(steps)
+            )
+
+    def show(self, text: str) -> None:
+        with self._lock:
+            self._status.message = text
+            self._log.append(text)
+
+    def ask(self, prompt: str, answers: list[str]) -> threading.Event:
+        with self._lock:
+            self._answered = threading.Event()
+            self._status.state, self._status.question = "waiting", prompt
+            self._status.answers = list(answers)
+            self._log.append(f"? {prompt}")
+            return self._answered
+
+    def answer(self, text: str) -> str:
+        """Answer the pending question with one of its answers: "ok", or why not."""
+        word = text.strip().lower()
+        with self._lock:
+            if self._status.question is None:
+                return "no question pending"
+            if word not in self._status.answers:
+                return f"unknown answer {text!r}; answer {' or '.join(self._status.answers)}"
+            self.reply = word
+            self._status.state, self._status.question, self._status.answers = "running", None, []
+            self._log.append(f"> {word}")
+            self._answered.set()
+        return "ok"
+
+    def withdraw(self) -> None:
+        """The question was answered, or the run interrupted: it runs on."""
+        with self._lock:
+            self._status.state, self._status.question, self._status.answers = "running", None, []
+
+    def mark(self, step: str, state: StepState, result: str | None = None) -> None:
+        """``step`` is now ``state``, with ``result`` once it has one."""
+        with self._lock:
+            row = next(row for row in self._status.steps if row.name == step)
+            row.state, row.result = state, row.result if result is None else result
+            self._status.step = step
+
+    def finish(self, state: RunState, summary: str, home: bool) -> None:
+        """The run ended ``state``, as ``summary`` says; ``home``: the arm is home."""
+        message = f"Calibration {'done' if state == 'done' else 'not done'}:\n{summary}"
+        message += "" if home else f"\n{NOT_HOME}"
+        with self._lock:
+            self._status.state, self._status.summary, self._status.message = state, summary, message
+            self._log.append(message)
+
+
 class Calibration:
     """One calibration run: ``feed`` it every ``joint_state``, ``run`` it on its own thread.
 
@@ -200,11 +351,12 @@ class Calibration:
         spec: The arm.
         config: The settings.
         connection: The connection's ``get_config`` and ``set_config``.
-        call: Calls an operator RPC by name with a reply callback (``rpc.call``'s form).
+        operator: What it shows and asks, the plan of its ``config.steps`` begun.
         publish: Sends one position command.
         torque_limit_nm: Each joint's motor torque limit, joint order: past it over kp off
             target, the motor cannot push through, and a motion stops.
-        block: How the run thread waits on an event (tests step a fake arm instead).
+        block: How the run thread waits on the arm (tests step a fake arm instead); it waits
+            on the operator in real time.
     """
 
     def __init__(
@@ -212,7 +364,7 @@ class Calibration:
         spec: ArmCalibrationSpec,
         config: CalibrationModuleConfig,
         connection: ArmConfigSpec,
-        call: Call,
+        operator: Operator,
         publish: Callable[[JointState], None],
         torque_limit_nm: np.ndarray,
         block: Callable[[threading.Event], Any] = threading.Event.wait,
@@ -228,7 +380,7 @@ class Calibration:
         self.arm.clearance_m = self.arm.reach_m * (
             self.excursion_rad + math.radians(config.float_trip_deg)
         )
-        self._call, self._publish, self._block = call, publish, block
+        self.operator, self._publish, self._block = operator, publish, block
         self._torque_limit = torque_limit_nm
         self._lock = threading.Lock()
         self._motion: Motion | None = None
@@ -287,14 +439,17 @@ class Calibration:
             if self._waiting is not None:
                 self._waiting.set()
 
-    def wait(self, event: threading.Event) -> None:
-        """Wait for ``event``; raises what interrupted the run (``abort``, ``stop``, a bad feed)."""
+    def wait(
+        self, event: threading.Event, block: Callable[[threading.Event], Any] | None = None
+    ) -> None:
+        """Wait for ``event``, as for the arm unless ``block`` says how; raises what interrupted
+        the run (``abort``, ``stop``, a bad feed)."""
         with self._lock:
             if self._interrupt is not None:
                 raise self._interrupt
             self._waiting = event
         try:
-            self._block(event)
+            (block or self._block)(event)
         finally:
             with self._lock:
                 self._waiting = None
@@ -302,30 +457,24 @@ class Calibration:
             if self._interrupt is not None:
                 raise self._interrupt
 
-    def _operator(self, name: str, *args: Any) -> Any:
-        replies: list[Any] = []
-        answered = threading.Event()
-
-        def reply(value: Any) -> None:
-            replies.append(value)
-            answered.set()
-
-        self._call(name, list(args), reply)
-        self.wait(answered)
-        if isinstance(replies[0], BaseException):
-            raise replies[0]
-        return replies[0]
-
     def show(self, text: str) -> None:
-        self._operator("show", text)
+        self.operator.show(text)
 
     def ask(self, prompt: str, choices: list[str]) -> str:
-        """The operator's choice; "abort" (q) raises ``AbortedError``, whichever of it and the
-        ``abort`` RPC arrives first."""
-        answer: str = self._operator("ask", prompt, choices)
-        if answer == "abort":
-            raise AbortedError("aborted by the operator")
-        return answer
+        """The operator's answer, one of ``choices``; ``abort`` ends the wait."""
+        answered = self.operator.ask(prompt, choices)
+        try:
+            self.wait(answered, threading.Event.wait)
+        finally:
+            self.operator.withdraw()
+        return self.operator.reply
+
+    def status(self) -> CalibrationStatus:
+        """The operator's status, with the file the arm runs as the run last read it."""
+        status = self.operator.status()
+        file = self.state.get("file")
+        status.file = None if file is None else AppliedFile.model_validate(file)
+        return status
 
     def confirm(self, prompt: str, *, skippable: bool = True) -> None:
         if self.ask(prompt, ["go", "skip"] if skippable else ["go"]) == "skip":
@@ -423,32 +572,44 @@ class Calibration:
             self.move(back, "the previous pose", ask=False, patch=patch)
         self.move(self.arm.home, "home", patch=patch)
 
+    def _step(self, name: str, reason: str | None) -> str:
+        """Step ``name``'s result, run unless ``reason`` says why not; its row follows it."""
+        if reason is not None:
+            self.operator.mark(name, "skipped", reason)
+            return f"skipped: {reason}"
+        self.operator.mark(name, "running")
+        try:
+            result = STEPS[name](self)
+        except SkippedError:
+            self.operator.mark(name, "skipped", "skipped by the operator")
+            return "skipped by the operator"
+        self.operator.mark(name, "done", result)
+        return result
+
     def run(self) -> None:
         """Every step in order; on a failure or abort the arm holds and home is offered."""
-        ok, current, results = False, "check", {}
+        ended: RunState = "failed"
+        current, results = "check", {}
         try:
             chosen = ["check", *(step for step in self.config.steps if step != "check")]
             self.show(f"Calibrating {self.spec.arm_id}: {', '.join(chosen)}")
-            results["check"] = steps.check(self)
-            for current, reason in steps.plan(self.config.steps, self.state["can_float"]):
-                if current == "check":
-                    continue
-                try:
-                    results[current] = (
-                        f"skipped: {reason}" if reason else steps.STEPS[current](self)
-                    )
-                except SkippedError:
-                    results[current] = "skipped by the operator"
-                self.show(f"{current}: {results[current]}")
-            ok, text = True, "\n".join(f"  {step}: {result}" for step, result in results.items())
+            results["check"] = self._step("check", None)
+            for current, reason in plan(self.config.steps, self.state["can_float"]):
+                if current != "check":
+                    results[current] = self._step(current, reason)
+                    self.show(f"{current}: {results[current]}")
+            ended = "done"
+            text = "\n".join(f"  {step}: {result}" for step, result in results.items())
         except AbortedError as error:
-            text = f"{current}: {error}"
+            self.operator.mark(current, "aborted", str(error))
+            ended, text = "aborted", f"{current}: {error}"
         except Exception as error:
             logger.exception(f"calibration step {current} failed")
+            self.operator.mark(current, "failed", f"{type(error).__name__}: {error}")
             text = f"{current} failed: {type(error).__name__}: {error}"
         if self._stopping:
             return
-        if not ok:
+        if ended != "done":
             with self._lock:
                 self._interrupt = None
             try:
@@ -464,11 +625,27 @@ class Calibration:
                 text += f"; going home failed: {type(error).__name__}: {error}"
             with self._lock:
                 self._interrupt = None
-        self._operator("done", ok, text, self.at_home)
+        self.operator.finish(ended, text, self.at_home)
+
+
+def bake_calibration(
+    spec: ArmCalibrationSpec, state: dict[str, Any], urdf_path: str, out_path: str | None = None
+) -> str:
+    """Bake the fitted links of the file the arm runs (``state``: its ``get_config`` entry) into
+    the URDF at ``urdf_path``; the path written, ``out_path`` or ``calibrated.urdf`` beside it."""
+    if state["file"] is None:
+        raise ArmCalibrationError(f"{spec.arm_id} runs no calibration file, so nothing is fitted")
+    file = Path(state["file"]["path"])
+    out = Path(out_path) if out_path else file.with_name("calibrated.urdf")
+    out.write_text(bake_into_urdf(load_for_spec(spec, file), Path(urdf_path).read_text()))
+    return str(out)
 
 
 class CalibrationModule(Module):
-    """Calibrates one arm of ``robot`` (see the module docstring); ``abort`` is its only RPC.
+    """Calibrates one arm of ``robot`` (see the module docstring), driven by its RPCs.
+
+    ``run`` starts a calibration, ``status`` says what it does and asks, ``answer`` replies,
+    ``abort`` stops it, and ``bake`` writes the arm's fitted links into a URDF.
 
     Args:
         robot: The robot its connection deploys, from ``calibration_blueprint``; not a setting.
@@ -480,32 +657,30 @@ class CalibrationModule(Module):
     position_command: Out[JointState]
 
     _calibration: Calibration | None = None
+    _thread: threading.Thread | None = None
 
     def __init__(self, robot: DamiaoRobot, **kwargs: Any) -> None:
         self.robot = robot
+        self._connected = threading.Event()
+        self._run_lock = threading.Lock()
         super().__init__(**kwargs)
 
     @rpc
     def start(self) -> None:
         super().start()
-        spec = self.config.arm_spec(self.robot)
+        self._spec = self.config.arm_spec(self.robot)
         motors = {m.name: m for bus in self.robot.buses for m in bus.arm}
-        rpc_client = self.rpc
-
-        def call(name: str, args: list[Any], reply: Callable[[Any], None]) -> Any:
-            return rpc_client.call(f"{OPERATOR}/{name}", (args, {}), reply)
-
-        calibration = Calibration(
-            spec,
-            self.config,
-            self._connection,
-            call,
-            self.position_command.publish,
-            np.asarray([motor_torque_limit_nm(motors[name]) for name in spec.joint_names]),
+        self._torque_limit = np.asarray(
+            [motor_torque_limit_nm(motors[name]) for name in self._spec.joint_names]
         )
-        self._calibration = calibration
-        self.register_disposable(Disposable(self.joint_state.subscribe(calibration.feed)))
-        threading.Thread(target=calibration.run, daemon=True, name="calibration").start()
+        self._operator = Operator(self._spec.arm_id, plan(self.config.steps, self.robot.gravity))
+        self.register_disposable(Disposable(self.joint_state.subscribe(self._feed)))
+
+    def _feed(self, msg: JointState) -> None:
+        self._connected.set()
+        calibration = self._calibration
+        if calibration is not None:
+            calibration.feed(msg)
 
     @rpc
     def stop(self) -> None:
@@ -514,7 +689,57 @@ class CalibrationModule(Module):
         super().stop()
 
     @rpc
-    def abort(self) -> None:
-        """Stop streaming now (the connection holds the arm), then offer to go home."""
-        assert self._calibration is not None, "the calibration module has not started"
-        self._calibration.abort()
+    def run(self, steps: list[str] | None = None) -> str:
+        """Start calibrating: check, then ``steps`` (default: the ``steps`` setting).
+
+        Returns "started" at once, or why not; ``status`` follows the run.
+        """
+        chosen = self.config.steps if steps is None else list(steps)
+        unknown = sorted(set(chosen) - set(STEPS))
+        if unknown:
+            return f"unknown steps {unknown}; the steps are {list(STEPS)}"
+        with self._run_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return "already running"
+            if not self._connected.is_set():
+                return "not connected: no joint_state from the arm's connection yet"
+            self._operator.begin(plan(chosen, self.robot.gravity))
+            calibration = Calibration(
+                self._spec,
+                self.config.model_copy(update={"steps": chosen}),
+                self._connection,
+                self._operator,
+                self.position_command.publish,
+                self._torque_limit,
+            )
+            self._calibration = calibration
+            self._thread = threading.Thread(target=calibration.run, daemon=True, name="calibration")
+            self._thread.start()
+        return "started"
+
+    @rpc
+    def status(self) -> CalibrationStatus:
+        """What the run does, has found and asks; ``print`` it."""
+        calibration = self._calibration
+        return self._operator.status() if calibration is None else calibration.status()
+
+    @rpc
+    def answer(self, text: str) -> str:
+        """Answer the pending question with one of ``status().answers``: "ok", or why not."""
+        return self._operator.answer(text)
+
+    @rpc
+    def abort(self) -> str:
+        """Stop streaming now (the connection holds the arm), then ask whether to go home."""
+        with self._run_lock:
+            if self._calibration is None or self._thread is None or not self._thread.is_alive():
+                return "not running"
+            self._calibration.abort()
+        return "aborting"
+
+    @rpc
+    def bake(self, urdf_path: str, out_path: str | None = None) -> str:
+        """Write the URDF at ``urdf_path`` with the fitted links of the file this arm runs to
+        ``out_path`` (default: ``calibrated.urdf`` beside that file); returns the path written."""
+        state = self._connection.get_config()[self._spec.arm_id]
+        return bake_calibration(self._spec, state, urdf_path, out_path)
