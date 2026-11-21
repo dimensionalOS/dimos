@@ -413,12 +413,25 @@ class McpServer(Module):
             for module, skills in zip(modules, per_module, strict=True)
         }
         owner_counts = Counter(name for names in module_skills.values() for name in names)
+        # A module running a skill that holds a capability keeps the names it was called by, so
+        # the skill can still be stopped when another module brings the same names.
+        holding = set(app.state.cap_registry.snapshot().values())
+        running = {
+            call.remote_name for name, call in app.state.rpc_calls.items() if name in holding
+        }
+        kept = Counter(
+            skill.func_name
+            for module, skills in zip(modules, per_module, strict=True)
+            for skill in skills
+            if module.remote_name in running
+        )
         # MCP calls name only the tool, so discovery and dispatch must agree on a single owner.
         routable = [
             (module, skill)
             for module, skills in zip(modules, per_module, strict=True)
             for skill in skills
             if owner_counts[skill.func_name] == 1
+            or (module.remote_name in running and kept[skill.func_name] == 1)
         ]
         skills_by_name = {skill.func_name: skill for _, skill in routable}
         rpc_calls = {

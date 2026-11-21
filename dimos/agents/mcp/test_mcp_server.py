@@ -17,13 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from starlette.datastructures import State
 
-from dimos.agents.capabilities import CapabilityRegistry
-from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.capabilities import CapabilityHold, CapabilityRegistry
+from dimos.agents.mcp.mcp_server import McpServer, app, handle_request
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
@@ -297,6 +298,45 @@ async def test_conflict_uses_the_running_holders_lifecycle_after_discovery_chang
     assert "held by 'patrol'" in text
     assert advice in text
     rpc_calls["navigate"].assert_not_called()
+
+
+async def test_a_stop_reaches_the_module_running_the_skill_when_another_brings_the_same_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patrol = SkillInfo("Patrol", "patrol", "{}", uses=("movement",), lifecycle="background")
+    stop = SkillInfo("Patrol", "stop_patrol", "{}")
+
+    def module(name: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            instance_name=name, remote_name=name, get_skills=lambda: [patrol, stop]
+        )
+
+    rpc = MagicMock()
+    rpc.call_sync.return_value = ("stopped", lambda: None)
+    server = SimpleNamespace(rpc=rpc)
+    monkeypatch.setattr(app, "state", State())
+    app.state.rpc_calls = {}
+    app.state.cap_registry = CapabilityRegistry()
+    McpServer.on_system_modules(server, [module("first")])
+    # patrol runs on the first module and holds movement until it is stopped
+    app.state.cap_registry.acquire_hold(
+        ["movement"], CapabilityHold("patrol", "running", "background")
+    )
+
+    McpServer.on_system_modules(server, [module("first"), module("second")])
+    response = await handle_request(
+        {"method": "tools/call", "id": 1, "params": {"name": "stop_patrol"}},
+        app.state.skills,
+        app.state.rpc_calls,
+    )
+
+    assert response is not None
+    assert response["result"]["content"][0]["text"] == "stopped"
+    assert [call.args[0] for call in rpc.call_sync.call_args_list] == ["first/stop_patrol"]
+    # with nothing running, names two modules provide have no single owner
+    app.state.cap_registry.release_by_token("running")
+    McpServer.on_system_modules(server, [module("first"), module("second")])
+    assert app.state.rpc_calls == {}
 
 
 def test_instant_holder_conflict_waits_then_runs() -> None:
