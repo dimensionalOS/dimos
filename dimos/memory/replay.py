@@ -36,6 +36,7 @@ from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
@@ -159,35 +160,13 @@ class ReplayStream(Generic[T]):
         cfg = self._replay.config
         s: Stream[Any] = self._replay.store.stream(self._name)
 
-        start: float | None = None
-        if cfg.from_timestamp is not None:
-            start = cfg.from_timestamp
-        elif cfg.seek is not None:
-            recording_first = self._replay.first_ts()
-            if recording_first is None:
-                return s.order_by("ts")
-            start = recording_first + cfg.seek
-
-        end: float | None = None
-        if cfg.duration is not None:
-            if start is not None:
-                end = start + cfg.duration
-            else:
-                recording_first = self._replay.first_ts()
-                if recording_first is None:
-                    return s.order_by("ts")
-                end = recording_first + cfg.duration
-
-        if start is not None and end is not None:
-            bound = s.time_range(start, end)
-        elif start is not None:
-            bound = s.time_range(start, float("inf"))
-        elif end is not None:
-            bound = s.before(end)
-        else:
-            bound = s
-
-        return bound.order_by("ts")
+        window = RecordingWindow.for_replay(
+            self._replay.first_ts,
+            seek=cfg.seek,
+            duration=cfg.duration,
+            from_timestamp=cfg.from_timestamp,
+        )
+        return window.apply(s).order_by("ts")
 
     def first_ts(self) -> float | None:
         """First ts within the replay window (post seek/duration)."""

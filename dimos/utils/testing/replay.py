@@ -39,6 +39,7 @@ from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
@@ -232,34 +233,10 @@ class MemoryReplayAdapter(Generic[T]):
         from_timestamp: float | None = None,
         loop: bool = False,
     ) -> Iterator[tuple[float, T]]:
-        s = self._stream
-
-        first_ts = self.first_timestamp()
-        if first_ts is None:
-            return
-
-        start: float | None = None
-        if from_timestamp is not None:
-            start = from_timestamp
-        elif seek is not None:
-            start = first_ts + seek
-
-        end: float | None = None
-        if duration is not None:
-            start_ts = start if start is not None else first_ts
-            end = start_ts + duration
-
-        # Time-bound stream using memory filters. time_range is inclusive on
-        # both sides; .after is exclusive. Use time_range with +inf for the
-        # inclusive-start semantics legacy callers rely on.
-        if start is not None and end is not None:
-            bound = s.time_range(start, end)
-        elif start is not None:
-            bound = s.time_range(start, float("inf"))
-        elif end is not None:
-            bound = s.before(end)  # no start → include from beginning
-        else:
-            bound = s
+        window = RecordingWindow.for_replay(
+            self.first_timestamp, seek=seek, duration=duration, from_timestamp=from_timestamp
+        )
+        bound = window.apply(self._stream)
 
         while True:
             emitted = False

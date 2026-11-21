@@ -21,6 +21,8 @@ from math import inf
 from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
 
@@ -37,16 +39,31 @@ class RecordingWindow:
     @classmethod
     def from_store(cls, store: Store, seek: float, duration: float | None) -> RecordingWindow:
         """Measure seek and duration from the recording start, as ``Store.replay`` does."""
-        if not seek and duration is None:
-            return cls()
-        first_ts = store.replay().first_ts()
-        if first_ts is None:
-            return cls()
-        start = first_ts + seek
+        return cls.for_replay(lambda: store.replay().first_ts(), seek=seek, duration=duration)
+
+    @classmethod
+    def for_replay(
+        cls,
+        first_ts: Callable[[], float | None],
+        *,
+        seek: float | None,
+        duration: float | None,
+        from_timestamp: float | None = None,
+    ) -> RecordingWindow:
+        """Resolve relative bounds only when the replay needs the first timestamp."""
+        start = from_timestamp
+        if start is None:
+            if not seek and duration is None:
+                return cls()
+            first = first_ts()
+            if first is None:
+                return cls()
+            start = first + (seek or 0.0)
         return cls(start, inf if duration is None else start + duration)
 
     def apply(self, stream: Stream[T]) -> Stream[T]:
         if self == RecordingWindow():
             return stream
         # time_range includes both ends. before() makes the end exclusive.
-        return stream.time_range(self.start, self.end).before(self.end)
+        rows = stream.time_range(self.start, self.end)
+        return rows if self.end == inf else rows.before(self.end)
