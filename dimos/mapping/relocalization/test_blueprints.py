@@ -14,6 +14,7 @@
 
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import threading
@@ -63,6 +64,23 @@ def player(
     module = player_type(**{path_param: str(path)}, **kwargs)
     yield module
     module.stop()
+
+
+def test_player_replays_without_changing_recording(player, tmp_path, mocker):
+    path = tmp_path / "recording.db"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    original = path.read_bytes()
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    received = []
+    with Disposable(player.tf.subscribe(received.append)):
+        player.start()
+        scheduler.advance_by(30)
+        player.stop()
+
+    assert len(received) == 3
+    assert path.read_bytes() == original
 
 
 def test_player_stops_mid_replay(player: RecordingPlayer | SpotReplay) -> None:

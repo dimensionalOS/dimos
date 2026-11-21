@@ -68,7 +68,7 @@ def _get_store(dataset: str) -> SqliteStore:
     key = str(db_path)
     store = _stores.get(key)
     if store is None:
-        store = SqliteStore(path=key, must_exist=True)
+        store = SqliteStore(path=key, read_only=True)
         store.start()
         _stores[key] = store
     return store

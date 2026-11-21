@@ -70,10 +70,10 @@ def main(
     assert not isinstance(pinhole, list)
     rr.log("world/camera", pinhole, static=True)
 
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), read_only=True)
     with store:
         color_image = store.stream("color_image", Image)
-        lidar = store.stream("lidar", PointCloud2)
+        lidar = store.stream("lidar", PointCloud2) if "lidar" in store.streams else ()
 
         # Pass 1: robot base pose from lidar.pose.
         for lidar_obs in lidar:

@@ -46,6 +46,8 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.memory.utils.sqlite import connect_existing_sqlite
+
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import MetaBlueprint
 
@@ -199,7 +201,7 @@ def _odom_stats(db_path: Path, table: str) -> tuple[int, float, float]:
     """(count, min_ts, max_ts) for the odom table; zeros if absent."""
     if not db_path.exists():
         return 0, 0.0, 0.0
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    con = connect_existing_sqlite(db_path, read_only=True, timeout=2.0)
     try:
         try:
             row = con.execute(f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM '{table}'").fetchone()
@@ -237,8 +239,10 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
 
-    store = SqliteStore(path=str(db_path), must_exist=True)
+    store = SqliteStore(path=str(db_path), read_only=True)
     try:
+        if not {odom_stream, lidar_stream}.issubset(store.list_streams()):
+            return None
         odom = list(store.stream(odom_stream, Odometry).order_by("ts"))
         if not odom:
             return None

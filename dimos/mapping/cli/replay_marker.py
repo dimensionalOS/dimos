@@ -71,7 +71,7 @@ def main(
     """
     import rerun as rr
 
-    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.cli.dataset import open_cli_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.vis.color import Color
     from dimos.msgs.sensor_msgs.Image import Image
@@ -79,8 +79,12 @@ def main(
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.connection import _camera_info_static
 
-    db_path = resolve_dataset(dataset)
-    store = open_store(db_path)
+    db_path, store = open_cli_dataset(dataset)
+    if "color_image" not in store.streams:
+        store.stop()
+        raise typer.BadParameter(
+            "Marker replay requires a color_image stream", param_hint="DATASET"
+        )
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     cam_info = _camera_info_static()
@@ -97,7 +101,7 @@ def main(
     with store:
         window = RecordingWindow.from_store(store, seek, duration)
         color_image = window.apply(store.stream("color_image", Image))
-        lidar = window.apply(store.stream("lidar", PointCloud2))
+        lidar = window.apply(store.stream("lidar", PointCloud2)) if "lidar" in store.streams else ()
 
         # Pass 1: robot base pose over time (from lidar.pose).
         for lidar_obs in lidar:

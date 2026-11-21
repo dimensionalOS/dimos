@@ -618,7 +618,7 @@ def main(
     crop = LocalCrop(local_radius, local_above, local_below)
     _init_recording(db_path, out, live, crop)
 
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), read_only=True)
     with store:
         if lidar_stream not in store.list_streams():
             raise typer.BadParameter(

@@ -28,7 +28,7 @@ from dimos.utils.data import get_data
 
 T = TypeVar("T")
 
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+store = SqliteStore(path=get_data("go2_bigoffice.db"), read_only=True)
 global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_bytes())
 costmap = simple_inflate(general_occupancy(global_map), 0.05)
 

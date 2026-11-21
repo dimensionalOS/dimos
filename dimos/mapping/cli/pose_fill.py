@@ -115,7 +115,7 @@ def pose_fill_db(
         )
 
     written: dict[str, int] = {}
-    with SqliteStore(path=str(src_path), must_exist=True) as src:
+    with SqliteStore(path=str(src_path), read_only=True) as src:
         available = src.list_streams()
         names = streams if streams is not None else available
         if target not in names:
@@ -186,22 +186,29 @@ def main(
     ),
 ) -> None:
     """Copy a recording, baking nearest pose_source poses into the target stream."""
+    from dimos.memory.utils.sqlite import RecordingRegistryError
     from dimos.utils.data import resolve_named_path
 
-    src = resolve_named_path(dataset, ".db")
+    try:
+        src = resolve_named_path(dataset, ".db")
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(str(exc), param_hint="DATASET") from exc
     dest = Path(out) if out else src.with_name(f"{src.stem}_posed.db")
     names = [s.strip() for s in streams.split(",")] if streams else None
     print(f"pose-filling {src.name}: {target!r} <- nearest {pose_source!r} (±{tolerance}s)")
-    written = pose_fill_db(
-        src,
-        dest,
-        target=target,
-        pose_source=pose_source,
-        tolerance=tolerance,
-        streams=names,
-        seek=seek,
-        duration=duration,
-    )
+    try:
+        written = pose_fill_db(
+            src,
+            dest,
+            target=target,
+            pose_source=pose_source,
+            tolerance=tolerance,
+            streams=names,
+            seek=seek,
+            duration=duration,
+        )
+    except (FileNotFoundError, RecordingRegistryError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="DATASET") from exc
     for name, n in written.items():
         print(f"  {name}: {n}")
     print(f"wrote {dest}")

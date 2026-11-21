@@ -211,7 +211,7 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
 
     ds = DATASETS[name]
     premap = load_premap(ds.premap)
-    store = SqliteStore(path=str(get_data(ds.recording)), must_exist=True)
+    store = SqliteStore(path=str(get_data(ds.recording)), read_only=True)
     store.start()
     return premap, store
 

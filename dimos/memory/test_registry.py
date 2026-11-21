@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+from pathlib import Path
 import sqlite3
 
 import pytest
 
 from dimos.memory.blobstore.file import FileBlobStore
 from dimos.memory.blobstore.sqlite import SqliteBlobStore, SqliteBlobStoreConfig
+from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.sqlite import SqliteObservationStoreConfig
 from dimos.memory.registry import RegistryStore, deserialize_component, qual
@@ -289,3 +292,40 @@ class TestStoreReopen:
             stored = store2._registry.get("data")
             assert stored is not None
             assert stored["page_size"] == 512
+
+
+def test_legacy_recording_can_be_read_then_updated(tmp_path: Path) -> None:
+    path = tmp_path / "saved #1.db"
+    with SqliteStore(path=path) as writer:
+        writer.stream("odom", float).append(1.0, ts=1.0)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute(
+            "UPDATE _streams SET config=replace(config, 'dimos.memory.', 'dimos.memory2.')"
+        )
+        conn.commit()
+    original = path.read_bytes()
+    with open_dataset(path) as reader:
+        assert reader.stream("odom").first().data == 1.0
+    assert path.read_bytes() == original
+
+    with SqliteStore(path=path, must_exist=True) as writer:
+        writer.stream("odom").append(2.0, ts=2.0)
+    with open_dataset(path) as reader:
+        assert [obs.data for obs in reader.stream("odom")] == [1.0, 2.0]
+
+
+def test_existing_recording_needs_both_registry_columns(tmp_path: Path) -> None:
+    path = tmp_path / "other.db"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE _streams (name TEXT)")
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError) as caught:
+        SqliteStore(path=path, must_exist=True)
+
+    assert (
+        str(caught.value)
+        == f"Cannot read SQLite recording registry in {path}: no such column: config"
+    )
+    assert path.read_bytes() == before

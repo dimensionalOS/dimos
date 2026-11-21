@@ -43,9 +43,6 @@ class FileBlobStore(BlobStore):
         validate_identifier(stream_name)
         return self._root / stream_name / f"{key}.bin"
 
-    def start(self) -> None:
-        self._root.mkdir(parents=True, exist_ok=True)
-
     def stop(self) -> None:
         pass
 

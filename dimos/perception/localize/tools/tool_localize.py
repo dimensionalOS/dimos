@@ -533,7 +533,7 @@ def main() -> int:
     if args.detection_chunk is not None and args.detection_chunk <= 0:
         parser.error("--detection-chunk must be positive")
 
-    store = SqliteStore(path=args.dataset or get_data(XARM_DATASET))
+    store = SqliteStore(path=args.dataset or get_data(XARM_DATASET), read_only=True)
     rig = Rig.from_store(store)
     lo, hi = rig.time_range()
     after = lo + args.start

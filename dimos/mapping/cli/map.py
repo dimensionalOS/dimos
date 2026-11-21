@@ -451,7 +451,7 @@ def main(
     """
     import rerun as rr
 
-    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.cli.dataset import open_cli_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -463,8 +463,7 @@ def main(
     from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
     from dimos.visualization.rerun.init import rerun_init
 
-    db_path = resolve_dataset(dataset)
-    store = open_store(db_path)
+    db_path, store = open_cli_dataset(dataset)
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export_cloud or full_pgo:

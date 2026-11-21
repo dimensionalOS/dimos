@@ -239,7 +239,7 @@ class Premap:
     @classmethod
     def load(cls, name: str | Path) -> Premap:
         """A premap by path, stem, or LFS name; ``.map.db`` is appended if absent."""
-        with SqliteStore(path=str(resolve_named_path(name, MAP_SUFFIX)), must_exist=True) as store:
+        with SqliteStore(path=str(resolve_named_path(name, MAP_SUFFIX)), read_only=True) as store:
             # by keyframe index, not stamp: a joint map's sessions can interleave in time
             loaded = [(o, o.data) for o in store.stream(KEYFRAMES, PointCloud2)]
             loaded.sort(key=lambda pair: _keyframe_index(pair[1].frame_id))

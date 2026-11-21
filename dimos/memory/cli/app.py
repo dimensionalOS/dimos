@@ -45,11 +45,8 @@ def rerun(
     The detached viewer stays open after this command exits.
     Close the viewer window separately; Ctrl+C and dimos stop will not close it.
     """
-    from dimos.memory.cli.dataset import AmbiguousDatasetError, open_dataset
+    from dimos.memory.cli.dataset import open_cli_dataset
     from dimos.memory.cli.render import render_store
 
-    try:
-        store = open_dataset(path)
-    except (FileNotFoundError, AmbiguousDatasetError) as exc:
-        raise typer.BadParameter(str(exc), param_hint="PATH") from exc
+    _, store = open_cli_dataset(path, param_hint="PATH")
     render_store(store, out=out, seconds=seconds, no_gui=no_gui, root=root)

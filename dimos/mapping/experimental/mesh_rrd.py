@@ -105,7 +105,7 @@ def main(
         rr.spawn(executable_path=find_executable("rerun"))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 
-    with SqliteStore(path=db) as store:
+    with SqliteStore(path=db, read_only=True) as store:
         tf = StreamTF.from_store(store)
         if tf is None:
             raise typer.BadParameter(f"{db} has no tf stream to register clouds from")

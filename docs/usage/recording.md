@@ -74,6 +74,15 @@ stored filename or stem, original filename or stem, timestamp-and-ID tag, or
 upload ID prefix. Downloads store only the first eight ID characters; use that
 stored ID or a shorter unique prefix, not the full upload ID.
 
+Inspection and replay open SQLite recordings and their external SQLite payload
+and vector files read-only. Python callers can use `SqliteStore(path=path, read_only=True)`
+for the same behavior. Readers include committed samples in a live recorder's
+write-ahead log. SQLite may create coordination files beside a recording in a writable
+directory. A closed recording on read-only media, or one sealed by removing write
+permission from the file and its directory, can be opened without these files.
+Keep its permissions in place throughout inspection. An empty DimOS recording has zero streams.
+A zero-byte file or a database without a stream registry produces an error.
+
 Lookup checks cwd and the project root, then data/LFS, before searching the
 default recording and download directories. An installed package may need to
 clone the data repository before finding an existing local recording, and a

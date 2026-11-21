@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 
 import numpy as np
 import pytest
@@ -22,6 +24,7 @@ from scipy.spatial.transform import Rotation
 # TODO(PY311): drop. Skip before importing test_pgo, which skips mid-import without gtsam.
 gtsam = pytest.importorskip("gtsam")
 
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP, Premap
 from dimos.navigation.go2.loop_closure.test_pgo import _make_lidar_stream
@@ -65,10 +68,32 @@ def test_a_map_built_by_the_live_mapper_keeps_what_its_frames_saw() -> None:
     assert d.max() < 0.05 * np.sqrt(3)
 
 
+def test_loading_a_recording_without_keyframes_preserves_it(tmp_path: Path) -> None:
+    path = tmp_path / "office.db"
+    with SqliteStore(path=str(path)) as store:
+        assert store.list_streams() == []
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("PRAGMA journal_mode=DELETE").fetchone() == ("delete",)
+    before = path.read_bytes()
+
+    with pytest.raises(KeyError, match="keyframes"):
+        Premap.load(path)
+
+    assert path.read_bytes() == before
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+
+
 def test_save_load_roundtrip(tmp_path: Path) -> None:
     premap, _ = _premap()
-    premap.save(tmp_path / "office.map.db")
+    path = tmp_path / "office.map.db"
+    premap.save(path)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    before = path.read_bytes()
     back = Premap.load(tmp_path / "office")
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
     np.testing.assert_allclose(back.stamps, premap.stamps)
     np.testing.assert_allclose(back.poses, premap.poses, atol=1e-9)
     np.testing.assert_array_equal(back.edges, premap.edges)
