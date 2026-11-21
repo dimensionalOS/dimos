@@ -277,7 +277,7 @@ class SqliteObservationStore(ObservationStore[T]):
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
-        """Create the metadata table and R*Tree index if they don't exist."""
+        """Create the metadata table and its spatial and timestamp indexes."""
         with self._lock:
             self._conn.execute(
                 f'CREATE TABLE IF NOT EXISTS "{self._name}" ('
@@ -297,6 +297,22 @@ class SqliteObservationStore(ObservationStore[T]):
                 "    z_min, z_max"
                 ")"
             )
+            # Older recordings used UNIQUE(ts), which already supplies this index.
+            indexed = self._conn.execute(
+                "SELECT 1 FROM pragma_index_list(?) AS idx "
+                "JOIN pragma_index_info(idx.name) AS col "
+                "WHERE NOT idx.partial AND col.seqno = 0 AND col.name = 'ts' LIMIT 1",
+                (self._name,),
+            ).fetchone()
+            if indexed is None:
+                try:
+                    self._conn.execute(
+                        f'CREATE INDEX IF NOT EXISTS "{self._name}.ts" ON "{self._name}" (ts)'
+                    )
+                except sqlite3.OperationalError as exc:
+                    # An unindexed read-only recording can still use SQLite's sort.
+                    if str(exc) != "attempt to write a readonly database":
+                        raise
             self._conn.commit()
 
     @property
