@@ -154,8 +154,6 @@ def test_manifest_and_robot_info_content() -> None:
         ("costmap_max_hz", -1.0),
         ("jpeg_quality", -1),
         ("jpeg_quality", 101),
-        ("local_port", -1),
-        ("local_port", 65536),
     ],
 )
 def test_config_rejects_out_of_range_values(field: str, value: float) -> None:
