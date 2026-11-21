@@ -49,7 +49,8 @@ def test_empty_loop_completes_and_nonempty_loop_repeats(backend: str, tmp_path: 
         InMemoryStore() if backend == "memory" else LegacyPickleStore(tmp_path)
     )
     store.save(SampleData("first", 10), SampleData("second", 11))
-    completed: list[bool] = []
+    # The pickle store loops in its own iterator. Each must stop after an empty pass.
+    looped = store.iterate_ts if isinstance(store, LegacyPickleStore) else store.iterate_items
     # Bound the number of reads so a regression cannot hang the test suite.
     passes = [
         store._iter_items(),
@@ -57,12 +58,9 @@ def test_empty_loop_completes_and_nonempty_loop_repeats(backend: str, tmp_path: 
         AssertionError("repeated empty scan"),
     ]
     with patch.object(store, "_iter_items", side_effect=passes):
-        with store.stream(seek=100, loop=True).subscribe(
-            on_completed=lambda: completed.append(True)
-        ):
-            assert completed == [True]
+        assert list(looped(seek=100, loop=True)) == []
 
-    assert [item.ts for item in islice(store.iterate(seek=1, loop=True), 3)] == [11, 11, 11]
+    assert [ts for ts, _ in islice(looped(seek=1, loop=True), 3)] == [11, 11, 11]
 
 
 def make_in_memory_store() -> TimeSeriesStore[SampleData]:
