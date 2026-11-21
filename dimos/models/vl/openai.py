@@ -29,9 +29,23 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _client_type() -> type[OpenAI]:
+    # Keep blueprint discovery independent of the optional SDK.
+    from openai import OpenAI
+
+    return OpenAI
+
+
 class OpenAIVlModelConfig(HostedVlModelConfig):
     model_name: str = "gpt-4o-mini"
     api_key_env = "OPENAI_API_KEY"
+
+    def validate_runtime(self) -> None:
+        super().validate_runtime()
+        try:
+            _client_type()
+        except ImportError as exc:
+            raise ValueError("The OpenAI vision model requires the openai SDK") from exc
 
 
 class OpenAIVlModel(VlModel):
@@ -39,9 +53,7 @@ class OpenAIVlModel(VlModel):
 
     @cached_property
     def _client(self) -> OpenAI:
-        from openai import OpenAI
-
-        return OpenAI(api_key=self.config.require_api_key())
+        return _client_type()(api_key=self.config.require_api_key())
 
     def query(
         self,

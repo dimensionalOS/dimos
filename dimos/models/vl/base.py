@@ -184,6 +184,10 @@ class HostedVlModelConfig(VlModelConfig):
     api_key: str | None = None
     api_key_env: ClassVar[str]
 
+    def validate_runtime(self) -> None:
+        """Check local prerequisites before starting a hosted vision model."""
+        self.require_api_key()
+
     def require_api_key(self) -> str:
         key = self.api_key or os.getenv(self.api_key_env)
         if not key or not key.strip():

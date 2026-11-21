@@ -115,10 +115,10 @@ class TemporalMemoryConfig(ModuleConfig):
     nearby_distance_meters: float = 5.0
 
     @model_validator(mode="after")
-    def _validate_model_credentials(self) -> Self:
+    def _validate_model_runtime(self) -> Self:
         config = OpenAIVlModelConfig() if self.vlm is None else getattr(self.vlm, "config", None)
         if isinstance(config, HostedVlModelConfig):
-            config.require_api_key()
+            config.validate_runtime()
         return self
 
 

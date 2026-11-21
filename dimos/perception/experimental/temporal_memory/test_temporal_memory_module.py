@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from contextlib import closing
 import json
+import sys
 import threading
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, create_autospec, patch
@@ -355,6 +356,25 @@ class TestPersistence:
             entity = db.get_entity("E1")
         assert entity is not None
         assert entity["descriptor"] == "previous observation"
+
+    def test_missing_sdk_preserves_memory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "configured")
+        monkeypatch.setitem(sys.modules, "openai", None)
+        log = tmp_path / "temporal_memory.jsonl"
+        log.write_text("prior observation\n")
+        db_path = tmp_path / "entity_graph.db"
+        with closing(EntityGraphDB(db_path=db_path)) as db:
+            db.upsert_entity("E1", "person", "prior observation", 0.0)
+            db.commit()
+
+        with pytest.raises(ValidationError, match="openai"):
+            TemporalMemory(db_dir=tmp_path, new_memory=True, use_clip_filtering=False).stop()
+
+        assert log.read_text() == "prior observation\n"
+        with closing(EntityGraphDB(db_path=db_path)) as db:
+            assert db.get_entity("E1") is not None
 
     def test_new_memory_clears_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
