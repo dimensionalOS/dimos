@@ -138,7 +138,6 @@ def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable
         config.setdefault("boot_vendor_stack", False)
         config.setdefault("deadman_timeout_s", DEADMAN_S)
         config.setdefault("sensor_stats_interval_s", 0.0)
-        config.setdefault("enable_wrist_color", False)
         r = Rig(fake_ros, R1ProConnection(**config))
         made.append(r)
         if start:
@@ -161,8 +160,9 @@ def test_nothing_is_published_until_every_segment_has_reported(
 
     r.fake.control.feed("/hdas/feedback_torso", joint_feedback(TORSO_Q, 100.1))
     r.fake.control.feed("/hdas/feedback_arm_left", joint_feedback(LEFT_Q, 100.2))
-    time.sleep(2.0 / r.module.config.publish_rate_hz)
-    assert r.readings() == []
+    # Two publish periods with two of three segments reported: still nothing.
+    with pytest.raises(TimeoutError):
+        wait_until(lambda: bool(r.readings()), timeout=2.0 / r.module.config.publish_rate_hz)
 
     r.fake.control.feed("/hdas/feedback_arm_right", joint_feedback(RIGHT_Q, 100.3))
     wait_until(lambda: bool(r.readings()), timeout=5.0)
@@ -320,7 +320,7 @@ def test_physical_assembly_parses_body_resources_without_hardware(name, monkeypa
     module = importlib.import_module(
         f"dimos.robot.galaxea.r1pro.blueprints.{category}.r1pro_{name}"
     )
-    blueprint = getattr(module, f"r1pro_{name}")
+    blueprint = getattr(module, f"r1pro_{name}").solidify()
     parsed = BlueprintConfigParser(blueprint).parse([], environ={})
     atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
     config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))

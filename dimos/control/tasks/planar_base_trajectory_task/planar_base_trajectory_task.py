@@ -129,6 +129,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
         if not problem and current_positions is not None:
             problem = self._start_problem(trajectory, current_positions)
         if problem:
+            logger.warning("Trajectory rejected", task_name=self._name, reason=problem)
             return TrajectoryExecutionResult(TrajectoryExecutionStatus.INVALID_TRAJECTORY, problem)
         with self._lock:
             if self._state == TrajectoryState.EXECUTING:
@@ -145,6 +146,12 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             self._error = ""
             self._last_pose_t = None
             self._state = TrajectoryState.EXECUTING
+            logger.info(
+                "Executing trajectory",
+                task_name=self._name,
+                duration=trajectory.duration,
+                target=trajectory.points[-1].positions,
+            )
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
     def cancel(self) -> bool:
@@ -152,6 +159,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             if self._state != TrajectoryState.EXECUTING:
                 return False
             self._stop(None, TrajectoryState.ABORTED, "cancelled")
+            logger.info("Trajectory cancelled", task_name=self._name, elapsed=self._elapsed)
         return True
 
     def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
@@ -249,6 +257,12 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                     and yaw_error < config.orientation_goal_tolerance
                 ):
                     self._stop(state.t_now, TrajectoryState.COMPLETED, "")
+                    logger.info(
+                        "Trajectory completed",
+                        task_name=self._name,
+                        elapsed=self._elapsed,
+                        position=pose,
+                    )
                     return self._command(0.0, 0.0, 0.0)
                 if self._elapsed - self._trajectory.duration > config.settle_timeout:
                     return self._fail(state.t_now, "base did not reach the end of the trajectory")
@@ -268,7 +282,9 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         with self._lock:
             if joints & set(self._joints) and self._state == TrajectoryState.EXECUTING:
-                logger.warning(f"PlanarBaseTrajectoryTask '{self._name}' preempted by {by_task}")
+                logger.warning(
+                    "Trajectory preempted", task_name=self._name, by_task=by_task, joints=joints
+                )
                 self._stop(None, TrajectoryState.ABORTED, f"preempted by {by_task}")
 
     def _read_pose(self, state: CoordinatorState) -> tuple[float, float, float] | None:
@@ -301,7 +317,9 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
         )
 
     def _fail(self, t_now: float, message: str) -> JointCommandOutput:
-        logger.error(f"PlanarBaseTrajectoryTask '{self._name}' aborted: {message}")
+        logger.error(
+            "Trajectory aborted", task_name=self._name, elapsed=self._elapsed, reason=message
+        )
         self._stop(t_now, TrajectoryState.ABORTED, message)
         return self._command(0.0, 0.0, 0.0)
 

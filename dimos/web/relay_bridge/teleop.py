@@ -187,12 +187,17 @@ class Teleop:
         while True:
             await asyncio.sleep(_TELEOP_POLL_S)
             if self._driving and time.monotonic() - self._last_rx > watchdog_s:
-                self._zero("watchdog: twist silence")
+                self._zero("watchdog: twist silence", warn=True)
 
-    def _zero(self, reason: str, *, force: bool = False) -> None:
-        """Publish one zero twist; edge-gated unless `force` (e-stop)."""
+    def _zero(self, reason: str, *, force: bool = False, warn: bool = False) -> None:
+        """Publish one zero twist; edge-gated unless `force` (e-stop).
+
+        `warn` is for a zero nobody asked for (the deadman). A key release, an
+        e-stop and the end of a lease are routine.
+        """
         if not force and not self._driving:
             return
         self._driving = False
-        logger.warning(f"relay bridge teleop: zero twist ({reason})")
+        log = logger.warning if warn else logger.info
+        log(f"relay bridge teleop: zero twist ({reason})")
         self._publish(Twist.zero())

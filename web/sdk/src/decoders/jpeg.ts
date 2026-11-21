@@ -15,7 +15,7 @@ export const MAX_JPEG_DIM = 4096;
  * declared frame dimensions. Headers precede scan data, so a tail-truncated
  * jpeg still passes; a non-jpeg or header-truncated payload throws.
  */
-function scanDimensions(payload: Uint8Array): { w: number; h: number } {
+export function jpegDimensions(payload: Uint8Array): { w: number; h: number } {
   if (payload.length < 4 || payload[0] !== 0xff || payload[1] !== 0xd8) {
     throw new Error("jpeg payload has no SOI marker");
   }
@@ -64,7 +64,7 @@ export function jpegDecoder(payload: Uint8Array, _header: FrameHeader): Decoded 
       `oversized jpeg payload: ${payload.byteLength} B, cap ${MAX_JPEG_PAYLOAD_BYTES} B`,
     );
   }
-  const { w, h } = scanDimensions(payload);
+  const { w, h } = jpegDimensions(payload);
   if (w < 1 || h < 1 || w > MAX_JPEG_DIM || h > MAX_JPEG_DIM) {
     throw new Error(`jpeg dimensions ${w}x${h} out of bounds`);
   }

@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
@@ -65,6 +65,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "xarm-grasp-graspgenx-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
+        "xarm6-grasp",
+        "xarm6-grasp-graspgenx",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
     }
@@ -78,9 +80,11 @@ def _check_blueprint(blueprint_name: str) -> None:
         blueprint = load_blueprint(blueprint_name)
     except OptionalDependencyError as e:
         pytest.skip(f"Skipping due to missing optional dependency: {e}")
-    assert isinstance(blueprint, Blueprint), (
-        f"Blueprint '{blueprint_name}' is not a Blueprint, got {type(blueprint)}"
+    assert isinstance(blueprint, (Blueprint, MetaBlueprint)), (
+        f"Blueprint '{blueprint_name}' is not a Blueprint or MetaBlueprint, got {type(blueprint)}"
     )
+    # Deferred operations and default choices are only validated on solidification.
+    autoconnect(blueprint).solidify()
 
 
 def test_old_self_hosted_blueprints() -> None:

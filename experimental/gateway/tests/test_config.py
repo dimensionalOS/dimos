@@ -20,10 +20,11 @@ from fastapi.testclient import TestClient
 import pytest
 import yaml
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import annotations as annotation_file, constants, launches
+from experimental.gateway import annotations as annotation_file, catalog, constants, launches
 from experimental.gateway.__main__ import serve
 from experimental.gateway.state import API_VERSION, ApiError, State
 
@@ -147,6 +148,29 @@ def test_a_blueprints_config_schema_is_global_and_module_fields(
     assert schema["modules"]["camera"]["args"]["api_key"]["secret"]
 
 
+@pytest.mark.parametrize("name", ["unitree-go2-multi", "unitree-go2-multi-teleop"])
+def test_multi_go2_catalog_loads_without_robot_ips(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.delenv("ROBOT_IPS", raising=False)
+    monkeypatch.setattr(state, "dimos_dir", DIMOS_PROJECT_ROOT)
+    monkeypatch.setattr(state, "listed", [{"name": name, "kind": "builtin"}])
+
+    detail = client.get(f"/catalog/blueprints/{name}")
+    config = client.get(f"/catalog/blueprints/{name}/config")
+
+    assert detail.status_code == 200, detail.text
+    assert config.status_code == 200, config.text
+    assert detail.json()["name"] == config.json()["name"] == name
+    assert config.json()["global"]["robot_ips"]["default"] is None
+    ip_setting = next(
+        setting
+        for setting in detail.json()["recommended_config"]
+        if setting.get("global") == "robot_ips"
+    )
+    assert ip_setting["required"] is True
+
+
 def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
     client: TestClient, state: State, home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -242,6 +266,52 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
             for setting in settings:
                 if "global" in setting:
                     assert setting["global"] in GlobalConfig.model_fields
+
+
+def test_modules_name_described_abilities() -> None:
+    abilities, modules = annotation_file.load_abilities()
+    for ability_id, ability in abilities.items():
+        assert ability.get("label") and ability.get("description"), (
+            f"ability {ability_id} needs both"
+        )
+    for module, given in modules.items():
+        assert given and set(given) <= set(abilities), f"module {module}: {given}"
+
+
+def test_a_checkout_without_abilities_gets_the_gateways(tmp_path: Path) -> None:
+    gateway_dir = tmp_path / "experimental" / "gateway"
+    gateway_dir.mkdir(parents=True)
+    (gateway_dir / "annotations.yaml").write_text("robots:\n  types: {}\n  robots: {}\n")
+    notes = catalog.notes_for(tmp_path, [])
+    assert notes["abilities"] == annotation_file.load_abilities()[0] and notes["module_abilities"]
+
+
+def test_a_blueprint_has_the_abilities_of_the_modules_it_runs() -> None:
+    notes = {
+        "robots": {},
+        "abilities": {"mapping": {}, "loop-closure": {}, "arm-control": {}},
+        "module_abilities": {"pgo-voxel-mapper": ["loop-closure", "mapping"]},
+    }
+    cache = {
+        "results": {
+            "go2-map": {
+                "name": "go2-map",
+                "modules": [
+                    {"module": "pgo-voxel-mapper", "class": "x.Pgo"},
+                    {"module": "cost-mapper", "class": "x.Cost"},
+                ],
+            }
+        },
+        "modules": {
+            "pgo": {"name": "pgo-voxel-mapper", "class": "x.Pgo", "rpcs": []},
+            "cost": {"name": "cost-mapper", "class": "x.Cost", "rpcs": []},
+        },
+    }
+    found = catalog.blueprints([{"name": "go2-map"}], cache, notes)
+    # in the order annotations.yaml lists abilities
+    assert found[0]["abilities"] == ["mapping", "loop-closure"]
+    by_name = {module["name"]: module["abilities"] for module in catalog.modules(cache, notes)}
+    assert by_name == {"pgo-voxel-mapper": ["loop-closure", "mapping"], "cost-mapper": []}
 
 
 def test_every_registered_blueprint_is_annotated() -> None:

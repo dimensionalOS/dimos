@@ -29,6 +29,7 @@ from dimos.core.coordination.blueprints import Blueprint, StreamRef
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
+    RustMcapAttachment,
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
@@ -90,7 +91,16 @@ class CollectionModuleConfig(RustRecorderConfig):
         if self.format == "sqlite":
             store = RustSqliteStoreConfig(kind="sqlite", path=str(self.recording / "recording.db"))
         else:
-            store = RustMcapStoreConfig(kind="mcap", path=str(self.recording / "recording.mcap"))
+            store = RustMcapStoreConfig(
+                path=str(self.recording / "recording.mcap"),
+                attachments=[
+                    RustMcapAttachment(
+                        name="schema.json",
+                        media_type="application/json",
+                        path=str(self.recording / "schema.json"),
+                    )
+                ],
+            )
         if "store" in self.model_fields_set and self.store != store:
             raise ValueError("Collection store is derived from recording and format")
         self.store = store

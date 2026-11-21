@@ -48,7 +48,9 @@ const GPU_ARGS = [
   "--ignore-gpu-blocklist",
   "--enable-gpu",
   "--use-gl=angle",
-  "--use-angle=metal",
+  // Metal exists only on macOS. Chromium 149 exits when asked for it on Linux,
+  // where ANGLE's default backend (OpenGL) is the right one.
+  ...(Deno.build.os === "darwin" ? ["--use-angle=metal"] : []),
   "--in-process-gpu",
   "--disable-gpu-sandbox",
   // Prevent Chrome from throttling timers in headless/background mode
@@ -107,19 +109,47 @@ function getViewport(render: RenderMode) {
     : { width: 1280, height: 720 };
 }
 
+export class BrowserLifecycle {
+  // Include pending launches so a signal during browser startup also closes Chromium.
+  private browsers = new Set<Promise<Browser>>();
+
+  async close(): Promise<void> {
+    await Promise.all([...this.browsers].map(async (pending) => {
+      const browser = await pending;
+      await browser.close();
+    }));
+  }
+
+  async launch(render: RenderMode): Promise<Browser> {
+    const pending = chromium.launch({
+      headless: false, // --headless=new is passed via args
+      channel: LAUNCH_CHANNEL,
+      args: render === "gpu" ? GPU_ARGS : CPU_ARGS,
+      // The CLI owns shutdown: Playwright's SIGTERM handler closes Chromium
+      // but leaves the bridge server (and thus the Deno process) alive.
+      handleSIGTERM: false,
+      handleSIGINT: false,
+    });
+    this.browsers.add(pending);
+    try {
+      const browser = await pending;
+      browser.on("disconnected", () => this.browsers.delete(pending));
+      return browser;
+    } catch (error) {
+      this.browsers.delete(pending);
+      throw error;
+    }
+  }
+}
+
 // ── Single-page launcher ─────────────────────────────────────────────────
 
-export async function launchHeadless(options: LaunchOptions): Promise<HeadlessInstance> {
+export async function launchHeadless(lifecycle: BrowserLifecycle, options: LaunchOptions): Promise<HeadlessInstance> {
   const { url, timeout = 30000, render = "cpu" } = options;
-  const args = render === "gpu" ? GPU_ARGS : CPU_ARGS;
 
   console.log(`[headless] Launching: render=${render}`);
 
-  const browser = await chromium.launch({
-    headless: false,  // --headless=new passed via args (Playwright's built-in headless uses old mode)
-    channel: LAUNCH_CHANNEL,
-    args,
-  });
+  const browser = await lifecycle.launch(render);
 
   const context = await browser.newContext({ viewport: getViewport(render), deviceScaleFactor: 1 });
   const page = await context.newPage();
@@ -152,14 +182,13 @@ export async function launchHeadless(options: LaunchOptions): Promise<HeadlessIn
 
 // ── Multi-page launcher (single browser, N tabs) ────────────────────────
 
-export async function launchMultiPage(options: MultiPageOptions): Promise<MultiPageInstance> {
+export async function launchMultiPage(lifecycle: BrowserLifecycle, options: MultiPageOptions): Promise<MultiPageInstance> {
   const { url, numPages, timeout = 120_000, render = "cpu" } = options;
-  const args = render === "gpu" ? GPU_ARGS : CPU_ARGS;
   const viewport = getViewport(render);
 
   console.log(`[headless] Multi-page: ${numPages} pages, render=${render}, timeout=${timeout}ms`);
 
-  const browser = await chromium.launch({ headless: false, channel: LAUNCH_CHANNEL, args });
+  const browser = await lifecycle.launch(render);
 
   const pages: Page[] = [];
   const channels: string[] = [];

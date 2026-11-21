@@ -32,10 +32,11 @@ from typing import Any
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out, TransportSpec
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -119,8 +120,6 @@ def _r1pro_rerun_blueprint() -> Any:
         rrb.Spatial2DView(origin="world/wrist_right_color", name="Wrist right"),
         # Row 2 — depth.
         rrb.Spatial2DView(origin="world/head_depth", name="Head depth"),
-        rrb.Spatial2DView(origin="world/wrist_left_depth", name="Wrist left depth"),
-        rrb.Spatial2DView(origin="world/wrist_right_depth", name="Wrist right depth"),
         grid_columns=4,
         name="All cameras",
     )
@@ -148,8 +147,6 @@ _RERUN_MAX_HZ = {
 # Per-topic overrides for the rerun bridge (None = suppress entirely).
 _RERUN_VISUAL_OVERRIDE = {
     # Raw depth frames are the heaviest payloads on the viewer link.
-    "world/wrist_left_depth": None,
-    "world/wrist_right_depth": None,
     "world/head_depth": None,
 }
 
@@ -165,7 +162,7 @@ rerun_config = {
 }
 
 
-def r1pro_visualization() -> Blueprint:
+def r1pro_visualization() -> Blueprint | MetaBlueprint:
     if global_config.viewer == "rerun":
         return autoconnect(
             RerunBridgeModule.blueprint(**rerun_config),
@@ -196,12 +193,45 @@ def _head_cameras() -> list[Blueprint]:
     return [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint(), HeadCameraInfo.blueprint()]
 
 
+# The wrist D405s share one USB 3.0 controller, which cannot carry colour and depth from both at
+# 1280x720, what Galaxea's wrist driver opens (so vendor_setup.sh does not start it); colour alone
+# fits. by-path pins each wrist to its USB port; video-index4 is a D405's colour node.
+_WRIST_V4L2 = (
+    "/dev/v4l/by-path/platform-14160000.pcie-pci-0004:01:00.0-usb-0:{port}:1.0-video-index4"
+)
+
+
+def _wrist_cameras() -> list[Blueprint]:
+    """Both wrists' colour as 640x480 JPEG at 30 fps, encoded by the Jetson.
+
+    The Jetson encoder costs about 4% of one core per wrist. It needs 640 px
+    rows: the camera writes 1280-byte rows, the same as the encoder's buffers;
+    at 848 px (1696-byte rows into 1792-byte buffer rows) the image comes out
+    scrambled with no error. 640x480 at 30 fps is also the largest size at
+    which both wrists can send colour and depth together through their shared
+    USB controller. The rate must be set: a D405 defaults to 90 fps, at which
+    its colour stream on this controller never delivers a frame.
+    """
+    return [
+        V4L2Camera.blueprint(
+            instance_name=f"wrist_{side}",
+            device=_WRIST_V4L2.format(port=port),
+            frame_id=f"{side}_d405_link",
+            width=640,
+            height=480,
+            fps=30.0,
+            hardware=True,
+        )
+        for side, port in (("left", 2), ("right", 1))
+    ]
+
+
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
     **connection: Any,
-) -> Blueprint:
-    """R1ProConnection, R1ProCoordinator and the head cameras.
+) -> MetaBlueprint:
+    """R1ProConnection, R1ProCoordinator and the head and wrist cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
@@ -230,6 +260,7 @@ def r1pro_control(
         autoconnect(
             R1ProConnection.blueprint(**declaration.model_dump()),
             *_head_cameras(),
+            *_wrist_cameras(),
             R1ProCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 tick_rate=100,
@@ -261,6 +292,8 @@ def r1pro_control(
                 (HeadRightCamera, "jpeg_out", "head_right_color"),
                 (HeadCameraInfo, "left_info", "head_left_info"),
                 (HeadCameraInfo, "right_info", "head_right_info"),
+                ("wrist_left", "jpeg_out", "wrist_left_color"),
+                ("wrist_right", "jpeg_out", "wrist_right_color"),
             ]
         )
         .transports(
@@ -289,14 +322,8 @@ def r1pro_control(
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
                     "/wrist_left_color", CompressedImage, latest_wins=True
                 ),
-                ("wrist_left_depth", Image): _zenoh_transport(
-                    "/wrist_left_depth", Image, latest_wins=True
-                ),
                 ("wrist_right_color", CompressedImage): _zenoh_transport(
                     "/wrist_right_color", CompressedImage, latest_wins=True
-                ),
-                ("wrist_right_depth", Image): _zenoh_transport(
-                    "/wrist_right_depth", Image, latest_wins=True
                 ),
                 # ControlCoordinator outs.
                 ("coordinator_joint_state", JointState): _zenoh_transport(
@@ -308,7 +335,7 @@ def r1pro_control(
     )
 
 
-def r1pro_lidar_odometry() -> Blueprint:
+def r1pro_lidar_odometry() -> MetaBlueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
     lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
     return autoconnect(

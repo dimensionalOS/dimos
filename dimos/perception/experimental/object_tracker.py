@@ -111,6 +111,9 @@ class ObjectTracking(Module):
         self._latest_depth_frame: np.ndarray | None = None
         self._latest_camera_info: CameraInfo | None = None
 
+        # Serialize lifecycle calls, including the join and subsequent reset.
+        self._tracking_lock = threading.RLock()
+
         # Tracking thread control
         self.tracking_thread: threading.Thread | None = None
         self.stop_tracking = threading.Event()
@@ -166,12 +169,6 @@ class ObjectTracking(Module):
     @rpc
     def stop(self) -> None:
         self.stop_track()
-
-        self.stop_tracking.set()
-
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
         super().stop()
 
     @rpc
@@ -186,54 +183,63 @@ class ObjectTracking(Module):
             bbox: Bounding box in format [x1, y1, x2, y2]
 
         Returns:
-            Dict containing tracking results with 2D and 3D detections
+            Tracking status and bbox, or stop_timeout if the previous worker
+            cannot be joined safely.
         """
-        import cv2
+        # A worker callback cannot wait for its own thread to finish.
+        if threading.current_thread() is self.tracking_thread:
+            return {"status": "stop_timeout"}
 
-        if self._latest_rgb_frame is None:
-            logger.warning("No RGB frame available for tracking")
+        with self._tracking_lock:
+            import cv2
 
-        # Initialize tracking
-        x1, y1, x2, y2 = map(int, bbox)
-        w, h = x2 - x1, y2 - y1
-        if w <= 0 or h <= 0:
-            logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
+            if self._latest_rgb_frame is None:
+                logger.warning("No RGB frame available for tracking")
 
-        # Set tracking parameters
-        self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]  # Store in (x, y, w, h) format
-        self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
-        self.tracking_initialized = False
-        self.original_des = None
-        self.reid_fail_count = 0
-        logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
+            # Initialize tracking
+            x1, y1, x2, y2 = map(int, bbox)
+            w, h = x2 - x1, y2 - y1
+            if w <= 0 or h <= 0:
+                logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
 
-        # Extract initial features
-        roi = self._latest_rgb_frame[y1:y2, x1:x2]  # type: ignore[index]
-        if roi.size > 0:
-            self.original_kps, self.original_des = self.orb.detectAndCompute(roi, None)
-            if self.original_des is None:
-                logger.warning("No ORB features found in initial ROI. REID will be disabled.")
+            if self.tracking_thread is not None and not self.stop_track():
+                return {"status": "stop_timeout"}
+
+            # Set tracking parameters
+            self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]  # Store in (x, y, w, h) format
+            self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
+            self.tracking_initialized = False
+            self.original_des = None
+            self.reid_fail_count = 0
+            logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
+
+            # Extract initial features
+            roi = self._latest_rgb_frame[y1:y2, x1:x2]  # type: ignore[index]
+            if roi.size > 0:
+                self.original_kps, self.original_des = self.orb.detectAndCompute(roi, None)
+                if self.original_des is None:
+                    logger.warning("No ORB features found in initial ROI. REID will be disabled.")
+                else:
+                    logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
+
+                # Initialize the tracker
+                init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)  # type: ignore[attr-defined]
+                if init_success:
+                    self.tracking_initialized = True
+                    self.tracking_frame_count = 0  # Reset frame counter
+                    logger.info("Tracker initialized successfully.")
+                else:
+                    logger.error("Tracker initialization failed.")
+                    self.stop_track()
             else:
-                logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
-
-            # Initialize the tracker
-            init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)  # type: ignore[attr-defined]
-            if init_success:
-                self.tracking_initialized = True
-                self.tracking_frame_count = 0  # Reset frame counter
-                logger.info("Tracker initialized successfully.")
-            else:
-                logger.error("Tracker initialization failed.")
+                logger.error("Empty ROI during tracker initialization.")
                 self.stop_track()
-        else:
-            logger.error("Empty ROI during tracker initialization.")
-            self.stop_track()
 
-        # Start tracking thread
-        self._start_tracking_thread()
+            # Start tracking thread
+            self._start_tracking_thread()
 
-        # Return initial tracking result
-        return {"status": "tracking_started", "bbox": self.tracking_bbox}
+            # Return initial tracking result
+            return {"status": "tracking_started", "bbox": self.tracking_bbox}
 
     def reid(self, frame, current_bbox) -> bool:  # type: ignore[no-untyped-def]
         """Check if features in current_bbox match stored original features."""
@@ -324,24 +330,29 @@ class ObjectTracking(Module):
         This resets the tracker and all tracking state.
 
         Returns:
-            bool: True if tracking was successfully stopped
+            bool: True if tracking stopped, False if the worker is still running.
         """
-        # Reset tracking state first
-        self._reset_tracking_state()
+        # Do not wait for the lifecycle lock from the worker: its owner may
+        # already be joining this thread.
+        if threading.current_thread() is self.tracking_thread:
+            self.stop_tracking.set()
+            return False
 
-        # Stop tracking thread if running (only if called from outside the thread)
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            # Check if we're being called from within the tracking thread
-            if threading.current_thread() != self.tracking_thread:
-                self.stop_tracking.set()
-                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                self.tracking_thread = None
-            else:
-                # If called from within thread, just set the stop flag
-                self.stop_tracking.set()
+        with self._tracking_lock:
+            self.stop_tracking.set()
+            thread = self.tracking_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                if thread.is_alive():
+                    logger.warning("Tracking worker did not stop. Retaining tracking state.")
+                    return False
 
-        logger.info("Tracking stopped")
-        return True
+            # The worker must finish using the tracker before its state is cleared.
+            self.tracking_thread = None
+            self._reset_tracking_state()
+
+            logger.info("Tracking stopped")
+            return True
 
     @rpc
     def is_tracking(self) -> bool:

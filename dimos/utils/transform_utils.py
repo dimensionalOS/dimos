@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-from collections.abc import Mapping, Sequence
 import math
 
 import numpy as np
@@ -410,36 +409,6 @@ def offset_distance(
     return Pose(position=offset_position, orientation=target_pose.orientation)
 
 
-def twist_to_values(twist: Twist, joints: tuple[str, str, str], *, yaw: float) -> dict[str, float]:
-    """Body-frame Twist to declared world-frame planar joint velocities.
-
-    ``yaw`` must be real odometry, never an assumed zero orientation.
-    """
-    if not math.isfinite(yaw):
-        raise ValueError("odometry yaw must be finite")
-    c, s = math.cos(yaw), math.sin(yaw)
-    vx, vy = twist.linear.x, twist.linear.y
-    speeds = (c * vx - s * vy, s * vx + c * vy, twist.angular.z)
-    if not all(math.isfinite(value) for value in speeds):
-        raise ValueError("Twist conversion produced non-finite velocities")
-    return {_planar_key(joint, "velocity"): v for joint, v in zip(joints, speeds, strict=True)}
-
-
-def twist_from_values(
-    values: Mapping[str, float], joints: tuple[str, str, str], *, yaw: float
-) -> Twist:
-    """Declared world-frame planar joint velocities to a body-frame Twist."""
-    _require_planar_values(values, joints, ("velocity",))
-    if not math.isfinite(yaw):
-        raise ValueError("odometry yaw must be finite")
-    vx, vy, wz = [values[_planar_key(joint, "velocity")] for joint in joints]
-    c, s = math.cos(yaw), math.sin(yaw)
-    body = (c * vx + s * vy, -s * vx + c * vy, wz)
-    if not all(math.isfinite(value) for value in body):
-        raise ValueError("Twist conversion produced non-finite velocities")
-    return Twist(linear=Vector3(body[0], body[1], 0.0), angular=Vector3(0.0, 0.0, body[2]))
-
-
 def pose_to_values(pose: PoseStamped, joints: tuple[str, str, str]) -> dict[str, float]:
     """World-frame planar coordinates from odometry, bound to model joint names."""
     q = pose.orientation
@@ -452,35 +421,6 @@ def pose_to_values(pose: PoseStamped, joints: tuple[str, str, str]) -> dict[str,
         raise ValueError("odometry quaternion must be unit length")
     yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
     return {
-        _planar_key(joint, "position"): value
+        f"{joint}/position": value
         for joint, value in zip(joints, (pose.position.x, pose.position.y, yaw), strict=True)
     }
-
-
-def pose_from_values(
-    values: Mapping[str, float],
-    joints: tuple[str, str, str],
-    ts: float | None = None,
-    frame_id: str = "",
-) -> PoseStamped:
-    """World-frame planar coordinates to an odometry pose."""
-    _require_planar_values(values, joints, ("position",))
-    x, y, yaw = [values[_planar_key(joint, "position")] for joint in joints]
-    orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
-    return PoseStamped(
-        ts=ts, frame_id=frame_id, position=Vector3(x, y, 0.0), orientation=orientation
-    )
-
-
-def _planar_key(joint: str, interface: str) -> str:
-    return f"{joint}/{interface}"
-
-
-def _require_planar_values(
-    values: Mapping[str, float], joints: Sequence[str], interfaces: Sequence[str]
-) -> None:
-    missing = [
-        _planar_key(j, i) for j in joints for i in interfaces if _planar_key(j, i) not in values
-    ]
-    if missing:
-        raise ValueError(f"missing values {missing}")

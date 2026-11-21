@@ -19,7 +19,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.costmapper import Config, CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
@@ -57,8 +57,7 @@ def test_navigation_blueprint_preserves_costmapper_config(
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, module_name, module)
     spec.loader.exec_module(module)
-    blueprint = getattr(module, variable)
-    assert isinstance(blueprint, Blueprint)
+    blueprint = autoconnect(getattr(module, variable)).solidify()
     costmapper = next(atom for atom in blueprint.blueprints if atom.module is CostMapper)
 
     parsed = BlueprintConfigParser(blueprint).parse(environ={})

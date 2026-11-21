@@ -25,6 +25,7 @@ from dimos.evals.environments.habitat import HabitatEnvironment
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.simulation.habitat.blueprints import habitat_nav
 from dimos.simulation.habitat.connection import HabitatConnection, HabitatConnectionConfig
 
 
@@ -46,8 +47,6 @@ def test_smoke_checks_recorded_samples(mocker, missing):
 
 
 def test_scene_config_reaches_blueprint_parser(tmp_path):
-    from dimos.simulation.habitat.blueprints import habitat_nav
-
     dataset = tmp_path / "dataset.json"
     dataset.write_text("{}")
     env = environment(
@@ -59,7 +58,7 @@ def test_scene_config_reaches_blueprint_parser(tmp_path):
     )
     proc = DimosCliCall()
     env.configure_launch(proc)
-    parsed = BlueprintConfigParser(habitat_nav).parse(environ=proc.extra_env)
+    parsed = BlueprintConfigParser(habitat_nav.solidify()).parse(environ=proc.extra_env)
     config = parsed.module_kwargs("habitatconnection")
     assert config["scene_id"] == "apt_1"
     assert config["scene_dataset_config"] == str(dataset)
@@ -126,7 +125,11 @@ def test_external_executable_reaches_blueprint_without_source_build(
 
 def test_launch_and_cleanup(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
-    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
     proc.extra_env = {}
     mocker.patch(
         "dimos.evals.environments.live.McpAdapter"
@@ -162,9 +165,41 @@ def test_launch_and_cleanup(tmp_path, mocker):
     store.stop.assert_called_once()
 
 
+def test_a_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.extra_env = {}
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run", return_value=SimpleNamespace(mcp_url=None)
+    )
+    connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    env = HabitatEnvironment(blueprint=["habitat-nav", "observe-skill"], scene_id="apt_1")
+    mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    wait_mcp = mocker.patch.object(env, "_wait_mcp")
+    try:
+        env.start(())
+        assert connectable.call_args.args[1] is proc.process
+        wait_mcp.assert_not_called()
+    finally:
+        env.stop()
+
+
+def test_preflight_refuses_a_transport_other_than_zenoh_without_mcp(mocker):
+    mocker.patch("dimos.evals.environments.habitat.global_config", transport="lcm")
+    with pytest.raises(ValueError, match="DIMOS_TRANSPORT=zenoh"):
+        environment().preflight(Mock(requires_mcp=False))
+    mocker.patch("dimos.evals.environments.sim.Sim.preflight")
+    environment().preflight(Mock(requires_mcp=True))
+
+
 def test_readiness_failure_releases_resources(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
-    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
     mocker.patch(
         "dimos.evals.environments.live.McpAdapter"
     ).return_value.wait_for_ready.return_value = True

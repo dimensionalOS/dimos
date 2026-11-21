@@ -1,6 +1,6 @@
 # Ubuntu installation
 
-Use the official installer on Ubuntu 22.04/24.04, on x86_64 or ARM64:
+Use the official installer on Ubuntu 22.04/24.04/26.04, on x86_64 or ARM64:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
@@ -18,9 +18,17 @@ source .venv/bin/activate
 
 An existing checkout is reused without pulling or switching branches. Developer mode includes test and lint dependencies; see [testing](/docs/development/testing.md) for additional groups.
 
-Both modes pass CPU installation CI on Ubuntu 22.04/24.04 and x86_64/ARM64. Linux ARM64 excludes the unsupported `scene` extra. Jetson CUDA setup is not supported.
+CI tests both modes in headless Ubuntu 22.04/24.04/26.04 containers on x86_64 and ARM64. Linux ARM64 excludes the unsupported `scene` extra. Jetson CUDA setup is not supported.
 
 See [installer options](/docs/installation/index.md).
+
+## Headless Unitree on Ubuntu 26.04
+
+Until a fixed wheel ships, install from a developer checkout that includes the [headless Unitree fix](https://github.com/dimensionalOS/dimos/pull/5358). If your clone predates the fix, `git fetch origin pull/5358/head` followed by `git switch --detach FETCH_HEAD` selects the PR revision. Run the installer from the checkout root.
+
+```sh skip
+bash scripts/install.sh --mode dev --project-dir . --no-nix --extras base,unitree
+```
 
 ## Manual installation
 
@@ -28,7 +36,7 @@ Use these steps if you need to install without the guided script.
 
 ```sh skip
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config
+sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg0-dev pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -39,7 +47,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir dimos-app && cd dimos-app
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
+uv pip install --torch-backend cpu 'dimos[base,unitree,sim,drone]'
 uv run dimos --help
 ```
 

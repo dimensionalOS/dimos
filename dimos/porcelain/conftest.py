@@ -45,13 +45,7 @@ def app():
 
 @pytest.fixture
 def running_app() -> Iterator[Dimos]:
-    """Function-scoped: a Dimos with `StressTestModule` running.
-
-    Function-scoped (not session) because every Dimos instance in this
-    process shares the LCM bus, so a peer test that calls `.stop()` on
-    its own `StressTestModule` would broadcast a stop RPC that closed
-    *this* instance's module too.
-    """
+    """A running stack with one skill provider for local and attached clients."""
     instance = Dimos(n_workers=1)
     instance.run(StressTestModule)
     try:

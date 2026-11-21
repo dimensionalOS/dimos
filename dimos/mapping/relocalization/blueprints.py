@@ -23,6 +23,8 @@ relocalizer. In Rerun, `loaded_map` appears once a fix lands, on top of
 
 from typing import Any
 
+from reactivex.disposable import CompositeDisposable
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -30,14 +32,12 @@ from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.memory.replay import ReplayStream
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import resolve_named_path
-from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module
-
-logger = setup_logger()
 
 WORLD = "odom"
 
@@ -61,7 +61,11 @@ class RecordingPlayer(Module):
     def start(self) -> None:
         super().start()
         path = resolve_named_path(self.config.dataset, ".db")
-        store = self.register_disposable(SqliteStore(path=str(path), must_exist=True))
+        store = SqliteStore(path=str(path), must_exist=True)
+        subscriptions = CompositeDisposable()
+        # One disposer drains the subscriptions before closing their store,
+        # even when stop() is called concurrently or setup fails partway through.
+        self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
         replay = store.replay(
             speed=self.config.speed,
@@ -69,14 +73,12 @@ class RecordingPlayer(Module):
             duration=self.config.duration,
         )
         lidar: ReplayStream[PointCloud2] = replay.stream(self.config.stream)
-        logger.info(
-            f"Replaying {path.name}:{self.config.stream} "
-            f"({lidar.count()} frames at {self.config.speed}x)"
-        )
-        self.register_disposable(lidar.observable().subscribe(self.lidar.publish))
-
         tf: ReplayStream[TFMessage] = replay.stream("tf")
-        self.register_disposable(tf.observable().subscribe(self.tf.publish))
+        progress = ReplayProgress(str(path))
+        progress.start(replay, [lidar, tf])
+        subscriptions.add(progress.track(lidar.observable()).subscribe(self.lidar.publish))
+        subscriptions.add(progress.track(tf.observable()).subscribe(self.tf.publish))
+        progress.seal()
 
 
 def _fine_points(cloud: Any) -> Any:

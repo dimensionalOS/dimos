@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import platform
+import runpy
 import sys
-from typing import cast
+from types import ModuleType
+from typing import Any, cast
 
 import pytest
 
@@ -31,12 +33,15 @@ from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.gripper_task.gripper_task import GripperControlTask
 from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.robot.manipulators.xarm import config as xarm_config
+from dimos.robot.manipulators.xarm.blueprints import basic, teleop
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
 from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
@@ -50,14 +55,17 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
 )
 from dimos.robot.manipulators.xarm.connection import XArmConfig, XArmConnection
 from dimos.robot.urdf_manager import UrdfManager
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
+# Each blueprint's gripper joint: the adapter's "arm/gripper", or the URDF's
+# drive_joint behind XArmConnection.
 _GRIPPER_BLUEPRINTS = [
-    keyboard_teleop_xarm6,
-    keyboard_teleop_xarm7,
-    coordinator_teleop_xarm6,
-    coordinator_teleop_xarm7,
-    xarm7_planner_coordinator,
-    xarm_perception_sim,
+    (keyboard_teleop_xarm6.solidify(), "arm/gripper"),
+    (keyboard_teleop_xarm7.solidify(), "arm/gripper"),
+    (coordinator_teleop_xarm6.solidify(), "arm/gripper"),
+    (coordinator_teleop_xarm7.solidify(), "arm/gripper"),
+    (xarm7_planner_coordinator.solidify(), "arm/drive_joint"),
+    (xarm_perception_sim.solidify(), "arm/gripper"),
 ]
 
 
@@ -73,10 +81,10 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
 @pytest.mark.parametrize(
     "blueprint",
     [
-        keyboard_teleop_xarm6,
-        keyboard_teleop_xarm7,
-        xarm_grasp,
-        xarm_perception_sim,
+        keyboard_teleop_xarm6.solidify(),
+        keyboard_teleop_xarm7.solidify(),
+        xarm_grasp.solidify(),
+        xarm_perception_sim.solidify(),
     ],
 )
 def test_xarm_roboplan_blueprints_use_compatible_visualization(blueprint: Blueprint) -> None:
@@ -90,22 +98,64 @@ def test_xarm_roboplan_blueprints_use_compatible_visualization(blueprint: Bluepr
     assert config.visualization.requires_world_visualization is False
 
 
-@pytest.mark.parametrize("blueprint", _GRIPPER_BLUEPRINTS)
-def test_gripper_has_dedicated_task(blueprint: Blueprint) -> None:
+@pytest.mark.parametrize(("blueprint", "joint"), _GRIPPER_BLUEPRINTS)
+def test_gripper_has_dedicated_task(blueprint: Blueprint, joint: str) -> None:
     tasks = _coordinator_tasks(blueprint)
     gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", [joint])
 
 
-@pytest.mark.parametrize("blueprint", [coordinator_teleop_xarm6, coordinator_teleop_xarm7])
+@pytest.mark.parametrize(
+    "blueprint", [coordinator_teleop_xarm6.solidify(), coordinator_teleop_xarm7.solidify()]
+)
 def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
 
     assert "arm/gripper" in trajectory.joint_names
 
 
-@pytest.mark.parametrize("blueprint", [xarm6_teleop, xarm7_teleop])
+# The blueprints that run their arm and its gripper in MuJoCo under --simulation.
+_SIM_BLUEPRINTS: dict[str, ModuleType] = {
+    "keyboard_teleop_xarm6": teleop,
+    "keyboard_teleop_xarm7": teleop,
+    "coordinator_teleop_xarm6": teleop,
+    "coordinator_teleop_xarm7": teleop,
+    "coordinator_xarm6": basic,
+}
+
+
+def _under_simulation(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """What the module defines when it is built under ``--simulation``.
+
+    Blueprints are built at import, so this runs the module's source again and
+    leaves the imported module as it is. Plain strings stand in for the scenes,
+    because building a sim blueprint from an ``LfsPath`` downloads the scene.
+    """
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+    monkeypatch.setattr(xarm_config, "XARM6_SIM_PATH", "xarm6/scene.xml")
+    monkeypatch.setattr(xarm_config, "XARM7_SIM_PATH", "xarm7/scene.xml")
+    assert module.__file__ is not None
+    return runpy.run_path(module.__file__)
+
+
+@pytest.mark.parametrize("name", _SIM_BLUEPRINTS)
+def test_simulation_leaves_the_gripper_joint_to_the_sim(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blueprint = autoconnect(_under_simulation(_SIM_BLUEPRINTS[name], monkeypatch)[name]).solidify()
+    coordinator = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    sim = next(atom for atom in blueprint.blueprints if atom.module is MujocoSimModule)
+    (arm,) = coordinator.kwargs["hardware"]
+
+    assert arm.adapter_type == "sim_mujoco"
+    # The sim finds the gripper only in a scene joint past its dof.
+    assert sim.kwargs["dof"] == len(arm.joints) - 1
+
+
+@pytest.mark.parametrize("blueprint", [xarm6_teleop.solidify(), xarm7_teleop.solidify()])
 def test_connection_blueprint_shares_the_contract_declaration(blueprint: Blueprint) -> None:
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={}, overrides={"xarmconnection": {"ip": "192.0.2.1"}}

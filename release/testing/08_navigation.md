@@ -19,12 +19,12 @@ Expected result: the legged robot reaches the clicked goal without crossing wall
 Needs the `mapping` extra. The first run pulls the `go2_hongkong_office` recording.
 
 ```bash
-uv run dimos map global go2_hongkong_office --pgo --export --export-pc2
+uv run dimos map global go2_hongkong_office --pgo --export --export-cloud
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2-map --map-file go2_hongkong_office
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2
 ```
 
-* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.rrd`, `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office.pc2.lcm` (the point-cloud export) to the current directory.
+* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office_map.db`, whose point cloud is the named map `--map-name` gives (`v1` by default, on its `map_v1_cloud` stream), to the current directory.
 * The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy.
 * The PGO replay grows `world/pgo_keyframes` and publishes loop edges to `world/pgo_loops` when the walk revisits an area.
 
@@ -35,7 +35,7 @@ Expected result: the premap exports, relocalization finds a fix, and PGO closes 
 The first run pulls the `go2_mid360_sf_office_outdoors_2026-05-29` recording and premap. Allow about 7 GB of free disk during the download and extraction. If the Rerun viewer closes while the data is downloading, rerun the command after the data is cached to inspect the map.
 
 ```bash
-uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29
+uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29_map.db
 ```
 
 * In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands and lies on top of the live `world/local_map`. `world/global_map`, `world/lidar` and `world/region_bounds` are hidden by default; tick them in the Blueprint panel to compare.

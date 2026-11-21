@@ -64,7 +64,8 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 
 def test_make_openyam_model_config_uses_canonical_arm_joints(mocker) -> None:
     download = mocker.patch(
-        "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
+        "dimos.robot.assets.git_cache.GitAssetCache.resolve",
+        side_effect=AssertionError("Config must not download models"),
     )
     config = make_openyam_model_config()
 
@@ -82,13 +83,17 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
     model = prepare_robot_model(config).description
 
-    assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
+    assert OPENYAM_MODEL_PATH.parts[-2:] == ("openyam_single", "openyam_single.urdf")
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
     )
-    assert {
-        joint.name: joint.type for joint in model.joints if joint.name in {"joint7", "joint8"}
-    } == {"joint7": "prismatic", "joint8": "prismatic"}
+    tip = model.get_joint("gripper_tip_joint")
+    assert tip is not None
+    assert (tip.parent_link, tip.child_link, tip.origin_xyz) == (
+        "arm_tcp",
+        "gripper_tip",
+        (0.0, 0.0, 0.0),
+    )
 
 
 @pytest.mark.self_hosted
@@ -104,7 +109,11 @@ def test_openyam_jaw_is_joint7_and_joint8_copies_it() -> None:
     finger = loaded.get_joint("arm/joint7")
     follower = loaded.get_joint("arm/joint8")
     assert finger is not None and follower is not None
-    assert (finger.type, finger.lower, finger.upper) == ("prismatic", -0.04695, pytest.approx(0.0))
+    assert (finger.type, finger.lower, finger.upper) == (
+        "prismatic",
+        0.01081,
+        pytest.approx(0.0594641),
+    )
     assert follower.mimic == ("arm/joint7", 1.0, 0.0)
 
 
@@ -117,7 +126,7 @@ def test_make_openyam_model_config_preserves_explicit_home() -> None:
 
 
 def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
-    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
+    tasks = _coordinator_kwargs(teleop_webxr_openyam.solidify())["tasks"]
     teleop = next(task for task in tasks if task.type == "teleop_ik")
 
     assert teleop.params["pink"].gain == 1.0
@@ -144,7 +153,7 @@ def test_openyam_connection_rejects_empty_selector(port: str) -> None:
 
 
 def test_quest_teleop_module_accepts_blueprint_config() -> None:
-    kwargs = _module_kwargs(teleop_webxr_openyam, ArmTeleopModule)
+    kwargs = _module_kwargs(teleop_webxr_openyam.solidify(), ArmTeleopModule)
 
     module = ArmTeleopModule(**kwargs)
     module.stop()
@@ -153,8 +162,8 @@ def test_quest_teleop_module_accepts_blueprint_config() -> None:
 @pytest.mark.parametrize(
     "blueprint",
     [
-        coordinator_openyam,
-        openyam_planner_coordinator,
+        coordinator_openyam.solidify(),
+        openyam_planner_coordinator.solidify(),
     ],
 )
 def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Blueprint) -> None:
@@ -176,8 +185,8 @@ def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Bluepri
 @pytest.mark.parametrize(
     "blueprint",
     [
-        keyboard_teleop_openyam,
-        keyboard_teleop_openyam_planner,
+        keyboard_teleop_openyam.solidify(),
+        keyboard_teleop_openyam_planner.solidify(),
     ],
 )
 def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
@@ -195,9 +204,9 @@ def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
 @pytest.mark.parametrize(
     "blueprint",
     [
-        keyboard_teleop_openyam,
-        keyboard_teleop_openyam_planner,
-        teleop_webxr_openyam,
+        keyboard_teleop_openyam.solidify(),
+        keyboard_teleop_openyam_planner.solidify(),
+        teleop_webxr_openyam.solidify(),
     ],
 )
 def test_openyam_task_bindings_have_coordinator_inputs(blueprint: Blueprint) -> None:
@@ -212,7 +221,7 @@ def test_openyam_task_bindings_have_coordinator_inputs(blueprint: Blueprint) -> 
 
 
 def test_keyboard_teleop_gripper_control_is_independent() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam.solidify())["tasks"]
     gripper = next(task for task in tasks if task.name == "arm_gripper")
 
     assert gripper.joint_names == [_GRIPPER_JOINT]
@@ -220,7 +229,7 @@ def test_keyboard_teleop_gripper_control_is_independent() -> None:
 
 
 def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner)["tasks"]
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner.solidify())["tasks"]
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
 
@@ -229,7 +238,7 @@ def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
 
 
 def test_keyboard_teleop_openyam_gripper_opens_toward_joint7_lower_end() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam.solidify())["tasks"]
     gripper = next(task for task in tasks if task.name == "arm_gripper")
 
     assert gripper.joint_names == [_GRIPPER_JOINT]
@@ -237,7 +246,7 @@ def test_keyboard_teleop_openyam_gripper_opens_toward_joint7_lower_end() -> None
 
 
 def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
-    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
+    tasks = _coordinator_kwargs(teleop_webxr_openyam.solidify())["tasks"]
     teleop = next(task for task in tasks if task.type == "teleop_ik")
     gripper = next(task for task in tasks if task.type == "gripper")
 

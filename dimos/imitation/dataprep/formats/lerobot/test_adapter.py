@@ -23,6 +23,7 @@ from dimos.imitation.dataprep.formats.lerobot.adapter import (
     inspect_lerobot_dataset,
     run_lerobot_dataprep,
 )
+from dimos.imitation.dataprep.formats.lerobot.protocol import ErrorResult
 from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
 from dimos.utils.data import get_project_root
 
@@ -83,22 +84,69 @@ def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.Mocke
         run_lerobot_dataprep(config)
 
 
-def test_conversion_reports_child_process_diagnostics(
-    tmp_path: Path, mocker: pytest_mock.MockerFixture
-) -> None:
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "detail"),
+    [
+        ("partial output", "bad config", "bad config"),
+        ("progress\nfailed on stdout\n", "", "failed on stdout"),
+        ("", "", "no diagnostic output"),
+        ("", "Downloading torch\nerror: download failed\n", "error: download failed"),
+        (
+            "",
+            "Creating virtual environment\n"
+            "  \u00d7 No solution found when resolving dependencies:\n"
+            "  ╰─▶ Because required-package was not found in the cache\n"
+            "      and your project depends on required-package, we can\n"
+            "      conclude that your project's requirements are unsatisfiable.\n"
+            "\n"
+            "      hint: Packages were unavailable because the network was disabled. When\n"
+            "      the network is disabled, registry packages may only be read from the\n"
+            "      cache.\n",
+            "\u00d7 No solution found when resolving dependencies: "
+            "╰─▶ Because required-package was not found in the cache "
+            "and your project depends on required-package, we can "
+            "conclude that your project's requirements are unsatisfiable. "
+            "hint: Packages were unavailable because the network was disabled. When "
+            "the network is disabled, registry packages may only be read from the cache.",
+        ),
+        (
+            "",
+            "Downloading torch\nerror: Failed to download torch\n  Caused by: Connection refused\n",
+            "error: Failed to download torch Caused by: Connection refused",
+        ),
+        (
+            "",
+            "Installed 157 packages\n"
+            "Traceback (most recent call last):\n"
+            '  File "dataprep.py", line 191, in main\n'
+            "    request = REQUEST_ADAPTER.validate_json(sys.stdin.read())\n"
+            "pydantic_core.ValidationError: 1 validation error for BuildRequest\n"
+            "config.output.path\n"
+            "  Field required [type=missing, input_value={}, input_type=dict]\n",
+            "pydantic_core.ValidationError: 1 validation error for BuildRequest "
+            "config.output.path Field required [type=missing, input_value={}, input_type=dict]",
+        ),
+        (
+            ErrorResult(error="No successful episodes.\nUse explicit ranges.").model_dump_json(),
+            "Creating virtual environment\nDownloading torch\nInstalled 157 packages\n",
+            "No successful episodes. Use explicit ranges.",
+        ),
+    ],
+)
+def test_conversion_reports_child_process_diagnostics(tmp_path, mocker, stdout, stderr, detail):
     mocker.patch(
         "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
-        return_value=subprocess.CompletedProcess(
-            [], 9, stdout="partial output", stderr="bad config"
-        ),
+        return_value=subprocess.CompletedProcess([], 9, stdout=stdout, stderr=stderr),
     )
     config = DataPrepConfig(
         source="recording.db",
         output=OutputConfig(format="lerobot", path=tmp_path / "dataset"),
     )
 
-    with pytest.raises(RuntimeError, match="status 9: bad config"):
+    with pytest.raises(RuntimeError) as caught:
         run_lerobot_dataprep(config)
+
+    assert str(caught.value) == f"LeRobot dataprep exited with status 9: {detail}"
 
 
 def test_inspection_uses_the_same_isolated_entrypoint(
