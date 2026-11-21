@@ -121,6 +121,8 @@ enabled output stream. For example, a G1 recording containing only
 enabled input before subscribing. For example, a G1 `pointlio_odometry` stream
 must carry `Odometry` messages. At least one selected stream must contain a
 recorded frame. A seek or duration that excludes all frames still completes normally.
+The relocalization recording player and the xArm depth feed make the same checks
+for the streams they play, all of which must be in the recording.
 
 The G1 mesh blueprint warns when a recording lacks color, depth, camera calibration,
 or TF. It continues to publish the available streams, including odometry.

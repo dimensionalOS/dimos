@@ -557,6 +557,22 @@ def test_replay_rejects_wrong_sensor_type_before_subscribing(tmp_path, name, moc
         module.stop()
 
 
+def test_replay_names_a_missing_sensor_stream_before_subscribing(tmp_path, mocker):
+    path = tmp_path / "input.db"
+    with SqliteStore(path=path) as store:
+        store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+    module = GO2Connection(
+        g=GlobalConfig(replay=True, replay_db=str(path)), lidar=False, replay_loop=False
+    )
+    subscribe = mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    try:
+        with pytest.raises(LookupError, match="No stream 'color_image'.*odom"):
+            module.start()
+        subscribe.assert_not_called()
+    finally:
+        module.stop()
+
+
 def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
     """A legacy Go2 DDS recording holds nav_msgs.Odometry, which GO2Connection cannot publish."""
     path = tmp_path / "legacy.mcap"

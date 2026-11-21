@@ -90,6 +90,9 @@ class Replay(Configurable):
 
     def typed_stream(self, name: str, expected: type[T], *, source: str | Path) -> ReplayStream[T]:
         """Check the decoded type a subscriber will receive before playback starts."""
+        if name not in self.list_streams():
+            recorded_names = ", ".join(sorted(self.list_streams())) or "(none)"
+            raise LookupError(f"No stream {name!r} in {source}. Recorded: {recorded_names}.")
         recorded = self.store.stream(name).data_type
         if recorded is None or not issubclass(recorded, expected):
             raise TypeError(
