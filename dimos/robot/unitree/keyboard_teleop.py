@@ -32,7 +32,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
-from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess
+from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess, check_keyboard_display
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -181,6 +181,7 @@ class _DriveWindow(KeyboardWindow):
         self._was_active = False
         self._estop_at = 0.0
         pygame.display.init()
+        check_keyboard_display(pygame.display.get_driver())
         pygame.font.init()
         self._screen = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT), pygame.SWSURFACE)
         pygame.display.set_caption(self.title)

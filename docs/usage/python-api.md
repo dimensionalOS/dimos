@@ -39,6 +39,8 @@ app.stop()
 
 The drive and arm keyboard teleop modules open a pygame window on the worker's machine.
 Startup waits for the display to open. Closing a moving keyboard publishes a zero velocity command.
+If SDL selects an offscreen or dummy driver automatically, startup reports that no
+usable display is available. For headless tests, explicitly set `SDL_VIDEODRIVER=dummy`.
 Closing an idle window leaves other velocity publishers in control. Call `start()` to reopen it.
 
 ## RPC calls

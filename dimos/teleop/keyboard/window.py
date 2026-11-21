@@ -22,6 +22,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
+import os
 import subprocess
 import sys
 import threading
@@ -31,6 +32,13 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.encode.cbor import decode, encode
+
+
+def check_keyboard_display(driver: str) -> None:
+    """A headless SDL backend can create a surface without opening a keyboard window."""
+    requested = os.environ.get("SDL_VIDEODRIVER", "").lower().split(",")
+    if driver in {"offscreen", "dummy"} and driver not in requested:
+        raise RuntimeError(f"no usable display (SDL selected the {driver!r} video driver)")
 
 
 @dataclass

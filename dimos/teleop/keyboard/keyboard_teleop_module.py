@@ -47,7 +47,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess
+from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess, check_keyboard_display
 
 # Default jog speeds
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
@@ -143,6 +143,7 @@ class _ArmWindow(KeyboardWindow):
 
     def open(self) -> None:
         pygame.display.init()
+        check_keyboard_display(pygame.display.get_driver())
         pygame.font.init()
         self._screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
         pygame.display.set_caption("Keyboard Teleop")

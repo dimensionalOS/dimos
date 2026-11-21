@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import os
 from threading import Event
 from typing import Any
 
@@ -23,7 +24,7 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.get_all_blueprints import get_module_by_name
-from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess
+from dimos.teleop.keyboard.window import KeyboardWindow, WindowProcess, check_keyboard_display
 
 
 @pytest.fixture(params=["keyboard-teleop", "keyboard-teleop-module"])
@@ -49,6 +50,31 @@ def test_start_reports_the_display_error(module, velocities, monkeypatch) -> Non
     with pytest.raises(RuntimeError, match="unavailable-teleop-test"):
         module.start()
     assert velocities == []
+
+
+def test_start_refuses_automatically_selected_headless_display(
+    module, velocities, monkeypatch, tmp_path
+) -> None:
+    # Give the window child an initialized headless display, independent of the host desktop.
+    (tmp_path / "sitecustomize.py").write_text(
+        "import os, pygame\n"
+        "os.environ['SDL_VIDEODRIVER'] = 'dummy'\n"
+        "pygame.display.init()\n"
+        "del os.environ['SDL_VIDEODRIVER']\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path), prepend=os.pathsep)
+    with pytest.raises(RuntimeError, match="no usable display.*dummy"):
+        module.start()
+    assert velocities == []
+
+
+def test_offscreen_requires_requesting_that_driver(monkeypatch) -> None:
+    monkeypatch.setenv("SDL_VIDEODRIVER", "x11")
+    with pytest.raises(RuntimeError, match="no usable display.*offscreen"):
+        check_keyboard_display("offscreen")
+
+    monkeypatch.setenv("SDL_VIDEODRIVER", "x11,offscreen")
+    check_keyboard_display("offscreen")
 
 
 def test_stop_closes_the_open_display(module, monkeypatch) -> None:
