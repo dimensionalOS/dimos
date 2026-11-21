@@ -15,6 +15,8 @@ The Go2 navigation stack uses a simple **column-carving voxel map** strategy: ea
 
 For hardware setup, simulation, and the full blueprint list, see the [Go2 platform guide](/docs/platforms/quadruped/go2/index.md).
 
+To drive a robot to goals from a script, see [Navigation from Python](/docs/capabilities/navigation/python_api.md).
+
 ## Generic
 
 | Workflow                 | When to use                                                            | Blueprint     | Docs                                                |

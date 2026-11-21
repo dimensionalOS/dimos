@@ -55,6 +55,11 @@ See the [manipulation Python guide](/docs/capabilities/manipulation/python_api.m
 for arm control from scripts or `dimos shell`, including setup, motion, and
 failure handling.
 
+## Navigation
+
+See the [navigation Python guide](/docs/capabilities/navigation/python_api.md)
+for driving mobile robots to goals from scripts.
+
 ## Discovering modules and RPCs
 
 Discovery works in both local and remote mode:
