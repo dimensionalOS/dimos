@@ -19,10 +19,14 @@ subscribe across all streams pins a single ``(wall_t0, replay_t0)`` anchor;
 subsequent subscribers schedule emissions against the same anchor, so
 ``replay.streams.lidar.observable()`` and ``replay.streams.odom.observable()``
 advance together. Late subscribers skip past data already behind wall time.
+
+Setup metadata (intrinsics and mount frames that keep one stamp) is not part of
+that clock: :meth:`ReplayStream.split_static` separates it from the timed rows.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 import threading
 import time
@@ -42,12 +46,15 @@ from reactivex.subject import AsyncSubject
 
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
     from dimos.memory.stream import Stream
+    from dimos.memory.type.observation import Observation
+    from dimos.msgs.geometry_msgs.Transform import Transform
 
 T = TypeVar("T")
 
@@ -80,6 +87,7 @@ class Replay(Configurable):
     def __init__(self, store: Store, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
+        self._splits: dict[str, tuple[Any, ReplayStream[Any] | None]] = {}
         self._first_ts: float | None = None
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
@@ -101,25 +109,21 @@ class Replay(Configurable):
         """Replay a named stream, optionally from a filtered observation query."""
         return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
 
-    def set_relative_window(
-        self, origin: float, *, seek: float | None, duration: float | None
-    ) -> None:
-        """Set bounds before playback when only part of the recording participates in timing."""
-        self._first_ts = origin
-        self.config.from_timestamp = None
-        self.config.seek = seek
-        self.config.duration = duration
-
     def first_ts(self) -> float | None:
-        """Common origin for relative seek and duration.
+        """Common origin for relative seek and duration: the earliest timed row in the store.
 
-        Defaults to the earliest source timestamp in the underlying store.
+        Static metadata is often stamped long before the run, so a clip measured
+        from it would hold no sensor data.
         """
         if self._first_ts is None:
             candidates: list[float] = []
             for name in self.store.list_streams():
+                stream: ReplayStream[Any] = self.stream(name)
                 try:
-                    candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
+                    _, timed = stream.split_static()
+                    if timed is not None:
+                        rows = timed._source_stream()
+                        candidates.append(float(rows.order_by("ts").first().ts))
                 except (LookupError, ImportError, AttributeError):
                     continue
             if candidates:
@@ -134,7 +138,7 @@ class Replay(Configurable):
             return self._anchor
 
     def pin_anchor(self, ts: float | None = None) -> None:
-        """Pin the anchor at *ts* (default: the earliest recorded ts) now, before any stream
+        """Pin the anchor at *ts* (default: the earliest timed row) now, before any stream
         subscribes, so streams that start earlier than the first-subscribed one keep their
         frames."""
         first = self.first_ts() if ts is None else ts
@@ -214,6 +218,45 @@ class ReplayStream(Generic[T]):
             bound = s
 
         return bound.order_by("ts")
+
+    def split_static(self) -> tuple[T | None, ReplayStream[T] | None]:
+        """Separate setup metadata from the rows that play on the recording clock.
+
+        Returns the message to republish and the stream to schedule; either can be
+        missing. A stream whose rows all carry one timestamp (camera_info stamped at
+        import) and TF edges whose stamp never changes describe the setup, not the
+        run. They are often stamped long before it: scheduled like sensor data, they
+        would start the clock early and leave every sensor silent until its own
+        first row. A stream given its own source or cast plays as given.
+        """
+        if self._source is not None or self._autocast is not None:
+            return None, self
+        splits = self._replay._splits
+        if self._name not in splits:
+            splits[self._name] = self._split_static()
+        return splits[self._name]
+
+    def _split_static(self) -> tuple[Any, ReplayStream[Any] | None]:
+        rows = self._source_stream()
+        payload_type = rows.data_type
+        if payload_type is not None and issubclass(payload_type, TFMessage):
+            frozen, edges = _frozen_tf(rows)
+            if not frozen.transforms:
+                return None, self
+            dynamic = rows.filter(partial(_has_dynamic_tf, edges))
+            try:
+                start = dynamic.order_by("ts").first().ts
+            except LookupError:
+                return frozen, None
+            return frozen, ReplayStream(
+                replay=self._replay,
+                name=self._name,
+                autocast=partial(_dynamic_tf, edges),
+                source=dynamic.time_range(start, float("inf")),
+            )
+        if rows.count() > 1 and (first := rows.order_by("ts").first()).ts == rows.last().ts:
+            return first.data, None
+        return None, self
 
     def first_ts(self) -> float | None:
         """First ts within the replay window (post seek/duration)."""
@@ -430,3 +473,42 @@ class ReplayStream(Generic[T]):
             return Disposable(dispose)
 
         return rx.create(subscribe)
+
+
+def _has_dynamic_tf(edges: set[tuple[str, str]], row: Observation[TFMessage]) -> bool:
+    return not row.data.transforms or any(
+        (t.frame_id, t.child_frame_id) not in edges for t in row.data.transforms
+    )
+
+
+def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
+    # Older recordings can carry both fixed and changing edges in one row.
+    return TFMessage(
+        *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
+    )
+
+
+def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
+    """Find fixed edges in a finite recording, independent of playback bounds."""
+    all_static = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
+    # A changing stamp disqualifies the edge. Only the last stamp and count
+    # are kept for each edge, irrespective of the length of the recording.
+    stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
+    for row in rows:
+        for transform in row.data.transforms:
+            edge = (transform.frame_id, transform.child_frame_id)
+            previous = stamps.get(edge, (transform.ts, 0))
+            if previous is not None:
+                stamps[edge] = (
+                    (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
+                )
+    edges = {
+        edge for edge, stamp in stamps.items() if stamp is not None and (all_static or stamp[1] > 1)
+    }
+    transforms: dict[bytes, Transform] = {}
+    if edges:
+        for row in rows:
+            for transform in row.data.transforms:
+                if (transform.frame_id, transform.child_frame_id) in edges:
+                    transforms[transform.lcm_encode()] = transform
+    return TFMessage(*transforms.values()), edges

@@ -121,8 +121,11 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.mcap run unitree-go2
 ```
 
-Sensor replay opens all selected streams before starting the playback clock at their earliest row.
+Sensor replay opens all selected streams before starting the playback clock at their earliest timed row.
 Initial subscriptions include the first recorded rows even when opening another sensor takes time.
+Setup metadata stays off that clock: a stream whose rows all share one stamp, and TF edges whose
+stamp never changes, are republished every second. They are often stamped long before the run, so
+`seek` and `duration` are measured from the first timed row.
 
 An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
 

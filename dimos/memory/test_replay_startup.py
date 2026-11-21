@@ -17,11 +17,13 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from reactivex import interval
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
 from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
+from dimos.memory import replay_progress
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.sqlite import SqliteStore
@@ -115,3 +117,136 @@ def test_player_starts_clock_after_opening_both_sensor_cursors(tmp_path, mocker,
         scheduler.advance_by(1.0)
     assert [stamp for _, stamp in events] == pytest.approx([5.0, 5.1, 5.15, 5.2, 5.4, 5.6])
     assert [wall - start for wall, _ in events] == pytest.approx([0, 0.1, 0.15, 0.2, 0.4, 0.6])
+
+
+@pytest.fixture
+def calibrated_recording(tmp_path):
+    """Mount frames and intrinsics keep one old stamp; the sensors start 990 s later."""
+    path = tmp_path / "calibrated.db"
+    with SqliteStore(path=str(path)) as store:
+        frames = store.stream("tf", TFMessage)
+        for _ in range(2):
+            frames.append(
+                TFMessage(Transform(frame_id="base", child_frame_id="camera", ts=10.0)), ts=10.0
+            )
+        for ts in (1000.0, 1000.5):
+            frames.append(
+                TFMessage(Transform(frame_id="world", child_frame_id="base", ts=ts)), ts=ts
+            )
+        # An edge or stream sampled once is data, not calibration: it plays at its own time.
+        frames.append(
+            TFMessage(Transform(frame_id="base", child_frame_id="tool", ts=1000.25)), ts=1000.25
+        )
+        for name in ("grayscale_info", "camera_info", "realsense_camera_info"):
+            for _ in range(2):
+                store.stream(name, CameraInfo).append(CameraInfo(ts=10.0), ts=10.0)
+        for ts in (1000.0, 1000.25, 1000.5):
+            for name in ("odometry", "pointlio_odometry"):
+                store.stream(name, Odometry).append(Odometry(ts=ts), ts=ts)
+            image = Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8), ts=ts)
+            store.stream("color_image", Image).append(image, ts=ts)
+            cloud = PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=ts)
+            store.stream("pointlio_lidar", PointCloud2).append(cloud, ts=ts)
+        store.stream("depth_image", Image).append(image, ts=1000.5)
+    return path
+
+
+@pytest.fixture
+def scheduler(mocker):
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: scheduler.clock))
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    return scheduler
+
+
+@pytest.fixture
+def play(calibrated_recording, scheduler):
+    """Run a player for some scheduler seconds; gives (wall offset, stamp) per port."""
+    with ExitStack() as cleanup:
+
+        def run(player, seconds, *ports, **settings):
+            dataset = "db_path" if player is SpotReplay else "dataset"
+            module = player(**{dataset: str(calibrated_recording)}, **settings)
+            cleanup.callback(module.stop)
+            received = {name: [] for name in ("tf", *ports)}
+            for name in ports:
+                cleanup.enter_context(
+                    Disposable(
+                        getattr(module, name).subscribe(
+                            lambda m, name=name: received[name].append((scheduler.clock, m.ts))
+                        )
+                    )
+                )
+            cleanup.enter_context(
+                Disposable(
+                    module.tf.subscribe(
+                        lambda m: received["tf"].extend(
+                            (scheduler.clock, t.child_frame_id, t.ts) for t in m.transforms
+                        )
+                    )
+                )
+            )
+            module.start()
+            scheduler.advance_by(seconds)
+            return received
+
+        yield run
+
+
+@pytest.mark.parametrize(
+    ("player", "sensor", "settings"),
+    [
+        (SpotReplay, "odometry", {"loop": False}),
+        (DepthCameraFeed, "color_image", {}),
+        (G1Replay, "pointlio_odometry", {}),
+        (RecordingPlayer, "lidar", {}),
+    ],
+)
+def test_static_calibration_does_not_delay_sensor_playback(play, mocker, player, sensor, settings):
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    received = play(player, 1, sensor, **settings)
+    assert received[sensor] == [(0, 1000.0), (0.25, 1000.25), (0.5, 1000.5)]
+    # The mount frame is published once, ahead of the edges that move.
+    assert received["tf"] == [
+        (0, "camera", 10.0),
+        (0, "base", 1000.0),
+        (0.25, "tool", 1000.25),
+        (0.5, "base", 1000.5),
+    ]
+    assert [call.args[0] for call in log.info.call_args_list] == [
+        "Replay started",
+        "Replay finished",
+    ]
+    assert log.info.call_args_list[0].kwargs["duration_s"] == 0.5
+
+
+def test_looped_spot_replay_repeats_without_the_static_lead(play):
+    received = play(SpotReplay, 0.6, "odometry")
+    assert received["odometry"] == [(0, 1000.0), (0.25, 1000.25), (0.5, 1000.5), (0.55, 1000.0)]
+    assert received["tf"] == [
+        (0, "camera", 10.0),
+        (0, "base", 1000.0),
+        (0.25, "tool", 1000.25),
+        (0.5, "base", 1000.5),
+        (0.55, "base", 1000.0),
+    ]
+
+
+def test_clip_is_measured_from_the_first_sensor_row(play, scheduler, mocker):
+    mocker.patch.object(
+        replay_progress, "interval", side_effect=lambda period: interval(period, scheduler)
+    )
+    received = play(
+        DepthCameraFeed, 2, "color_image", "depth_image", "camera_info", seek=0.25, duration=0.5
+    )
+    assert received["color_image"] == [(0, 1000.25), (0.25, 1000.5)]
+    assert received["depth_image"] == [(0.25, 1000.5)]
+    # Calibration is outside the clip and still reaches every consumer, once a second.
+    assert received["camera_info"] == [(1, 10.0), (2, 10.0)]
+    assert received["tf"] == [
+        (0, "camera", 10.0),
+        (0, "tool", 1000.25),
+        (0.25, "base", 1000.5),
+        (1, "camera", 10.0),
+        (2, "camera", 10.0),
+    ]

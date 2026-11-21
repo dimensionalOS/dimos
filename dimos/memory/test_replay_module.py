@@ -27,7 +27,7 @@ from reactivex.subject import Subject
 from reactivex.testing import TestScheduler
 
 from dimos.core.stream import Out, Transport
-from dimos.memory import replay as replay_mod, replay_module as rm
+from dimos.memory import replay as replay_mod, replay_progress
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
@@ -233,7 +233,7 @@ def test_constant_timestamp_tf_republishes_every_edge(sqlite_store, mocker):
     emitted = []
     path = sqlite_store.config.path
     with Subject() as ticks:
-        mocker.patch.object(rm, "interval", return_value=ticks)
+        mocker.patch.object(replay_progress, "interval", return_value=ticks)
         with replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True) as module:
             module.register_disposable(Disposable(module.outputs["tf"].subscribe(emitted.append)))
             ticks.on_next(0)
@@ -280,8 +280,9 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(
     mocker.patch.object(ReplayStream, "_decode", side_effect=slow_decode, autospec=True)
     mocker.patch.object(replay_mod.time, "time", side_effect=lambda: scheduler.clock)
     mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
-    interval = rm.interval
-    mocker.patch.object(rm, "interval", side_effect=lambda period: interval(period, scheduler))
+    mocker.patch.object(
+        replay_progress, "interval", side_effect=lambda period: interval(period, scheduler)
+    )
     mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
     mocker.patch.object(ZenohRPC, "start")
     mocker.patch.object(ZenohRPC, "serve_module_rpc")
@@ -502,7 +503,7 @@ def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
             store.stream("camera_info", PoseStamped).append(PoseStamped(ts=0.0), ts=0.0)
     scheduler = TestScheduler()
     mocker.patch(
-        "dimos.memory.replay_module.interval",
+        "dimos.memory.replay_progress.interval",
         side_effect=lambda period: interval(period, scheduler=scheduler),
     )
     log = mocker.patch("dimos.memory.replay_progress.logger")
