@@ -44,6 +44,9 @@ pub struct Config {
     /// Bytes asked for per read.
     #[validate(range(min = 1))]
     read_chunk_bytes: i64,
+    /// Read with this syscall number instead of read(2), for a kernel that only delivers the UART that way (0 = read(2)).
+    #[validate(range(min = 0))]
+    read_syscall: i64,
     /// Bytes the decoder holds waiting for a frame before dropping the oldest.
     #[validate(range(min = 7))]
     max_buffered_bytes: i64,
@@ -92,6 +95,7 @@ fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
         path: config.device.clone(),
         baud: u32::try_from(config.baud).unwrap_or(1),
         read_chunk_bytes: usize::try_from(config.read_chunk_bytes).unwrap_or(1),
+        read_syscall: (config.read_syscall > 0).then_some(config.read_syscall),
         decoder: DecoderConfig {
             max_buffered_bytes: usize::try_from(config.max_buffered_bytes).unwrap_or(0),
         },

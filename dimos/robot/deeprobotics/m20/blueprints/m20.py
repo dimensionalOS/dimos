@@ -417,6 +417,9 @@ _m20_real = autoconnect(
             # the Yesense on AOS's 16550 UART, at its mount on the M20
             "serial": YesenseImu.blueprint(
                 device="/dev/ttyS9",
+                # AOS's vendor kernel hands this UART's bytes only to syscall 0x1cb (what yesense_node calls); read(2)
+                # gets none of them
+                read_syscall=0x1CB,
                 frame_id=constants.IMU_FRAME,
                 imu_xyz=constants.IMU_XYZ_M,
                 mount_rpy_rad=constants.IMU_MOUNT_RPY_RAD,

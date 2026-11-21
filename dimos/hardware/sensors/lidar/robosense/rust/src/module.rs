@@ -103,7 +103,7 @@ pub struct Config {
     /// fixed: body_filter_joint_positions for every scan; joint_state: the joint_state sample nearest each scan.
     body_filter_joint_source: JointSource,
     body_filter_joint_positions: HashMap<String, f64>,
-    /// How far (s) a joint state may be from a scan's stamp; a scan with none that close is dropped.
+    /// How far (s) a joint state may be from a scan's stamp; a scan with none that close goes out uncut.
     #[validate(range(min = 0.0))]
     body_filter_state_tolerance_s: f64,
     /// Seconds of joint states kept behind the newest.
@@ -334,14 +334,14 @@ impl Airy {
                     let kept = cut.cut(&mut framed.scan);
                     let s = &cut.stats;
                     if config.body_filter_stats_every > 0 && s.scans % config.body_filter_stats_every == 0 {
-                        tracing::info!(scans = s.scans, dropped_without_joint_state = s.dropped, points_in = s.points_in,
+                        tracing::info!(scans = s.scans, uncut_without_joint_state = s.dropped, points_in = s.points_in,
                             points_removed = s.points_removed, mean_ms = s.total_ms / (s.scans - s.dropped).max(1) as f64,
                             max_ms = s.max_ms, "body filter");
                     }
                     if !kept {
+                        // never go blind: without a joint state near the stamp the scan goes out uncut, body included
                         dimos_module::warn_throttled!(std::time::Duration::from_secs(1), stamp = framed.scan.timestamp,
-                            "dropping a scan: no joint state within body_filter_state_tolerance_s of its stamp");
-                        continue;
+                            "publishing a scan uncut: no joint state within body_filter_state_tolerance_s of its stamp");
                     }
                 }
                 let msg = cloud_message(config.point_format, &config.frame_id, &framed.scan);

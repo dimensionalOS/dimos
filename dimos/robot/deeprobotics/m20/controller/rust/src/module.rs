@@ -212,11 +212,11 @@ pub fn guard(
     };
     let torque = largest(&mut joints.iter().map(|j| j.torque));
     let velocity = largest(&mut joints.iter().map(|j| j.velocity));
+    // a reply with no joint records says nothing about the joints; a missing joint state is the stale-state fault's job
     let status_bad = !in_startup
-        && (joints.is_empty()
-            || joints
-                .iter()
-                .any(|j| j.status_word != m20_ecan::joint::STATUS_OK));
+        && joints
+            .iter()
+            .any(|j| j.status_word != m20_ecan::joint::STATUS_OK);
     (
         torque,
         velocity,
@@ -485,7 +485,16 @@ fn run_policy(
                 !guard_startup.load(Ordering::Relaxed),
             );
             if stop && !guard_tripped.swap(true, Ordering::Relaxed) {
-                tracing::error!(torque, velocity, "guard: stopping the controller");
+                let statuses: Vec<(String, u16)> = joints
+                    .iter()
+                    .map(|j| (format!("{:?}", j.joint), j.status_word))
+                    .collect();
+                tracing::error!(
+                    torque,
+                    velocity,
+                    ?statuses,
+                    "guard: stopping the controller"
+                );
                 guard_shared.stop.store(true, Ordering::Relaxed);
             }
         }
@@ -821,6 +830,6 @@ mod tests {
         // a NaN reading used to fold away to 0 and pass
         assert!(guard(&joints(f32::NAN, 0.1, 1), 1.0, 0.5, false).2);
         assert!(guard(&joints(0.1, f32::INFINITY, 1), 1.0, 0.5, false).2);
-        assert!(guard(&[], 1.0, 0.5, false).2);
+        assert!(!guard(&[], 1.0, 0.5, false).2);
     }
 }
