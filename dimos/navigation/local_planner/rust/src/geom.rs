@@ -21,6 +21,8 @@ pub struct Params {
     pub lookahead: f64,
     pub max_speed: f64,
     pub max_yaw_rate: f64,
+    /// The slowest turn the body executes, held past `fan_yaw_done`.
+    pub min_yaw_rate: f64,
     pub k_pos: f64,
     pub k_yaw: f64,
     pub fan_yaw_per_m: f64,

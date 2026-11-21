@@ -118,6 +118,7 @@ pub struct Emb {
     pub walk_gain: f64,
     pub walk_slip: f64,
     pub walk_slip_ramp: f64,
+    pub min_yaw_rate: f64,
     /// Vertical geometry off the surface the feet stand on (`obstacles.rs`).
     pub steppable: f64,
     pub height: f64,
@@ -153,6 +154,7 @@ impl Emb {
             walk_gain: 0.964,
             walk_slip: 0.132,
             walk_slip_ramp: 0.08,
+            min_yaw_rate: 0.0,
             steppable: 0.2,
             height: 0.6,
             base_height: 0.29,

@@ -35,6 +35,7 @@ ALFRED = Embodiment(
     walk_gain=1.0,  # wheels deliver the command
     walk_slip=0.0,
     walk_slip_ramp=0.08,
+    min_yaw_rate=0.0,  # no turn floor
     strafe=1.5,  # holonomic, but priced above forward so it turns to face long legs
     reverse=1.8,  # backwards drives into what the mast hides from the lidar
     yaw_w=0.15,  # planner cost per rad of rotation

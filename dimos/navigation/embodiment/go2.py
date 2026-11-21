@@ -37,6 +37,7 @@ GO2 = Embodiment(
     walk_gain=0.964,  # ground speed ~= walk_gain * cmd - walk_slip, probed open loop
     walk_slip=0.132,
     walk_slip_ramp=0.08,  # below this intended speed the slip inverse fades to identity
+    min_yaw_rate=0.0,  # no turn floor
     strafe=1.3,  # planner cost of a metre sideways, forward = 1
     reverse=1.8,  # ...and backwards
     yaw_w=0.15,  # planner cost per rad of rotation
