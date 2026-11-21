@@ -24,7 +24,19 @@ from dimos.core.introspection.blueprint.dot import LayoutAlgo, render
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.svg import to_svg
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
+
+
+class Duplex(Module):
+    frame: IO[bytes]
+
+
+def test_duplex_port_has_edges_in_both_directions() -> None:
+    graph = render(Duplex.blueprint())
+    edges = [line.split()[:3] for line in graph.splitlines() if " -> " in line]
+    assert "frame:bytes" in graph
+    assert len(edges) == 2
+    assert edges[0] == edges[1][::-1]
 
 
 @pytest.mark.parametrize(
@@ -99,3 +111,15 @@ def test_disabled_modules_do_not_add_stream_nodes_or_edges() -> None:
     assert '"module:camera"' in graph
     assert '"module:display"' not in graph
     assert "image:bytes" not in graph
+
+
+def test_named_duplex_instances_share_both_directions_of_one_channel() -> None:
+    blueprint = autoconnect(
+        Duplex.blueprint(instance_name="left"), Duplex.blueprint(instance_name="right")
+    )
+    graph = render(blueprint.solidify())
+    channel = re.search(r'(\w+) \[label="frame:bytes"', graph)
+    assert channel
+    for peer in ("left", "right"):
+        assert f'"module:{peer}" -> {channel[1]} ' in graph
+        assert f'{channel[1]} -> "module:{peer}" ' in graph

@@ -13,7 +13,7 @@ uv run dimos --replay run unitree-go2 --relay-url http://localhost:7780
 
 Or the blueprint composes `cockpit(...)` itself, as the Go2 cockpit blueprints do. Then the bridge is part of the blueprint with exactly the panels and channels declared, and the flags only choose the relay. Without `--relay-url` such a blueprint starts a local relay by itself.
 
-The default cockpit is built from the streams the blueprint has: a video panel when a module publishes `color_image`, a map when one publishes `global_costmap` (with the pose marker when `odom` exists too), and teleop when a module consumes `tele_cmd_vel`.
+The default cockpit is built from the streams the blueprint has: a video panel when a module publishes `color_image`, a map when one publishes `global_costmap` (with the pose marker when `odom` exists too), and teleop when a module consumes `tele_cmd_vel`. A bidirectional `IO[T]` port can supply a built-in receive channel or consume a transmit channel.
 
 Both ways need the `web` extra (`uv sync --extra web --inexact` in a checkout, `dimos[web]` from pip).
 

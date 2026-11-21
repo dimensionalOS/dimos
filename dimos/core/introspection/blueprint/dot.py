@@ -164,9 +164,9 @@ def render(
             if not isinstance(name, str):
                 continue
             key = (name, conn.type)
-            if conn.direction == "out":
+            if conn.can_publish:
                 producers[key].append(bp.name)
-            else:
+            if conn.can_subscribe:
                 consumers[key].append(bp.name)
 
     channels = sorted(
