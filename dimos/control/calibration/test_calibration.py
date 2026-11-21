@@ -44,7 +44,6 @@ def calibration(
     arm: ArmModel, operator: FakeOperator, fake: FakeArm, **settings: Any
 ) -> Calibration:
     config = CalibrationModuleConfig(
-        robot="openyam",
         poses=4,
         speed_deg_s=50.0,
         grid_points=400,
@@ -406,13 +405,13 @@ def test_proposed_gains_that_rest_worse_than_the_first_visit_are_not_saved(
 def test_moves_default_to_10_deg_s_up_to_60_and_each_dither_holds_a_second(
     arm: ArmModel,
 ) -> None:
-    config = CalibrationModuleConfig(robot="openyam")
+    config = CalibrationModuleConfig()
     assert (config.speed_deg_s, config.dither_hold_s) == (10.0, 1.0)
-    CalibrationModuleConfig(robot="openyam", speed_deg_s=60.0)
+    CalibrationModuleConfig(speed_deg_s=60.0)
     with pytest.raises(ValueError, match="less than or equal to 60"):
-        CalibrationModuleConfig(robot="openyam", speed_deg_s=61.0)
+        CalibrationModuleConfig(speed_deg_s=61.0)
     with pytest.raises(ValueError, match="outlast rest_window_s"):
-        CalibrationModuleConfig(robot="openyam", dither_hold_s=0.5)
+        CalibrationModuleConfig(dither_hold_s=0.5)
     run = calibration(arm, FakeOperator(), FakeArm(arm), steps=["gravity_poses"])
     holds: list[float] = []
     stream = run.stream
@@ -447,12 +446,12 @@ def test_a_hold_on_a_creeping_joint_ends_not_converging_at_its_bound(arm: ArmMod
             )
         return motion
 
-    bounded = creep(CalibrationModuleConfig(robot="openyam").max_hold_s)
+    bounded = creep(CalibrationModuleConfig().max_hold_s)
     assert bounded.ended == "not converging"
     assert bounded.t[-1] - bounded.t[0] == pytest.approx(5.0, abs=0.011)
     assert not creep(math.inf).done.is_set()
     with pytest.raises(ValueError, match="two rest windows"):
-        CalibrationModuleConfig(robot="openyam", max_hold_s=1.0)
+        CalibrationModuleConfig(max_hold_s=1.0)
 
 
 def test_the_plan_skips_what_cannot_run() -> None:
