@@ -34,9 +34,12 @@ import signal
 import subprocess
 import sys
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
+
+if TYPE_CHECKING:
+    from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 
 arm_app = typer.Typer(
     help="Calibrate an arm (gravity, gains, checks), show its calibration, bake it into a URDF.",
@@ -181,6 +184,23 @@ def use_run_globals(tokens: list[str], overrides: Mapping[str, Any]) -> None:
     )
 
 
+def _robot_data(robot: str) -> DamiaoRobot:
+    """The robot ``<robot>-calibrate`` calibrates; exits naming the robots with such a blueprint."""
+    from dimos.control.calibration.blueprints import calibrated_robot
+    from dimos.robot.all_blueprints import all_blueprints
+    from dimos.robot.get_all_blueprints import load_blueprint
+
+    if f"{robot}-calibrate" not in all_blueprints:
+        known = [
+            name.removesuffix("-calibrate")
+            for name in all_blueprints
+            if name.endswith("-calibrate")
+        ]
+        typer.echo(f"Error: no {robot}-calibrate blueprint; robots: {', '.join(known)}", err=True)
+        raise typer.Exit(2)
+    return calibrated_robot(load_blueprint(f"{robot}-calibrate"))
+
+
 def _split(text: str | None, kind: type) -> list[Any] | None:
     return (
         None if text is None else [kind(item.strip()) for item in text.split(",") if item.strip()]
@@ -192,7 +212,7 @@ def _split(text: str | None, kind: type) -> list[Any] | None:
 )
 def calibrate_cmd(
     ctx: typer.Context,
-    robot: str = typer.Argument(..., help="Robot: openyam, dual-openyam, metal, dual-metal, ..."),
+    robot: str = typer.Argument(..., help="Robot with a <robot>-calibrate blueprint, e.g. openyam"),
     arm: str | None = typer.Option(None, help="Which arm, e.g. left, on a robot with several"),
     floor_z_m: float | None = typer.Option(None, help="Table height from the arm's base, m"),
     min_x_m: float | None = typer.Option(None, help="The fingertip stays in front of this x, m"),
@@ -215,7 +235,6 @@ def calibrate_cmd(
 ) -> None:
     """Calibrate one arm from this terminal; extra flags go to `dimos run <robot>-calibrate`."""
     from dimos.control.calibration.module import CalibrationModuleConfig
-    from dimos.control.calibration.robots import KNOWN_ROBOTS
     from dimos.control.calibration.steps import TITLES, plan
 
     given = {
@@ -237,9 +256,10 @@ def calibrate_cmd(
         "confirm_each": confirm_each,
     }
     settings: dict[str, Any] = {name: value for name, value in given.items() if value is not None}
+    robot_data = _robot_data(robot)
     try:
-        config = CalibrationModuleConfig(robot=robot, **settings)
-        spec = config.arm_spec()
+        config = CalibrationModuleConfig(**settings)
+        spec = config.arm_spec(robot_data)
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -264,7 +284,7 @@ def calibrate_cmd(
         )
     argv = [*dimos_command(), *root, "run", f"{robot}-calibrate", *flags, *ctx.args]
     typer.echo(f"Plan for {spec.arm_id}:")
-    for step, reason in plan(config.steps, KNOWN_ROBOTS[robot].gravity):
+    for step, reason in plan(config.steps, robot_data.gravity):
         typer.echo(f"  {step:<17} {TITLES[step] if reason is None else 'skipped: ' + reason}")
     if dry_run:
         typer.echo("Would run:\n  " + shlex.join(argv) + "\nNothing was started.")
@@ -274,21 +294,17 @@ def calibrate_cmd(
 
 
 def _arm_ids(robot: str, arm: str | None) -> list[str]:
-    from dimos.control.calibration.robots import KNOWN_ROBOTS
-
-    ids = KNOWN_ROBOTS[robot].arm_ids() if robot in KNOWN_ROBOTS else []
+    ids = _robot_data(robot).arm_ids()
     chosen = [i for i in ids if arm in (None, i, i.rsplit("/", 1)[-1])]
     if not chosen:
-        typer.echo(
-            f"Error: no arm {arm or ''} of {robot}; known: {', '.join(KNOWN_ROBOTS)}", err=True
-        )
+        typer.echo(f"Error: no arm {arm} of {robot}; its arms: {', '.join(ids)}", err=True)
         raise typer.Exit(2)
     return chosen
 
 
 @arm_app.command("show")
 def show_cmd(
-    robot: str = typer.Argument(..., help="Robot: openyam, dual-openyam, ..."),
+    robot: str = typer.Argument(..., help="Robot with a <robot>-calibrate blueprint, e.g. openyam"),
     arm: str | None = typer.Option(None, help="Only this arm, e.g. left"),
 ) -> None:
     """Print the saved calibration of a robot's arms and the files it replaced."""
@@ -329,7 +345,7 @@ def show_cmd(
 
 @arm_app.command("bake")
 def bake_cmd(
-    robot: str = typer.Argument(..., help="Robot: openyam, dual-openyam, ..."),
+    robot: str = typer.Argument(..., help="Robot with a <robot>-calibrate blueprint, e.g. openyam"),
     urdf: Path = typer.Option(..., exists=True, dir_okay=False, help="URDF to read"),
     out: Path = typer.Option(..., help="URDF to write"),
     arm: str | None = typer.Option(None, help="Only this arm, e.g. left"),
