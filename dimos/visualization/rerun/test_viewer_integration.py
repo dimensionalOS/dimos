@@ -21,9 +21,13 @@ import threading
 from unittest.mock import ANY
 
 import pytest
+from pytest_mock import MockerFixture
 import rerun as rr
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
+from dimos.core.introspection.blueprint.dot import render
+from dimos.core.module import Module
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun import bridge
 from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs, _start_save_client
@@ -184,3 +188,40 @@ class TestBridgePubsubResolution:
         pubsubs = _resolve_pubsubs(config)
 
         assert pubsubs == [custom]
+
+
+def test_bridge_logs_named_graph_nodes_and_edges(mocker: MockerFixture) -> None:
+    layout = (
+        'node "module:front camera" 1 2 1 1 "front camera" filled box "#112233" "#445566"\n'
+        'node channel_0 1 3 1 1 image filled note "#112233" "#445566"\n'
+        'edge "module:front camera" channel_0 0 solid "#112233"\n'
+    )
+    mocker.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, layout))
+    log = mocker.patch.object(rr, "log")
+    viewer = bridge.RerunBridgeModule.__new__(bridge.RerunBridgeModule)
+    viewer.log_blueprint_graph("digraph {}", ["module:front camera"])
+
+    _, nodes, edges = log.call_args.args
+    assert nodes.node_ids.as_arrow_array().to_pylist() == ["module:front camera", "channel_0"]
+    assert nodes.labels.as_arrow_array().to_pylist() == ["front camera", "image"]
+    assert nodes.radii.as_arrow_array().to_pylist() == [viewer.MODULE_RADIUS, viewer.CHANNEL_RADIUS]
+    assert edges.edges.as_arrow_array().to_pylist() == [
+        {"first": "module:front camera", "second": "channel_0"}
+    ]
+
+
+@pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz computes the Rerun layout")
+def test_rerun_keeps_distinct_escaped_module_names(mocker: MockerFixture) -> None:
+    names = ["front\nleft", r"front\nleft", "front%0Aleft"]
+    blueprint = autoconnect(*(Module.blueprint(instance_name=name) for name in names)).solidify()
+    module_ids = ["module:front%0Aleft", "module:front%5Cnleft", "module:front%250Aleft"]
+    log = mocker.patch.object(rr, "log")
+    viewer = bridge.RerunBridgeModule.__new__(bridge.RerunBridgeModule)
+
+    viewer.log_blueprint_graph(render(blueprint), module_ids)
+
+    _, nodes, _ = log.call_args.args
+    ids = nodes.node_ids.as_arrow_array().to_pylist()
+    assert len(set(ids)) == len(names)
+    assert set(ids) == set(module_ids)
+    assert nodes.radii.as_arrow_array().to_pylist() == [viewer.MODULE_RADIUS] * len(names)

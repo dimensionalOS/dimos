@@ -1402,10 +1402,10 @@ def _log_blueprint_graph(blueprint: Blueprint, module_coordinator: ModuleCoordin
         return
 
     try:
-        from dimos.core.introspection.blueprint.dot import render
+        from dimos.core.introspection.blueprint.dot import module_node_id, render
 
         dot_code = render(blueprint)
-        module_names = [bp.module.__name__ for bp in blueprint.active_blueprints]
+        module_names = [module_node_id(bp.name) for bp in blueprint.active_blueprints]
         bridge = module_coordinator.get_instance(RerunBridgeModule)  # type: ignore[arg-type]
         bridge.log_blueprint_graph(dot_code, module_names)
     except Exception:

@@ -13,15 +13,18 @@
 # limitations under the License.
 
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
-from dimos.core.introspection.blueprint.dot import LayoutAlgo
+from dimos.core.introspection.blueprint.dot import LayoutAlgo, render
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.svg import to_svg
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 
 
 @pytest.mark.parametrize(
@@ -61,3 +64,38 @@ def test_svg_reports_graphviz_rendering_errors(tmp_path: Path, mocker: MockerFix
 
     with pytest.raises(RuntimeError, match="^graphviz failed: invalid graph$"):
         to_svg(ModuleInfo(name="Example"), str(tmp_path / "graph.svg"))
+
+
+class Camera(Module):
+    image: Out[bytes]
+
+
+class Display(Module):
+    image: In[bytes]
+    camera: Camera
+
+
+def test_blueprint_graph_keeps_each_instances_stream_and_rpc() -> None:
+    camera_display = autoconnect(Camera.blueprint(), Display.blueprint()).solidify()
+    blueprint = autoconnect(camera_display.namespace("left"), camera_display.namespace("right"))
+    graph = render(blueprint.solidify())
+
+    for side in ("left", "right"):
+        camera = f'"module:{side}/camera"'
+        display = f'"module:{side}/display"'
+        stream = re.search(rf"{camera} -> (\w+) ", graph)
+        contract = re.search(rf"{display} -> (\w+) ", graph)
+        assert stream and contract
+        assert f"{stream[1]} -> {display} " in graph
+        assert f"{contract[1]} -> {camera} " in graph
+        other = "right" if side == "left" else "left"
+        assert f'{stream[1]} -> "module:{other}/display"' not in graph
+        assert f'{contract[1]} -> "module:{other}/camera"' not in graph
+
+
+def test_disabled_modules_do_not_add_stream_nodes_or_edges() -> None:
+    blueprint = autoconnect(Camera.blueprint(), Display.blueprint()).disabled_modules(Display)
+    graph = render(blueprint.solidify())
+    assert '"module:camera"' in graph
+    assert '"module:display"' not in graph
+    assert "image:bytes" not in graph

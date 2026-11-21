@@ -21,6 +21,7 @@ from dataclasses import field
 import functools
 from operator import attrgetter
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -700,7 +701,7 @@ class RerunBridgeModule(Module):
 
         Args:
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
-            module_names: List of module class names (to distinguish modules from channels).
+            module_names: Module node IDs in the DOT graph (to distinguish modules from channels).
         """
         import rerun as rr
 
@@ -723,12 +724,12 @@ class RerunBridgeModule(Module):
 
         for line in _graphviz_plain_lines(result.stdout):
             if line.startswith("node "):
-                parts = line.split()
-                node_id = parts[1].strip('"')
+                parts = shlex.split(line)
+                node_id = parts[1]
                 x = float(parts[2]) * self.GRAPH_VIZ_SCALE
                 y = -float(parts[3]) * self.GRAPH_VIZ_SCALE
-                label = parts[6].strip('"')
-                color = parts[9].strip('"')
+                label = parts[6]
+                color = parts[9]
 
                 node_ids.append(node_id)
                 node_labels.append(label)
@@ -737,8 +738,8 @@ class RerunBridgeModule(Module):
                 radii.append(self.MODULE_RADIUS if node_id in module_set else self.CHANNEL_RADIUS)
 
             elif line.startswith("edge "):
-                parts = line.split()
-                edges.append((parts[1].strip('"'), parts[2].strip('"')))
+                parts = shlex.split(line)
+                edges.append((parts[1], parts[2]))
 
         if not node_ids:
             return
