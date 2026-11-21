@@ -680,9 +680,9 @@ def test_run_rejects_missing_robot_addresses_before_build(
     monkeypatch.setenv("REPLAY", "false")
     monkeypatch.setenv("SIMULATION", "")
 
-    result = CliRunner().invoke(
-        main, ["run", "robot", "--config", str(tmp_path / "absent.json"), *options]
-    )
+    config = tmp_path / "robot.json"
+    config.write_text("{}")
+    result = CliRunner().invoke(main, ["run", "robot", "--config", str(config), *options])
 
     assert result.exit_code == 2, result.output
     assert "Invalid blueprint configuration" in result.output
@@ -760,6 +760,47 @@ def test_python_mcap_is_rejected_before_build(
     output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert "MCAP recording requires --record-engine rust" in output_plain
     assert "blueprint" not in stubbed_run
+
+
+def test_run_config_path_is_optional_only_when_omitted(
+    tmp_path: Path, stubbed_run: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "robot.json"
+    monkeypatch.setattr(lifecycle, "DEFAULT_CONFIG_PATH", path)
+    runner = CliRunner()
+
+    missing = runner.invoke(main, ["run", "alpha", "--config", str(path)])
+    assert missing.exit_code == 2
+    assert "read" in missing.output
+
+    path.symlink_to(path.name)
+    unreadable = runner.invoke(main, ["run", "alpha"])
+    assert unreadable.exit_code == 2
+    assert "read" in unreadable.output
+    assert "blueprint" not in stubbed_run
+    path.unlink()
+
+    assert runner.invoke(main, ["run", "alpha"]).exit_code == 0
+    path.write_text('{"runmodulea": {"entity_prefix": "from-file"}}')
+    assert runner.invoke(main, ["run", "alpha"]).exit_code == 0
+    assert stubbed_run["parsed_config"].module_kwargs("runmodulea")["entity_prefix"] == "from-file"
+
+
+def test_run_reads_encoded_config_before_resolving_blueprint(
+    tmp_path: Path, stubbed_run: dict[str, Any]
+) -> None:
+    path = tmp_path / "encoded.json"
+    path.write_bytes(b"\xff\xfe{\xfd}")
+    runner = CliRunner()
+    args = ["run", "alpha", "--config", str(path)]
+    invalid = runner.invoke(main, args)
+    assert invalid.exit_code == 2
+    assert "encoding" in invalid.output
+    assert "blueprint" not in stubbed_run
+
+    path.write_bytes('{"runmodulea":{"entity_prefix":"from-file"}}'.encode("utf-16"))
+    assert runner.invoke(main, args).exit_code == 0
+    assert stubbed_run["parsed_config"].module_kwargs("runmodulea")["entity_prefix"] == "from-file"
 
 
 def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) -> None:

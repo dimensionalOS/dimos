@@ -19,7 +19,6 @@ from structlog.testing import capture_logs
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprint_config.sources import read_config_file
 from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import Module, ModuleConfig
 
@@ -71,9 +70,12 @@ def test_preparse_environment_null_coerces_to_none() -> None:
     assert values["relay_url"] is None
 
 
-def test_config_file_errors_are_clear_but_missing_file_is_optional(tmp_path: Path) -> None:
+def test_config_file_errors_are_clear(tmp_path: Path) -> None:
     parser = BlueprintConfigParser(PrimaryModule.blueprint())
-    parser.parse(config_path=tmp_path / "missing.json", environ={})
+    for path in (tmp_path / "missing.json", tmp_path):
+        with pytest.raises(BlueprintConfigError, match="Could not read config file") as exc:
+            parser.parse(config_path=path, environ={})
+        assert str(path) in str(exc.value)
 
     invalid = tmp_path / "invalid.json"
     invalid.write_text("{")
@@ -84,10 +86,6 @@ def test_config_file_errors_are_clear_but_missing_file_is_optional(tmp_path: Pat
     not_an_object.write_text("[]")
     with pytest.raises(BlueprintConfigError, match="must contain a JSON object"):
         parser.parse(config_path=not_an_object, environ={})
-
-
-def test_config_path_that_is_a_directory_reads_as_absent(tmp_path: Path) -> None:
-    assert read_config_file(tmp_path) == {}
 
 
 @pytest.mark.parametrize("parse_method", ["parse", "preparse_global_config"])
