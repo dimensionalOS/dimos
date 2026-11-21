@@ -115,6 +115,32 @@ def test_a_bad_config_or_name_is_refused(client: TestClient) -> None:
     assert client.post("/active/exec", json={"args": []}).status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("section", "value"), [("global", []), ("modules", False), ("secrets", {}), ("global", None)]
+)
+def test_wrong_config_sections_are_refused_before_launch_or_relaunch(
+    client: TestClient, section: str, value: Any
+) -> None:
+    bad = {section: value}
+    refused = client.post("/active/launch", json={"blueprint": "demo", "config": bad})
+    assert refused.status_code == 400 and section in refused.json()["error"]
+    assert not launches.launch_file().exists()
+    assert not launches.request_file().exists()
+
+    valid = {"global": {}, "modules": {}, "secrets": []}
+    started = client.post("/active/launch", json={"blueprint": "demo", "config": valid})
+    assert started.status_code == 200
+    until(running(client))
+    path = launches.request_file()
+    saved = json.dumps({**json.loads(path.read_text()), **bad})
+    path.write_text(saved)
+
+    refused = client.post("/active/relaunch")
+    assert refused.status_code == 400 and section in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == started.json()["pid"]
+    assert path.read_text() == saved
+
+
 @pytest.mark.parametrize("scan", ["missing", "stale", "fresh"])
 @pytest.mark.parametrize("field", ["blueprint", "module", "args"])
 @pytest.mark.parametrize("name", ["", " ", "\t", "demo cam", "-x"])
@@ -488,10 +514,14 @@ def test_relaunch_refuses_bad_saved_names_before_stopping(
 
 @pytest.mark.parametrize(
     ("values", "error"),
-    [({"n_workers": "invalid"}, "n_workers"), ({"record": "sqlite"}, "record-topics")],
+    [
+        ([], "global"),
+        ({"n_workers": "invalid"}, "n_workers"),
+        ({"record": "sqlite"}, "record-topics"),
+    ],
 )
 def test_replace_checks_the_new_settings_before_stopping_the_current_run(
-    client: TestClient, launch_targets: AsyncMock, values: dict[str, str], error: str
+    client: TestClient, launch_targets: AsyncMock, values: Any, error: str
 ) -> None:
     launch_targets.side_effect = run_child
     module = {"module": "demo-calculator-skill"}
