@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -101,6 +102,16 @@ class M20Controller(NativeModule):
     battery_right: Out[BatteryState]
     command_ready: Out[Bool]
     controller_state: Out[String]
+
+    @rpc
+    def stand(self) -> None:
+        """Stand up (policy on; the legs only move with allow_gains)."""
+        self.motion_cmd.transport.publish(String("stand"))
+
+    @rpc
+    def lie_down(self) -> None:
+        """Lie down."""
+        self.motion_cmd.transport.publish(String("lie_down"))
 
 
 if TYPE_CHECKING:

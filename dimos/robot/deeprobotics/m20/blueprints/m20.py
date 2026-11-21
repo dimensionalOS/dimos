@@ -159,6 +159,8 @@ def m20_relocalization(
         # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
         live_voxel_m=0.2,
         match_radius_m=15.0,
+        # a lost fix keeps refining by ICP and never falls back to a whole-premap search: that search pegged 4 GOS cores
+        global_after_refusals=0,
         attempt_after_frames=attempt_after_frames or [],
         attempt_every_sweeps=attempt_every_sweeps,
     ).remappings([(PremapModule, "lidar", lidar)])
