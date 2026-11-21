@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Placing a live lidar cloud into a prior map.
+"""Placing a live point cloud (lidar scans or a local map) into a prior map.
 
 Coarse FPFH+RANSAC to find the place, then point-to-plane ICP over narrowing
-distances to settle it. Pure computation; ``lidar/module.py`` is the runtime
+distances to settle it. Pure computation; ``module.py`` is the runtime
 and ``tune.py`` measures it.
 
-    relocalizer = LidarRelocalizer(premap_cloud, PRESETS["mid360"])
+    relocalizer = CloudRelocalizer(premap_cloud, PRESETS["mid360"])
     tf = relocalizer.relocalize(live_cloud, "world", "map")  # world -> map, or None
 
 Configs are per-rig :data:`PRESETS`; see tune.md to measure a new one.
@@ -117,7 +117,7 @@ PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "mid360-nav": MID360_N
 DEFAULT_PRESET = "mid360"
 
 
-class LidarRelocalizer:
+class CloudRelocalizer:
     """A prior map, preprocessed once under ``config``, that places live clouds into itself."""
 
     def __init__(self, global_map: PointCloud, config: RelocalizeConfig) -> None:
@@ -152,10 +152,11 @@ class LidarRelocalizer:
         fine = normals(cloud.voxel_down_sample(cfg.voxel_fine), cfg.voxel_fine)
         return _Prepared(coarse=coarse, fpfh=fpfh, fine=fine)
 
-    def align(self, local_map: PointCloud) -> RegistrationResult:
+    def align(self, local_map: PointCloud, initial: np.ndarray | None = None) -> RegistrationResult:
         """Best registration of ``local_map`` against the prior map, however poor.
 
-        ``.transformation`` places the live cloud in the map (map <- live).
+        ``.transformation`` places the live cloud in the map (map <- live). With an
+        ``initial`` placement (map <- live, 4x4) only ICP runs from it, no global search.
         """
         import open3d as o3d  # type: ignore[import-untyped]
 
@@ -197,6 +198,8 @@ class LidarRelocalizer:
                 coarse_T = result.transformation
             return result
 
+        if initial is not None:
+            return refine(initial)
         scored = [
             refine(np.asarray(hypothesis().transformation))
             for _ in range(max(cfg.ransac_restarts, 1))
@@ -209,9 +212,19 @@ class LidarRelocalizer:
         """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough."""
         return self.attempt(local_map, world_frame, map_frame).fix
 
-    def attempt(self, local_map: PointCloud, world_frame: str, map_frame: str) -> RelocAttempt:
-        """The fix if accepted, ready to publish, with the registration it was scored on."""
-        result = self.align(local_map)
+    def attempt(
+        self,
+        local_map: PointCloud,
+        world_frame: str,
+        map_frame: str,
+        initial_fix: Transform | None = None,
+    ) -> RelocAttempt:
+        """The fix if accepted, ready to publish, with the registration it was scored on.
+
+        With ``initial_fix`` (a ``world_frame -> map_frame`` fix) it is refined from there instead of searched for.
+        """
+        initial = None if initial_fix is None else np.asarray(initial_fix.inverse().to_matrix())
+        result = self.align(local_map, initial)
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
             return RelocAttempt(None, result)

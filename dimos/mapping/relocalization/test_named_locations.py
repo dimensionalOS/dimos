@@ -19,8 +19,8 @@ from typing import Any, cast
 import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
-from dimos.mapping.relocalization.module import PremapModule, map_names, resolve_map
-from dimos.mapping.relocalization.named_locations import load_locations
+from dimos.mapping.relocalization.module import PremapModule
+from dimos.mapping.relocalization.utils import load_locations, map_names, resolve_map
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
