@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from contextlib import ExitStack
+from functools import partial
 from types import SimpleNamespace
 
 import numpy as np
@@ -137,6 +138,10 @@ def calibrated_recording(tmp_path):
         frames.append(
             TFMessage(Transform(frame_id="base", child_frame_id="tool", ts=1000.25)), ts=1000.25
         )
+        # Except on the static channel of a tf stream, where ROS 2 latches a mount once.
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(Transform(frame_id="base", child_frame_id="lidar", ts=10.0)), ts=10.0
+        )
         for name in ("grayscale_info", "camera_info", "realsense_camera_info"):
             for _ in range(2):
                 store.stream(name, CameraInfo).append(CameraInfo(ts=10.0), ts=10.0)
@@ -169,23 +174,19 @@ def play(calibrated_recording, scheduler):
             module = player(**{dataset: str(calibrated_recording)}, **settings)
             cleanup.callback(module.stop)
             received = {name: [] for name in ("tf", *ports)}
-            for name in ports:
+
+            def record(name, message):
+                if isinstance(message, TFMessage):
+                    received[name].extend(
+                        (scheduler.clock, t.child_frame_id, t.ts) for t in message.transforms
+                    )
+                else:
+                    received[name].append((scheduler.clock, message.ts))
+
+            for name in received:
                 cleanup.enter_context(
-                    Disposable(
-                        getattr(module, name).subscribe(
-                            lambda m, name=name: received[name].append((scheduler.clock, m.ts))
-                        )
-                    )
+                    Disposable(getattr(module, name).subscribe(partial(record, name)))
                 )
-            cleanup.enter_context(
-                Disposable(
-                    module.tf.subscribe(
-                        lambda m: received["tf"].extend(
-                            (scheduler.clock, t.child_frame_id, t.ts) for t in m.transforms
-                        )
-                    )
-                )
-            )
             module.start()
             scheduler.advance_by(seconds)
             return received
@@ -200,6 +201,7 @@ def play(calibrated_recording, scheduler):
         (DepthCameraFeed, "color_image", {}),
         (G1Replay, "pointlio_odometry", {}),
         (RecordingPlayer, "lidar", {}),
+        (ReplayModule, "odometry", {}),
     ],
 )
 def test_static_calibration_does_not_delay_sensor_playback(play, mocker, player, sensor, settings):
@@ -218,6 +220,15 @@ def test_static_calibration_does_not_delay_sensor_playback(play, mocker, player,
         "Replay finished",
     ]
     assert log.info.call_args_list[0].kwargs["duration_s"] == 0.5
+
+
+def test_only_the_static_tf_channel_makes_one_row_calibration(play):
+    received = play(ReplayModule, 1, "odometry", "depth_image", "tf_static")
+    assert received["tf_static"] == [(0, "lidar", 10.0)]
+    assert received["odometry"][0] == (0, 1000.0)
+    # Elsewhere one row is a sample: an event stream and an ordinary tf edge keep their time.
+    assert received["depth_image"] == [(0.5, 1000.5)]
+    assert (0.25, "tool", 1000.25) in received["tf"]
 
 
 def test_looped_spot_replay_repeats_without_the_static_lead(play):

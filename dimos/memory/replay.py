@@ -46,6 +46,7 @@ from reactivex.subject import AsyncSubject
 
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
+from dimos.memory.tf import STATIC_SUFFIX
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
@@ -228,6 +229,10 @@ class ReplayStream(Generic[T]):
         run. They are often stamped long before it: scheduled like sensor data, they
         would start the clock early and leave every sensor silent until its own
         first row. A stream given its own source or cast plays as given.
+
+        One row decides nothing by itself, with one exception: the static channel
+        of a TF stream (``tf_static``) holds edges that are published once and
+        valid at every time, as :class:`~dimos.memory.tf.StreamTF` reads them.
         """
         if self._source is not None or self._autocast is not None:
             return None, self
@@ -240,6 +245,13 @@ class ReplayStream(Generic[T]):
         rows = self._source_stream()
         payload_type = rows.data_type
         if payload_type is not None and issubclass(payload_type, TFMessage):
+            if self._name.endswith(STATIC_SUFFIX):
+                held = {
+                    (t.frame_id, t.child_frame_id): t
+                    for row in rows.order_by("ts")
+                    for t in row.data.transforms
+                }
+                return (TFMessage(*held.values()), None) if held else (None, self)
             frozen, edges = _frozen_tf(rows)
             if not frozen.transforms:
                 return None, self
