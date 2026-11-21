@@ -101,12 +101,14 @@ class FakeDimos:
 
         return Handle()
 
-    def restart(self, name: str) -> None:
-        self.calls.append(("restart", name))
+    def restart_instance(
+        self, name: str, *, reload_source: bool = True, config: dict[str, Any] | None = None
+    ) -> None:
+        self.calls.append(("restart", name, reload_source, config))
 
-    def unload(self, name: str) -> None:
+    def unload_instance(self, name: str) -> None:
         self.calls.append(("unload", name))
-        if name == "class x.Camera":
+        if name == "camera":
             raise ValueError("camera is busy")
 
     def peek_stream(self, name: str, timeout: float) -> Any:
@@ -125,8 +127,6 @@ def dimos(state: State, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return world["apps"][-1]
 
     state.live = live.Live(connect, lambda: world["run"])
-    # stands in for importing the module class from its class path
-    monkeypatch.setattr(live, "load_class", lambda path: f"class {path}")
     monkeypatch.setattr(
         state.scanner,
         "cache",
@@ -198,23 +198,60 @@ def test_an_rpc_is_called_on_one_instance(client: TestClient, dimos: dict[str, A
     assert len(app.calls) == 2
 
 
-def test_restart_and_stop_go_by_the_instances_class(
+def test_restart_and_stop_go_by_instance_not_class(
     client: TestClient, dimos: dict[str, Any]
 ) -> None:
     assert client.post("/active/modules/robot0:speaker/restart").json() == {
         "ok": True,
         "error": None,
     }
+    # a new config takes effect on a restart of that one robot's instance
+    assert client.post(
+        "/active/modules/robot1:speaker/restart",
+        json={"config": {"volume": 3}, "reloadSource": False},
+    ).json() == {"ok": True, "error": None}
+    assert client.post("/active/modules/nope/restart").status_code == 404
     assert client.post("/active/modules/robot1:speaker/stop").json() == {"ok": True, "error": None}
     busy = client.post("/active/modules/camera/stop").json()
     assert not busy["ok"] and "camera is busy" in busy["error"]
     assert client.post("/active/modules/nope/stop").status_code == 404
     calls = [call for call in dimos["apps"][-1].calls if call[0] in ("restart", "unload")]
     assert calls == [
-        ("restart", "class x.Speaker"),
-        ("unload", "class x.Speaker"),
-        ("unload", "class x.Camera"),
+        ("restart", "robot0/speaker", True, None),
+        ("restart", "robot1/speaker", False, {"volume": 3}),
+        ("unload", "robot1/speaker"),
+        ("unload", "camera"),
     ]
+
+
+def test_modules_deployed_or_removed_are_an_event(dimos: dict[str, Any]) -> None:
+    import asyncio
+    import json
+
+    from experimental.gateway import events
+
+    sent: list[dict[str, Any]] = []
+    bus = events.Bus("ns", lambda key, data: sent.append({"key": key, **json.loads(data)}))
+    listings = iter([{"a", "b"}, {"a", "b"}, {"a", "c"}, set()])
+
+    async def run() -> None:
+        task = asyncio.create_task(events.watch_modules(bus, lambda: next(listings), check_s=0.001))
+        while len(sent) < 2:
+            await asyncio.sleep(0.001)
+        task.cancel()
+
+    asyncio.run(run())
+    assert sent == [
+        {"key": "ns/dimos/events/modules", "type": "modules", "added": ["c"], "removed": ["b"]},
+        {"key": "ns/dimos/events/modules", "type": "modules", "added": [], "removed": ["a", "c"]},
+    ]
+
+
+def test_module_ids_are_the_running_instances(client: TestClient, dimos: dict[str, Any]) -> None:
+    state = client.app.state.gateway  # type: ignore[attr-defined]
+    assert state.live.module_ids() == {"robot0:speaker", "robot1:speaker", "camera"}
+    dimos["run"] = None
+    assert state.live.module_ids() == set()
 
 
 def test_peek_returns_one_message(client: TestClient, dimos: dict[str, Any]) -> None:
@@ -295,3 +332,47 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
     registered(terminal_run.pid, original_argv=["dimos", "--transport=lcm", "run", "demo"])
     assert live.connect_dimos() == "lcm"
+
+
+def test_a_cbor_call_carries_dimos_objects_both_ways(
+    client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.protocol.encode import cbor
+
+    def get_module(self: FakeDimos, name: str) -> Any:
+        fake = self
+
+        class Handle:
+            def __getattr__(self, rpc: str) -> Any:
+                def call(*args: Any, **kwargs: Any) -> Any:
+                    fake.calls.append((f"{name}/{rpc}", args, kwargs))
+                    return kwargs["targets"]["arm"]
+
+                return call
+
+        return Handle()
+
+    monkeypatch.setattr(FakeDimos, "get_module", get_module)
+    joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
+    body = cbor.encode(((), {"targets": {"arm": joints}, "speed_scale": 0.5}))
+    # the body is dimos's own RPC payload: the module gets the JointState itself
+    answer = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        content=body,
+        headers={"content-type": "application/cbor"},
+    )
+    assert answer.headers["content-type"] == "application/cbor"
+    ((_, args, kwargs),) = dimos["apps"][-1].calls
+    assert args == () and kwargs["speed_scale"] == 0.5
+    assert isinstance(kwargs["targets"]["arm"], JointState)
+    # and the reply is CBOR too: the result as dimos encodes it, the JointState again
+    reply = cbor.decode(answer.content)
+    assert reply["ok"] and isinstance(reply["result"], JointState)
+    assert reply["result"].name == ["j1", "j2"] and list(reply["result"].position) == [0.1, 0.2]
+    bad = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        content=b"not cbor",
+        headers={"content-type": "application/cbor"},
+    )
+    assert bad.status_code == 400
