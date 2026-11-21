@@ -592,6 +592,7 @@ class Calibration:
                 if self._motion is motion:
                     self._motion = None
         if motion.error:
+            logger.warning(f"motion ended: {motion.error}")
             raise (StalledError if motion.stalled else RuntimeError)(motion.error)
         return motion
 
@@ -611,7 +612,11 @@ class Calibration:
         path = plan_path(self.arm, self.measured(), target)
         motion = self.stream(self.motion(path, "converge"), patch)
         if motion.ended != "settled":
-            raise RuntimeError(f"the arm is {motion.ended} at {what}")
+            reason = f"the arm is {motion.ended} at {what}"
+            if motion.detail:
+                reason = f"{reason}: {motion.detail}"
+            logger.warning(reason)
+            raise RuntimeError(reason)
         self.at_home = what == "home"
         return motion
 
