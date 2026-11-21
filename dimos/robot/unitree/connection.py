@@ -511,6 +511,9 @@ class UnitreeWebRTCConnection(Resource):
                 raise TimeoutError(
                     f"event loop did not take the command within {_SEND_TIMEOUT} s"
                 ) from None
+            if sent.done():
+                # The driver itself can raise TimeoutError while publishing.
+                sent.result()
 
     def _send_stop(self) -> None:
         if self.loop.is_running():

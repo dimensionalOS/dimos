@@ -274,3 +274,16 @@ def test_move_fails_at_once_when_the_loop_has_stopped(built_connection, monkeypa
     conn.loop.call_soon_threadsafe(conn.loop.stop)
     conn.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
     assert _returned(conn.move, Twist(linear=[0.1, 0, 0])) is False
+
+
+def test_driver_timeout_keeps_previous_watchdog(built_connection, monkeypatch):
+    conn, driver = built_connection
+    deadlines = []
+    monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
+    assert conn.move(Twist(linear=[0.1, 0, 0]))
+    publish = driver.datachannel.pub_sub.publish_without_callback
+    publish.side_effect = TimeoutError("driver rejected the command")
+    assert not conn.move(Twist(linear=[0, 0.2, 0]))
+    publish.side_effect = None
+    deadlines[0]()
+    assert publish.call_args.kwargs["data"] == _STOP
