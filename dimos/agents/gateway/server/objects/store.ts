@@ -6,6 +6,7 @@ import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { feed } from "#dimos/agents/gateway/server/objects/lib/feed.ts";
 import { conversationRows } from "#dimos/agents/gateway/server/objects/lib/conversations.ts";
 import { jobRows } from "#dimos/agents/gateway/server/objects/lib/jobs.ts";
+import { profileRows } from "#dimos/agents/gateway/server/objects/lib/profiles.ts";
 import { runtimeView } from "#dimos/agents/gateway/server/objects/lib/runtime.ts";
 import { local } from "@earendil-works/chord";
 
@@ -33,6 +34,7 @@ export const serveStore: ServeObject = (host, deps) =>
         report: deps.report,
       });
       return {
+        profiles: profileRows(self, agent.harness),
         link,
         load: feed(self, "load", GatewayState.load, agent.loader.status),
         runs: feed(self, "runs", GatewayState.runs, agent.runs.status),

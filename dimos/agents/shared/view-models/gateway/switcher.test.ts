@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { ConversationRow } from "#dimos/agents/shared/protocol/conversation/summary.ts";
 import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
-import { switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
+import { switcherLine, switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
 import { test } from "node:test";
 
 const NOW = epochMs(1_760_700_000_000);
@@ -66,4 +66,14 @@ test("a fork whose source is not listed is a root", () => {
     rows.map((entry) => [entry.id, entry.depth, entry.state]),
     [[21, 0, "idle"]],
   );
+});
+
+test("conversation lines identify the profile and fall back for older rows", () => {
+  const rows = switcherRows(
+    [row(1, { profile: { id: "piper", name: "Piper sorter", description: "" } }), row(2, {})],
+    null,
+    NOW,
+  );
+  assert(switcherLine(rows.find((item) => item.id === 1)!).includes("Piper sorter"));
+  assert(switcherLine(rows.find((item) => item.id === 2)!).includes("General agent"));
 });
