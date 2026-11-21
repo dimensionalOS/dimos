@@ -292,6 +292,7 @@ async def test_conflict_uses_the_running_holders_lifecycle_after_discovery_chang
         timeout=3.0,
     )
     assert response is not None
+    assert response["result"]["isError"] is True
     text = response["result"]["content"][0]["text"]
     assert "held by 'patrol'" in text
     assert advice in text

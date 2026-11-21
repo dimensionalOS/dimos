@@ -173,7 +173,7 @@ async def _handle_tools_call(
                 advice = "Call the appropriate stop tool first, then retry."
             else:
                 advice = "It is taking longer than expected; wait a moment and then retry."
-            return _jsonrpc_result_text(
+            return _jsonrpc_tool_error(
                 req_id,
                 f"Cannot start '{name}': capability '{cap}' is held by '{holder.tool_name}'. {advice}",
             )
