@@ -34,7 +34,7 @@ from reactivex.disposable import Disposable
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -92,6 +92,12 @@ class _TwistConsumer(Module):
     tele_cmd_vel: In[Twist]
 
 
+class _DuplexModule(Module):
+    color_image: In[Image]
+    odom: IO[PoseStamped]
+    tele_cmd_vel: IO[Twist]
+
+
 class _BareModule(Module):
     config: _EmptyConfig
 
@@ -123,6 +129,13 @@ def test_composition_derives_tx_channels_from_consumers() -> None:
     relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
 
     assert relay_atom.kwargs["available_channels"] == ("color_image", "tele_cmd_vel")
+
+
+def test_composition_includes_both_directions_of_io_ports() -> None:
+    blueprint = with_relay_bridge(_DuplexModule.blueprint())
+    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
+
+    assert relay_atom.kwargs["available_channels"] == ("odom", "tele_cmd_vel")
 
 
 def test_composition_ignores_disabled_producers() -> None:
