@@ -16,15 +16,22 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import threading
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, create_autospec, patch
 
 import numpy as np
+from pydantic import ValidationError
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.models.vl.base import VlModel
+from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
+from dimos.models.vl.openai import OpenAIVlModel
+from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
 from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
@@ -286,8 +293,71 @@ class TestEntityGraphDB:
         assert "semantic_relations" not in stats
 
 
+_HOSTED_PROVIDERS = [
+    (OpenAIVlModel, "OPENAI_API_KEY"),
+    (QwenVlModel, "ALIBABA_API_KEY"),
+    (MoondreamHostedVlModel, "MOONDREAM_API_KEY"),
+]
+
+
 class TestPersistence:
-    def test_new_memory_clears_db(self, tmp_path: Path) -> None:
+    def test_run_requires_model_or_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        parser = BlueprintConfigParser(TemporalMemory.blueprint())
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(BlueprintConfigError, match="OPENAI_API_KEY"):
+            parser.parse([])
+
+        monkeypatch.setenv("OPENAI_API_KEY", "example")
+        parser.parse([])
+
+    @pytest.mark.parametrize(("model", "key_env"), _HOSTED_PROVIDERS)
+    def test_supplied_hosted_model_credentials(
+        self, model: type[VlModel], key_env: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "other-provider")
+        monkeypatch.delenv(key_env, raising=False)
+        parser = BlueprintConfigParser(TemporalMemory.blueprint(vlm=model()))
+        with pytest.raises(BlueprintConfigError, match=key_env):
+            parser.parse([])
+
+        BlueprintConfigParser(TemporalMemory.blueprint(vlm=model(api_key="configured"))).parse([])
+        monkeypatch.setenv(key_env, "from-environment")
+        parser.parse([])
+        with pytest.raises(BlueprintConfigError, match=key_env):
+            BlueprintConfigParser(TemporalMemory.blueprint(vlm=model(api_key=" "))).parse([])
+
+    @pytest.mark.parametrize("model", [None, QwenVlModel])
+    def test_blank_key_preserves_memory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        model: type[VlModel] | None,
+    ) -> None:
+        key_env = "ALIBABA_API_KEY" if model else "OPENAI_API_KEY"
+        monkeypatch.setenv(key_env, "   ")
+        log = tmp_path / "temporal_memory.jsonl"
+        log.write_text('{"caption":"previous run"}\n')
+        db_path = tmp_path / "entity_graph.db"
+        with closing(EntityGraphDB(db_path=db_path)) as db:
+            db.upsert_entity("E1", "person", "previous observation", 0.0)
+            db.commit()
+
+        with pytest.raises(ValidationError, match=key_env):
+            TemporalMemory(
+                vlm=model() if model else None,
+                db_dir=tmp_path,
+                new_memory=True,
+                use_clip_filtering=False,
+            ).stop()
+
+        assert log.read_text() == '{"caption":"previous run"}\n'
+        with closing(EntityGraphDB(db_path=db_path)) as db:
+            entity = db.get_entity("E1")
+        assert entity is not None
+        assert entity["descriptor"] == "previous observation"
+
+    def test_new_memory_clears_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         db_dir = tmp_path / "memory" / "temporal"
         db_dir.mkdir(parents=True)
         db_path = db_dir / "entity_graph.db"

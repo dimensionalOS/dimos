@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import cached_property
-import os
 from typing import Any
 import warnings
 
@@ -21,15 +20,15 @@ import moondream as md  # type: ignore[import-untyped]
 import numpy as np
 from PIL import Image as PILImage
 
-from dimos.models.vl.base import VlModel, VlModelConfig
+from dimos.models.vl.base import HostedVlModelConfig, VlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 
-class Config(VlModelConfig):
-    api_key: str | None = None
+class Config(HostedVlModelConfig):
+    api_key_env = "MOONDREAM_API_KEY"
 
 
 class MoondreamHostedVlModel(VlModel):
@@ -37,12 +36,7 @@ class MoondreamHostedVlModel(VlModel):
 
     @cached_property
     def _client(self) -> md.vl:
-        api_key = self.config.api_key or os.getenv("MOONDREAM_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Moondream API key must be provided or set in MOONDREAM_API_KEY environment variable"
-            )
-        return md.vl(api_key=api_key)
+        return md.vl(api_key=self.config.require_api_key())
 
     def _to_pil_image(self, image: Image | np.ndarray) -> PILImage.Image:
         if isinstance(image, np.ndarray):

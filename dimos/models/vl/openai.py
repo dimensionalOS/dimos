@@ -12,23 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import cached_property
-import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from openai import OpenAI
 
-from dimos.models.vl.base import VlModel, VlModelConfig
+from dimos.models.vl.base import HostedVlModelConfig, VlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 logger = setup_logger()
 
 
-class OpenAIVlModelConfig(VlModelConfig):
+class OpenAIVlModelConfig(HostedVlModelConfig):
     model_name: str = "gpt-4o-mini"
-    api_key: str | None = None
+    api_key_env = "OPENAI_API_KEY"
 
 
 class OpenAIVlModel(VlModel):
@@ -36,13 +39,9 @@ class OpenAIVlModel(VlModel):
 
     @cached_property
     def _client(self) -> OpenAI:
-        api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OpenAI API key must be provided or set in OPENAI_API_KEY environment variable"
-            )
+        from openai import OpenAI
 
-        return OpenAI(api_key=api_key)
+        return OpenAI(api_key=self.config.require_api_key())
 
     def query(
         self,
