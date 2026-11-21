@@ -28,6 +28,8 @@ from typing import Any
 
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.a750 import connection
@@ -171,6 +173,19 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
     yield build
     for each in made:
         each.module.stop()
+
+
+def test_blank_device_path_fails_blueprint_validation(tmp_path: Path) -> None:
+    parser = BlueprintConfigParser(A750Connection.blueprint(model=a750_like_model(tmp_path)))
+    with pytest.raises(BlueprintConfigError, match="device_path"):
+        parser.parse(["--device-path", " \t "], environ={})
+
+
+def test_blueprint_preserves_spaces_in_device_path(tmp_path: Path) -> None:
+    parser = BlueprintConfigParser(A750Connection.blueprint(model=a750_like_model(tmp_path)))
+    device_path = "/dev/serial/by-id/Arm A "
+    parsed = parser.parse(["--device-path", device_path], environ={})
+    assert parsed.module_kwargs("a750connection")["device_path"] == device_path
 
 
 def test_start_connects_and_runs_the_control_loop_and_stop_disconnects(
