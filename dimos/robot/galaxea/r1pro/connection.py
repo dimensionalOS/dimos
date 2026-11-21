@@ -150,15 +150,14 @@ class _GripperChannel:
     measured_m: float | None = None
     feedback_at: float = 0.0
     feedback_wall: float = 0.0
-    faults: dict[str, float] = field(default_factory=dict)
+    # Segments that reported a fault and have not reported all clear since.
+    faults: set[str] = field(default_factory=set)
     last_sent_m: float | None = None
     blocked_intent_m: float | None = None
 
     def valid(self, timeout_s: float, now: float) -> bool:
         return (
-            self.measured_m is not None
-            and now - self.feedback_at <= timeout_s
-            and all(now - at > timeout_s for at in self.faults.values())
+            self.measured_m is not None and now - self.feedback_at <= timeout_s and not self.faults
         )
 
 
@@ -808,9 +807,9 @@ class R1ProConnection(ConnectionModule):
                 if segment in segments:
                     faults = self._grippers[side].faults
                     if faulted:
-                        faults[segment] = time.monotonic()
+                        faults.add(segment)
                     else:
-                        faults.pop(segment, None)
+                        faults.discard(segment)
 
     # Local wheel odometry from measured vendor chassis speed, never commands.
 

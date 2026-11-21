@@ -276,6 +276,11 @@ def test_gripper_invalid_feedback_blocks_without_replay(rig, monkeypatch):
     r.feed_status("gripper_left", [RosStatusError(error_code=7)])
     r.move({"r1pro/left_gripper": 0.08})
     assert len(r.jaws("left")) == 1
+    # The fault keeps blocking after the status reports stop.
+    clock[0] += 0.2
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.085})
+    assert len(r.jaws("left")) == 1
     r.feed_status("gripper_left", [RosStatusError()])
     r.move({"r1pro/left_gripper": 0.09})
     assert [list(msg.position) for msg in r.jaws("left")] == [[60.0], [90.0]]
