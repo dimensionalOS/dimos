@@ -168,8 +168,8 @@ def test_collection_records_a_camera_that_publishes_on_a_bidirectional_port(
 
     recorder, *_ = collection._collection_components("demo", teleop, task="Teleoperate")
 
-    profile = recorder.active_blueprints[0].kwargs["profile"]
-    assert profile.observations["camera"].shape == (2, 4, 3)
+    schema = recorder.active_blueprints[0].kwargs["recording_schema"]
+    assert schema.observation["camera"].shape == (2, 4, 3)
 
 
 @pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])
