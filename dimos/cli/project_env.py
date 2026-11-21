@@ -18,7 +18,7 @@ from functools import cache
 import os
 from pathlib import Path
 
-from dotenv import find_dotenv, load_dotenv
+from dotenv import load_dotenv
 from dotenv.main import DotEnv
 
 
@@ -30,9 +30,11 @@ def load_project_dotenv() -> dict[str, str]:
 
     project = Path.cwd() / ".env"
     paths = [project]
-    installed = find_dotenv()
-    if installed and Path(installed) != project:
-        paths.append(Path(installed))
+    # find_dotenv starts from cwd instead of the package when a debugger or coverage is active.
+    candidates = (parent / ".env" for parent in Path(__file__).parents)
+    installed = next((path for path in candidates if path.is_file() or path.is_fifo()), None)
+    if installed is not None and installed != project:
+        paths.append(installed)
 
     inherited = os.environ.copy()
     dotenv: dict[str, str] = {}
