@@ -147,19 +147,23 @@ def _offset_target(snapshot: ManipulationSnapshot, group_id: str, delta: float) 
 
 
 def _start_openarm_mock_planner(
-    start_blueprint: Callable[..., DimosCliCall], lcm_spy: LcmSpy
+    start_blueprint: Callable[..., DimosCliCall],
+    wait_for_system_ready: Callable[..., None],
+    lcm_spy: LcmSpy,
 ) -> None:
     lcm_spy.save_topic(JOINT_STATE_TOPIC)
     start_blueprint(BLUEPRINT)
+    wait_for_system_ready()
     lcm_spy.wait_for_saved_topic(JOINT_STATE_TOPIC, timeout=120.0)
 
 
 def test_single_arm_plans_and_executes_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     """Plan with one arm and execute through its trajectory task."""
-    _start_openarm_mock_planner(start_blueprint, lcm_spy)
+    _start_openarm_mock_planner(start_blueprint, wait_for_system_ready, lcm_spy)
 
     with closing(RemoteModuleSource()) as source:
         client = cast("ManipulationModule", source.get_module(ManipulationModule.__name__))
@@ -187,9 +191,10 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
 def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     """Plan one generated plan over both arms and dispatch through one trajectory task."""
-    _start_openarm_mock_planner(start_blueprint, lcm_spy)
+    _start_openarm_mock_planner(start_blueprint, wait_for_system_ready, lcm_spy)
 
     with closing(RemoteModuleSource()) as source:
         client = cast("ManipulationModule", source.get_module(ManipulationModule.__name__))
