@@ -17,8 +17,9 @@
 ``dimos arm calibrate`` serves the calibration module's operator RPCs
 (``ArmCalibrateOperator/show``, ``/ask`` and ``/done``), then runs
 ``dimos run <robot>-calibrate`` as its child and answers the module from the keyboard.
-``q`` or Ctrl-C calls ``CalibrationModule/abort``: the arm holds where it is and going home
-is offered. The child is stopped once the module is done, and on any way out.
+``q`` or Ctrl-C calls the module's ``abort`` at the address ``Coordinator/list_modules``
+gives: the arm holds where it is and going home is offered. The child is stopped once the
+module is done, and on any way out.
 """
 
 from __future__ import annotations
@@ -96,18 +97,25 @@ class Operator:
 
 def walk(argv: list[str], lines: Iterable[str]) -> bool:
     """Serve the operator RPCs, run ``argv`` as a child until the module is done; whether it succeeded."""
-    from dimos.control.calibration.module import OPERATOR
+    from dimos.control.calibration.module import OPERATOR, CalibrationModule
+    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
     from dimos.core.transport_factory import rpc_backend
 
     rpc = rpc_backend()()
     rpc.start()
 
-    def aborted(reply: Any) -> None:
-        if isinstance(reply, BaseException):
-            typer.echo(f"Abort failed: {reply}", err=True)
+    def send_abort() -> None:
+        try:
+            modules = CoordinatorRPC(rpc).call("list_modules", rpc_timeout=5.0)
+            addresses = [m.rpc_name for m in modules if m.class_name == CalibrationModule.__name__]
+            if not addresses:
+                raise RuntimeError("the run has no calibration module")
+            rpc.call_sync(f"{addresses[0]}/abort", ([], {}), rpc_timeout=5.0)
+        except Exception as error:
+            typer.echo(f"Abort failed: {error}", err=True)
 
     def abort() -> None:
-        rpc.call("CalibrationModule/abort", ([], {}), aborted)
+        threading.Thread(target=send_abort, daemon=True, name="abort").start()
 
     operator = Operator(abort)
 
