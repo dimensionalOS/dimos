@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import threading
 from unittest.mock import ANY
 
@@ -69,6 +70,23 @@ class TestViewerLaunch:
 
         launch.assert_not_called()
         sdk_spawn.assert_not_called()
+
+    @pytest.mark.skipif(os.name != "posix", reason="requires a Unix socket")
+    def test_named_wayland_display_requires_a_listener(self, mocker, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.delenv("DISPLAY")
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+        mocker.patch.object(subprocess, "Popen")
+        mocker.patch.object(rr, "spawn")
+        uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
+        with TemporaryDirectory() as runtime:
+            monkeypatch.setenv("XDG_RUNTIME_DIR", runtime)
+            with socket.socket(socket.AF_UNIX) as compositor:
+                compositor.bind(os.path.join(runtime, "wayland-1"))
+                compositor.listen()
+                assert spawn_viewer(uri, "25%")
+            # The socket file survives the compositor that was listening on it.
+            assert not spawn_viewer(uri, "25%")
 
     @pytest.mark.skipif(sys.platform != "linux", reason="Wayland passes a Unix socket descriptor")
     @pytest.mark.parametrize("binary", ["dimos-viewer", "rerun"])
@@ -133,14 +151,10 @@ class TestViewerLaunch:
             assert not spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
             sdk_spawn.assert_not_called()
 
-    @pytest.mark.parametrize(
-        ("beside_interpreter", "display_variable"), [(True, "DISPLAY"), (False, "WAYLAND_DISPLAY")]
-    )
+    @pytest.mark.parametrize("beside_interpreter", [True, False])
     def test_custom_viewer_connects_without_sdk_version_check(
-        self, mocker, monkeypatch, tmp_path, beside_interpreter, display_variable
+        self, mocker, monkeypatch, tmp_path, beside_interpreter
     ):
-        monkeypatch.delenv("DISPLAY")
-        monkeypatch.setenv(display_variable, ":0" if display_variable == "DISPLAY" else "wayland-1")
         monkeypatch.delenv("RUST_LOG", raising=False)
         monkeypatch.setenv("PATH", "")
         # The viewer beside the interpreter is launched, whatever PATH holds.

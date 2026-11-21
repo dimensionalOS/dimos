@@ -87,7 +87,21 @@ def spawn_viewer(
             except (OSError, ValueError, OverflowError) as exc:
                 logger.info("Cannot use WAYLAND_SOCKET for the native Rerun viewer: %s", exc)
                 return False
-        elif not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        elif display := os.environ.get("WAYLAND_DISPLAY"):
+            path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", ""), display)
+            if not os.path.isabs(path):
+                logger.info("A relative WAYLAND_DISPLAY requires an absolute XDG_RUNTIME_DIR")
+                return False
+            try:
+                with socket.socket(socket.AF_UNIX) as probe:
+                    probe.setblocking(False)
+                    probe.connect(path)
+            except OSError as exc:
+                logger.info(
+                    "Cannot connect to WAYLAND_DISPLAY for the native Rerun viewer: %s", exc
+                )
+                return False
+        elif not os.environ.get("DISPLAY"):
             logger.info("No Linux display available for the native Rerun viewer")
             return False
 
