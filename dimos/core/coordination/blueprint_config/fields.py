@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import is_dataclass
+from functools import reduce
 import inspect
+from operator import or_
 from types import UnionType
 from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
@@ -245,10 +247,18 @@ def _select_discriminated_model(
     return None
 
 
+def _without_annotated(annotation: Any) -> Any:
+    """The annotation without Annotated metadata, on it or on the members of its unions."""
+    annotation = _unwrap_annotated(annotation)
+    if get_origin(annotation) in (Union, UnionType):
+        return reduce(or_, map(_without_annotated, get_args(annotation)))
+    return annotation
+
+
 def display_annotation(annotations: tuple[Any, ...]) -> str:
     names = []
     for annotation in annotations:
-        annotation = _unwrap_annotated(annotation)
+        annotation = _without_annotated(annotation)
         if isinstance(annotation, type):
             name = annotation.__name__
         else:

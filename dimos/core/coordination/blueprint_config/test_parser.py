@@ -27,6 +27,7 @@ from dimos.core.coordination.blueprint_config.parser import (
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.native_module import NativeInputPath
 from dimos.core.stream import Stream, Transport, TransportSpec
 
 
@@ -589,6 +590,20 @@ def test_format_help_marks_a_required_nested_parent_with_default_children() -> N
     assert "(default: 7) [parent required]" in value_line
     with pytest.raises(BlueprintConfigError, match="nested"):
         parser.parse(environ={})
+
+
+def test_format_help_names_the_types_behind_annotated_union_members() -> None:
+    class ReplayConfig(ModuleConfig):
+        capture: NativeInputPath | None = None
+        rate: Annotated[int | float, Field(gt=0)] | None = None
+
+    class ReplayModule(Module):
+        config: ReplayConfig
+
+    output = BlueprintConfigParser(ReplayModule.blueprint()).format_help()
+
+    assert "--capture, --replaymodule.capture <str | None> (default: None)" in output
+    assert "--rate, --replaymodule.rate <int | float | None> (default: None)" in output
 
 
 def test_split_run_arguments_requires_leading_blueprint_names() -> None:
