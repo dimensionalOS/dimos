@@ -128,7 +128,7 @@ class ModuleConfig(BaseConfig):
     # Optional RPC alias in a blueprint. The coordinator passes the resolved
     # wire address to the module, independently of its instance and stream names.
     rpc_name: str | None = None
-    g: GlobalConfig = global_config
+    g: GlobalConfig = Field(default_factory=lambda: global_config.model_copy(deep=True))
 
 
 ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)

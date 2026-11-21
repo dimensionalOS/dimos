@@ -119,6 +119,7 @@ class BlueprintConfigParser:
         config_path: Path | str | None = None,
         environ: Mapping[str, str] | None = None,
         global_overrides: Mapping[str, Any] | None = None,
+        for_help: bool = False,
     ) -> dict[str, Any]:
         """Resolve GlobalConfig before importing a blueprint.
 
@@ -139,14 +140,32 @@ class BlueprintConfigParser:
                     )
                 deep_merge(values, normalize_mapping_keys(raw_global))
 
-        merge_global_environment(
-            values,
-            configuration_environment(environ),
-        )
-        merge_global_cli(values, tuple(cli_tokens))
+        inherited: dict[str, Any] = {}
+        merge_global_environment(inherited, configuration_environment(environ))
+        explicit: dict[str, Any] = {}
+        merge_global_cli(explicit, tuple(cli_tokens))
         if global_overrides is not None:
-            deep_merge(values, normalize_mapping_keys(global_overrides))
-        return validate_global_values(values)
+            deep_merge(explicit, normalize_mapping_keys(global_overrides))
+
+        try:
+            return validate_global_values(values | inherited | explicit)
+        except BlueprintConfigError:
+            if not for_help:
+                raise
+
+        # Help still needs valid inherited settings to choose the blueprint's
+        # modules. Retry deferred values when another setting satisfies a dependency.
+        while inherited:
+            count = len(inherited)
+            for field, value in inherited.copy().items():
+                try:
+                    validate_global_values(values | {field: value} | explicit)
+                except BlueprintConfigError:
+                    continue
+                values[field] = inherited.pop(field)
+            if len(inherited) == count:
+                break
+        return validate_global_values(values | explicit)
 
     def parse(
         self,

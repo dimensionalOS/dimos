@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
-from typing import Any, Literal
+from typing import Any, Literal, get_origin
 
 from pydantic import BaseModel
 
@@ -125,12 +125,14 @@ def coerce_cli_value(value: Any, target: OptionTarget, option: str) -> Any:
 def coerce_environment_value(value: str, target: OptionTarget, name: str) -> Any:
     """Coerce an environment value like a CLI value.
 
-    Booleans keep pydantic's lax coercion and pure-str fields keep their raw
-    string (a value starting with '[' or '{' must not become an error), so
-    environment usage that predates the coercion keeps working.
+    Scalar settings keep their raw text until model validation so later
+    sources can override them. Container settings accept JSON.
     """
-    scalars = target.scalar_types
-    parse_json = scalars != {bool} and scalars != {str}
+    # Only structured settings need JSON decoding before the sources are merged.
+    parse_json = any(
+        kind not in (str, bool, int, float) and get_origin(kind) is not Literal
+        for kind in target.scalar_types
+    )
     return coerce_string_value(value, target, f"Environment variable {name}", parse_json=parse_json)
 
 

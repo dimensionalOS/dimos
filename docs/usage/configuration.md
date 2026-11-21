@@ -75,6 +75,8 @@ Python module construction and `.blueprint(...)` accept the same fields as keywo
 
 ## Global settings
 
+For example, if the shell exports an invalid `N_WORKERS`, `dimos --help` still opens and `dimos --n-workers 3 show-config` displays the corrected value. Without a valid override, the command identifies the setting and exits with status 2.
+
 [`GlobalConfig`](/dimos/core/global_config.py) owns process management, shared transport, and choices that affect stack composition. It retains robot addresses used by shared transport, simulation/replay selection, recording, Zenoh settings, coordinator RPC serving, viewer selection, workers, scene packages, robot models, robot geometry (`robot_width`, `robot_rotation_diameter`, which the navigation and patrol modules share), native builds, dtop, the default listen host, and relay composition (`local_relay`, `relay_url`).
 
 `dimos show-config` shows only these global settings. Global environment names are uppercase field names, such as `ROBOT_IP` and `N_WORKERS`; transport also accepts `DIMOS_TRANSPORT`. Use `dimos run <blueprint> --help` to inspect that stack's module settings.
