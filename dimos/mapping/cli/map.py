@@ -464,6 +464,20 @@ def main(
     from dimos.visualization.rerun.init import rerun_init
 
     db_path, store = open_cli_dataset(dataset)
+    # A read-only recording does not grow a stream on request: refuse one it lacks
+    # at its option, before the map is built.
+    needed = {"--lidar": lidar_stream}
+    if markers:
+        needed["--markers"] = "color_image"
+        if image_pose is not None:
+            needed["--image-pose"] = image_pose
+    for option, name in needed.items():
+        if name not in store.streams:
+            recorded = ", ".join(store.list_streams())
+            store.stop()
+            raise typer.BadParameter(
+                f"The recording has no {name!r} stream. Recorded: {recorded}", param_hint=option
+            )
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export_cloud or full_pgo:

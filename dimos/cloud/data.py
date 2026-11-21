@@ -207,9 +207,10 @@ class MultipartBackend:
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
-        A .db is built from a copy: the store opens read-write (WAL), and the user's
-        recording must stay byte-identical to what was uploaded; an .mcap opens
-        read-only. Best effort: the upload stands without it."""
+        A .db is built from a copy: the store opens it read-only, but SQLite may still
+        leave coordination files beside a recording, and nothing may appear next to
+        what was uploaded; an .mcap is read in place. Best effort: the upload stands
+        without it."""
         try:
             source, clip = path, tmp / "timelapse.mp4"
             if path.suffix != ".mcap":
