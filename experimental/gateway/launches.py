@@ -745,7 +745,7 @@ def _prepare(
     if validate and not launch.exact and not launch.args:
         module_args = command[command.index("run") + 2 :]
         try:
-            asyncio.run(
+            checked = asyncio.run(
                 introspect.run_child(
                     dimos_dir,
                     ["validate_launch", blueprint],
@@ -753,7 +753,12 @@ def _prepare(
                 )
             )
         except introspect.IntrospectError as error:
-            raise LaunchConfigError(str(error)) from error
+            # not a verdict on the settings: the checkout could not be asked (a timeout, an import error)
+            raise RunError(
+                f"could not validate the launch, so nothing was stopped or started: {error}"
+            ) from error
+        if "rejected" in checked:
+            raise LaunchConfigError(checked["rejected"])
 
     def spawn() -> dict[str, Any]:
         pid = _spawn(

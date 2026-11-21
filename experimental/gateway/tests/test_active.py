@@ -719,10 +719,8 @@ def test_relaunch_keeps_the_running_blueprint_when_module_config_no_longer_loads
     assert launches.request_file().read_bytes() == saved
 
 
-@pytest.mark.parametrize("secrets", [[], ["camera.mode"]], ids=["flag", "environment"])
-def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
-    client: TestClient, checkout: Path, launch_targets: AsyncMock, secrets: list[str]
-) -> None:
+def camera_module(checkout: Path) -> Path:
+    """The file of a module the served checkout runs as `demo`, with one setting."""
     robot = checkout / "dimos" / "robot"
     robot.mkdir(parents=True)
     for package in (robot, robot.parent):
@@ -733,13 +731,38 @@ def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
         'all_blueprints = {}\nall_modules = {"demo": "dimos.robot.camera.Camera"}\n'
     )
     source = robot / "camera.py"
-    module = (
+    source.write_text(
         "from typing import Literal\n"
         "from dimos.core.module import Module, ModuleConfig\n"
         "class CameraConfig(ModuleConfig):\n    mode: str = 'photo'\n"
         "class Camera(Module):\n    config: CameraConfig\n"
     )
-    source.write_text(module)
+    return source
+
+
+def test_a_launch_the_checkout_could_not_validate_is_not_reported_as_a_bad_config(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock
+) -> None:
+    source = camera_module(checkout)
+    launch_targets.side_effect = run_child
+    started = client.post("/active/launch", json={"blueprint": "demo"}).json()
+    until(running(client))
+    source.write_text("import a_package_this_checkout_lacks\n")
+
+    refused = client.post("/active/relaunch")
+
+    assert refused.status_code == 500, refused.text
+    assert refused.json()["error"].startswith("could not validate the launch")
+    assert "a_package_this_checkout_lacks" in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == started["pid"]
+
+
+@pytest.mark.parametrize("secrets", [[], ["camera.mode"]], ids=["flag", "environment"])
+def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock, secrets: list[str]
+) -> None:
+    source = camera_module(checkout)
+    module = source.read_text()
     launch_targets.side_effect = run_child
     start = client.post(
         "/active/launch",

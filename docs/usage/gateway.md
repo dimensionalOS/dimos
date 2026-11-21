@@ -29,8 +29,10 @@ For Relaunch with edited settings, send one launch request to `POST /active/repl
 The gateway validates the replacement before stopping the current process. Discover this route in
 the gateway manifest or OpenAPI document. On an older gateway, leave the run active.
 A bodyless `POST /active/relaunch` repeats the previously saved launch.
-Validation does not hold up `POST /active/stop`: after a stop, or any other change to what runs, during
-validation, the replacement answers 409 and starts nothing.
+Both answer 400 when the checkout rejects the settings and 500 (`could not validate the launch`) when its
+check could not run; the current run keeps running either way. Validation does not hold up
+`POST /active/stop`: after a stop, or any other change to what runs, during validation, the replacement
+answers 409 and starts nothing.
 
 ## Routes
 
