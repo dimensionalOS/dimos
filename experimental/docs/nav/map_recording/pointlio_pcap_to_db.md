@@ -98,17 +98,15 @@ dimos map global --lidar pointlio_lidar --pgo-tol=0 --no-carve
 
 ### Replay a pcap to a module
 
-Run the `mid360-pointlio-replay` blueprint from the directory containing `recordings/`. Pass an absolute capture path because the native driver runs from its own directory.
+Run the `mid360-pointlio-replay` blueprint from the directory containing `recordings/`.
 
 ```bash
-DIMOS_MID360_PCAP="$PWD/recordings/run1.pcap" dimos run mid360-pointlio-replay
+DIMOS_MID360_PCAP=recordings/run1.pcap dimos run mid360-pointlio-replay
 ```
 
 Or save the following Python script and run it from the same directory. For headless playback of the Python script, set `VIEWER=none`.
 
 ```python
-from pathlib import Path
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
@@ -117,7 +115,7 @@ from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for
 from dimos.visualization.vis_module import vis_module
 
 replay = autoconnect(
-    mid360_for_pointlio(pcap=str(Path("recordings/run1.pcap").resolve())),
+    mid360_for_pointlio(pcap="recordings/run1.pcap"),
     PointLio.blueprint(),
     vis_module(global_config.viewer),
 ).global_config(n_workers=3)
