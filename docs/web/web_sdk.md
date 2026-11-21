@@ -490,14 +490,17 @@ Add a button and a receipt to `my-ui/page/index.html`, next to the canvas:
 <output id="receipt"></output>
 ```
 
-In the existing module script, enable the button when the connected robot advertises the input. Publish once per click:
+In the existing module script, add this immediately after `const session = connect();` so the button observes each connection. Enable it when the robot advertises the input on the current connection. Publish once per click:
 
 ```js
 const send = document.querySelector("#send");
 const receipt = document.querySelector("#receipt");
+let previousManifest = null;
 function updateSendButton() {
   const { transport, manifest } = session.status.get();
-  send.disabled = transport.phase !== "connected" ||
+  // The SDK retains the old manifest until the new connection confirms its watch.
+  if (transport.phase !== "connected") previousManifest = manifest;
+  send.disabled = transport.phase !== "connected" || manifest === previousManifest ||
     !manifest?.channels.some((c) => c.ch === "human_input" && c.publish === "shared");
 }
 session.status.subscribe(updateSendButton);
