@@ -48,6 +48,7 @@ EXPECTED_NAMES = {
         "mock",
         "piper",
         "sim_mujoco",
+        "sim_transport",
         "xarm",
     },
     "drive_trains": {
