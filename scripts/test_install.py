@@ -53,5 +53,8 @@ def test_graph_smoke_check_runs_in_installed_project(
     assert (install_root / "logs" / "graph.svg").read_text().strip() == str(project)
 
 
-def test_retired_follow_human_is_absent_from_skill_discovery() -> None:
+def test_retired_follow_human_is_absent_from_skill_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     assert find_spec("dimos.skills.visual_navigation_skills") is None
