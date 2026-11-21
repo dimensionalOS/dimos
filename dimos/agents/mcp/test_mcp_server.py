@@ -19,6 +19,9 @@ import json
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+from starlette.datastructures import State
+
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_server import app, handle_request
 from dimos.agents.skill_result import SkillResult
@@ -253,75 +256,46 @@ def test_mcp_module_injects_acquire_token_for_capability_skill() -> None:
         app.state.cap_registry = saved_registry
 
 
-def test_refusal_message_distinguishes_holder_lifecycle() -> None:
-    """The conflict message tells the LLM to call a stop tool for a background
-    holder, but to wait for an instant holder (which has no stop tool)."""
-    schema = json.dumps({"type": "object", "properties": {}})
-    requester = SkillInfo(
-        class_name="TestSkills",
-        func_name="follow_person",
-        args_schema=schema,
-        uses=("movement",),
-        lifecycle="background",
-    )
-
-    def _refusal_text(holder: SkillInfo) -> str:
-        rpc_calls = _make_rpc_calls([requester], {"follow_person": "ok"})
-        saved_skills = app.state.skills_by_name
-        saved_registry = app.state.cap_registry
-        saved_timeout = app.state.cap_acquire_timeout
-        app.state.skills_by_name = {holder.func_name: holder, "follow_person": requester}
-        registry = CapabilityRegistry()
-        registry.acquire(["movement"], tool_name=holder.func_name, token="held")
-        app.state.cap_registry = registry
-        # An instant holder is waited on; keep that wait short so the test that
-        # exercises the timeout path stays fast.
-        app.state.cap_acquire_timeout = 0.05
-        try:
-            response = asyncio.run(
-                handle_request(
-                    {
-                        "method": "tools/call",
-                        "id": 1,
-                        "params": {"name": "follow_person", "arguments": {}},
-                    },
-                    [requester],
-                    rpc_calls,
-                )
-            )
-            # The requester is refused, so its RPC never runs.
-            rpc_calls["follow_person"].assert_not_called()
-            assert response is not None
-            return response["result"]["content"][0]["text"]
-        finally:
-            app.state.skills_by_name = saved_skills
-            app.state.cap_registry = saved_registry
-            app.state.cap_acquire_timeout = saved_timeout
-
-    background_text = _refusal_text(
-        SkillInfo(
-            class_name="TestSkills",
-            func_name="start_patrol",
-            args_schema=schema,
-            uses=("movement",),
-            lifecycle="background",
+@pytest.mark.parametrize(
+    ("lifecycle", "advice"), [("background", "stop tool"), ("instant", "wait")]
+)
+async def test_conflict_uses_the_running_holders_lifecycle_after_discovery_changes(
+    lifecycle: str, advice: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    holder = SkillInfo("Patrol", "patrol", "{}", uses=("movement",), lifecycle=lifecycle)
+    requester = SkillInfo("Navigator", "navigate", "{}", uses=("movement",))
+    rpc_calls = _make_rpc_calls([holder, requester], {})
+    registry = CapabilityRegistry()
+    monkeypatch.setattr(app, "state", State())
+    app.state.skills_by_name = {"patrol": holder, "navigate": requester}
+    app.state.cap_registry = registry
+    app.state.cap_acquire_timeout = 10.0 if lifecycle == "background" else 0.01
+    if lifecycle == "background":
+        await handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": "patrol"}},
+            [holder, requester],
+            rpc_calls,
         )
-    )
-    assert "held by 'start_patrol'" in background_text
-    assert "stop tool" in background_text
+    else:
+        # Simulate an instant invocation that has not yet returned.
+        registry.acquire(["movement"], tool_name="patrol", token="held")
 
-    instant_text = _refusal_text(
-        SkillInfo(
-            class_name="TestSkills",
-            func_name="turn_in_place",
-            args_schema=schema,
-            uses=("movement",),
-            lifecycle="instant",
-        )
+    # A second provider makes patrol ambiguous, so only navigate is callable.
+    app.state.skills_by_name = {"navigate": requester}
+    del rpc_calls["patrol"]
+    response = await asyncio.wait_for(
+        handle_request(
+            {"method": "tools/call", "id": 2, "params": {"name": "navigate"}},
+            [requester],
+            rpc_calls,
+        ),
+        timeout=3.0,
     )
-    assert "held by 'turn_in_place'" in instant_text
-    assert "wait" in instant_text.lower()
-    assert "stop tool" not in instant_text
+    assert response is not None
+    text = response["result"]["content"][0]["text"]
+    assert "held by 'patrol'" in text
+    assert advice in text
+    rpc_calls["navigate"].assert_not_called()
 
 
 def test_instant_holder_conflict_waits_then_runs() -> None:

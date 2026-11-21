@@ -32,7 +32,7 @@ from starlette.responses import Response, StreamingResponse
 import uvicorn
 
 from dimos.agents.annotation import skill
-from dimos.agents.capabilities import CapabilityRegistry
+from dimos.agents.capabilities import CapabilityHold, CapabilityRegistry
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import DEFAULT_MCP_PORT, mcp_url
 from dimos.agents.skill_result import SkillResult
@@ -53,8 +53,7 @@ _SSE_KEEPALIVE_INTERVAL = 20.0  # seconds
 
 # How long a `tools/call` waits for a capability held by a short, self-completing
 # (instant) skill before refusing. Well under the MCP client's 120s HTTP timeout.
-# Background holders run until stopped, so they are never waited on (see
-# `_can_wait` in `_handle_tools_call`).
+# Background holders run until stopped, so they are never waited on.
 DEFAULT_CAP_ACQUIRE_TIMEOUT = 30.0  # seconds
 
 app = FastAPI()
@@ -149,24 +148,14 @@ async def _handle_tools_call(
     # teardown can't release a hold that a newer same-tool invocation took over.
     acquire_token = uuid.uuid4().hex
     if uses:
-
-        def _can_wait(holder: str) -> bool:
-            # Wait only on instant holders; they release when they return.
-            # Background holders run until explicitly stopped, so refuse instead
-            # of blocking until the timeout.
-            info = app.state.skills_by_name.get(holder)
-            return (info.lifecycle if info is not None else "instant") != "background"
-
         # Run the (possibly blocking) acquire off the event loop so waiting for a
         # busy capability doesn't stall the server.
         conflict = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: cap_registry.acquire(
+            lambda: cap_registry.acquire_hold(
                 uses,
-                tool_name=name,
-                token=acquire_token,
+                CapabilityHold(name, acquire_token, lifecycle),
                 timeout=app.state.cap_acquire_timeout,
-                can_wait=_can_wait,
             ),
         )
         if conflict is not None:
@@ -175,20 +164,18 @@ async def _handle_tools_call(
                 "MCP tool refused (capability busy)",
                 tool=name,
                 cap=cap,
-                holder=holder,
+                holder=holder.tool_name,
                 snapshot=cap_registry.snapshot(),
             )
             # A background holder has a stop tool to call; an instant holder is
             # waited on above, so reaching here means it outlasted the timeout.
-            holder_info = app.state.skills_by_name.get(holder)
-            holder_lifecycle = holder_info.lifecycle if holder_info is not None else "instant"
-            if holder_lifecycle == "background":
+            if holder.lifecycle == "background":
                 advice = "Call the appropriate stop tool first, then retry."
             else:
                 advice = "It is taking longer than expected; wait a moment and then retry."
             return _jsonrpc_result_text(
                 req_id,
-                f"Cannot start '{name}': capability '{cap}' is held by '{holder}'. {advice}",
+                f"Cannot start '{name}': capability '{cap}' is held by '{holder.tool_name}'. {advice}",
             )
 
     logger.info("MCP tool call", tool=name, args=args, progress_token=progress_token)
