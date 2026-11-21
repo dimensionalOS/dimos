@@ -21,10 +21,12 @@ stub, and runner environments implement the same lifecycle as real environments.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from datetime import datetime
 import json
 import math
 from pathlib import Path
+import sqlite3
 import threading
 import time
 from types import SimpleNamespace
@@ -784,11 +786,17 @@ def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
     assert seen == {"agent": {"recording"}, "grader": {"recording", "answers"}}
 
 
-def test_recording_helper_opens_the_artifact(dataset: str) -> None:
+def test_recording_helper_reads_the_artifact_without_changing_it(dataset: str) -> None:
+    path = Path(dataset)
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("PRAGMA journal_mode=DELETE")
+    before = path.read_bytes()
+
     with recording(
-        Outcome(trajectory=_trajectory("", Path()), artifacts={"recording": Path(dataset)})
+        Outcome(trajectory=_trajectory("", Path()), artifacts={"recording": path})
     ) as store:
         assert store.streams.odom.last().data.position.x == 4.0
+    assert path.read_bytes() == before
 
 
 def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
