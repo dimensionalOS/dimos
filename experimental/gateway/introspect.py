@@ -726,6 +726,11 @@ def packages() -> dict[str, Any]:
 
 def validate_launch(name: str, request: dict[str, Any]) -> dict[str, Any]:
     """Validate a structured launch in the served checkout before replacing a process."""
+    # This child serves one request. Let the checkout's CLI load its .env with the
+    # launch environment already in place, before config and state paths are imported.
+    os.environ.update(request["env"])
+    importlib.import_module("dimos.cli.dimos")
+
     from dimos.cli.commands.lifecycle import DEFAULT_CONFIG_PATH, _with_relay_bridge
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.core.coordination.module_coordinator import stream_name_types
@@ -734,11 +739,11 @@ def validate_launch(name: str, request: dict[str, Any]) -> dict[str, Any]:
     from dimos.robot.get_all_blueprints import get_by_name
 
     config_path = DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else None
-    environ = {**os.environ, **request["env"]}
-    args, overrides = request["args"], request["global"]
+    args = request["args"]
+    overrides = {key: value for key, value in request["global"].items() if value is not None}
     global_config.update(
         **BlueprintConfigParser.preparse_global_config(
-            args, config_path=config_path, environ=environ, global_overrides=overrides
+            args, config_path=config_path, environ=os.environ, global_overrides=overrides
         )
     )
     blueprint = _with_relay_bridge(solid_blueprint(get_by_name(name)))
@@ -747,7 +752,7 @@ def validate_launch(name: str, request: dict[str, Any]) -> dict[str, Any]:
             global_config.record_topics, {stream for stream, _ in stream_name_types(blueprint)}
         )
     BlueprintConfigParser(blueprint).parse(
-        args, config_path=config_path, environ=environ, global_overrides=overrides
+        args, config_path=config_path, environ=os.environ, global_overrides=overrides
     )
     return {}
 

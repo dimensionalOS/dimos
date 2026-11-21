@@ -28,6 +28,7 @@ import psutil
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches, shared_config
 from experimental.gateway.introspect import IntrospectError, run_child
@@ -544,6 +545,52 @@ def test_replace_checks_the_new_settings_before_stopping_the_current_run(
     assert repeated.status_code == 200 and repeated.json()["config"]["global"] == {"n_workers": 2}
 
 
+def test_relaunch_accepts_a_saved_null_global_option(
+    client: TestClient, launch_targets: AsyncMock
+) -> None:
+    launch_targets.side_effect = run_child
+    request = {"module": "demo-calculator-skill", "config": {"global": {"n_workers": None}}}
+    started = client.post("/active/launch", json=request)
+    assert started.status_code == 200
+    until(running(client))
+
+    repeated = client.post("/active/relaunch")
+
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["pid"] != started.json()["pid"]
+    until(running(client))
+
+
+def test_replace_validates_checkout_dotenv_and_honors_launch_environment(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (checkout / "dimos").symlink_to(DIMOS_PROJECT_ROOT / "dimos")
+    monkeypatch.delenv("PYTEST_VERSION", raising=False)
+    monkeypatch.delenv("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT", raising=False)
+    launch_targets.side_effect = run_child
+    module = {"module": "demo-calculator-skill"}
+    started = client.post("/active/launch", json=module)
+    assert started.status_code == 200
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+    (checkout / ".env").write_text("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT=invalid\n")
+
+    refused = client.post("/active/replace", json=module)
+
+    assert refused.status_code == 400 and "default_rpc_timeout" in refused.json()["error"]
+    active = client.get("/active").json()
+    assert active["running"] and active["pid"] == started.json()["pid"]
+    assert launches.request_file().read_bytes() == saved
+    config = {
+        "modules": {"democalculatorskill": {"default_rpc_timeout": 2}},
+        "secrets": ["democalculatorskill.default_rpc_timeout"],
+    }
+    accepted = client.post("/active/replace", json={**module, "config": config})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["pid"] != started.json()["pid"]
+    until(running(client))
+
+
 @pytest.mark.parametrize(
     ("schema", "error"),
     [(IntrospectError("schema unavailable"), "schema unavailable"), ({"camera": ["rate"]}, "auth")],
@@ -576,15 +623,17 @@ def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
         (package / "__init__.py").write_text(
             "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n"
         )
-    registry = robot / "get_all_blueprints.py"
+    (robot / "all_blueprints.py").write_text(
+        'all_blueprints = {}\nall_modules = {"demo": "dimos.robot.camera.Camera"}\n'
+    )
+    source = robot / "camera.py"
     module = (
         "from typing import Literal\n"
         "from dimos.core.module import Module, ModuleConfig\n"
         "class CameraConfig(ModuleConfig):\n    mode: str = 'photo'\n"
         "class Camera(Module):\n    config: CameraConfig\n"
-        "def get_by_name(name):\n    return Camera.blueprint()\n"
     )
-    registry.write_text(module)
+    source.write_text(module)
     launch_targets.side_effect = run_child
     start = client.post(
         "/active/launch",
@@ -598,7 +647,7 @@ def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
     pid = start.json()["pid"]
     saved = launches.request_file().read_bytes()
 
-    registry.write_text(module.replace("mode: str", "mode: Literal['photo']"))
+    source.write_text(module.replace("mode: str", "mode: Literal['photo']"))
     refused = client.post("/active/relaunch")
     assert refused.status_code == 400, refused.text
     assert "camera.mode" in refused.json()["error"]
@@ -606,7 +655,7 @@ def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
     assert client.get("/active").json()["pid"] == pid and launches.alive(pid)
     assert launches.request_file().read_bytes() == saved
 
-    registry.write_text(module)
+    source.write_text(module)
     retried = client.post("/active/relaunch")
     assert retried.status_code == 200, retried.text
     until(running(client))
