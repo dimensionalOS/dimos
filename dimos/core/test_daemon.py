@@ -743,6 +743,7 @@ def test_run_coordinator_stops_the_build_when_the_health_check_fails(mocker, mon
     coordinator = mock.MagicMock()
     coordinator.health_check.return_value = False
     mocker.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog")
+    mocker.patch("dimos.core.daemon.install_signal_handlers")
     monkeypatch.setenv("DIMOS_RUN_ID", "run-y")
     build = "dimos.core.coordination.module_coordinator.ModuleCoordinator.build"
     with (
