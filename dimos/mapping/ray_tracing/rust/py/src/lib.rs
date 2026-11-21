@@ -157,6 +157,7 @@ impl VoxelRayMapper {
             emit_every,
             global_emit_every: 1,
             region_percentile,
+            region_radius_window: 1,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
@@ -166,6 +167,8 @@ impl VoxelRayMapper {
             viz_cell_m: region_m,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            separate_premaps: false,
+            premap_regions_shift_m: 0.0,
         };
         config
             .validate()

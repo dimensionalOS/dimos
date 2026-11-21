@@ -14,5 +14,6 @@
 
 pub mod mapper;
 pub mod module;
+pub mod premap;
 pub mod region_viz;
 pub mod voxel_ray_tracer;
