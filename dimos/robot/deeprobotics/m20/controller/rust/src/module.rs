@@ -227,10 +227,12 @@ pub fn guard(
 }
 
 /// The one-time setup that grants the controller CAP_NET_RAW (motor bus) and SCHED_FIFO (CAP_SYS_NICE, LimitRTPRIO).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const REALTIME_FIX: &str =
     "on AOS run `m20tool setup-step aos/dimos-host-realtime`, then restart dimos-host";
 
 /// What to run when the motor bus is refused for want of a permission; "" otherwise.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn setup_fix(error: &str) -> &'static str {
     if error.contains("Operation not permitted") || error.contains("Permission denied") {
         REALTIME_FIX

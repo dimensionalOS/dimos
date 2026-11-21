@@ -103,19 +103,31 @@ unsafe fn confirm_realtime(cpu: Option<usize>, fifo_priority: Option<i32>) -> Re
     let cpus: Vec<usize> = (0..libc::CPU_SETSIZE as usize)
         .filter(|&c| libc::CPU_ISSET(c, &set))
         .collect();
+    let policy = libc::sched_getscheduler(0);
+    let mut param = libc::sched_param { sched_priority: 0 };
+    let read = libc::sched_getparam(0, &mut param) == 0;
+    check_placement(
+        &cpus,
+        policy == libc::SCHED_FIFO && read,
+        param.sched_priority,
+        cpu,
+        prio,
+    )
+}
+
+/// The placement read back is exactly `cpu`, SCHED_FIFO (`fifo`) at `prio`; otherwise an error saying what it is.
+pub fn check_placement(
+    cpus: &[usize],
+    fifo: bool,
+    priority: i32,
+    cpu: usize,
+    prio: i32,
+) -> Result<()> {
     if cpus != [cpu] {
         anyhow::bail!("pinned to cpus {cpus:?}, not only {cpu}");
     }
-    let policy = libc::sched_getscheduler(0);
-    let mut param = libc::sched_param { sched_priority: 0 };
-    if policy != libc::SCHED_FIFO
-        || libc::sched_getparam(0, &mut param) != 0
-        || param.sched_priority != prio
-    {
-        anyhow::bail!(
-            "scheduler {policy} priority {}, not SCHED_FIFO {prio}",
-            param.sched_priority
-        );
+    if !fifo || priority != prio {
+        anyhow::bail!("scheduler fifo={fifo} priority {priority}, not SCHED_FIFO {prio}");
     }
     Ok(())
 }
@@ -269,4 +281,18 @@ pub fn run<H: Hardware + ?Sized>(
         }
     }
     Ok(stats)
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::check_placement;
+
+    #[test]
+    fn only_the_configured_core_at_the_configured_fifo_priority_passes() {
+        assert!(check_placement(&[4], true, 80, 4, 80).is_ok());
+        assert!(check_placement(&[4, 5], true, 80, 4, 80).is_err());
+        assert!(check_placement(&[0, 1, 2, 3], true, 80, 4, 80).is_err());
+        assert!(check_placement(&[4], false, 0, 4, 80).is_err());
+        assert!(check_placement(&[4], true, 70, 4, 80).is_err());
+    }
 }
