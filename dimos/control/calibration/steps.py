@@ -623,7 +623,8 @@ def _revisit(
 ) -> tuple[dict[str, np.ndarray], dict[str, str]]:
     """Each pose's rest error, and why each pose that did not settle was skipped; a stall with
     a ``patch`` still raises."""
-    rests, skipped, visited = {}, {}, []
+    rests, visited = {}, []
+    skipped: dict[str, str] = {}
     for k, pose in enumerate(poses, 1):
         run.progress(f"pose {k}/{len(poses)}")
         target = np.asarray(pose.joints_rad)
