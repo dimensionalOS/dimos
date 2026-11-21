@@ -80,25 +80,41 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     # Anything buffered would otherwise be flushed by both processes.
     sys.stdout.flush()
     sys.stderr.flush()
-    read_fd, write_fd = os.pipe()
-    os.set_inheritable(write_fd, True)
-    exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
     # Preserve interpreter flags and both console-script/python -m entry.
     exec_argv = [sys.executable, *sys.orig_argv[1:]]
-
-    pid = os.fork()
+    read_fd, write_fd = os.pipe()
+    try:
+        os.set_inheritable(write_fd, True)
+        exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
+        pid = os.fork()
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid > 0:
         os.close(write_fd)
-        os.waitpid(pid, 0)  # The intermediate exits immediately; don't leave a zombie.
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            # SIGCHLD can be ignored, in which case the OS already reaped the child.
+            pass
+        except BaseException:
+            os.close(read_fd)
+            raise
         return pid, read_fd
 
-    os.close(read_fd)
-    os.setsid()
-
-    # Second fork — can never reacquire a controlling terminal
-    if os.fork() > 0:
-        os._exit(0)
-    os.execve(sys.executable, exec_argv, exec_env)
+    try:
+        os.close(read_fd)
+        os.setsid()
+        # Second fork — can never reacquire a controlling terminal.
+        if os.fork() > 0:
+            os._exit(0)
+        os.execve(sys.executable, exec_argv, exec_env)
+    except OSError as exc:
+        write_daemon_status(write_fd, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        # An inherited image must never unwind the launcher's CLI or atexit handlers.
+        os._exit(1)
 
 
 def redirect_stdio_to_devnull() -> None:
