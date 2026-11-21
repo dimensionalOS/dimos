@@ -103,6 +103,27 @@ def test_class_local_bare_stream_shadows_global(monkeypatch: pytest.MonkeyPatch,
             other: peer
 
 
+class DelayedWriter(Module):
+    Output = Out
+    peer: "DelayedPeer"
+    frames: "Output[int]"
+
+
+class DelayedPeer:
+    pass
+
+
+def test_typed_output_with_a_delayed_peer() -> None:
+    (port,) = DelayedWriter.blueprint().blueprints[0].streams
+    assert (port.name, port.direction, port.type) == ("frames", "out", int)
+
+    writer = DelayedWriter()
+    try:
+        assert isinstance(writer.frames, Out) and writer.frames.type is int
+    finally:
+        writer.stop()
+
+
 def test_classmethods(navigation) -> None:
     # Test class property access
     class_rpcs = Navigation.rpcs
