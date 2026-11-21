@@ -38,13 +38,16 @@ class MotionTimer:
             self._timer.cancel()
             self._timer = None
 
-    def arm(self, duration: float, stop: Callable[[], None]) -> None:
+    def is_current(self, timer: threading.Timer) -> bool:
+        return self._timer is timer
+
+    def arm(self, duration: float, stop: Callable[[], None]) -> threading.Timer:
         self.cancel()
 
         def expire() -> None:
             with self._lock:
                 # cancel() cannot recall a callback that is already running.
-                if self._timer is timer:
+                if self.is_current(timer):
                     self._timer = None
                     stop()
 
@@ -52,3 +55,4 @@ class MotionTimer:
         self._timer = timer
         timer.daemon = True
         timer.start()
+        return timer

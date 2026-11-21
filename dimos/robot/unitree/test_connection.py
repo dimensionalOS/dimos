@@ -18,7 +18,9 @@ Pure-Python test suite with no hardware or network. Covers connect() error propa
 and aes_128_key forwarding.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
@@ -158,3 +160,25 @@ def test_empty_string_key_forwarded_as_falsy(stub_legion: MagicMock) -> None:
     """Empty-string key stays falsy → the driver treats it as no key."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
     assert not _aes_kwarg(stub_legion)
+
+
+@pytest.mark.parametrize("duration", [0.0, 0.15], ids=["watchdog", "timed-loop"])
+def test_expired_webrtc_move_cannot_overwrite_replacement(built_connection, monkeypatch, duration):
+    conn, driver = built_connection
+    deadlines = []
+    monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
+    sent = threading.Event()
+    publish = driver.datachannel.pub_sub.publish_without_callback
+    publish.side_effect = lambda *args, **kwargs: sent.set()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(conn.move, Twist(linear=[0.1, 0, 0]), duration)
+        assert sent.wait(2)
+        assert conn.move(Twist(linear=[0, 0.2, 0]))
+        assert first.result(timeout=2)
+
+    deadlines[0]()  # The old callback was dispatched before cancel.
+    commands = [item.kwargs["data"] for item in publish.call_args_list]
+    lateral = {"lx": -0.2, "ly": 0.0, "rx": 0.0, "ry": 0}
+    assert commands[commands.index(lateral) :] == [lateral]
+    deadlines[1]()
+    assert publish.call_args.kwargs["data"] == {"lx": 0, "ly": 0, "rx": 0, "ry": 0}
