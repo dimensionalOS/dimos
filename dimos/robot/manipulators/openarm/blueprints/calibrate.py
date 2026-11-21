@@ -20,7 +20,6 @@ See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint
-from dimos.robot.manipulators.openarm.config import OPENARM
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
-openarm_calibrate = calibration_blueprint(OpenArmConnection, OPENARM).remappings([])
+openarm_calibrate = calibration_blueprint(OpenArmConnection).remappings([])

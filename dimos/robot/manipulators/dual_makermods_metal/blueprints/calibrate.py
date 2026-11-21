@@ -20,7 +20,6 @@ See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint
-from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
 
-dual_metal_calibrate = calibration_blueprint(DualMetalConnection, DUAL_METAL).remappings([])
+dual_metal_calibrate = calibration_blueprint(DualMetalConnection).remappings([])

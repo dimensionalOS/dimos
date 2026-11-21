@@ -30,13 +30,11 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 
 
-def calibration_blueprint(
-    connection: type[DamiaoConnection], robot: DamiaoRobot, **defaults: Any
-) -> MetaBlueprint:
-    """``connection`` with ``config_writes`` and a calibration module for an arm of ``robot``."""
+def calibration_blueprint(connection: type[DamiaoConnection], **defaults: Any) -> MetaBlueprint:
+    """``connection`` with ``config_writes`` and a calibration module for an arm of its robot."""
     return autoconnect(
         arm_connection(connection, config_writes=True),
-        CalibrationModule.blueprint(robot=robot, **defaults),
+        CalibrationModule.blueprint(robot=connection.robot, **defaults),
     )
 
 
