@@ -10,8 +10,7 @@ import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
 /**
  * Every built-in pi-ai provider, then `extra` (the faux provider in tests), with credentials in `authFile` through
  * pi-coding-agent's AuthStorage, the store that wrote dimcode's auth.json. `modelsFile`, when it exists, overrides
- * providers in pi's models.json format. A malformed one leaves the providers as built in and goes to `report`. No
- * catalog download, and the catalog stays in memory.
+ * providers in pi's models.json format.
  */
 export async function openModels(
   authFile: string,
@@ -19,16 +18,35 @@ export async function openModels(
   extra: readonly Provider[],
   report: (error: unknown) => void,
 ): Promise<Models> {
+  const store = new InMemoryModelsStore();
   const models = await ModelRuntime.create({
     authPath: authFile,
     modelsPath: modelsFile,
-    modelsStore: new InMemoryModelsStore(),
+    modelsStore: store,
   });
+  const signal = AbortSignal.timeout(4_000);
+  const providers = models.getProviders().filter(({ id }) => models.getProviderAuthStatus(id).configured);
+  await Promise.all(providers.map(({ id }) => refreshCatalog(models, id, signal, store).catch(report)));
   // pi folds a malformed models.json in with credential and catalog failures, so none of them stops the gateway.
   const error = models.getError();
   if (error !== undefined) report(new Error(error));
   for (const provider of extra) models.registerNativeProvider(provider);
   return models;
+}
+
+/** OpenAI's public catalog needs no request credentials. Other providers may personalize theirs. */
+export async function refreshCatalog(models: Models, id: string, signal: AbortSignal, store?: InMemoryModelsStore) {
+  if (id !== "openai" && id !== "openai-codex") return models.refresh({ providers: [id], force: true, signal });
+  await models.getProvider(id)?.refreshModels?.({
+    allowNetwork: process.env.PI_OFFLINE === undefined,
+    signal,
+    publish: async ({ persist, update }) => {
+      if (signal.aborted) return false;
+      if (persist) await store?.write(id, persist, { signal });
+      update?.();
+      return true;
+    },
+  });
 }
 
 /** Login methods a terminal offers: an interactive API key, or OAuth except Anthropic's. */
