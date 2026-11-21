@@ -197,11 +197,11 @@ class ArmModel:
     def transition_ok(self, a: Joints, b: Joints) -> bool:
         """Whether a joint-space ramp from ``a`` to ``b`` keeps the clearance.
 
-        A point may run lower only where an end of the ramp has it, never below both ends. The
-        margin is the smallest distance, at either end, of a point to the floor or a keep-out,
-        or of the fingertip to the front limit; the ramp is checked often enough that no point
-        moves more than twice the margin between checks (a point moves at most ``reach_m`` per
-        radian).
+        A point may run lower only where an end of the ramp has it, never below both ends, and
+        no check has a point nearer a keep-out or the front limit than the margin: the smallest
+        distance, at either end, of a point to the floor or a keep-out, or of the fingertip to
+        the front limit. The ramp is checked often enough that no point moves more than twice
+        the margin between checks (a point moves at most ``reach_m`` per radian).
         """
         start, end = self.q(a), self.q(b)
         ends = [self.points(q) for q in (start, end)]
@@ -215,11 +215,11 @@ class ArmModel:
             return False
         checks = max(1, math.ceil(np.abs(end - start).sum() * self.reach_m / (2.0 * margin)))
         for s in np.linspace(0.0, 1.0, checks + 1):
-            tip, others = self.points(start + s * (end - start))
+            tip, others = self.points((1.0 - s) * start + s * end)
             if (
                 tip[2] < floor[0]
                 or (others[:, 2] < floor[1:]).any()
-                or not self._clear(tip, others)
+                or self._bound_distance(tip, others) < margin
             ):
                 return False
         return True
