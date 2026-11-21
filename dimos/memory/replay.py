@@ -101,11 +101,19 @@ class Replay(Configurable):
         """Replay a named stream, optionally from a filtered observation query."""
         return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
 
-    def first_ts(self) -> float | None:
-        """Earliest source timestamp across non-empty streams in the underlying store.
+    def set_relative_window(
+        self, origin: float, *, seek: float | None, duration: float | None
+    ) -> None:
+        """Set bounds before playback when only part of the recording participates in timing."""
+        self._first_ts = origin
+        self.config.from_timestamp = None
+        self.config.seek = seek
+        self.config.duration = duration
 
-        Found once and reused. A replay reads a finished recording, and every
-        stream measures seek and duration from the same start.
+    def first_ts(self) -> float | None:
+        """Common origin for relative seek and duration.
+
+        Defaults to the earliest source timestamp in the underlying store.
         """
         if self._first_ts is None:
             candidates: list[float] = []

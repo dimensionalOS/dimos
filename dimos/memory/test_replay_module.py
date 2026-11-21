@@ -20,6 +20,7 @@ from typing import Any
 from unittest import mock
 
 import pytest
+from pytest_mock import MockerFixture
 from reactivex import interval
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
@@ -243,8 +244,8 @@ def test_constant_timestamp_tf_republishes_every_edge(sqlite_store, mocker):
     ] == [[("base", "camera", 42.25), ("camera", "optical", 42.25)]] * 2
 
 
-@pytest.mark.parametrize("seek", [None, 990.0])
-def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_store, mocker, seek):
+@pytest.fixture
+def mixed_tf_recording(sqlite_store: SqliteStore, mocker: MockerFixture) -> SqliteStore:
     with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
         transport = mocker.Mock(spec=Transport)
         unsubscribe = recorder.tap("tf", TFMessage, transport)
@@ -261,6 +262,12 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
             # Sort after TF to also catch priming that delays another subscription.
             sqlite_store.stream("z_odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
 
+    return sqlite_store
+
+
+def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(
+    mixed_tf_recording: SqliteStore, mocker: MockerFixture
+) -> None:
     scheduler = TestScheduler()
     preparing = True
     decode = ReplayStream._decode
@@ -280,9 +287,9 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
     mocker.patch.object(ZenohRPC, "serve_module_rpc")
     odom = []
     tf = []
-    path = sqlite_store.config.path
+    path = mixed_tf_recording.config.path
     with ExitStack() as cleanup:
-        module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True, seek=seek)
+        module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True)
         cleanup.callback(module.stop)
         module.register_disposable(Disposable(module.outputs["z_odom"].subscribe(odom.append)))
         module.register_disposable(
@@ -306,6 +313,63 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
         assert [m.ts for m in odom] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "world"] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "base"] == [10.0] * 3
+
+
+@pytest.mark.parametrize(
+    ("seek", "duration", "expected_odom", "expected_tf"),
+    [
+        (None, 1.0, [999.5, 1000.0], [1000.0]),
+        (0.5, None, [1000.0, 1001.0], [1000.0, 1001.0]),
+        (990.0, 1.0, [], []),
+    ],
+)
+def test_mixed_tf_window_starts_at_first_timed_row(
+    mixed_tf_recording: SqliteStore,
+    mocker: MockerFixture,
+    seek: float | None,
+    duration: float | None,
+    expected_odom: list[float],
+    expected_tf: list[float],
+) -> None:
+    # Odometry starts half a second before changing TF. Both share the same window.
+    mixed_tf_recording.stream("z_odom", PoseStamped).append(PoseStamped(ts=999.5), ts=999.5)
+    scheduler = TestScheduler()
+    mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    path = mixed_tf_recording.config.path
+    module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC, seek=seek, duration=duration)
+    tf: list[Transform] = []
+    odom: list[PoseStamped] = []
+    with ExitStack() as cleanup:
+        cleanup.callback(module.stop)
+        cleanup.callback(module.outputs["tf"].subscribe(lambda msg: tf.extend(msg.transforms)))
+        cleanup.callback(module.outputs["z_odom"].subscribe(odom.append))
+        module.start()
+        scheduler.advance_by(2)
+        assert [msg.ts for msg in odom] == expected_odom
+        assert [t.ts for t in tf if t.child_frame_id == "base"] == expected_tf
+        assert (tf[0].child_frame_id, tf[0].ts) == ("camera", 10.0)
+
+
+def test_seek_on_late_topic_uses_recording_origin(
+    mixed_tf_recording: SqliteStore, mocker: MockerFixture
+) -> None:
+    late = mixed_tf_recording.stream("late", PoseStamped)
+    for ts in (1010.0, 1010.25):
+        late.append(PoseStamped(ts=ts), ts=ts)
+
+    scheduler = TestScheduler()
+    mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    path = mixed_tf_recording.config.path
+    cls = replay_module(path, topics="late")
+    module = cls(dataset=path, topics="late", seek=10.0, duration=0.5, rpc_transport=ZenohRPC)
+    received: list[float] = []
+    with Disposable(module.outputs["late"].subscribe(lambda msg: received.append(msg.ts))), module:
+        scheduler.advance_by(1)
+    assert received == [1010.0, 1010.25]
 
 
 def test_legacy_tf_batches_publish_fixed_edges_once_at_start(sqlite_store, mocker):
