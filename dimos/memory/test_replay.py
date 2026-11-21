@@ -14,14 +14,18 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from typing import TYPE_CHECKING
 
 import pytest
+from reactivex.testing import TestScheduler
 
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.base import StreamAccessor
 
 if TYPE_CHECKING:
+    from pytest_mock import MockerFixture
+
     from dimos.memory.store.sqlite import SqliteStore
 
 pytestmark = pytest.mark.self_hosted
@@ -148,3 +152,29 @@ def test_replay_anchor_thread_safe(sqlite_store: SqliteStore) -> None:
 
     assert len(anchors) == n_workers
     assert all(a == anchors[0] for a in anchors)
+
+
+@pytest.mark.parametrize("join_at", [0.0, 3.5])
+def test_looped_streams_share_one_bounded_period(
+    sqlite_store: SqliteStore, mocker: MockerFixture, join_at: float
+) -> None:
+    _populate(sqlite_store, "odom", [100, 101, 110])
+    _populate(sqlite_store, "lidar", [100.5, 101.5])
+    replay = sqlite_store.replay(loop=True, duration=2)
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
+    replay.pin_anchor(100)
+    events = []
+    with ExitStack() as subscriptions:
+        subscriptions.enter_context(
+            replay.streams.lidar.observable().subscribe(scheduler=scheduler)
+        )
+        scheduler.advance_to(join_at)
+        subscriptions.enter_context(
+            replay.streams.odom.observable().subscribe(
+                lambda value: events.append((round(scheduler.clock, 2), value)), scheduler=scheduler
+            )
+        )
+        scheduler.advance_to(4.7)
+    expected = [(0, 0), (1, 1), (1.55, 0), (2.55, 1), (3.1, 0), (4.1, 1), (4.65, 0)]
+    assert events == [event for event in expected if event[0] >= join_at]

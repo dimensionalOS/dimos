@@ -25,6 +25,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from mcap.writer import Writer
@@ -619,3 +620,22 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     assert (len(received) > 2) is loop
     finished = [call for call in log.info.call_args_list if call.args == ("Replay finished",)]
     assert len(finished) == (0 if loop else 1)
+
+
+def test_loop_period_uses_selected_sensors_when_subscription_runs_before_seal(tmp_path, mocker):
+    path = tmp_path / "sensors.db"
+    with SqliteStore(path=str(path)) as store:
+        store.stream("odom", PoseStamped).append(PoseStamped(ts=10.0), ts=10.0)
+        store.stream("unused", int).append(1, ts=100.0)
+
+    clock = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: clock.clock))
+    times = []
+    with go2_conn.ReplayConnection(str(path), loop=True) as connection:
+        with connection.odom_stream().subscribe(
+            lambda _: times.append(clock.clock), scheduler=clock
+        ):
+            clock.advance_to(0.01)
+            connection.seal_subscriptions()
+            clock.advance_to(0.18)
+    assert [t - times[0] for t in times] == pytest.approx([0, 0.05, 0.10, 0.15])

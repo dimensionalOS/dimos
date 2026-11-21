@@ -18,10 +18,10 @@ from importlib import resources
 import sys
 from threading import Event, Thread
 import time
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 from pydantic import Field, model_validator
-from reactivex import empty
+from reactivex import Subject, concat, empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -225,6 +225,7 @@ class ReplayConnection(CompositeResource):
         self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
         self._replay_path: str | None = None
         self._pending_streams: list[ReplayStream[Any]] = []
+        self._loop_window_ready: Subject[NoReturn] = Subject()
 
     @cached_property
     def replay(self) -> Replay:
@@ -282,15 +283,21 @@ class ReplayConnection(CompositeResource):
 
     def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
         self._pending_streams.append(stream)
-        return self._tracked(stream.observable())
+        source = stream.observable()
+        if self._loop:
+            # A singleton can wrap on its first callback. Set the selected
+            # window before any loop can fall back to the full recording.
+            source = concat(self._loop_window_ready, source)
+        return self._tracked(source)
 
     def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
+        """Finish selecting sensors and start looped playback on their shared window."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
             self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
             self._pending_streams.clear()
+        self._loop_window_ready.on_completed()
         self._progress.seal()
 
     def _on_complete(self) -> None:
