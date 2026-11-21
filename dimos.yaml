@@ -168,6 +168,9 @@ provides:
         description: >-
           Launch {blueprint} or {module} with all of its config {global, modules, secrets?} (the gateway saves none); 409 if
           something runs
+    /active/launch-with-defaults:
+      post:
+        summary: Launch with saved module_defaults below config.modules, resolved at the launch schema's field boundaries
     /active/exec:
       post:
         summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module)

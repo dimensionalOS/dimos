@@ -40,6 +40,12 @@ class LaunchRequest(BaseModel):
     config: JsonValue = None
 
 
+class LayeredLaunchRequest(LaunchRequest):
+    """Module defaults below config.modules, resolved against this launch's CLI fields."""
+
+    module_defaults: dict[str, dict[str, JsonValue]]
+
+
 class ExecRequest(BaseModel):
     args: list[str]
 
@@ -111,13 +117,30 @@ async def active_log(
     return await read_log(state, await running_id(), after, level, q, limit)
 
 
-@router.post("/launch", response_model=responses.Launch)
-async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
+async def start_request(
+    state: GatewayState,
+    request: LaunchRequest,
+    module_defaults: launches.ModuleValues | None = None,
+) -> dict[str, Any]:
     if (request.blueprint is None) == (request.module is None):
         raise ApiError(400, "give exactly one of blueprint or module")
     name = check_name(request.module if request.blueprint is None else request.blueprint)
     launch_config = launches.parse(request.config)
+    if module_defaults is not None:
+        launch_config.module_defaults = module_defaults
     return await started(state, name, launch_config)
+
+
+@router.post("/launch", response_model=responses.Launch)
+async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
+    return await start_request(state, request)
+
+
+@router.post("/launch-with-defaults", response_model=responses.Launch)
+async def launch_with_defaults(
+    state: GatewayState, request: LayeredLaunchRequest
+) -> dict[str, Any]:
+    return await start_request(state, request, request.module_defaults)
 
 
 @router.post("/exec", response_model=responses.Launch)

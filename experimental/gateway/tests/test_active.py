@@ -283,6 +283,66 @@ def test_nested_launch_and_relaunch_keep_secrets_out_of_args_and_metadata(
     launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
 
 
+@pytest.mark.parametrize(
+    ("saved_camera", "asked_camera"),
+    [
+        ({"camera.gain": 1, "camera.exposure": 4}, {"camera": {"gain": 2}}),
+        ({"camera": {"gain": 1, "exposure": 4}}, {"camera.gain": 2}),
+        ({"camera": {"gain": 1, "exposure": 4}}, {"camera": {"gain": 2}}),
+    ],
+)
+def test_launch_applies_module_defaults_at_the_selected_parser_leaves(
+    client: TestClient,
+    checkout: Path,
+    launch_targets: AsyncMock,
+    mocker: MockerFixture,
+    saved_camera: dict[str, Any],
+    asked_camera: dict[str, Any],
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {
+        "reader": ["camera.gain", "camera.exposure", "weights", "token", "channels"],
+    }
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    saved = {
+        "reader": {
+            **saved_camera,
+            "weights": {"Old-Entry": 1},
+            "token": "saved-value",
+            "channels": [1, 2],
+        }
+    }
+    config = {
+        "global": {"replay": True},
+        "modules": {
+            "reader": {
+                **asked_camera,
+                "weights": {"New-Entry": 3},
+                "token": "•••",
+                "channels": None,
+            }
+        },
+    }
+    response = client.post(
+        "/active/launch-with-defaults",
+        json={"blueprint": "demo", "module_defaults": saved, "config": config},
+    )
+    assert response.status_code == 200, response.text
+    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={"replay": True})
+    command, _, _, env = spawn.call_args.args
+    assert [arg for arg in command if arg.startswith("--reader.")] == [
+        "--reader.camera.exposure=4",
+        "--reader.camera.gain=2",
+        '--reader.weights={"New-Entry":3}',
+    ]
+    assert env["READER__TOKEN"] == "saved-value"
+    assert "saved-value" not in response.text
+    remembered = json.loads(launches.request_file().read_text())
+    assert remembered["modules"]["reader"]["weights"] == {"New-Entry": 3}
+    assert "module_defaults" not in remembered
+
+
 def test_launch_introspection_receives_global_mode_settings(
     client: TestClient, checkout: Path, launch_targets: AsyncMock
 ) -> None:

@@ -78,10 +78,36 @@ class LaunchConfig:
     args: list[str] = field(default_factory=list)
     # POST /active/exec: exactly these args (a relaunch keeps it that way)
     exact: bool = False
+    module_defaults: ModuleValues = field(default_factory=dict)
 
     def normalized(self) -> LaunchConfig:
         """Normalize global overrides without changing raw exec requests or adding defaults."""
         return self if self.exact else replace(self, global_=normalize_global(self.global_))
+
+    def with_module_defaults(self, targets: ConfigTargets) -> LaunchConfig:
+        """Overlay at the served CLI's field boundaries, before argv, secrets and the remembered launch."""
+        if not self.module_defaults:
+            return self
+        modules: ModuleValues = {}
+        names = {_option_name(name.replace("/", "_")): name for name in targets}
+        for saved, layer in ((True, self.module_defaults), (False, self.modules)):
+            seen: set[tuple[str, str]] = set()
+            for module, fields in layer.items():
+                root = names.get(_option_name(module.replace("/", "_")), module)
+                values = modules.setdefault(root, {})
+                leaves = targets.get(root, [])
+                for path, value in configured_fields(fields, leaves, edits=not saved).items():
+                    key = _option_name(path)
+                    if (root, key) in seen:
+                        raise LaunchConfigError(f"conflicting spellings for {module}.{path}")
+                    seen.add((root, key))
+                    if not saved and _is_hidden(value):
+                        continue
+                    if value is None:
+                        values.pop(key, None)
+                    else:
+                        values[key] = value
+        return replace(self, modules={m: f for m, f in modules.items() if f}, module_defaults={})
 
     def secret_paths(self, targets: ConfigTargets | None = None) -> list[str]:
         return secret_paths(self.global_, self.modules, self.secrets, targets)
@@ -334,7 +360,13 @@ def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[s
     return flags
 
 
-def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) -> dict[str, Any]:
+def _is_hidden(value: Any) -> bool:
+    return isinstance(value, str) and bool(value) and not value.strip("•")
+
+
+def configured_fields(
+    fields: dict[str, Any], targets: list[str] | None = None, *, edits: bool = False
+) -> dict[str, Any]:
     """Normalize dotted/object input at parser leaves, preserving collection data keys.
 
     Model fields become leaf options; dictionaries and lists stay atomic. Without a
@@ -360,7 +392,7 @@ def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) 
 
     def visit(values: dict[str, Any], prefix: str = "") -> None:
         for name, value in sorted(values.items()):
-            if value is None:
+            if value is None and not edits:
                 continue
             path = f"{prefix}.{name}" if prefix else name
             target = next(
@@ -378,6 +410,17 @@ def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) 
                     for part in reversed(suffix.split(".")):
                         value = {part: value}
                 merge(out, leaf, value)
+            elif (
+                edits
+                and (value is None or _is_hidden(value))
+                and (
+                    children := [
+                        leaf for leaf in leaves if _within(_option_name(leaf), _option_name(path))
+                    ]
+                )
+            ):
+                for leaf in children:
+                    merge(out, leaf, value)
             elif any(
                 _within(_option_name(leaf), _option_name(path)) for leaf in leaves
             ) and isinstance(value, dict):
@@ -709,13 +752,14 @@ def _start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, A
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
         targets = None
-        if launch.modules:
+        if launch.modules or launch.module_defaults:
             try:
                 targets = asyncio.run(
                     introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
                 )
             except introspect.IntrospectError as error:
                 raise LaunchConfigError(f"could not read launch config fields: {error}") from error
+            launch = launch.with_module_defaults(targets)
         paths = launch.secret_paths(targets)
         secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
         shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
