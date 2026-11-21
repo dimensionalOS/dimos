@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -28,6 +27,7 @@ from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.fields import (
     all_annotation_types,
     scalar_annotation_types,
+    takes_json,
 )
 from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.core.stream import TransportSpec
@@ -128,12 +128,17 @@ def coerce_environment_value(value: str, target: OptionTarget, name: str) -> Any
 
 
 def coerce_string_value(value: Any, target: OptionTarget, label: str) -> Any:
+    """Decode JSON only for fields that take a list or an object.
+
+    Scalar fields keep their literal text until model validation, so a later
+    source can still replace a value that would not validate.
+    """
     if not isinstance(value, str):
         return value
     stripped = value.strip()
     if stripped == "null" and target.allows_none:
         return None
-    if stripped.startswith(("[", "{")) and not target.scalar_types <= {str, Path, bool}:
+    if stripped.startswith(("[", "{")) and any(map(takes_json, target.scalar_types)):
         try:
             return json.loads(stripped)
         except json.JSONDecodeError as error:
