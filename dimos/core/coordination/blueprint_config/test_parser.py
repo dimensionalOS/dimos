@@ -339,12 +339,20 @@ def test_environment_values_coerce_null_and_json_like_cli() -> None:
     assert kwargs["labels"] == ["one", "two"]
 
 
-def test_environment_str_field_keeps_bracketed_string() -> None:
-    parsed = BlueprintConfigParser(PrimaryModule.blueprint()).parse(
-        environ={"PRIMARYMODULE__NESTED__MODE": "[not json"},
-    )
+@pytest.mark.parametrize(("value", "from_env"), [('{"west":1}', False), ("[west] office.db", True)])
+def test_string_and_path_fields_keep_json_looking_values(value: str, from_env: bool) -> None:
+    class FileConfig(ModuleConfig):
+        label: str
+        path: Path | None = None
 
-    assert parsed.module_kwargs("primarymodule")["nested"]["mode"] == "[not json"
+    class FileModule(Module):
+        config: FileConfig
+
+    parser = BlueprintConfigParser(FileModule.blueprint())
+    args = [] if from_env else ["--label", value, "--path", value]
+    env = {"FILEMODULE__LABEL": value, "FILEMODULE__PATH": value} if from_env else {}
+    parsed = parser.parse(args, environ=env)
+    assert parsed.module_kwargs("filemodule") == {"label": value, "path": Path(value)}
 
 
 def test_environment_invalid_json_names_the_variable() -> None:
