@@ -64,8 +64,7 @@ git log -1 --format='%H %s'
 - [ ] [7.7 Camera calibration and AprilTag markers](07_agents.md#77-camera-calibration-and-apriltag-markers)
 - [ ] [7.8 Agent evals](07_agents.md#78-agent-evals)
 - [ ] [7.9 VQA dataset generation](07_agents.md#79-vqa-dataset-generation)
-- [ ] [7.10 xArm6 WorldBelief](07_agents.md#710-xarm6-worldbelief)
-- [ ] [7.11 Depth2DepthCloud](07_agents.md#711-depth2depthcloud)
+- [ ] [7.10 Depth2DepthCloud](07_agents.md#710-depth2depthcloud)
 - [ ] [8.1 Go2 3D navigation in MuJoCo](08_navigation.md#81-go2-3d-navigation-in-mujoco)
 - [ ] [8.2 Go2 premap and relocalization](08_navigation.md#82-go2-premap-and-relocalization)
 - [ ] [8.3 Mid-360 relocalization in replay](08_navigation.md#83-mid-360-relocalization-in-replay)
@@ -97,4 +96,3 @@ These have no complete manual procedure and are not pass/fail checkboxes:
 
 - **Imitation learning policy rollout:** `LeRobotPolicyModule` can run a trained policy, but there is no shipped blueprint and checkpoint pair to exercise. Add a reproducible rollout procedure when those are available.
 - **Alfred wheeled robot:** the `alfred-keyboard-teleop`, `alfred-mls-nav` and `alfred-mls-nav-lidar` blueprints need the in-house Alfred robot and a documented end-to-end procedure.
-- **xArm6 WorldBelief on hardware:** [7.10](07_agents.md#710-xarm6-worldbelief) checks a recorded session. The live blueprint's broken TF tree remains a hardware coverage gap.
