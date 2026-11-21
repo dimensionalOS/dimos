@@ -12,7 +12,7 @@ import { runStop } from "#dimos/agents/cli/commands/stop.ts";
 import { runTui } from "#dimos/agents/cli/commands/tui.ts";
 import { runVersion } from "#dimos/agents/cli/commands/version.ts";
 import { ensureGateway } from "#dimos/agents/cli/process.ts";
-import commandLine from "./command-line.json" with { type: "json" };
+import commandLine from "#dimos/agents/cli/command-line.json" with { type: "json" };
 
 const USAGE = commandLine.usage.join("\n");
 
