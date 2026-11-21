@@ -17,11 +17,13 @@
 
 from collections.abc import Generator
 import json
+import socket
 import threading
 import time
 from typing import Any
 
 from dimos_lcm.std_msgs import String
+from pydantic import field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -48,6 +50,58 @@ class Config(ModuleConfig):
     connection_string: str = "udp:0.0.0.0:14550"
     video_port: int = 5600
     outdoor: bool = False
+
+    @field_validator("connection_string")
+    @classmethod
+    def _validate_endpoint(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("MAVLink connection string cannot be blank")
+        scheme, separator, address = value.partition(":")
+        if not separator:
+            return value  # Replay, serial devices and plain file paths.
+        if scheme not in {
+            "tcp",
+            "tcpin",
+            "udp",
+            "udpin",
+            "udpout",
+            "udpbcast",
+            "wsserver",
+            "ws",
+            "wss",
+            "mcast",
+        }:
+            # pymavlink handles CSV and log files before its implicit UDP fallback.
+            if scheme.lower() == "csv" or value.lower().endswith(
+                (".bin", ".px4log", ".mavlink", ".log", ".raw", ".tlog")
+            ):
+                return value
+            scheme, address = "udp", value
+
+        host, separator, port = address.partition(":")
+        if scheme == "mcast" and not separator:
+            if not address:
+                return value  # pymavlink supplies both multicast defaults.
+            port = address
+        else:
+            if not separator or any(c.isspace() for c in host):
+                raise ValueError(f"MAVLink {scheme} endpoint requires host:port")
+            if scheme == "mcast":
+                try:
+                    group = socket.inet_aton(host)
+                except OSError as exc:
+                    raise ValueError("Expected an IPv4 multicast group") from exc
+                if not 224 <= group[0] <= 239:
+                    raise ValueError("Expected an IPv4 multicast group")
+            if scheme in {"ws", "wss"}:
+                port = port.partition(":")[0]  # Optional WebSocket resource follows the port.
+        try:
+            port_number = int(port)
+        except ValueError as exc:
+            raise ValueError(f"MAVLink {scheme} endpoint requires an integer port") from exc
+        if not 0 <= port_number <= 65535:
+            raise ValueError("MAVLink port must be between 0 and 65535")
+        return value
 
 
 class DroneConnectionModule(Module):
@@ -110,13 +164,12 @@ class DroneConnectionModule(Module):
             self.connection = MavlinkConnection(
                 self.config.connection_string, outdoor=self.config.outdoor
             )
-            self.connection.connect()
+            if not self.connection.connect():
+                raise ConnectionError(
+                    f"Failed to connect to MAVLink endpoint {self.config.connection_string}"
+                )
 
             self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
-
-        if not self.connection.connected:
-            logger.error("Failed to connect to drone")
-            return
 
         # Start video stream (already created above)
         if self.video_stream.start():

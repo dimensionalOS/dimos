@@ -266,6 +266,13 @@ dimos --replay run drone-basic
 ## Troubleshooting
 
 ### No MAVLink Connection
+
+The `--droneconnectionmodule.connection-string` option accepts pymavlink endpoints,
+serial devices, log files, and `replay`. For TCP and UDP use `protocol:host:port`.
+A bare `host:port` also selects UDP, for example `localhost:14550`.
+A live run requires a heartbeat within 30 seconds. If opening the endpoint or
+waiting for its heartbeat fails, startup stops before video starts.
+
 - Check Android and computer are on same network
 - Verify IP address in RosettaDrone matches computer
 - Test with: `nc -lu 14550` (should see data)
