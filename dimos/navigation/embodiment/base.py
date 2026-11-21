@@ -72,6 +72,7 @@ class Embodiment:
     walk_gain: float
     walk_slip: float
     walk_slip_ramp: float
+    min_yaw_rate: float  # slowest turn the gait executes; 0 = no floor (rad/s)
     # Cost preferences: forward = 1, strafe/reverse scale it, yaw_w prices rotation per rad.
     strafe: float
     reverse: float
