@@ -140,12 +140,11 @@ for ts, frame in replay.iterate_ts(loop=True):
 
 For a store replay, `store.replay(**options).stream(name).find_closest(ts, tolerance)`
 returns the nearest frame inside the selected clip and tolerance. A tie selects
-the earlier timestamp. The legacy `TimedSensorReplay` adapter below returns the
-first recorded match.
+the earlier timestamp. The legacy `TimedSensorReplay` adapter below picks the
+nearest frame the same way, over the whole stream.
 
 ```python skip
-# First recorded frame within 1s of an absolute timestamp, not the nearest one
-# (None if there is none). Use a small tolerance for a frame near the timestamp.
+# Nearest frame within 1s of an absolute timestamp (None if there is none)
 timestamp = replay.first_timestamp() + 5.0
 frame = replay.find_closest(timestamp)
 
@@ -232,7 +231,7 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 | `iterate()`                                           | Iterate frames (no timing)        |
 | `iterate_ts(seek, duration, from_timestamp, loop)`    | Iterate with absolute timestamps  |
 | `stream(speed, seek, duration, from_timestamp, loop)` | Observable with original timing   |
-| `find_closest(timestamp, tolerance=1.0)`              | First frame within tolerance of an absolute timestamp |
+| `find_closest(timestamp, tolerance=1.0)`              | Nearest frame to an absolute timestamp |
 | `find_closest_seek(seconds)`                          | Find frame by relative time       |
 | `first()`                                             | Get first frame                   |
 | `first_timestamp()`                                   | Get first timestamp               |

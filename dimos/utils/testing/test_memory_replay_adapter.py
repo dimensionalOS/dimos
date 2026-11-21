@@ -45,3 +45,9 @@ def test_duration_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int
 
 def test_find_closest_seek_uses_earliest_source_timestamp(replay: MemoryReplayAdapter[int]) -> None:
     assert replay.find_closest_seek(0.005) == 0
+
+
+def test_find_closest_returns_the_nearest_frame_not_the_first_recorded(
+    replay: MemoryReplayAdapter[int],
+) -> None:
+    assert replay.find_closest(10.011, tolerance=0.05) == 2

@@ -287,7 +287,7 @@ class MemoryReplayAdapter(Generic[T]):
 
     def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
         try:
-            obs = self._stream.at(timestamp, tolerance).first()
+            obs = self._stream.closest(timestamp, tolerance)
         except LookupError:
             return None
         return self._decode(obs)
