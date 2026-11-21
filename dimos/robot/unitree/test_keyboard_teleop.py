@@ -17,8 +17,9 @@ from multiprocessing import Pipe
 import pygame
 import pytest
 
+from dimos.control.benchmarking.gate import GATE_ADVANCE
 from dimos.protocol.encode.cbor import decode
-from dimos.robot.unitree.keyboard_teleop import GATE_ADVANCE, JOY_BUTTONS, _DriveWindow, joy_buttons
+from dimos.robot.unitree.keyboard_teleop import JOY_BUTTONS, _DriveWindow, joy_buttons
 
 
 def test_joy_buttons_follow_held_keys() -> None:
