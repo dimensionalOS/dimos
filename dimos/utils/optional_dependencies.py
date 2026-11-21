@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from importlib import import_module
 from importlib.metadata import PackageNotFoundError, distribution
+from importlib.util import find_spec
 import re
+import sys
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+
+from dimos.constants import DIMOS_PROJECT_ROOT
 
 # Imports whose distribution cannot be inferred from its normalized name.
 _DISTRIBUTIONS = {
@@ -94,11 +97,20 @@ def explain_missing_extra() -> Iterator[None]:
                 f"for this Python or platform. Create a supported dimOS environment matching "
                 f"{' or '.join(sorted(environments))} before installing the extra."
             ) from error
-        raise OptionalDependencyError(f"Missing {module!r}. Install {choices}.") from error
+        hint = f"Install {choices}"
+        if (DIMOS_PROJECT_ROOT / ".git").exists():
+            # 'dimos[extra]' names the published package; a checkout installs from its lock.
+            commands = " or ".join(
+                f"`uv sync --extra {extra} --inexact`" for extra in sorted(extras)
+            )
+            hint += f" with {commands}"
+        raise OptionalDependencyError(f"Missing {module!r}. {hint}.") from error
 
 
 def check_imports(*packages: str) -> None:
-    """Resolve the packages required by the selected implementation, without starting it."""
+    """Check that the selected implementation's packages are installed, without importing them."""
     with explain_missing_extra():
         for package in packages:
-            import_module(package)
+            # Finding a submodule imports only its parents, never the package itself.
+            if sys.modules.get(package) is None and find_spec(package) is None:
+                raise ModuleNotFoundError(f"No module named {package!r}", name=package)

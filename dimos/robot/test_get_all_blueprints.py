@@ -34,7 +34,13 @@ from dimos.cli.dimos import main
 from dimos.core import run_registry
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint, autoconnect
 from dimos.robot.all_blueprints import all_blueprints, all_modules
-from dimos.robot.get_all_blueprints import OptionalDependencyError, get_by_name, get_by_name_or_exit
+from dimos.robot.get_all_blueprints import (
+    OptionalDependencyError,
+    get_by_name,
+    get_by_name_or_exit,
+    load_blueprint,
+)
+from dimos.utils import optional_dependencies
 
 
 def test_resolve_string_blueprint():
@@ -135,6 +141,50 @@ def test_lookup_names_alternative_extras(monkeypatch: pytest.MonkeyPatch) -> Non
         get_by_name("needs-pygame")
     assert "dimos[control]" in str(error.value)
     assert "dimos[sim]" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("missing", "error"),
+    [
+        ("mujoco", ModuleNotFoundError),  # an extra provides it, the allow-list does not name it
+        ("unitree_sdk2py", OptionalDependencyError),
+    ],
+)
+def test_load_blueprint_lets_only_the_allow_list_be_absent(
+    monkeypatch: pytest.MonkeyPatch, missing: str, error: type[ImportError]
+) -> None:
+    monkeypatch.setitem(all_blueprints, "needs-package", f"{missing}:blueprint")
+    monkeypatch.setitem(sys.modules, missing, None)
+
+    with pytest.raises(error):
+        load_blueprint("needs-package")
+
+
+@pytest.mark.parametrize("checkout", [True, False])
+def test_missing_extra_names_the_sync_command_only_in_a_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: bool
+) -> None:
+    if checkout:
+        (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(optional_dependencies, "DIMOS_PROJECT_ROOT", tmp_path)
+    monkeypatch.setitem(all_blueprints, "needs-mujoco", "mujoco:blueprint")
+    monkeypatch.setitem(sys.modules, "mujoco", None)
+
+    with pytest.raises(OptionalDependencyError) as error:
+        get_by_name("needs-mujoco")
+    assert "Install 'dimos[sim]'" in str(error.value)
+    assert ("`uv sync --extra sim --inexact`" in str(error.value)) is checkout
+
+
+def test_check_imports_finds_a_package_without_importing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "vendor_sdk.py").write_text("raise RuntimeError('imported')\n")
+    monkeypatch.syspath_prepend(tmp_path)
+
+    optional_dependencies.check_imports("vendor_sdk")
+
+    assert "vendor_sdk" not in sys.modules
 
 
 @pytest.mark.parametrize(

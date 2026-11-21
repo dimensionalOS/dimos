@@ -68,7 +68,8 @@ Start one or more robot blueprints. Built-in dimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 If a blueprint import fails because an optional package is missing, `dimos run` names
-the extra that provides it. It also checks declared dependencies of selected modules
+the extra that provides it and, in a checkout, the `uv sync` command that installs it.
+It also checks declared dependencies of selected modules
 and adapters before starting workers. For example, Go2 replay needs `dimos[mapping]`
 for its mapper, and the Go2 mesh viewer needs `dimos[cuda]` for Warp. On Linux x86-64
 with Python 3.10 the mapping extra has no compatible gtsam build. Use a supported

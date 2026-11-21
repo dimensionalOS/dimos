@@ -70,9 +70,15 @@ def get_blueprint_by_name(name: str) -> Blueprint | MetaBlueprint:
 
 
 def load_blueprint(name: str) -> Blueprint | MetaBlueprint:
-    """The named blueprint. Raises OptionalDependencyError when its extras are absent."""
+    """The named blueprint. Raises OptionalDependencyError when an allowed dependency is absent."""
     try:
         return get_blueprint_by_name(name)
+    except OptionalDependencyError as e:
+        # Every missing extra is explained with this error; only the allow-list may be absent.
+        missing = e.__cause__
+        if isinstance(missing, ModuleNotFoundError) and missing.name not in OPTIONAL_DEPENDENCIES:
+            raise missing from None
+        raise
     except ModuleNotFoundError as e:
         if e.name in OPTIONAL_DEPENDENCIES:
             raise OptionalDependencyError(str(e.name)) from e
