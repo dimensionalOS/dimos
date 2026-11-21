@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.control.components import HardwareComponent
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
@@ -26,6 +27,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.common.blueprints import (
@@ -279,44 +281,57 @@ coordinator_teleop_xarm7 = autoconnect(
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
+
+def xarm6_teleop_control(hardware: HardwareComponent, model: RobotModelConfig) -> Blueprint:
+    """The xArm6's teleop coordinator and planner, for the real arm or the sim.
+
+    Args:
+        hardware: The xArm6 named "arm", with its gripper.
+        model: Its planning model, with the gripper; the Quest hand's IK uses it too.
+    """
+    return autoconnect(
+        TeleopControlCoordinator.blueprint(
+            hardware=[hardware],
+            tasks=[
+                teleop_ik_task(
+                    hardware,
+                    robot_model=model,
+                    bindings=[
+                        {
+                            "hand": "right",
+                            "target_frame": "link_tcp",
+                        }
+                    ],
+                    name="teleop_xarm",
+                    priority=20,
+                ),
+                eef_twist_task(
+                    hardware,
+                    robot_model=_xarm6_control_model,
+                    target_frame="link6",
+                    priority=10,
+                    timeout=0.0,
+                ),
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                trajectory_task(hardware),
+            ],
+        ),
+        ManipulationModule.blueprint(
+            gripper_tasks={"manipulator": "arm_gripper"},
+            model=model,
+            visualization={"backend": "viser"},
+        ),
+    )
+
+
 coordinator_teleop_xarm6 = autoconnect(
-    TeleopControlCoordinator.blueprint(
-        hardware=[_xarm6_teleop_hw],
-        tasks=[
-            teleop_ik_task(
-                _xarm6_teleop_hw,
-                robot_model=_xarm6_teleop_model,
-                bindings=[
-                    {
-                        "hand": "right",
-                        "target_frame": "link_tcp",
-                    }
-                ],
-                name="teleop_xarm",
-                priority=20,
-            ),
-            eef_twist_task(
-                _xarm6_teleop_hw,
-                robot_model=_xarm6_control_model,
-                target_frame="link6",
-                priority=10,
-                timeout=0.0,
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            trajectory_task(_xarm6_teleop_hw),
-        ],
-    ),
-    ManipulationModule.blueprint(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=_xarm6_teleop_model,
-        visualization={"backend": "viser"},
-    ),
+    xarm6_teleop_control(_xarm6_teleop_hw, _xarm6_teleop_model),
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
