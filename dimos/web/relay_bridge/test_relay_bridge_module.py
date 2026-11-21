@@ -1012,8 +1012,9 @@ def test_discovered_ephemeral_cert_is_refused_off_loopback(monkeypatch) -> None:
         stop_module(module)
 
 
-def test_relay_ca_reaches_discovery_and_connect(monkeypatch) -> None:
-    ca = "/ca.pem"
+def test_relay_ca_reaches_discovery_and_connect(monkeypatch, tmp_path: Path) -> None:
+    ca = str(tmp_path / "ca.pem")
+    Path(ca).touch()
     seen: list[tuple[Any, ...]] = []
     client = FakeClient()
 
@@ -1259,6 +1260,16 @@ def test_serve_dir_requires_existing_directory(tmp_path: Path, path: str) -> Non
     parser = BlueprintConfigParser(RelayBridgeModule.blueprint())
     with pytest.raises(BlueprintConfigError, match="serve_dir must be an existing directory"):
         parser.parse(["--serve-dir", value], environ={})
+
+
+def test_relay_ca_must_be_an_existing_file_for_the_relay_it_is_used_with(tmp_path: Path) -> None:
+    ca = tmp_path / "ca.pem"
+    parser = BlueprintConfigParser(RelayBridgeModule.blueprint())
+    external = {"relay_url": "https://relay.example"}
+    with pytest.raises(BlueprintConfigError, match="relay_ca must be an existing file"):
+        parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
+    ca.touch()
+    parser.parse(["--relay-ca", str(ca)], environ={}, global_overrides=external)
 
 
 @pytest.mark.parametrize("option", ["--serve-dir", "--rtc-file"])

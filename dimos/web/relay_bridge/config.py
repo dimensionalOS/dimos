@@ -127,6 +127,10 @@ class RelayBridgeConfig(ModuleConfig):
                 raise ValueError("rtc_file requires the spawned local relay (--local-relay)")
             if not Path(self.rtc_file).is_file():
                 raise ValueError(f"rtc_file must be an existing file: {self.rtc_file!r}")
+        # read only for a relay started elsewhere: with a local relay it is not used
+        if self.relay_ca is not None and self.effective_relay_url is not None:
+            if not Path(self.relay_ca).is_file():
+                raise ValueError(f"relay_ca must be an existing file: {self.relay_ca!r}")
         return self
 
 
