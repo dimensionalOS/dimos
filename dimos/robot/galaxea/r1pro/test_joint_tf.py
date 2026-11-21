@@ -30,7 +30,7 @@ def fk() -> UrdfManager:
 
 
 def joint_state(**positions: float) -> JointState:
-    """motor_states as the connection publishes it, with named joints bent."""
+    """joint_state as the connection publishes it, with named joints bent."""
     values = dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, 0.0)
     for joint, angle in positions.items():
         values[f"r1pro/{joint}"] = angle
@@ -58,7 +58,7 @@ def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
     return position, rotation
 
 
-def test_motor_states_joint_names_all_exist_in_the_model(fk: UrdfManager) -> None:
+def test_joint_state_names_all_exist_in_the_model(fk: UrdfManager) -> None:
     """A mismatch is silent: unknown joints are skipped and the camera never moves."""
     assert set(R1PRO_UPPER_BODY_JOINTS) <= set(fk._joints)
 
