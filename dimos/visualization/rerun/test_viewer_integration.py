@@ -90,7 +90,7 @@ class TestViewerLaunch:
 
     @pytest.mark.skipif(sys.platform != "linux", reason="Wayland passes a Unix socket descriptor")
     @pytest.mark.parametrize("binary", ["dimos-viewer", "rerun"])
-    def test_viewer_receives_the_wayland_socket(self, monkeypatch, tmp_path, binary):
+    def test_viewer_receives_the_wayland_socket(self, monkeypatch, mocker, tmp_path, binary):
         monkeypatch.delenv("DISPLAY")
         monkeypatch.delenv("RERUN_CLI_PATH", raising=False)
         if binary == "rerun":
@@ -104,12 +104,18 @@ class TestViewerLaunch:
         with display, compositor:
             monkeypatch.setenv("WAYLAND_SOCKET", str(display.fileno()))
             compositor.settimeout(10)
-            assert spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
-            # The actual viewer must issue a wl_display request on the inherited connection.
-            header = compositor.recv(8, socket.MSG_WAITALL)
-            assert len(header) == 8
-            assert int.from_bytes(header[:4], sys.byteorder) == 1
-            assert not os.get_inheritable(display.fileno())
+            launch = mocker.spy(subprocess, "Popen")
+            try:
+                assert spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
+                # The actual viewer must issue a wl_display request on the inherited connection.
+                header = compositor.recv(8, socket.MSG_WAITALL)
+                assert len(header) == 8
+                assert int.from_bytes(header[:4], sys.byteorder) == 1
+                assert not os.get_inheritable(display.fileno())
+            finally:
+                for viewer in launch.spy_return_list:
+                    viewer.kill()
+                    viewer.wait(timeout=5)
 
     @pytest.mark.skipif(os.name != "posix", reason="requires Unix file descriptors")
     @pytest.mark.parametrize("value", ["invalid", "closed", "file", "unconnected"])
