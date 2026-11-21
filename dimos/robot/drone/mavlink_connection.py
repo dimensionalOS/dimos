@@ -73,13 +73,15 @@ class MavlinkConnection:
         try:
             logger.info(f"Connecting to {self.connection_string}")
             self.mavlink = mavutil.mavlink_connection(self.connection_string)
-            self.mavlink.wait_heartbeat(timeout=30)
+            if self.mavlink.wait_heartbeat(timeout=30) is None:
+                raise TimeoutError("No MAVLink heartbeat received within 30 seconds")
             self.connected = True
             logger.info(f"Connected to system {self.mavlink.target_system}")
 
             self.update_telemetry()
             return True
         except Exception as e:
+            self.disconnect()
             logger.error(f"Connection failed: {e}")
             return False
 
@@ -1004,8 +1006,9 @@ class MavlinkConnection:
 
     def disconnect(self) -> None:
         """Disconnect from drone."""
-        if self.mavlink:
+        if self.mavlink is not None:
             self.mavlink.close()
+            self.mavlink = None
         self.connected = False
         logger.info("Disconnected")
 
