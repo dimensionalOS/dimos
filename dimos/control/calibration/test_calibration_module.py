@@ -21,7 +21,7 @@ from collections.abc import Callable
 import time
 from typing import TypeVar
 
-import pytest
+from IPython.lib.pretty import pretty
 
 from dimos.control.calibration._calibration_test_helpers import toy_run
 from dimos.control.calibration.module import CalibrationStatus
@@ -50,6 +50,7 @@ def test_the_shell_runs_answers_and_aborts_the_deployed_calibration() -> None:
             assert isinstance(idle, CalibrationStatus)
             assert (idle.state, idle.arm, idle.question) == ("idle", "toy", None)
             assert f"  {'check':<17} {'pending':<8} measure the noise" in str(idle)
+            assert pretty(idle) == str(idle)
             assert cal.answer("go") == "no question pending"
             assert cal.abort() == "not running"
             assert cal.run(["dance"]).startswith("unknown steps ['dance']")
@@ -78,7 +79,5 @@ def test_the_shell_runs_answers_and_aborts_the_deployed_calibration() -> None:
             done = until(cal.status, lambda status: status.state == "done")
             assert done.summary.endswith("  summary: no calibration file"), str(done)
             assert "> go" in done.log and done.file is None
-            with pytest.raises(Exception, match="runs no calibration file"):
-                cal.bake("toy.urdf")
         finally:
             app.stop()

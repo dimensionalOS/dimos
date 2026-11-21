@@ -48,7 +48,9 @@ from dimos.control.calibration.schema import (
     gravity_links_from_inertial,
     save_calibration,
 )
+from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.calibration.steps import plan
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 
 TRUE_LINKS = {"fore": LinkInertial(mass_kg=0.7, com_m=(0.13, 0.0, 0.02))}
 WAIT_S = 10.0
@@ -223,29 +225,36 @@ def test_an_abort_while_the_run_waits_holds_the_arm_and_offers_home(arm: ArmMode
     assert len(fake.commands) == commands and run.measurements == []
 
 
-def test_bake_writes_the_fitted_links_of_the_file_the_arm_runs_beside_it(
-    arm: ArmModel, tmp_path: Path
+def test_bake_writes_the_fitted_links_of_every_arm_with_a_file_and_names_the_rest(
+    dual_openyam_specs: list[ArmCalibrationSpec], tmp_path: Path
 ) -> None:
-    fake = FakeArm(arm)
-    with pytest.raises(ArmCalibrationError, match="runs no calibration file"):
-        bake_calibration(arm.spec, fake.get_config()[arm.arm_id], "toy.urdf")
-    links = gravity_links_from_inertial(arm.spec, TRUE_LINKS)
-    fitted = ArmCalibration.for_spec(arm.spec, gravity=GravityCalibration(links=links))
-    fake.path = str(save_calibration(calibration_path(arm.arm_id, tmp_path), fitted))
-    fake.file = {"links": {name: link.model_dump(mode="json") for name, link in links.items()}}
-    urdf = tmp_path / "toy.urdf"
-    urdf.write_text(arm.spec.model.load().xml)
+    left, right = dual_openyam_specs
+    with pytest.raises(ArmCalibrationError, match="no arm of dual_openyam has a calibration file"):
+        bake_calibration(DUAL_OPENYAM, "unread.urdf", root=tmp_path)
+    urdf, out = tmp_path / "in.urdf", tmp_path / "dual_openyam" / "calibrated.urdf"
+    urdf.write_text(left.model.load().xml)
 
-    written = Path(bake_calibration(arm.spec, fake.get_config()[arm.arm_id], str(urdf)))
+    def save(spec: ArmCalibrationSpec, link: str) -> None:
+        links = gravity_links_from_inertial(spec, {link: LinkInertial(0.9, (0.0, 0.01, 0.02))})
+        fitted = ArmCalibration.for_spec(spec, gravity=GravityCalibration(links=links))
+        save_calibration(calibration_path(spec.arm_id, tmp_path), fitted)
 
-    assert written == tmp_path / arm.arm_id / "calibrated.urdf"
-    [mass] = ET.fromstring(written.read_text()).findall("./link[@name='fore']/inertial/mass")
-    assert float(mass.attrib["value"]) == pytest.approx(0.7)
-    other = tmp_path / "other.urdf"
-    assert bake_calibration(arm.spec, fake.get_config()[arm.arm_id], str(urdf), str(other)) == str(
-        other
+    def mass(path: Path, link: str) -> float:
+        [element] = ET.fromstring(path.read_text()).findall(f"./link[@name='{link}']/inertial/mass")
+        return float(element.attrib["value"])
+
+    save(left, "left_link3")
+    baked = bake_calibration(DUAL_OPENYAM, str(urdf), root=tmp_path)
+
+    assert baked == f"wrote {out}: baked left; right has no calibration file"
+    assert mass(out, "left_link3") == pytest.approx(0.9)
+    assert mass(out, "right_link3") == mass(urdf, "right_link3")
+    save(right, "right_link3")
+    both = tmp_path / "both.urdf"
+    assert bake_calibration(DUAL_OPENYAM, str(urdf), str(both), root=tmp_path) == (
+        f"wrote {both}: baked left, right"
     )
-    assert other.read_text() == written.read_text()
+    assert mass(both, "left_link3") == mass(both, "right_link3") == pytest.approx(0.9)
 
 
 def test_a_refused_set_config_fails_the_run_and_the_arm_holds(arm: ArmModel) -> None:

@@ -70,7 +70,6 @@ class FakeArm:
         self.live: dict[str, tuple[float, float]] = {}
         self.floating: dict[str, float] = {}
         self.file: dict[str, Any] = {}
-        self.path = "fake/calibration.json"
         self.listener: Callable[[JointState], None] | None = None
         self.last_command: float | None = None
         self.commands: list[float] = []
@@ -95,7 +94,11 @@ class FakeArm:
                 "gains": {j: {"kp": kp, "kd": kd} for j, (kp, kd) in self.gains().items()},
                 "floating": sorted(self.floating),
                 "links": copy.deepcopy(self.file.get("links", {})),
-                "file": {"path": self.path, "sha256": "0" * 64, "created": "2026-11-21T00:00:00Z"}
+                "file": {
+                    "path": "fake/calibration.json",
+                    "sha256": "0" * 64,
+                    "created": "2026-11-21T00:00:00Z",
+                }
                 if self.file
                 else None,
                 "can_float": True,

@@ -19,7 +19,6 @@ from __future__ import annotations
 import pytest
 
 from dimos.control.calibration._calibration_test_helpers import require_model
-from dimos.control.calibration.blueprints import calibrated_robot
 from dimos.control.calibration.module import CalibrationModule, CalibrationModuleConfig
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
@@ -63,7 +62,8 @@ def test_the_module_commands_the_connection_directly(name: str) -> None:
 
 @pytest.mark.parametrize("name", CALIBRATE)
 def test_the_blueprint_is_named_after_the_robot_it_hands_the_module(name: str) -> None:
-    robot = calibrated_robot(load_blueprint(name))
+    _blueprint, _driver, calibration = atoms(name)
+    robot = calibration.kwargs["robot"]
 
     assert name == f"{robot.name.replace('_', '-')}-calibrate"
     # It reaches the module's worker as a constructor argument, never a flag.
@@ -74,7 +74,7 @@ def test_the_blueprint_is_named_after_the_robot_it_hands_the_module(name: str) -
 @pytest.mark.parametrize("name", CALIBRATE)
 def test_every_arm_of_the_robot_resolves_a_spec(name: str) -> None:
     blueprint, _driver, calibration = atoms(name)
-    robot = calibrated_robot(blueprint)
+    robot = calibration.kwargs["robot"]
     require_model(robot.gravity_model, name)
     settings = {key: value for key, value in calibration.kwargs.items() if key != "robot"}
 
