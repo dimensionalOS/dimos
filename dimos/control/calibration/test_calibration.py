@@ -195,9 +195,9 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     rows = {row.name: (row.state, row.result) for row in done.steps}
     assert (done.state, done.question, done.answers) == ("done", None, [])
     assert rows["check"][0] == "done" and rows["check"][1].endswith("at home")
-    assert rows["summary"] == ("done", "no calibration file")
+    assert rows["summary"] == ("done", "fake/calibration.json")
     assert rows["gravity_fit"] == ("skipped", "not selected")
-    assert done.summary.endswith("  summary: no calibration file")
+    assert done.summary.endswith("  summary: fake/calibration.json")
     assert done.message == f"Calibration done:\n{done.summary}"
     assert done.log[1].startswith("? The arm moves home") and done.log[2] == "> go"
 

@@ -77,7 +77,8 @@ def test_the_shell_runs_answers_and_aborts_the_deployed_calibration() -> None:
             until(cal.status, lambda status: status.state == "waiting")
             assert cal.answer("go") == "ok"
             done = until(cal.status, lambda status: status.state == "done")
-            assert done.summary.endswith("  summary: no calibration file"), str(done)
-            assert "> go" in done.log and done.file is None
+            assert done.summary.endswith("  summary: fake/calibration.json"), str(done)
+            assert "> go" in done.log
+            assert done.file is not None and done.file.created == "2026-11-21T00:00:00+00:00"
         finally:
             app.stop()
