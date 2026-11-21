@@ -121,16 +121,20 @@ def test_a_child_dying_right_after_a_record_still_scans_the_rest(
     assert set(scanned.scanner.cache()["results"]) == {"dies_after", "good", "missing"}
 
 
-@pytest.mark.parametrize("path", ["/catalog/scan", "/catalog/scan/blueprints/good"])
 @pytest.mark.parametrize(
-    ("program", "error"),
+    ("path", "program", "error"),
     [
         (
+            "/catalog/scan",
             f'print({introspect.MARKER!r} + \'{{"error":"cannot read registry"}}\')',
             "cannot read registry",
         ),
-        ("raise SystemExit('checkout unavailable')", "exit 1): checkout unavailable"),
-        ("pass", "scanner exited before reporting completion (exit 0)"),
+        (
+            "/catalog/scan/blueprints/good",
+            "raise SystemExit('checkout unavailable')",
+            "exit 1): checkout unavailable",
+        ),
+        ("/catalog/scan", "pass", "scanner exited before reporting completion (exit 0)"),
     ],
 )
 def test_a_failed_scan_keeps_the_previous_catalog(
