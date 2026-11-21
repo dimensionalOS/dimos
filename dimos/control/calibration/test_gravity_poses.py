@@ -40,9 +40,9 @@ def ahead_of(x_m: float) -> dict[str, Any]:
     "bend,guard,clear",
     [
         (STRETCHED, ahead_of(0.499), False),
-        (STRETCHED, ahead_of(0.501), True),
+        (STRETCHED, ahead_of(0.61), True),
         (FOLDED, {"min_x_m": -0.1765}, False),
-        (FOLDED, {"min_x_m": -0.178}, True),
+        (FOLDED, {"min_x_m": -0.3}, True),
     ],
 )
 def test_a_yaw_swing_clear_at_both_ends_passes_only_when_clear_in_between(
@@ -53,3 +53,13 @@ def test_a_yaw_swing_clear_at_both_ends_passes_only_when_clear_in_between(
     assert all(arm.pose_ok(q) for q in ends)
     assert arm.pose_ok([0.0, *bend]) == clear
     assert arm.transition_ok(*ends) == clear
+
+
+@pytest.mark.parametrize("plane_x,ok", [(0.51, False), (0.61, True)])
+def test_a_swing_clear_of_a_keep_out_is_refused_where_it_passes_nearer_than_the_margin(
+    plane_x: float, ok: bool
+) -> None:
+    arm = on_bench(**ahead_of(plane_x))
+    ends = [-0.6, *STRETCHED], [0.6, *STRETCHED]
+    assert all(arm.pose_ok(q) for q in (*ends, [0.0, *STRETCHED]))
+    assert arm.transition_ok(*ends) == ok
