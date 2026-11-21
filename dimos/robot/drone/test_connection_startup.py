@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     [
         (" ", "replay"),
         ("tcp:missing-port", "tcp:localhost:5760"),
+        ("localhost:badport", "localhost:14550"),
         ("udpout:host:65536", "udpin::14550"),
         ("tcp: :80", "/dev/serial/by-id/example,115200"),
         ("ws:host:bad:/path", "ws:localhost:8080:/path"),

@@ -57,7 +57,9 @@ class Config(ModuleConfig):
         if not value.strip():
             raise ValueError("MAVLink connection string cannot be blank")
         scheme, separator, address = value.partition(":")
-        if not separator or scheme not in {
+        if not separator:
+            return value  # Replay, serial devices and plain file paths.
+        if scheme not in {
             "tcp",
             "tcpin",
             "udp",
@@ -69,7 +71,12 @@ class Config(ModuleConfig):
             "wss",
             "mcast",
         }:
-            return value  # Replay, serial devices and log files are handled by the driver.
+            # pymavlink handles CSV and log files before its implicit UDP fallback.
+            if scheme.lower() == "csv" or value.lower().endswith(
+                (".bin", ".px4log", ".mavlink", ".log", ".raw", ".tlog")
+            ):
+                return value
+            scheme, address = "udp", value
 
         host, separator, port = address.partition(":")
         if scheme == "mcast" and not separator:
