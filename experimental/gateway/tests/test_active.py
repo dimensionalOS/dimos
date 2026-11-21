@@ -583,6 +583,26 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     assert client.get("/history").json()["runs"][0]["running"]
 
 
+def test_latest_log_uses_the_same_run_as_history(client: TestClient, home: Path) -> None:
+    terminal_id = "20260101-100000-terminal"
+    terminal = home / "other-checkout" / "custom-log-directory"
+    terminal.mkdir(parents=True)
+    (terminal / "main.jsonl").write_text(json.dumps({"event": terminal_id}) + "\n")
+    RunEntry(terminal_id, os.getpid(), "terminal", "2026-01-01T10:00:00Z", str(terminal)).save()
+
+    for hour in ("09", "11"):
+        local_id = f"20260101-{hour}0000-local"
+        local = home / "logs" / local_id
+        local.mkdir(parents=True)
+        (local / "main.jsonl").write_text(json.dumps({"event": local_id}) + "\n")
+        newest = max(local_id, terminal_id)
+        assert client.get("/history/latest").json()["runId"] == newest
+        page = client.get("/history/latest/logs").json()
+        assert page == client.get(f"/history/{newest}/logs").json()
+        assert page["runId"] == newest
+        assert [record["event"] for record in page["records"]] == [newest]
+
+
 def test_recordings_is_the_standard_directory(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
 ) -> None:
