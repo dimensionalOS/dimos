@@ -343,6 +343,43 @@ def test_launch_applies_module_defaults_at_the_selected_parser_leaves(
     assert "module_defaults" not in remembered
 
 
+def test_layered_launch_keeps_bullet_text_and_only_preserves_masked_secrets(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {
+        "reader": ["label", "token", "auth.code", "group.key", "group.note"]
+    }
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    response = client.post(
+        "/active/launch-with-defaults",
+        json={
+            "blueprint": "demo",
+            "module_defaults": {
+                "reader": {
+                    "label": "old",
+                    "token": "saved",
+                    "auth.code": "private",
+                    "group.key": "clear",
+                    "group.note": "clear",
+                }
+            },
+            "config": {
+                "modules": {"reader": {"label": "•", "token": "•••", "auth": "•••", "group": None}},
+                "secrets": ["READER.Auth"],
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    command, _, _, env = spawn.call_args.args
+    assert "--reader.label=•" in command
+    assert env["READER__TOKEN"] == "saved" and env["READER__AUTH__CODE"] == "private"
+    assert "READER__GROUP__KEY" not in env and not any(
+        arg.startswith("--reader.group.") for arg in command
+    )
+
+
 def test_launch_introspection_receives_global_mode_settings(
     client: TestClient, checkout: Path, launch_targets: AsyncMock
 ) -> None:

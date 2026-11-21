@@ -90,18 +90,34 @@ class LaunchConfig:
             return self
         modules: ModuleValues = {}
         names = {_option_name(name.replace("/", "_")): name for name in targets}
+        secret_fields = [
+            _secret_path(path, targets)
+            for path in [*self.secrets, *secret_paths({}, self.module_defaults, targets=targets)]
+        ]
         for saved, layer in ((True, self.module_defaults), (False, self.modules)):
             seen: set[tuple[str, str]] = set()
             for module, fields in layer.items():
                 root = names.get(_option_name(module.replace("/", "_")), module)
                 values = modules.setdefault(root, {})
                 leaves = targets.get(root, [])
-                for path, value in configured_fields(fields, leaves, edits=not saved).items():
+                edit_secrets = (
+                    None
+                    if saved
+                    else {
+                        _option_name(leaf)
+                        for leaf in leaves
+                        if is_secret_name(leaf)
+                        or _contains_secret(_secret_path(f"{root}.{leaf}", targets), secret_fields)
+                    }
+                )
+                for path, value in configured_fields(
+                    fields, leaves, edit_secrets=edit_secrets
+                ).items():
                     key = _option_name(path)
                     if (root, key) in seen:
                         raise LaunchConfigError(f"conflicting spellings for {module}.{path}")
                     seen.add((root, key))
-                    if not saved and _is_hidden(value):
+                    if edit_secrets is not None and key in edit_secrets and _is_hidden(value):
                         continue
                     if value is None:
                         values.pop(key, None)
@@ -365,12 +381,16 @@ def _is_hidden(value: Any) -> bool:
 
 
 def configured_fields(
-    fields: dict[str, Any], targets: list[str] | None = None, *, edits: bool = False
+    fields: dict[str, Any],
+    targets: list[str] | None = None,
+    *,
+    edit_secrets: set[str] | None = None,
 ) -> dict[str, Any]:
     """Normalize dotted/object input at parser leaves, preserving collection data keys.
 
     Model fields become leaf options; dictionaries and lists stay atomic. Without a
-    schema, conservatively treat each top-level field as one atomic value.
+    schema, conservatively treat each top-level field as one atomic value. In an edit
+    layer, null clears a subtree and a mask can stand for a group of secret leaves.
     """
     out: dict[str, Any] = {}
     leaves = sorted(
@@ -392,7 +412,7 @@ def configured_fields(
 
     def visit(values: dict[str, Any], prefix: str = "") -> None:
         for name, value in sorted(values.items()):
-            if value is None and not edits:
+            if value is None and edit_secrets is None:
                 continue
             path = f"{prefix}.{name}" if prefix else name
             target = next(
@@ -411,7 +431,7 @@ def configured_fields(
                         value = {part: value}
                 merge(out, leaf, value)
             elif (
-                edits
+                edit_secrets is not None
                 and (value is None or _is_hidden(value))
                 and (
                     children := [
@@ -419,6 +439,10 @@ def configured_fields(
                     ]
                 )
             ):
+                if value is not None and not all(
+                    _option_name(leaf) in edit_secrets for leaf in children
+                ):
+                    raise LaunchConfigError(f"not a settable module config field: {path}")
                 for leaf in children:
                     merge(out, leaf, value)
             elif any(
