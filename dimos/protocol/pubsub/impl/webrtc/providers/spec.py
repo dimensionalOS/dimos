@@ -29,9 +29,9 @@ import concurrent.futures
 import contextlib
 import importlib.util
 import threading
-from typing import Any, Protocol, runtime_checkable
+from typing import Annotated, Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, Field
 
 from dimos.utils.logging_config import setup_logger
 
@@ -100,11 +100,20 @@ def shutdown_all_providers() -> None:
             logger.exception("Error stopping provider %s", type(provider).__name__)
 
 
+def _require_nonblank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("Provide a nonblank credential")
+    return value
+
+
+ProviderCredential = Annotated[str, AfterValidator(_require_nonblank), Field(repr=False)]
+
+
 class ProviderConfig(BaseModel):
     """Provider factory that crosses process boundaries as data. Equal configs share one
     provider per process."""
 
-    model_config = {"frozen": True, "extra": "forbid"}
+    model_config = {"frozen": True, "extra": "forbid", "hide_input_in_errors": True}
 
     def _create(self) -> Provider:
         raise NotImplementedError

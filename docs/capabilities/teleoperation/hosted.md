@@ -66,6 +66,14 @@ overrides. All broker settings can also be passed on the CLI, e.g.
 2. Under **API keys**, click **Create key**.
 3. Copy the key (shown once) and pass it as `TRANSPORTS__BROKER__API_KEY`.
 
+The machine running the broker transport checks for a nonblank key before startup.
+For distributed runs, the executing Host can supply it through its own environment.
+You can inspect the blueprint’s run options without a key.
+
+A transport spec that supplies a direct `CloudflareConfig` uses that provider’s
+`app_id` and `app_secret`. Use `--transports.cloudflare.app-id` and
+`--transports.cloudflare.app-secret` for its overrides.
+
 ## Available blueprints
 
 | Blueprint | Notes |

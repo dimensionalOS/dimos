@@ -27,14 +27,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS
-from dimos.core.coordination.blueprint_config.errors import (
-    BlueprintConfigError,
-    format_validation_error,
-)
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.fields import (
     display_annotation,
     field_descriptions,
@@ -43,9 +40,9 @@ from dimos.core.coordination.blueprint_config.fields import (
     leaf_fields,
     module_config_cls,
     nested_get,
-    prepare_model_input,
     safe_field_default,
     validate_module_config,
+    validate_transport_config,
 )
 from dimos.core.coordination.blueprint_config.merging import (
     merge_cli,
@@ -315,7 +312,7 @@ class BlueprintConfigParser:
             for atom in self.blueprint.active_blueprints
         )
         transports_by_name: dict[str, tuple[type[BaseModel], list[TransportSpec]]] = {}
-        for spec in self.blueprint.transport_map.values():
+        for spec in self.blueprint.active_transport_map.values():
             if not isinstance(spec, TransportSpec) or spec.config_cls is None:
                 continue
             name = transport_config_name(spec.config_cls)
@@ -418,7 +415,7 @@ class BlueprintConfigParser:
             )
 
         transport_types: dict[str, set[type[BaseModel]]] = defaultdict(set)
-        for spec in self.blueprint.transport_map.values():
+        for spec in self.blueprint.active_transport_map.values():
             if isinstance(spec, TransportSpec) and spec.config_cls is not None:
                 transport_types[transport_config_name(spec.config_cls)].add(spec.config_cls)
         collisions = {name: types for name, types in transport_types.items() if len(types) > 1}
@@ -463,24 +460,15 @@ class BlueprintConfigParser:
                 raise BlueprintConfigError(
                     f"Transport configuration {transport.name!r} must be an object."
                 )
-            models: list[BaseModel] = []
-            for spec in transport.specs:
-                pinned = {
-                    key: plain(value)
-                    for key, value in spec.kwargs.items()
-                    if key in transport.config_cls.model_fields
-                }
-                deep_merge(pinned, plain_mapping(raw_overrides))
-                pinned = prepare_model_input(transport.config_cls, pinned)
-                try:
-                    models.append(transport.config_cls.model_validate(pinned))
-                except ValidationError as error:
-                    raise BlueprintConfigError(
-                        format_validation_error(
-                            f"transports.{transport.name}",
-                            error,
-                        )
-                    ) from error
+            if self.blueprint.hosted_placements:
+                # The executing Host validates the complete config with its own environment.
+                if raw_overrides:
+                    parsed[transport.name] = plain_mapping(raw_overrides)
+                continue
+            models = [
+                validate_transport_config(transport.config_cls, spec.config_kwargs, raw_overrides)
+                for spec in transport.specs
+            ]
             if not models:
                 continue
             full = plain(models[0])
@@ -498,7 +486,7 @@ class BlueprintConfigParser:
         if target.section == "transport":
             transport = next(item for item in schema.transports if item.name == target.root)
             for spec in transport.specs:
-                configured = nested_get(spec.kwargs, target.path)
+                configured = nested_get(spec.config_kwargs, target.path)
                 if configured is not PydanticUndefined:
                     return configured
             return safe_field_default(transport.config_cls, target.path)

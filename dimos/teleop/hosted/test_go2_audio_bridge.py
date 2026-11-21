@@ -90,7 +90,7 @@ def test_hosted_blueprint_accepts_speaker_override() -> None:
     parser = BlueprintConfigParser(teleop_hosted_go2_transport.solidify())
 
     parsed = parser.parse(
-        environ={"ROBOT_IP": "192.0.2.1"},
+        environ={"ROBOT_IP": "192.0.2.1", "TRANSPORTS__BROKER__API_KEY": "synthetic-key"},
         overrides={"go2audiobridgemodule": {"speaker": "enabled"}},
     )
 

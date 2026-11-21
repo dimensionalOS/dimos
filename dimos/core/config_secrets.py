@@ -21,6 +21,7 @@ from typing import Any
 SECRET_CONFIG_FIELDS = frozenset(
     {
         "api_key",
+        "app_secret",
         "aes_128_key",
         "relay_key",
         "dimos_api_key",
