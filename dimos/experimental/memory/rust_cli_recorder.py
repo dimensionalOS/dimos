@@ -203,6 +203,7 @@ class RustRecordingSession:
             "topics": self.plan.topics,
             "config": {
                 "store": store,
+                "preserve_zero_stamps": global_config.preserve_zero_stamps,
                 "encoding_threads": global_config.record_encoding_threads
                 or _DEFAULT_ENCODING_THREADS,
                 "streams": [stream.model_dump(exclude_none=True) for stream in self.plan.streams],

@@ -30,7 +30,7 @@ class OnExisting(str, enum.Enum):
     APPEND = "append"
 
 
-def message_timestamp(msg: Any) -> float:
+def message_timestamp(msg: Any, reception_ts: float | None = None) -> float:
     """Return the message's source time, falling back to the receiving clock."""
     ts = getattr(msg, "ts", None)
     if ts is not None:
@@ -45,13 +45,17 @@ def message_timestamp(msg: Any) -> float:
             return to_timestamp(stamp)
         except TypeError:
             pass  # An opaque payload may use "stamp" for a non-clock value.
-    return time.time()
+    return time.time() if reception_ts is None else reception_ts
 
 
-def recording_rows(msg: Any, ts: float | None = None) -> Iterator[tuple[Any, float]]:
+def recording_rows(
+    msg: Any, ts: float | None = None, *, reception_ts: float, preserve_zero_stamps: bool
+) -> Iterator[tuple[Any, float]]:
     """Index each transform at its source time. Other packets retain a single row."""
+    # Unset headers and a simulation's first tick have the same wire representation.
+    zero_stamp = 0.0 if preserve_zero_stamps else reception_ts
     if isinstance(msg, TFMessage) and msg.transforms:
         for transform in msg.transforms:
-            yield TFMessage(transform), transform.ts
+            yield TFMessage(transform), transform.ts or zero_stamp
     elif ts is not None:
-        yield msg, ts
+        yield msg, ts or zero_stamp

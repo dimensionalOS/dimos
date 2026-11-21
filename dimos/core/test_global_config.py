@@ -72,3 +72,22 @@ def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("ROBOT_IP", raising=False)
 
     assert GlobalConfig().robot_ip is None
+
+
+@pytest.mark.parametrize(
+    ("simulation", "replay", "policy", "expected"),
+    [
+        ("", False, "auto", False),
+        ("mujoco", False, "auto", True),
+        ("", True, "auto", True),
+        ("", False, "source", True),
+        ("mujoco", False, "arrival", False),
+    ],
+)
+def test_record_zero_stamp_policy(
+    simulation: str, replay: bool, policy: str, expected: bool
+) -> None:
+    config = GlobalConfig.model_validate(
+        {"simulation": simulation, "replay": replay, "record_zero_stamp": policy}
+    )
+    assert config.preserve_zero_stamps is expected

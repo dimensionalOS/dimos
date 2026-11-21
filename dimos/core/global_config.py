@@ -49,6 +49,11 @@ class GlobalConfig(BaseSettings):
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
+    record_zero_stamp: Literal["auto", "source", "arrival"] = Field(
+        default="auto",
+        description="Index zero message stamps at arrival, or preserve the source zero. "
+        "Auto preserves zero during simulation and replay.",
+    )
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.
@@ -126,6 +131,12 @@ class GlobalConfig(BaseSettings):
         if value is not None and info.data.get("record_engine") != "rust":
             raise ValueError("--record-encoding-threads is valid only with --record-engine rust")
         return value
+
+    @property
+    def preserve_zero_stamps(self) -> bool:
+        if self.record_zero_stamp == "auto":
+            return bool(self.simulation or self.replay)
+        return self.record_zero_stamp == "source"
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""

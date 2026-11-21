@@ -346,7 +346,12 @@ class Recorder(MemoryModule):
 
         async def on_msg(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
-            for payload, ts in recording_rows(msg, self._resolve_ts(name, msg)):
+            for payload, ts in recording_rows(
+                msg,
+                self._resolve_ts(name, msg),
+                reception_ts=recv_ts,
+                preserve_zero_stamps=self.config.g.preserve_zero_stamps,
+            ):
                 pose = await self._resolve_pose(name, payload, ts)
                 if not pose and name not in self.config.poseless_streams:
                     logger.warning(
@@ -415,7 +420,11 @@ class Recorder(MemoryModule):
 
         def on_tf(msg: TFMessage) -> None:
             try:
-                for payload, ts in recording_rows(msg):
+                for payload, ts in recording_rows(
+                    msg,
+                    reception_ts=time.time(),
+                    preserve_zero_stamps=self.config.g.preserve_zero_stamps,
+                ):
                     tf_stream.append(payload, ts=ts, pose=None)
             except sqlite3.ProgrammingError:
                 # A late LCM callback raced teardown and hit the closed store.

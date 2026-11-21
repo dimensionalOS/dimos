@@ -87,7 +87,10 @@ class TransportRecorder:
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
         self._topics = topics
-        self._queue: queue.Queue[tuple[str, type, Any, float] | None] = queue.Queue(queue_size)
+        self._preserve_zero_stamps = global_config.preserve_zero_stamps
+        self._queue: queue.Queue[tuple[str, type, Any, float, float] | None] = queue.Queue(
+            queue_size
+        )
         self._streams: dict[str, Stream[Any]] = {}
         self.dropped = 0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
@@ -95,14 +98,19 @@ class TransportRecorder:
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
-            name, stream_type, msg, ts = item
+            name, stream_type, msg, ts, received = item
             try:
                 stream = self._streams.get(name)
                 if stream is None:
                     codec = codec_for(stream_type, sample=msg)
                     stream = self.store.stream(name, stream_type, codec=codec)
                     self._streams[name] = stream
-                for payload, source_ts in recording_rows(msg, ts):
+                for payload, source_ts in recording_rows(
+                    msg,
+                    ts,
+                    reception_ts=received,
+                    preserve_zero_stamps=self._preserve_zero_stamps,
+                ):
                     stream.append(payload, ts=source_ts)
             except Exception:
                 logger.exception("--record: failed to append to %s", name)
@@ -126,7 +134,10 @@ class TransportRecorder:
 
         def on_msg(msg: Any) -> None:
             try:
-                self._queue.put_nowait((name, stream_type, msg, message_timestamp(msg)))
+                received = time.time()
+                self._queue.put_nowait(
+                    (name, stream_type, msg, message_timestamp(msg, received), received)
+                )
             except queue.Full:
                 self.dropped += 1
                 if self.dropped % 1000 == 1:
