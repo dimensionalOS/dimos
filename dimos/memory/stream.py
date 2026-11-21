@@ -501,6 +501,16 @@ class Stream(CompositeResource, Generic[T, O]):
         except StopIteration:
             raise LookupError("No matching observation") from None
 
+    def closest(self, timestamp: float, tolerance: float = 1.0) -> O:
+        """Nearest stored observation within tolerance, preferring the earlier timestamp on ties."""
+        if self.is_live():
+            raise TypeError(".closest() requires a finite stream")
+        candidates = self.at(timestamp, tolerance)
+        best = min(candidates, key=lambda obs: (abs(obs.ts - timestamp), obs.ts), default=None)
+        if best is None:
+            raise LookupError("No matching observation")
+        return best
+
     def last(self) -> O:
         """Return the last matching observation (by timestamp)."""
         return self.order_by("ts", desc=True).first()

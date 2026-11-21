@@ -14,10 +14,12 @@
 
 import threading
 
+import numpy as np
 import pytest
 from reactivex.disposable import Disposable
 
 from dimos.memory.store.memory import MemoryStore
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.module import PerceptionLocalize
 
@@ -102,3 +104,13 @@ def test_stop_after_start_releases_resources_once(localizer, mocker):
     localizer.camera_info.subscribe.return_value.assert_called_once_with()
     close.assert_called_once_with(localizer._memento)
     assert not localizer._thread.is_alive()
+
+
+def test_pair_geometry_retains_the_nearest_depth_frame(localizer):
+    localizer.start()
+    for ts in (10.0, 10.03):
+        depth = Image.from_numpy(np.ones((2, 2), np.uint16), format=ImageFormat.DEPTH16, ts=ts)
+        localizer.depth_image.subscribe.call_args.args[0](depth)
+    query = localizer._geometry_feed.last()
+    list(localizer._pair_geometry(iter([query])))
+    assert localizer._geometry_memory.first().ts == 10.03

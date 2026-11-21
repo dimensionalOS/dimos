@@ -138,6 +138,11 @@ for ts, frame in replay.iterate_ts(loop=True):
 
 ### Finding Specific Frames
 
+For a store replay, `store.replay(**options).stream(name).find_closest(ts, tolerance)`
+returns the nearest frame inside the selected clip and tolerance. A tie selects
+the earlier timestamp. The legacy `TimedSensorReplay` adapter below returns the
+first recorded match.
+
 ```python skip
 # First recorded frame within 1s of an absolute timestamp, not the nearest one
 # (None if there is none). Use a small tolerance for a frame near the timestamp.
