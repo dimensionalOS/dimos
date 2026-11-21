@@ -264,6 +264,23 @@ def test_run_config_resolves_collection_destination(tmp_path):
         recorder.stop()
 
 
+def test_default_collection_store_reaches_worker(tmp_path, worker_manager, deployed_recorders):
+    directory = tmp_path / "session"
+    blueprint = collect(profile=_profile(1))
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--recorder.recording", str(directory)], environ={}
+    )
+    atom = blueprint.active_blueprints[0]
+    proxy = worker_manager.deploy(
+        atom.module, global_config, {**atom.kwargs, **parsed.module_kwargs(atom.name)}
+    )
+    deployed_recorders.append(proxy)
+    store = proxy.get_config()["store"]
+    assert store["kind"] == "mcap"
+    assert store["path"] == str(directory / "recording.mcap")
+    assert store["attachments"][0]["path"] == str(directory / "schema.json")
+
+
 def test_same_ports_keep_independent_dataset_projections(tmp_path):
     first_profile = _profile(1)
     second_profile = _profile(1)
