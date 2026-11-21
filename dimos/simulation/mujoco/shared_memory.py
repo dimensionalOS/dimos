@@ -15,7 +15,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import threading
 from typing import Any, TypeVar
@@ -25,6 +24,7 @@ from numpy.typing import NDArray
 
 from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.shm import ShmBuffer, attach_shm
 
 logger = setup_logger()
 
@@ -60,30 +60,22 @@ _shm_sizes = {
 }
 
 
-def _unregister(shm: SharedMemory) -> SharedMemory:
-    try:
-        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    return shm
-
-
 @dataclass(frozen=True)
 class ShmSet:
-    video: SharedMemory
-    depth_front: SharedMemory
-    depth_left: SharedMemory
-    depth_right: SharedMemory
-    odom: SharedMemory
-    cmd: SharedMemory
-    lidar: SharedMemory
-    lidar_len: SharedMemory
-    seq: SharedMemory
-    control: SharedMemory
+    video: ShmBuffer
+    depth_front: ShmBuffer
+    depth_left: ShmBuffer
+    depth_right: ShmBuffer
+    odom: ShmBuffer
+    cmd: ShmBuffer
+    lidar: ShmBuffer
+    lidar_len: ShmBuffer
+    seq: ShmBuffer
+    control: ShmBuffer
 
     @classmethod
     def from_names(cls, shm_names: dict[str, str]) -> "ShmSet":
-        return cls(**{k: _unregister(SharedMemory(name=shm_names[k])) for k in _shm_sizes.keys()})
+        return cls(**{k: attach_shm(shm_names[k], timeout=0) for k in _shm_sizes.keys()})
 
     @classmethod
     def from_sizes(cls) -> "ShmSet":
@@ -92,7 +84,7 @@ class ShmSet:
     def to_names(self) -> dict[str, str]:
         return {k: getattr(self, k).name for k in _shm_sizes.keys()}
 
-    def as_list(self) -> list[SharedMemory]:
+    def as_list(self) -> list[ShmBuffer]:
         return [getattr(self, k) for k in _shm_sizes.keys()]
 
 

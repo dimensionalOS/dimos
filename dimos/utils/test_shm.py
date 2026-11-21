@@ -15,8 +15,11 @@
 """Regression tests for the SHM creation race (shm_open before ftruncate)."""
 
 import errno
+import json
 from multiprocessing.shared_memory import SharedMemory
 import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -127,3 +130,69 @@ def test_a_wrongly_sized_segment_attaches_immediately(name):
         shm.close()
     finally:
         owner.close()
+
+
+def _read_sim_segment(layout: str, key: str) -> None:
+    from dimos.simulation.engines.mujoco_shm import ManipShmReader
+    from dimos.simulation.mujoco.shared_memory import ShmReader
+
+    reader = ManipShmReader(key) if layout == "arm" else ShmReader(json.loads(key))
+    try:
+        assert reader.shm.as_list()[0].buf[0] == 42
+    finally:
+        reader.cleanup()
+
+
+def _run_sim_owner(layout: str) -> None:
+    from dimos.simulation.engines.mujoco_shm import ManipShmWriter
+    from dimos.simulation.mujoco.shared_memory import ShmWriter
+
+    owner: ManipShmWriter | ShmWriter
+    if layout == "arm":
+        key = uuid.uuid4().hex[:12]
+        # Leave the previous generation named, as after an interrupted shutdown.
+        previous = ManipShmWriter(key)
+        for segment in previous.shm.as_list():
+            segment.close()
+        owner = ManipShmWriter(key)
+    else:
+        owner = ShmWriter()
+        key = json.dumps(owner.shm.to_names())
+    try:
+        owner.shm.as_list()[0].buf[0] = 42
+        # An independent reader must leave the names available to a later attach.
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from dimos.utils.test_shm import _read_sim_segment; "
+                "_read_sim_segment(*sys.argv[1:])",
+                layout,
+                key,
+            ],
+            check=True,
+            timeout=30,
+        )
+        # This reader shares the owner's tracker and must leave its registration intact.
+        _read_sim_segment(layout, key)
+    finally:
+        owner.cleanup()
+
+
+@pytest.mark.parametrize("layout", ["arm", "unitree"])
+def test_only_the_sim_owner_tracks_its_segments(layout: str) -> None:
+    # The tracker reports asynchronous errors on stderr when this process exits.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dimos.utils.test_shm import _run_sim_owner; "
+            "_run_sim_owner(sys.argv[1])",
+            layout,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "resource_tracker" not in result.stderr, result.stderr
