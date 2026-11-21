@@ -21,6 +21,7 @@ Every port gets an in-process transport, so nothing opens a socket.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import math
 from typing import Any
 
 import pytest
@@ -28,7 +29,11 @@ import pytest
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.flowbase import connection
-from dimos.robot.flowbase.connection import FLOWBASE_BASE_JOINTS, FlowBaseConnection
+from dimos.robot.flowbase.connection import (
+    FLOWBASE_BASE_JOINTS,
+    FlowBaseConnection,
+    _body_speeds,
+)
 from dimos.utils.testing.waiting import wait_until
 
 # Long enough that the deadman never halts mid-test, except where a test sets its own.
@@ -139,6 +144,15 @@ def test_speeds_go_out_with_lateral_and_turn_flipped(rig: Callable[..., Rig]) ->
     assert r.client.speeds == [[0.5, -0.2, -1.0]]
 
 
+def test_a_speed_over_the_limit_is_refused(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.drive(0.8, -0.8, 3.0)
+    r.drive(0.81, 0.0, 0.0)
+    r.drive(0.0, 0.0, -3.01)
+    # Only the command at the limits went out.
+    assert [s for s in r.client.speeds if any(s)] == [[0.8, 0.8, -3.0]]
+
+
 def test_no_command_within_the_deadman_sends_zero_speed(rig: Callable[..., Rig]) -> None:
     r = rig(deadman_timeout_s=0.05)
     r.drive(0.5, 0.0, 0.0)
@@ -168,3 +182,24 @@ def test_stop_sends_zero_speed_and_closes_the_client(rig: Callable[..., Rig]) ->
     r.module.stop()
     assert r.client.speeds[-1] == [0.0, 0.0, 0.0]
     assert r.client.closed
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "speeds"),
+    [
+        # Facing left (+y), moving along +y: that is forward.
+        ((0.0, 0.0, math.pi / 2), (0.0, 0.1, math.pi / 2), (1.0, 0.0, 0.0)),
+        # Facing left, moving along +x: that is to the right.
+        ((0.0, 0.0, math.pi / 2), (0.1, 0.0, math.pi / 2), (0.0, -1.0, 0.0)),
+        # Turning left on the spot.
+        ((0.0, 0.0, 0.0), (0.0, 0.0, 0.2), (0.0, 0.0, 2.0)),
+        # Turning left across the +pi / -pi boundary.
+        ((0.0, 0.0, math.pi - 0.1), (0.0, 0.0, -math.pi + 0.1), (0.0, 0.0, 2.0)),
+    ],
+)
+def test_body_speeds_between_two_poses(
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+    speeds: tuple[float, float, float],
+) -> None:
+    assert _body_speeds(start, end, 0.1) == pytest.approx(speeds, abs=1e-9)
