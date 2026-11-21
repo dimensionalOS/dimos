@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
-from typing import Any, Literal, get_origin
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -27,6 +27,7 @@ from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.fields import (
     all_annotation_types,
     scalar_annotation_types,
+    takes_json,
 )
 from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.core.stream import TransportSpec
@@ -123,28 +124,21 @@ def coerce_cli_value(value: Any, target: OptionTarget, option: str) -> Any:
 
 
 def coerce_environment_value(value: str, target: OptionTarget, name: str) -> Any:
-    """Coerce an environment value like a CLI value.
+    return coerce_string_value(value, target, f"Environment variable {name}")
 
-    Scalar settings keep their raw text until model validation so later
-    sources can override them. Container settings accept JSON.
+
+def coerce_string_value(value: Any, target: OptionTarget, label: str) -> Any:
+    """Decode JSON only for fields that take a list or an object.
+
+    Scalar fields keep their literal text until model validation, so a later
+    source can still replace a value that would not validate.
     """
-    # Only structured settings need JSON decoding before the sources are merged.
-    parse_json = any(
-        kind not in (str, bool, int, float) and get_origin(kind) is not Literal
-        for kind in target.scalar_types
-    )
-    return coerce_string_value(value, target, f"Environment variable {name}", parse_json=parse_json)
-
-
-def coerce_string_value(
-    value: Any, target: OptionTarget, label: str, *, parse_json: bool = True
-) -> Any:
     if not isinstance(value, str):
         return value
     stripped = value.strip()
     if stripped == "null" and target.allows_none:
         return None
-    if parse_json and stripped.startswith(("[", "{")):
+    if stripped.startswith(("[", "{")) and any(map(takes_json, target.scalar_types)):
         try:
             return json.loads(stripped)
         except json.JSONDecodeError as error:
