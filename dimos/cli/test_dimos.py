@@ -83,6 +83,11 @@ class RunModuleB(Module):
         (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
         (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
         (["dimos", "--record", "mcap", "run"], ["dimos", "--record", "mcap", "run"]),
+        # A subcommand name in a blueprint's options is a value.
+        (
+            ["dimos", "run", "go2", "--record", "status"],
+            ["dimos", "run", "go2", "--record", "status"],
+        ),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),

@@ -14,7 +14,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 |------|------|---------|-------------|
 | `--robot-ip` | TEXT | `None` | Robot IP address |
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
-| `--simulation` | TEXT | empty | Select simulation (`mujoco` or `dimsim`); a bare flag selects MuJoCo |
+| `--simulation` | TEXT | empty | Select the built-in simulator (`mujoco` or `dimsim`). A bare flag or the legacy value `true` selects MuJoCo |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_short` | Recording to replay: a dataset name, or a `.db` or `.mcap` path |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |

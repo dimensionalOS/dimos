@@ -23,8 +23,31 @@ import subprocess
 import sys
 import threading
 
+import pytest
+
 # CI runners are slower — give generous headroom but still catch gross regressions.
 HELP_TIMEOUT_SECONDS = 8
+
+
+@pytest.mark.parametrize(
+    ("args", "env", "code", "word"),
+    [
+        (["--simulation=mujco", "show-config"], {}, 2, "mujco"),
+        (["run", "coordinator-basic", "--simulation", "status", "--help"], {}, 2, "status"),
+        (["show-config"], {"SIMULATION": "mujco"}, 2, "mujco"),
+        (["--simulation", "TrUe", "show-config"], {}, 0, "simulation: mujoco"),
+    ],
+)
+def test_simulator_selection(args: list[str], env: dict[str, str], code: int, word: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "from dimos.cli.entry import main; main()", *args],
+        env=os.environ | env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == code
+    assert word in result.stdout + result.stderr
 
 
 def test_help_does_not_import_heavy_deps() -> None:

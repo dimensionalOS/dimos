@@ -74,6 +74,7 @@ from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
+from dimos.core.global_config import DEFAULT_SIMULATOR
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
@@ -81,23 +82,29 @@ main = typer.Typer(
     no_args_is_help=True,
 )
 
-SIMULATORS = ("mujoco", "dimsim")
-RECORDERS = ("sqlite", "mcap")
-
-# Flags with an optional value; bare `--flag` means the first choice.
-OPTIONAL_VALUE_FLAGS = {
-    "--simulation": SIMULATORS,
-    "--record": RECORDERS,
-}
+# Flags with an optional value. A following subcommand is not its argument.
+OPTIONAL_VALUE_FLAGS = {"--simulation": DEFAULT_SIMULATOR, "--record": "sqlite"}
 
 
 def normalize_argv(argv: list[str]) -> list[str]:
     out: list[str] = []
     for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
         out.append(arg)
-        choices = OPTIONAL_VALUE_FLAGS.get(arg)
-        if choices and nxt not in choices:
-            out.append(choices[0])
+        default = OPTIONAL_VALUE_FLAGS.get(arg)
+        if default is None:
+            continue
+        if nxt is None or nxt.startswith("-"):
+            out.append(default)
+            continue
+        root = typer.main.get_group(main)
+        if nxt in root.commands:
+            # In "run robot --simulation status", status is a value. Insert the
+            # default only if Click would consume this word as the root subcommand.
+            with root.make_context(
+                argv[0], [*out[1:], default, nxt], resilient_parsing=True
+            ) as ctx:
+                if not ctx.args:
+                    out.append(default)
     return out
 
 
