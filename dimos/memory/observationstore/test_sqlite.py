@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import closing
+import sqlite3
 import warnings
 
 import numpy as np
 import pytest
 
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.models.embedding.base import Embedding
 
 
@@ -56,3 +59,19 @@ def test_near_does_not_warn_for_empty_stream(sqlite_store):
         warnings.simplefilter("always")
         assert stream.near((1, 2, 3), 1.0).count() == 0
     assert not emitted
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["new", "legacy"])
+def test_timestamp_playback_uses_an_index(tmp_path, existing):
+    path = tmp_path / "sensor.db"
+    if existing:
+        with SqliteStore(path=str(path)) as store:
+            store.stream("sensor", int).append(1, ts=1.0)
+        with closing(sqlite3.connect(path)) as db:
+            db.execute('DROP INDEX IF EXISTS "sensor.ts"')
+
+    with SqliteStore(path=str(path)) as store:
+        store.stream("sensor", int)
+        with closing(sqlite3.connect(path)) as db:
+            plan = db.execute("EXPLAIN QUERY PLAN SELECT value FROM sensor ORDER BY ts")
+            assert all("TEMP B-TREE" not in row[-1] for row in plan)
