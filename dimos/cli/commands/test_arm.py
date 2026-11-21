@@ -37,7 +37,19 @@ from dimos.control.calibration._calibration_test_helpers import (
     offline_robot_assets,
     require_model,
 )
+from dimos.control.calibration._toy_arm import TOY_URDF as TOY_ARM_URDF
+from dimos.control.calibration.module import CalibrationModule
 from dimos.control.calibration.schema import calibration_path, save_calibration
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 
 ARM_ID = "dual_openyam/left"
@@ -166,10 +178,15 @@ class FakeRpc:
     def serve_rpc(self, f: Callable[..., Any], name: str) -> None:
         self.handlers[name.rsplit("/", 1)[-1]] = f
 
-    def call(self, name: str, args: Any, reply: Callable[[Any], None]) -> None:
-        assert name == "CalibrationModule/abort"
+    def call_sync(self, name: str, args: Any, rpc_timeout: float | None = None) -> Any:
+        if name == "Coordinator/list_modules":
+            module = ModuleDescriptor(
+                "CalibrationModule", "", ["abort"], rpc_name="run/calibration"
+            )
+            return [module], None
+        assert name == "run/calibration/abort"
         self.aborts.set()
-        reply(None)
+        return None, None
 
     def answer_next(self, text: str) -> None:
         """Type ``text`` once the operator is asked."""
@@ -311,6 +328,123 @@ def test_the_run_is_stopped_away_from_home_only_once_the_operator_says_so(
 def test_a_run_that_exits_early_ends_the_walk(child: type[FakeChild], never: Iterator[str]) -> None:
     child.script = lambda rpc: rpc.handlers["show"]("starting")
     assert arm_command.walk(["dimos", "run", "x"], never) is False
+
+
+ARM_MODEL = RobotModel.from_urdf_string(TOY_ARM_URDF)
+ARM_JOINTS = ["yaw", "shoulder", "elbow"]
+TOY_ROBOT = DamiaoRobot(
+    buses=[
+        DamiaoBus(
+            arm=[DamiaoMotor(name, "DM4310", i + 1, i + 17) for i, name in enumerate(ARM_JOINTS)],
+            kp=[20.0] * 3,
+            kd=[1.0] * 3,
+        )
+    ],
+    model=ARM_MODEL,
+    gravity_model=ARM_MODEL,
+    base_link="base",
+    joint_names=ARM_JOINTS,
+    name="toy",
+)
+
+
+class SilentConnection(Module):
+    """A connection that never reports, so the calibration waits in check until aborted."""
+
+    joint_state: Out[JointState]
+    position_command: In[JointState]
+
+    @rpc
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+    @rpc
+    def set_config(self, patch: dict[str, Any], save: bool = False) -> dict[str, Any]:
+        return {}
+
+
+class DeployedRun:
+    """``dimos run`` in this process: the toy arm's calibration, built and served as it builds it."""
+
+    runs: list[DeployedRun] = []
+
+    def __init__(self, argv: list[str], **kwargs: Any) -> None:
+        blueprint = autoconnect(
+            SilentConnection.blueprint(),
+            CalibrationModule.blueprint(robot=TOY_ROBOT, floor_z_m=-0.45, min_x_m=-1.0),
+        ).solidify()
+        parsed = BlueprintConfigParser(blueprint).parse(
+            environ=os.environ, overrides={"g": {"viewer": "none"}}
+        )
+        self._stopped = threading.Event()
+        self.coordinator = ModuleCoordinator.build(
+            blueprint, parsed, reserve_rpc_name=CoordinatorRPC.NAME
+        )
+        self.coordinator.start_rpc_service()
+        DeployedRun.runs.append(self)
+
+    def poll(self) -> int | None:
+        return 0 if self._stopped.is_set() else None
+
+    def wait(self) -> int:
+        self._stopped.wait()
+        return 0
+
+    def send_signal(self, sig: int) -> None:
+        self.kill()
+
+    def kill(self) -> None:
+        self.coordinator.stop()
+        self._stopped.set()
+
+
+@pytest.fixture
+def deployed(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[DeployedRun]]:
+    DeployedRun.runs = []
+    monkeypatch.setattr(arm_command.subprocess, "Popen", DeployedRun)
+    yield DeployedRun
+    for run in DeployedRun.runs:
+        run.kill()
+
+
+def test_q_reaches_the_deployed_calibration_module(
+    deployed: type[DeployedRun],
+    never: Iterator[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    prompts: list[str] = []
+    asked = threading.Event()
+    keys = iter(["s", ""])
+
+    class Answering(arm_command.Operator):
+        def ask(self, prompt: str, choices: list[str]) -> str:
+            prompts.append(prompt)
+            asked.set()
+            key = next(keys)
+
+            def type_it() -> None:
+                assert self._asking.wait(WAIT_S)
+                self.line(key)
+
+            threading.Thread(target=type_it, daemon=True).start()
+            return super().ask(prompt, choices)
+
+    def typed() -> Iterator[str]:
+        yield "q"
+        if not asked.wait(WAIT_S):
+            deployed.runs[0].kill()
+        yield from never
+
+    monkeypatch.setattr(arm_command, "Operator", Answering)
+    assert arm_command.walk(["dimos", "run", "toy-calibrate"], typed()) is False
+    assert prompts == [
+        "check: aborted by the operator\nThe arm holds where it is. Go home?",
+        "The arm is not home, and stopping the run turns its motors off. Support it.",
+    ]
+    out = capsys.readouterr()
+    assert "Calibration not done:\ncheck: aborted by the operator" in out.out
+    assert "Abort failed" not in out.err
 
 
 def test_the_run_globals_are_resolved_as_dimos_run_resolves_them() -> None:
