@@ -114,7 +114,6 @@ def test_every_forwarded_setting_parses_on_the_real_blueprint(
         global_overrides={},
     )
     assert dict(parsed.module_configs["calibrationmodule"]) == {
-        "robot": "dual-openyam",
         "arm": "left",
         "floor_z_m": 0.0,
         "min_x_m": 0.1,
@@ -141,6 +140,16 @@ def test_bad_settings_are_refused_before_anything_starts(
     assert result.exit_code == 2 and message in result.output
     unguarded = invoke("calibrate", "dual-openyam", "--arm", "left")
     assert unguarded.exit_code == 2 and "floor_z_m and min_x_m" in unguarded.output
+
+
+def test_a_robot_without_a_calibrate_blueprint_is_refused_with_those_that_have_one(
+    no_child: None,
+) -> None:
+    for args in (["calibrate", "unicycle", *BENCH, "--dry-run"], ["show", "unicycle"]):
+        result = invoke(*args)
+        assert result.exit_code == 2
+        assert "no unicycle-calibrate blueprint" in result.output
+        assert "dual-openyam" in result.output and "openarm" in result.output
 
 
 class FakeRpc:
