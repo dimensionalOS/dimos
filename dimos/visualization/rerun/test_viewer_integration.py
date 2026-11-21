@@ -219,6 +219,30 @@ def test_bridge_logs_named_graph_nodes_and_edges(
     ]
 
 
+def test_bridge_breaks_label_lines_and_keeps_a_literal_backslash(
+    mocker: MockerFixture, viewer: bridge.RerunBridgeModule
+) -> None:
+    # Graphviz 14.1.2 on instances named "front\nleft", r"front\nleft" and "front%0Aleft" (positions shortened)
+    layout = "\n".join(
+        [
+            r'node "module:front%0Aleft" 0.77 0.58 0.75 0.73 "front\nleft\nModule" filled box #5c9ff0 #0b0f0f',
+            r'node "module:front%5Cnleft" 0.77 2.27 0.87 0.55 "front\\nleft\nModule" filled box #5c9ff0 #0b0f0f',
+            r'node "module:front%250Aleft" 0.77 1.47 1.09 0.55 "front%0Aleft\nModule" filled box #5c9ff0 #0b0f0f',
+        ]
+    )
+    mocker.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, layout))
+    log = mocker.patch.object(rr, "log")
+
+    viewer.log_blueprint_graph("digraph {}", [])
+
+    _, nodes, _ = log.call_args.args
+    assert nodes.labels.as_arrow_array().to_pylist() == [
+        "front\nleft\nModule",
+        "front\\nleft\nModule",
+        "front%0Aleft\nModule",
+    ]
+
+
 @pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz computes the Rerun layout")
 def test_rerun_keeps_distinct_escaped_module_names(
     mocker: MockerFixture, viewer: bridge.RerunBridgeModule
@@ -235,3 +259,5 @@ def test_rerun_keeps_distinct_escaped_module_names(
     assert len(set(ids)) == len(names)
     assert set(ids) == set(module_ids)
     assert nodes.radii.as_arrow_array().to_pylist() == [viewer.MODULE_RADIUS] * len(names)
+    labels = nodes.labels.as_arrow_array().to_pylist()
+    assert sorted(labels) == sorted(f"{name}\nModule" for name in names)

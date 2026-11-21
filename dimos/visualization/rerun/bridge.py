@@ -21,7 +21,7 @@ from dataclasses import field
 import functools
 from operator import attrgetter
 import os
-import shlex
+import re
 import signal
 import socket
 import subprocess
@@ -205,6 +205,21 @@ def _graphviz_plain_lines(output: str) -> list[str]:
     if pending:
         lines.append(pending)
     return lines
+
+
+# One field of a plain-format line: a quoted string in which a backslash escapes the next
+# character, or a bare word.
+_PLAIN_FIELD = re.compile(r'"((?:[^"\\]|\\.)*)"|(\S+)')
+
+
+def _graphviz_plain_fields(line: str) -> list[str]:
+    """Split one plain-format line, leaving Graphviz's escapes in a quoted field as written."""
+    return [bare or quoted for quoted, bare in _PLAIN_FIELD.findall(line)]
+
+
+def _graphviz_label(field: str) -> str:
+    """A label as Graphviz draws it: `\\n`, `\\l` and `\\r` end a line, `\\\\` is one backslash."""
+    return re.sub(r"\\(.)", lambda escape: "\n" if escape[1] in "nlr" else escape[1], field)
 
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
@@ -724,11 +739,11 @@ class RerunBridgeModule(Module):
 
         for line in _graphviz_plain_lines(result.stdout):
             if line.startswith("node "):
-                parts = shlex.split(line)
+                parts = _graphviz_plain_fields(line)
                 node_id = parts[1]
                 x = float(parts[2]) * self.GRAPH_VIZ_SCALE
                 y = -float(parts[3]) * self.GRAPH_VIZ_SCALE
-                label = parts[6]
+                label = _graphviz_label(parts[6])
                 color = parts[9]
 
                 node_ids.append(node_id)
@@ -738,7 +753,7 @@ class RerunBridgeModule(Module):
                 radii.append(self.MODULE_RADIUS if node_id in module_set else self.CHANNEL_RADIUS)
 
             elif line.startswith("edge "):
-                parts = shlex.split(line)
+                parts = _graphviz_plain_fields(line)
                 edges.append((parts[1], parts[2]))
 
         if not node_ids:
