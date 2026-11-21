@@ -306,7 +306,7 @@ class SpyBlobStore(BlobStore):
 
 
 class SpyVectorStore(VectorStore):
-    """VectorStore that records all calls for verification."""
+    """Index implementing the original put/search/delete interface."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -323,9 +323,6 @@ class SpyVectorStore(VectorStore):
     def put(self, stream: str, key: int, embedding: Embedding) -> None:
         self.puts.append((stream, key))
         self.vectors.setdefault(stream, {})[key] = embedding
-
-    def get(self, stream: str, key: int) -> Embedding | None:
-        return self.vectors.get(stream, {}).get(key)
 
     def search(self, stream: str, query: Any, k: int) -> list[tuple[int, float]]:
         self.searches.append((stream, k))
@@ -401,11 +398,13 @@ class TestStoreDelegation:
 
         store, _blob_spy, vec_spy = spy_session
         s = store.stream("vecs", str)
-        s.append("a", ts=1.0, embedding=_emb([1, 0, 0]))
+        first = s.append("a", ts=1.0, embedding=_emb([1, 0, 0]))
         s.append("b", ts=2.0, embedding=_emb([0, 1, 0]))
         s.append("c", ts=3.0)  # no embedding
 
         assert len(vec_spy.puts) == 2
+        with pytest.raises(NotImplementedError, match="lookup by observation ID"):
+            vec_spy.get("vecs", first.id)
 
     def test_search_calls_vector_search(self, spy_session) -> None:
         import numpy as np

@@ -122,7 +122,8 @@ dimos map rename recordings/<run-id>/memory.db --rename color_image=camera --out
 
 The copy keeps the original encoding and payload bytes, including JPEG color
 images and lossless depth images. Rows with search embeddings retain their vectors
-under the new stream name and observation IDs.
+under the new stream name and observation IDs. Custom vector stores that serve as
+copy sources must implement `VectorStore.get` to look up embeddings by observation ID.
 
 ## Spatial queries
 

@@ -51,10 +51,11 @@ class VectorStore(Configurable, CompositeResource):
         """Store an embedding vector for the given stream and observation id."""
         ...
 
-    @abstractmethod
     def get(self, stream_name: str, key: int) -> Embedding | None:
-        """Look up the vector for one observation, returning None if it has none."""
-        ...
+        """Return one observation's vector or None. Recording copies require this lookup."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support lookup by observation ID"
+        )
 
     @abstractmethod
     def search(self, stream_name: str, query: Embedding, k: int | None) -> list[tuple[int, float]]:
