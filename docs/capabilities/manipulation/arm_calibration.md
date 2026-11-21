@@ -62,11 +62,11 @@ The calibration moves the arm only by streaming targets to its connection, one p
 The file is `~/.local/state/dimos/arms/<arm id>/calibration.json`, for example `~/.local/state/dimos/arms/dual_openyam/right/calibration.json`. The file it replaces goes to `history/` next to it. `cat` it to see the gains and link masses.
 
 ```python
-cal.bake("/path/to/in.urdf")                        # writes calibrated.urdf beside the file
+cal.bake("/path/to/in.urdf")        # "wrote .../dual_openyam/calibrated.urdf: baked left, right"
 cal.bake("/path/to/in.urdf", "/path/to/out.urdf")
 ```
 
-`bake` writes a copy of the URDF with the arm's fitted masses and centres of mass and returns its path; the paths are those of the machine running `dimos run`. It refuses a URDF other than the one the calibration was made with.
+`bake` writes a copy of the URDF with the fitted masses and centres of mass of every arm of the robot that has a calibration file, and says which arms it baked and which have no file. The default output is `calibrated.urdf` in the robot's directory under `~/.local/state/dimos/arms/`; the paths are those of the machine running `dimos run`. It refuses a URDF other than the one the calibration was made with.
 
 The connection applies the file at every start. Its `calibration` setting is `auto`, `off` or a path; `--dualopenyamconnection.calibration off` runs without it. A file that does not load or does not fit the arm makes the connection fail to start.
 
