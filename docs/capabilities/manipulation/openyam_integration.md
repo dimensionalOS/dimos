@@ -27,6 +27,29 @@ dimos --simulation run teleop-webxr-dual-openyam
 
 `openyam-connection-control` exposes trajectory and normalized-gripper control.
 
+## Run Dual YAM in MuJoCo
+
+`dual-openyam-sim` and `teleop-webxr-dual-openyam-sim` are
+`dual-openyam-planner-coordinator` and `teleop-webxr-dual-openyam` with the
+connection replaced by `DualOpenYamSimConnection`: both arms and jaws on the
+workcell table in MuJoCo, built at startup from the URDF the planner uses. The
+coordinator, its tasks, the joint names and the units are the robot's, and no
+CAN selector is needed.
+
+```bash
+dimos run dual-openyam-sim
+dimos run teleop-webxr-dual-openyam-sim
+```
+
+A cup, a bottle and a Rubik's cube stand on the table. Three cameras publish on
+the rig's topics: the overhead RGB-D camera on `color_image`, `depth_image` and
+`camera_info`, and one colour camera per wrist on `left_wrist_color_image` and
+`right_wrist_color_image`. Their frames are on `tf` under `world`.
+
+Rendering needs OpenGL: on a machine without a display, set `MUJOCO_GL=egl`.
+`--cameras false` runs the physics alone, and `--headless false` opens the MuJoCo
+window.
+
 ## CAN transport
 
 List the selectors accepted on the current host:
