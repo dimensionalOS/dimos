@@ -241,8 +241,9 @@ def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:
     r = rig()
     assert not r.jaws("left") and not r.jaws("right")
     r.feed_grippers(left=20.0, right=40.0, ts=time.time())
-    wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
-    assert list(r.jaw_readings()[-1].position) == pytest.approx([0.02, 0.04])
+    wait_until(lambda: any(len(msg.name) == 2 for msg in r.jaw_readings()), timeout=5.0)
+    both = next(msg for msg in r.jaw_readings() if len(msg.name) == 2)
+    assert list(both.position) == pytest.approx([0.02, 0.04])
     r.move({"r1pro/left_gripper": 0.02})  # Initial measured-position hold.
     assert not r.jaws("left")
     r.move({"r1pro/left_gripper": 0.05})
