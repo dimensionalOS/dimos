@@ -75,11 +75,16 @@ def test_expired_watchdog_cannot_stop_the_next_command(sdk, mocker, replacement)
         assert sdk.loco_client.method_calls == [*calls, call.StopMove()]
 
 
-def test_rejected_velocity_keeps_the_previous_watchdog(sdk, mocker):
+@pytest.mark.parametrize("rejected", ["timed", "request"])
+def test_rejected_velocity_keeps_the_previous_watchdog(sdk, mocker, rejected):
     timers = mocker.patch.object(threading, "Timer")
     assert sdk.move(Twist(linear=[0.25, 0, 0]))
     expired = timers.call_args.args[1]
     sdk.loco_client.SetVelocity.return_value = 7
-    assert sdk.publish_request("rt/api/loco/request", {"api_id": 7105}) == {"code": 7}
+    if rejected == "timed":
+        assert not sdk.move(Twist(linear=[0, 0.5, 0]), duration=2.0)
+    else:
+        assert sdk.publish_request("rt/api/loco/request", {"api_id": 7105}) == {"code": 7}
+    timers.return_value.cancel.assert_not_called()
     expired()
     sdk.loco_client.StopMove.assert_called_once_with()
