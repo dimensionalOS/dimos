@@ -66,6 +66,8 @@ data/*
 MUJOCO_LOG.TXT
 /logs
 /recordings
+# Hand-eye calibration sessions from the agent and manual CLI runs
+/hand-eye-*/
 /downloads
 results/
 /assets/output/

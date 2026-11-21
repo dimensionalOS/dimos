@@ -31,6 +31,7 @@ from dimos.robot.manipulators._modeling import (
 )
 
 A1Z_DOF = 6
+A1Z_HOME_TOLERANCE_RAD = 0.05
 #: How far the G1Z gripper's jaw opens, in metres.
 A1Z_GRIPPER_OPENING_M = 0.1
 

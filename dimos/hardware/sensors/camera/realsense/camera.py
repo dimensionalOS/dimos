@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -35,9 +36,21 @@ from dimos.spec import perception
 
 class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     source_dir: str | None = "dimos/hardware/sensors/camera/realsense/rust"
-    executable: str = "result/bin/realsense_native"
-    # Own flake: librealsense2 isn't in the root shell.
-    build_command: str | None = "nix build -L path:."
+    executable: str = Field(
+        default_factory=lambda: (
+            "target/release/realsense_native"
+            if sys.platform == "darwin"
+            else "result/bin/realsense_native"
+        )
+    )
+    # The flake targets Linux; macOS links against a local SDK via pkg-config.
+    build_command: str | None = Field(
+        default_factory=lambda: (
+            "cargo build --release --locked --target-dir target"
+            if sys.platform == "darwin"
+            else "nix build -L path:."
+        )
+    )
     stdin_config: bool = True
     # The frame stem and its namespace cross to rust like any other field.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})

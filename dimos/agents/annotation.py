@@ -70,7 +70,7 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
     return result
 
 
-def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle) -> F:
+def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle, allow_reentry: bool) -> F:
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
@@ -114,13 +114,16 @@ def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle) -> F:
     wrapped.__skill__ = True  # type: ignore[attr-defined]
     wrapped.__skill_uses__ = list(uses)  # type: ignore[attr-defined]
     wrapped.__skill_lifecycle__ = lifecycle  # type: ignore[attr-defined]
+    wrapped.__skill_allow_reentry__ = allow_reentry  # type: ignore[attr-defined]
     return cast("F", wrapped)
 
 
 @overload
 def skill(func: F) -> F: ...
 @overload
-def skill(*, uses: list[str] | None = ..., lifecycle: SkillLifecycle = ...) -> Callable[[F], F]: ...
+def skill(
+    *, uses: list[str] | None = ..., lifecycle: SkillLifecycle = ..., allow_reentry: bool = ...
+) -> Callable[[F], F]: ...
 
 
 def skill(
@@ -128,6 +131,7 @@ def skill(
     *,
     uses: list[str] | None = None,
     lifecycle: SkillLifecycle = "instant",
+    allow_reentry: bool = True,
 ) -> F | Callable[[F], F]:
     """Mark a method as an agent-callable skill.
 
@@ -141,13 +145,18 @@ def skill(
     returning, or `"background"` for skills that kick off background work and
     return early -- those must use `start_tool`/`stop_tool` so the matching
     stop-tool frame can release their capabilities.
+
+    Set `allow_reentry=False` to keep an active invocation's capabilities
+    reserved when the same skill is called again.
     """
     if lifecycle not in _VALID_LIFECYCLES:
         raise ValueError(f"lifecycle must be one of {_VALID_LIFECYCLES}, got {lifecycle!r}")
     if func is not None:
-        return _make_skill(func, uses=[], lifecycle="instant")
+        return _make_skill(func, uses=[], lifecycle="instant", allow_reentry=True)
 
     def decorator(f: F) -> F:
-        return _make_skill(f, uses=list(uses or []), lifecycle=lifecycle)
+        return _make_skill(
+            f, uses=list(uses or []), lifecycle=lifecycle, allow_reentry=allow_reentry
+        )
 
     return decorator
