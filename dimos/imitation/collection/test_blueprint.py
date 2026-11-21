@@ -14,11 +14,17 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import IO
+from dimos.imitation.collection import blueprint as collection
 from dimos.imitation.collection.blueprint import (
     learning_collect_webxr_piper,
     learning_collect_webxr_xarm7,
@@ -28,6 +34,7 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModuleConfig,
 )
 from dimos.imitation.collection.recorder import CollectionModule
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.get_all_blueprints import get_by_name
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
@@ -139,6 +146,30 @@ def test_collection_rejects_camera_dimensions_that_disagree_with_saved_schema(
     parser = BlueprintConfigParser(blueprint)
     with pytest.raises(BlueprintConfigError, match=dimension):
         parser.parse([f"--RealSenseCamera.{dimension}", value], environ={})
+
+
+class DuplexCameraConfig(ModuleConfig):
+    width: int = 4
+    height: int = 2
+
+
+class DuplexCamera(Module):
+    config: DuplexCameraConfig
+    color_image: IO[Image]
+
+
+def test_collection_records_a_camera_that_publishes_on_a_bidirectional_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # as in simulation: the teleop stack brings the camera, no RealSense is added
+    monkeypatch.setattr(collection.global_config, "simulation", "mujoco")
+    arm = SimpleNamespace(joints=["joint1"])
+    teleop = autoconnect(ControlCoordinator.blueprint(hardware=[arm]), DuplexCamera.blueprint())
+
+    recorder, *_ = collection._collection_components("demo", teleop, task="Teleoperate")
+
+    profile = recorder.active_blueprints[0].kwargs["profile"]
+    assert profile.observations["camera"].shape == (2, 4, 3)
 
 
 @pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])
