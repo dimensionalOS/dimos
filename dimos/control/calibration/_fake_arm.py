@@ -97,10 +97,8 @@ class FakeArm:
                 "file": {
                     "path": "fake/calibration.json",
                     "sha256": "0" * 64,
-                    "created": "2026-11-21T00:00:00Z",
-                }
-                if self.file
-                else None,
+                    "created": "2026-11-21T00:00:00+00:00",
+                },
                 "can_float": True,
                 "deadman_timeout_s": self.deadman_s,
             }
