@@ -100,7 +100,11 @@ bp = TemporalMemory.blueprint(
 )
 ```
 
-If no VLM is passed, one is created automatically from `OPENAI_API_KEY`.
+The default OpenAI model reads `OPENAI_API_KEY`. When supplying a hosted `vlm`,
+pass `api_key` to the model or set its environment variable (`OPENAI_API_KEY`,
+`ALIBABA_API_KEY` for Qwen, or `MOONDREAM_API_KEY` for hosted Moondream).
+Temporal memory checks for a nonblank key and loads the selected SDK before
+opening or clearing the SQLite graph and JSONL log. Local models can run without a hosted API key.
 
 ## Storage
 

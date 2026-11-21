@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
-from typing import Any
+import os
+from typing import Any, ClassVar
 import warnings
 
 from dimos.core.resource import Resource
@@ -177,6 +178,21 @@ class VlModelConfig(BaseConfig):
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
+
+
+class HostedVlModelConfig(VlModelConfig):
+    api_key: str | None = None
+    api_key_env: ClassVar[str]
+
+    def validate_runtime(self) -> None:
+        """Check local prerequisites before starting a hosted vision model."""
+        self.require_api_key()
+
+    def require_api_key(self) -> str:
+        key = self.api_key or os.getenv(self.api_key_env)
+        if not key or not key.strip():
+            raise ValueError(f"Set {self.api_key_env} or supply api_key to the model")
+        return key
 
 
 class VlModel(Captioner, Resource, Configurable):
