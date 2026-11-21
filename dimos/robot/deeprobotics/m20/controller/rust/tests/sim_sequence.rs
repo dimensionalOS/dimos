@@ -339,6 +339,47 @@ fn basic_flat(mode: Mode) {
     check(mode, &run, (13.0, 17.5), 0.5, "basic_flat");
 }
 
+/// M20Controller.standup(): rl_control on 0x1001, the navigation gait as soon as the state reads RlControl (held
+/// through the stand-in, so the stand-in hands over straight to the gait's runner), then 0.5 m/s forward for 5 s.
+fn standup_rpc(mode: Mode, gait: u32, runner: &str) {
+    let script = vec![
+        step(0.0, Target::Passive, 0x1001, [0.0; 3]),
+        step(2.0, Target::RlControl, 0x1001, [0.0; 3]),
+        step(5.2, Target::RlControl, gait, [0.0; 3]),
+        step(11.0, Target::RlControl, gait, [0.25, 0.0, 0.0]),
+        step(16.0, Target::RlControl, gait, [0.0; 3]),
+        step(18.0, Target::LieDown, gait, [0.0; 3]),
+    ];
+    let Some(run) = run_script(mode, script, 25.0) else {
+        return;
+    };
+    let runners: Vec<&str> = run
+        .trace
+        .iter()
+        .filter(|s| s.state == State::RlControl)
+        .filter_map(|s| s.runner.as_deref())
+        .fold(Vec::new(), |mut v, r| {
+            if v.last() != Some(&r) {
+                v.push(r);
+            }
+            v
+        });
+    assert_eq!(runners, ["six_axis_stand", runner], "runner sequence");
+    check(mode, &run, (11.5, 16.0), 0.5, runner);
+}
+
+/// standup() on the stairs terrain (0x3003 NaviStair, the gait the vendor captures walk on).
+#[test]
+fn standup_rpc_navi_stair() {
+    standup_rpc(Mode::Lockstep, 0x3003, "basic_stair");
+}
+
+/// standup() on the flat terrain (0x3002 NaviFlat): safe only because BasicFlat never runs before it.
+#[test]
+fn standup_rpc_navi_flat() {
+    standup_rpc(Mode::Lockstep, 0x3002, "navi_flat");
+}
+
 /// NaviCharge entry (1.5 s finetune_stand_15kg stand-in), then NaviFlat walking at 0.5 m/s.
 #[test]
 fn stand_walk_lie_navi_flat() {

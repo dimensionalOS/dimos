@@ -200,6 +200,20 @@ def switch_sequence(cfg: dict[str, Any], src: str, dst: str) -> Sequence:
     return Sequence(f"switch:{src}->{dst}", src, segs)
 
 
+def standup_rpc_sequence(cfg: dict[str, Any], dst: str) -> Sequence:
+    """M20Controller.standup(): rl_control on 0x1001, dst's gait as soon as rl_control runs (held through the stand-in), then walk."""
+    segs = [
+        Segment("lying", 2.0, "passive", gait=cfg["states"]["rl_control"]["entry_fallback_gait"]),
+        Segment("stand_up", 3.2, "rl_control"),
+        Segment("stand_in", 4.0, "rl_control", gait=cfg["runners"][dst]["gaits"][0]),
+        Segment("stand", 2.0, "rl_control", track=True),
+        Segment("vx", 5.0, "rl_control", (0.5, 0, 0), track=True),
+        Segment("stop", 2.0, "rl_control", track=True),
+        Segment("lie_down", 5.0, "lie_down"),
+    ]
+    return Sequence(f"standup_rpc:{dst}", dst, segs)
+
+
 def all_sequences(cfg: dict[str, Any]) -> list[Sequence]:
     seqs = [Sequence(f"walk:{r}", r, walk_segments(cfg, r)) for r in WALKERS]
     seqs += [
@@ -212,6 +226,8 @@ def all_sequences(cfg: dict[str, Any]) -> list[Sequence]:
         gait_switch_sequence(cfg),
         switch_sequence(cfg, "basic_flat", "navi_flat"),
         switch_sequence(cfg, "basic_plat", "basic_backknee"),
+        standup_rpc_sequence(cfg, "basic_stair"),
+        standup_rpc_sequence(cfg, "navi_flat"),
     ]
     for seq in seqs:
         seq.expected_failure = EXPECTED_FAILURES.get(seq.name, "")

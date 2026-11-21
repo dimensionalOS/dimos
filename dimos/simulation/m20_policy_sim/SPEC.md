@@ -560,7 +560,9 @@ vy 0.3, wz 0.5 (6 s each) -> stop -> lie down. Values are body-frame means over 
 | stairs: height_gap | known fail | | | | | falls at 14 s |
 | dock / undock: navi_charge | pass | | | | | dock x error 0.005 m, y 0.002 m, back to start 0.002 m |
 | gait_switch (12 gait changes while walking 0.2 m/s) | pass | | | | | |
-| switch: basic_flat -> navi_flat | known fail | | | | | BasicFlat's 0.59 m sim stance is outside NaviFlat's distribution; NaviCharge / BasicStair -> NaviFlat work |
+| switch: basic_flat -> navi_flat | known fail | | | | | BasicFlat's 0.59 m sim stance is outside NaviFlat's distribution: after 0.02-4 s of BasicFlat, NaviFlat drives hr_hipy to -2.64..-2.71 rad (limit -2.583, the robot faulted at -2.688) and falls; NaviCharge / BasicStair -> NaviFlat work |
+| standup_rpc: 0x1001 entry, gait 0x3003 at once (stand-in -> basic_stair, no BasicFlat) | pass | 0.51 | 0.47 | | | M20Controller.standup(); no fault, 2.4 m in 5 s at 0.5 m/s |
+| standup_rpc: 0x1001 entry, gait 0x3002 at once (stand-in -> navi_flat, no BasicFlat) | pass | 0.47 | 0.49 | | | the same with 0.5 s of BasicFlat before 0x3002 (the vendor captures' dwell) faults at hr_hipy |
 | switch: basic_plat -> basic_backknee (walking) | known fail | | | | | standing switch works |
 
 The Rust controller passes the same lie -> stand-up -> walk 0.5 m/s -> lie-down run in real time against the sim
