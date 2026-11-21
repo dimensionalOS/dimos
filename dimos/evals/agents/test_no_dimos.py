@@ -132,12 +132,14 @@ def test_process_env_drops_dimos_paths_and_variables(
     monkeypatch.setenv("PYTHONPATH", str(tmp_path / "checkout"))
     monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "checkout" / ".venv"))
     monkeypatch.setenv("DIMOS_TRANSPORT", "lcm")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/native/lib:/opt/vendor/lib")
     paths = RunPaths.for_run(tmp_path / "run")
 
     env = PiAdapter(no_dimos=True)._build_process_env(paths)
     assert env["PATH"].split(os.pathsep) == [str(plain), "/usr/bin"]
     assert "PYTHONPATH" not in env and "VIRTUAL_ENV" not in env and "DIMOS_TRANSPORT" not in env
     assert env["DIMOS_EVAL_RUN_ID"] == str(paths.workspace)
+    assert env["LD_LIBRARY_PATH"] == "/opt/native/lib:/opt/vendor/lib"
 
     kept = PiAdapter()._build_process_env(paths)
     assert str(venv_bin) in kept["PATH"] and kept["DIMOS_TRANSPORT"] == "lcm"
