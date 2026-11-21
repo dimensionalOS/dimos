@@ -129,10 +129,12 @@ CPUAffinity=$cpus
 Nice=10
 # The memlock a fragment's system check asks for (it cannot sudo prlimit itself).
 LimitMEMLOCK=67108864
-# Raw receive-only capture for M20BodyImuSniff (it copies the vendor IMU's DDS samples off loopback); fragments inherit it.
-AmbientCapabilities=CAP_NET_RAW
-# The serial ports' group (dialout), for YesenseImu on /dev/ttyS9; fragments inherit it.
-SupplementaryGroups=dialout
+# Raw receive-only capture for M20BodyImuSniff (it copies the vendor IMU's DDS samples off loopback), and SCHED_FIFO +
+# own-core pinning for the M20 controller (it refuses to run without them); fragments inherit both.
+AmbientCapabilities=CAP_NET_RAW CAP_SYS_NICE
+LimitRTPRIO=99
+# The serial ports' group (dialout) for YesenseImu on /dev/ttyS9, and video for the Rockchip encoder/cameras
+SupplementaryGroups=dialout video
 Restart=always
 RestartSec=3
 KillSignal=SIGINT
