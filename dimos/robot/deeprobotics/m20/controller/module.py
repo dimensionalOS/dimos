@@ -125,13 +125,14 @@ class M20Controller(NativeModule):
 
     @rpc
     def start(self) -> None:
-        super().start()
         self._state = ""
         self._navigate_once_walking: int | None = None
         self._state_lock = threading.Lock()
+        # before the native process starts: it publishes the state only when it changes, so its first one would be missed
         self.register_disposable(
             Disposable(self.controller_state.subscribe(self._on_controller_state))
         )
+        super().start()
 
     def _on_controller_state(self, msg: String) -> None:
         with self._state_lock:
