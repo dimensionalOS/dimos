@@ -11,6 +11,10 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 2. **Declare every route you call** in your app's `dimos.yaml`: `uses: {"@dimos-gateway": [GET /active, POST /active/launch]}`.
 3. **Config is per launch.** The gateway saves none: keep your defaults and send all of them in each
    `POST /active/launch` `{blueprint, config: {global, modules}}`. `GET /catalog/blueprints/{name}/config` is the schema.
+   When saved and explicit module settings overlap, send the same body to `POST /active/launch-with-defaults`
+   with a separate `module_defaults` object. The explicit value wins for each CLI field. Nested model fields
+   keep untouched siblings. Dictionary and list fields are replaced as a whole. A null clears the saved field.
+   Bullet-only text is literal in ordinary fields; for a secret field it keeps the saved value.
 4. **Secrets** (keys like `*_key`, `*token*`) reach dimos through the environment, never its command line, and come
    back as `•••`.
 5. **One blueprint runs at a time.** `/active` routes answer 409 when nothing runs; `POST /active/launch` answers 409
