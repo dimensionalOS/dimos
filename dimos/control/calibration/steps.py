@@ -233,7 +233,9 @@ def gravity_poses(run: Calibration) -> str:
     )
     visited: list[np.ndarray] = []
     redone = 0
-    for pose in poses:
+    for k, pose in enumerate(poses, 1):
+        where = f"pose {k}/{len(poses)}"
+        run.progress(where)
         target = np.asarray(pose.joints_rad)
         try:
             rest = run.move(target, pose.name)
@@ -241,7 +243,8 @@ def gravity_poses(run: Calibration) -> str:
             continue
         visited.append(target)
         run.baseline[pose.name] = _rest_error(run, rest, target)
-        for joint, dither in dithers.items():
+        for j, (joint, dither) in enumerate(dithers.items(), 1):
+            run.progress(f"{where} · dither {j}/{len(dithers)} {joint}")
             measurement = _dither(run, pose.name, target, joint, dither)
             if measurement.stuck:
                 redone += 1
@@ -326,7 +329,8 @@ def float_check(run: Calibration) -> str:
         f"{config.float_trip_deg:g} deg is held again."
     )
     rows, joints, passed, visited = [], {}, 0, []
-    for joint, pose in where.items():
+    for k, (joint, pose) in enumerate(where.items(), 1):
+        run.progress(f"joint {k}/{len(where)} {joint}")
         i, target = run.arm.joint_names.index(joint), np.asarray(pose.joints_rad)
         try:
             if config.confirm_each:
@@ -447,8 +451,9 @@ def step_sweep(run: Calibration) -> str:
     )
     run.move(pose, name, ask=False)
     records: list[tuple[bool, StepEvent, Motion]] = []
-    for joint in run.arm.joint_names:
-        i = run.arm.joint_names.index(joint)
+    joints = run.arm.joint_names
+    for i, joint in enumerate(joints):
+        run.progress(f"joint {i + 1}/{len(joints)} {joint}")
         try:
             if config.confirm_each:
                 run.confirm(f"Sweep {joint}?")
@@ -458,6 +463,9 @@ def step_sweep(run: Calibration) -> str:
         baseline = {"gains": {joint: {"kp": kp0, "kd": kd0}}}
         try:
             for index, pair in enumerate(tried[joint]):
+                run.progress(
+                    f"joint {i + 1}/{len(joints)} {joint} · candidate {index + 1}/{len(tried[joint])}"
+                )
                 live = {"gains": {joint: {"kp": pair[0], "kd": pair[1]}}}
                 rest = run.stream(run.motion([pose], "converge"), patch=live)
                 kp, kd = run.gains(joint)
@@ -565,7 +573,8 @@ def _revisit(
     run: Calibration, poses: list[Pose], patch: dict[str, Any] | None
 ) -> dict[str, np.ndarray]:
     rests, visited = {}, []
-    for pose in poses:
+    for k, pose in enumerate(poses, 1):
+        run.progress(f"pose {k}/{len(poses)}")
         target = np.asarray(pose.joints_rad)
         try:
             rest = run.move(target, pose.name, patch=patch)

@@ -30,6 +30,7 @@ import itertools
 import math
 from pathlib import Path
 import threading
+import time
 from typing import Any, Literal, Protocol
 
 import numpy as np
@@ -234,7 +235,10 @@ class CalibrationStatus(BaseConfig):
         answers: The words ``answer`` takes for ``question``.
         file: The calibration file the arm runs, as the run last read it.
         summary: Each step's result, or why the run ended, once it has.
+        progress: Where the run is: the step among those that run, where the step is, and the
+            time since the run began, e.g. "step 2/8 · pose 4/15 · 03:12".
         log: The last messages, questions (``?``) and answers (``>``), oldest first.
+        logged: How many lines the log has had; ``log`` holds the last of them.
     """
 
     state: RunState
@@ -246,10 +250,16 @@ class CalibrationStatus(BaseConfig):
     answers: list[str] = Field(default_factory=list)
     file: AppliedFile | None = None
     summary: str = ""
+    progress: str = ""
     log: list[str] = Field(default_factory=list)
+    logged: int = 0
 
     def __str__(self) -> str:
-        lines = [f"{self.arm}: {self.state}" + (f" at {self.step}" if self.step else "")]
+        lines = [
+            f"{self.arm}: {self.state}"
+            + (f" at {self.step}" if self.step else "")
+            + (f" · {self.progress}" if self.progress else "")
+        ]
         lines += [f"  {row.name:<17} {row.state:<8} {row.result}" for row in self.steps]
         if self.file is not None:
             lines.append(f"runs {self.file.path}")
@@ -273,7 +283,8 @@ def _rows(steps: list[tuple[str, str | None]]) -> list[StepRow]:
 
 
 class Operator:
-    """The run's operator: the status ``show`` and ``ask`` keep, and the answer the run waits on.
+    """The run's operator: the status ``show``, ``ask`` and ``progress`` keep, and the answer the
+    run waits on.
 
     ``ask`` poses a question and returns the event ``answer`` sets; the run waits on it with
     ``Calibration.wait``, so ``abort`` and ``stop`` wake it too.
@@ -286,13 +297,36 @@ class Operator:
     def __init__(self, arm: str, steps: list[tuple[str, str | None]]) -> None:
         self._lock = threading.Lock()
         self._log: deque[str] = deque(maxlen=LOG_SIZE)
+        self._logged = 0
         self._status = CalibrationStatus(state="idle", arm=arm, steps=_rows(steps))
         self._answered = threading.Event()
+        self._running: list[str] = []
+        self._where = ""
+        self._began: float | None = None
+        self._ended: float | None = None
         self.reply = ""
 
     def status(self) -> CalibrationStatus:
         with self._lock:
-            return self._status.model_copy(update={"log": list(self._log)}, deep=True)
+            update = {"log": list(self._log), "logged": self._logged, "progress": self._progress()}
+            return self._status.model_copy(update=update, deep=True)
+
+    def _progress(self) -> str:
+        if self._began is None:
+            return ""
+        step = self._status.step
+        parts = (
+            [f"step {self._running.index(step) + 1}/{len(self._running)}"]
+            if step in self._running
+            else []
+        )
+        parts += [self._where] if self._where else []
+        seconds = int((time.monotonic() if self._ended is None else self._ended) - self._began)
+        return " · ".join([*parts, f"{seconds // 60:02d}:{seconds % 60:02d}"])
+
+    def _note(self, text: str) -> None:
+        self._log.append(text)
+        self._logged += 1
 
     def begin(self, steps: list[tuple[str, str | None]]) -> None:
         """A new run of the plan ``steps``; the log goes on."""
@@ -300,18 +334,25 @@ class Operator:
             self._status = CalibrationStatus(
                 state="running", arm=self._status.arm, steps=_rows(steps)
             )
+            self._running = [step for step, reason in steps if reason is None]
+            self._where, self._began, self._ended = "", time.monotonic(), None
 
     def show(self, text: str) -> None:
         with self._lock:
             self._status.message = text
-            self._log.append(text)
+            self._note(text)
+
+    def progress(self, text: str) -> None:
+        """Where the running step is, e.g. "pose 4/15"; the next step starts without."""
+        with self._lock:
+            self._where = text
 
     def ask(self, prompt: str, answers: list[str]) -> threading.Event:
         with self._lock:
             self._answered = threading.Event()
             self._status.state, self._status.question = "waiting", prompt
             self._status.answers = list(answers)
-            self._log.append(f"? {prompt}")
+            self._note(f"? {prompt}")
             return self._answered
 
     def answer(self, text: str) -> str:
@@ -324,7 +365,7 @@ class Operator:
                 return f"unknown answer {text!r}; answer {' or '.join(self._status.answers)}"
             self.reply = word
             self._status.state, self._status.question, self._status.answers = "running", None, []
-            self._log.append(f"> {word}")
+            self._note(f"> {word}")
             self._answered.set()
         return "ok"
 
@@ -334,11 +375,14 @@ class Operator:
             self._status.state, self._status.question, self._status.answers = "running", None, []
 
     def mark(self, step: str, state: StepState, result: str | None = None) -> None:
-        """``step`` is now ``state``, with ``result`` once it has one."""
+        """``step`` is now ``state``, with ``result`` once it has one; where it was stays only
+        once it failed or aborted."""
         with self._lock:
             row = next(row for row in self._status.steps if row.name == step)
             row.state, row.result = state, row.result if result is None else result
             self._status.step = step
+            if state not in ("failed", "aborted"):
+                self._where = ""
 
     def finish(self, state: RunState, summary: str, home: bool) -> None:
         """The run ended ``state``, as ``summary`` says; ``home``: the arm is home."""
@@ -346,7 +390,8 @@ class Operator:
         message += "" if home else f"\n{NOT_HOME}"
         with self._lock:
             self._status.state, self._status.summary, self._status.message = state, summary, message
-            self._log.append(message)
+            self._ended = time.monotonic()
+            self._note(message)
 
 
 class Calibration:
@@ -464,6 +509,9 @@ class Calibration:
 
     def show(self, text: str) -> None:
         self.operator.show(text)
+
+    def progress(self, text: str) -> None:
+        self.operator.progress(text)
 
     def ask(self, prompt: str, choices: list[str]) -> str:
         """The operator's answer, one of ``choices``; ``abort`` ends the wait."""
