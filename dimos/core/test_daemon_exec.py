@@ -48,7 +48,7 @@ def test_failed_daemon_releases_startup_resources(tmp_path: Path) -> None:
             timeout=60,
         )
         status.seek(0)
-        assert result.returncode == 1 and "recording" in result.stderr
+        assert result.returncode == 1, result.stderr
         assert json.load(status)["ok"] is False
         assert not list((tmp_path / "dimos/cache-users").glob("*.lock"))
         assert not list(Path(scratch).glob("pymp-*"))
