@@ -90,6 +90,7 @@ class Motion:
     ended: str = ""
     error: str | None = None
     stalled: bool = False
+    detail: str = ""
     t: list[float] = field(default_factory=list)
     q: list[np.ndarray] = field(default_factory=list)
     dq: list[np.ndarray] = field(default_factory=list)
@@ -165,10 +166,21 @@ class Motion:
             np.ptp(latest, axis=0) >= np.ptp(q[earlier], axis=0)
         )
         if (stopped & (spread > tolerance + quantum)).any():
+            self.detail = self._oscillating(spread, tolerance)
             return "not converging"
         if (stopped | (spread <= tolerance)).all():
             return "settled"
-        return "not converging" if elapsed >= self.max_hold_s else None
+        if elapsed >= self.max_hold_s:
+            self.detail = self._oscillating(spread, tolerance)
+            return "not converging"
+        return None
+
+    def _oscillating(self, spread: np.ndarray, tolerance: np.ndarray) -> str:
+        return ", ".join(
+            f"{name} oscillates {math.degrees(s):.2f} deg (band {math.degrees(b):.2f} deg)"
+            for name, s, b in zip(self.arm.joint_names, spread, tolerance, strict=True)
+            if s > b
+        )
 
     def _guard(self, q: np.ndarray, target: np.ndarray) -> str | None:
         lag = np.abs(q - target)
@@ -179,6 +191,7 @@ class Motion:
         ]
         if stalled:
             self.stalled = True
+            self.detail = ", ".join(stalled) + " off target"
             return (
                 f"stalled or blocked, past what the motor can push: {', '.join(stalled)} off target"
             )
