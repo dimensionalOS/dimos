@@ -490,7 +490,7 @@ Add a button and a receipt to `my-ui/page/index.html`, next to the canvas:
 <output id="receipt"></output>
 ```
 
-In the existing module script, add this immediately after `const session = connect();` so the button observes each connection. Enable it when the robot advertises the input on the current connection. Publish once per click:
+In the existing module script, add this immediately after `const session = connect({ decoders });` so the button observes each connection. Enable it when the robot advertises the input on the current connection. Publish once per click:
 
 ```js
 const send = document.querySelector("#send");
