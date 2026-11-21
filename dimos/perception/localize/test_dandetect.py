@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.memory.store.memory import MemoryStore
+from dimos.memory.type.observation import Observation
 from dimos.models.embedding.base import Embedding
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -29,7 +30,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.localize import dandetect
 from dimos.perception.localize.dandetect import DanDetector, NoSegmenter, Option
-from dimos.perception.localize.localize import embed_index
+from dimos.perception.localize.localize import IndexFrame, embed_index
 from dimos.perception.localize.rig import Rig, RigCamera
 from dimos.perception.localize.types import LocalizeParams
 from dimos.protocol.tf.tf import MultiTBuffer
@@ -171,3 +172,27 @@ def test_shifted_detector_scales_gate_localization(
         )
 
     assert len(hits) == expected_hits
+
+
+@pytest.mark.parametrize("lookup", ["frame", "depth", "backdrop"])
+def test_rig_pairs_nearest_camera_sample(two_view_rig: tuple[Rig, Any], lookup: str) -> None:
+    rig, _ = two_view_rig
+    camera = rig.cameras["cam"]
+    ts = 1.01
+    color = Image.from_numpy(np.zeros((40, 40, 3), dtype=np.uint8), frame_id="cam", ts=ts)
+    camera.color.append(color, ts=ts)
+    if lookup == "frame":
+        index = Observation(id=0, ts=ts, _data=IndexFrame(ts, "cam", 1.0))
+        assert rig.frame_at(index).ts == ts
+    elif lookup == "depth":
+        depth = Image.from_numpy(
+            np.ones((40, 40), dtype=np.uint16), format=ImageFormat.DEPTH16, ts=ts
+        )
+        camera.depth.append(depth, ts=ts)
+        selected = rig.depth_at(ts, "cam")
+        assert selected is not None and selected.ts == ts
+    else:
+        cloud = rig.backdrop(ts, "cam")
+        assert cloud is not None
+        _, colors = cloud.as_numpy()
+        assert colors is not None and len(colors) and np.all(colors == 0)

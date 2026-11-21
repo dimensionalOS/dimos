@@ -148,3 +148,19 @@ def test_replay_anchor_thread_safe(sqlite_store: SqliteStore) -> None:
 
     assert len(anchors) == n_workers
     assert all(a == anchors[0] for a in anchors)
+
+
+@pytest.mark.parametrize(
+    ("seek", "target", "tolerance", "expected"),
+    [(None, 10.1, 1, 1), (None, 12.9, 2, 3), (None, 10.5, 1, 1), (1.0, 12.0, 0, None)],
+)
+def test_closest_frame_within_clip(
+    sqlite_store: SqliteStore,
+    seek: float | None,
+    target: float,
+    tolerance: float,
+    expected: int | None,
+) -> None:
+    _populate(sqlite_store, "sensor", [11, 10, 12, 13])
+    replay = sqlite_store.replay(seek=seek, duration=None if seek is None else 0.1)
+    assert replay.streams.sensor.find_closest(target, tolerance) == expected

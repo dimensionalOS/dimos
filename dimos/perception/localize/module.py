@@ -204,7 +204,7 @@ class PerceptionLocalize(Module):
         tolerance = DEPTH_TOLERANCE if self.config.geometry == "depth" else LIDAR_TOLERANCE
         for obs in upstream:
             try:
-                paired = self._geometry_feed.at(obs.ts, tolerance).first()
+                paired = self._geometry_feed.closest(obs.ts, tolerance)
             except LookupError:
                 yield obs
                 continue

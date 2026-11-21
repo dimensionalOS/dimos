@@ -254,13 +254,13 @@ class Rig:
         if isinstance(data, Image):
             return data
         color = self.cameras[data.frame_id].color
-        image: Image = color.at(obs.ts, FRAME_TOLERANCE).first().load()
+        image: Image = color.closest(obs.ts, FRAME_TOLERANCE).load()
         return image
 
     def depth_at(self, ts: float, frame: str) -> Image | None:
         """Temporal join: a camera's aligned depth frame for one of its colour timestamps."""
         try:
-            depth: Image = self.cameras[frame].depth.at(ts, DEPTH_TOLERANCE).first().load()
+            depth: Image = self.cameras[frame].depth.closest(ts, DEPTH_TOLERANCE).load()
         except LookupError:
             return None
         return depth
@@ -327,7 +327,7 @@ class Rig:
         if depth is None:
             return None
         try:
-            color = self.cameras[frame].color.at(ts, 0.1).first().load()
+            color = self.cameras[frame].color.closest(ts, 0.1).load()
         except LookupError:
             return None
         transform = self.world_to_optical(ts, frame)
