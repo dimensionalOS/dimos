@@ -225,8 +225,8 @@ def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
     config = RustRecorderConfig()
 
     assert config.source_dir == "dimos/experimental/memory/rust"
-    assert config.build_command == "nix build -L path:. --out-link result-registry-v1"
-    assert config.executable == "result-registry-v1/bin/dimos-memory-recorder"
+    assert config.build_command == "nix build -L path:."
+    assert config.executable == "result/bin/dimos-memory-recorder"
 
 
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:

@@ -345,9 +345,7 @@ def test_preparation_failure_does_not_create_artifact(tmp_path, mocker):
 
 
 def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
-    executable = (
-        tmp_path / "dimos/experimental/memory/rust/result-registry-v1/bin/dimos-memory-recorder"
-    )
+    executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
     executable.parent.mkdir(parents=True)
     executable.touch()
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
@@ -357,12 +355,7 @@ def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
 
 
 def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
-    legacy = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
-    legacy.parent.mkdir(parents=True)
-    legacy.touch()
-    executable = (
-        tmp_path / "dimos/experimental/memory/rust/result-registry-v1/bin/dimos-memory-recorder"
-    )
+    executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     process = mocker.Mock()
     process.stdout = []
@@ -377,4 +370,4 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", side_effect=build)
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
-    assert popen.call_args.args[0] == "nix build -L path:. --out-link result-registry-v1"
+    assert popen.call_args.args[0] == "nix build -L path:."

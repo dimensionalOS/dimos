@@ -118,16 +118,10 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Configuration for :class:`RustRecorder`.
+    """Configuration for the native memory recorder and its input streams."""
 
-    Python owns artifact lifecycle; the native writer registers populated streams.
-    The native process receives only ``store``, ``encoding_threads``, and the
-    internally resolved ``streams`` list over stdin.
-    """
-
-    # Older managed binaries rely on Python to register streams before launch.
-    executable: str = "result-registry-v1/bin/dimos-memory-recorder"
-    build_command: str | None = "nix build -L path:. --out-link result-registry-v1"
+    executable: str = "result/bin/dimos-memory-recorder"
+    build_command: str | None = "nix build -L path:."
     source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
 

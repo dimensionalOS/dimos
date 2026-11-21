@@ -27,13 +27,13 @@ pub struct SqliteRecordingStore {
 
 impl SqliteRecordingStore {
     pub fn open(path: &str, streams: &[StreamConfig]) -> Result<Self> {
+        for stream in streams {
+            validate_identifier(&stream.name)?;
+        }
         let connection =
             Connection::open(path).with_context(|| format!("failed to open {path}"))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
-        for stream in streams {
-            validate_identifier(&stream.name)?;
-        }
         // Keep registry DDL compatible with dimos/memory/registry.py::RegistryStore.
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS _streams (name TEXT PRIMARY KEY, config TEXT NOT NULL)",
@@ -267,6 +267,29 @@ mod tests {
             )
             .unwrap();
         assert_eq!(actual, original);
+    }
+
+    #[test]
+    fn invalid_selected_name_leaves_the_destination_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recording.db");
+        let invalid = stream("bad-name");
+        let open =
+            || SqliteRecordingStore::open(path.to_str().unwrap(), std::slice::from_ref(&invalid));
+        assert!(open().is_err());
+        assert!(!path.exists());
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute("CREATE TABLE existing (value INTEGER)", [])
+            .unwrap();
+        drop(connection);
+        assert!(open().is_err());
+        let connection = Connection::open(&path).unwrap();
+        let mode: String = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "delete");
     }
 
     #[test]
