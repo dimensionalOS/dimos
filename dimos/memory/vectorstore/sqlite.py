@@ -19,6 +19,7 @@ import sqlite3
 import threading
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from dimos.memory.utils.sqlite import conn_lock, open_disposable_sqlite_connection
@@ -94,6 +95,25 @@ class SqliteVectorStore(VectorStore):
                 f'INSERT OR REPLACE INTO "{stream_name}_vec" (rowid, embedding) VALUES (?, ?)',
                 (key, json.dumps(vec)),
             )
+
+    def get(self, stream_name: str, key: int) -> Embedding | None:
+        validate_identifier(stream_name)
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    f'SELECT embedding FROM "{stream_name}_vec" WHERE rowid = ?', (key,)
+                ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc):
+                return None
+            raise
+        if row is None:
+            return None
+
+        # Keep embedding model dependencies out of reads of unindexed recordings.
+        from dimos.models.embedding.base import Embedding
+
+        return Embedding(vector=np.frombuffer(row[0], dtype=np.float32))
 
     # vec0 virtual tables require an explicit k in the MATCH clause; apply a
     # default cap when the caller did not specify one.

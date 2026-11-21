@@ -30,6 +30,7 @@ from dimos.memory.vectorstore.base import VectorStore
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+    from dimos.models.embedding.base import Embedding
 
 pytestmark = pytest.mark.self_hosted
 
@@ -305,13 +306,13 @@ class SpyBlobStore(BlobStore):
 
 
 class SpyVectorStore(VectorStore):
-    """VectorStore that records all calls for verification."""
+    """Index implementing the original put/search/delete interface."""
 
     def __init__(self) -> None:
         super().__init__()
         self.puts: list[tuple[str, int]] = []
         self.searches: list[tuple[str, int]] = []
-        self.vectors: dict[str, dict[int, Any]] = {}
+        self.vectors: dict[str, dict[int, Embedding]] = {}
 
     def start(self) -> None:
         pass
@@ -319,7 +320,7 @@ class SpyVectorStore(VectorStore):
     def stop(self) -> None:
         pass
 
-    def put(self, stream: str, key: int, embedding: Any) -> None:
+    def put(self, stream: str, key: int, embedding: Embedding) -> None:
         self.puts.append((stream, key))
         self.vectors.setdefault(stream, {})[key] = embedding
 
@@ -397,11 +398,13 @@ class TestStoreDelegation:
 
         store, _blob_spy, vec_spy = spy_session
         s = store.stream("vecs", str)
-        s.append("a", ts=1.0, embedding=_emb([1, 0, 0]))
+        first = s.append("a", ts=1.0, embedding=_emb([1, 0, 0]))
         s.append("b", ts=2.0, embedding=_emb([0, 1, 0]))
         s.append("c", ts=3.0)  # no embedding
 
         assert len(vec_spy.puts) == 2
+        with pytest.raises(NotImplementedError, match="lookup by observation ID"):
+            vec_spy.get("vecs", first.id)
 
     def test_search_calls_vector_search(self, spy_session) -> None:
         import numpy as np

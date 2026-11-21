@@ -14,10 +14,8 @@
 
 """Copy a memory sqlite recording into a new file, renaming streams.
 
-Iterates each source stream and re-appends every observation under its new
-name in a fresh destination db. Slower than in-place ``ALTER TABLE`` but
-forces a full re-read of every row, so any pre-existing corruption surfaces
-immediately. Streams not mentioned in ``--rename`` are copied verbatim.
+Reads each selected row and checks its payload while copying the original
+encoded bytes to the new database. Unmapped streams retain their names.
 """
 
 from __future__ import annotations
@@ -31,6 +29,7 @@ from typing import Any
 
 import typer
 
+from dimos.mapping.cli.recording_copy import copy_recorded_stream
 from dimos.memory.codecs.base import resolve_payload_type
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
@@ -160,12 +159,8 @@ def main(
             for src_name, dst_name in kept.items():
                 ptype = payload_types[src_name]
                 src_s: Stream[Any] = window.apply(src.stream(src_name, ptype))
-                dst_s: Stream[Any] = dst.stream(dst_name, ptype)
-                total = src_s.count()
-                cb = progress(total, f"{dst_name:>16s}")
-                for obs in src_s:
-                    dst_s.append(obs.data, ts=obs.ts, pose=obs.pose, tags=obs.tags or None)
-                    cb(obs)
+                cb = progress(src_s.count(), f"{dst_name:>16s}")
+                copy_recorded_stream(src, src_name, dst, dst_name, src_s.tap(cb), verify=True)
 
     print(f"\nwrote {out}")
 

@@ -34,12 +34,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
+from dimos.mapping.cli.recording_copy import copy_recorded_stream
 from dimos.memory.utils.time_window import RecordingWindow
 
 # Heavy dimos imports are deferred (TYPE_CHECKING / inside functions) so that
 # `dimos map --help` stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
-    from dimos.memory.backend import Backend
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -130,13 +130,6 @@ def pose_fill_db(
         # Validate the full selection before creating a destination that would block retries.
         with SqliteStore(path=str(dest_path)) as dest:
             for name in names:
-                src_b = cast("Backend[Any]", src.stream(name)._source)
-                dest_b = cast(
-                    "Backend[Any]", dest.stream(name, src_b.data_type, codec=src_b.codec)._source
-                )
-
-                # Re-posed observations for the target (ids preserved from source, so
-                # the source blob still resolves); plain metadata for everything else.
                 if name == target:
                     rows: Iterable[Observation[Any]] = pose_fill(
                         window.apply(src.stream(name)).order_by("ts"),
@@ -146,23 +139,7 @@ def pose_fill_db(
                 else:
                     rows = window.apply(src.stream(name)).order_by("ts")
 
-                scalar = src_b.data_type in (int, float)
-                n = 0
-                for obs in rows:
-                    blob = (
-                        None
-                        if scalar or src_b.blob_store is None
-                        else src_b.blob_store.get(name, obs.id)
-                    )
-                    row_id = dest_b.metadata_store.insert(obs)
-                    if blob is not None:
-                        assert dest_b.blob_store is not None
-                        dest_b.blob_store.put(name, row_id, blob)
-                    n += 1
-                commit = getattr(dest_b.metadata_store, "commit", None)
-                if commit is not None:
-                    commit()
-                written[name] = n
+                written[name] = copy_recorded_stream(src, name, dest, name, rows)
 
     return written
 

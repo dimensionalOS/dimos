@@ -156,3 +156,35 @@ def test_pose_fill_db_shares_window_across_offset_streams(
     with SqliteStore(path=str(destination), must_exist=True) as store:
         assert [obs.ts for obs in store.stream("lidar").order_by("ts")] == [101.0, 101.25]
         assert [obs.ts for obs in store.stream("aux").order_by("ts")] == [101.0, 101.25]
+
+
+def test_pose_fill_db_preserves_inline_value(tmp_path):
+    source = tmp_path / "source.db"
+    destination = tmp_path / "posed.db"
+    with SqliteStore(path=source) as store:
+        store.stream("reading", float).append(3.75, ts=1.0)
+        store.stream("odom", Transform).append(Transform(translation=Vector3(1, 2, 3)), ts=1.0)
+
+    pose_fill_db(source, destination, target="reading")
+
+    with SqliteStore(path=destination, must_exist=True) as store:
+        row = store.stream("reading").first()
+        assert (row.data, row.pose_tuple) == (3.75, (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0))
+
+
+def test_pose_fill_preserves_mixed_payloads_at_new_ids(tmp_path: Path) -> None:
+    source, destination = tmp_path / "source.db", tmp_path / "posed.db"
+    with SqliteStore(path=source) as store:
+        stream = store.stream("mixed", object)
+        odom = store.stream("odom", Transform)
+        for ts, value in enumerate(["skipped", 0, "copied"]):
+            stream.append(value, ts=float(ts))
+            odom.append(Transform(), ts=float(ts))
+
+    pose_fill_db(source, destination, target="mixed", streams=["mixed"], seek=1.0)
+
+    with SqliteStore(path=destination, must_exist=True) as store:
+        assert [(row.id, row.data) for row in store.stream("mixed").order_by("ts")] == [
+            (1, 0),
+            (2, "copied"),
+        ]

@@ -48,6 +48,9 @@ class MemoryVectorStore(VectorStore):
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
         self._vectors.setdefault(stream_name, {})[key] = embedding
 
+    def get(self, stream_name: str, key: int) -> Embedding | None:
+        return self._vectors.get(stream_name, {}).get(key)
+
     def search(self, stream_name: str, query: Embedding, k: int | None) -> list[tuple[int, float]]:
         vectors = self._vectors.get(stream_name, {})
         if not vectors:
