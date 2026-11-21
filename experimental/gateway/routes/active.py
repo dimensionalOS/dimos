@@ -79,6 +79,8 @@ def check_known(state: State, name: str) -> None:
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
     await asyncio.to_thread(check_known, state, name)
     launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
+    # the run reads its code now, so the graph and config read it again too
+    state.cache.forget_name(name)
     state.bus.launch(launch)
     return launch
 
@@ -133,6 +135,8 @@ async def relaunch(state: GatewayState) -> dict[str, Any]:
     launch = await asyncio.to_thread(
         launches.relaunch, state.dimos_dir, partial(check_known, state)
     )
+    if launch.get("blueprint"):
+        state.cache.forget_name(str(launch["blueprint"]))
     state.bus.launch(launch)
     return launch
 
