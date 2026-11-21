@@ -21,17 +21,29 @@ dimos run dual-openyam-calibrate --calibrationmodule.arm right \
     --dualopenyamconnection.right-can-port can1
 ```
 
-In another, open `dimos shell` and drive it:
+In another, open the shell and walk the calibration:
 
-```python
-cal = app.CalibrationModule
-cal.run()                # "started": check, then every step
-print(cal.status())      # the plan, the latest message, and the question with its answers
-cal.answer("go")         # answer the question, then print(cal.status()) again
+```bash
+dimos shell
+```
+
+```python skip
+cal.run()                # check, then every step; answer each question at the > prompt
+```
+
+The shell says `cal: calibration of dual_openyam/right; cal.run() to start` when the run has a calibration. `cal.run()` prints each message as it comes. At each question it prints where the run is, the question and its answers, then waits at `> `: Enter gives the first answer, or type another. It returns once the run is done, failed or aborted. Ctrl-C leaves it and the run goes on, the arm held at its question: `cal.run()` follows it again, `cal.abort()` stops it.
+
+By hand, the same:
+
+```python skip
+print(cal.status())      # where the run is, the plan, the latest message, and the question with its answers
+cal.answer("go")         # answer the question
 cal.abort()              # the arm stops and holds where it is; you are asked whether to go home
 ```
 
-Stop the run with Ctrl-C and start it again with `--calibrationmodule.arm left` for the left arm. `cal.run(["gravity_poses", "gravity_fit"])` runs only those steps after check. The other robots take `--openyamconnection.can-port`, `--metalconnection.can-port`, `--b601dmconnection.can-port`, or `--dualmetalconnection.` / `--openarmconnection.` with `left-can-port` and `right-can-port`.
+`print(cal.status())` starts with where the run is, e.g. `dual_openyam/right: waiting at gravity_poses · step 2/8 · pose 4/12 · 03:12`: the step among those that run, where the step is, and the time since the run began.
+
+Stop `dimos run` with Ctrl-C in its terminal and start it again with `--calibrationmodule.arm left` for the left arm. `cal.run(["gravity_poses", "gravity_fit"])` runs only those steps after check. The other robots take `--openyamconnection.can-port`, `--metalconnection.can-port`, `--b601dmconnection.can-port`, or `--dualmetalconnection.` / `--openarmconnection.` with `left-can-port` and `right-can-port`.
 
 | Answer | When |
 |--------|------|
@@ -40,7 +52,7 @@ Stop the run with Ctrl-C and start it again with `--calibrationmodule.arm left` 
 | `keep`, `save` | Keep what the arm runs, or save a fit that is worse over all |
 | `home`, `stay` | After a failure or an abort: go home, or hold where it is |
 
-`run`, `answer` and `abort` return at once: `"started"` or `"ok"`, or why not. The calibration asks before every move; with `--calibrationmodule.confirm-each false` it asks only at the start of each step. A question waits until it is answered, and the arm holds meanwhile. `cal.status().log` keeps the last 50 messages, questions and answers. If the arm is not home when the calibration ends, the last message says so: support it before you stop `dimos run`, because stopping turns the motors off.
+`cal.answer` and `cal.abort` return at once: `"ok"` or `"aborting"`, or why not. The calibration asks before every move; with `--calibrationmodule.confirm-each false` it asks only at the start of each step. A question waits until it is answered, and the arm holds meanwhile. `cal.status().log` keeps the last 50 messages, questions and answers. If the arm is not home when the calibration ends, the last message says so: support it before you stop `dimos run`, because stopping turns the motors off.
 
 ## What each step does
 
@@ -61,7 +73,7 @@ The calibration moves the arm only by streaming targets to its connection, one p
 
 The file is `~/.local/state/dimos/arms/<arm id>/calibration.json`, for example `~/.local/state/dimos/arms/dual_openyam/right/calibration.json`. The file it replaces goes to `history/` next to it. `cat` it to see the gains and link masses.
 
-```python
+```python skip
 cal.bake("/path/to/in.urdf")        # "wrote .../dual_openyam/calibrated.urdf: baked left, right"
 cal.bake("/path/to/in.urdf", "/path/to/out.urdf")
 ```
