@@ -29,7 +29,7 @@ from typing import (
 from pydantic import BaseModel
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.disposable import CompositeDisposable, Disposable
+from reactivex.disposable import CompositeDisposable, Disposable, SerialDisposable
 from reactivex.scheduler import TimeoutScheduler
 from reactivex.subject import Subject
 
@@ -351,6 +351,8 @@ class In(Stream[T], ObservableMixin[T]):
     ) -> None:
         super().__init__(type, name, owner, transport)
         self._local: Subject[T] = Subject()
+        # callbacks subscribed while there was no transport, each with what unsubscribes it
+        self._early: list[tuple[Callable[[T], Any], SerialDisposable]] = []
         self._connections = CompositeDisposable()
         self._forward_lock = threading.RLock()
 
@@ -372,12 +374,18 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport and self.connection:
-            self._transport = self.connection.transport
+            self.transport = self.connection.transport
         return self._transport
 
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
-        self._transport = value
+        with self._forward_lock:
+            self._transport = value
+            early, self._early = (self._early, []) if value is not None else ([], self._early)
+        # A callback subscribed before there was a transport now hears what it delivers.
+        for cb, subscription in early:
+            if not subscription.is_disposed:
+                subscription.disposable = Disposable(value.subscribe(cb, self))
 
     def connect(self, value: Out[T]) -> None:
         """Forward a local output until this input stops."""
@@ -405,9 +413,13 @@ class In(Stream[T], ObservableMixin[T]):
 
     # returns unsubscribe function
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
-        if (transport := self.transport) is not None:
-            return transport.subscribe(cb, self)
-        return self._local.subscribe(cb).dispose
+        with self._forward_lock:
+            if (transport := self.transport) is None:
+                subscription = SerialDisposable()
+                subscription.disposable = self._local.subscribe(cb)
+                self._early.append((cb, subscription))
+                return subscription.dispose
+        return transport.subscribe(cb, self)
 
 
 # representation of input outside of module

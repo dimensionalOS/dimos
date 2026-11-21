@@ -474,7 +474,7 @@ Most of the time this is a bad idea, but you can peak behind blueprints, autocon
 
 `input.connect(output)` wires two modules in one process. You can subscribe before or after connecting. With no transport, the callback runs on the publisher's thread and receives the same message object. Stopping the input disconnects its outputs.
 
-To receive over a **transport** such as LCM or Zenoh, assign the input's transport before subscribing. Connected outputs also publish to the input's current transport. The modules in the following example can run as separate scripts.
+To receive over a **transport** such as LCM or Zenoh, assign the input's transport. A callback subscribed before that starts receiving from the transport once it is assigned. Connected outputs also publish to the input's current transport. The modules in the following example can run as separate scripts.
 
 `camera_script.py`:
 

@@ -344,6 +344,27 @@ def test_connected_output_forwards_to_input_transport(configure_first: bool) -> 
     transport.publish.assert_called_once_with(1)
 
 
+@pytest.mark.parametrize("through_module", [False, True])
+def test_a_callback_subscribed_before_the_transport_hears_what_it_delivers(
+    through_module: bool,
+) -> None:
+    sink: In[int] = In(int, "numbers")
+    transport = Mock(spec=Transport)
+    received: list[int] = []
+    unsubscribe = sink.subscribe(received.append)
+
+    if through_module:
+        Module.set_transport(SimpleNamespace(numbers=sink), "numbers", transport)
+    else:
+        sink.transport = transport
+
+    (deliver, stream), _ = transport.subscribe.call_args
+    deliver(1)
+    assert received == [1] and stream is sink
+    unsubscribe()
+    transport.subscribe.return_value.assert_called_once_with()
+
+
 def test_stopping_input_during_output_publish_skips_pending_forward() -> None:
     source: Out[int] = Out(int, "numbers")
     transport = Mock(spec=Transport)
