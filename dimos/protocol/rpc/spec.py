@@ -38,6 +38,7 @@ DEFAULT_RPC_TIMEOUTS: MappingProxyType[str, float] = MappingProxyType(
     {
         "build": 86400.0,  # 24h — docker builds, LFS downloads, etc.
         "start": 1200.0,
+        "infer": 86400.0,  # an agent turn blocks until it ends
     }
 )
 

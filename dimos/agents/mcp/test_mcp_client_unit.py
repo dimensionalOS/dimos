@@ -511,3 +511,56 @@ def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
     assert isinstance(result, ToolMessage)
     assert (result.tool_call_id, result.status) == ("c1", "error")
     assert note.content == "This turn failed with ConnectionError: MCP server unreachable"
+
+
+class _AnswersGraph:
+    """Fake agent graph that streams `turn` for every message, then "turn N" once it runs out."""
+
+    def __init__(self, *turn: BaseMessage) -> None:
+        self.turn = turn
+        self.turns = 0
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        self.turns += 1
+        for message in self.turn or (AIMessage(content=f"turn {self.turns}"),):
+            yield {"model": {"messages": [message]}}
+
+
+@pytest.fixture
+def running_agent(
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> Agent:
+    """An agent whose message loop runs, as it does once its blueprint has started."""
+    monkeypatch.setattr(mcp_client, "_thread", agent_thread)
+    return mcp_client
+
+
+def test_infer_returns_the_final_answer_of_its_turn(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _AnswersGraph(
+        AIMessage(content="", tool_calls=[_call("add", "c1", x=1, y=2)]),
+        ToolMessage(content="3", tool_call_id="c1"),
+        AIMessage(content=[{"type": "text", "text": "It is "}, {"type": "text", "text": "3."}]),
+    )
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
+
+    assert running_agent.infer(HumanMessage("what is 1 + 2?")).text == "It is 3."
+    assert running_agent._history[0].content == "what is 1 + 2?"
+
+
+def test_infer_raises_when_its_turn_fails(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _FailsOnceGraph([]))
+
+    with pytest.raises(RuntimeError, match="TimeoutError: LLM API timed out"):
+        running_agent.infer(HumanMessage("first"))
+    assert running_agent.infer(HumanMessage("second")).text == "done"
+
+
+def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
+    with pytest.raises(RuntimeError, match="not running"):
+        mcp_client.infer(HumanMessage("too early"))

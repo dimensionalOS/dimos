@@ -98,7 +98,7 @@ class AgentConfig(ModuleConfig):
     trace_dir: Path | None = None
 
 
-class Agent(BaseAgent):
+class Agent(BaseAgent[HumanMessage, AIMessage]):
     config: AgentConfig
 
     # Injected when the blueprint has an McpServer.
@@ -337,6 +337,18 @@ class Agent(BaseAgent):
         self._message_queue.put(message)
 
     @rpc
+    def infer(self, x: HumanMessage) -> AIMessage:
+        """Send x like a message on human_input and return the answer once the queue is empty."""
+        if not self._thread.is_alive():
+            raise RuntimeError("Agent is not running; it starts with the blueprint")
+        self._message_queue.put(x)
+        self._message_queue.join()
+        answer = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
+        if TURN_FAILED_KEY in answer.additional_kwargs:
+            raise RuntimeError(str(answer.text))
+        return answer
+
+    @rpc
     def dispatch_continuation(
         self, continuation: dict[str, Any], continuation_context: dict[str, Any]
     ) -> None:
@@ -402,10 +414,13 @@ class Agent(BaseAgent):
             except Empty:
                 continue
 
-            with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+            try:
+                with self._lock:
+                    if not self._state_graph:
+                        raise ValueError("No state graph initialized")
+                    self._process_message(self._state_graph, message)
+            finally:
+                self._message_queue.task_done()
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
