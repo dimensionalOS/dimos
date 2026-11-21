@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,71 +12,66 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 ControlCoordinator: G1WholeBodyConnection Module + servo task via LCM bridge.
-
-Mirrors `unitree_go2_coordinator.py`. Run with `ROBOT_INTERFACE=<nic> dimos run unitree-g1-coordinator`.
-"""
+"""G1 canonical joint connection and bounded trajectory coordinator."""
 
 from __future__ import annotations
 
 import os
 
-from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
+from dimos.control.connection.connection_module import ConnectionConfig as JointConnectionConfig
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
-
-_g1_joints = make_humanoid_joints("g1")
+from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
+from dimos.robot.unitree.g1.wholebody_connection import (
+    G1WholeBodyConnection,
+    G1WholeBodyConnectionConfig,
+)
 
 
 class _G1Coordinator(ControlCoordinator):
-    g1_joints: Out[JointState]
+    g1_position_command: Out[JointState]
+    g1_joint_state: In[JointState]
+    g1_imu: In[Imu]
 
 
-# ROBOT_INTERFACE pins cyclonedds to a NIC; required on multi-NIC hosts.
+_declaration = G1WholeBodyConnectionConfig(
+    release_sport_mode=True, network_interface=os.getenv("ROBOT_INTERFACE", "")
+)
 unitree_g1_coordinator = (
     autoconnect(
-        G1WholeBodyConnection.blueprint(
-            release_sport_mode=True,
-            network_interface=os.getenv("ROBOT_INTERFACE", ""),
-        ),
+        G1WholeBodyConnection.blueprint(**_declaration.model_dump()),
         _G1Coordinator.blueprint(
             instance_name="ControlCoordinator",
-            publish_robot_joint_states=True,
             tick_rate=500,
-            hardware=[
-                HardwareComponent(
-                    hardware_id="g1",
-                    hardware_type=HardwareType.WHOLE_BODY,
-                    joints=_g1_joints,
-                    adapter_type="transport_lcm",
-                ),
+            connections=[
+                JointConnectionConfig(
+                    **_declaration.model_dump(include=set(JointConnectionConfig.model_fields))
+                )
             ],
             tasks=[
                 joint_trajectory_task(
-                    _g1_joints,
-                    velocity_limits={name: 1.0 for name in _g1_joints},
-                ),
+                    G1_JOINT_NAMES, velocity_limits={name: 1.0 for name in G1_JOINT_NAMES}
+                )
             ],
         ),
     )
-    # No remappings: Module stream names (motor_states/imu/motor_command) don't
-    # collide with ControlCoordinator's (joint_state/joint_command/...).
+    .remappings(
+        [
+            (G1WholeBodyConnection, "position_command", "g1_position_command"),
+            (_G1Coordinator, "g1_joint_state", "joint_state"),
+            (_G1Coordinator, "g1_imu", "imu"),
+        ]
+    )
     .transports(
         {
-            ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-            ("imu", Imu): LCMTransport("/g1/imu", Imu),
-            ("motor_command", MotorCommandArray): LCMTransport(
-                "/g1/motor_command", MotorCommandArray
-            ),
+            ("joint_state", JointState): LCMTransport("/g1/joints", JointState),
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-            ("g1_joints", JointState): LCMTransport("/g1/joints", JointState),
+            ("imu", Imu): LCMTransport("/g1/imu", Imu),
         }
     )
 )
