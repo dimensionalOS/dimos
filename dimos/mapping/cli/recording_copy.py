@@ -37,12 +37,16 @@ def new_recording(path: str | Path) -> Iterator[SqliteStore]:
     """
     from dimos.memory.store.sqlite import SqliteStore
 
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Claim the filename before opening SQLite so only its creator can roll back.
+    destination.touch(mode=0o644, exist_ok=False)
     try:
-        with SqliteStore(path=str(path)) as store:
+        with SqliteStore(path=str(destination)) as store:
             yield store
     except BaseException:
-        for suffix in ("", "-wal", "-shm"):
-            Path(f"{path}{suffix}").unlink(missing_ok=True)
+        for suffix in ("-wal", "-shm", ""):
+            Path(f"{destination}{suffix}").unlink(missing_ok=True)
         raise
 
 

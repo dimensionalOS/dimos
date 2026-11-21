@@ -21,6 +21,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from dimos.mapping.cli.recording_copy import new_recording
 from dimos.mapping.cli.rename import main
 from dimos.memory.blobstore.file import FileBlobStore
 from dimos.memory.blobstore.sqlite import SqliteBlobStore
@@ -143,3 +144,13 @@ def test_failed_rename_leaves_no_partial_copy(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert list(tmp_path.glob("copy.db*")) == []
+
+
+def test_second_copy_cannot_open_an_owned_destination(tmp_path: Path) -> None:
+    path = tmp_path / "nested" / "copy.db"
+    with new_recording(path) as first:
+        first.stream("samples", int).append(7, ts=1.0)
+        with pytest.raises(FileExistsError):
+            with new_recording(path):
+                pass
+        assert first.stream("samples").first().data == 7
