@@ -1218,6 +1218,33 @@ def test_restart_keeps_run_when_wrapper_reenters_relative_directory(launcher, tm
             original.terminate()
 
 
+@pytest.mark.parametrize(
+    ("setup", "replaced"),
+    [("", True), ("sys.argv = ['dimos', *sys.argv[1:]]", False)],
+    ids=["launcher", "launcher-replaces-argv"],
+)
+def test_daemon_restart_from_a_python_launcher(launcher, tmp_path, setup, replaced):
+    script, env = launcher(setup)
+    started = subprocess.run(
+        [sys.executable, script.name, "--viewer", "none", "run", "demo-mcp-stress-test", "-d"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=60,
+    )
+    assert started.returncode == 0, started.stderr.decode()
+    (daemon,) = run_registry.list_runs()
+
+    result = _restart(env, tmp_path)
+
+    # Restart cannot rebuild a command the launcher replaced, so that daemon stays.
+    assert result.returncode == int(not replaced), result.stderr.decode()
+    assert lifecycle.is_pid_alive(daemon.pid) is not replaced
+    (running,) = run_registry.list_runs()
+    assert (running.pid != daemon.pid) is replaced
+
+
 def test_restart_keeps_wrapper_with_ambiguous_relative_source(restart_entry, tmp_path, monkeypatch):
     script = tmp_path / "wrapper"
     script.touch()

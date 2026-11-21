@@ -109,9 +109,8 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     # Anything buffered would otherwise be flushed by both processes.
     sys.stdout.flush()
     sys.stderr.flush()
-    exec_argv, _ = python_command()
-    if not exec_argv:
-        raise OSError("Cannot identify the original Python command for daemon startup")
+    # A launcher that replaced sys.argv starts its daemon the way Python started it.
+    exec_argv = python_command()[0] or [sys.executable, *sys.orig_argv[1:]]
     read_fd, write_fd = os.pipe()
     os.set_inheritable(write_fd, True)
     exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}

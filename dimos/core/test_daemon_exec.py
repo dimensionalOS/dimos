@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from types import ModuleType
 from unittest import mock
 
 import pytest
@@ -45,32 +46,44 @@ def test_reexecuted_daemon_consumes_status_pipe_once(
 
 
 @pytest.mark.parametrize(
-    "original_argv",
+    ("original_argv", "program"),
     [
-        [
-            "python",
-            "-u",
-            "-m",
-            "dimos.cli.dimos",
-            "--replay",
-            "run",
-            "unitree-go2-basic",
-            "--daemon",
-        ],
-        [
-            "python",
-            "-X",
-            "dev",
+        (
+            [
+                "python",
+                "-u",
+                "-m",
+                "dimos.cli.dimos",
+                "--replay",
+                "run",
+                "unitree-go2-basic",
+                "--daemon",
+            ],
+            "/site-packages/dimos/cli/dimos.py",
+        ),
+        (
+            [
+                "python",
+                "-X",
+                "dev",
+                "/workspace with spaces/bin/dimos",
+                "run",
+                "demo-mcp-stress-test",
+                "--daemon",
+            ],
             "/workspace with spaces/bin/dimos",
-            "run",
-            "demo-mcp-stress-test",
-            "--daemon",
-        ],
+        ),
+        # A launcher script that replaces sys.argv before it calls the CLI.
+        (["python", "launch.py"], "dimos"),
     ],
 )
 def test_grandchild_reexec_preserves_interpreter_and_arguments(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, original_argv: list[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, original_argv: list[str], program: str
 ) -> None:
+    launcher = ModuleType("__main__")
+    launcher.__file__ = str(tmp_path / "launch.py")
+    monkeypatch.setitem(sys.modules, "__main__", launcher)
+    monkeypatch.setattr(sys, "argv", [program, "run", "demo-mcp-stress-test", "--daemon"])
     monkeypatch.setattr(sys, "orig_argv", original_argv)
     monkeypatch.delenv("_DIMOS_DAEMON_STATUS_FD", raising=False)
     monkeypatch.setenv("DIMOS_RUN_ID", "launcher-run")

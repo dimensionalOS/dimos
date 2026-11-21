@@ -272,6 +272,8 @@ an older version, restart gets the missing context from the live process.
 If the directory was replaced, the source or interpreter is unavailable, a Python
 module no longer resolves to its original file, or the
 run came from Python standard input or `-c`, restart leaves the instance running.
+A launcher script that replaces `sys.argv` can start a daemon, but restart cannot
+rebuild its command and leaves that instance running.
 The replacement must reach `dimos run` in the original project before it stops
 the previous instance. A wrapper that fails or enters a different directory leaves
 the previous instance running. These checks also apply to `--force`.
