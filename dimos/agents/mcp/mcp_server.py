@@ -33,6 +33,7 @@ import uvicorn
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.arguments import require_tool_arguments
 from dimos.agents.mcp.constants import DEFAULT_MCP_PORT, mcp_url
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
@@ -124,7 +125,10 @@ async def _handle_tools_call(
     req_id: Any, params: dict[str, Any], rpc_calls: dict[str, Any]
 ) -> dict[str, Any]:
     name = params.get("name", "")
-    args: dict[str, Any] = params.get("arguments") or {}
+    try:
+        args = require_tool_arguments(params.get("arguments", {}))
+    except ValueError as error:
+        return _jsonrpc_error(req_id, -32602, str(error))
     meta = params.get("_meta") or {}
     progress_token = meta.get("progressToken")
 

@@ -37,6 +37,7 @@ import uuid
 
 import requests
 
+from dimos.agents.mcp.arguments import require_tool_arguments
 from dimos.agents.mcp.constants import DEFAULT_MCP_TIMEOUT, DEFAULT_MCP_URL
 from dimos.utils.logging_config import setup_logger
 
@@ -92,7 +93,8 @@ class McpAdapter:
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call a tool by name and return the result dict."""
-        return self._unwrap(self.call("tools/call", {"name": name, "arguments": arguments or {}}))
+        args = {} if arguments is None else require_tool_arguments(arguments)
+        return self._unwrap(self.call("tools/call", {"name": name, "arguments": args}))
 
     def call_tool_text(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         """Call a tool and return just the first text content item."""

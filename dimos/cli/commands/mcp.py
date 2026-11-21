@@ -24,6 +24,7 @@ from typing import Any
 import requests
 import typer
 
+from dimos.agents.mcp.arguments import require_tool_arguments
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.core.run_registry import list_runs
 
@@ -112,18 +113,20 @@ def mcp_call_tool(
         callback=lambda values: _validate_key_value_args(values),
         help="Arguments as key=value",
     ),
-    json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
+    json_args: str | None = typer.Option(
+        None, "--json-args", "-j", help="Arguments as a JSON object"
+    ),
     timeout: int = typer.Option(
         None, "--timeout", "-t", help="Seconds to wait for the tool (default: 30 seconds)"
     ),
 ) -> None:
     """Call an MCP tool by name."""
     arguments: dict[str, Any] = {}
-    if json_args:
+    if json_args is not None:
         try:
-            arguments = json.loads(json_args)
-        except json.JSONDecodeError as e:
-            typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
+            arguments = require_tool_arguments(json.loads(json_args))
+        except ValueError as e:
+            typer.echo(f"Error: invalid JSON arguments in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
         try:

@@ -19,6 +19,8 @@ import json
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_server import app, handle_request
 from dimos.agents.skill_result import SkillResult
@@ -121,6 +123,24 @@ def test_mcp_module_without_meta_passes_empty_meta() -> None:
     )
 
     rpc_calls["ping"].assert_called_once_with(_mcp_context={"meta": {}})
+
+
+@pytest.mark.parametrize("arguments", [[], None])
+def test_tools_call_refuses_non_object_arguments_before_dispatch(
+    arguments: list[str] | str | None,
+) -> None:
+    tool = MagicMock(return_value="ready")
+    request = {
+        "id": 42,
+        "method": "tools/call",
+        "params": {"name": "status", "arguments": arguments},
+    }
+
+    response = asyncio.run(handle_request(request, [], {"status": tool}))
+
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    tool.assert_not_called()
 
 
 def test_mcp_module_handles_errors() -> None:
