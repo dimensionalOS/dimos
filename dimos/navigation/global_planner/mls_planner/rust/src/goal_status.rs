@@ -33,13 +33,15 @@ pub(crate) const PREEMPT_CANCELED: &str = "canceled";
 /// Why a goal was aborted.
 pub(crate) const NO_SAFE_PATH: &str = "no safe path";
 pub(crate) const NO_POSE: &str = "no robot pose";
+pub(crate) const NO_GOAL_FRAME: &str = "goal frame not on tf";
 pub(crate) const NO_PROGRESS: &str = "no progress";
+pub(crate) const HEADING_NOT_REACHED: &str = "heading not reached";
 
 /// How often the latest goal status repeats between transitions.
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// A goal that cannot be planned, when that began, and why.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Blocked {
     pub(crate) goal: Goal,
     since: Instant,
@@ -71,31 +73,43 @@ impl Blocked {
 }
 
 /// A followed goal, where the robot last moved, and when.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Stall {
     pub(crate) goal: Goal,
     anchor: Xyz,
+    /// How far the robot was from facing the goal's heading at the anchor, when it has one.
+    heading_error: Option<f32>,
     since: Instant,
 }
 
 impl Stall {
-    /// Where the robot stands, anchored anew once it moved min_m or the goal
-    /// changed, else carried over.
+    /// Where the robot stands, anchored anew once it moved min_m, turned min_turn
+    /// closer to the goal's heading, or the goal changed, else carried over.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn track(
         goal: Goal,
         position: Xyz,
+        heading_error: Option<f32>,
         earlier: Option<Stall>,
         min_m: f32,
+        min_turn: f32,
         now: Instant,
     ) -> Self {
-        let moved = |earlier: &Stall| {
-            (earlier.anchor.0 - position.0).hypot(earlier.anchor.1 - position.1) >= min_m
+        let progressed = |earlier: &Stall| {
+            let moved =
+                (earlier.anchor.0 - position.0).hypot(earlier.anchor.1 - position.1) >= min_m;
+            let turned = matches!(
+                (earlier.heading_error, heading_error),
+                (Some(was), Some(now)) if was - now >= min_turn
+            );
+            moved || turned
         };
-        match earlier.filter(|earlier| earlier.goal == goal && !moved(earlier)) {
+        match earlier.filter(|earlier| earlier.goal == goal && !progressed(earlier)) {
             Some(earlier) => earlier,
             None => Self {
                 goal,
                 anchor: position,
+                heading_error,
                 since: now,
             },
         }
@@ -123,11 +137,14 @@ impl GoalId {
     }
 }
 
-/// The active goal and the id its status reports carry.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The active goal, its status id, and its frame, held together so a reader never mixes goals.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Goal {
     pub(crate) id: GoalId,
     pub(crate) position: Xyz,
+    /// The heading to face at the goal, when it carries one.
+    pub(crate) yaw: Option<f32>,
+    pub(crate) frame: Option<Arc<str>>,
 }
 
 /// One goal's state as nav_status carries it.
@@ -244,9 +261,9 @@ pub(crate) fn stop_on_arrival(followed: Option<GoalId>, goal: GoalId) -> bool {
     !followed.is_some_and(|followed| followed.same_stamp(&goal))
 }
 
-pub(crate) fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: Goal) -> bool {
+pub(crate) fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: &Goal) -> bool {
     let mut guard = slot.lock().expect("goal mutex");
-    let held = *guard == Some(goal);
+    let held = guard.as_ref() == Some(goal);
     if held {
         *guard = None;
     }

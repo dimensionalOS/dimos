@@ -62,7 +62,7 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 def _teleop_task() -> TaskConfig:
     coordinator = next(
         atom
-        for atom in unitree_g1_groot_wbc.blueprints
+        for atom in unitree_g1_groot_wbc.solidify().blueprints
         if issubclass(atom.module, TeleopControlCoordinator)
     )
     return cast(
@@ -97,7 +97,7 @@ def test_g1_teleop_model_passes_planning_validation() -> None:
 def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
     coordinator = next(
         atom
-        for atom in unitree_g1_groot_wbc.blueprints
+        for atom in unitree_g1_groot_wbc.solidify().blueprints
         if issubclass(atom.module, TeleopControlCoordinator)
     )
 
@@ -112,24 +112,28 @@ def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
 
 
 def test_g1_teleop_wires_arm_and_recording_streams_without_webxr_locomotion() -> None:
-    teleop_kwargs = _module_kwargs(unitree_g1_teleop, VideoArmTeleopModule)
+    teleop_kwargs = _module_kwargs(unitree_g1_teleop.solidify(), VideoArmTeleopModule)
 
     assert "task_names" not in teleop_kwargs
     assert (
-        unitree_g1_teleop.remapping_map[(VideoArmTeleopModule.name, "left_controller_output")]
+        unitree_g1_teleop.solidify().remapping_map[
+            (VideoArmTeleopModule.name, "left_controller_output")
+        ]
         == "left_cartesian_command"
     )
     assert (
-        unitree_g1_teleop.remapping_map[(VideoArmTeleopModule.name, "right_controller_output")]
+        unitree_g1_teleop.solidify().remapping_map[
+            (VideoArmTeleopModule.name, "right_controller_output")
+        ]
         == "right_cartesian_command"
     )
-    assert (VideoArmTeleopModule.name, "cmd_vel") not in unitree_g1_teleop.remapping_map
+    assert (VideoArmTeleopModule.name, "cmd_vel") not in unitree_g1_teleop.solidify().remapping_map
     assert "left_cartesian_command" in G1CollectionRecorder.__annotations__
     assert "right_cartesian_command" in G1CollectionRecorder.__annotations__
 
 
 def test_g1_teleop_excludes_navigation_and_legacy_visualization() -> None:
-    module_names = {atom.module.__name__ for atom in unitree_g1_teleop.active_blueprints}
+    module_names = {atom.module.__name__ for atom in unitree_g1_teleop.solidify().active_blueprints}
 
     assert module_names.isdisjoint(
         {
@@ -147,7 +151,7 @@ def test_g1_teleop_excludes_navigation_and_legacy_visualization() -> None:
 
 
 async def test_g1_collection_accepts_blueprint_config_and_records_without_world_poses(tmp_path):
-    kwargs = _module_kwargs(unitree_g1_teleop, G1CollectionRecorder)
+    kwargs = _module_kwargs(unitree_g1_teleop.solidify(), G1CollectionRecorder)
     recorder = G1CollectionRecorder(**{**kwargs, "db_path": str(tmp_path / "session.db")})
     try:
         ports = recorder._data_ports()
@@ -184,7 +188,7 @@ def test_g1_manipulation_model_tracks_full_body_but_plans_only_arms() -> None:
 
 
 def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
-    manipulation_kwargs = _module_kwargs(unitree_g1_teleop, G1ManipulationModule)
+    manipulation_kwargs = _module_kwargs(unitree_g1_teleop.solidify(), G1ManipulationModule)
     model = manipulation_kwargs["model"]
 
     assert manipulation_kwargs["instance_name"] == "G1Manipulation"
@@ -192,7 +196,7 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     assert [group.name for group in model.planning_groups] == ["left_arm", "right_arm"]
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")
     assert (
-        unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
+        unitree_g1_teleop.solidify().remapping_map[("G1Manipulation", "_control_coordinator")]
         is _G1GrootCoordinator
     )
 

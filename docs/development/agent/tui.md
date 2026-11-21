@@ -120,7 +120,7 @@ never calls or retries an RPC.
   viewer.
 
 The action line shows the newest record with `actionLine`. `pendingSends` keeps a sent message in the chat as `sending`
-until the transcript or the queue holds its request id. The Overview tab of `/menu` lists the newest refused records.
+until the transcript or the queue holds its request id. The menu footer shows the latest action.
 
 ### runSetup and LoginPanel
 
@@ -167,7 +167,7 @@ the consumer does not import.
 | -------- | -------------- | ----------------------- | ----------------------------------------- |
 | cards/   | `ToolCard`     | `cardFor` in choose.ts  | `BashCard`, `PiToolCard`                  |
 | views/   | `ViewPanel<K>` | `Gallery` in gallery.ts | `ImagePanel`, `SpatialPanel`, `ClipPanel` |
-| menu/    | `MenuTab`   | `TABS` in view.ts       | Ten tabs, one per key from 1 to 0         |
+| menu/    | `MenuTab`      | `TABS` in view.ts       | Conversations, Agent modules, Jobs        |
 
 `ToolCard` is a `Component` for one tool call. It has the `call`, `output(text)` for the output so far, `end(result)`
 for the `ToolResult`, `setExpanded(expanded)` for `/expand`, and `dispose()`, which stops timers.
@@ -177,11 +177,11 @@ for the `ToolResult`, `setExpanded(expanded)` for `/expand`, and `dispose()`, wh
 `handleInput` when it takes keys. A panel reads its own files and calls the `changed` callback it was built with when it
 needs a frame.
 
-`MenuTab` has a `title`, an `inventory` flag, and `rows(context)`, which returns the tab's `MenuRow` list each
-time the view renders. A `MenuRow` has `text`, a `Level`, its `MenuKey` list, and `open`, which Enter calls.
-`open` returns a `MenuDetail` pane with a `title`, `lines()` and `close()`, or `null` after an action that leaves
-`/menu`. `TabContext` carries the `Ui`, `now`, the held inventory or `null`, the `current` conversation,
-`attach(conversation)` and `requestRender()`. `TAB_KEYS` has ten keys, 1 to 0, and every one has a tab.
+`MenuTab` has a `title` and `rows(context)`, which returns the tab's `MenuRow` list each
+time the view renders. A `MenuRow` has `text`, a `Level`, its actions, and an optional `open` callback.
+`open` returns a `MenuDetail` pane with a `title` and `lines()`, or `null` after an action that leaves
+`/menu`. `TabContext` carries the `Ui`, `now`, the `current` conversation
+and `attach(conversation)`.
 
 ### What the terminal may import
 
@@ -330,8 +330,7 @@ export class StreamGetCard implements ToolCard {
 
 `busyTab` lists every conversation with a run in progress, the oldest run first, and Enter shows the selected one in the
 chat. It reads `ui.gateway.conversations` each time the view renders, as `conversationsTab` in
-[menu/conversations.ts](/dimos/agents/frontends/tui/menu/conversations.ts) does. To show it, move it into menu/ and add it to `TABS` in
-[menu/view.ts](/dimos/agents/frontends/tui/menu/view.ts). Add a matching key to `TAB_KEYS`.
+[menu/conversations.ts](/dimos/agents/frontends/tui/menu/conversations.ts) does.
 
 ```ts
 import type { MenuRow, MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
@@ -352,7 +351,7 @@ export const busyTab: MenuTab = {
                 return {
                     text: `${mark} #${row.id}  ${what}  ${duration(elapsed)}  ${row.title}`,
                     level: elapsed > LONG_RUN_MS ? "warn" : "ok",
-                    keys: [],
+                    actions: [],
                     open: () => {
                         context.attach(row.id);
                         return null;
@@ -431,24 +430,16 @@ Any other `FrameSource` can replace it.
 sidebar.test.ts drives a `Sidebar` through a real `TuiAltScreen` with an in-memory terminal and frame source.
 
 [menu/](/dimos/agents/frontends/tui/menu/) is the main menu that `/menu` opens, the `MenuTab` family in [base.ts](/dimos/agents/frontends/tui/menu/base.ts). `MenuView` in
-view.ts is the full-screen view main.ts opens. Keys 1 to 9 pick a tab, Up and Down pick a row, Enter opens the row's
-detail, a row's own keys run its actions, and Esc closes the detail and then the view. A tab longer than the screen
-shows the rows around the selected one. A failed key action lands in `Feedback` as a refusal.
+view.ts is the full-screen view main.ts opens. Left and Right switch sections. Typing filters the current list, and Up and Down select a row.
+Enter resumes a conversation or opens the actions for a module or job. Esc returns to the previous screen and
+restores the list selection and filter. The footer shows connection status and the latest action result.
 
-| Key | Tab           | File                                         | Rows                                                                                                  |
-| --- | ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 1   | Overview      | [overview.ts](/dimos/agents/frontends/tui/menu/overview.ts)           | This terminal's link, the dimOS link, load and run, the five newest refused actions. |
-| 2   | Conversations | conversations.ts                             | Every conversation in switcher order. Enter shows it in the chat.                                     |
-| 3   | Agent modules | [modules.ts](/dimos/agents/frontends/tui/menu/modules.ts)             | Every agent module and its owner. `r` restarts, `u` unloads, `d` deletes.   |
-| 4   | Jobs          | [jobs.ts](/dimos/agents/frontends/tui/menu/jobs.ts)                   | Every job as a lane over the last and next 12 hours. `r` runs it now, `d` deletes, Enter lists runs.  |
-| 5   | Streams       | [streams.ts](/dimos/agents/frontends/tui/menu/streams.ts)             | Every dimOS stream, grouped by module instance.                                                       |
-| 6   | Env           | [inventory.ts](/dimos/agents/frontends/tui/menu/inventory.ts)         | The dimOS checkout, Python, transport and system size.                                                |
-| 7   | Modules       | inventory.ts                                 | Every module instance. Enter lists its streams and RPCs.                                              |
-| 8   | RPCs          | inventory.ts                                 | Every RPC with its signature and doc.                                                                 |
-| 9   | Stream types  | inventory.ts                                 | Every stream with its direction, type and channel.                                                    |
+| Section | Actions |
+| --- | --- |
+| [Conversations](/dimos/agents/frontends/tui/menu/conversations.ts) | Resume the selected conversation. |
+| [Agent modules](/dimos/agents/frontends/tui/menu/modules.ts) | Restart, unload, or delete the selected module. |
+| [Jobs](/dimos/agents/frontends/tui/menu/jobs.ts) | View run history, run the selected job now, or delete it. |
 
-Tabs 6 to 9 read the inventory held by the terminal. [menu/lib/](/dimos/agents/frontends/tui/menu/lib/) is private to menu/.
-`plain(text, level)` in [rows.ts](/dimos/agents/frontends/tui/menu/lib/rows.ts) is a row with no keys and no Enter.
 [lane.ts](/dimos/agents/frontends/tui/menu/lib/lane.ts) has `laneText`, which draws a job's runs, due times and now on a ruler of a given number
 of cells, and `axisText`, the clock labels above it. The Jobs tab uses 48 cells, one per 30 minutes. lane.test.ts checks
 both strings.

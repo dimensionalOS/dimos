@@ -15,7 +15,7 @@
 """WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
@@ -75,7 +75,7 @@ _dual_openyam_webxr_tasks = {
 
 def build_dual_openyam_webxr(
     *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
-) -> Blueprint:
+) -> MetaBlueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
         ArmTeleopModule.blueprint(zero_button="B"),

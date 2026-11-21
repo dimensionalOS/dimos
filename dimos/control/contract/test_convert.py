@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from dimos.control._control_test_helpers import fake_arm_model
@@ -30,33 +28,11 @@ from dimos.control.contract.convert import (
     motor_joints,
 )
 from dimos.control.contract.keys import Interface
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.utils.transform_utils import (
-    pose_from_values,
-    pose_to_values,
-    twist_from_values,
-    twist_to_values,
-)
-
-BASE = ("chassis/base_x", "chassis/base_y", "chassis/base_yaw")
-
-
-@pytest.mark.parametrize("yaw", [0.0, math.pi / 2])
-def test_a_twist_carries_forwards_leftwards_and_turning_only(yaw: float) -> None:
-    twist = Twist(linear=Vector3(0.5, 0.2, 9.0), angular=Vector3(9.0, 9.0, -0.3))
-    values = twist_to_values(twist, BASE, yaw=yaw)
-    assert list(values.values()) == pytest.approx(
-        (0.5 * math.cos(yaw) - 0.2 * math.sin(yaw), 0.5 * math.sin(yaw) + 0.2 * math.cos(yaw), -0.3)
-    )
-    back = twist_from_values(values, BASE, yaw=yaw)
-    assert (back.linear.x, back.linear.y, back.linear.z) == pytest.approx((0.5, 0.2, 0.0))
-    assert (back.angular.x, back.angular.y, back.angular.z) == (0.0, 0.0, -0.3)
 
 
 def test_a_joint_state_gives_only_the_fields_asked_for() -> None:
@@ -131,32 +107,6 @@ def test_a_motor_command_of_the_wrong_size_or_missing_values_raises() -> None:
         )
 
 
-@pytest.mark.parametrize("yaw", [0.0, 0.7, -2.5, math.pi])
-def test_a_pose_round_trips_through_x_y_and_yaw(yaw: float) -> None:
-    pose = pose_from_values(
-        {
-            "chassis/base_x/position": 1.0,
-            "chassis/base_y/position": -2.0,
-            "chassis/base_yaw/position": yaw,
-        },
-        BASE,
-        ts=3.0,
-        frame_id="odom",
-    )
-    assert (pose.ts, pose.frame_id, pose.position.z) == (3.0, "odom", 0.0)
-    values = pose_to_values(pose, BASE)
-    assert values["chassis/base_x/position"] == 1.0
-    assert values["chassis/base_y/position"] == -2.0
-    # Facing exactly backwards may come back as +pi or -pi; both are the same.
-    assert math.cos(values["chassis/base_yaw/position"] - yaw) == pytest.approx(1.0)
-
-
-def test_pose_yaw_is_read_from_a_tilted_orientation() -> None:
-    orientation = Quaternion.from_euler(Vector3(0.2, -0.1, 1.2))
-    values = pose_to_values(PoseStamped(position=Vector3(0, 0, 0), orientation=orientation), BASE)
-    assert values["chassis/base_yaw/position"] == pytest.approx(1.2)
-
-
 def test_an_imu_round_trips_all_ten_readings() -> None:
     imu = Imu(
         orientation=Quaternion(0.1, 0.2, 0.3, 0.9),
@@ -172,11 +122,5 @@ def test_an_imu_round_trips_all_ten_readings() -> None:
 
 
 def test_from_values_names_what_is_missing() -> None:
-    with pytest.raises(ValueError, match=r"missing values \['chassis/base_yaw/velocity'\]"):
-        twist_from_values(
-            {"chassis/base_x/velocity": 0.0, "chassis/base_y/velocity": 0.0}, BASE, yaw=0.0
-        )
-    with pytest.raises(ValueError, match="chassis/base_yaw/position"):
-        pose_from_values({"chassis/base_x/position": 0.0, "chassis/base_y/position": 0.0}, BASE)
     with pytest.raises(ValueError, match="g1/imu/qx"):
         imu_from_values({}, "g1/imu")

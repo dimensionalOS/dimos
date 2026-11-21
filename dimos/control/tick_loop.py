@@ -254,7 +254,7 @@ class TickLoop:
 
         # Optional logging
         if self._log_ticks:
-            active = len([c for c in commands if c[2] is not None])
+            active = len({task.name for task, _, output in commands if output is not None})
             logger.debug(
                 f"Tick {self._tick_count}: dt={dt:.4f}s, "
                 f"{len(joint_states.joint_positions)} joints, "
@@ -352,7 +352,12 @@ class TickLoop:
                 try:
                     claim = task.claim()
                     output = task.compute(state)
-                    results.append((task, claim, output))
+                    # One task may command disjoint joint groups in different modes.
+                    # Normalize here so arbitration and preemption stay per task/joint.
+                    if isinstance(output, list):
+                        results.extend((task, claim, command) for command in output)
+                    else:
+                        results.append((task, claim, output))
                 except Exception as e:
                     logger.error(f"Task {task.name} compute error: {e}")
 

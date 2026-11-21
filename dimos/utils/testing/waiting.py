@@ -28,11 +28,11 @@ def wait_until(
 ) -> None:
     """Poll ``predicate`` until it returns truthy or ``timeout`` elapses."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(interval)
-    raise TimeoutError(message or f"Timed out after {timeout}s waiting for condition")
+    while not predicate():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(message or f"Timed out after {timeout}s waiting for condition")
+        time.sleep(min(interval, remaining))
 
 
 def retry_until(

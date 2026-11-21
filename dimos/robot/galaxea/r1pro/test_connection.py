@@ -113,7 +113,6 @@ def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable
         config.setdefault("boot_vendor_stack", False)
         config.setdefault("deadman_timeout_s", DEADMAN_S)
         config.setdefault("sensor_stats_interval_s", 0.0)
-        config.setdefault("enable_wrist_color", False)
         r = Rig(fake_ros, R1ProConnection(**config))
         made.append(r)
         if start:

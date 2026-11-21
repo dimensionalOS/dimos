@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.m20 import M20
@@ -27,12 +27,12 @@ from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 
 VOXEL_SIZE_M = 0.08
-WALL_CLEARANCE_M = 0.3
+WALL_CLEARANCE_M = 0.07
 PLANNER_VIZ_HZ = 2.0
 PLANNER_VIZ_SWEEP_CELLS = 1
 
 
-def m20_nav_stack(embodiment: Embodiment = M20) -> Blueprint:
+def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
     """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s."""
     return autoconnect(
         RayTracingVoxelMap.blueprint(

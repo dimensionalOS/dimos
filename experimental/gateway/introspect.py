@@ -21,6 +21,7 @@ import contextlib
 import enum
 import functools
 import importlib
+import importlib.util
 import inspect
 import json
 import os
@@ -108,16 +109,23 @@ async def run_child(
 def child_command(dimos_dir: Path) -> list[str]:
     from experimental.gateway.store import python_for
 
-    return [python_for(dimos_dir), "-m", "experimental.gateway.introspect"]
+    # the served checkout may be another one than this gateway's (Desktop runs a pinned copy of the gateway against
+    # the user's checkout), with an older gateway or none in it: this file runs in its python either way
+    return foreign_command(python_for(dimos_dir))
 
 
 def foreign_command(python: str) -> list[str]:
     # the checkout may have no gateway or an older one, so this file runs there, importing that checkout's dimos;
-    # the gateway's checkout goes last on the path, only for the experimental.gateway helpers that one lacks
+    # the gateway's checkout goes last on the path, and experimental.gateway is pinned to this gateway's helpers (a
+    # checkout's own, maybe older, experimental/gateway/ would otherwise come first)
     run = (
-        "import runpy, sys\n"
+        "import os, runpy, sys, types\n"
         "sys.argv.pop(0)\n"
-        "sys.path.append(sys.argv.pop(0))\n"
+        "root = sys.argv.pop(0)\n"
+        "sys.path.append(root)\n"
+        "helpers = types.ModuleType('experimental.gateway')\n"
+        "helpers.__path__ = [os.path.join(root, 'experimental', 'gateway')]\n"
+        "sys.modules['experimental.gateway'] = helpers\n"
         # a startup hook (a sitecustomize, a venv .pth) may have imported another checkout's dimos already
         "for name in [loaded for loaded in sys.modules if loaded == 'dimos' or loaded.startswith('dimos.')]:\n"
         "    del sys.modules[name]\n"
@@ -188,20 +196,24 @@ def source_of(target: Any) -> dict[str, Any]:
 
 
 def blueprint_source(name: str) -> dict[str, Any]:
+    """A blueprint's (or registered module's) file and line, found without importing it (only its parent packages)."""
     from dimos.robot.all_blueprints import all_blueprints, all_modules
 
+    if name in all_modules:
+        path, _, attribute = all_modules[name].rpartition(".")
+        line = re.compile(rf"class\s+{re.escape(attribute)}\b")
+    else:
+        path, _, attribute = all_blueprints.get(name, "").partition(":")
+        line = re.compile(rf"{re.escape(attribute)}\s*(:|=(?!=))")
     try:
-        if name in all_modules:
-            path, _, attribute = all_modules[name].rpartition(".")
-            return source_of(getattr(importlib.import_module(path), attribute))
-        path, _, attribute = all_blueprints[name].partition(":")
-        module = importlib.import_module(path)
-        lines = inspect.getsource(module).splitlines()
-    except Exception:  # importing a blueprint runs its code, which can raise anything
+        spec = importlib.util.find_spec(path) if path else None
+    except Exception:  # a parent package's __init__ can raise anything
+        spec = None
+    if spec is None or not spec.origin or not spec.origin.endswith(".py"):
         return {"file": None, "line": None}
-    assignment = re.compile(rf"{re.escape(attribute)}\s*(:|=(?!=))")
-    line = next((number for number, text in enumerate(lines, 1) if assignment.match(text)), 1)
-    return {"file": relative_to_checkout(inspect.getfile(module)), "line": line}
+    lines = Path(spec.origin).read_text("utf-8", "replace").splitlines()
+    found = next((number for number, text in enumerate(lines, 1) if line.match(text)), 1)
+    return {"file": relative_to_checkout(spec.origin), "line": found}
 
 
 def params(function: Any) -> list[dict[str, Any]]:
@@ -315,10 +327,18 @@ def blueprint_modules(blueprint: Any, registry_names: dict[str, str]) -> list[di
     ]
 
 
+def solid_blueprint(blueprint: Any) -> Any:
+    """Resolve choices in the worker, where DimOS is installed."""
+    # DimOS is optional in the gateway process.
+    from dimos.core.coordination.blueprints import autoconnect
+
+    return autoconnect(blueprint).solidify()
+
+
 def blueprint_detail(name: str) -> dict[str, Any]:
     from dimos.robot.get_all_blueprints import get_by_name
 
-    blueprint = get_by_name(name)
+    blueprint = solid_blueprint(get_by_name(name))
     modules = []
     for atom, entry in zip(
         blueprint.active_blueprints, blueprint_modules(blueprint, {}), strict=True
@@ -374,12 +394,48 @@ def json_safe(kind: Any, value: Any) -> bool:
         return False
 
 
+# here, not in launches.py: this file runs in a served checkout's python, where launches.py's dimos imports may not exist
+def is_secret_name(path: str) -> bool:
+    return any(
+        name == "key"
+        or name.endswith("_key")
+        or any(word in name for word in ("secret", "token", "password", "passwd"))
+        for name in path.lower().replace("-", "_").split(".")
+    )
+
+
+def secret_annotation(kind: Any, ancestors: frozenset[Any] = frozenset()) -> bool:
+    """Whether a nested configuration type declares any secret field."""
+    # Introspection runs against the served checkout's dependencies.
+    from pydantic import BaseModel
+
+    if isinstance(kind, type) and issubclass(kind, BaseModel):
+        if kind in ancestors:
+            return False
+        return any(
+            is_secret_name(name) or secret_annotation(field.annotation, ancestors | {kind})
+            for name, field in kind.model_fields.items()
+        )
+    return any(secret_annotation(arg, ancestors) for arg in typing.get_args(kind))
+
+
+def secret_value(value: Any) -> bool:
+    """Whether a structured default or blueprint value contains secret keys."""
+    from pydantic import BaseModel
+
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if isinstance(value, dict):
+        return any(is_secret_name(str(key)) or secret_value(item) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(secret_value(item) for item in value)
+    return False
+
+
 def field_args(
     fields: dict[str, Any], base: set[str], values: dict[str, Any] | None = None
 ) -> dict[str, dict[str, Any]]:
     """Each config field's type, default, description and choices, by name; `value` is what the blueprint itself sets."""
-    from experimental.gateway.launches import is_secret_name
-
     args = {}
     for name, field in fields.items():
         required, kind = field.is_required(), field.annotation
@@ -392,7 +448,12 @@ def field_args(
             "default": jsonable(default),
             "description": field.description,
             "required": required,
-            "secret": is_secret_name(name),
+            "secret": (
+                is_secret_name(name)
+                or secret_annotation(kind)
+                or secret_value(default)
+                or secret_value((values or {}).get(name))
+            ),
             "base": name in base,
         }
         options = choices(kind)
@@ -421,10 +482,32 @@ def settable(schema: Any, root: str) -> set[str]:
     return {target.path[0] for target in schema.targets if target.root == root}
 
 
+def target_paths(schema: Any) -> dict[str, list[str]]:
+    """Parser leaf paths by module name or `g`, preserving atomic collection fields."""
+    paths: dict[str, list[str]] = {}
+    for target in schema.targets:
+        if target.section != "transport":
+            paths.setdefault(target.root, []).append(".".join(target.path))
+    return paths
+
+
+def targets(name: str, global_values: dict[str, Any] | None = None) -> dict[str, Any]:
+    from dimos.core.global_config import global_config
+    from dimos.robot.get_all_blueprints import get_by_name
+
+    # Match pre-command CLI flags before imports choose simulation/replay modules.
+    global_config.update(
+        **{key: value for key, value in (global_values or {}).items() if value is not None}
+    )
+    return target_paths(parser_schema(solid_blueprint(get_by_name(name))))
+
+
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.module import ModuleConfig
 
-    schema = parser_schema(module.blueprint())
+    # Blueprint.create, not module.blueprint(): an override may require arguments (CollectionModule's input_types)
+    schema = parser_schema(Blueprint.create(module))
     (only,) = schema.modules
     fields = only.config_cls.model_fields
     keep = settable(schema, only.atom.name)
@@ -441,7 +524,7 @@ def config(name: str) -> dict[str, Any]:
     from dimos.core.module import ModuleConfig
     from dimos.robot.get_all_blueprints import get_by_name
 
-    schema = parser_schema(get_by_name(name))
+    schema = parser_schema(solid_blueprint(get_by_name(name)))
     modules: dict[str, Any] = {}
     for module in schema.modules:
         atom = module.atom
@@ -571,7 +654,9 @@ def scan(request: Any) -> dict[str, Any]:
             "builtin": ref is not None,
         }
         try:
-            blueprint = load_blueprint(name) if ref is not None else get_by_name(name)
+            blueprint = solid_blueprint(
+                load_blueprint(name) if ref is not None else get_by_name(name)
+            )
             file = ref.split(":")[0] if ref else None
             doc = first_line(importlib.import_module(file)) if file and per_file[file] == 1 else ""
             modules = blueprint_modules(blueprint, registry_names)
@@ -643,7 +728,9 @@ def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
     commands: dict[str, Callable[..., dict[str, Any]]] = {
         "blueprint": blueprint_detail,
+        "source": lambda name: {"name": name, **blueprint_source(name)},
         "config": config,
+        "targets": targets,
         "module": module,
         "module_config": module_config,
         "list": blueprint_list,
@@ -652,7 +739,9 @@ def main(argv: list[str]) -> None:
     }
     try:
         command = commands[argv[0]]
-        result = command(*argv[1:], request) if argv[0] == "scan" else command(*argv[1:])
+        result = (
+            command(*argv[1:], request) if argv[0] in {"scan", "targets"} else command(*argv[1:])
+        )
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}
     emit(result)

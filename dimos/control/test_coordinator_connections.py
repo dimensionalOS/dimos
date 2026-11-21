@@ -652,17 +652,32 @@ def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], targe
         assert list(commands["mock_velocity_command"].velocity) == [0.4, 0.0, 0.0, 0.0]
 
 
-def test_position_hold_scope_preserves_velocity_joint_feedback(rig: Callable[..., Rig]) -> None:
-    r = rig(WholeRobot, tasks=[operator_hold_task()])
+@pytest.mark.parametrize("scoped", [False, True])
+def test_mixed_hold_scope_preserves_velocity_joint_feedback(
+    rig: Callable[..., Rig],
+    scoped: bool,
+) -> None:
+    r = rig(WholeRobot, tasks=[operator_hold_task(joint_names=MOCK_JOINTS if scoped else None)])
     hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
     assert isinstance(hold, OperatorHoldTask)
+    axes = ["mock/base_forward", "mock/base_lateral", "mock/base_turn"]
+    velocity = JointVelocityTask("velocity", JointVelocityTaskConfig(axes, priority=50))
+    r.coordinator.add_task(velocity)
     r.report_arm(*AT_REST)
     r.report_base("mock")
+    moving = [0.4, -0.2, 0.3]
+    assert velocity.set_velocities(moving, time.perf_counter())
+    r.tick()
+    assert list(dict(r.sent)["mock_velocity_command"].velocity) == moving
     hold.request("manual")
     r.tick()
-    assert hold.claim().joints == frozenset(MOCK_JOINTS)
+    expected = MOCK_JOINTS if scoped else [*MOCK_JOINTS, *axes]
+    assert hold.claim().joints == frozenset(expected)
     assert "mock/base_forward" not in r.coordinator.get_joint_positions()
     assert r.positions_sent()[-1] == AT_REST
+    assert list(dict(r.sent)["mock_velocity_command"].velocity) == (
+        moving if scoped else [0.0] * len(axes)
+    )
 
 
 def test_velocity_estop_invalidates_commands_until_fresh_post_clear_input(
@@ -920,21 +935,25 @@ def system(request: pytest.FixtureRequest) -> Iterator[ModuleCoordinator]:
     base_declaration = ConnectionConfig(
         **FakeBaseConfig().model_dump(include=set(ConnectionConfig.model_fields))
     )
-    blueprint = autoconnect(
-        Robots.blueprint(
-            connections=[arm_declaration, base_declaration],
-            tasks=[joint_trajectory_task(MOCK_JOINTS)],
-            reading_timeout_s=getattr(request, "param", 10.0),
-        ),
-        FakeArm.blueprint(**arm_declaration.model_dump()),
-        FakeBase.blueprint(**base_declaration.model_dump(), initial_yaw=math.pi / 2),
-    ).remappings(
-        [
-            (FakeArm, "position_command", "mock_position_command"),
-            (Robots, "mock_joint_state", "joint_state"),
-            (FakeBase, "velocity_command", "go2_velocity_command"),
-            (FakeBase, "joint_state", "go2_joint_state"),
-        ]
+    blueprint = (
+        autoconnect(
+            Robots.blueprint(
+                connections=[arm_declaration, base_declaration],
+                tasks=[joint_trajectory_task(MOCK_JOINTS)],
+                reading_timeout_s=getattr(request, "param", 10.0),
+            ),
+            FakeArm.blueprint(**arm_declaration.model_dump()),
+            FakeBase.blueprint(**base_declaration.model_dump(), initial_yaw=math.pi / 2),
+        )
+        .solidify()
+        .remappings(
+            [
+                (FakeArm, "position_command", "mock_position_command"),
+                (Robots, "mock_joint_state", "joint_state"),
+                (FakeBase, "velocity_command", "go2_velocity_command"),
+                (FakeBase, "joint_state", "go2_joint_state"),
+            ]
+        )
     )
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},

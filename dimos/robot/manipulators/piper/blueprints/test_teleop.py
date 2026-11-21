@@ -33,7 +33,9 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     return cast("list[TaskConfig]", kwargs["tasks"])
 
 
-@pytest.mark.parametrize("blueprint", [keyboard_teleop_piper, coordinator_teleop_piper])
+@pytest.mark.parametrize(
+    "blueprint", [keyboard_teleop_piper.solidify(), coordinator_teleop_piper.solidify()]
+)
 def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
     blueprint: Blueprint,
 ) -> None:

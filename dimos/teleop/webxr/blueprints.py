@@ -106,7 +106,7 @@ teleop_webxr_piper = autoconnect(
 )
 
 
-# A1Z mock teleop: left controller -> A1Z arm
+# A1Z teleop (real arm only, through A1ZConnection): left controller -> A1Z arm
 teleop_webxr_a1z = autoconnect(
     ArmTeleopModule.blueprint(),
     coordinator_teleop_a1z,

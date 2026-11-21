@@ -77,6 +77,8 @@ there is no atomic transaction across both buses.
 | `openarm-planner-coordinator` | bimanual planner, connection, and coordinator |
 | `teleop-webxr-openarm` | bimanual WebXR task, independent grippers, planner, and Viser |
 | `openarm-connection-control` | connection and coordinator with trajectory and gripper tasks |
+| `teleop-openarm-mini`, `-leader`, `-follower` | Feetech leader arms driving both arms and jaws, see [OpenArm Mini Teleop](/docs/capabilities/manipulation/openarm_mini_teleop.md) |
+| `openarm-mini-collection`, `openarm-mini-follower-collection` | the leader stack plus the collection recorder and three cameras |
 
 ## WebXR controls and safety
 
@@ -100,10 +102,11 @@ firmware behavior or confirm that every motor supplied fresh feedback.
 
 | Path | Role |
 |---|---|
-| `dimos/robot/manipulators/openarm/connection.py` | native motor declarations, gains, CAN selection, and direct connection |
-| `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints and planning configuration |
+| `dimos/robot/manipulators/openarm/connection.py` | CAN selection and the direct connection |
+| `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints, planning configuration, motor declarations and gains |
 | `dimos/robot/manipulators/openarm/blueprints/` | connection, coordinator, planner, and WebXR compositions |
-| `dimos/robot/manipulators/damiao/damiao_connection.py` | shared native lifecycle |
+| `dimos/robot/manipulators/damiao/connection.py` | shared connection lifecycle: start, stop, state reader, deadman and faults |
+| `dimos/robot/manipulators/damiao/arm.py` | shared native motor layer |
 
 ## Validation
 

@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 from dimos.memory.utils.progress import progress
+from dimos.memory.utils.time_window import RecordingWindow
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -173,7 +175,11 @@ def main(
         help="Drop accumulated-map points below this Z (m) when rendering; e.g. 0 strips the floor; --map/--map-final only",
     ),
 ) -> None:
-    """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
+    """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.mapping.voxels.module import VoxelMapTransformer
@@ -220,8 +226,10 @@ def main(
 
         print(store.summary())
 
+        window = RecordingWindow.from_store(store, seek, duration)
+
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
-            return store.stream(name, ptype).from_time(seek or None).to_time(duration)
+            return window.apply(store.stream(name, ptype))
 
         lidar = clipped("lidar", PointCloud2)
         color_image = clipped("color_image", Image)
@@ -341,11 +349,12 @@ def main(
                     )
                 rr.log("world/camera/image", img_obs.data.to_rerun())
 
+    rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen(["rerun", str(out)])
+        subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
 
 
 if __name__ == "__main__":

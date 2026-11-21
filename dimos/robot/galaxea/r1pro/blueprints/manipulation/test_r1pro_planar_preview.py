@@ -19,6 +19,7 @@ import platform
 
 import pytest
 
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTaskConfig,
@@ -60,10 +61,10 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
 
 
 def test_planar_preview_plans_on_the_planar_base_limits() -> None:
-    parsed = BlueprintConfigParser(r1pro_planar_preview).parse(environ={})
+    parsed = BlueprintConfigParser(r1pro_planar_preview.solidify()).parse(environ={})
     atom = next(
         atom
-        for atom in r1pro_planar_preview.active_blueprints
+        for atom in r1pro_planar_preview.solidify().active_blueprints
         if issubclass(atom.module, ManipulationModule)
     )
     manipulation = ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
@@ -81,7 +82,7 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 )
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
-    config = _coordinator_config(r1pro_planar_preview)
+    config = _coordinator_config(r1pro_planar_preview.solidify())
     coordinator = ControlCoordinator(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
@@ -111,13 +112,12 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
 
 def test_real_control_declares_planar_velocity_joints_without_position_commands() -> None:
     """Measured planar joints are ordinary velocity-only hardware interfaces."""
-    coordinator = _coordinator_config(r1pro_control())
+    coordinator = _coordinator_config(r1pro_control().solidify())
 
     # The real robot is driven through R1ProConnection: no hardware adapters.
     assert coordinator.hardware == []
     claimed = {joint for task in coordinator.tasks for joint in task.joint_names}
     assert claimed == {*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS}
-    from dimos.control.contract.keys import Interface
 
     (declaration,) = coordinator.connections
     assert all(

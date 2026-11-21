@@ -42,7 +42,7 @@ export interface WebTransportLike {
   ready: Promise<unknown>;
   closed: Promise<unknown>;
   close(): void;
-  createBidirectionalStream(): Promise<BidiStreamLike>;
+  createBidirectionalStream(options?: { sendOrder?: number }): Promise<BidiStreamLike>;
   incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
   // Writable only: teleop twists ride datagrams viewer->relay; everything
   // the relay sends a browser viewer rides the control stream.

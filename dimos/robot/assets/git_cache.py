@@ -20,6 +20,7 @@ from hashlib import sha256
 from pathlib import Path
 import shutil
 import tempfile
+import time
 from urllib.parse import urlparse
 import warnings
 
@@ -27,6 +28,9 @@ from filelock import FileLock
 from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 from dimos.constants import CACHE_DIR
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 DEFAULT_ROBOT_ASSET_CACHE_ROOT = CACHE_DIR / "robot_assets"
 
@@ -85,16 +89,21 @@ class GitAssetCache:
         temp_parent = checkout_path.parent
         temp_parent.mkdir(parents=True, exist_ok=True)
         temp_path = Path(tempfile.mkdtemp(prefix=f".{checkout_path.name}-", dir=temp_parent))
+        logger.info("Cloning robot assets", repo=repo_url, ref=ref, path=str(checkout_path))
+        started = time.monotonic()
         try:
             repo = Repo.clone_from(repo_url, temp_path)
             self._checkout_ref(repo, ref)
             temp_path.rename(checkout_path)
-            return checkout_path
         except Exception as exc:
             shutil.rmtree(temp_path, ignore_errors=True)
             raise GitAssetCacheError(
                 f"Failed to fetch Git asset source {repo_url!r} at ref {ref!r}: {exc}"
             ) from exc
+        logger.info(
+            "Cloned robot assets", repo=repo_url, duration=f"{time.monotonic() - started:.1f}s"
+        )
+        return checkout_path
 
     def _refresh_cached(self, repo_url: str, ref: str, checkout_path: Path) -> Path:
         try:

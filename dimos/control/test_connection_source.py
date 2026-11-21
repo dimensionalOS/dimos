@@ -337,7 +337,7 @@ def test_live_sensor_traffic_cannot_refresh_joint_feedback(monkeypatch: pytest.M
         clock[0] += 0.04
         source.on_message("imu", Imu(frame_id="imu"))
     assert not source.ready_for_control()
-    assert source.read_joints().joint_velocities["go2/base_forward"] == 0.4
+    assert source.read_joints().joint_velocities == {}
     assert source.read_joints().joint_command_interfaces == {
         name: frozenset({Interface.VELOCITY}) for name in source.joint_names
     }
@@ -451,3 +451,24 @@ def test_declared_zero_stiffness_joints_are_kept_for_tasks() -> None:
 def test_declared_zero_stiffness_joint_must_be_in_the_model() -> None:
     with pytest.raises(ValueError, match="zero-stiffness joints.*arm/missing"):
         arm(zero_stiffness_joints=["arm/missing"])
+
+
+def test_joint_feedback_recovery_reanchors_holds_with_a_live_imu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    source = arm(readings=("joint_state", "imu"))
+    source.on_message("joint_state", reading(0.2, -0.2))
+    source.on_message("imu", Imu(frame_id="imu"))
+    source.command({J1: (0.5, ControlMode.POSITION)})
+    for _ in range(4):
+        clock[0] += 0.04
+        source.on_message("imu", Imu(frame_id="imu"))
+    assert not source.ready_for_control()
+    source.on_message("joint_state", reading(0.8))
+    assert not source.ready_for_control()
+    source.on_message("joint_state", reading(0.8, -0.4))
+    source.on_message("imu", Imu(frame_id="imu"))
+    assert source.ready_for_control()
+    assert source.command({})[f"{J1}/position"] == 0.8
