@@ -138,9 +138,7 @@ class SimMujocoG1WholeBodyAdapter:
             return IMUState()
         assert self._shm is not None
         quat, gyro, accel = self._shm.read_imu()
-        # rpy is left at its zero default to match the real G1 adapter
-        # (TransportWholeBodyAdapter._on_imu). The WBC task's observation
-        # uses only quaternion + gyroscope, so euler is never read downstream.
+        # WBC observations use quaternion + gyroscope, not derived Euler angles.
         return IMUState(
             quaternion=quat,
             gyroscope=gyro,

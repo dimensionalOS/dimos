@@ -41,9 +41,11 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     RPPPathFollowerTask,
     create_task,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -178,7 +180,7 @@ def test_set_path_resets_cleanly_on_replan(artifact_path):
     task.start_path(straight_line(length=3.0), _odom())
     # Drive a couple ticks so progress advances.
     for k in range(5):
-        task.compute(_state(0.5 * k, 0.0, 0.0))
+        task.compute(_state(task, 0.5 * k, 0.0, 0.0))
     advanced = task._max_progress_idx
     assert advanced > 0
     # A replan (new path via set_path) resets progress to 0 — no stale carrot.
@@ -187,10 +189,15 @@ def test_set_path_resets_cleanly_on_replan(artifact_path):
     assert task.get_state() == "path_following"
 
 
-def _state(x, y, yaw, t=0.0):
+def _state(task, x, y, yaw, t=0.0):
+    task.on_odometry(
+        Odometry(
+            ts=t + 1.0, pose=Pose(Vector3(x, y, 0.0), Quaternion.from_euler(Vector3(0.0, 0.0, yaw)))
+        ),
+        t,
+    )
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={_JOINTS[0]: x, _JOINTS[1]: y, _JOINTS[2]: yaw},
             joint_velocities={_JOINTS[0]: 0.0, _JOINTS[1]: 0.0, _JOINTS[2]: 0.0},
         ),
         t_now=t,
@@ -217,7 +224,7 @@ def test_drives_to_arrival_forward_only(artifact_path):
     task.start_path(p, _odom())
     arrived = False
     for k in range(400):
-        out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * 0.1))
+        out = task.compute(_state(task, plant.x, plant.y, plant.yaw, t=k * 0.1))
         cvx, cvy, cwz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         assert cvy == 0.0
         assert cvx >= 0.0
