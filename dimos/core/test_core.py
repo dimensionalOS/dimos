@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+import runpy
 import time
 
 import pytest
@@ -19,7 +21,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -65,6 +67,61 @@ def navigation():
         yield nav
     finally:
         nav.stop()
+
+
+@pytest.mark.parametrize("port", [In, Out, IO])
+def test_stream_declaration_requires_a_message_type(port: type) -> None:
+    with pytest.raises(TypeError, match=rf"Broken\.frames.*{port.__name__}\["):
+        type("Broken", (Module,), {"__annotations__": {"frames": port}})
+
+
+@pytest.mark.parametrize("reference", ['"Output"', "ports.Out"])
+def test_bare_stream_with_an_unresolved_peer(tmp_path: Path, reference: str) -> None:
+    source = tmp_path / "reader.py"
+    source.write_text(
+        "from __future__ import annotations\n"
+        "from dimos.core import stream as ports\n"
+        "from dimos.core.module import Module\n"
+        "from dimos.core.stream import Out as Output\n"
+        "class Broken(Module):\n"
+        "    peer: Later\n"
+        f"    frames: {reference}\n"
+        "class Later: pass\n"
+    )
+    with pytest.raises(TypeError, match=r"Broken\.frames needs a message type: use Out\["):
+        runpy.run_path(str(source))
+
+
+@pytest.mark.parametrize("peer", ["int", "DefinedLater"])
+def test_class_local_bare_stream_shadows_global(monkeypatch: pytest.MonkeyPatch, peer: str) -> None:
+    monkeypatch.setitem(globals(), "Port", int)
+    with pytest.raises(TypeError, match=r"Broken\.frames.*Out\["):
+
+        class Broken(Module):
+            Port = Out
+            frames: "Port"
+            other: peer
+
+
+class DelayedWriter(Module):
+    Output = Out
+    peer: "DelayedPeer"
+    frames: "Output[int]"
+
+
+class DelayedPeer:
+    pass
+
+
+def test_typed_output_with_a_delayed_peer() -> None:
+    (port,) = DelayedWriter.blueprint().blueprints[0].streams
+    assert (port.name, port.direction, port.type) == ("frames", "out", int)
+
+    writer = DelayedWriter()
+    try:
+        assert isinstance(writer.frames, Out) and writer.frames.type is int
+    finally:
+        writer.stop()
 
 
 def test_classmethods(navigation) -> None:
