@@ -164,6 +164,8 @@ dimos graph unitree-go2-agentic
 dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
 ```
 
+Named module instances appear separately, with their own stream and RPC connections.
+
 The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
 executable must be installed.
 

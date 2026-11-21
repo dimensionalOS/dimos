@@ -27,6 +27,8 @@ methods between the caller and provider modules.
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
+import json
+from urllib.parse import quote
 
 from dimos.cli import theme
 from dimos.core.coordination.blueprints import Blueprint
@@ -37,7 +39,6 @@ from dimos.core.introspection.utils import (
     TYPE_COLORS,
     color_for_string,
     render_dot_svg,
-    sanitize_id,
 )
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.spec.utils import get_protocol_method_signatures, is_spec
@@ -70,6 +71,11 @@ class RpcConnection:
     methods: tuple[str, ...]
 
 
+def module_node_id(name: str) -> str:
+    """Keep module IDs distinct through both DOT and Graphviz plain-text escaping."""
+    return f"module:{quote(name)}"
+
+
 def _rpc_methods(contract: type) -> tuple[str, ...]:
     if is_spec(contract):
         return tuple(sorted(get_protocol_method_signatures(contract)))
@@ -79,7 +85,6 @@ def _rpc_methods(contract: type) -> tuple[str, ...]:
 
 
 def _resolve_rpc_connections(blueprint: Blueprint) -> list[RpcConnection]:
-    atoms_by_name = {atom.name: atom for atom in blueprint.active_blueprints}
     disabled_set = set(blueprint.disabled_modules_tuple)
     connections: list[RpcConnection] = []
 
@@ -98,14 +103,11 @@ def _resolve_rpc_connections(blueprint: Blueprint) -> list[RpcConnection]:
             )
             if not isinstance(provider_name, str):
                 continue
-            provider = atoms_by_name.get(provider_name)
-            if provider is None:
-                continue
 
             connections.append(
                 RpcConnection(
-                    caller=atom.module.__name__,
-                    provider=provider.module.__name__,
+                    caller=atom.name,
+                    provider=provider_name,
                     ref_name=module_ref.name,
                     contract_name=module_ref.spec.__name__,
                     methods=_rpc_methods(module_ref.spec),
@@ -148,40 +150,29 @@ def render(
 
     rpc_connections = _resolve_rpc_connections(blueprint_set) if include_rpc else []
 
-    # Collect all outputs: (name, type) -> list of producer modules
-    producers: dict[tuple[str, type], list[type[ModuleBase]]] = defaultdict(list)
-    # Collect all inputs: (name, type) -> list of consumer modules
-    consumers: dict[tuple[str, type], list[type[ModuleBase]]] = defaultdict(list)
-    # Module name -> module class (for getting package info)
-    module_classes: dict[str, type[ModuleBase]] = {}
-
-    for bp in blueprint_set.blueprints:
-        module_classes[bp.module.__name__] = bp.module
+    atoms = {
+        atom.name: atom
+        for atom in blueprint_set.active_blueprints
+        if atom.module.__name__ not in ignored_modules
+    }
+    node_ids = {name: json.dumps(module_node_id(name), ensure_ascii=False) for name in atoms}
+    producers: dict[tuple[str, type], list[str]] = defaultdict(list)
+    consumers: dict[tuple[str, type], list[str]] = defaultdict(list)
+    for bp in atoms.values():
         for conn in bp.streams:
-            # Apply remapping
-            remapped_name = blueprint_set.remapping_map.get((bp.name, conn.name), conn.name)
-            key = (remapped_name, conn.type)
+            name = blueprint_set.remapping_map.get((bp.name, conn.name), conn.name)
+            if not isinstance(name, str):
+                continue
+            key = (name, conn.type)
             if conn.can_publish:
-                producers[key].append(bp.module)  # type: ignore[index]
+                producers[key].append(bp.name)
             if conn.can_subscribe:
-                consumers[key].append(bp.module)  # type: ignore[index]
+                consumers[key].append(bp.name)
 
-    # Find all active channels (have both producers AND consumers)
-    active_channels: dict[tuple[str, type], str] = {}  # key -> color
-    for key in producers:
-        name, type_ = key
-        type_name = type_.__name__
-        if key not in consumers:
-            continue
-        if (name, type_name) in ignored_streams:
-            continue
-        # Check if all modules are ignored
-        valid_producers = [m for m in producers[key] if m.__name__ not in ignored_modules]
-        valid_consumers = [m for m in consumers[key] if m.__name__ not in ignored_modules]
-        if not valid_producers or not valid_consumers:
-            continue
-        label = f"{name}:{type_name}"
-        active_channels[key] = color_for_string(TYPE_COLORS, label)
+    channels = sorted(
+        producers.keys() & consumers.keys(),
+        key=lambda key: (key[0], key[1].__module__, key[1].__qualname__),
+    )
 
     # Group modules by package
     def get_group(mod_class: type[ModuleBase]) -> str:
@@ -192,11 +183,8 @@ def render(
         return "other"
 
     by_group: dict[str, list[str]] = defaultdict(list)
-    for mod_name, mod_class in module_classes.items():
-        if mod_name in ignored_modules:
-            continue
-        group = get_group(mod_class)
-        by_group[group].append(mod_name)
+    for name, atom in atoms.items():
+        by_group[get_group(atom.module)].append(name)
 
     # Build DOT output
     lines = [
@@ -227,11 +215,19 @@ def render(
         lines.append("         penwidth=1;")
         lines.append(f'        fillcolor="{color}10";')
         for mod in mods:
-            lines.append(f"        {mod};")
+            atom = atoms[mod]
+            label = atom.module.__name__
+            if atom.instance_name is not None:
+                label = f"{mod}\n{label}"
+            lines.append(
+                f"        {node_ids[mod]} [label={json.dumps(label, ensure_ascii=False)}];"
+            )
         # Stack nodes vertically within cluster
         if LayoutAlgo.STACK_NODES in layout and len(mods) > 1:
             for i in range(len(mods) - 1):
-                lines.append(f"        {mods[i]} -> {mods[i + 1]} [style=invis];")
+                lines.append(
+                    f"        {node_ids[mods[i]]} -> {node_ids[mods[i + 1]]} [style=invis];"
+                )
         lines.append("    }")
         lines.append("")
 
@@ -244,32 +240,34 @@ def render(
             # Pick first node from each cluster
             node_a = sorted(by_group[group_a])[0]
             node_b = sorted(by_group[group_b])[0]
-            lines.append(f"    {node_a} -> {node_b} [style=invis, weight=10];")
+            lines.append(f"    {node_ids[node_a]} -> {node_ids[node_b]} [style=invis, weight=10];")
         lines.append("")
 
-    # Add type nodes (outside all clusters)
-    lines.append("    // Type nodes (data channels)")
-    for key, color in sorted(
-        active_channels.items(), key=lambda x: f"{x[0][0]}:{x[0][1].__name__}"
-    ):
-        name, type_ = key
-        type_name = type_.__name__
-        node_id = sanitize_id(f"chan_{name}_{type_name}")
-        label = f"{name}:{type_name}"
+    # Each wired stream type has its own node, including namespaced streams.
+    for index, (name, type_) in enumerate(channels):
+        if (name, type_.__name__) in ignored_streams:
+            continue
+        node_id = f"channel_{index}"
+        label = f"{name}:{type_.__name__}"
+        color = color_for_string(TYPE_COLORS, label)
         lines.append(
-            f'    {node_id} [label="{label}", shape=note, style=filled, '
+            f"    {node_id} [label={json.dumps(label, ensure_ascii=False)}, shape=note, style=filled, "
             f'fillcolor="{color}35", color="{color}", fontcolor="{theme.FOREGROUND}", '
             f'width=0, height=0, margin="0.1,0.05", fontsize=10];'
         )
+        for producer in producers[(name, type_)]:
+            lines.append(
+                f'    {node_ids[producer]} -> {node_id} [color="{color}", arrowhead=none];'
+            )
+        for consumer in consumers[(name, type_)]:
+            lines.append(f'    {node_id} -> {node_ids[consumer]} [color="{color}"];')
 
-    lines.append("")
-
-    # Add RPC contract nodes (one per caller ModuleRef)
-    lines.append("    // RPC contracts")
-    for connection in sorted(rpc_connections, key=lambda c: (c.caller, c.ref_name)):
-        if connection.caller in ignored_modules or connection.provider in ignored_modules:
+    for index, connection in enumerate(
+        sorted(rpc_connections, key=lambda c: (c.caller, c.ref_name))
+    ):
+        if connection.caller not in atoms or connection.provider not in atoms:
             continue
-        node_id = sanitize_id(f"rpc_{connection.caller}_{connection.ref_name}")
+        node_id = f"rpc_{index}"
         method_lines = "".join(f"\\n{method}()" for method in connection.methods)
         label = f"{connection.ref_name}:{connection.contract_name}{method_lines}"
         lines.append(
@@ -278,43 +276,13 @@ def render(
             f'fontcolor="{theme.FOREGROUND}", width=0, height=0, '
             'margin="0.1,0.05", fontsize=9];'
         )
-
-    lines.append("")
-
-    # Add stream edges: producer -> type_node -> consumer
-    lines.append("    // Stream edges")
-    for key, color in sorted(
-        active_channels.items(), key=lambda x: f"{x[0][0]}:{x[0][1].__name__}"
-    ):
-        name, type_ = key
-        type_name = type_.__name__
-        node_id = sanitize_id(f"chan_{name}_{type_name}")
-
-        # Edges from producers to type node (no arrow, kept close)
-        for producer in producers[key]:
-            if producer.__name__ in ignored_modules:
-                continue
-            lines.append(f'    {producer.__name__} -> {node_id} [color="{color}", arrowhead=none];')
-
-        # Edges from type node to consumers (with arrow)
-        for consumer in consumers[key]:
-            if consumer.__name__ in ignored_modules:
-                continue
-            lines.append(f'    {node_id} -> {consumer.__name__} [color="{color}"];')
-
-    lines.append("")
-
-    # Add RPC edges: caller -> contract -> provider
-    lines.append("    // RPC edges")
-    for connection in sorted(rpc_connections, key=lambda c: (c.caller, c.ref_name)):
-        if connection.caller in ignored_modules or connection.provider in ignored_modules:
-            continue
-        node_id = sanitize_id(f"rpc_{connection.caller}_{connection.ref_name}")
         lines.append(
-            f"    {connection.caller} -> {node_id} "
+            f"    {node_ids[connection.caller]} -> {node_id} "
             f'[color="{RPC_COLOR}", style=dashed, arrowhead=none];'
         )
-        lines.append(f'    {node_id} -> {connection.provider} [color="{RPC_COLOR}", style=dashed];')
+        lines.append(
+            f'    {node_id} -> {node_ids[connection.provider]} [color="{RPC_COLOR}", style=dashed];'
+        )
 
     lines.append("}")
     return "\n".join(lines)
