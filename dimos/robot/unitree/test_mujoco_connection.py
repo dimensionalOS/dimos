@@ -34,6 +34,8 @@ import structlog
 from structlog.testing import LogCapture
 
 from dimos.core.global_config import global_config
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -361,6 +363,22 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
     np.testing.assert_allclose(message.points_f32(), points)
 
     assert quiet_connection.get_lidar_message() is None  # same frame again
+
+
+def test_stop_movement_sends_zero_speed(
+    quiet_connection: MujocoConnection, monkeypatch: MonkeyPatch
+) -> None:
+    sent: list[tuple[list[float], list[float]]] = []
+    assert quiet_connection.shm_data is not None
+    monkeypatch.setattr(
+        quiet_connection.shm_data,
+        "write_command",
+        lambda linear, angular: sent.append((linear.tolist(), angular.tolist())),
+        raising=False,
+    )
+    quiet_connection.move(Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.2)))
+    quiet_connection.stop_movement()
+    assert sent[-1] == ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 
 
 @pytest.mark.self_hosted

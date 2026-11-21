@@ -345,8 +345,10 @@ class MujocoConnection:
         return True
 
     def stop_movement(self) -> None:
-        # No webrtc deadman timer in sim; the cmd_vel timeout covers it.
-        pass
+        if self._stop_timer:
+            self._stop_timer.cancel()
+            self._stop_timer = None
+        self.move(Twist())
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         return True
