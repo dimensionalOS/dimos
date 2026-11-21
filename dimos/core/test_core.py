@@ -92,6 +92,17 @@ def test_bare_stream_with_an_unresolved_peer(tmp_path: Path, reference: str) -> 
         runpy.run_path(str(source))
 
 
+@pytest.mark.parametrize("peer", ["int", "DefinedLater"])
+def test_class_local_bare_stream_shadows_global(monkeypatch: pytest.MonkeyPatch, peer: str) -> None:
+    monkeypatch.setitem(globals(), "Port", int)
+    with pytest.raises(TypeError, match=r"Broken\.frames.*Out\["):
+
+        class Broken(Module):
+            Port = Out
+            frames: "Port"
+            other: peer
+
+
 def test_classmethods(navigation) -> None:
     # Test class property access
     class_rpcs = Navigation.rpcs

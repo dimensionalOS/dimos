@@ -836,25 +836,30 @@ class Module(ModuleBase):
         super().__init_subclass__(**kwargs)
 
         try:
-            hints = get_type_hints(cls, include_extras=True)
+            resolved = get_type_hints(cls, include_extras=True)
         except (NameError, AttributeError, TypeError):
-            # An unrelated forward reference can hide a bare port. Look up named
-            # classes without evaluating expressions or initializing deferred ports.
-            hints = {}
-            for base in reversed(cls.__mro__):
-                module_vars = getattr(sys.modules.get(base.__module__), "__dict__", {})
-                for name, hint in inspect.get_annotations(base).items():
-                    if isinstance(hint, str):
-                        root, *path = hint.strip().strip("'\"").split(".")
-                        root = root.strip()
-                        hint = module_vars.get(root, vars(base).get(root))
+            resolved = {}
+
+        # get_type_hints prefers module globals for postponed class annotations.
+        # A bare name belongs to its declaring class first, even with unresolved peers.
+        hints = {}
+        for base in reversed(cls.__mro__):
+            class_vars = vars(base)
+            module_vars = getattr(sys.modules.get(base.__module__), "__dict__", {})
+            for name, raw in inspect.get_annotations(base).items():
+                hint = resolved.get(name, raw)
+                if isinstance(raw, str):
+                    root, *path = raw.strip().strip("'\"").split(".")
+                    root = root.strip()
+                    if root in class_vars or name not in resolved:
+                        hint = class_vars.get(root, module_vars.get(root))
                         for part in path:
                             hint = inspect.getattr_static(hint, part.strip(), None)
-                    hints[name] = hint if isinstance(hint, type) else None
+                hints[name] = hint
 
         for name, ann in hints.items():
             origin = get_origin(ann)
-            if origin in (In, Out, IO):
+            if name in resolved and origin in (In, Out, IO):
                 # Set class-level attribute if not already set.
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
