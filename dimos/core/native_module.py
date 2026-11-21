@@ -51,9 +51,9 @@ import subprocess
 import sys
 import threading
 import time
-from typing import IO, Any
+from typing import IO, Annotated, Any
 
-from pydantic import Field, model_validator
+from pydantic import AfterValidator, Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -138,6 +138,12 @@ def _check_legacy_cwd(values: Any) -> Any:
             "from their executable directory. Pass absolute resource paths or use a launcher."
         )
     return values
+
+
+# A native child opens input files from its own working directory.
+NativeInputPath = Annotated[
+    str, Field(min_length=1), AfterValidator(lambda p: str(Path(p).absolute()))
+]
 
 
 class NativeModuleConfig(ModuleConfig):

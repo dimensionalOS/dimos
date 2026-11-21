@@ -520,8 +520,8 @@ Usage:
     # Or programmatically:
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.robot.manipulators.yourarm.blueprints import coordinator_yourarm
-    coordinator = ModuleCoordinator.build(coordinator_yourarm)
-    coordinator.loop()
+    if __name__ == "__main__":
+        ModuleCoordinator.build(coordinator_yourarm).loop()
 """
 
 from __future__ import annotations
@@ -913,17 +913,17 @@ def test_write_positions(mock_adapter):
 ### Integration test with coordinator
 
 ```python skip
-from dimos.robot.manipulators.common.mock import coordinator_mock
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.robot.manipulators.common.mock import coordinator_mock
 
-# Build and start coordinator with mock hardware
-coordinator = ModuleCoordinator.build(coordinator_mock)
-coordinator.start()
-
-# Your adapter is tested through the same coordinator interface
-# Just swap adapter_type="mock" to adapter_type="yourarm" in a blueprint
-
-coordinator.stop()
+if __name__ == "__main__":
+    coordinator = ModuleCoordinator.build(coordinator_mock)
+    try:
+        arm = coordinator.get_instance(ControlCoordinator)
+        assert "arm" in arm.list_hardware()
+    finally:
+        coordinator.stop()
 ```
 
 ### Test the real adapter standalone
