@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
 from types import ModuleType
 from typing import Any
@@ -1093,9 +1094,12 @@ def test_restart_restores_command_and_relative_recording(
     )
     assert "private-value" not in entry.registry_path.read_text()
     opened = []
-    execute.side_effect = lambda program, args: opened.append(
-        Path(args[args.index("--replay-db") + 1]).read_text()
-    )
+
+    def replacement(program, args):
+        opened.append(Path(args[args.index("--replay-db") + 1]).read_text())
+        assert runner.invoke(main, args[len(prefix) :]).exit_code == 0
+
+    execute.side_effect = replacement
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(main, ["restart"])
@@ -1144,6 +1148,50 @@ def test_restart_restores_wrapper_command(restart_entry, tmp_path, monkeypatch, 
     assert runner.invoke(main, ["restart"]).exit_code == 0
     execute.assert_called_once_with(sys.executable, [*prefix, str(script), *raw_args])
     assert Path.cwd() == project
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["missing", "different-project"])
+def test_restart_keeps_run_when_wrapper_reenters_relative_directory(tmp_path, nested):
+    project = tmp_path / "project"
+    project.mkdir()
+    if nested:
+        (project / "project").mkdir()
+    wrapper = tmp_path / "launch.py"
+    wrapper.write_text(
+        "import os, sys\n"
+        "os.chdir('project')\n"
+        "from dimos.cli.commands import lifecycle\n"
+        "from dimos.cli.dimos import cli_main\n"
+        "def serve(blueprint, config, entry, **kwargs):\n"
+        "    entry.save()\n"
+        "    print('registered', flush=True)\n"
+        "    sys.stdin.read()\n"
+        "lifecycle._run_registered = serve\n"
+        "cli_main()\n"
+    )
+    env = os.environ | {"XDG_STATE_HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path)}
+    with subprocess.Popen(
+        [sys.executable, str(wrapper), "--viewer", "none", "run", "replay"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as original:
+        try:
+            assert any(line.strip() == "registered" for line in original.stdout)
+            result = subprocess.run(
+                [sys.executable, "-m", "dimos.cli.dimos", "restart", "--force"],
+                cwd=tmp_path,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=30,
+            )
+            assert result.returncode == 1
+            assert original.poll() is None
+        finally:
+            original.terminate()
 
 
 def test_restart_keeps_wrapper_with_ambiguous_relative_source(restart_entry, tmp_path, monkeypatch):

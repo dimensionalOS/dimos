@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import shutil
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "config"
+_RESTART_ENV = "_DIMOS_RESTART_PREVIOUS_RUN"
 
 
 def _reject_legacy_config() -> None:
@@ -348,6 +350,10 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
+    # A daemon executes its wrapper again in the background. Only the final
+    # invocation can confirm which project the wrapper actually entered.
+    if not daemon or DAEMON_STATUS_FD_ENV in os.environ:
+        _stop_previous_run(blueprint_name, directory_stat)
     # A daemon re-execs this command. Preserve the launcher's run/log
     # identity rather than generating a second one in the fresh interpreter.
     inherited_run_id = (
@@ -577,6 +583,31 @@ def _check_module_source(argv: list[str], source: Path) -> None:
             return
 
 
+def _stop_previous_run(blueprint: str, directory: os.stat_result) -> None:
+    pending = os.environ.pop(_RESTART_ENV, None)
+    if pending is None:
+        return
+    run_id, pid, device, inode, force = json.loads(pending)
+    if (directory.st_dev, directory.st_ino) != (device, inode):
+        typer.echo("Cannot restart: the launcher entered a different working directory", err=True)
+        raise typer.Exit(1)
+    entry = get_most_recent(alive_only=True)
+    if entry is None or (entry.run_id, entry.pid, entry.blueprint) != (run_id, pid, blueprint):
+        typer.echo("Cannot restart: the running instance or blueprint has changed", err=True)
+        raise typer.Exit(1)
+    msg, ok = stop_entry(entry, force=force)
+    typer.echo(f"  {msg}")
+
+    if not ok:
+        raise typer.Exit(1)
+
+    # Wait for the old process to fully exit so ports are released.
+    for _ in range(20):  # up to 2s
+        if not is_pid_alive(pid):
+            break
+        time.sleep(0.1)
+
+
 def restart(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
 ) -> None:
@@ -628,18 +659,14 @@ def restart(
         raise typer.Exit(1) from exc
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
-    msg, _ok = stop_entry(entry, force=force)
-    typer.echo(f"  {msg}")
-
-    # Wait for the old process to fully exit so ports are released.
-    for _ in range(20):  # up to 2s
-        if not is_pid_alive(old_pid):
-            break
-        time.sleep(0.1)
-
     typer.echo(f"  Running: {' '.join(argv)}")
     try:
+        os.environ[_RESTART_ENV] = json.dumps(
+            [entry.run_id, old_pid, current.st_dev, current.st_ino, force]
+        )
         os.execvp(argv[0], argv)
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)
+    finally:
+        os.environ.pop(_RESTART_ENV, None)
