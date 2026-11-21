@@ -90,15 +90,18 @@ _replay_mesh_vis = vis_module(
     },
 )
 
+_mesh_inputs = {
+    "color_image": "color_image",
+    "depth_image": "realsense_depth_image",
+    "camera_info": "realsense_camera_info",
+    "tf": "tf",
+}
 _rgbd_mesh = RgbdMesh.blueprint().remappings(
-    [
-        (RgbdMesh, "depth_image", "realsense_depth_image"),
-        (RgbdMesh, "camera_info", "realsense_camera_info"),
-    ]
+    [(RgbdMesh, port, stream) for port, stream in _mesh_inputs.items()]
 )
 
 unitree_g1_replay_mesh = autoconnect(
-    G1Replay.blueprint(),
+    G1Replay.blueprint(expected_streams=tuple(_mesh_inputs.values())),
     _rgbd_mesh,
     _replay_mesh_vis,
 ).global_config(
