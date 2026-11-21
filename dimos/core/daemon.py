@@ -24,6 +24,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -157,7 +158,7 @@ def install_signal_handlers(
 
 def run_coordinator(
     blueprint: Blueprint,
-    config: ParsedBlueprintConfig,
+    config: ParsedBlueprintConfig | None,
     *,
     run_id: str,
     log_dir: str | os.PathLike[str],
@@ -168,16 +169,30 @@ def run_coordinator(
     sigint: bool = True,
     on_ready: Callable[[ModuleCoordinator], None] | None = None,
 ) -> None:
-    """Build, serve RPC, call ``on_ready`` and loop until a signal; the caller owns any registry entry."""
+    """Prepare the recorder, start the stack and call ``on_ready`` once startup succeeds."""
     from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.coordination.process_lifecycle import spawn_watchdog
     from dimos.memory.tap import recording
 
     os.environ[DIMOS_RUN_ID_ENV] = run_id
+    if config is not None:
+        config.assert_matches(blueprint)
+    settings = GlobalConfig.model_validate(
+        config.global_config
+        if config is not None
+        else {**global_config.model_dump(), **blueprint.global_config_overrides}
+    )
     # Build can launch detached viewers before a module fails to start. Arm the
     # sweep first so startup failures receive the same cleanup as normal exits.
     spawn_watchdog(run_id, log_dir=log_dir)
+    rust_executable = None
+    if settings.record and not settings.replay and settings.record_engine == "rust":
+        # Native recording is optional. Its cold build does not need a running blueprint.
+        from dimos.experimental.memory.rust_cli_recorder import prepare_rust_recorder
+
+        rust_executable = prepare_rust_recorder(build_native=settings.build_native)
+
     coordinator = ModuleCoordinator.build(
         blueprint,
         config,
@@ -186,18 +201,14 @@ def run_coordinator(
         remote_module_refs=remote_module_refs,
     )
     try:
-        if not coordinator.health_check():
-            raise RuntimeError("health check failed, a worker process died")
-        coordinator.start_rpc_service(name=rpc_name)
-    except BaseException:
-        coordinator.stop()
-        raise
-    install_signal_handlers(run_id, coordinator, sigint=sigint)
-    try:
-        if on_ready is not None:
-            on_ready(coordinator)
-        with recording(coordinator):
+        install_signal_handlers(run_id, coordinator, sigint=sigint)
+        with recording(coordinator, rust_executable=rust_executable):
+            if not coordinator.health_check():
+                raise RuntimeError("health check failed, a worker process died")
+            coordinator.start_rpc_service(name=rpc_name)
+            if on_ready is not None:
+                on_ready(coordinator)
             coordinator.loop()
-    except Exception:
+    except BaseException:
         coordinator.stop()
         raise

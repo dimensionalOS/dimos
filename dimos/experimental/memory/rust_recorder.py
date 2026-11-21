@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
+import stat
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -38,6 +40,43 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
+
+
+def _source_digest(root: Path) -> bytes:
+    """Compare the entries and file attributes preserved in a Nix source tree."""
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    digest = hashlib.sha256()
+    for parent, directories, files in os.walk(root, onerror=raise_walk_error):
+        directory = Path(parent)
+        if directory == root:
+            # Nix outputs and local build trees are outside the recorder package inputs.
+            ignored = {"target", "build", "result", "__pycache__"}
+            # bin/native-modules also writes result-tests and result-lint out-links.
+            ignored.update(
+                name
+                for name in directories + files
+                if name.startswith("result-") and (directory / name).is_symlink()
+            )
+            directories[:] = [name for name in directories if name not in ignored]
+            files = [name for name in files if name not in ignored]
+        directories.sort()
+        for name in sorted(files + directories):
+            path = directory / name
+            digest.update(os.fsencode(path.relative_to(root)) + b"\0")
+            mode = path.lstat().st_mode
+            if stat.S_ISDIR(mode):
+                digest.update(b"D")
+            elif stat.S_ISLNK(mode):
+                digest.update(b"L" + os.fsencode(os.readlink(path)) + b"\0")
+            elif stat.S_ISREG(mode):
+                digest.update(b"X" if mode & stat.S_IXUSR else b"F")
+                digest.update(hashlib.sha256(path.read_bytes()).digest())
+            else:
+                raise RuntimeError(f"Unsupported file type in recorder sources: {path}")
+    return digest.digest()
 
 
 class RustStreamSpec(BaseModel):
@@ -178,6 +217,38 @@ class RustRecorderConfig(NativeModuleConfig):
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
         return self
+
+    def prepare_executable(
+        self, cwd: str | None, exe: Path, module: str, *, build_native: bool
+    ) -> Path:
+        if (
+            cwd is None
+            or self.build_command != RustRecorderConfig.model_fields["build_command"].default
+        ):
+            return super().prepare_executable(cwd, exe, module, build_native=build_native)
+
+        source_dir = Path(cwd)
+
+        def matches(binary: Path) -> bool:
+            source = binary.parent.parent / "recorder-source"
+            return (
+                binary.is_file()
+                and os.access(binary, os.X_OK)
+                and source.is_dir()
+                and _source_digest(source) == _source_digest(source_dir)
+            )
+
+        # Resolve the link once per candidate so the source and the process refer to one package.
+        binary = exe.resolve()
+        if not build_native and not self.auto_build and matches(binary):
+            return binary
+        super().prepare_executable(cwd, exe, module, build_native=True)
+        binary = exe.resolve()
+        if not matches(binary):
+            raise RuntimeError(
+                f"{module} build at {binary} does not match recorder sources in {cwd}"
+            )
+        return binary
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()

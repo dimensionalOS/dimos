@@ -45,7 +45,9 @@ that URL even when it differs from `LCM_DEFAULT_URL`. Conflicting URLs and
 externally supplied LCM connections are rejected.
 
 After preparation, the native process must report ready within 10 seconds.
-Preparation, configuration, and subscription failures stop startup. If it exits unexpectedly after startup,
+A cold build runs before blueprint workers start. A recording run registers only after its
+recorder has started and its workers have passed the health check. A startup error
+reaches the launcher, including with `--daemon`. If it exits unexpectedly after startup,
 the error is logged and the rest of `dimos run` continues. Normal shutdown sends
 SIGTERM and lets the existing native module runtime flush the artifact. There is
 no automatic fallback to Python.

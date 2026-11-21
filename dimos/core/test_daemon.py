@@ -29,8 +29,14 @@ import uuid
 import psutil
 import pytest
 
+from dimos.cli.commands.lifecycle import _run_registered
 from dimos.core import run_registry
-from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
+from dimos.core.daemon import run_coordinator
+from dimos.core.global_config import global_config
 from dimos.core.run_registry import (
     RunEntry,
     blueprint_from_run_id,
@@ -39,6 +45,11 @@ from dimos.core.run_registry import (
     list_runs,
     stop_entry,
 )
+from dimos.core.transport import ZenohTransport
+from dimos.experimental.memory import rust_cli_recorder
+from dimos.memory import tap
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -686,11 +697,10 @@ class TestStopCommand:
 def test_run_coordinator_serves_and_leaves_the_registry_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dimos.core.daemon import run_coordinator
-
     monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
     coordinator = mock.MagicMock()
     coordinator.health_check.return_value = True
+    blueprint = autoconnect().solidify()
     entry = RunEntry("run-x", os.getpid(), "bp", "now", str(tmp_path))
     entry.save()
     readiness: list[bool] = []
@@ -705,8 +715,8 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
             os.environ["DIMOS_RUN_ID"] == "run-x"
         )
         run_coordinator(
-            "bp",  # type: ignore[arg-type]
-            "cfg",  # type: ignore[arg-type]
+            blueprint,
+            None,
             run_id="run-x",
             log_dir=str(tmp_path),
             rpc_name="runs/x",
@@ -715,7 +725,11 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
         )
 
     build.assert_called_once_with(
-        "bp", "cfg", reserve_rpc_name="runs/x", module_rpc_namespace=None, remote_module_refs=None
+        blueprint,
+        None,
+        reserve_rpc_name="runs/x",
+        module_rpc_namespace=None,
+        remote_module_refs=None,
     )
     coordinator.start_rpc_service.assert_called_once_with(name="runs/x")
     watchdog.assert_called_once_with("run-x", log_dir=str(tmp_path))
@@ -726,16 +740,107 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
 
 
 def test_run_coordinator_stops_the_build_when_the_health_check_fails(mocker, monkeypatch) -> None:
-    from dimos.core.daemon import run_coordinator
-
     coordinator = mock.MagicMock()
     coordinator.health_check.return_value = False
     mocker.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog")
+    mocker.patch("dimos.core.daemon.install_signal_handlers")
     monkeypatch.setenv("DIMOS_RUN_ID", "run-y")
     build = "dimos.core.coordination.module_coordinator.ModuleCoordinator.build"
     with (
         mock.patch(build, return_value=coordinator),
         pytest.raises(RuntimeError, match="health check failed"),
     ):
-        run_coordinator("bp", "cfg", run_id="run-y", log_dir="/logs")  # type: ignore[arg-type]
+        run_coordinator(autoconnect().solidify(), None, run_id="run-y", log_dir="/logs")
     coordinator.stop.assert_called_once_with()
+
+
+@pytest.fixture
+def recording_launch(mocker, monkeypatch, tmp_path):
+    monkeypatch.setenv(DIMOS_RUN_ID_ENV, "recording-test")
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    monkeypatch.setattr(global_config, "record", "sqlite")
+    monkeypatch.setattr(global_config, "record_topics", "*")
+    monkeypatch.setattr(global_config, "replay", False)
+    blueprint = autoconnect().solidify()
+    coordinator = mocker.MagicMock(spec=ModuleCoordinator)
+    coordinator.transports = {("odom", PoseStamped): ZenohTransport(Topic("/odom", PoseStamped))}
+    mocker.patch.object(ModuleCoordinator, "build", return_value=coordinator)
+    mocker.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog")
+    mocker.patch("dimos.core.daemon.install_signal_handlers")
+    entry = RunEntry("recording-test", os.getpid(), "bp", "now", str(tmp_path))
+
+    def launch(engine, *, on_ready=None):
+        monkeypatch.setattr(global_config, "record_engine", engine)
+        config = BlueprintConfigParser(blueprint).parse(
+            global_overrides={"record": "sqlite", "record_engine": engine, "build_native": True}
+        )
+        _run_registered(blueprint, config, entry, on_ready=on_ready)
+
+    return launch, coordinator, entry
+
+
+def test_failed_rust_build_never_starts_workers_or_registers(recording_launch, mocker):
+    launch, _, entry = recording_launch
+    prepare = mocker.patch.object(
+        rust_cli_recorder, "prepare_rust_recorder", side_effect=RuntimeError("compiler failed")
+    )
+    ready = mocker.Mock()
+
+    with pytest.raises(RuntimeError, match="compiler failed"):
+        launch("rust", on_ready=ready)
+
+    ModuleCoordinator.build.assert_not_called()
+    prepare.assert_called_once_with(build_native=True)
+    ready.assert_not_called()
+    assert not entry.registry_path.exists()
+
+
+def test_python_store_error_never_registers(recording_launch, monkeypatch, tmp_path):
+    launch, coordinator, entry = recording_launch
+    invalid_dir = tmp_path / "file"
+    invalid_dir.touch()
+    monkeypatch.setattr(tap, "recording_dir", lambda: invalid_dir)
+    ready = mock.Mock()
+
+    with pytest.raises(OSError):
+        launch("python", on_ready=ready)
+
+    ready.assert_not_called()
+    assert not entry.registry_path.exists()
+    coordinator.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_registers_only_after_the_recorder_and_workers_are_ready(
+    recording_launch, mocker, tmp_path, healthy
+):
+    launch, coordinator, entry = recording_launch
+    executable = tmp_path / "built-recorder"
+    prepare = mocker.patch.object(
+        rust_cli_recorder, "prepare_rust_recorder", return_value=executable
+    )
+    mocker.patch.object(rust_cli_recorder, "make_plan")
+    session = mocker.patch.object(rust_cli_recorder, "RustRecordingSession").return_value
+    coordinator.health_check.return_value = True
+
+    def start(path):
+        assert path == executable
+        assert not entry.registry_path.exists()
+        coordinator.health_check.return_value = healthy
+
+    def ready(_):
+        assert entry.registry_path.exists()
+        session.start.assert_called_once_with(executable)
+
+    session.start.side_effect = start
+    if healthy:
+        launch("rust", on_ready=ready)
+        coordinator.loop.assert_called_once_with()
+    else:
+        with pytest.raises(RuntimeError, match="health check failed"):
+            launch("rust", on_ready=ready)
+        coordinator.loop.assert_not_called()
+        coordinator.stop.assert_called_once_with()
+    prepare.assert_called_once_with(build_native=True)
+    session.stop.assert_called_once_with()
+    assert not entry.registry_path.exists()

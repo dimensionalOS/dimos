@@ -57,7 +57,12 @@
 
         rustTools = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ];
       in {
-        packages.default = buildOf (callWith null);
+        packages.default = (buildOf (callWith null)).overrideAttrs (old: {
+          postInstall = ''
+            ${old.postInstall or ""}
+            ln -s ${src} "$out/recorder-source"
+          '';
+        });
         packages.${name} = self.packages.${system}.default;
         packages.lint = (buildOf (callWith "lint")).override {
           runTests = true;

@@ -11,9 +11,10 @@ The recorder is built as a locked Nix package. Nix supplies Rust, CMake, NASM,
 SQLite, and the native libraries used by TurboJPEG, so none of those tools or
 development packages need to be installed on the host.
 
-The Python module resolves the package through Nix before each launch, so its
-wire protocol always matches the Python checkout. Nix reuses the cached package
-when the native sources have not changed. To build it ahead of time, run:
+The blueprint and the CLI check the cached package against the recorder sources
+before launch. A matching Nix package can run offline and without Nix on
+`PATH`. Missing, older or mismatched packages go through the locked Nix build
+before recording starts. To build the package ahead of time, run:
 
 ```bash
 cd dimos/experimental/memory/rust
@@ -24,7 +25,10 @@ nix --extra-experimental-features 'nix-command flakes' \
 The resulting executable is available at
 `dimos/experimental/memory/rust/result/bin/dimos-memory-recorder`. Both the
 blueprint module and experimental `dimos --record-engine rust` integration use
-this executable. The global `--build-native` flag forces a rebuild through Nix.
+this executable. Keep the Nix output and its source closure together when
+copying a prebuilt recorder. The global `--build-native` flag requests a Nix
+build even when the cached package matches. A blueprint configured with an
+external executable and no build command uses the supplied executable.
 
 The CLI integration is deliberately staged: Python remains the default recorder,
 and Rust is selected only with `--record-engine rust`.

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import json
 import os
@@ -23,18 +24,17 @@ from pathlib import Path
 import signal
 import subprocess
 import threading
-import time
 from typing import IO, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
+from dimos.core.native_module import native_log_filter
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -56,39 +56,17 @@ class RustRecordingPlan:
     lcm_url: str | None = None
 
 
-def prepare_rust_recorder() -> Path:
-    """Build the native recorder when it is unavailable or explicitly requested."""
+def prepare_rust_recorder(*, build_native: bool | None = None) -> Path:
+    """Resolve a native recorder built from the current sources before starting workers."""
     config = RustRecorderConfig()
-    rust_dir, executable_path = config.resolve_paths()
-    executable = Path(executable_path)
-    if executable.exists() and not global_config.build_native:
-        return executable
-
-    logger.info("Building experimental Rust recorder", executable=str(executable))
-    started = time.perf_counter()
-    assert config.build_command is not None
-    process = subprocess.Popen(
-        config.build_command,
-        shell=True,
-        cwd=rust_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+    cwd, path = config.resolve_paths()
+    executable = Path(path)
+    return config.prepare_executable(
+        cwd,
+        executable,
+        "Rust recorder",
+        build_native=global_config.build_native if build_native is None else build_native,
     )
-    assert process.stdout is not None
-    for raw in process.stdout:
-        line = raw.decode("utf-8", errors="replace").rstrip()
-        if line:
-            logger.info(line, module="rust-recorder-build")
-    returncode = process.wait()
-    if returncode != 0:
-        raise RuntimeError(
-            "Rust recorder build failed "
-            f"after {time.perf_counter() - started:.2f}s (exit {returncode})"
-        )
-    if not executable.exists():
-        raise FileNotFoundError(f"Rust recorder build did not produce {executable}")
-
-    return executable
 
 
 def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
@@ -192,11 +170,13 @@ class RustRecordingSession:
         self._ready = threading.Event()
         self._stopping = threading.Event()
         self._failure: str | None = None
+        self._startup_output: deque[str] | None = deque(maxlen=8)
         self._process: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
 
-    def start(self) -> None:
-        executable = prepare_rust_recorder()
+    def start(self, executable: Path | None = None) -> None:
+        if executable is None:
+            executable = prepare_rust_recorder()
         _prepare_artifact(self.plan)
         store = {"kind": global_config.record, "path": str(self.plan.path)}
         launch = {
@@ -209,11 +189,10 @@ class RustRecordingSession:
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }
-        level = os.environ.get("DIMOS_LOG_LEVEL", "info").lower()
         env = {
             **os.environ,
             "DIMOS_TRANSPORT": self.plan.backend,
-            "RUST_LOG": f"{level},{ZENOH_LOG_DIRECTIVES}",
+            "RUST_LOG": native_log_filter(ready_target="dimos_memory_recorder"),
         }
         if self.plan.lcm_url is not None:
             env["LCM_DEFAULT_URL"] = self.plan.lcm_url
@@ -235,10 +214,16 @@ class RustRecordingSession:
             self._start_thread(self._watch_process),
         ]
         ready = self._ready.wait(_READY_TIMEOUT)
-        if not ready or self._failure is not None or self._process.poll() is not None:
+        returncode = self._process.poll()
+        if not ready or self._failure is not None or returncode is not None:
             message = self._failure or f"did not report ready within {_READY_TIMEOUT:g}s"
-            self.stop()
+            if returncode is not None:
+                message = f"process exited with status {returncode}"
+            self.stop()  # Drain stderr before constructing the error returned to the daemon.
+            if self._startup_output:
+                message += ": " + " | ".join(self._startup_output)
             raise RuntimeError(f"Rust recorder startup failed: {message}")
+        self._startup_output = None
         logger.info(
             "Experimental Rust recorder ready",
             artifact_path=str(self.plan.path),
@@ -258,6 +243,8 @@ class RustRecordingSession:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
+            level = fallback_level
+            message = line
             try:
                 data = json.loads(line)
                 fields = data.pop("fields", {})
@@ -269,6 +256,9 @@ class RustRecordingSession:
                     self._ready.set()
             except (json.JSONDecodeError, TypeError, AttributeError):
                 getattr(logger, fallback_level)(line, module="rust-recorder")
+            output = self._startup_output
+            if output is not None and level in {"error", "warn", "warning"}:
+                output.append(" ".join(str(message).splitlines())[:512])
         stream.close()
 
     def _watch_process(self) -> None:

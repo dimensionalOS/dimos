@@ -312,6 +312,26 @@ def test_build_native_forces_build(tmp_path: Path, mocker) -> None:
     assert run_build(tmp_path, mocker, build_native=True).exists()
 
 
+def test_native_build_failure_includes_command_output(tmp_path: Path, mocker) -> None:
+    mocker.patch.object(
+        NativeModuleConfig, "resolve_paths", return_value=(str(tmp_path), str(tmp_path / "unbuilt"))
+    )
+    module = StubBuildModule(
+        source_dir=".",
+        executable="unbuilt",
+        build_command='echo "$BUILD_DIAGNOSTIC" >&2; exit 7',
+        extra_env={"BUILD_DIAGNOSTIC": "missing dependency"},
+    )
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            module.build()
+    finally:
+        module.stop()
+
+    assert "(exit 7)" in str(exc.value)
+    assert str(exc.value).splitlines()[0].endswith("missing dependency")
+
+
 def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:
     """The launch line the native subprocess would get, without spawning it."""
 
