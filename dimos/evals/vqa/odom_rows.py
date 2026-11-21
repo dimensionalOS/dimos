@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Eval-row generators — deferred feature (PRD: low priority), kept minimal.
+"""Odom memory-row generators for the VQA / memory-eval pipeline.
 
-Ground truth is computed analytically from a *privileged* modality; the emitted
-case quizzes a different (or lossily-encoded) surface. Rows are pure data —
-a suite module maps them onto :class:`~dimos.evals.types.EvalCase` values.
+``displacement`` and ``path_length`` families compute ground truth analytically
+from privileged odom; emitted rows quiz a lossily-encoded surface. Rows are
+pure data — suite modules (for example ``go2_vqa``) map them onto
+:class:`~dimos.evals.types.EvalCase` values. Numeric band scoring stays outside
+the image-choice VQA families until that protocol grows a numeric answer path.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
+from pathlib import Path
 
 from dimos.memory.cli.dataset import open_dataset
 
@@ -42,6 +46,7 @@ def displacement_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> l
             rows.append(
                 {
                     "id": f"{dataset}_disp_{t1:g}_{t2:g}",
+                    "family": "displacement",
                     "q": "How far in a straight line is your final position from your "
                     "position at the first shown observation, in meters?",
                     "a": round(d, 1),
@@ -74,6 +79,7 @@ def path_length_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> li
             rows.append(
                 {
                     "id": f"{dataset}_path_{t1:g}_{t2:g}",
+                    "family": "path_length",
                     "q": "Roughly how many meters did you travel in total over these "
                     "observations (path length, not displacement)?",
                     "a": round(path, 1),
@@ -86,3 +92,12 @@ def path_length_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> li
         return rows
     finally:
         store.stop()
+
+
+def memory_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Row]:
+    """Displacement and path-length rows for each window in *dataset*."""
+    return displacement_rows(dataset, windows) + path_length_rows(dataset, windows)
+
+
+def write_rows(path: Path, rows: Sequence[Row]) -> None:
+    path.write_text(json.dumps(list(rows), indent=2) + "\n", encoding="utf-8")
