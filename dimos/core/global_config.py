@@ -18,21 +18,16 @@ Module and subsystem settings belong to their owners' configuration classes.
 """
 
 import os
-from typing import Literal, TypeAlias
 
-from pydantic import AliasChoices, Field, ValidationInfo, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import ValidationInfo, field_validator
+from pydantic_settings import SettingsConfigDict
 
-from dimos.constants import DEFAULT_BUILD_NATIVE
-from dimos.core.config_aliases import GLOBAL_ALIASES
-from dimos.visualization.rerun.constants import ViewerBackend
-
-TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
-# How one zenoh session joins the network.
-ZenohMode: TypeAlias = Literal["peer", "client", "router"]
-# How every session in every process joins it. A router binds a port only one
-# process can hold, so it is pinned on the one session that owns that port.
-ZenohProcessMode: TypeAlias = Literal["peer", "client"]
+from dimos.core.global_config_fields import (
+    GlobalConfigFields,
+    TransportBackend as TransportBackend,
+    ZenohMode as ZenohMode,
+    ZenohProcessMode as ZenohProcessMode,
+)
 
 # pytest exports PYTEST_VERSION to the whole process tree. Tests must not pick up
 # a developer's .env (ROBOT_IP, SIMULATION, ...); dimos/conftest.py exports the
@@ -40,71 +35,7 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
 
-class GlobalConfig(BaseSettings):
-    robot_ip: str | None = None
-    robot_ips: str | None = None
-    simulation: str = ""
-    replay: bool = False
-    replay_db: str = "go2_short"
-    record: Literal["", "sqlite", "mcap"] = ""
-    record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
-    record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
-    record_encoding_threads: int | None = Field(default=None, ge=1)
-    # How every zenoh session this process opens joins the network.
-    zenoh_mode: ZenohProcessMode = "peer"
-    # Extra locators every session dials, alongside those derived from --robot-ip.
-    # Comma-separated, e.g. tcp/127.0.0.1:7447. Names a router or any non-robot peer.
-    zenoh_connect: str = ""
-    # Discover zenoh peers across the network.
-    # Toggling off drops back to loopback-only discovery:
-    # Sibling worker processes still find each other,
-    # remote peers come solely from the connect endpoints derived from --robot-ip
-    zenoh_scouting: bool = False
-    # Interface multicast scouting binds to, e.g. wlan0.
-    # Empty derives it from zenoh_scouting.
-    zenoh_interface: str = ""
-    # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
-    zenoh_multicast: bool = True
-    # Multicast group scouting joins, e.g. 224.0.0.224:7446. Empty takes zenoh's
-    # own. Moving it walks a session onto a private discovery bus, which is how
-    # parallel sessions on one machine stay apart (LCM_DEFAULT_URL's analog).
-    zenoh_scout_addr: str = ""
-    # Whether peers propagate the peers they already know over established links.
-    # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
-    # needs it to resolve the key expressions a linked peer sends.
-    zenoh_gossip: bool | None = True
-    # Seconds ZenohService.start() blocks for the configured connect endpoints to
-    # link before giving up and continuing. 0 disables the wait.
-    zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
-    # Off: share a zenoh bus with a stack that already owns the Coordinator name.
-    serve_coordinator_rpc: bool = True
-    # Isolates this run's zenoh streams under dimos-domains/<name>/; a hosted run pins its run id.
-    zenoh_domain: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$")
-    viewer: ViewerBackend = "rerun"
-    n_workers: int = 2
-    scene_package: str | None = None
-    robot_model: str | None = None
-    # Robot geometry shared by every navigation and patrol module in a stack;
-    # a module config may still override it for itself.
-    robot_width: float = 0.3
-    robot_rotation_diameter: float = 0.6
-    # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
-    # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
-    # env name and the `--transport` CLI flag (which sets the field by name) working.
-    transport: TransportBackend = Field(
-        default="zenoh",
-        validation_alias=AliasChoices(*GLOBAL_ALIASES["transport"]),
-    )
-    build_native: bool = DEFAULT_BUILD_NATIVE
-    dtop: bool = Field(default=False, description="Publish live resource stats for dtop.")
-    listen_host: str = "127.0.0.1"
-    local_relay: bool = False
-    topic_metadata: bool = False
-    """Publish bounded Zenoh stream descriptors for a trusted topic service."""
-    relay_url: str | None = None
-    """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
-    bridge discovers its WebTransport endpoint through /api/info."""
-
+class GlobalConfig(GlobalConfigFields):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         env_file_encoding="utf-8",

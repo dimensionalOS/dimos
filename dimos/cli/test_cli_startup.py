@@ -150,34 +150,43 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
 
 
 @pytest.mark.parametrize(
-    ("shell_name", "dotenv_name"),
+    ("field", "shell_name", "shell_value", "dotenv_name", "dotenv_value"),
     [
-        ("TRANSPORT", "DIMOS_TRANSPORT"),
-        ("G__TRANSPORT", "dimos_transport"),
-        ("G__DIMOS_TRANSPORT", "TRANSPORT"),
+        ("transport", "TRANSPORT", "zenoh", "DIMOS_TRANSPORT", "lcm"),
+        ("transport", "G__TRANSPORT", "zenoh", "dimos_transport", "lcm"),
+        ("transport", "G__DIMOS_TRANSPORT", "zenoh", "TRANSPORT", "lcm"),
+        ("n_workers", "G__N_WORKERS", "7", "N_WORKERS", "invalid"),
     ],
 )
-def test_cli_and_its_child_keep_the_exported_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shell_name: str, dotenv_name: str
+def test_cli_and_its_child_keep_the_exported_global(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    shell_name: str,
+    shell_value: str,
+    dotenv_name: str,
+    dotenv_value: str,
 ) -> None:
-    (tmp_path / ".env").write_text(f"{dotenv_name}=lcm\n")
+    (tmp_path / ".env").write_text(f"{dotenv_name}={dotenv_value}\n")
     monkeypatch.delenv("PYTEST_VERSION", raising=False)
-    monkeypatch.delenv("DIMOS_TRANSPORT", raising=False)
-    monkeypatch.delenv("TRANSPORT", raising=False)
-    monkeypatch.setenv(shell_name, "zenoh")
-    read_transport = (
+    monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
+    for name in ("DIMOS_TRANSPORT", "TRANSPORT", "N_WORKERS"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(f"G__{name}", raising=False)
+    monkeypatch.setenv(shell_name, shell_value)
+    read_global = (
         "from dimos.core.global_config import global_config; "
         "from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser; "
-        "print(global_config.transport, BlueprintConfigParser.preparse_global_config()['transport'], flush=True)"
+        f"print(global_config.{field}, BlueprintConfigParser.preparse_global_config()[{field!r}], flush=True)"
     )
     code = (
-        f"import subprocess, sys; import dimos.cli.dimos; {read_transport}; "
-        f"subprocess.run([sys.executable, '-c', {read_transport!r}], check=True)"
+        f"import subprocess, sys; import dimos.cli.dimos; {read_global}; "
+        f"subprocess.run([sys.executable, '-c', {read_global!r}], check=True)"
     )
     result = subprocess.run(
         [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=True
     )
-    assert result.stdout.splitlines() == ["zenoh zenoh", "zenoh zenoh"]
+    assert result.stdout.splitlines() == [f"{shell_value} {shell_value}"] * 2
 
 
 @pytest.mark.parametrize("source", ["shell", "dotenv"])

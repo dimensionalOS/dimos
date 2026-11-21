@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, ValidationError
+from pydantic import ValidationError
 
 from dimos.core.config_aliases import resolve_global_values
 from dimos.core.coordination.blueprint_config.errors import (
@@ -43,6 +43,7 @@ from dimos.core.coordination.blueprint_config.values import (
     plain_mapping,
 )
 from dimos.core.global_config import ENV_FILE, GlobalConfig
+from dimos.core.global_config_fields import global_environment_aliases
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -120,7 +121,7 @@ REQUIRED_ENVIRONMENT_MIGRATIONS = frozenset(
 def configuration_environment(
     environ: Mapping[str, str] | None,
 ) -> Mapping[str, str]:
-    aliases = _global_environment_aliases()
+    aliases = global_environment_aliases()
     names = {name.lower() for choices in aliases.values() for name in choices}
 
     def canonical(source: Mapping[str, str]) -> dict[str, str]:
@@ -165,7 +166,7 @@ def normalize_global_keys(values: Mapping[str, Any]) -> dict[str, Any]:
     normalized = normalize_mapping_keys(values)
     names = global_environment_names()
     other = {name: value for name, value in normalized.items() if name.lower() not in names}
-    return {**other, **resolve_global_values(normalized, _global_environment_aliases())}
+    return {**other, **resolve_global_values(normalized, global_environment_aliases())}
 
 
 def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -296,21 +297,9 @@ def reserved_global_short_names() -> set[str]:
     return reserved
 
 
-def _global_environment_aliases() -> dict[str, tuple[str, ...]]:
-    aliases = {}
-    for field, info in GlobalConfig.model_fields.items():
-        alias = info.validation_alias
-        if isinstance(alias, AliasChoices):
-            choices = tuple(choice for choice in alias.choices if isinstance(choice, str))
-        else:
-            choices = (alias,) if isinstance(alias, str) else ()
-        aliases[field] = (*choices, field) if field not in choices else choices
-    return aliases
-
-
 def global_environment_names() -> dict[str, str]:
     return {
         name.lower(): field
-        for field, choices in _global_environment_aliases().items()
+        for field, choices in global_environment_aliases().items()
         for name in choices
     }
