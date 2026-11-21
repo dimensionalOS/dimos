@@ -50,6 +50,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.base import ReplaySpeed
 
 logger = setup_logger()
 
@@ -79,7 +80,7 @@ class SpotReplayConfig(ModuleConfig):
     db_path: str = ""
     dataset_dir: str = str(RECORDINGS_DIR / "spot")
 
-    speed: float = 1.0
+    speed: ReplaySpeed = 1.0
     loop: bool = True
     seek: float | None = None
     duration: float | None = None

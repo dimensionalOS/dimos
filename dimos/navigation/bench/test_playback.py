@@ -15,10 +15,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.navigation.bench.playback import frames
+from dimos.navigation.bench.playback import frames, play
 
 
 def test_frames_read_coordinator_joint_state_when_joint_state_is_empty(tmp_path: Path) -> None:
@@ -37,3 +39,8 @@ def test_frames_read_coordinator_joint_state_when_joint_state_is_empty(tmp_path:
 
     assert first.joints == {"fl_knee_joint": 0.3}
     assert second.joints == {"fl_knee_joint": 0.9}
+
+
+def test_play_rejects_infinite_speed_before_loading_an_episode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        play(tmp_path, speed=float("inf"))

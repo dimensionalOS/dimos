@@ -37,6 +37,7 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.utils.timeseries.base import ReplaySpeed
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -55,7 +56,7 @@ def resolve_db_path(dataset: str | Path) -> Path:
 
 
 class ReplayConfig(BaseConfig):
-    speed: float = 1.0
+    speed: ReplaySpeed = 1.0
     seek: float | None = None
     duration: float | None = None
     from_timestamp: float | None = None

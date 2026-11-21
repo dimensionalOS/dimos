@@ -15,14 +15,22 @@
 from collections.abc import Iterator
 from pathlib import Path
 
+from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
+from dimos.mapping.relocalization.blueprints import RecordingPlayer
+from dimos.memory.replay_module import replay_module
 from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.perception.localize.demo_blueprints.xarm_feed import DepthCameraFeed
+from dimos.robot.unitree.g1.g1_replay import G1Replay
 
 
 @pytest.fixture(params=["memory", "sqlite", "mcap"])
@@ -115,3 +123,18 @@ def test_pin_anchor_uses_earliest_source_timestamp(recording: Store) -> None:
 
     assert replay._anchor is not None
     assert replay._anchor[1] == 10.0
+
+
+@pytest.mark.parametrize("speed", [0.0, -1.0, float("nan"), float("inf")])
+def test_store_rejects_invalid_speed_before_subscription(speed: float) -> None:
+    with MemoryStore() as store, pytest.raises(ValidationError, match="speed"):
+        store.replay(speed=speed)
+
+
+@pytest.mark.parametrize(
+    "module", [replay_module(""), G1Replay, SpotReplay, RecordingPlayer, DepthCameraFeed]
+)
+def test_replay_blueprint_rejects_invalid_speed_before_launch(module) -> None:
+    parser = BlueprintConfigParser(module.blueprint())
+    with pytest.raises(BlueprintConfigError, match="speed"):
+        parser.parse([f"--{module.__name__.lower()}.speed", "0"], environ={})

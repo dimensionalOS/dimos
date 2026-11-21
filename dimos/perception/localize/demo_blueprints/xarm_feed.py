@@ -47,6 +47,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.base import ReplaySpeed
 
 logger = setup_logger()
 
@@ -58,7 +59,7 @@ XARM_DATASET = (
 
 class DepthCameraFeedConfig(ModuleConfig):
     dataset: str = XARM_DATASET
-    speed: float = 1.0
+    speed: ReplaySpeed = 1.0
     seek: float | None = None
     duration: float | None = None
 
