@@ -29,11 +29,14 @@ built by a peer with a different layout, which is a permanent error its caller m
 raise, not a race to wait out.
 """
 
-import _posixshmem
-from multiprocessing import resource_tracker
+import mmap
 from multiprocessing.shared_memory import SharedMemory
 import os
+import sys
 import time
+
+if sys.platform != "win32":
+    import _posixshmem
 
 DEFAULT_ATTACH_TIMEOUT_S = float(os.getenv("DIMOS_SHM_ATTACH_TIMEOUT_S", "10"))
 _POLL_S = float(os.getenv("DIMOS_SHM_ATTACH_POLL_S", "0.0005"))
@@ -47,16 +50,36 @@ class ShmNotReadyError(TimeoutError, FileNotFoundError):
     """
 
 
-def unregister(shm: SharedMemory) -> SharedMemory:
-    """Drop ``shm`` from the resource tracker; lifecycle is managed explicitly."""
-    try:
-        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    return shm
+class AttachedShm:
+    """A POSIX mapping borrowed from its creator, outside the Python resource tracker."""
+
+    def __init__(self, name: str, fd: int, size: int) -> None:
+        self.name = name.removeprefix("/")
+        self.size = size
+        self._mapping = mmap.mmap(fd, size)
+        self.buf = memoryview(self._mapping)
+
+    def close(self) -> None:
+        self.buf.release()
+        self._mapping.close()
+
+    def unlink(self) -> None:
+        unlink_shm(self.name)
 
 
-def attach_shm(name: str, *, timeout: float | None = None) -> SharedMemory:
+ShmBuffer = SharedMemory | AttachedShm
+
+
+def unlink_shm(name: str) -> None:
+    """Discard a stale name without enrolling it in this process's tracker."""
+    if sys.platform == "win32":
+        # Windows releases the name when its final handle closes.
+        SharedMemory(name=name).close()
+    else:
+        _posixshmem.shm_unlink("/" + name.removeprefix("/"))
+
+
+def attach_shm(name: str, *, timeout: float | None = None) -> ShmBuffer:
     """Attach to ``name`` once its creator has finished sizing it."""
     limit = DEFAULT_ATTACH_TIMEOUT_S if timeout is None else timeout
     deadline = time.monotonic() + limit
@@ -69,26 +92,19 @@ def attach_shm(name: str, *, timeout: float | None = None) -> SharedMemory:
         time.sleep(_POLL_S)
 
 
-def _try_attach(name: str) -> tuple[SharedMemory | None, str]:
-    # Probe with a bare fd before constructing SharedMemory: its attach path
-    # unlinks the segment whenever mmap fails with an OSError, and on darwin
-    # the zero-length mmap inside the creation window fails with exactly that
-    # (EINVAL — shm fds are not regular files there, so Python's empty-file
-    # ValueError is never reached). Constructing eagerly would therefore
-    # destroy the creator's name mid-window.
+def _try_attach(name: str) -> tuple[ShmBuffer | None, str]:
     try:
-        fd = _posixshmem.shm_open(name if name.startswith("/") else "/" + name, os.O_RDWR, mode=0)
+        if sys.platform == "win32":
+            return SharedMemory(name=name), ""
+        fd = _posixshmem.shm_open("/" + name.removeprefix("/"), os.O_RDWR, mode=0)
     except FileNotFoundError:
         return None, "segment does not exist"
     try:
-        if os.fstat(fd).st_size == 0:
+        size = os.fstat(fd).st_size
+        if size == 0:
             return None, "creator has not sized the segment yet"
+        # Map the descriptor we checked. SharedMemory(name=...) would register
+        # the creator's name even in an independent reader's tracker.
+        return AttachedShm(name, fd, size), ""
     finally:
         os.close(fd)
-    try:
-        return unregister(SharedMemory(name=name)), ""
-    except FileNotFoundError:
-        return None, "segment does not exist"
-    except ValueError:
-        # shm_open has landed but ftruncate has not: the creation window.
-        return None, "creator has not sized the segment yet"

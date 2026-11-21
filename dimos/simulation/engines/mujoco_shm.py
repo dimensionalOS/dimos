@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 import time
@@ -38,7 +37,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.shm import attach_shm
+from dimos.utils.shm import ShmBuffer, attach_shm, unlink_shm
 
 logger = setup_logger()
 
@@ -139,18 +138,6 @@ def _buffer_name(key: str, buffer: str) -> str:
     return f"{_NAME_PREFIX}_{key}_{buffer}"
 
 
-def _unregister(shm: SharedMemory) -> SharedMemory:
-    """Detach ``shm`` from ``resource_tracker`` to silence spurious warnings.
-
-    Same technique as ``dimos.simulation.mujoco.shared_memory._unregister``.
-    """
-    try:
-        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    return shm
-
-
 @dataclass(frozen=True)
 class ManipShmSet:
     """Frozen set of named SharedMemory buffers for sim <-> adapter IPC.
@@ -161,35 +148,30 @@ class ManipShmSet:
     extra buffers are unused by the manipulator path.
     """
 
-    pos: SharedMemory
-    vel: SharedMemory
-    eff: SharedMemory
-    pos_t: SharedMemory
-    vel_t: SharedMemory
-    grp: SharedMemory
+    pos: ShmBuffer
+    vel: ShmBuffer
+    eff: ShmBuffer
+    pos_t: ShmBuffer
+    vel_t: ShmBuffer
+    grp: ShmBuffer
     # Whole-body additions
-    imu: SharedMemory
-    kp_t: SharedMemory
-    kd_t: SharedMemory
-    tau_t: SharedMemory
+    imu: ShmBuffer
+    kp_t: ShmBuffer
+    kd_t: ShmBuffer
+    tau_t: ShmBuffer
     # Bookkeeping
-    seq: SharedMemory
-    ctl: SharedMemory
+    seq: ShmBuffer
+    ctl: ShmBuffer
 
     @classmethod
     def create(cls, key: str) -> ManipShmSet:
         """Create new SHM buffers with deterministic names derived from *key*"""
-        buffers: dict[str, SharedMemory] = {}
+        buffers: dict[str, ShmBuffer] = {}
         for buffer_name, size in _shm_sizes.items():
             name = _buffer_name(key, buffer_name)
             try:
-                stale = _unregister(SharedMemory(name=name))
-                stale.close()
-                try:
-                    stale.unlink()
-                    logger.info("ManipShmSet: unlinked stale SHM", name=name)
-                except FileNotFoundError:
-                    pass
+                unlink_shm(name)
+                logger.info("ManipShmSet: unlinked stale SHM", name=name)
             except FileNotFoundError:
                 pass
             buffers[buffer_name] = SharedMemory(create=True, size=size, name=name)
@@ -202,13 +184,13 @@ class ManipShmSet:
         seq and ctl go first because create() replaces them last: a fresh seq
         means every buffer attached after it is fresh too.
         """
-        buffers: dict[str, SharedMemory] = {}
+        buffers: dict[str, ShmBuffer] = {}
         for buffer_name in ("seq", "ctl", *(n for n in _shm_sizes if n not in ("seq", "ctl"))):
             name = _buffer_name(key, buffer_name)
             buffers[buffer_name] = attach_shm(name, timeout=_ATTACH_WINDOW_S)
         return cls(**buffers)
 
-    def as_list(self) -> list[SharedMemory]:
+    def as_list(self) -> list[ShmBuffer]:
         return [getattr(self, k) for k in _shm_sizes]
 
 
@@ -359,7 +341,7 @@ class ManipShmWriter:
             except OSError as exc:
                 logger.warning("SHM unlink failed", name=shm.name, error=str(exc))
 
-    def _array(self, buf: SharedMemory, n: int, dtype: Any) -> NDArray[Any]:
+    def _array(self, buf: ShmBuffer, n: int, dtype: Any) -> NDArray[Any]:
         return np.ndarray((n,), dtype=dtype, buffer=buf.buf)
 
     def _control(self) -> NDArray[np.int32]:
