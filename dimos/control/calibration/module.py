@@ -77,7 +77,10 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 LOG_SIZE = 50
-NOT_HOME = "The arm is not home: support it before stopping the run, which turns its motors off."
+NOT_AT_REST = (
+    "The arm is not at rest: support it before stopping the run, which turns its motors off."
+)
+PARKED = "Parked at rest; you can stop the run."
 RunState = Literal["idle", "running", "waiting", "done", "failed", "aborted"]
 StepState = Literal["pending", "running", "done", "skipped", "failed", "aborted"]
 
@@ -145,7 +148,7 @@ class CalibrationModuleConfig(ModuleConfig):
     stuck_fraction: float = Field(default=0.5, gt=0.0, lt=1.0)
     dither_span_nm: float = Field(default=0.1, gt=0.0)
     kp_scales: list[float] = Field(default_factory=lambda: [0.6, 1.0, 1.5])
-    kd_scales: list[float] = Field(default_factory=lambda: [1.0, 2.5, 5.0])
+    kd_scales: list[float] = Field(default_factory=lambda: [0.4, 1.0, 2.5, 5.0])
     kd_per_kp: float = Field(default=0.25, gt=0.0)
     step_deltas_deg: list[float] = Field(default_factory=lambda: [1.0, -1.0, 3.0, -3.0])
     max_overshoot_pct: float = Field(default=20.0, gt=0.0)
@@ -390,10 +393,10 @@ class Operator:
             if state not in ("failed", "aborted"):
                 self._where = ""
 
-    def finish(self, state: RunState, summary: str, home: bool) -> None:
-        """The run ended ``state``, as ``summary`` says; ``home``: the arm is home."""
+    def finish(self, state: RunState, summary: str, rest: bool) -> None:
+        """The run ended ``state``, as ``summary`` says; ``rest``: the arm is parked at rest."""
         message = f"Calibration {'done' if state == 'done' else 'not done'}:\n{summary}"
-        message += "" if home else f"\n{NOT_HOME}"
+        message += f"\n{PARKED if rest else NOT_AT_REST}"
         with self._lock:
             self._status.state, self._status.summary, self._status.message = state, summary, message
             self._ended = time.monotonic()
@@ -457,7 +460,7 @@ class Calibration:
         self.stopped: dict[str, dict[tuple[float, float], str]] = {}
         self.friction: dict[str, float] = {}
         self.proposed: dict[str, dict[str, float]] = {}
-        self.at_home = False
+        self.at_home = self.at_rest = False
 
     def feed(self, msg: JointState) -> None:
         """Take one ``joint_state``: keep it, and send the running motion's next target."""
@@ -584,7 +587,7 @@ class Calibration:
 
     def stream(self, motion: Motion, patch: dict[str, Any] | None = None) -> Motion:
         """Stream ``motion`` until it ends, applying the live ``patch`` once it streams."""
-        self.at_home = False
+        self.at_home = self.at_rest = False
         with self._lock:
             if self._interrupt is not None:
                 raise self._interrupt
@@ -625,7 +628,7 @@ class Calibration:
                 reason = f"{reason}: {motion.detail}"
             logger.warning(reason)
             raise UnsettledError(reason, motion.detail)
-        self.at_home = what == "home"
+        self.at_home, self.at_rest = what == "home", what == "rest"
         return motion
 
     def home(
@@ -637,6 +640,13 @@ class Calibration:
                 break
             self.move(back, "the previous pose", ask=False, patch=patch)
         self.move(self.arm.home, "home", patch=patch)
+
+    def park(self) -> None:
+        """Go home unless there, then to rest: every joint at zero, where the arm sits with its
+        motors off."""
+        if not self.at_home:
+            self.home()
+        self.move(np.zeros(self.arm.dof), "rest")
 
     def _step(self, name: str, reason: str | None) -> str:
         """Step ``name``'s result, run unless ``reason`` says why not; its row follows it."""
@@ -653,7 +663,8 @@ class Calibration:
         return result
 
     def run(self) -> None:
-        """Every step in order; on a failure or abort the arm holds and home is offered."""
+        """Every step in order, then the arm parks at rest; on a failure or abort it holds and
+        home, then rest, is offered."""
         ended: RunState = "failed"
         current, results = "check", {}
         try:
@@ -678,20 +689,23 @@ class Calibration:
         if ended != "done":
             with self._lock:
                 self._interrupt = None
-            try:
-                if (
-                    self.ask(f"{text}\nThe arm holds where it is. Go home?", ["home", "stay"])
-                    == "home"
-                ):
-                    self.home()
-            except AbortedError:
-                text += "; going home was aborted"
-            except Exception as error:
-                logger.exception("going home failed")
-                text += f"; going home failed: {type(error).__name__}: {error}"
-            with self._lock:
-                self._interrupt = None
-        self.operator.finish(ended, text, self.at_home)
+        try:
+            if (
+                ended == "done"
+                or self.ask(f"{text}\nThe arm holds where it is. Go home?", ["home", "stay"])
+                == "home"
+            ):
+                self.park()
+        except SkippedError:
+            text += "; parking was skipped"
+        except AbortedError:
+            text += "; parking was aborted"
+        except Exception as error:
+            logger.exception("parking failed")
+            text += f"; parking failed: {type(error).__name__}: {error}"
+        with self._lock:
+            self._interrupt = None
+        self.operator.finish(ended, text, self.at_rest)
 
 
 def bake_calibration(
