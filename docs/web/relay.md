@@ -2,7 +2,7 @@
 
 The relay is the server both sides connect to. Robots connect as robot sessions and browsers as viewer sessions, both over WebTransport. The relay routes frames by channel id without reading their payloads, sends each channel to the viewers that asked for it, and tells the bridge which channels anybody wants. It also serves the cockpit and the SDK over plain HTTP. It stores nothing: everything is in memory, and the clients re-establish it after a restart.
 
-It runs in two modes. Local: `dimos run --local-relay` spawns one on your machine, bound to loopback, with no authentication and an ephemeral self-signed certificate. Hosted: the same program with a real certificate and an auth file, reachable from anywhere. Robots dial out to it, so they need no open ports.
+It runs in two modes. Local: adding `--local-relay` to a blueprint run spawns one on your machine, bound to loopback, with no authentication and an ephemeral self-signed certificate. Hosted: the same program with a real certificate and an auth file, reachable from anywhere. Robots dial out to it, so they need no open ports.
 
 <details>
 <summary>diagram source</summary>
@@ -132,7 +132,7 @@ A topic provider connects to the relay like a robot but offers raw Zenoh topics 
 
 Optional `read`, `write`, `media` and `guarded_publishers` switches bound what the provider accepts; writes and guarded publishers default to false. `video: { "enabled": true }` adds the `video.h264.v1` profile, direct WebRTC video encoded in software (`encoder` is `software`, or an explicit PyAV encoder name such as `libx264`), for up to `max_peers` (16) viewers and `max_encoders` (4) distinct settings; it needs `aiortc` and `av` installed (`dimos[webrtc]`). `zenoh` selects the session's endpoints, scouting and gossip settings. See [TopicServiceConfig](/dimos/web/relay_bridge/topic_service.py) and the [shared Zenoh configuration](/dimos/protocol/service/zenoh_wire.py). `dimos run ... --topic-metadata` publishes the robot's stream descriptors, which the provider's catalog lists.
 
-Access is relay-wide. A relay without an auth file (the local one `dimos run --local-relay` spawns, or `deno task dev`) has topics open: any provider registers without a key and every page reads and writes every connected source, within what the provider accepts. A relay with `--auth-file` keeps topics closed: it turns providers away with `topics_disabled` and denies every topic operation. Start it with `--open-topics` to open them. The provider then needs the key bound to its source in the file's `topicSources` map, passed as `token` in its config, and every viewer token reads and writes every source:
+Access is relay-wide. A relay without an auth file (the local one a blueprint starts with `--local-relay`, or `deno task dev`) has topics open: any provider registers without a key and every page reads and writes every connected source, within what the provider accepts. A relay with `--auth-file` keeps topics closed: it turns providers away with `topics_disabled` and denies every topic operation. Start it with `--open-topics` to open them. The provider then needs the key bound to its source in the file's `topicSources` map, passed as `token` in its config, and every viewer token reads and writes every source:
 
 ```json
 {
