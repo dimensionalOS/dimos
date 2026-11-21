@@ -266,7 +266,12 @@ dimos restart [--force]
 |--------|-------------|
 | `--force`, `-f` | Force kill before restarting |
 
-Reads saved CLI args from the run registry, stops the current instance, then re-runs with the same arguments.
+Restart uses the original Python command and working directory, so relative settings
+and recording paths still resolve from the launch project. For a run started by
+an older version, restart gets the missing context from the live process.
+If the directory was replaced, the source or interpreter is unavailable, or the
+run came from Python standard input or `-c`, restart leaves the instance running.
+These checks also apply to `--force`.
 
 ### `dimos log`
 

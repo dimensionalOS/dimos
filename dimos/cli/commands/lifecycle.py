@@ -19,12 +19,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import shutil
 import signal
 import sys
 import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+import psutil
 from pydantic import ValidationError
 import typer
 
@@ -33,13 +35,19 @@ from dimos.core.coordination.coordinator_rpc import CoordinatorAlreadyRunningErr
 from dimos.core.daemon import (
     DAEMON_STATUS_FD_ENV,
     fork_daemon,
+    python_command,
     read_daemon_status,
     redirect_stdio_to_devnull,
     run_coordinator,
     write_daemon_status,
 )
 from dimos.core.global_config import global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.run_registry import (
+    get_most_recent,
+    is_pid_alive,
+    stop_entry,
+    without_secret_options,
+)
 from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
@@ -204,6 +212,9 @@ def run(
 ) -> None:
     """Start a robot blueprint"""
 
+    working_directory = os.getcwd()
+    directory_stat = os.stat(".")
+    command, source = python_command()
     # Log this at the start so that people get immediate feedback that the program has started.
     logger.info("Starting DimOS")
 
@@ -360,7 +371,10 @@ def run(
         log_dir=str(log_dir),
         cli_args=list(blueprint_names),
         config_overrides=global_option_overrides,
-        original_argv=sys.argv,
+        original_argv=[source, *sys.argv[1:]],
+        working_directory=working_directory,
+        working_directory_id=[directory_stat.st_dev, directory_stat.st_ino],
+        python_argv=command if source not in ("", "-", "-c") else [],
     )
     if blueprint.hosted_placements:
         if daemon:
@@ -530,9 +544,41 @@ def restart(
         typer.echo("Cannot restart: run entry missing original command", err=True)
         raise typer.Exit(1)
 
-    # Save argv and pid before stopping (stop removes the entry)
-    argv = entry.original_argv
+    source = entry.original_argv[0]
+    if source in ("", "-", "-c"):
+        typer.echo("Cannot restart a run launched from standard input or inline code", err=True)
+        raise typer.Exit(1)
+
     old_pid = entry.pid
+    try:
+        # A released registry contains only sys.argv. Read its missing context
+        # while the process is still alive, then apply the usual argument filter.
+        directory = entry.working_directory or psutil.Process(old_pid).cwd()
+        os.chdir(directory)
+        current = os.stat(".")
+        if entry.working_directory_id is not None and entry.working_directory_id != [
+            current.st_dev,
+            current.st_ino,
+        ]:
+            raise OSError("the original launch directory was replaced")
+        source_path = Path(source)
+        candidates = (
+            [source_path / "__main__.py", source_path / "__main__.pyc"]
+            if source_path.is_dir()
+            else [source_path]
+        )
+        if not any(path.is_file() and os.access(path, os.R_OK) for path in candidates):
+            raise OSError(f"original Python source is unavailable: {source}")
+        argv = (
+            without_secret_options(psutil.Process(old_pid).cmdline())
+            if entry.python_argv is None
+            else entry.python_argv
+        )
+        if not argv or shutil.which(argv[0]) is None:
+            raise OSError("original command is unavailable")
+    except (OSError, psutil.Error) as exc:
+        typer.echo(f"Cannot restart: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
     msg, _ok = stop_entry(entry, force=force)

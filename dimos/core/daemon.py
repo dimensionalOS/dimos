@@ -48,6 +48,35 @@ def health_check(coordinator: ModuleCoordinator) -> bool:
     return coordinator.health_check()
 
 
+def python_command() -> tuple[list[str], str]:
+    """Return the interpreter invocation and the source Python actually launched."""
+    command = [sys.executable, *sys.orig_argv[1:]]
+    source = sys.argv[0]
+    # Python has already split interpreter options from application arguments.
+    # A wrapper may have changed cwd before calling the CLI. Its relative script
+    # operand then needs the original path recorded by Python in __main__.__file__.
+    main = sys.modules["__main__"]
+    filename = getattr(main, "__file__", None)
+    if not filename or filename == "<stdin>":
+        # An embedded CLI can supply its own sys.argv even when Python has no file.
+        return command, source if source in ("-", "-c") else ""
+    if (
+        main.__spec__ is None
+        and not os.path.isabs(source)
+        and source not in ("", "-", "-c")
+        and os.path.abspath(source) != filename
+    ):
+        operand = len(command) - len(sys.argv)
+        if operand < 1 or command[operand:] != sys.argv:
+            # Wrappers may insert their own CLI arguments. Only move an operand
+            # we can identify without changing an interpreter option or user value.
+            if command[1:].count(source) != 1:
+                return [], filename
+            operand = command.index(source, 1)
+        source = command[operand] = filename
+    return command, source
+
+
 def fork_daemon(log_dir: Path) -> tuple[int, int]:
     """Double-fork into a daemon, keeping a status pipe to the launcher.
 
@@ -80,11 +109,12 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     # Anything buffered would otherwise be flushed by both processes.
     sys.stdout.flush()
     sys.stderr.flush()
+    exec_argv, _ = python_command()
+    if not exec_argv:
+        raise OSError("Cannot identify the original Python command for daemon startup")
     read_fd, write_fd = os.pipe()
     os.set_inheritable(write_fd, True)
     exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
-    # Preserve interpreter flags and both console-script/python -m entry.
-    exec_argv = [sys.executable, *sys.orig_argv[1:]]
 
     pid = os.fork()
     if pid > 0:

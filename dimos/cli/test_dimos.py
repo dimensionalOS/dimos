@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import os
 from pathlib import Path
 import re
 import signal
@@ -37,6 +38,7 @@ from dimos.core.daemon import install_signal_handlers
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
+from dimos.core.run_registry import RunEntry
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
@@ -50,6 +52,7 @@ import dimos.utils.logging_config as logging_config
 
 
 class RunConfigA(ModuleConfig):
+    api_key: str | None = None
     map_file: str | None = None
     entity_prefix: str = "world"
     daemon: str = "module-default"
@@ -1028,3 +1031,155 @@ def test_run_registered_keeps_the_entry_from_readiness_until_exit(
     assert seen == [False, True]
     assert entry.mcp_url == "http://127.0.0.1:9990/mcp"
     assert not entry.registry_path.exists()
+
+
+@pytest.fixture
+def restart_entry(stubbed_run, tmp_path, monkeypatch, mocker):
+    """Drive run, reload its registry entry, and capture the restart handoff."""
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    stop = mocker.patch.object(lifecycle, "stop_entry", return_value=("stopped", True))
+    mocker.patch.object(lifecycle, "is_pid_alive", return_value=False)
+    execute = mocker.patch.object(lifecycle.os, "execvp")
+
+    def capture(source, prefix, *, legacy=False, raw_args=None, extra_args=()):
+        args = ["--replay-db", "replay.db", "run", "alpha", *extra_args]
+        monkeypatch.setattr(sys, "argv", [source, *args])
+        monkeypatch.setattr(sys, "orig_argv", [*prefix, *(args if raw_args is None else raw_args)])
+        runner = CliRunner()
+        assert runner.invoke(main, args).exit_code == 0
+        fields = dict(stubbed_run["entry"])
+        if legacy:
+            fields = {
+                k: v
+                for k, v in fields.items()
+                if k not in ("working_directory", "working_directory_id", "python_argv")
+            }
+            mocker.patch("psutil.Process.cwd", return_value=os.getcwd())
+            mocker.patch("psutil.Process.cmdline", return_value=[*prefix, *args])
+        entry = RunEntry(**fields)
+        entry.save()
+        mocker.patch.object(
+            lifecycle, "get_most_recent", return_value=RunEntry.load(entry.registry_path)
+        )
+        return runner, stop, execute, entry
+
+    return capture
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["saved", "released"])
+def test_restart_restores_command_and_relative_recording(
+    restart_entry, tmp_path, monkeypatch, legacy
+):
+    launch = tmp_path / "project"
+    launch.mkdir()
+    (launch / "replay.db").write_text("original")
+    (tmp_path / "replay.db").write_text("different")
+    monkeypatch.chdir(launch)
+    source = str(Path(lifecycle.__file__))
+    prefix = [sys.executable, "-u", "-m", "dimos.cli.dimos"]
+    runner, stop, execute, entry = restart_entry(
+        source, prefix, legacy=legacy, extra_args=["--runmodulea.api-key=private-value"]
+    )
+    assert "private-value" not in entry.registry_path.read_text()
+    opened = []
+    execute.side_effect = lambda program, args: opened.append(
+        Path(args[args.index("--replay-db") + 1]).read_text()
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(main, ["restart"])
+
+    assert result.exit_code == 0
+    assert opened == ["original"]
+    execute.assert_called_once_with(
+        sys.executable, [*prefix, "--replay-db", "replay.db", "run", "alpha"]
+    )
+    stop.assert_called_once()
+
+
+@pytest.mark.parametrize("kind", ["interpreter-option", "relative-injected", "absolute-injected"])
+def test_restart_restores_wrapper_command(restart_entry, tmp_path, monkeypatch, kind):
+    script = tmp_path / "wrapper"
+    script.touch()
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(script))
+    monkeypatch.setattr(sys.modules["__main__"], "__spec__", None)
+    source = str(script) if kind == "absolute-injected" else script.name
+    # The interpreter option and the program may have the same spelling.
+    options = ["-X", script.name, "-u"] if kind == "interpreter-option" else ["-u"]
+    raw_args = ["--replay-db", "replay.db", "run", "alpha"] if kind == "interpreter-option" else []
+    prefix = [sys.executable, *options]
+    runner, _, execute, _ = restart_entry(source, [*prefix, source], raw_args=raw_args)
+    monkeypatch.chdir(tmp_path)
+
+    assert runner.invoke(main, ["restart"]).exit_code == 0
+    execute.assert_called_once_with(sys.executable, [*prefix, str(script), *raw_args])
+    assert Path.cwd() == project
+
+
+def test_restart_keeps_wrapper_with_ambiguous_relative_source(restart_entry, tmp_path, monkeypatch):
+    script = tmp_path / "wrapper"
+    script.touch()
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(script))
+    monkeypatch.setattr(sys.modules["__main__"], "__spec__", None)
+    prefix = [sys.executable, "-X", script.name, "-u", script.name]
+    runner, stop, execute, _ = restart_entry(script.name, prefix, raw_args=[])
+
+    result = runner.invoke(main, ["restart", "--force"])
+
+    assert result.exit_code == 1
+    stop.assert_not_called()
+    execute.assert_not_called()
+
+
+@pytest.mark.parametrize("missing", ["directory", "source", "source-is-directory", "interpreter"])
+def test_restart_keeps_run_if_launch_context_is_unavailable(
+    restart_entry, tmp_path, monkeypatch, missing
+):
+    launch = tmp_path / "launch"
+    launch.mkdir()
+    monkeypatch.chdir(launch)
+    script = launch / "program"
+    script.touch()
+    interpreter = tmp_path / "python"
+    interpreter.symlink_to(sys.executable)
+    monkeypatch.setattr(sys, "executable", str(interpreter))
+    runner, stop, execute, entry = restart_entry(str(script), [str(interpreter), str(script)])
+    if missing == "directory":
+        launch.rename(tmp_path / "moved")
+        launch.mkdir()
+        (launch / "program").touch()
+    elif missing in ("source", "source-is-directory"):
+        script.unlink()
+        if missing == "source-is-directory":
+            script.mkdir()
+    else:
+        interpreter.unlink()
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(main, ["restart", "--force"])
+
+    assert result.exit_code == 1
+    stop.assert_not_called()
+    execute.assert_not_called()
+    assert entry.registry_path.is_file()
+
+
+@pytest.mark.parametrize("source", ["-", "-c"])
+def test_restart_keeps_stdin_and_inline_runs(restart_entry, tmp_path, monkeypatch, source):
+    monkeypatch.chdir(tmp_path)
+    prefix = [sys.executable, source] + (["print('inline contents')"] if source == "-c" else [])
+    runner, stop, execute, entry = restart_entry(source, prefix)
+
+    result = runner.invoke(main, ["restart", "--force"])
+
+    assert result.exit_code == 1
+    assert "inline contents" not in entry.registry_path.read_text()
+    assert "inline contents" not in result.output
+    stop.assert_not_called()
+    execute.assert_not_called()
