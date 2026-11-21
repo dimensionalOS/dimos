@@ -77,6 +77,7 @@ class RunModuleB(Module):
 
 class RunConfigKey(ModuleConfig):
     api_key: str
+    password: str
 
 
 class RunModuleKey(Module):
@@ -1137,12 +1138,20 @@ def test_restart_restores_command_and_relative_recording(
 
 
 @pytest.mark.parametrize(
-    ("shell", "code", "key"),
-    [({}, 2, "launch-key"), ({"RUNMODULEKEY__API_KEY": "shell-key"}, 0, "shell-key")],
+    ("password_option", "shell", "code", "resolved"),
+    [
+        (["--runmodulekey.password", "launch-word"], {}, 2, ("launch-key", "launch-word")),
+        (
+            ["--runmodulekey.password=launch-word"],
+            {"RUNMODULEKEY__API_KEY": "shell-key", "RUNMODULEKEY__PASSWORD": "shell-word"},
+            0,
+            ("shell-key", "shell-word"),
+        ),
+    ],
     ids=["missing", "exported"],
 )
 def test_restart_resolves_an_unsaved_credential_before_stopping_the_run(
-    restart_entry, stubbed_run, tmp_path, monkeypatch, shell, code, key
+    restart_entry, stubbed_run, tmp_path, monkeypatch, password_option, shell, code, resolved
 ):
     monkeypatch.setattr(
         get_all_blueprints, "get_by_name_or_exit", lambda name: RunModuleKey.blueprint()
@@ -1152,7 +1161,7 @@ def test_restart_resolves_an_unsaved_credential_before_stopping_the_run(
     runner, stop, execute, entry = restart_entry(
         sys.modules["dimos.cli.dimos"].__file__,
         prefix,
-        extra_args=["--runmodulekey.api-key", "launch-key"],
+        extra_args=["--runmodulekey.api-key", "launch-key", *password_option],
     )
     replacements = []
     execute.side_effect = lambda program, args: replacements.append(
@@ -1165,10 +1174,13 @@ def test_restart_resolves_an_unsaved_credential_before_stopping_the_run(
 
     (replacement,) = replacements
     assert replacement.exit_code == code
-    assert ("runmodulekey.api_key: Field required" in replacement.output) is (code == 2)
+    assert ("runmodulekey.password: Field required" in replacement.output) is (code == 2)
     assert stop.call_count == int(code == 0)
-    assert stubbed_run["parsed_config"].module_kwargs("runmodulekey")["api_key"] == key
-    assert "launch-key" not in entry.registry_path.read_text() + result.output
+    config = stubbed_run["parsed_config"].module_kwargs("runmodulekey")
+    assert (config["api_key"], config["password"]) == resolved
+    saved = entry.registry_path.read_text() + result.output
+    assert "launch-key" not in saved
+    assert "launch-word" not in saved
 
 
 def test_restart_keeps_run_if_python_cannot_resolve_original_module(
