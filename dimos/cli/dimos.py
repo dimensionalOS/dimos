@@ -103,7 +103,8 @@ def normalize_argv(argv: list[str]) -> list[str]:
 
 def cli_main() -> None:
     # Keep Python's application argv intact for the daemon and restart commands.
-    main(args=normalize_argv(sys.argv[1:]))
+    # normalize_argv reads the program name first, like sys.argv.
+    main(args=normalize_argv(sys.argv)[1:])
 
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]

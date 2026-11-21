@@ -31,6 +31,7 @@ import dimos.cli.commands.info as info
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
 import dimos.cli.commands.mcp as mcp
+import dimos.cli.dimos as dimos_cli
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
@@ -99,6 +100,21 @@ class RunModuleB(Module):
 )
 def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
+
+
+def test_cli_main_normalizes_the_program_argv_without_replacing_it(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    argv = ["dimos", "--simulation", "status"]
+    monkeypatch.setattr(sys, "argv", list(argv))
+    normalize = mocker.spy(dimos_cli, "normalize_argv")
+    run = mocker.patch.object(type(main), "__call__")
+
+    dimos_cli.cli_main()
+
+    normalize.assert_called_once_with(argv)
+    run.assert_called_once_with(args=["--simulation", "mujoco", "status"])
+    assert sys.argv == argv
 
 
 @pytest.mark.parametrize(
