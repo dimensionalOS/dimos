@@ -83,9 +83,40 @@ pub fn apply_realtime(
                 anyhow::bail!("SCHED_FIFO {prio}: {}", std::io::Error::last_os_error());
             }
         }
+        confirm_realtime(cpu, fifo_priority)?;
     }
     #[cfg(not(target_os = "linux"))]
     let _ = (cpu, fifo_priority, lock_memory);
+    Ok(())
+}
+
+/// Read back this thread's placement: exactly `cpu` and SCHED_FIFO at `fifo_priority`, or an error saying what it is.
+#[cfg(target_os = "linux")]
+unsafe fn confirm_realtime(cpu: Option<usize>, fifo_priority: Option<i32>) -> Result<()> {
+    let (Some(cpu), Some(prio)) = (cpu, fifo_priority) else {
+        anyhow::bail!("not configured real-time: realtime cpu and fifo priority must both be set");
+    };
+    let mut set: libc::cpu_set_t = std::mem::zeroed();
+    if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
+        anyhow::bail!("sched_getaffinity: {}", std::io::Error::last_os_error());
+    }
+    let cpus: Vec<usize> = (0..libc::CPU_SETSIZE as usize)
+        .filter(|&c| libc::CPU_ISSET(c, &set))
+        .collect();
+    if cpus != [cpu] {
+        anyhow::bail!("pinned to cpus {cpus:?}, not only {cpu}");
+    }
+    let policy = libc::sched_getscheduler(0);
+    let mut param = libc::sched_param { sched_priority: 0 };
+    if policy != libc::SCHED_FIFO
+        || libc::sched_getparam(0, &mut param) != 0
+        || param.sched_priority != prio
+    {
+        anyhow::bail!(
+            "scheduler {policy} priority {}, not SCHED_FIFO {prio}",
+            param.sched_priority
+        );
+    }
     Ok(())
 }
 

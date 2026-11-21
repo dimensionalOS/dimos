@@ -43,6 +43,14 @@ control_hz = 1000
 # control ticks per policy step (50 Hz)
 policy_decimation = 20
 
+# the 1 kHz loop and the policy thread each own an isolated A76 core (AOS isolcpus 0,4-7) at SCHED_FIFO; the
+# controller refuses to run unless both are placed and confirmed (a 20 ms bus gap off a shared core faults the stand)
+[realtime]
+control_cpu = 4
+control_fifo_priority = 80
+policy_cpu = 5
+policy_fifo_priority = 70
+
 [safety]
 # no faults are raised for this long after start (rl_deploy SafeController grace)
 startup_grace_s = 1.0

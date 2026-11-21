@@ -46,6 +46,10 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.std_msgs.UInt32 import UInt32
 
+# rl_deploy's basic flat gait; vendor-mode M20Connection walks on 0x3002 (flat agile), which this controller's
+# basic_flat -> navi_flat switch does not yet reproduce (it faulted on the robot 2026-11-21)
+BASIC_FLAT_GAIT = 0x1001
+
 
 class M20ControllerConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/robot/deeprobotics/m20/controller/rust"
@@ -84,6 +88,8 @@ class M20ControllerConfig(NativeModuleConfig):
     # policy: seconds without a new command before the velocity is zeroed, over the TOML's
     # safety.command_timeout_s (0 keeps the TOML's; the native config takes no None)
     command_timeout_s: float = Field(default=0.0, ge=0.0)
+    # policy: the gait code walking starts on until a gait_cmd changes it
+    gait: int = BASIC_FLAT_GAIT
 
 
 class M20Controller(NativeModule):
@@ -105,8 +111,9 @@ class M20Controller(NativeModule):
 
     @rpc
     def stand(self) -> None:
-        """Stand up (policy on; the legs only move with allow_gains)."""
-        self.motion_cmd.transport.publish(String("stand"))
+        """Stand up, then walk on the configured gait: the state machine goes on to rl_control by itself."""
+        self.gait_cmd.transport.publish(UInt32(self.config.gait))
+        self.motion_cmd.transport.publish(String("rl_control"))
 
     @rpc
     def lie_down(self) -> None:

@@ -94,6 +94,8 @@ pub struct Config {
     /// safety.command_timeout_s; 0 (unset) keeps the TOML's.
     #[validate(range(min = 0.0))]
     command_timeout_s: f64,
+    /// policy: the vendor gait code walking starts on until a gait_cmd changes it (Python default 0x1001 basic flat).
+    gait: u32,
 }
 
 #[derive(Module)]
@@ -283,6 +285,7 @@ struct Status {
 impl M20Controller {
     async fn start(&mut self) {
         let config = self.config.clone();
+        self.current.gait = config.gait;
         let (joint_state, joint_state_rx) = watch::channel(None);
         let (joint_command, joint_command_rx) = watch::channel(None);
         let (battery, battery_rx) = watch::channel(None);
@@ -456,7 +459,11 @@ fn run_policy(
         if let Err(error) =
             rt::apply_realtime(rt_cfg.policy_cpu, rt_cfg.policy_fifo_priority, false)
         {
-            warn!(error = format!("{error:#}"), "policy thread realtime setup");
+            tracing::error!(
+                error = format!("{error:#}"),
+                "the policy thread is not real-time; refusing to run"
+            );
+            std::process::exit(1);
         }
     }) {
         Ok(policy) => policy,
@@ -522,11 +529,11 @@ fn run_policy(
         }
     };
     if let Err(error) = rt::control_realtime(&cfg.realtime) {
-        warn!(
+        tracing::error!(
             error = format!("{error:#}"),
-            "cannot make the 1 kHz loop real-time; not running the policy"
+            "the 1 kHz loop is not real-time (needs CAP_SYS_NICE / LimitRTPRIO); refusing to run"
         );
-        return;
+        std::process::exit(1);
     }
     info!(
         interface = %cfg.ecan.interface,
@@ -797,7 +804,7 @@ mod tests {
             "frame_id": "base_link", "guard_max_torque": 1.0, "guard_max_velocity": 0.5,
             "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
             "controller_config": "", "policy_dir": "", "imu_timeout_s": 0.05,
-            "command_timeout_s": command_timeout_s,
+            "command_timeout_s": command_timeout_s, "gait": 0x3002,
         });
         serde_json::from_value(fields).unwrap()
     }
