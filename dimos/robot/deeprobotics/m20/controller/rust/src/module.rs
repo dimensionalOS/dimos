@@ -226,6 +226,19 @@ pub fn guard(
     )
 }
 
+/// The one-time setup that grants the controller CAP_NET_RAW (motor bus) and SCHED_FIFO (CAP_SYS_NICE, LimitRTPRIO).
+const REALTIME_FIX: &str =
+    "on AOS run `m20tool setup-step aos/dimos-host-realtime`, then restart dimos-host";
+
+/// What to run when the motor bus is refused for want of a permission; "" otherwise.
+fn setup_fix(error: &str) -> &'static str {
+    if error.contains("Operation not permitted") || error.contains("Permission denied") {
+        REALTIME_FIX
+    } else {
+        ""
+    }
+}
+
 /// Publish whatever the channel holds, as often as the output keeps up.
 fn forward<T: Clone + Send + Sync + 'static>(
     mut latest: watch::Receiver<Option<T>>,
@@ -524,14 +537,19 @@ fn run_policy(
     ) {
         Ok(hardware) => hardware,
         Err(error) => {
-            warn!(error = format!("{error:#}"), "cannot own the motor bus");
+            warn!(
+                error = format!("{error:#}"),
+                fix = setup_fix(&format!("{error:#}")),
+                "cannot own the motor bus"
+            );
             return;
         }
     };
     if let Err(error) = rt::control_realtime(&cfg.realtime) {
         tracing::error!(
             error = format!("{error:#}"),
-            "the 1 kHz loop is not real-time (needs CAP_SYS_NICE / LimitRTPRIO); refusing to run"
+            fix = REALTIME_FIX,
+            "the 1 kHz loop is not real-time; refusing to run"
         );
         std::process::exit(1);
     }
@@ -667,7 +685,7 @@ fn run_owner(config: &Config, latest: &Latest) {
     let mut bus = match Bus::open(&config.interface, OwnerConfig { allow_gains: false }) {
         Ok(bus) => bus,
         Err(error) => {
-            warn!(%error, "cannot own the motor bus");
+            warn!(%error, fix = setup_fix(&error.to_string()), "cannot own the motor bus");
             return;
         }
     };

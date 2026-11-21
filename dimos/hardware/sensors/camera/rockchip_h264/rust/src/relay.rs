@@ -108,7 +108,7 @@ pub async fn relay(
         match stream(&camera, &encode, stall, stats).await {
             Ok(()) => warn!(camera = %camera.name, "camera pipeline ended"),
             Err(error) => {
-                warn!(camera = %camera.name, error = format!("{error:#}"), "camera pipeline failed")
+                warn!(camera = %camera.name, error = format!("{error:#}"), fix = setup_fix(&format!("{error:#}")), "camera pipeline failed")
             }
         }
         tokio::time::sleep(retry).await;
@@ -474,5 +474,14 @@ mod tests {
         // what the Rockchip encoder actually did once fdsink blocked: ~5 fps of the 30 asked for
         assert!(sick(4.7, 30));
         assert!(sick(0.0, 30));
+    }
+}
+
+/// What to run when the cameras or the hardware encoder (/dev/mpp_service) are refused for want of a permission; "" otherwise.
+fn setup_fix(error: &str) -> &'static str {
+    if error.contains("Permission denied") || error.contains("Operation not permitted") {
+        "on AOS run `m20tool setup-step aos/rockchip-media` and `m20tool setup-step aos/dimos-host-realtime` (video group), then restart dimos-host"
+    } else {
+        ""
     }
 }

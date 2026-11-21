@@ -26,6 +26,8 @@ Configs are per-rig :data:`PRESETS`; see tune.md to measure a new one.
 
 from __future__ import annotations
 
+import ctypes
+import functools
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
@@ -88,6 +90,8 @@ class RelocalizeConfig(BaseConfig):
     ransac_confidence: float = 0.999
     ransac_n: int = 3  # the minimum for a rigid transform
     icp_max_iter: int = 200
+    # OpenMP threads one align may use (Open3D's RANSAC / ICP / FPFH); 0 keeps OpenMP's default, every core
+    threads: int = 0
 
 
 # Livox mid360 on a Go2, outdoors; trial 229 of the go2-sf-area1 study.
@@ -162,6 +166,7 @@ class CloudRelocalizer:
 
         cfg = self.config
         reg = o3d.pipelines.registration
+        _limit_openmp_threads(cfg.threads)
         source = self._prepare(local_map)
         target = self._target
         dist = cfg.voxel_coarse * cfg.coarse_dist_factor
@@ -232,3 +237,29 @@ class CloudRelocalizer:
             np.asarray(result.transformation), frame_id=map_frame, child_frame_id=world_frame
         )
         return RelocAttempt(placement.inverse(), result)
+
+
+@functools.cache
+def _openmp_runtime() -> ctypes.CDLL | None:
+    """The OpenMP runtime Open3D loaded into this process (libgomp / libomp), found in its memory map; None if none is."""
+    try:
+        with open("/proc/self/maps") as maps:
+            paths = {line.split()[-1] for line in maps if "libgomp" in line or "libomp" in line}
+    except OSError:
+        paths = set()
+    for path in sorted(paths):
+        try:
+            return ctypes.CDLL(path)
+        except OSError:
+            continue
+    logger.warning("relocalize: no OpenMP runtime found, its thread count is left as is")
+    return None
+
+
+def _limit_openmp_threads(threads: int) -> None:
+    """Cap the OpenMP team the calling thread starts (the setting is per thread, so call it from the aligning thread)."""
+    if threads <= 0:
+        return
+    runtime = _openmp_runtime()
+    if runtime is not None:
+        runtime.omp_set_num_threads(threads)

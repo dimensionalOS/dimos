@@ -123,6 +123,12 @@ fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
                 };
                 warn!(%error, stats = ?imu.stats(), "IMU read failed, reopening");
             }
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => warn!(
+                %error,
+                device = %config.device,
+                fix = "on AOS run `m20tool setup-step aos/dimos-host-realtime` (dialout group), then restart dimos-host",
+                "cannot open the IMU"
+            ),
             Err(error) => warn!(%error, device = %config.device, "cannot open the IMU"),
         }
         // retry backoff, not load-bearing: the UART node is fixed, so there is no appearance to watch for
