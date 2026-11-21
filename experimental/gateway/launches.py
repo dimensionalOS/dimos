@@ -726,6 +726,7 @@ def _start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, A
             **os.environ,
             "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
             "VIRTUAL_ENV": str(venv),
+            "DIMOS_RECORDINGS_DIR": str(store.recordings_dir(dimos_dir).absolute()),
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
             **launch_env_defaults(),
