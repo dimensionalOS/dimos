@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -56,7 +57,7 @@ def test_graph_command_uses_default_svg_path(
 
     expected = (tmp_path / "alpha.svg").resolve()
     assert result.exit_code == 0, result.output
-    render.assert_called_once_with("alpha", expected, include_rpc=False)
+    render.assert_called_once_with("alpha", expected, include_rpc=False, global_overrides={})
     assert result.output == f"Blueprint graph written to {expected}\n"
 
 
@@ -72,7 +73,7 @@ def test_graph_command_includes_rpc_when_requested(
 
     expected = (tmp_path / "alpha.svg").resolve()
     assert result.exit_code == 0, result.output
-    render.assert_called_once_with("alpha", expected, include_rpc=True)
+    render.assert_called_once_with("alpha", expected, include_rpc=True, global_overrides={})
 
 
 def test_graph_command_creates_output_parent(
@@ -86,7 +87,9 @@ def test_graph_command_creates_output_parent(
 
     assert result.exit_code == 0, result.output
     assert output.parent.is_dir()
-    render.assert_called_once_with("alpha", output.resolve(), include_rpc=False)
+    render.assert_called_once_with(
+        "alpha", output.resolve(), include_rpc=False, global_overrides={}
+    )
 
 
 def test_graph_command_rejects_non_svg_output(
@@ -132,7 +135,7 @@ def test_graph_subprocess_uses_static_transport_environment(
     )
     output = tmp_path / "alpha.svg"
 
-    graph_command._render_in_subprocess("alpha", output, include_rpc=False)
+    graph_command._render_in_subprocess("alpha", output, include_rpc=False, global_overrides={})
 
     run.assert_called_once()
     args, kwargs = run.call_args
@@ -144,7 +147,7 @@ def test_graph_subprocess_uses_static_transport_environment(
         str(output),
     ]
     assert kwargs["env"]["LCM_DEFAULT_URL"] == "memq://"
-    assert kwargs["env"]["viewer"] == "none"
+    assert kwargs["env"]["viewer"] == "rerun"
     assert kwargs["text"] is True
     assert kwargs["capture_output"] is True
 
@@ -160,7 +163,7 @@ def test_graph_subprocess_forwards_rpc_flag(
     )
     output = tmp_path / "alpha.svg"
 
-    graph_command._render_in_subprocess("alpha", output, include_rpc=True)
+    graph_command._render_in_subprocess("alpha", output, include_rpc=True, global_overrides={})
 
     args, _kwargs = run.call_args
     assert args[0] == [
@@ -198,3 +201,38 @@ def test_graph_worker_forwards_rpc_choice_to_renderer(
     graph_command._worker_main()
 
     render.assert_called_once_with("alpha", output, include_rpc=include_rpc)
+
+
+def test_graph_resolves_blueprint_with_global_options_in_renderer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = tmp_path / "graph_fixture-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Name: graph-fixture\nVersion: 1.0\n")
+    (metadata / "entry_points.txt").write_text("[dimos.blueprints]\nrobot = graph_fixture:robot\n")
+    (tmp_path / "graph_fixture.py").write_text(
+        "from dimos.core.global_config import global_config as g\n"
+        "from dimos.core.module import Module\n"
+        "class SimReplay(Module): pass\n"
+        "class Live(Module): pass\n"
+        "selected = g.simulation == 'dimsim' and g.replay and g.viewer == 'rerun'\n"
+        "robot = (SimReplay if selected else Live).blueprint()\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setenv("REPLAY", "false")
+    monkeypatch.delenv("viewer", raising=False)
+    monkeypatch.setenv("VIEWER", "rerun")
+    # Capture the DOT that would be sent to Graphviz.
+    dot = tmp_path / "dot"
+    dot.write_text('#!/bin/sh\ncat > "$3"\n')
+    dot.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    graph = tmp_path / "robot.svg"
+
+    result = CliRunner().invoke(
+        main,
+        ["--simulation", "dimsim", "--replay", "graph", "graph-fixture.robot", "-o", str(graph)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "SimReplay" in graph.read_text()

@@ -14,14 +14,17 @@
 
 """Render Blueprint relationships as a Graphviz SVG."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any
 
 import typer
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.introspection.blueprint.dot import render_svg
 from dimos.robot import get_all_blueprints
 
@@ -35,11 +38,13 @@ def _render_graph(blueprint_name: str, output: Path, *, include_rpc: bool) -> No
     render_svg(blueprint, str(output), include_rpc=include_rpc)
 
 
-def _render_in_subprocess(blueprint_name: str, output: Path, *, include_rpc: bool) -> None:
+def _render_in_subprocess(
+    blueprint_name: str, output: Path, *, include_rpc: bool, global_overrides: dict[str, Any]
+) -> None:
     """Import and render a Blueprint without opening its runtime transports."""
     env = os.environ.copy()
+    env["_DIMOS_GRAPH_GLOBAL_OPTIONS"] = json.dumps(global_overrides)
     env["LCM_DEFAULT_URL"] = "memq://"
-    env["viewer"] = "none"
     env.setdefault("PYTHONWARNINGS", "ignore")
 
     command = [sys.executable, "-m", __name__, blueprint_name, str(output)]
@@ -58,6 +63,7 @@ def _render_in_subprocess(blueprint_name: str, output: Path, *, include_rpc: boo
 
 
 def graph(
+    ctx: typer.Context,
     blueprint: str = typer.Argument(..., help="Blueprint or module name to visualize."),
     output: Path | None = typer.Option(
         None,
@@ -71,14 +77,16 @@ def graph(
         help="Include RPC contracts and relationships.",
     ),
 ) -> None:
-    """Render a Blueprint's relationships as a Graphviz SVG."""
+    """Render a Blueprint's relationships with the selected global options as a Graphviz SVG."""
     output_path = (output or Path(f"{blueprint}.svg")).expanduser().resolve()
     if output_path.suffix.lower() != ".svg":
         raise typer.BadParameter("output path must end in .svg", param_hint="--output")
 
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        _render_in_subprocess(blueprint, output_path, include_rpc=rpc)
+        _render_in_subprocess(
+            blueprint, output_path, include_rpc=rpc, global_overrides=ctx.obj or {}
+        )
     except (GraphRenderError, OSError) as exc:
         typer.echo(typer.style(str(exc), fg=typer.colors.RED), err=True)
         raise typer.Exit(1) from exc
@@ -95,6 +103,8 @@ def _worker_main() -> None:
         raise SystemExit("usage: python -m dimos.cli.commands.graph BLUEPRINT OUTPUT.svg [--rpc]")
 
     try:
+        # Blueprint imports can choose modules from the root CLI options.
+        global_config.update(**json.loads(os.environ.pop("_DIMOS_GRAPH_GLOBAL_OPTIONS", "{}")))
         _render_graph(args[0], Path(args[1]), include_rpc=include_rpc)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
