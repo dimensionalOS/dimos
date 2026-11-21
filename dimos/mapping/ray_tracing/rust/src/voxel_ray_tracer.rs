@@ -97,9 +97,16 @@ pub struct Config {
     /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
     pub graze_recent_frames: u32,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
-    /// emits all. Higher drops isolated returns. The global map is unfiltered.
+    /// emits all. Higher drops isolated returns. The global map is unfiltered
+    /// unless `support_global` is set.
     #[validate(range(min = 0))]
     pub support_min: i32,
+    /// Apply `support_min` to the global map too.
+    pub support_global: bool,
+    /// Health a voxel needs to appear in the global map. Zero or less shows
+    /// every occupied voxel plus this frame's first hits. One waits for a
+    /// second hit; each step up needs one more hit than misses.
+    pub global_min_health: i32,
     /// Publish the accumulated local map and region bounds every Nth frame. Zero disables them.
     #[validate(range(min = 0))]
     pub emit_every: u32,
@@ -885,7 +892,7 @@ pub fn emit_points(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, bounds, live, true, false)
+    emit_points_impl(map, voxel_size, bounds, live, true, 0, false)
 }
 
 /// `emit_points` as flat (x, y, z, flags) quads, flags being the voxel's
@@ -896,12 +903,12 @@ pub fn emit_points_flags(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, bounds, live, true, true)
+    emit_points_impl(map, voxel_size, bounds, live, true, 0, true)
 }
 
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, None, live, false, false)
+    emit_points_impl(map, voxel_size, None, live, false, 0, false)
 }
 
 /// `emit_points_ungated` as flat (x, y, z, flags) quads, like `emit_points_flags`.
@@ -910,15 +917,32 @@ pub fn emit_points_ungated_flags(
     voxel_size: f32,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, None, live, false, true)
+    emit_points_impl(map, voxel_size, None, live, false, 0, true)
 }
 
+/// The whole map for the global cloud: healthy voxels with at least
+/// `min_health`, through the support gate when `gated`. A `min_health` of zero
+/// or less also adds this frame's not-yet-healthy `live` voxels. Flat triples,
+/// or quads like `emit_points_flags` when `with_flags`.
+pub fn emit_global_points(
+    map: &VoxelMap,
+    voxel_size: f32,
+    live: &AHashSet<VoxelKey>,
+    gated: bool,
+    min_health: VoxelHealth,
+    with_flags: bool,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, None, live, gated, min_health, with_flags)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_points_impl(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
     gated: bool,
+    min_health: VoxelHealth,
     with_flags: bool,
 ) -> Vec<f32> {
     let mut out = scan_chunks(
@@ -931,6 +955,9 @@ fn emit_points_impl(
             if gated && !voxel_supported(hv.support, map.support_min) {
                 return;
             }
+            if hv.voxel.health < min_health {
+                return;
+            }
             let (x, y, z) = voxel_center(hv.key, voxel_size);
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
@@ -941,6 +968,9 @@ fn emit_points_impl(
         },
     );
 
+    if min_health > 0 {
+        return out;
+    }
     // This frame hit them, so none is premap and none has flags yet.
     for &key in live.iter() {
         if map.voxels.is_healthy(&key) {

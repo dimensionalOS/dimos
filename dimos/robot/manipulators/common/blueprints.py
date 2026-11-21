@@ -195,6 +195,7 @@ def manipulation_mapping(
     self_filter_model: RobotModel,
     voxel_size: float,
     world_frame: str = "world",
+    grace_depth: float = 0.2,
 ) -> MetaBlueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
@@ -211,6 +212,8 @@ def manipulation_mapping(
             same ``voxel_map_resolution``, or its octree will not line up with
             the map.
         world_frame: Fixed frame the map is built and published in.
+        grace_depth: How close to a ray's end, metres, the mapper never clears a
+            cell. An outdated cell that close to a surface stays in the map.
     """
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
@@ -230,6 +233,12 @@ def manipulation_mapping(
             voxel_size=voxel_size,
             world_frame=world_frame,
             max_range=2.0,
+            grace_depth=grace_depth,
+            # The planner reads the global map; drop its isolated voxels.
+            support_global=True,
+            # A cell needs a second hit before the planner sees it, so one bad
+            # depth pixel is not an obstacle.
+            global_min_health=1,
         ),
         PointCloudBoxFilter.blueprint(),
     ).remappings(

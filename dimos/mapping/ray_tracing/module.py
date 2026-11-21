@@ -62,8 +62,15 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Spare a grazing miss only on a voxel hit within this many frames, so what nothing sees any more clears; 2**32 - 1 spares always.
     graze_recent_frames: int = 2**32 - 1
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
-    # emits all. Higher drops isolated returns. The global map is unfiltered.
+    # emits all. Higher drops isolated returns. The global map is unfiltered
+    # unless support_global is set.
     support_min: int = 4
+    # Apply support_min to the global map too.
+    support_global: bool = False
+    # Health a voxel needs to appear in the global map. Zero or less shows every
+    # occupied voxel plus this frame's first hits. One waits for a second hit;
+    # each step up needs one more hit than misses.
+    global_min_health: int = 0
     # Publish the accumulated local maps and region bounds every Nth frame.
     # Zero disables them.
     emit_every: int = 1
