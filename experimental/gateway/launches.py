@@ -50,6 +50,9 @@ STRUCTURED = ("global", "modules", "secrets")
 
 # held across every change to what runs (start, stop, relaunch), so none sees another half done
 _lock = threading.RLock()
+# how often this gateway changed what runs (each stop request, each spawn): a replacement is validated
+# outside the lock, and goes ahead only if this and the running process are as it found them
+_changes = 0
 # the gateway's own children, by pid: set once reaped, which is when the gateway stops counting it as running
 _reaped: dict[int, threading.Event] = {}
 # called from a thread when a launched child exits (the launch watcher wakes on it)
@@ -640,6 +643,8 @@ def run_args(
 
 
 def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) -> int:
+    global _changes
+    _changes += 1
     launch_log().parent.mkdir(parents=True, exist_ok=True)
     launch_log().write_text(f"$ {shlex.join(shown)}\n")
     with launch_log().open("a") as log:
@@ -698,64 +703,59 @@ def check_idle() -> None:
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     check_name(blueprint)
-    return _start(dimos_dir, blueprint, launch.normalized())
-
-
-def _start(
-    dimos_dir: Path, blueprint: str, launch: LaunchConfig, *, replace_active: bool = False
-) -> dict[str, Any]:
-    """Spawn a prepared launch; relaunch also prepares before stopping the current process."""
     with _lock:
-        if not replace_active:
-            check_idle()
-        program = store.dimos_bin(dimos_dir)
-        if not program.exists():
-            raise RunError(f"no dimos at {dimos_dir} (no {program})")
-        targets = None
-        if launch.modules:
-            try:
-                targets = asyncio.run(
-                    introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
+        check_idle()
+        spawn = _prepare(dimos_dir, blueprint, launch.normalized())
+        return spawn()
+
+
+def _prepare(
+    dimos_dir: Path, blueprint: str, launch: LaunchConfig, *, validate: bool = False
+) -> Callable[[], dict[str, Any]]:
+    """Read the checkout for a launch, which can take minutes; the answer spawns it, under the lock."""
+    program = store.dimos_bin(dimos_dir)
+    if not program.exists():
+        raise RunError(f"no dimos at {dimos_dir} (no {program})")
+    targets = None
+    if launch.modules:
+        try:
+            targets = asyncio.run(
+                introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
+            )
+        except introspect.IntrospectError as error:
+            raise LaunchConfigError(f"could not read launch config fields: {error}") from error
+    paths = launch.secret_paths(targets)
+    secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
+    shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
+    shown_launch_args = shown_args(launch.args)
+    shown_run = run_args(blueprint, replace(launch, args=shown_launch_args), targets)
+    venv = store.venv_dir(dimos_dir)
+    launch_env = {**launch_env_defaults(), **secret_vars}
+    env = {
+        **os.environ,
+        "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "VIRTUAL_ENV": str(venv),
+        "PYTHONUNBUFFERED": "1",
+        "NO_COLOR": "1",
+        **launch_env,
+    }
+    command = [str(program), *run_args(blueprint, launch, targets)]
+    # Raw exec requests may contain other CLI options. A structured launch has only
+    # module flags after its target, and can use the checkout's own parser before stop.
+    if validate and not launch.exact and not launch.args:
+        module_args = command[command.index("run") + 2 :]
+        try:
+            asyncio.run(
+                introspect.run_child(
+                    dimos_dir,
+                    ["validate_launch", blueprint],
+                    stdin={"global": launch.global_, "args": module_args, "env": launch_env},
                 )
-            except introspect.IntrospectError as error:
-                raise LaunchConfigError(f"could not read launch config fields: {error}") from error
-        paths = launch.secret_paths(targets)
-        secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
-        shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
-        shown_launch_args = shown_args(launch.args)
-        shown_run = run_args(blueprint, replace(launch, args=shown_launch_args), targets)
-        venv = store.venv_dir(dimos_dir)
-        launch_env = {**launch_env_defaults(), **secret_vars}
-        env = {
-            **os.environ,
-            "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
-            "VIRTUAL_ENV": str(venv),
-            "PYTHONUNBUFFERED": "1",
-            "NO_COLOR": "1",
-            **launch_env,
-        }
-        command = [str(program), *run_args(blueprint, launch, targets)]
-        if replace_active:
-            # Raw exec requests may contain other CLI options. A structured launch has only
-            # module flags after its target, and can use the checkout's own parser before stop.
-            if not launch.exact and not launch.args:
-                module_args = command[command.index("run") + 2 :]
-                try:
-                    asyncio.run(
-                        introspect.run_child(
-                            dimos_dir,
-                            ["validate_launch", blueprint],
-                            stdin={
-                                "global": launch.global_,
-                                "args": module_args,
-                                "env": launch_env,
-                            },
-                        )
-                    )
-                except introspect.IntrospectError as error:
-                    raise LaunchConfigError(str(error)) from error
-            _stop_if_running()
-            check_idle()
+            )
+        except introspect.IntrospectError as error:
+            raise LaunchConfigError(str(error)) from error
+
+    def spawn() -> dict[str, Any]:
         pid = _spawn(
             command,
             [*shown_env, "dimos", *shown_run],
@@ -773,6 +773,8 @@ def _start(
         started = current_launch()
         assert started is not None
         return started
+
+    return spawn
 
 
 def copy_of(entry: Any) -> dict[str, Any]:
@@ -815,7 +817,10 @@ def _wait_reaped(pid: int) -> None:
 
 def stop() -> str:
     """Exactly `dimos stop`: SIGTERM the newest run, SIGKILL after 5 s. A launch that hasn't registered yet is killed."""
+    global _changes
     with _lock:
+        # also with nothing running: a replacement still being validated must not start after a stop
+        _changes += 1
         entry = get_most_recent(alive_only=True)
         record = _record()
         if entry is None:
@@ -836,10 +841,19 @@ def stop() -> str:
         return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
 
 
+def _running() -> tuple[int, float | None] | None:
+    """The process a stop would end, by pid and start time: the newest run, else a launch yet to register."""
+    entry = get_most_recent(alive_only=True)
+    if entry is not None:
+        return entry.pid, started_time(entry.pid)
+    launch = current_launch()
+    if launch is not None and launch["phase"] == "starting":
+        return launch["pid"], started_time(launch["pid"])
+    return None
+
+
 def _stop_if_running() -> None:
-    if get_most_recent(alive_only=True) is not None or (
-        (launch := current_launch()) is not None and launch["phase"] == "starting"
-    ):
+    if _running() is not None:
         stop()
 
 
@@ -869,5 +883,17 @@ def relaunch(
             config = LaunchConfig.from_json(request)
         else:
             blueprint, config = replacement
-        check_known(blueprint)
-        return _start(dimos_dir, blueprint, config.normalized(), replace_active=True)
+        found = _changes, _running()
+    check_known(blueprint)
+    # Not under the lock: the run to replace is still alive, and a stop must not wait minutes behind this.
+    spawn = _prepare(dimos_dir, blueprint, config.normalized(), validate=True)
+    with _lock:
+        if (_changes, _running()) != found:
+            raise ApiError(
+                409,
+                "not started: the run changed or a stop was requested while this launch was being"
+                " validated",
+            )
+        _stop_if_running()
+        check_idle()
+        return spawn()

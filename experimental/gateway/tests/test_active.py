@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -29,7 +30,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core.run_registry import RunEntry
+from dimos.core.run_registry import RunEntry, get_most_recent, stop_entry
 from experimental.gateway import launches, shared_config
 from experimental.gateway.introspect import IntrospectError, run_child
 from experimental.gateway.routes import active as active_routes
@@ -589,6 +590,111 @@ def test_replace_validates_checkout_dotenv_and_honors_launch_environment(
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["pid"] != started.json()["pid"]
     until(running(client))
+
+
+def hold_validation(launch_targets: AsyncMock) -> tuple[threading.Semaphore, threading.Event]:
+    """Validation children that wait: `entered` counts them, `release` lets them answer."""
+    entered, release = threading.Semaphore(0), threading.Event()
+
+    async def validate(dimos_dir: Path, args: list[str], **kwargs: Any) -> dict[str, Any]:
+        if args[0] == "validate_launch":
+            entered.release()
+            assert release.wait(60)
+        return {}
+
+    launch_targets.side_effect = validate
+    return entered, release
+
+
+def stop_here(client: TestClient) -> None:
+    assert client.post("/active/stop").status_code == 200
+
+
+def stop_with_nothing_running(client: TestClient) -> None:
+    assert client.post("/active/stop").status_code == 409
+
+
+def stop_in_a_terminal(client: TestClient) -> None:
+    """`dimos stop`: the gateway only finds the run gone from the registry."""
+    entry = get_most_recent()
+    assert entry is not None
+    stop_entry(entry)
+
+
+def launch_one_that_fails(client: TestClient) -> None:
+    assert client.post("/active/launch", json={"blueprint": "fail"}).status_code == 200
+    until(lambda: launch_of(client).get("phase") == "failed")
+
+
+@pytest.mark.parametrize(
+    ("route", "launched", "change"),
+    [
+        ("/active/relaunch", True, stop_here),
+        ("/active/replace", True, stop_here),
+        ("/active/replace", False, stop_with_nothing_running),
+        ("/active/replace", True, stop_in_a_terminal),
+        ("/active/replace", False, launch_one_that_fails),
+    ],
+)
+def test_a_replacement_does_not_start_after_a_stop_or_change_during_its_validation(
+    client: TestClient,
+    launch_targets: AsyncMock,
+    mocker: MockerFixture,
+    route: str,
+    launched: bool,
+    change: Callable[[TestClient], None],
+) -> None:
+    pid = None
+    if launched:
+        pid = client.post("/active/launch", json={"blueprint": "demo"}).json()["pid"]
+        until(running(client))
+    entered, release = hold_validation(launch_targets)
+    body = {"blueprint": "demo"} if route == "/active/replace" else None
+    with ThreadPoolExecutor() as pool:
+        try:
+            replacing = pool.submit(client.post, route, json=body)
+            assert entered.acquire(timeout=10)
+            # answered while the replacement is still being validated
+            pool.submit(change, client).result(timeout=20)
+            until(lambda: pid is None or not launches.alive(pid))
+            spawn = mocker.spy(launches, "_spawn")
+        finally:
+            release.set()
+        refused = replacing.result(timeout=10)
+    assert refused.status_code == 409 and refused.json()["error"].startswith("not started")
+    spawn.assert_not_called()
+    assert not client.get("/active").json()["running"]
+    # and nothing is left held: the next replacement starts
+    assert client.post("/active/replace", json={"blueprint": "demo"}).status_code == 200
+
+
+def test_one_of_two_replacements_validated_against_the_same_run_starts(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    first = client.post("/active/launch", json={"blueprint": "demo"}).json()
+    until(running(client))
+    entered, release = hold_validation(launch_targets)
+    spawn = mocker.spy(launches, "_spawn")
+    with ThreadPoolExecutor() as pool:
+        try:
+            replacing = [
+                pool.submit(
+                    client.post,
+                    "/active/replace",
+                    json={"blueprint": "demo", "config": {"global": {"n_workers": workers}}},
+                )
+                for workers in (2, 3)
+            ]
+            assert entered.acquire(timeout=10) and entered.acquire(timeout=10)
+        finally:
+            release.set()
+        answers = [future.result(timeout=10) for future in replacing]
+    assert sorted(answer.status_code for answer in answers) == [200, 409]
+    assert spawn.call_count == 1
+    won = next(answer.json() for answer in answers if answer.status_code == 200)
+    until(running(client))
+    assert client.get("/active").json()["pid"] == won["pid"] != first["pid"]
+    assert json.loads(launches.request_file().read_text())["global"] == won["config"]["global"]
 
 
 @pytest.mark.parametrize(
