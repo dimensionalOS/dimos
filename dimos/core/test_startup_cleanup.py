@@ -33,8 +33,12 @@ def startup_run_id() -> Iterator[str]:
 
 @pytest.mark.parametrize("failure_stage", ["build", "health", "rpc"])
 def test_failed_start_cleans_up_detached_viewer(
-    tmp_path: Path, startup_run_id: str, failure_stage: str
+    tmp_path: Path, startup_run_id: str, failure_stage: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Select the native launch path for the fake viewer even on headless runners.
+    monkeypatch.delenv("WAYLAND_SOCKET", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
     viewer_pid_file = tmp_path / "viewer.pid"
     viewer = tmp_path / "dimos-viewer"
     viewer.write_text(
