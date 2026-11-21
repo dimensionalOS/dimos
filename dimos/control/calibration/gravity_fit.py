@@ -24,7 +24,8 @@ gives the URDF's error, fitted with pinocchio's torque regressor as ridge least 
 corrections of ``(m, m*c)`` of the fitted links, inside the directions the poses identify and
 inside physical bounds (mass >= 0, COM within the arm's reach of its joint). An arm joint that
 was not dithered is held at its URDF torque at every pose, so the fit cannot move gravity onto a
-joint it never measured. The ridge is
+joint it never measured, unless no correction moves it past ``hold_nm`` (an axis a rounding off
+vertical carries a load no motor resolves). The ridge is
 chosen by leave-one-pose-out cross-validation, and the fit is scored on every pose with that
 pose left out (the selection of the ridge nested inside). A fit is refused only when a dithered
 joint has no measurement; one whose held-out RMS over the dithered joints is worse than the
@@ -245,15 +246,17 @@ def fit_gravity(
     measurements: Sequence[Measurement],
     compensation: Compensation,
     joints: Sequence[str] | None = None,
+    *,
+    hold_nm: float = 1e-3,
 ) -> GravityFit:
     """Fit the gravity links to ``measurements``, which were held with ``compensation``.
 
     ``joints`` are the joints that were dithered (default the arm's measured joints); every
-    other arm joint is held at its URDF torque at the poses (``held_joints``: the most the fit
-    changes it, N m, by joint, for those it could change). Needs at least three poses (each
-    held-out pose's ridge is chosen by cross-validation over the others). Raises
-    ``ValueError`` when the masses compensated do not fit the model or the fit drives a mass
-    to zero.
+    other arm joint that a column scale of correction moves by more than ``hold_nm`` at a pose
+    is held at its URDF torque at the poses (``held_joints``: the most the fit changes it, N m,
+    by joint). Needs at least three poses (each held-out pose's ridge is chosen by
+    cross-validation over the others). Raises ``ValueError`` when the masses compensated do
+    not fit the model or the fit drives a mass to zero.
     """
     dithered = tuple(arm.measured_joints if joints is None else joints)
     poses = np.asarray([m.pose for m in measurements])
@@ -283,8 +286,7 @@ def fit_gravity(
         for row, name in enumerate(arm.joint_names)
         if name not in dithered
     }
-    tolerance = matrix_rank_tolerance(np.linalg.svd(a, compute_uv=False), a.shape)
-    loads = {name: rows for name, rows in loads.items() if np.abs(rows).max() > tolerance}
+    loads = {name: rows for name, rows in loads.items() if np.abs(rows).max() > hold_nm}
     held = np.vstack([np.zeros((0, a.shape[1])), *loads.values()])
     masses = np.asarray([arm.model.inertias[j].mass for j in arm.fitted_joint_ids])
     coms = np.asarray([arm.model.inertias[j].lever for j in arm.fitted_joint_ids])
