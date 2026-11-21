@@ -170,8 +170,20 @@ class ArmModel:
         return scaled
 
     def _clear(self, tip: np.ndarray, others: np.ndarray) -> bool:
+        """Clear of the keep-outs, and the fingertip in front when asked."""
+        min_x = self.workspace.min_x_m
+        if min_x is not None and tip[0] <= min_x:
+            return False
         points = np.vstack([tip, others])
         return not any(space.violated_by(points) for space in self.workspace.keep_out)
+
+    def _bound_distance(self, tip: np.ndarray, others: np.ndarray) -> float:
+        """Smallest distance of a point to a keep-out, or of the fingertip to the front limit."""
+        points = np.vstack([tip, others])
+        distances = [float(space.distance_m(points).min()) for space in self.workspace.keep_out]
+        if self.workspace.min_x_m is not None:
+            distances.append(float(tip[0]) - self.workspace.min_x_m)
+        return min(distances, default=math.inf)
 
     def pose_ok(self, joints: Joints) -> bool:
         """Clear of the floor and keep-outs, in front when asked, and no joint over its cap."""
@@ -180,25 +192,25 @@ class ArmModel:
         limit = self.workspace.floor_z_m + self.clearance_m
         if tip[2] <= limit or (others[:, 2] <= limit).any() or not self._clear(tip, others):
             return False
-        min_x = self.workspace.min_x_m
-        if min_x is not None and tip[0] <= min_x:
-            return False
         return bool((np.abs(self.gravity(q)) <= self.max_torque).all())
 
     def transition_ok(self, a: Joints, b: Joints) -> bool:
         """Whether a joint-space ramp from ``a`` to ``b`` keeps the clearance.
 
         A point may run lower only where an end of the ramp has it, never below both ends. The
-        ramp is checked often enough that no point moves more than twice its margin to the
-        floor between checks (a point moves at most ``reach_m`` per radian).
+        margin is the smallest distance, at either end, of a point to the floor or a keep-out,
+        or of the fingertip to the front limit; the ramp is checked often enough that no point
+        moves more than twice the margin between checks (a point moves at most ``reach_m`` per
+        radian).
         """
         start, end = self.q(a), self.q(b)
-        ends = [
-            np.concatenate([[tip[2]], others[:, 2]])
-            for tip, others in map(self.points, (start, end))
-        ]
-        floor = np.minimum(self.workspace.floor_z_m + self.clearance_m, np.minimum(*ends))
-        margin = float((floor - self.workspace.floor_z_m).min())
+        ends = [self.points(q) for q in (start, end)]
+        heights = [np.concatenate([[tip[2]], others[:, 2]]) for tip, others in ends]
+        floor = np.minimum(self.workspace.floor_z_m + self.clearance_m, np.minimum(*heights))
+        margin = min(
+            float((floor - self.workspace.floor_z_m).min()),
+            *(self._bound_distance(tip, others) for tip, others in ends),
+        )
         if margin <= 0.0:
             return False
         checks = max(1, math.ceil(np.abs(end - start).sum() * self.reach_m / (2.0 * margin)))
