@@ -39,6 +39,12 @@ class LaunchRequest(BaseModel):
     module: str | None = None
     config: JsonValue = None
 
+    def prepared(self) -> tuple[str, LaunchConfig]:
+        if (self.blueprint is None) == (self.module is None):
+            raise ApiError(400, "give exactly one of blueprint or module")
+        name = check_name(self.module if self.blueprint is None else self.blueprint)
+        return name, launches.parse(self.config)
+
 
 class ExecRequest(BaseModel):
     args: list[str]
@@ -113,11 +119,7 @@ async def active_log(
 
 @router.post("/launch", response_model=responses.Launch)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
-    if (request.blueprint is None) == (request.module is None):
-        raise ApiError(400, "give exactly one of blueprint or module")
-    name = check_name(request.module if request.blueprint is None else request.blueprint)
-    launch_config = launches.parse(request.config)
-    return await started(state, name, launch_config)
+    return await started(state, *request.prepared())
 
 
 @router.post("/exec", response_model=responses.Launch)
@@ -128,13 +130,24 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
     return await started(state, check_name(name), LaunchConfig(args=rest, exact=True))
 
 
-@router.post("/relaunch", response_model=responses.Launch)
-async def relaunch(state: GatewayState) -> dict[str, Any]:
+async def relaunched(
+    state: State, replacement: tuple[str, LaunchConfig] | None = None
+) -> dict[str, Any]:
     launch = await asyncio.to_thread(
-        launches.relaunch, state.dimos_dir, partial(check_known, state)
+        launches.relaunch, state.dimos_dir, partial(check_known, state), replacement
     )
     state.bus.launch(launch)
     return launch
+
+
+@router.post("/relaunch", response_model=responses.Launch)
+async def relaunch(state: GatewayState) -> dict[str, Any]:
+    return await relaunched(state)
+
+
+@router.post("/replace", response_model=responses.Launch)
+async def replace_active(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
+    return await relaunched(state, request.prepared())
 
 
 @router.post("/stop", response_model=responses.Stopped)
