@@ -17,26 +17,23 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import Field
 from reactivex import timer
+from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
 from dimos.memory.replay_progress import ReplayProgress
-from dimos.memory.store.base import Store
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.memory.replay import ReplayStream
 
 logger = setup_logger()
 
@@ -51,7 +48,10 @@ def _default_g1_dataset(model: dict[str, Any]) -> str:
 
 
 class G1ReplayConfig(ModuleConfig):
-    dataset: str = Field(default_factory=_default_g1_dataset)
+    dataset: str = Field(
+        default_factory=_default_g1_dataset,
+        description="SQLite or MCAP recording with at least one enabled G1 output stream.",
+    )
     speed: float = 1.0
     loop: bool = False
     seek: float | None = None
@@ -73,62 +73,59 @@ class G1Replay(Module):
     pointlio_lidar: Out[PointCloud2]
     tf: Out[TFMessage]
 
-    _store: Store | None = None
-
     @rpc
     def start(self) -> None:
-        super().start()
-        path = resolve_dataset(self.config.dataset)
-        store = open_store(path)
-        store.start()
-        self._store = store
-        replay = store.replay(
-            speed=self.config.speed,
-            loop=self.config.loop,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
-        available = set(replay.list_streams())
-        streams: dict[str, ReplayStream[Any]] = {}
-        for name in self.outputs:
-            if name == "pointlio_lidar" and not self.config.replay_lidar:
-                continue
-            if name in available:
-                streams[name] = replay.stream(name)
-
-        progress = ReplayProgress(str(path))
-        progress.start(replay, streams.values())
-        starts = [t for s in streams.values() if (t := s.first_ts()) is not None]
-        replay.pin_anchor(min(starts) if starts else None)
-
-        for info_name in ("realsense_camera_info", "realsense_depth_camera_info"):
-            if info_name in streams:
-                first_info = streams[info_name].first()
-                if first_info is not None:
-                    port = getattr(self, info_name)
-                    port.publish(first_info)
-                    self.register_disposable(
-                        timer(0.5).subscribe(partial(_publish_once, port, first_info))
-                    )
-
-        for name, stream in streams.items():
-            port = getattr(self, name)
-            logger.info(
-                "G1Replay: %s:%s (%d frames at %.1fx)",
-                path.name,
-                name,
-                stream.count(),
-                self.config.speed,
+        try:
+            path = resolve_dataset(self.config.dataset)
+            store = open_store(path)
+            subscriptions = CompositeDisposable()
+            self.register_disposable(CompositeDisposable(subscriptions, store))
+            store.start()
+            replay = store.replay(
+                speed=self.config.speed,
+                loop=self.config.loop,
+                seek=self.config.seek,
+                duration=self.config.duration,
             )
-            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
-        progress.seal()
+            streams = replay.select_streams(
+                {
+                    name: port.type
+                    for name, port in self.outputs.items()
+                    if name != "pointlio_lidar" or self.config.replay_lidar
+                },
+                source=path,
+            )
 
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-        if self._store is not None:
-            self._store.stop()
-            self._store = None
+            super().start()
+            progress = ReplayProgress(str(path))
+            progress.start(replay, streams.values())
+            starts = [t for s in streams.values() if (t := s.first_ts()) is not None]
+            replay.pin_anchor(min(starts) if starts else None)
+
+            for info_name in ("realsense_camera_info", "realsense_depth_camera_info"):
+                if info_name in streams:
+                    first_info = streams[info_name].first()
+                    if first_info is not None:
+                        port = getattr(self, info_name)
+                        port.publish(first_info)
+                        subscriptions.add(
+                            timer(0.5).subscribe(partial(_publish_once, port, first_info))
+                        )
+
+            for name, stream in streams.items():
+                port = getattr(self, name)
+                logger.info(
+                    "G1Replay: %s:%s (%d frames at %.1fx)",
+                    path.name,
+                    name,
+                    stream.count(),
+                    self.config.speed,
+                )
+                subscriptions.add(progress.track(stream.observable()).subscribe(port.publish))
+            progress.seal()
+        except BaseException:
+            self._rollback_start()
+            raise
 
 
 def _publish_once(port: Out[Any], msg: Any, _tick: int) -> None:

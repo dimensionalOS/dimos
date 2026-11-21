@@ -30,9 +30,11 @@ from collections.abc import AsyncIterator
 import math
 from pathlib import Path
 
+from pydantic import Field
 from reactivex.disposable import CompositeDisposable
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.experimental.robot.bosdyn.spot.config import (
@@ -72,11 +74,15 @@ _OPTICAL_FRAME_ROLL_TURNS = {
 
 
 class SpotReplayConfig(ModuleConfig):
-    """Where to read the recording from and how to play it back."""
+    """Where to read a recording with at least one Spot output and how to play it back."""
 
-    # An on-disk path, or the name of a dataset to pull from LFS (e.g.
-    # ``spot_small_loop.db``). Empty -> newest ``*.db`` in ``dataset_dir``.
-    db_path: str = ""
+    db_path: str = Field(
+        default="",
+        description=(
+            "SQLite path or dataset name with at least one Spot output stream. "
+            "Defaults to the newest .db in dataset_dir."
+        ),
+    )
     dataset_dir: str = str(RECORDINGS_DIR / "spot")
 
     speed: float = 1.0
@@ -143,6 +149,14 @@ class SpotReplay(Module):
             ts=transform.ts,
         )
 
+    @rpc
+    def start(self) -> None:
+        try:
+            super().start()
+        except BaseException:
+            self._rollback_start()
+            raise
+
     async def main(self) -> AsyncIterator[None]:
         db_path = self._resolve_db_path()
 
@@ -159,25 +173,24 @@ class SpotReplay(Module):
             seek=self.config.seek,
             duration=self.config.duration,
         )
-        available = set(replay.list_streams())
-        progress = ReplayProgress(str(db_path))
-        progress.start(
-            replay, (replay.stream(n) for n in [*_PLAYBACK_STREAMS, "tf"] if n in available)
+        outputs = self.outputs
+        streams = replay.select_streams(
+            {name: outputs[name].type for name in (*_PLAYBACK_STREAMS, "tf")}, source=db_path
         )
+        progress = ReplayProgress(str(db_path))
+        progress.start(replay, streams.values())
 
         for name in _PLAYBACK_STREAMS:
-            if name not in available:
+            if name not in streams:
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
                 continue
             subscriptions.add(
-                progress.track(replay.stream(name).observable()).subscribe(
-                    getattr(self, name).publish
-                )
+                progress.track(streams[name].observable()).subscribe(getattr(self, name).publish)
             )
 
-        if "tf" in available:
+        if "tf" in streams:
             subscriptions.add(
-                progress.track(replay.stream("tf").observable()).subscribe(self._republish_tf)
+                progress.track(streams["tf"].observable()).subscribe(self._republish_tf)
             )
         else:
             logger.warning("Spot replay: no tf stream in recording; 3D frames will be missing")

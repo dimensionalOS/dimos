@@ -534,6 +534,29 @@ def test_replay_opens_recording_and_emits_typed_odometry(
     ]
 
 
+@pytest.mark.parametrize("name", ["go2_lidar", "color_image"])
+def test_replay_rejects_wrong_sensor_type_before_subscribing(tmp_path, name, mocker):
+    path = tmp_path / "input.db"
+    with SqliteStore(path=path) as store:
+        store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+        store.stream(name, int).append(1, ts=1.0)
+    module = GO2Connection(
+        g=GlobalConfig(replay=True, replay_db=str(path)),
+        lidar=name == "go2_lidar",
+        camera=name == "color_image",
+        replay_loop=False,
+    )
+    subscribe = mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    try:
+        with pytest.raises(TypeError, match=name):
+            module.start()
+        subscribe.assert_not_called()
+        assert module.rpc is not None
+        assert module._loop_thread is None
+    finally:
+        module.stop()
+
+
 def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
     """A legacy Go2 DDS recording holds nav_msgs.Odometry, which GO2Connection cannot publish."""
     path = tmp_path / "legacy.mcap"
@@ -547,7 +570,7 @@ def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
         writer.finish()
 
     with go2_conn.ReplayConnection(dataset=str(path)) as conn:
-        with pytest.raises(TypeError, match="PoseStamped odometry.*'odom'.*Odometry"):
+        with pytest.raises(TypeError, match="PoseStamped.*'odom'.*Odometry"):
             conn.odom_stream()
 
 

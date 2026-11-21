@@ -315,28 +315,20 @@ class ReplayConnection(CompositeResource):
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        stream: ReplayStream[PointCloud2] = self.replay.stream(
-            self._stream_name("go2_lidar", "lidar")
-        )
+        name = self._stream_name("go2_lidar", "lidar")
+        stream = self.replay.typed_stream(name, PointCloud2, source=self.dataset)
         return self._replay_observable(stream)
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
         name = self._stream_name("go2_odom", "odom")
-        kind = self.replay.store.stream(name).data_type
-        if kind is None or not issubclass(kind, PoseStamped):
-            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
-            # it kills the odom subscriber and leaves lidar and video without TF.
-            raise TypeError(
-                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
-                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
-            )
-        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
+        stream = self.replay.typed_stream(name, PoseStamped, source=self.dataset)
         return self._replay_observable(stream)
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
-        return self._replay_observable(self.replay.streams.color_image)
+        stream = self.replay.typed_stream("color_image", Image, source=self.dataset)
+        return self._replay_observable(stream)
 
     @simple_mcache
     def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
@@ -414,6 +406,19 @@ class GO2Connection(Module, Camera, Pointcloud):
         def onimage(image: Image) -> None:
             image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
+
+        # Resolve every enabled replay input before the first subscription can publish.
+        if isinstance(self.connection, ReplayConnection):
+            try:
+                if self.config.lidar:
+                    self.connection.lidar_stream()
+                self.connection.odom_stream()
+                if self.config.camera:
+                    self.connection.video_stream()
+            except BaseException:
+                self.connection.stop()
+                self._rollback_start()
+                raise
 
         if self.config.lidar:
             self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
