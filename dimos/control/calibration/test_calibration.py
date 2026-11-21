@@ -64,12 +64,14 @@ def arm() -> ArmModel:
 
 def calibration(arm: ArmModel, operator: Operator, fake: FakeArm, **settings: Any) -> Calibration:
     config = CalibrationModuleConfig(
-        poses=4,
-        min_poses=3,
-        speed_deg_s=50.0,
-        grid_points=400,
-        confirm_poses=2,
-        **settings,
+        **{
+            "poses": 4,
+            "min_poses": 3,
+            "speed_deg_s": 50.0,
+            "grid_points": 400,
+            "confirm_poses": 2,
+            **settings,
+        }
     )
     operator.begin(plan(config.steps, can_float=True))
     run = Calibration(
@@ -397,6 +399,77 @@ def test_a_pair_the_joint_did_not_follow_is_redone_at_twice_the_dither_and_kept_
     assert operator.done is not None and operator.done[0], operator.done
     assert [m.pose for m in run.measurements if m.stuck] == [p.name for p in run.poses or []]
     assert any("elbow: every pair stuck, friction not cancelled" in text for text in operator.shown)
+
+
+def shaken_at(fake: FakeArm, run: Calibration, k: int) -> None:
+    """The elbow oscillates in place while the arm holds the run's ``k``-th gravity pose."""
+
+    def shake(arm_: FakeArm) -> None:
+        if run.poses and np.array_equal(arm_.target, run.poses[k].joints_rad):
+            arm_.q[2] = run.poses[k].joints_rad[2] + 0.005 * math.cos(2.0 * math.pi * 15.0 * arm_.t)
+
+    fake.on_tick = shake
+
+
+def test_a_pose_that_oscillates_is_skipped_and_named_and_the_fit_uses_the_others(
+    arm: ArmModel,
+) -> None:
+    fake, operator = FakeArm(arm, true_links=TRUE_LINKS), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["gravity_poses", "gravity_fit"])
+    shaken_at(fake, run, 1)
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert any(text.startswith("pose_02 skipped: elbow oscillates ") for text in operator.shown)
+    assert "3 of 4 poses, 1 skipped: pose_02 (elbow oscillates " in operator.done[1]
+    assert {m.pose for m in run.measurements} == {"pose_01", "pose_03", "pose_04"}
+    assert len(fake.halts) == 1
+    assert fake.file["fit"]["poses"] == ["pose_01", "pose_03", "pose_04"]
+
+
+def test_too_few_poses_measured_fails_gravity_poses(arm: ArmModel) -> None:
+    assert CalibrationModuleConfig().min_poses == 8
+    with pytest.raises(ValueError, match="min_poses must not exceed poses"):
+        CalibrationModuleConfig(poses=4, min_poses=5)
+    fake, operator = FakeArm(arm), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["gravity_poses", "gravity_fit"], min_poses=4)
+    shaken_at(fake, run, 1)
+    run.run()
+
+    assert operator.done is not None
+    ok, text, home = operator.done
+    assert not ok and home
+    assert (
+        "gravity_poses failed: RuntimeError: only 3 of 4 poses measured; need at least 4 "
+        "(min_poses), 1 skipped: pose_02 (elbow oscillates "
+    ) in text
+    assert "fit" not in fake.file
+
+
+def test_a_dither_that_stalls_is_dropped_for_its_joint_and_pose(arm: ArmModel) -> None:
+    operator = FakeOperator()
+    run = calibration(arm, operator, FakeArm(arm), steps=["gravity_poses"])
+    stream = run.stream
+
+    def stalling(motion: Motion, patch: dict[str, Any] | None = None) -> Motion:
+        pose = np.asarray(run.poses[1].joints_rad) if run.poses else None
+        if pose is not None and np.flatnonzero(motion.path[-1] != pose).tolist() == [2]:
+            motion.stall_rad = np.where(np.arange(3) == 2, 1e-3, motion.stall_rad)
+        return stream(motion, patch)
+
+    run.stream = stalling
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert ("elbow", "pose_02") not in {(m.joint, m.pose) for m in run.measurements}
+    assert len(run.measurements) == 4 * 2 - 1
+    assert any(
+        text.startswith("elbow at pose_02 dropped: stalled, elbow ") for text in operator.shown
+    )
+    assert (
+        "4 of 4 poses, 7 dither pairs, 1 dropped: elbow at pose_02 (stalled, elbow "
+        in (operator.done[1])
+    )
 
 
 def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
