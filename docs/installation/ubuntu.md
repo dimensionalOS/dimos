@@ -30,6 +30,16 @@ Until a fixed wheel ships, install from a developer checkout that includes the [
 bash scripts/install.sh --mode dev --project-dir . --no-nix --extras base,unitree
 ```
 
+## Headless DimSim
+
+From a developer checkout, install the host libraries for DimSim's pinned Chromium and prepare the simulator:
+
+```sh skip
+bin/dimsim-prepare --with-deps
+```
+
+Playwright may request sudo to install Ubuntu packages. On a provisioned machine, `bin/dimsim-prepare` checks that the headless browser starts and builds the frontend.
+
 ## Manual installation
 
 Use these steps if you need to install without the guided script.
