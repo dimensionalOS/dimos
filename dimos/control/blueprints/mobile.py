@@ -64,7 +64,9 @@ class FlowBaseCoordinator(ControlCoordinator):
 
 
 # The connection module's ports onto the coordinator's, and Twist in on cmd_vel.
+# The coordinator owns cmd_vel, so the connection's own Twist input is moved off it.
 _FLOWBASE_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (FlowBaseConnection, "cmd_vel", "base_cmd_vel"),
     (FlowBaseConnection, "velocity_command", "base_velocity_command"),
     (FlowBaseCoordinator, "base_joint_state", "joint_state"),
     (FlowBaseCoordinator, "twist_command", "cmd_vel"),

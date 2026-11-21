@@ -239,7 +239,6 @@ all_modules = {
     "a750-connection": "dimos.robot.manipulators.a750.connection.A750Connection",
     "a750-twist-coordinator": "dimos.robot.manipulators.a750.blueprints.teleop.A750TwistCoordinator",
     "agent": "dimos.agents.agent.Agent",
-    "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
     "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",

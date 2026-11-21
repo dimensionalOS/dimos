@@ -618,7 +618,7 @@ robots:
       dirs: [dimos/robot/diy/alfred]
       defaults:
         recommended_config:
-        - module: alfredhighlevel
+        - module: flowbaseconnection
           field: address
           label: Alfred address
       blueprints:
