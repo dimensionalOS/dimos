@@ -23,13 +23,40 @@ import reactivex as rx
 from reactivex import operators as ops
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from reactivex.observable import Observable
 
     from dimos.types.timestamped import Timestamped
 
 T = TypeVar("T", bound="Timestamped")
+U = TypeVar("U")
+
+LOOP_GAP = 0.05  # wall seconds between passes of timed playback
+
+
+def loop_timestamps(
+    source: Callable[[], Iterator[tuple[float, U]]], speed: float
+) -> Iterator[tuple[float, U]]:
+    """Repeat nonempty passes, advancing the scheduling clock only between passes."""
+    next_start: float | None = None
+    while True:
+        rows = source()
+        last: float | None = None
+        offset = 0.0
+        try:
+            for ts, data in rows:
+                if last is None and next_start is not None:
+                    offset = next_start - ts
+                last = ts + offset
+                yield last, data
+        finally:
+            close = getattr(rows, "close", None)
+            if close is not None:
+                close()
+        if last is None:
+            return
+        next_start = last + LOOP_GAP * speed
 
 
 class TimeSeriesStore(Generic[T], ABC):
@@ -267,10 +294,13 @@ class TimeSeriesStore(Generic[T], ABC):
         loop: bool = False,
     ) -> Iterator[T]:
         """Iterate data, sleeping to match original timing."""
+
+        def items() -> Iterator[tuple[float, T]]:
+            return self.iterate_items(seek=seek, duration=duration, from_timestamp=from_timestamp)
+
+        rows = loop_timestamps(items, speed) if loop else items()
         prev_ts: float | None = None
-        for ts, data in self.iterate_items(
-            seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-        ):
+        for ts, data in rows:
             if prev_ts is not None:
                 delay = (ts - prev_ts) / speed
                 if delay > 0:
@@ -293,9 +323,8 @@ class TimeSeriesStore(Generic[T], ABC):
         from dimos.utils.testing.replay import timed_playback
 
         return timed_playback(
-            lambda: self.iterate_items(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            ),
+            lambda: self.iterate_items(seek=seek, duration=duration, from_timestamp=from_timestamp),
             speed=speed,
+            loop=loop,
             detect_loop=loop,
         )

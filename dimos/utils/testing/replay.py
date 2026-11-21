@@ -41,6 +41,7 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.timeseries.base import loop_timestamps
 
 T = TypeVar("T")
 
@@ -85,13 +86,16 @@ def timed_playback(
     source: Callable[[], Iterator[tuple[float, T]]],
     speed: float = 1.0,
     detect_loop: bool = True,
+    *,
+    loop: bool = False,
 ) -> Observable[T]:
     """Replay a ``(ts, data)`` iterator as an Observable at real-time speed.
 
     Anchors on the first timestamp and schedules subsequent emissions with
     ``scheduler.schedule_relative`` at ``anchor + (ts - first_ts) / speed``.
     When ``detect_loop`` is set, a backwards-going timestamp re-anchors — use
-    this when the source iterator loops.
+    this for sources that already loop. Pass a finite source and ``loop=True``
+    to repeat it with a 50 ms gap, including a single-timestamp pass.
 
     ``source`` is a factory: called fresh on each subscription so the same
     Observable can be re-subscribed without iterator collisions.
@@ -112,7 +116,7 @@ def timed_playback(
         disp = SerialDisposable()
         disposed = threading.Event()
         emission_lock = threading.RLock()
-        iterator = source()
+        iterator = loop_timestamps(source, speed) if loop else source()
         iterator_disposable = Disposable(getattr(iterator, "close", None))
 
         def dispose() -> None:
@@ -329,10 +333,9 @@ class MemoryReplayAdapter(Generic[T]):
     ) -> Observable[T]:
         """Real-time scheduled playback as an RxPY Observable."""
         return timed_playback(
-            lambda: self.iterate_ts(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            ),
+            lambda: self.iterate_ts(seek=seek, duration=duration, from_timestamp=from_timestamp),
             speed=speed,
+            loop=loop,
         )
 
 
