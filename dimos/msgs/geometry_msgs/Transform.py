@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -83,6 +84,27 @@ class Transform(Timestamped):
     def identity(cls) -> Transform:
         """Create an identity transform."""
         return cls()
+
+    @classmethod
+    def from_xyz_rpy(
+        cls,
+        frame_id: str,
+        child_frame_id: str,
+        xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        degrees: bool = False,
+        ts: float | None = None,
+    ) -> Transform:
+        """frame_id -> child_frame_id from metres and fixed-axis roll, pitch, yaw (URDF's convention)."""
+        if degrees:
+            rpy = (math.radians(rpy[0]), math.radians(rpy[1]), math.radians(rpy[2]))
+        return cls(
+            translation=Vector3(*xyz),
+            rotation=Quaternion.from_euler(Vector3(*rpy)),
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            ts=ts,
+        )
 
     def lcm_transform(self) -> LCMTransformStamped:
         return LCMTransformStamped(

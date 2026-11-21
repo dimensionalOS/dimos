@@ -20,7 +20,6 @@
 //! the handlers only forward onto the DDS thread. Robot streams carry the robot's clock: a
 //! sample's own header stamp where it has one, else its DDS source timestamp.
 
-use std::f64::consts::FRAC_PI_2;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -55,12 +54,9 @@ use crate::rtp;
 const CAMERA_FRAME: &str = "camera_optical";
 /// The body IMU and the legs report in the body frame.
 const BODY_FRAME: &str = "base_link";
-const MOUNT_FRAME: &str = "front_camera";
-const MID360_FRAME: &str = "mid360_link";
-/// The head L1, the frame its raw cloud is stamped in.
-const L1_FRAME: &str = "utlidar_lidar";
-/// The optical axes off the camera mount: x right, y down, z forward.
-const OPTICAL_RPY: [f64; 3] = [-FRAC_PI_2, 0.0, -FRAC_PI_2];
+
+/// (child, parent, xyz metres, fixed-axis rpy radians).
+pub type MountFrame = (String, Option<String>, [f64; 3], [f64; 3]);
 /// The first 12 of LowState's 20 motors, in Unitree order.
 const JOINTS: [&str; 12] = [
     "FR_hip_joint",
@@ -97,14 +93,8 @@ pub struct Config {
     /// The frame the live odometry moves; the odom tf edge is ours only for base_link,
     /// and the mount edges above it are inverted so it never gets two parents.
     pub tf_root: String,
-    /// base_link -> front_camera, and front_camera -> mid360_link, in metres.
-    pub camera_xyz: [f64; 3],
-    pub mid360_xyz: [f64; 3],
-    /// front_camera -> mid360_link, fixed-axis rpy in degrees.
-    pub mid360_mount: [f64; 3],
-    /// base_link -> utlidar_lidar (the head L1): metres, and fixed-axis rpy in degrees.
-    pub l1_xyz: [f64; 3],
-    pub l1_mount: [f64; 3],
+    /// The mount tree, python's `Go2BaseConfig.mount_frames()`; the root has no parent.
+    pub mount: Vec<MountFrame>,
     /// The front camera's calibration, published at `camera_info_hz`.
     #[serde(with = "camera_info_dict")]
     pub camera_info: CameraInfo,
@@ -879,30 +869,32 @@ fn inverse(t: Transform) -> Transform {
     Transform::new(t.child, t.parent, t.ts, iso)
 }
 
-/// base_link -> {front_camera -> {mid360_link, camera_optical}, utlidar_lidar},
-/// re-rooted at `tf_root`.
+/// The configured mount tree, re-rooted at `tf_root`: the edges between it and the root
+/// are inverted.
 pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
-    let camera = edge(BODY_FRAME, MOUNT_FRAME, c.camera_xyz, [0.0; 3], ts);
-    let mid360 = edge(
-        MOUNT_FRAME,
-        MID360_FRAME,
-        c.mid360_xyz,
-        c.mid360_mount.map(f64::to_radians),
-        ts,
-    );
-    let optical = edge(MOUNT_FRAME, CAMERA_FRAME, [0.0; 3], OPTICAL_RPY, ts);
-    let l1 = edge(
-        BODY_FRAME,
-        L1_FRAME,
-        c.l1_xyz,
-        c.l1_mount.map(f64::to_radians),
-        ts,
-    );
-    if c.tf_root == MID360_FRAME {
-        vec![inverse(mid360), inverse(camera), optical, l1]
-    } else {
-        vec![camera, mid360, optical, l1]
+    let parent_of = |frame: &str| {
+        c.mount
+            .iter()
+            .find(|(child, _, _, _)| child == frame)
+            .and_then(|(_, parent, _, _)| parent.as_deref())
+    };
+    let mut above_root = Vec::new();
+    let mut frame = c.tf_root.as_str();
+    while let Some(parent) = parent_of(frame) {
+        above_root.push(frame);
+        frame = parent;
     }
+    c.mount
+        .iter()
+        .filter_map(|(child, parent, xyz, rpy)| {
+            let e = edge(parent.as_deref()?, child, *xyz, *rpy, ts);
+            Some(if above_root.contains(&child.as_str()) {
+                inverse(e)
+            } else {
+                e
+            })
+        })
+        .collect()
 }
 
 fn stamped(info: &CameraInfo, ts: f64) -> CameraInfo {
@@ -1516,7 +1508,7 @@ mod tests {
         assert!(
             (q.coords - dimos_module::nalgebra::Vector4::new(-0.5, 0.5, -0.5, 0.5)).norm() < 1e-9
         );
-        c.tf_root = MID360_FRAME.into();
+        c.tf_root = "mid360_link".into();
         let lidar = mount_tree(&c, 1.0);
         let parents: Vec<_> = lidar
             .iter()
@@ -1525,19 +1517,19 @@ mod tests {
         assert_eq!(
             parents,
             [
-                (MID360_FRAME, MOUNT_FRAME),
-                (MOUNT_FRAME, BODY_FRAME),
-                (MOUNT_FRAME, CAMERA_FRAME),
-                (BODY_FRAME, L1_FRAME)
+                ("front_camera", "base_link"),
+                ("mid360_link", "front_camera"),
+                ("front_camera", "camera_optical"),
+                ("base_link", "utlidar_lidar")
             ]
         );
         // The L1 hangs off base_link either way, at the configured mount.
         assert_eq!(lidar[3].translation(), body[3].translation());
         let (r, p, y) = body[3].rotation().euler_angles();
-        let rpy = c.l1_mount.map(f64::to_radians);
+        let (_, _, _, rpy) = c.mount.iter().find(|m| m.0 == "utlidar_lidar").unwrap();
         assert!((r - rpy[0]).abs() + (p - rpy[1]).abs() + (y - rpy[2]).abs() < 1e-9);
         // Inverting the lidar edge and composing back lands on the identity.
-        let round = body[1].translation() + body[1].rotation() * lidar[0].translation();
+        let round = body[1].translation() + body[1].rotation() * lidar[1].translation();
         assert!(round.norm() < 1e-9);
     }
 
