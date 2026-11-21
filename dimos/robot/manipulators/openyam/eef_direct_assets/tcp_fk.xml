@@ -1,0 +1,35 @@
+<mujoco model="openyam_eef_direct_tcp">
+  <compiler angle="radian" />
+  <worldbody>
+    <body name="base">
+      <inertial pos="0.000227239 -0.000250638 -0.0562032" quat="0.706917 0.707296 -5.39632e-05 0.000150339" mass="0.265472" diaginertia="0.00068555 0.000650567 0.000243715" />
+      <body name="arm_link_1">
+        <inertial pos="0.00729619 -0.000291569 0.0205138" quat="0.676159 0.67978 0.202898 -0.198846" mass="0.0572565" diaginertia="8.69856e-05 6.90743e-05 3.2381e-05" />
+        <joint name="arm_joint_1" range="-2.61799 3.14159" actuatorfrcrange="-30 30" damping=".05" armature=".005" />
+        <body name="arm_link_2" pos="0.02 2.51e-05 0.0409">
+          <inertial pos="-0.133029 0.00248911 0.00117469" quat="0.00361477 0.706918 0.00417921 0.707274" mass="0.508524" diaginertia="0.00476714 0.00468992 0.000329435" />
+          <joint name="arm_joint_2" range="0 3.66519" actuatorfrcrange="-30 30" axis="-7e-06 1 -4e-06" damping=".05" armature=".005" />
+          <body name="arm_link_3" pos="-0.264 -2e-06 0">
+            <inertial pos="0.125636 0.00151871 0.0535505" quat="0.0850369 0.664203 0.0658046 0.739779" mass="0.387316" diaginertia="0.00330054 0.00326034 0.000444654" />
+            <joint name="arm_joint_3" range="0 4.01426" actuatorfrcrange="-30 30" axis="7e-06 -1 6e-06" damping=".05" armature=".005" />
+            <body name="arm_link_4" pos="0.245 2.2e-06 0.0600003">
+              <inertial pos="0.0520862 -0.000395714 0.0442939" quat="0.948193 0.0142614 0.317041 0.0145651" mass="0.13956" diaginertia="0.000348983 0.000316858 9.98065e-05" />
+              <joint name="arm_joint_4" range="-1.65806 1.65806" actuatorfrcrange="-30 30" axis="7e-06 -1 6e-06" damping=".05" armature=".005" />
+              <body name="arm_link_5" pos="0.0739968 -2.37e-05 0.0395003">
+                <inertial pos="-0.00458257 -0.000293683 -0.0322483" quat="0.701206 -0.0809647 -0.123799 0.697444" mass="0.0903885" diaginertia="5.86686e-05 5.28613e-05 3.99072e-05" />
+                <joint name="arm_joint_5" range="-1.5708 1.5708" actuatorfrcrange="-30 30" axis="4e-06 -6e-06 -1" damping=".05" armature=".005" />
+                <body name="arm_link_6" pos="0.0353001 -1e-07 -0.0394999">
+                  <inertial pos="-0.0051645 -0.00096808 0.00077825" quat="0.922342 0.386196 -0.0109863 -0.00415684" mass="0.0269531" diaginertia="9.64241e-06 5.35995e-06 4.91283e-06" />
+                  <joint name="arm_joint_6" range="-2.35619 1.8326" actuatorfrcrange="-30 30" axis="1 4e-06 7e-06" damping=".05" armature=".005" />
+                  <body name="arm_tcp" pos="0.13 5e-07 1e-06">
+                    <site name="arm_tcp_site" size=".006" rgba="1 0 0 1" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

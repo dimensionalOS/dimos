@@ -85,7 +85,9 @@ class WebXRTeleopConfig(ModuleConfig):
     """Configuration for WebXR Teleoperation Module."""
 
     control_loop_hz: float = 50.0
+    server_host: str = "0.0.0.0"
     server_port: int = 8443
+    ssl_certs_dir: Path | None = None
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
     # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
@@ -347,7 +349,7 @@ class WebXRTeleopModule(Module):
         self._body_report_started_at = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
-        self._web_server = RobotWebInterface(host="0.0.0.0", port=self.config.server_port)
+        self._web_server = RobotWebInterface(host=self.config.server_host, port=self.config.server_port)
         self._setup_routes()
         self._start_server()
         self._start_control_loop()
@@ -486,12 +488,16 @@ class WebXRTeleopModule(Module):
 
         self._web_server_thread = threading.Thread(
             target=self._web_server.run,
-            kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
+            kwargs={
+                "ssl": True,
+                "ssl_certs_dir": self.config.ssl_certs_dir
+                or DIMOS_PROJECT_ROOT / "assets" / "teleop_certs",
+            },
             daemon=True,
             name="WebXRTeleopWebServer",
         )
         self._web_server_thread.start()
-        logger.info(f"WebXR teleop web server started on https://0.0.0.0:{self.config.server_port}")
+        logger.info(f"WebXR teleop web server started on https://{self.config.server_host}:{self.config.server_port}")
 
     def _stop_server(self) -> None:
         """Shutdown the embedded web server."""
