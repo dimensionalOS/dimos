@@ -16,10 +16,12 @@ from collections.abc import Iterator
 from contextlib import closing
 import sqlite3
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
+from reactivex import operators as ops
 from reactivex.abc import DisposableBase, ScheduledAction
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
@@ -134,3 +136,19 @@ def test_completion_can_close_the_source_database(frame_count: int, mocker: Mock
     assert received == ["first", "second"][:frame_count]
     completed.assert_called_once_with()
     on_error.assert_not_called()
+
+
+def test_slow_observer_leaves_a_gap_before_the_next_pass(mocker: MockerFixture) -> None:
+    clock = TestScheduler()
+    mocker.patch("dimos.utils.testing.replay.time", SimpleNamespace(time=lambda: clock.clock))
+    times = []
+
+    def receive(_value: int) -> None:
+        times.append(clock.clock)
+        if len(times) == 2:
+            clock.sleep(1.0)
+
+    replay = timed_playback(lambda: iter([(10.0, 1), (10.2, 2)]), loop=True)
+    with replay.pipe(ops.take(4)).subscribe(receive, scheduler=clock):
+        clock.advance_to(2)
+    assert times == pytest.approx([0.0, 0.2, 1.25, 1.45])

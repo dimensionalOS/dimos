@@ -41,7 +41,7 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
-from dimos.utils.timeseries.base import loop_timestamps
+from dimos.utils.timeseries.base import LOOP_GAP, playback_frames
 
 T = TypeVar("T")
 
@@ -116,7 +116,7 @@ def timed_playback(
         disp = SerialDisposable()
         disposed = threading.Event()
         emission_lock = threading.RLock()
-        iterator = loop_timestamps(source, speed) if loop else source()
+        iterator = playback_frames(source, loop)
         iterator_disposable = Disposable(getattr(iterator, "close", None))
 
         def dispose() -> None:
@@ -135,7 +135,7 @@ def timed_playback(
                 observer.on_error(error)
 
         try:
-            first_ts, first_data = next(iterator)
+            first_ts, first_data, _ = next(iterator)
         except StopIteration:
             terminate()
             return Disposable()
@@ -163,26 +163,31 @@ def timed_playback(
                 return
             schedule_emission(message)
 
-        def schedule_emission(message: tuple[float, T]) -> None:
+        def schedule_emission(message: tuple[float, T, bool]) -> None:
             nonlocal start_local_time, start_replay_time, prev_ts
 
             if disposed.is_set():
                 return
 
-            ts, data = message
+            ts, data, wrapped = message
 
-            if detect_loop and ts < prev_ts:
-                start_local_time = time.time()
-                start_replay_time = ts
+            if wrapped:
+                delay = LOOP_GAP
+            else:
+                now = time.time()
+                if detect_loop and ts < prev_ts:
+                    start_local_time, start_replay_time = now, ts
+                target_time = start_local_time + (ts - start_replay_time) / speed
+                delay = max(0.0, target_time - now)
             prev_ts = ts
 
-            target_time = start_local_time + (ts - start_replay_time) / speed
-            delay = max(0.0, target_time - time.time())
-
             def emit(_scheduler: SchedulerBase, _state: object) -> DisposableBase | None:
+                nonlocal start_local_time, start_replay_time
                 with emission_lock:
                     if disposed.is_set():
                         return None
+                    if wrapped:
+                        start_local_time, start_replay_time = time.time(), ts
                     observer.on_next(data)
                     advance()
                 return None

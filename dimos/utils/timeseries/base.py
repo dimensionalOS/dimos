@@ -35,28 +35,26 @@ U = TypeVar("U")
 LOOP_GAP = 0.05  # wall seconds between passes of timed playback
 
 
-def loop_timestamps(
-    source: Callable[[], Iterator[tuple[float, U]]], speed: float
-) -> Iterator[tuple[float, U]]:
-    """Repeat nonempty passes, advancing the scheduling clock only between passes."""
-    next_start: float | None = None
+def playback_frames(
+    source: Callable[[], Iterator[tuple[float, U]]], loop: bool
+) -> Iterator[tuple[float, U, bool]]:
+    """Yield recorded frames and mark the first frame of each repeated pass."""
+    wrapped = False
     while True:
         rows = source()
-        last: float | None = None
-        offset = 0.0
+        emitted = False
         try:
             for ts, data in rows:
-                if last is None and next_start is not None:
-                    offset = next_start - ts
-                last = ts + offset
-                yield last, data
+                emitted = True
+                yield ts, data, wrapped
+                wrapped = False
         finally:
             close = getattr(rows, "close", None)
             if close is not None:
                 close()
-        if last is None:
+        if not loop or not emitted:
             return
-        next_start = last + LOOP_GAP * speed
+        wrapped = True
 
 
 class TimeSeriesStore(Generic[T], ABC):
@@ -298,11 +296,10 @@ class TimeSeriesStore(Generic[T], ABC):
         def items() -> Iterator[tuple[float, T]]:
             return self.iterate_items(seek=seek, duration=duration, from_timestamp=from_timestamp)
 
-        rows = loop_timestamps(items, speed) if loop else items()
         prev_ts: float | None = None
-        for ts, data in rows:
+        for ts, data, wrapped in playback_frames(items, loop):
             if prev_ts is not None:
-                delay = (ts - prev_ts) / speed
+                delay = LOOP_GAP if wrapped else (ts - prev_ts) / speed
                 if delay > 0:
                     time.sleep(delay)
             prev_ts = ts
