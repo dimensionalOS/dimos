@@ -42,6 +42,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import global_config
+from dimos.core.module import Module
 from dimos.core.run_registry import (
     RunEntry,
     cleanup_stale,
@@ -68,12 +69,13 @@ def _clean_registry(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 @pytest.fixture(scope="class")
 def mcp_shared(mcp_url: str, mcp_port: int) -> Iterator[ModuleCoordinator]:
-    """Build a shared StressTestModule + McpServer.  Class-scoped -- started
+    """Build a server with a named skill provider and a module with no skills.  Class-scoped -- started
     once, torn down after every test in the class finishes.  Use for
     read-only tests that don't stop/restart the server."""
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(
-        StressTestModule.blueprint(),
+        StressTestModule.blueprint(instance_name="reporter"),
+        Module.blueprint(instance_name="telemetry"),
         McpServer.blueprint(port=mcp_port),
     ).solidify()
     coord = ModuleCoordinator.build(bp)
@@ -146,6 +148,27 @@ class TestMCPLifecycle:
         text = result["result"]["content"][0]["text"]
         assert text == "hello from stress test"
 
+    def test_ambiguous_skill_is_unavailable_until_one_owner_remains(
+        self, mcp_shared: ModuleCoordinator, adapter: McpAdapter
+    ) -> None:
+        assert adapter.call_tool_text("echo", {"message": "before"}) == "before"
+        mcp_shared.load_blueprint(StressTestModule.blueprint(instance_name="lab/backup"))
+        try:
+            reply = adapter.call("tools/call", {"name": "echo", "arguments": {"message": "hello"}})
+            assert reply["error"]["code"] == -32602
+            diagnostic = reply["error"]["message"]
+            assert all(name in diagnostic for name in ("echo", "reporter", "lab/backup"))
+            assert "echo" not in {tool["name"] for tool in adapter.list_tools()}
+            assert "echo" not in json.loads(adapter.call_tool_text("server_status"))["skills"]
+            owners = json.loads(adapter.call_tool_text("list_modules"))["modules"]
+            assert "echo" in owners["reporter"]
+            assert "echo" in owners["lab/backup"]
+        finally:
+            mcp_shared.unload_module("lab/backup")
+
+        assert [tool["name"] for tool in adapter.list_tools()].count("echo") == 1
+        assert adapter.call_tool_text("echo", {"message": "after"}) == "after"
+
     def test_ping_tool(self, mcp_shared: ModuleCoordinator, adapter: McpAdapter) -> None:
         """Call ping tool -- should return 'pong'."""
         result = adapter.call("tools/call", {"name": "ping", "arguments": {}})
@@ -167,14 +190,14 @@ class TestMCPLifecycle:
         assert "pid" in data
         assert "modules" in data
         assert "skills" in data
-        assert "StressTestModule" in data["modules"]
+        assert set(data["modules"]) == {"McpServer", "reporter", "telemetry"}
 
     def test_list_modules_tool(self, mcp_shared: ModuleCoordinator, adapter: McpAdapter) -> None:
         """list_modules tool should group skills by module."""
         text = adapter.call_tool_text("list_modules")
         modules = json.loads(text)["modules"]
-        assert "StressTestModule" in modules
-        assert "echo" in modules["StressTestModule"]
+        assert modules["telemetry"] == []
+        assert "echo" in modules["reporter"]
 
 
 @pytest.mark.usefixtures("mcp_entry")
@@ -213,15 +236,16 @@ class TestMCPCLICommands:
         result = CliRunner().invoke(main, ["mcp", "status"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert "StressTestModule" in data["modules"]
+        assert set(data["modules"]) == {"McpServer", "reporter", "telemetry"}
 
     def test_cli_mcp_modules(self, mcp_shared: ModuleCoordinator) -> None:
         """dimos mcp modules should show module-skill mapping."""
         result = CliRunner().invoke(main, ["mcp", "modules"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert "StressTestModule" in data["modules"]
-        assert "echo" in data["modules"]["StressTestModule"]
+        assert set(data["modules"]) == {"McpServer", "reporter", "telemetry"}
+        assert data["modules"]["telemetry"] == []
+        assert "echo" in data["modules"]["reporter"]
 
 
 @pytest.mark.usefixtures("mcp_entry")
