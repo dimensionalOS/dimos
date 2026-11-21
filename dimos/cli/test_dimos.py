@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from importlib.util import spec_from_file_location
 import os
 from pathlib import Path
@@ -1150,44 +1150,68 @@ def test_restart_restores_wrapper_command(restart_entry, tmp_path, monkeypatch, 
     assert Path.cwd() == project
 
 
+@pytest.fixture
+def launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Callable[[str], tuple[Path, dict[str, str]]]]:
+    """Write a script whose `dimos run` registers itself and idles instead of building."""
+    env = os.environ | {"XDG_STATE_HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path)}
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "dimos" / "runs")
+
+    def write(setup: str) -> tuple[Path, dict[str, str]]:
+        script = tmp_path / "launch.py"
+        script.write_text(
+            "import os, signal, sys\n"
+            "from types import SimpleNamespace\n"
+            f"{setup}\n"
+            "from dimos.cli.commands import lifecycle\n"
+            "from dimos.cli.dimos import cli_main\n"
+            "def serve(blueprint, config, entry, on_ready=None, **kwargs):\n"
+            "    entry.save()\n"
+            "    if on_ready is not None:\n"
+            "        on_ready(SimpleNamespace(n_modules=0, suppress_console=lambda: None))\n"
+            "    print('registered', flush=True)\n"
+            "    signal.pause()\n"
+            "lifecycle._run_registered = serve\n"
+            "cli_main()\n"
+        )
+        return script, env
+
+    yield write
+    # A daemon outlives its launcher.
+    for entry in run_registry.list_runs():
+        run_registry.stop_entry(entry, force=True)
+
+
+def _restart(env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        [sys.executable, "-m", "dimos.cli.dimos", "restart", "--force"],
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=60,
+    )
+
+
 @pytest.mark.parametrize("nested", [False, True], ids=["missing", "different-project"])
-def test_restart_keeps_run_when_wrapper_reenters_relative_directory(tmp_path, nested):
+def test_restart_keeps_run_when_wrapper_reenters_relative_directory(launcher, tmp_path, nested):
     project = tmp_path / "project"
     project.mkdir()
     if nested:
         (project / "project").mkdir()
-    wrapper = tmp_path / "launch.py"
-    wrapper.write_text(
-        "import os, sys\n"
-        "os.chdir('project')\n"
-        "from dimos.cli.commands import lifecycle\n"
-        "from dimos.cli.dimos import cli_main\n"
-        "def serve(blueprint, config, entry, **kwargs):\n"
-        "    entry.save()\n"
-        "    print('registered', flush=True)\n"
-        "    sys.stdin.read()\n"
-        "lifecycle._run_registered = serve\n"
-        "cli_main()\n"
-    )
-    env = os.environ | {"XDG_STATE_HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path)}
+    script, env = launcher("os.chdir('project')")
     with subprocess.Popen(
-        [sys.executable, str(wrapper), "--viewer", "none", "run", "replay"],
+        [sys.executable, str(script), "--viewer", "none", "run", "demo-mcp-stress-test"],
         cwd=tmp_path,
         env=env,
-        stdin=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         text=True,
     ) as original:
         try:
             assert any(line.strip() == "registered" for line in original.stdout)
-            result = subprocess.run(
-                [sys.executable, "-m", "dimos.cli.dimos", "restart", "--force"],
-                cwd=tmp_path,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=30,
-            )
+            result = _restart(env, tmp_path)
             assert result.returncode == 1
             assert original.poll() is None
         finally:
