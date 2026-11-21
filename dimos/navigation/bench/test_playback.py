@@ -42,5 +42,5 @@ def test_frames_read_coordinator_joint_state_when_joint_state_is_empty(tmp_path:
 
 
 def test_play_rejects_infinite_speed_before_loading_an_episode(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match="speed.*finite"):
         play(tmp_path, speed=float("inf"))

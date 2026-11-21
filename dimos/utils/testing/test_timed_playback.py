@@ -137,5 +137,5 @@ def test_completion_can_close_the_source_database(frame_count: int, mocker: Mock
 
 
 def test_invalid_speed_rejected_before_opening_playback_source() -> None:
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match="speed.*finite"):
         timed_playback(lambda: iter(()), speed=float("nan"))

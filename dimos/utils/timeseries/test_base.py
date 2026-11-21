@@ -392,5 +392,5 @@ class TestCollectionAPI:
 
 def test_realtime_iteration_rejects_zero_speed_even_with_no_samples() -> None:
     store = make_in_memory_store()
-    with pytest.raises(ValueError, match="greater than 0"):
+    with pytest.raises(ValueError, match="speed.*greater than 0"):
         list(store.iterate_realtime(speed=0.0))
