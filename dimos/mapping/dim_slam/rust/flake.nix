@@ -7,12 +7,14 @@
     flake-utils.url = "github:numtide/flake-utils";
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
-    cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
-    cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
-    cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
+    # The SDKs come through dimSLAM, so its tag pins both the library and cuVSLAM; keep it equal to Cargo.toml's tag.
+    dimslam.url = "github:dimensionalOS/dimSLAM/v0.4.4";
+    dimslam.inputs.nixpkgs.follows = "nixpkgs";
+    dimslam.inputs.flake-utils.follows = "flake-utils";
+    dimslam.inputs.crate2nix.follows = "crate2nix";
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, cu-vslam-rs }:
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, dimslam }:
     flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -24,7 +26,7 @@
 
         sdkPackages = nixpkgs.lib.filterAttrs
           (n: _: nixpkgs.lib.hasPrefix "sdk-" n)
-          cu-vslam-rs.packages.${system};
+          dimslam.packages.${system};
         variants = map (nixpkgs.lib.removePrefix "sdk-") (builtins.attrNames sdkPackages);
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
