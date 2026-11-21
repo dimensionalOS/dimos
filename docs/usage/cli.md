@@ -157,11 +157,14 @@ publishing details.
 
 Render a Blueprint's stream flow as a Graphviz SVG without starting the Blueprint or
 opening its runtime transports. RPC relationships are hidden by default; pass `--rpc`
-to include RPC contracts and their declared Spec methods as dashed edges.
+to include RPC contracts and their declared Spec methods as dashed edges. The graph
+reflects the selected simulation, replay, and viewer settings. Use `VIEWER` or the
+root `--viewer` flag to choose the viewer used for graph composition.
 
 ```bash
 dimos graph unitree-go2-agentic
 dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+dimos --simulation mujoco graph keyboard-teleop-xarm7
 ```
 
 The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`

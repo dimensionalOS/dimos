@@ -16,14 +16,55 @@
 
 from __future__ import annotations
 
+from functools import wraps
 import inspect
 import types
-from typing import get_args, get_origin
+from typing import Any, get_args, get_origin
 
+import click
 from pydantic import ValidationError
 import typer
+from typer.core import TyperGroup
 
-from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.global_config import GlobalConfig, get_global_config
+
+
+class GlobalOptionsGroup(TyperGroup):
+    """Apply settings when a command executes, after Click has handled help."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        for name, command in self.commands.items():
+            # These two commands merge root flags with blueprint-specific options.
+            if name not in {"run", "rerun-bridge"}:
+                _configure_callback(command)
+
+
+def _configure_callback(command: click.Command) -> None:
+    if isinstance(command, click.Group):
+        for child in command.commands.values():
+            _configure_callback(child)
+    callback = command.callback
+    if callback is None:
+        return
+
+    @wraps(callback)
+    def configured(*args: Any, **kwargs: Any) -> Any:
+        ctx = click.get_current_context()
+        # An external parser (e.g. lerobot-train) owns its forwarded help.
+        delegated_help = not ctx.help_option_names and any(
+            arg in {"--help", "-h"} for arg in ctx.args
+        )
+        if ctx.invoked_subcommand is None and not delegated_help:
+            try:
+                get_global_config(**ctx.find_root().obj)
+            except ValidationError as error:
+                detail = error.errors()[0]
+                field = ".".join(map(str, detail["loc"]))
+                raise typer.BadParameter(detail["msg"], param_hint=field) from error
+        return callback(*args, **kwargs)
+
+    command.callback = configured
 
 
 def create_dynamic_callback():  # type: ignore[no-untyped-def]
@@ -90,12 +131,6 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         ctx.obj = overrides
-        # Apply overrides (e.g. --transport, --viewer) to the process-global config
-        # up front so every subcommand honors flags given before the subcommand name.
-        try:
-            global_config.update(**overrides)
-        except ValidationError as error:
-            raise typer.BadParameter(error.errors()[0]["msg"]) from error
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 

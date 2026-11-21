@@ -51,7 +51,7 @@ class WorkerManagerPython:
         self._started = True
         for _ in range(self._n_workers):
             worker = PythonWorker()
-            worker.start_process()
+            worker.start_process(self._cfg)
             self._workers.append(worker)
         logger.info("Worker pool started.", n_workers=self._n_workers)
 
@@ -70,7 +70,7 @@ class WorkerManagerPython:
             raise RuntimeError("WorkerManager not started; call start() first")
         for _ in range(n):
             worker = PythonWorker()
-            worker.start_process()
+            worker.start_process(self._cfg)
             self._workers.append(worker)
         self._n_workers += n
         logger.info("Added workers to pool.", added=n, total=self._n_workers)
@@ -109,7 +109,7 @@ class WorkerManagerPython:
             self.start()
 
         worker = PythonWorker()
-        worker.start_process()
+        worker.start_process(self._cfg)
         self._workers.append(worker)
         self._n_workers += 1
         if module_class.dedicated_worker:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -124,7 +125,6 @@ def test_graph_subprocess_uses_static_transport_environment(
     mocker: MockerFixture,
 ) -> None:
     monkeypatch.setenv("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
-    monkeypatch.setenv("viewer", "rerun")
     run = mocker.patch.object(
         graph_command.subprocess,
         "run",
@@ -144,7 +144,6 @@ def test_graph_subprocess_uses_static_transport_environment(
         str(output),
     ]
     assert kwargs["env"]["LCM_DEFAULT_URL"] == "memq://"
-    assert kwargs["env"]["viewer"] == "none"
     assert kwargs["text"] is True
     assert kwargs["capture_output"] is True
 
@@ -198,3 +197,64 @@ def test_graph_worker_forwards_rpc_choice_to_renderer(
     graph_command._worker_main()
 
     render.assert_called_once_with("alpha", output, include_rpc=include_rpc)
+
+
+@pytest.mark.parametrize(
+    ("viewer", "viewer_args", "expected_module"),
+    [
+        ("rerun", [], "SimReplay"),
+        ("none", [], "Live"),
+        ("invalid", ["--viewer", "rerun"], "SimReplay"),
+    ],
+)
+def test_graph_resolves_blueprint_with_global_options_in_renderer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    viewer: str,
+    viewer_args: list[str],
+    expected_module: str,
+) -> None:
+    metadata = tmp_path / "graph_fixture-1.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Name: graph-fixture\nVersion: 1.0\n")
+    (metadata / "entry_points.txt").write_text("[dimos.blueprints]\nrobot = graph_fixture:robot\n")
+    (tmp_path / "graph_fixture.py").write_text(
+        "from dimos.core.global_config import global_config as g\n"
+        "from dimos.core.module import Module\n"
+        "class SimReplay(Module): pass\n"
+        "class Live(Module): pass\n"
+        "selected = g.simulation == 'dimsim' and g.replay and g.viewer == 'rerun'\n"
+        "robot = (SimReplay if selected else Live).blueprint()\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path), prepend=os.pathsep)
+    monkeypatch.setenv("REPLAY", "false")
+    monkeypatch.delenv("viewer", raising=False)
+    monkeypatch.setenv("VIEWER", viewer)
+    # Capture the DOT that would be sent to Graphviz.
+    dot = tmp_path / "dot"
+    dot.write_text('#!/bin/sh\ncat > "$3"\n')
+    dot.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+    graph = tmp_path / "robot.svg"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dimos.cli.dimos",
+            "--simulation",
+            "dimsim",
+            "--replay",
+            *viewer_args,
+            "graph",
+            "graph-fixture.robot",
+            "-o",
+            str(graph),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert expected_module in graph.read_text()
