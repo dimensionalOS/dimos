@@ -472,6 +472,9 @@ def test_a_hold_that_oscillates_in_place_ends_whatever_its_phase(arm: ArmModel, 
         q = arm.home + np.array([0.0, 0.0, 0.01 * math.cos(2.0 * math.pi * hz * k / 100.0)])
         motion.feed(Sample(k / 100.0, q, np.zeros(3)))
     assert motion.done.is_set() and motion.ended == "not converging"
+    name = arm.joint_names[2]
+    assert motion.detail.startswith(f"{name} oscillates 1.") and " deg (band " in motion.detail
+    assert arm.joint_names[0] not in motion.detail
 
 
 TRY_GAINS = {
