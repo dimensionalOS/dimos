@@ -14,7 +14,8 @@ Bare `--record` means `--record sqlite`. SQLite lands at
 `recordings/<run-id>/memory.mcap`. The Desktop Launcher writes to the folder
 shown in the Recordings app (the gateway's `GET /history/recordings`). A
 standalone run defaults to the checkout's `recordings/` directory or
-`~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
+`~/.local/state/dimos/recordings/` for an installed package. Set
+`DIMOS_RECORDINGS_DIR` to record under another folder. `<run-id>` is the
 same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
 
 ## Experimental Rust engine
