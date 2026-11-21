@@ -23,13 +23,13 @@ from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 import pytest
-from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.webrtc_connect import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:
@@ -158,3 +158,22 @@ def test_empty_string_key_forwarded_as_falsy(stub_legion: MagicMock) -> None:
     """Empty-string key stays falsy → the driver treats it as no key."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
     assert not _aes_kwarg(stub_legion)
+
+
+def test_odom_stream_preserves_source_timestamp(built_connection, monkeypatch):
+    from reactivex import just
+
+    from dimos.robot.unitree.type.odometry import raw_odometry_msg_sample
+
+    conn, _driver = built_connection
+    # Exercise production decoding synchronously, without process-wide Rx pool workers.
+    monkeypatch.setattr(conn_mod, "backpressure", lambda source: source)
+    monkeypatch.setattr(conn, "raw_odom_stream", lambda: just(raw_odometry_msg_sample))
+    measured = []
+    subscription = conn.odom_stream().subscribe(measured.append)
+    try:
+        assert len(measured) == 1
+        stamp = raw_odometry_msg_sample["data"]["header"]["stamp"]
+        assert measured[0].ts == stamp["sec"] + stamp["nanosec"] * 1e-9
+    finally:
+        subscription.dispose()

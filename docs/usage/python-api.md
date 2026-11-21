@@ -187,9 +187,9 @@ app.stop()  # closes the connection (does NOT stop the remote process)
 
 `Dimos.connect()` probes the coordinator on the configured transport bus. It does
 not require a CLI run-registry entry, so it also attaches to
-`ModuleCoordinator.build(...).loop()` launched directly from Python. dimOS
-supports one coordinator per bus; configure the transport bus consistently to
-connect across processes or hosts.
+`ModuleCoordinator.build(...).loop()` launched directly from Python. One stack
+per bus serves the default `Coordinator` endpoint. Companion stacks can share
+the bus by setting `serve_coordinator_rpc=False` and using their local module handles.
 
 `run()`, `restart()` and `unload()` also work against a daemon:
 

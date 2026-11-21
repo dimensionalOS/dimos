@@ -25,16 +25,6 @@ from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
-from unitree_webrtc_connect.constants import (
-    DATA_CHANNEL_TYPE,
-    RTC_TOPIC,
-    SPORT_CMD,
-    VUI_COLOR,
-)
-from unitree_webrtc_connect.webrtc_driver import (
-    UnitreeWebRTCConnection as LegionConnection,
-    WebRTCConnectionMethod,
-)
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
@@ -50,6 +40,14 @@ from dimos.robot.unitree.type.lidar import (
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.webrtc_connect import (
+    DATA_CHANNEL_TYPE,
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+    UnitreeWebRTCConnection as LegionConnection,
+    WebRTCConnectionMethod,
+)
 from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
@@ -309,7 +307,6 @@ class UnitreeWebRTCConnection(Resource):
                 ops.map(
                     Odometry.from_msg,
                 ),
-                ops.map(time_is_now),
             )
         )
 
