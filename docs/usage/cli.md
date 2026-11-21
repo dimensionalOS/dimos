@@ -137,7 +137,7 @@ When `--daemon` is used, the process:
 1. Builds and starts all modules (foreground, so you see errors)
 2. Runs a health check (polls worker PIDs)
 3. Forks to background, writes a run registry entry
-4. Prints run ID, PID, log path, and MCP endpoint
+4. Prints the run ID, daemon PID, log path, and the MCP endpoint when the stack provides one.
 
 #### Adding a New Blueprint
 
@@ -238,7 +238,7 @@ Show the running dimOS instance.
 dimos status
 ```
 
-Reads the run registry, verifies the PID is alive, and displays: run ID, PID, blueprint name, uptime, log path, and MCP port.
+Reads the run registry, verifies the PID is alive, and displays the run ID, PID, blueprint name, uptime, and log path. If the stack provides an MCP server, its full endpoint URL is also shown.
 
 ### `dimos stop`
 

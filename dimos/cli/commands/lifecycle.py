@@ -400,6 +400,7 @@ def run(
             typer.echo("✓ Health check passed")
             typer.echo("✓ DimOS running in background\n")
             typer.echo(f"  Run ID:    {run_id}")
+            _print_process_details(status["pid"], status["mcp_url"])
             typer.echo(f"  Log:       {log_dir}")
             typer.echo("  Stop:      dimos stop")
             typer.echo("  Status:    dimos status")
@@ -412,7 +413,15 @@ def run(
             nonlocal started
             # Workers dup2 /dev/null over the terminal fds they inherited.
             coordinator.suppress_console()
-            write_daemon_status(status_fd, {"ok": True, "n_modules": coordinator.n_modules})
+            write_daemon_status(
+                status_fd,
+                {
+                    "ok": True,
+                    "n_modules": coordinator.n_modules,
+                    "pid": entry.pid,
+                    "mcp_url": entry.mcp_url,
+                },
+            )
             os.close(status_fd)
             redirect_stdio_to_devnull()
             started = True
@@ -444,6 +453,12 @@ def run(
             raise typer.Exit(1) from exc
 
 
+def _print_process_details(pid: int, mcp_url: str | None) -> None:
+    typer.echo(f"  PID:       {pid}")
+    if mcp_url:
+        typer.echo(f"  MCP:       {mcp_url}")
+
+
 def status() -> None:
     """Show the running DimOS instance."""
     entry = get_most_recent(alive_only=True)
@@ -461,7 +476,7 @@ def status() -> None:
         uptime = "unknown"
 
     typer.echo(f"  Run ID:    {entry.run_id}")
-    typer.echo(f"  PID:       {entry.pid}")
+    _print_process_details(entry.pid, entry.mcp_url)
     typer.echo(f"  Blueprint: {entry.blueprint}")
     typer.echo(f"  Uptime:    {uptime}")
     typer.echo(f"  Log:       {entry.log_dir}")
