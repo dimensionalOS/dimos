@@ -203,7 +203,8 @@ class FakeArm:
 class FakeOperator(Operator):
     """Answers each question as it is asked with ``pick(prompt, answers)``, and keeps what it saw.
 
-    ``done`` is how the run ended: whether it was done, its summary, and whether the arm is home.
+    ``done`` is how the run ended: whether it was done, its summary, and whether the arm is parked
+    at rest.
     """
 
     def __init__(self, pick: Callable[[str, list[str]], str] | None = None) -> None:
@@ -228,6 +229,6 @@ class FakeOperator(Operator):
         assert self.answer(self.pick(prompt, answers)) == "ok"
         return answered
 
-    def finish(self, state: RunState, summary: str, home: bool) -> None:
-        super().finish(state, summary, home)
-        self.done = (state == "done", summary, home)
+    def finish(self, state: RunState, summary: str, rest: bool) -> None:
+        super().finish(state, summary, rest)
+        self.done = (state == "done", summary, rest)

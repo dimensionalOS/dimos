@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from dimos.control.calibration.gravity_poses import ArmModel
 from dimos.control.calibration.spec import WorkspaceGuard, build_arm_spec
 from dimos.robot.assets.model import RobotModel
@@ -59,14 +61,16 @@ def toy_urdf(tilt_rad: float = 0.0) -> str:
 TOY_URDF = toy_urdf()
 
 
-def toy_arm(tilt_rad: float = 0.0) -> ArmModel:
-    """The toy arm on a bench; its yaw, tilted or not, is never measured."""
+def toy_arm(tilt_rad: float = 0.0, home_rad: Sequence[float] | None = None) -> ArmModel:
+    """The toy arm on a bench, home at ``home_rad`` (default zeros); its yaw, tilted or not, is
+    never measured."""
     guard = WorkspaceGuard.for_bench(floor_z_m=-0.45, min_x_m=-1.0)
     model = RobotModel.from_urdf_string(toy_urdf(tilt_rad))
     spec = build_arm_spec(
         "toy",
         model,
         ["yaw", "shoulder", "elbow"],
+        home_joints=home_rad,
         measured_joints=["shoulder", "elbow"],
         workspace=guard,
     )

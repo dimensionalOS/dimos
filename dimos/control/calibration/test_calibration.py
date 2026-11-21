@@ -55,11 +55,18 @@ from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 
 TRUE_LINKS = {"fore": LinkInertial(mass_kg=0.7, com_m=(0.13, 0.0, 0.02))}
 WAIT_S = 10.0
+PARKED = "Parked at rest; you can stop the run."
 
 
 @pytest.fixture(scope="module")
 def arm() -> ArmModel:
     return toy_arm()
+
+
+@pytest.fixture(scope="module")
+def bent() -> ArmModel:
+    """The toy arm with its home away from rest, where every joint is zero."""
+    return toy_arm(home_rad=(0.0, -0.3, 0.6))
 
 
 def calibration(arm: ArmModel, operator: Operator, fake: FakeArm, **settings: Any) -> Calibration:
@@ -99,23 +106,24 @@ def assert_the_saved_fit_finds_the_truth(arm: ArmModel, fake: FakeArm, run: Cali
     assert total["held_out"] < total["urdf"]
 
 
-def test_a_full_run_saves_the_fit_and_the_gains_and_ends_home(arm: ArmModel) -> None:
-    fake = FakeArm(arm, true_links=TRUE_LINKS, friction_nm=dict.fromkeys(arm.joint_names, 0.02))
+def test_a_full_run_saves_the_fit_and_the_gains_and_parks_at_rest(bent: ArmModel) -> None:
+    fake = FakeArm(bent, true_links=TRUE_LINKS, friction_nm=dict.fromkeys(bent.joint_names, 0.02))
     operator = FakeOperator()
-    run = calibration(arm, operator, fake)
+    run = calibration(bent, operator, fake)
     run.run()
 
     assert operator.done is not None
-    ok, text, home = operator.done
-    assert ok and home, text
-    assert_the_saved_fit_finds_the_truth(arm, fake, run)
-    assert set(fake.file["gains"]) == set(arm.joint_names)
+    ok, text, rest = operator.done
+    assert ok and rest, text
+    assert operator.status().message == f"Calibration done:\n{text}\n{PARKED}"
+    assert_the_saved_fit_finds_the_truth(bent, fake, run)
+    assert set(fake.file["gains"]) == set(bent.joint_names)
     # The fit made the floats pass, and the tracking compared both visits.
     assert "2 of 2 floated joints ended within 2 mm" in text
     assert all(row["passed"] for row in fake.file["checks"]["float"]["joints"].values())
     assert "2 poses compared" in text
     assert fake.live == {} and fake.floating == {}
-    np.testing.assert_allclose(fake.q, arm.home, atol=1e-3)
+    np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
 
 
 def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel) -> None:
@@ -125,14 +133,14 @@ def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel)
 
     assert operator.done is not None and operator.done[0], operator.done
     assert "gravity_poses: skipped by the operator" in operator.done[1]
-    assert sum("Move to" in prompt for prompt in operator.asked) == 0
+    assert [p for p in operator.asked if "Move to" in p] == ["Move to rest [0.0, 0.0, 0.0] deg?"]
     moving = FakeOperator()
     calibration(arm, moving, FakeArm(arm), steps=["confirm_tracking"]).run()
-    assert sum("Move to" in prompt for prompt in moving.asked) == 2 + 1
+    assert sum("Move to" in prompt for prompt in moving.asked) == 2 + 1 + 1
 
 
-def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(arm: ArmModel) -> None:
-    fake = FakeArm(arm)
+def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(bent: ArmModel) -> None:
+    fake = FakeArm(bent)
     aborted_at: list[float] = []
 
     def answer(prompt: str, choices: list[str]) -> str:
@@ -144,7 +152,7 @@ def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(arm: Ar
         return choices[0]
 
     operator = FakeOperator(answer)
-    run = calibration(arm, operator, fake, steps=["gravity_poses"])
+    run = calibration(bent, operator, fake, steps=["gravity_poses"])
 
     def abort_mid_move(arm_: FakeArm) -> None:
         if not aborted_at and arm_.t > 1.0 and run._motion is not None:
@@ -155,14 +163,15 @@ def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(arm: Ar
     run.run()
 
     assert operator.done is not None
-    ok, text, home = operator.done
-    assert not ok and home and "aborted by the operator" in text
+    ok, text, rest = operator.done
+    assert not ok and rest and "aborted by the operator" in text
+    assert operator.status().message.endswith(f"\n{PARKED}")
     [t_abort] = aborted_at
     held = [t for t in fake.halts if t > t_abort]
     assert held and held[0] - t_abort <= fake.deadman_s + 2 * fake.period_s
     resumed = [t for t in fake.commands if t > t_abort]
     assert resumed[0] > held[0]
-    np.testing.assert_allclose(fake.q, arm.home, atol=1e-3)
+    np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
 
 
 def started(run: Calibration) -> threading.Thread:
@@ -199,8 +208,11 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     assert view[-2].startswith("? The arm moves home") and view[-1] == "  answer: go"
     assert operator.answer("skip") == "unknown answer 'skip'; answer go"
     assert operator.answer(" Go ") == "ok"
-    assert operator.answer("go") == "no question pending"
+    parking = asked(operator, "Move to rest")
+    assert (parking.step, parking.question) == ("summary", "Move to rest [0.0, 0.0, 0.0] deg?")
+    assert operator.answer("go") == "ok"
     thread.join(WAIT_S)
+    assert operator.answer("go") == "no question pending"
 
     done = operator.status()
     rows = {row.name: (row.state, row.result) for row in done.steps}
@@ -209,7 +221,7 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     assert rows["summary"] == ("done", "fake/calibration.json")
     assert rows["gravity_fit"] == ("skipped", "not selected")
     assert done.summary.endswith("  summary: fake/calibration.json")
-    assert done.message == f"Calibration done:\n{done.summary}"
+    assert done.message == f"Calibration done:\n{done.summary}\n{PARKED}"
     assert done.log[1].startswith("? The arm moves home") and done.log[2] == "> go"
 
 
@@ -322,8 +334,11 @@ def test_a_refused_set_config_fails_the_run_and_the_arm_holds(arm: ArmModel) -> 
     calibration(arm, operator, fake, steps=["step_sweep"]).run()
 
     assert operator.done is not None
-    ok, text, home = operator.done
-    assert not ok and not home
+    ok, text, rest = operator.done
+    assert not ok and not rest
+    assert operator.status().message.endswith(
+        "\nThe arm is not at rest: support it before stopping the run, which turns its motors off."
+    )
     assert "step_sweep failed: ValueError: set_config changed nothing" in text
     assert "refused by the test" in text
     assert fake.live == {}
@@ -339,7 +354,7 @@ def test_a_buzzing_candidate_stops_at_its_first_buzzing_step_and_the_sweep_goes_
 
     assert operator.done is not None and operator.done[0], operator.done
     assert {(j, pair) for j, pairs in run.stopped.items() for pair in pairs} == {
-        (j, (60.0, kd)) for j in arm.joint_names for kd in (1.0, 2.5, 5.0)
+        (j, (60.0, kd)) for j in arm.joint_names for kd in (0.4, 1.0, 2.5, 5.0)
     }
     stiff = [m for m in run.step_metrics if m.kp == 60.0]
     assert sorted({m.delta_deg for m in stiff}) == [-1.0, 1.0, 3.0]
@@ -347,6 +362,22 @@ def test_a_buzzing_candidate_stops_at_its_first_buzzing_step_and_the_sweep_goes_
     saved = {g["kp"] for g in fake.file["gains"].values()}
     assert 60.0 not in saved
     assert fake.live == {}
+
+
+def test_the_sweep_tries_kd_below_the_joints_own_and_each_pair_once(arm: ArmModel) -> None:
+    operator = FakeOperator()
+    run = calibration(arm, operator, FakeArm(arm, kd=2.0), steps=["step_sweep"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    [prompt] = [p for p in operator.asked if p.startswith("At ")]
+    assert (
+        "then at kp x 0.6, 1, 1.5 by kd x 0.4, 1, 2.5, 5 (kd at most 5 and kp x 0.25; "
+        "yaw 9, shoulder 9, elbow 9 candidates)"
+    ) in prompt
+    assert {(m.kp, m.kd) for m in run.step_metrics if m.joint == "elbow"} == {
+        (kp, kd) for kp in (24.0, 40.0, 60.0) for kd in (0.8, 2.0, 5.0)
+    }
 
 
 def test_friction_sets_each_joints_rest_limit_and_a_stuck_largest_step_rejects_its_gains(
@@ -464,8 +495,8 @@ def test_too_few_poses_measured_fails_gravity_poses(arm: ArmModel) -> None:
     run.run()
 
     assert operator.done is not None
-    ok, text, home = operator.done
-    assert not ok and home
+    ok, text, rest = operator.done
+    assert not ok and rest
     assert (
         "gravity_poses failed: RuntimeError: only 3 of 4 poses measured; need at least 4 "
         "(min_poses), 1 skipped: pose_02 (elbow oscillates "
