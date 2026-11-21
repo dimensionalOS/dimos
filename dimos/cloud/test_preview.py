@@ -24,7 +24,9 @@ import pytest
 
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
+from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.store.base import Store
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -324,3 +326,31 @@ def test_a_camera_whose_packets_never_decode_leaves_no_timelapse(tmp_path: Path)
     out = tmp_path / "t.mp4"
     assert preview.timelapse(store(front_camera=rubbish), out) is None
     assert not out.exists()
+
+
+def test_timing_counts_all_gaps_without_decoding_eager_payloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "eager.db"
+    with SqliteStore(path=path) as recording:
+        camera = recording.stream("color_image", Image, eager_blobs=True, codec=LcmCodec(Image))
+        image = Image.from_numpy(np.zeros((8, 8, 3), np.uint8))
+        # Arrivals are reversed, with the largest gap beyond the 64 displayed intervals.
+        for t in reversed([100.0 + 2 * i for i in range(200)] + [510.0]):
+            camera.append(image, ts=t)
+
+        def no_decode(*args: Any) -> Any:
+            pytest.fail("timestamp scan decoded a payload")
+
+        monkeypatch.setattr(LcmCodec, "decode", no_decode)
+        stats = preview._timing(path, {"camera": camera}, 100.0)["streams"]["camera"]
+
+    assert stats == {
+        "first_s": 0.0,
+        "last_s": 410.0,
+        "span_s": 410.0,
+        "max_gap_s": 12.0,
+        "gaps": [[2.0 * i, 2.0 * (i + 1)] for i in range(64)],
+        "gap_count": 200,
+        "truncated": True,
+    }

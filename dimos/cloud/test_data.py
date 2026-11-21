@@ -21,14 +21,19 @@ import sqlite3
 import time
 from typing import Any
 
+import numpy as np
 import pytest
 import typer
 
 from dimos.cloud import cli, data as cd
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class FakeTransport:
@@ -151,6 +156,137 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
+
+
+@pytest.fixture
+def timing_recording(tmp_path: Path) -> Path:
+    path = tmp_path / "sensors.db"
+    with SqliteStore(path=path) as store:
+        lidar = store.stream("lidar", PointCloud2)
+        lidar.append(
+            PointCloud2.from_numpy(np.zeros((1, 3), np.float32), frame_id="world"), ts=101.0
+        )
+        camera = store.stream("color_image", Image)
+        image = Image.from_numpy(np.zeros((8, 8, 3), np.uint8))
+        for t in (102.0, 105.0, 103.0, 103.0, 106.0):
+            camera.append(image, ts=t)
+        odom = store.stream("odom", Pose)
+        for i in range(8):
+            odom.append(Pose(i, 0, 0.3), ts=100.0 + i)
+        store.stream("joystick", Joy).append(Joy(axes=[], buttons=[]), ts=99.0)
+    return path
+
+
+def test_sqlite_upload_sends_stored_timestamp_gaps(
+    env: tuple[CloudData, FakeTransport, Path], timing_recording: Path
+) -> None:
+    cloud, transport, _ = env
+    result = cloud.upload(timing_recording)
+    doc = transport.previews[result["upload_id"]]
+    assert doc["duration_s"] == 7.0
+    assert doc["streams"]["odom"] == {"name": "odom", "count": 8}
+    assert doc["streams"]["camera"] == {"name": "color_image", "count": 5}
+    report = doc["timing"]
+    assert (report["version"], report["gap_threshold_s"]) == (1, 1.0)
+    assert set(report["streams"]) == {"camera", "lidar", "odom"}
+    assert report["streams"]["camera"] == {
+        "first_s": 2.0,
+        "last_s": 6.0,
+        "span_s": 4.0,
+        "max_gap_s": 2.0,
+        "gaps": [[3.0, 5.0]],
+        "gap_count": 1,
+        "truncated": False,
+    }
+    assert report["streams"]["lidar"] == {
+        "first_s": 1.0,
+        "last_s": 1.0,
+        "span_s": 0.0,
+        "max_gap_s": 0.0,
+        "gaps": [],
+        "gap_count": 0,
+        "truncated": False,
+    }
+    assert report["streams"]["odom"]["max_gap_s"] == 1.0
+    assert report["streams"]["odom"]["gaps"] == []
+
+
+def test_preview_timing_budget_includes_video(
+    env: tuple[CloudData, FakeTransport, Path],
+    timing_recording: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cloud, transport, _ = env
+    original = timing_recording.read_bytes()
+    uid = cloud.upload(timing_recording)["upload_id"]
+    full = transport.previews[uid]
+    assert "video" in full and "timing" in full
+    size = len(json.dumps(full).encode())
+    monkeypatch.setattr(cd, "PREVIEW_MAX_BYTES", size)
+    assert cloud.upload(timing_recording)["skipped"]
+    assert transport.previews[uid] == full
+    monkeypatch.setattr(cd, "PREVIEW_MAX_BYTES", size - 1)
+    assert cloud.upload(timing_recording)["skipped"]
+    expected = {k: v for k, v in full.items() if k != "timing"}
+    expected["streams"] = {k: v for k, v in full["streams"].items() if k != "odom"}
+    assert transport.previews[uid] == expected
+    transport.previews.clear()
+    monkeypatch.setattr(cd, "PREVIEW_MAX_BYTES", len(json.dumps(expected)) - 1)
+    result = cloud.upload(timing_recording)
+    assert result["skipped"] and "exceeds" in result["preview"]
+    assert transport.previews == {}
+    assert timing_recording.read_bytes() == original
+
+
+@pytest.mark.parametrize("timestamps", [[float("inf")], [-1e308, 1e308]])
+def test_nonfinite_timing_preserves_valid_lidar_preview(
+    env: tuple[CloudData, FakeTransport, Path], tmp_path: Path, timestamps: list[float]
+) -> None:
+    cloud, transport, _ = env
+    path = tmp_path / "bad-odom.db"
+    with SqliteStore(path=path) as store:
+        lidar = store.stream("lidar", PointCloud2)
+        for t in (100.0, 101.0):
+            scan = PointCloud2.from_numpy(
+                np.zeros((1, 3), np.float32), frame_id="world", timestamp=t
+            )
+            lidar.append(scan, ts=t, pose=Pose())
+        odom = store.stream("odom", Pose)
+        for t in timestamps:
+            odom.append(Pose(), ts=t)
+    result = cloud.upload(path)
+    doc = transport.previews[result["upload_id"]]
+    assert doc["streams"] == {"lidar": {"name": "lidar", "count": 2}}
+    assert doc["duration_s"] == 1.0 and len(doc["scans"]) == 2
+    assert "timing" not in doc
+
+
+def test_nonfinite_spatial_preview_is_not_sent(
+    env: tuple[CloudData, FakeTransport, Path], tmp_path: Path
+) -> None:
+    cloud, transport, _ = env
+    path = tmp_path / "bad-timeline.db"
+    with SqliteStore(path=path) as store:
+        odom = store.stream("odom", Pose)
+        for t in (0.0, float("inf")):
+            odom.append(Pose(), ts=t)
+    result = cloud.upload(path)
+    assert result["state"] == "complete"
+    assert result["preview"].startswith("failed:") and "JSON" in result["preview"]
+    assert transport.previews == {}
+
+
+def test_empty_recording_has_no_preview(
+    env: tuple[CloudData, FakeTransport, Path], tmp_path: Path
+) -> None:
+    cloud, transport, _ = env
+    path = tmp_path / "empty.db"
+    with SqliteStore(path=path) as store:
+        store.stream("odom", Pose)
+    result = cloud.upload(path)
+    assert result["state"] == "complete"
+    assert result["preview"] == "none (no lidar, camera or odometry)"
+    assert transport.previews == {}
 
 
 def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport, Path]) -> None:
@@ -599,14 +735,25 @@ def test_mcap_recording_sends_preview_with_joystick(
     assert [s[1:] for s in doc["joy"]] == [[[0.0, 0.5, -1.0, 0.0], [1, 0, 0]]] * 3
 
 
-def test_mcap_upload_sends_its_preview(env: tuple[CloudData, FakeTransport, Path]) -> None:
+def test_mcap_upload_sends_its_preview(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
 
-    cloud, _t, db = env
+    cloud, transport, db = env
     mcap = db.parent / "run.mcap"
     write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
     before = mcap.read_bytes()
+
+    def no_sqlite_scan(*args: Any) -> Any:
+        pytest.fail("MCAP preview attempted to scan SQLite timestamps")
+
+    monkeypatch.setattr(cd.preview, "_timing", no_sqlite_scan, raising=False)
     assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    transport.previews.clear()
+    monkeypatch.setattr(cd, "PREVIEW_MAX_BYTES", 1)
+    assert "exceeds" in cloud.upload(mcap)["preview"]
+    assert transport.previews == {}
     assert mcap.read_bytes() == before
 
 

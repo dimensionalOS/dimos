@@ -15,13 +15,16 @@
 """Console preview of a recording, built by `dimos data upload` while the recording is at hand:
 LiDAR map and timed scans with the robot's path (from the poses the store keeps with every
 LiDAR observation, else the recording's tf), timed camera thumbnails, joystick input, and an
-H.264 timelapse."""
+H.264 timelapse. SQLite recordings also report stored timestamp gaps."""
 
 from __future__ import annotations
 
 import base64
+from contextlib import closing
 import itertools
+import math
 from pathlib import Path
+import sqlite3
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -37,6 +40,7 @@ from dimos.cloud.constants import (
     PREVIEW_BAND,
     PREVIEW_FORMAT,
     PREVIEW_FRAMES,
+    PREVIEW_GAP_THRESHOLD_S,
     PREVIEW_JOY_SAMPLES,
     PREVIEW_MAP_POINTS,
     PREVIEW_MAP_SCANS,
@@ -44,12 +48,14 @@ from dimos.cloud.constants import (
     PREVIEW_SCALE,
     PREVIEW_SCAN_POINTS,
     PREVIEW_THUMB_PX,
+    PREVIEW_TIMING_GAPS,
     TIMELAPSE_CRF,
     TIMELAPSE_FPS,
     TIMELAPSE_HEIGHT,
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.foxglove_msgs.CompressedVideo import VIDEO_DECODERS, CompressedVideo
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -59,12 +65,16 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo as Go2CompressedVideo
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory.store.base import Store
     from dimos.memory.type.observation import Observation
+
+
+logger = setup_logger()
 
 
 def _stream(store: Store, payload: type | tuple[type, ...], prefer: str) -> Any:
@@ -183,6 +193,54 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
     return base64.b64encode(q.tobytes()).decode()
 
 
+def _timing(path: Path, streams: dict[str, Any], t0: float) -> dict[str, Any]:
+    """Stored SQLite timestamp intervals, not acquisition timing or dropped frames.
+
+    SELECT only ts: stream iteration may decode even without .data access when
+    eager_blobs is configured. Use a read-only connection to the staged recording,
+    explicit timestamp ordering, and the existing preview origin. Names/counts
+    live in doc.streams.
+    """
+    report = {}
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as db:
+        for kind, stream in streams.items():
+            if stream is None or kind == "joystick":
+                continue
+            name = stream.name.replace('"', '""')
+            rows = db.execute(f'SELECT ts FROM "{name}" ORDER BY ts')
+            offsets = (ts - t0 for (ts,) in rows)
+            first = next(offsets, None)
+            if first is None:
+                continue
+
+            last = first
+            max_gap = 0.0
+            gaps: list[list[float]] = []
+            gap_count = 0
+            for t in offsets:
+                gap = t - last
+                max_gap = max(max_gap, gap)
+                if gap > PREVIEW_GAP_THRESHOLD_S:
+                    gap_count += 1
+                    if len(gaps) < PREVIEW_TIMING_GAPS:
+                        gaps.append([last, t])
+                last = t
+            # Non-finite endpoints or an overflowing interval make this sorted span non-finite.
+            span = last - first
+            if not math.isfinite(span):
+                raise ValueError("Timing timestamps and span must be finite")
+            report[kind] = {
+                "first_s": first,
+                "last_s": last,
+                "span_s": span,
+                "max_gap_s": max_gap,
+                "gaps": gaps,
+                "gap_count": gap_count,
+                "truncated": gap_count > len(gaps),
+            }
+    return {"version": 1, "gap_threshold_s": PREVIEW_GAP_THRESHOLD_S, "streams": report}
+
+
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
     lidar = _stream(store, PointCloud2, "lidar")
@@ -245,10 +303,18 @@ def build(store: Store) -> dict[str, Any] | None:
     streams = {
         "lidar": lidar,
         "camera": camera,
-        "odom": odom if lidar is None else None,
+        "odom": odom,
         "joystick": joy,
     }
-    return {
+    timing = None
+    if isinstance(store, SqliteStore):
+        try:
+            timing = _timing(Path(store.config.path), streams, t0)
+        except (sqlite3.Error, OSError, TypeError, ValueError) as exc:
+            logger.warning("Preview timing unavailable", error=str(exc))
+    if timing is None and lidar is not None:
+        streams.pop("odom")  # the spatial preview already reports the LiDAR's path
+    doc = {
         "format": PREVIEW_FORMAT,
         "duration_s": round(t1 - t0, 3),
         "origin": origin.tolist(),
@@ -275,6 +341,10 @@ def build(store: Store) -> dict[str, Any] | None:
             for o in sticks
         ],
     }
+
+    if timing is not None:
+        doc["timing"] = timing
+    return doc
 
 
 def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
