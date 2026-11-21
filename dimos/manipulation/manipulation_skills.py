@@ -166,6 +166,10 @@ class ManipulationSkills(Module):
             pitch: Pitch in radians. Omit to preserve the current value.
             yaw: Yaw in radians. Omit to preserve the current value.
             planning_group: Opaque planning-group ID. Omit when only one arm exists.
+
+        With roll, pitch and yaw all omitted the gripper keeps the angle it has, so
+        a grasp needs its angle given: a grasp from propose_grasps_for has it as
+        ``rpy`` ([roll, pitch, yaw]).
         """
 
         group_id = self._select_group(planning_group, pose_capable=True)

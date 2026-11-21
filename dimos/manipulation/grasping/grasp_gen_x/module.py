@@ -116,8 +116,10 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
 
         Grasps come from many directions, so this suits mugs, tools and objects
         held from the side. Needs a GPU and takes about a second for 500
-        candidates. The grasps are not checked for reach or collisions. Pass one
-        entry of ``grasps`` to pick_object as ``grasp``.
+        candidates. The grasps are not checked for reach or collisions. Each
+        grasp is a pose for the arm's tool tip, in the cloud's frame: pass one
+        entry of ``grasps`` to pick_object as ``grasp``, or move an arm to its
+        position and orientation.
 
         Args:
             cloud: The object's points, as localize's get_pointcloud gives them.
@@ -127,7 +129,13 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
             max_angle_deg: Half-angle of the cone around approach, degrees.
             limit: How many grasps to return, best first.
 
-        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        Each grasp's ``position`` and orientation (``orientation`` or ``rpy``) are
+        where the closed fingertips' centre goes, not a point above it. Move to
+        ``pre_grasp`` with that orientation, then straight in along ``approach`` to
+        ``position``, close, and back out the same way.
+
+        Returns ``grasps`` (each with position, orientation, rpy, approach, pre_grasp,
+        score and angle_deg),
         ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
         made, which says how far off approach is when ``grasps`` is empty.
         """
