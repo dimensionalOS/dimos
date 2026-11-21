@@ -37,7 +37,8 @@ def load_project_dotenv() -> dict[str, str]:
     inherited = os.environ.copy()
     dotenv: dict[str, str] = {}
     for path in paths:
-        load_dotenv(path)
+        if not load_dotenv(path):
+            continue
         # A re-exec inherits file values. Expand them with the same environment
         # precedence as load_dotenv so the agent still filters interpolated keys.
         for name, value in DotEnv(path, override=False, encoding="utf-8").dict().items():

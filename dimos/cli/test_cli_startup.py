@@ -149,6 +149,9 @@ def test_agent_environment_uses_the_same_dotenv_as_the_cli(tmp_path: Path) -> No
         "from dimos.cli.commands.agent import _node_environment\n"
         "from dimos.hosted.config import HostConfig\n"
         "child = _node_environment()\n"
+        "if sys.argv[1:] == ['disabled']:\n"
+        "    assert child.get('PROJECT_LABEL') == 'working directory'\n"
+        "    sys.exit(0)\n"
         "assert os.environ.get('PROJECT_LABEL') == 'working directory'\n"
         "assert 'PROJECT_LABEL' not in child\n"
         "assert child.get('N_WORKERS') == '5'\n"
@@ -160,6 +163,8 @@ def test_agent_environment_uses_the_same_dotenv_as_the_cli(tmp_path: Path) -> No
         "assert host.tags == 'shell'\n"
         "if len(sys.argv) == 1:\n"
         "    subprocess.run([sys.executable, __file__, 'reexec'], check=True)\n"
+        "    shell = dict(os.environ, PYTHON_DOTENV_DISABLED='1', PROJECT_LABEL='working directory')\n"
+        "    subprocess.run([sys.executable, __file__, 'disabled'], env=shell, check=True)\n"
     )
     env = os.environ.copy()
     for name in (
