@@ -56,7 +56,7 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, ensure_menagerie
+from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, menagerie_path
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.executable import find_executable
@@ -95,7 +95,7 @@ class MujocoConnection:
 
         # Clone the mujoco_menagerie here rather than in the mujoco process,
         # where the download can time out.
-        ensure_menagerie()
+        menagerie_path()
 
         self.config = config
         self.robot_model = robot_model
