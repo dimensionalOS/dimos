@@ -211,11 +211,16 @@ class FakeOperator(Operator):
         self.pick = pick or (lambda prompt, answers: answers[0])
         self.shown: list[str] = []
         self.asked: list[str] = []
+        self.progressed: list[str] = []
         self.done: tuple[bool, str, bool] | None = None
 
     def show(self, text: str) -> None:
         super().show(text)
         self.shown.append(text)
+
+    def progress(self, text: str) -> None:
+        super().progress(text)
+        self.progressed.append(text)
 
     def ask(self, prompt: str, answers: list[str]) -> threading.Event:
         answered = super().ask(prompt, answers)

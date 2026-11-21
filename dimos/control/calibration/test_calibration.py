@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import replace
 import math
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any
@@ -182,7 +183,7 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     assert (waiting.state, waiting.step, waiting.answers) == ("waiting", "check", ["go"])
     assert waiting.message == f"Calibrating {arm.arm_id}: check, summary"
     view = str(waiting).splitlines()
-    assert view[0] == f"{arm.arm_id}: waiting at check"
+    assert re.fullmatch(rf"{arm.arm_id}: waiting at check · step 1/2 · 00:0\d", view[0]), view[0]
     assert view[1].startswith(f"  {'check':<17} {'running':<8} measure the noise")
     assert view[2] == f"  {'gravity_poses':<17} {'skipped':<8} not selected"
     assert view[-2].startswith("? The arm moves home") and view[-1] == "  answer: go"
@@ -200,6 +201,53 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     assert done.summary.endswith("  summary: fake/calibration.json")
     assert done.message == f"Calibration done:\n{done.summary}"
     assert done.log[1].startswith("? The arm moves home") and done.log[2] == "> go"
+
+
+def test_the_status_says_which_step_pose_dither_and_joint_the_run_is_at(arm: ArmModel) -> None:
+    operator = FakeOperator()
+    views: list[str] = []
+
+    def pick(prompt: str, answers: list[str]) -> str:
+        views.append(str(operator.status()))
+        return answers[0]
+
+    operator.pick = pick
+    run = calibration(arm, operator, FakeArm(arm), steps=["gravity_poses", "float_check"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    poses, dithered = len(run.poses or []), len(run.dithered)
+    for k in range(1, poses + 1):
+        assert f"pose {k}/{poses}" in operator.progressed
+        for j, joint in enumerate(run.dithered, 1):
+            assert f"pose {k}/{poses} · dither {j}/{dithered} {joint}" in operator.progressed
+    assert operator.progressed[-2:] == ["joint 1/2 shoulder", "joint 2/2 elbow"]
+    headers = [view.splitlines()[0] for view in views]
+    moving = next(h for h, v in zip(headers, views, strict=True) if "? Move to pose_02" in v)
+    assert re.fullmatch(
+        rf"fake: waiting at gravity_poses · step 2/3 · pose 2/{poses} · \d\d:\d\d", moving
+    )
+    floating = next(h for h, v in zip(headers, views, strict=True) if "? Float elbow" in v)
+    assert re.fullmatch(
+        r"fake: waiting at float_check · step 3/3 · joint 2/2 elbow · \d\d:\d\d", floating
+    )
+    done = operator.status()
+    assert re.fullmatch(r"\d\d:\d\d", done.progress), done.progress
+    assert done.logged == len(operator.shown) + 2 * len(operator.asked) + 1
+    assert str(done).splitlines()[0] == f"fake: done at summary · {done.progress}"
+
+
+def test_the_status_header_says_where_the_run_is() -> None:
+    status = CalibrationStatus(
+        state="waiting",
+        arm="dual_openyam/left",
+        step="gravity_poses",
+        steps=[],
+        progress="step 2/8 · pose 4/15 · 03:12",
+    )
+    assert (
+        str(status) == "dual_openyam/left: waiting at gravity_poses · step 2/8 · pose 4/15 · 03:12"
+    )
 
 
 def test_an_abort_while_the_run_waits_holds_the_arm_and_offers_home(arm: ArmModel) -> None:
