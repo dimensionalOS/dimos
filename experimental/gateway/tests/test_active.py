@@ -28,9 +28,10 @@ import psutil
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches, shared_config
-from experimental.gateway.introspect import IntrospectError
+from experimental.gateway.introspect import IntrospectError, run_child
 from experimental.gateway.routes import active as active_routes
 from experimental.gateway.state import State
 
@@ -306,7 +307,7 @@ def test_nested_launch_and_relaunch_keep_secrets_out_of_args_and_metadata(
     relaunched = client.post("/active/relaunch")
     assert relaunched.status_code == 200, relaunched.text
     assert assert_private_launch() != first_pid
-    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
+    launch_targets.assert_any_await(checkout, ["targets", "demo"], stdin={})
 
 
 def test_launch_introspection_receives_global_mode_settings(
@@ -510,6 +511,155 @@ def test_relaunch_refuses_bad_saved_names_before_stopping(
     start.assert_not_called()
     assert launch_of(client)["pid"] == first.json()["pid"]
     assert launches.alive(first.json()["pid"])
+
+
+@pytest.mark.parametrize(
+    ("values", "error"),
+    [
+        ([], "global"),
+        ({"n_workers": "invalid"}, "n_workers"),
+        ({"record": "sqlite"}, "record-topics"),
+    ],
+)
+def test_replace_checks_the_new_settings_before_stopping_the_current_run(
+    client: TestClient, launch_targets: AsyncMock, values: Any, error: str
+) -> None:
+    launch_targets.side_effect = run_child
+    module = {"module": "demo-calculator-skill"}
+    first = client.post("/active/launch", json=module).json()
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+
+    refused = client.post("/active/replace", json={**module, "config": {"global": values}})
+
+    assert refused.status_code == 400 and error in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == first["pid"]
+    assert launches.request_file().read_bytes() == saved
+
+    replaced = client.post(
+        "/active/replace", json={**module, "config": {"global": {"n_workers": 2}}}
+    )
+    assert replaced.status_code == 200 and replaced.json()["pid"] != first["pid"]
+    until(running(client))
+    repeated = client.post("/active/relaunch")
+    assert repeated.status_code == 200 and repeated.json()["config"]["global"] == {"n_workers": 2}
+
+
+def test_relaunch_accepts_a_saved_null_global_option(
+    client: TestClient, launch_targets: AsyncMock
+) -> None:
+    launch_targets.side_effect = run_child
+    request = {"module": "demo-calculator-skill", "config": {"global": {"n_workers": None}}}
+    started = client.post("/active/launch", json=request)
+    assert started.status_code == 200
+    until(running(client))
+
+    repeated = client.post("/active/relaunch")
+
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["pid"] != started.json()["pid"]
+    until(running(client))
+
+
+def test_replace_validates_checkout_dotenv_and_honors_launch_environment(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (checkout / "dimos").symlink_to(DIMOS_PROJECT_ROOT / "dimos")
+    monkeypatch.delenv("PYTEST_VERSION", raising=False)
+    monkeypatch.delenv("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT", raising=False)
+    launch_targets.side_effect = run_child
+    module = {"module": "demo-calculator-skill"}
+    started = client.post("/active/launch", json=module)
+    assert started.status_code == 200
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+    (checkout / ".env").write_text("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT=invalid\n")
+
+    refused = client.post("/active/replace", json=module)
+
+    assert refused.status_code == 400 and "default_rpc_timeout" in refused.json()["error"]
+    active = client.get("/active").json()
+    assert active["running"] and active["pid"] == started.json()["pid"]
+    assert launches.request_file().read_bytes() == saved
+    config = {
+        "modules": {"democalculatorskill": {"default_rpc_timeout": 2}},
+        "secrets": ["democalculatorskill.default_rpc_timeout"],
+    }
+    accepted = client.post("/active/replace", json={**module, "config": config})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["pid"] != started.json()["pid"]
+    until(running(client))
+
+
+@pytest.mark.parametrize(
+    ("schema", "error"),
+    [(IntrospectError("schema unavailable"), "schema unavailable"), ({"camera": ["rate"]}, "auth")],
+)
+def test_relaunch_keeps_the_running_blueprint_when_module_config_no_longer_loads(
+    client: TestClient, launch_targets: AsyncMock, schema: Any, error: str
+) -> None:
+    config = {"modules": {"camera": {"auth": {"region": "west"}}}}
+    started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
+    assert started.status_code == 200
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+    launch_targets.side_effect = [schema]
+
+    refused = client.post("/active/relaunch")
+
+    assert refused.status_code == 400
+    assert error in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == started.json()["pid"]
+    assert launches.request_file().read_bytes() == saved
+
+
+@pytest.mark.parametrize("secrets", [[], ["camera.mode"]], ids=["flag", "environment"])
+def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock, secrets: list[str]
+) -> None:
+    robot = checkout / "dimos" / "robot"
+    robot.mkdir(parents=True)
+    for package in (robot, robot.parent):
+        (package / "__init__.py").write_text(
+            "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n"
+        )
+    (robot / "all_blueprints.py").write_text(
+        'all_blueprints = {}\nall_modules = {"demo": "dimos.robot.camera.Camera"}\n'
+    )
+    source = robot / "camera.py"
+    module = (
+        "from typing import Literal\n"
+        "from dimos.core.module import Module, ModuleConfig\n"
+        "class CameraConfig(ModuleConfig):\n    mode: str = 'photo'\n"
+        "class Camera(Module):\n    config: CameraConfig\n"
+    )
+    source.write_text(module)
+    launch_targets.side_effect = run_child
+    start = client.post(
+        "/active/launch",
+        json={
+            "blueprint": "demo",
+            "config": {"modules": {"camera": {"mode": "video"}}, "secrets": secrets},
+        },
+    )
+    assert start.status_code == 200, start.text
+    until(running(client))
+    pid = start.json()["pid"]
+    saved = launches.request_file().read_bytes()
+
+    source.write_text(module.replace("mode: str", "mode: Literal['photo']"))
+    refused = client.post("/active/relaunch")
+    assert refused.status_code == 400, refused.text
+    assert "camera.mode" in refused.json()["error"]
+    assert "video" not in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == pid and launches.alive(pid)
+    assert launches.request_file().read_bytes() == saved
+
+    source.write_text(module)
+    retried = client.post("/active/relaunch")
+    assert retried.status_code == 200, retried.text
+    until(running(client))
+    assert retried.json()["pid"] != pid
 
 
 def test_relaunch_copies_a_run_the_gateway_did_not_launch(

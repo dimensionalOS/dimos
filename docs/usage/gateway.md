@@ -25,6 +25,11 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
    and `config`, and `extras`) is reused for ten minutes, and read again once a scan is asked for or the checkout
    changes (an edit, a commit, an install).
 
+For Relaunch with edited settings, send one launch request to `POST /active/replace`.
+The gateway validates the replacement before stopping the current process. Discover this route in
+the gateway manifest or OpenAPI document. On an older gateway, leave the run active.
+A bodyless `POST /active/relaunch` repeats the previously saved launch.
+
 ## Routes
 
 | | |

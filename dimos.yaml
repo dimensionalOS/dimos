@@ -168,12 +168,19 @@ provides:
         description: >-
           Launch {blueprint} or {module} with all of its config {global, modules, secrets?} (the gateway saves none); 409 if
           something runs
+    /active/replace:
+      post:
+        description: >-
+          Validate the same blueprint or module request as /active/launch before stopping the active run.
+          Invalid settings leave the current process and saved request intact. Starts the replacement if idle.
     /active/exec:
       post:
         summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module)
     /active/relaunch:
       post:
-        summary: Stop the running blueprint and start the same launch again (one started elsewhere as a copy of its command)
+        description: >-
+          Check a saved structured launch with the current checkout's config parser before stopping and restarting the blueprint.
+          A run started elsewhere is relaunched as a copy of its command.
     /active/stop:
       post:
         summary: Exactly `dimos stop`

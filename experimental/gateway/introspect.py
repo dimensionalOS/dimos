@@ -724,6 +724,39 @@ def packages() -> dict[str, Any]:
     }
 
 
+def validate_launch(name: str, request: dict[str, Any]) -> dict[str, Any]:
+    """Validate a structured launch in the served checkout before replacing a process."""
+    # This child serves one request. Let the checkout's CLI load its .env with the
+    # launch environment already in place, before config and state paths are imported.
+    os.environ.update(request["env"])
+    importlib.import_module("dimos.cli.dimos")
+
+    from dimos.cli.commands.lifecycle import DEFAULT_CONFIG_PATH, _with_relay_bridge
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.core.coordination.module_coordinator import stream_name_types
+    from dimos.core.global_config import global_config
+    from dimos.memory.tap import check_topics
+    from dimos.robot.get_all_blueprints import get_by_name
+
+    config_path = DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else None
+    args = request["args"]
+    overrides = {key: value for key, value in request["global"].items() if value is not None}
+    global_config.update(
+        **BlueprintConfigParser.preparse_global_config(
+            args, config_path=config_path, environ=os.environ, global_overrides=overrides
+        )
+    )
+    blueprint = _with_relay_bridge(solid_blueprint(get_by_name(name)))
+    if global_config.record:
+        check_topics(
+            global_config.record_topics, {stream for stream, _ in stream_name_types(blueprint)}
+        )
+    BlueprintConfigParser(blueprint).parse(
+        args, config_path=config_path, environ=os.environ, global_overrides=overrides
+    )
+    return {}
+
+
 def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
     commands: dict[str, Callable[..., dict[str, Any]]] = {
@@ -731,6 +764,7 @@ def main(argv: list[str]) -> None:
         "source": lambda name: {"name": name, **blueprint_source(name)},
         "config": config,
         "targets": targets,
+        "validate_launch": validate_launch,
         "module": module,
         "module_config": module_config,
         "list": blueprint_list,
@@ -740,7 +774,9 @@ def main(argv: list[str]) -> None:
     try:
         command = commands[argv[0]]
         result = (
-            command(*argv[1:], request) if argv[0] in {"scan", "targets"} else command(*argv[1:])
+            command(*argv[1:], request)
+            if argv[0] in {"scan", "targets", "validate_launch"}
+            else command(*argv[1:])
         )
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}
