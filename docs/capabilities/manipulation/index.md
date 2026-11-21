@@ -41,7 +41,7 @@ calibrates the grippers. See [connection testing and CAN selection](/docs/capabi
 for mock checks, explicit selectors, planner/teleop entries, and hardware acceptance.
 
 [Calibrating a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md) measures gravity, gains and
-drift for OpenYAM, Metal, B601-DM and OpenArm arms with `dimos arm calibrate`.
+drift for OpenYAM, Metal, B601-DM and OpenArm arms: `dimos run <robot>-calibrate`, driven from `dimos shell`.
 
 [MakerMods Metal](/docs/capabilities/manipulation/makermods_metal_integration.md) covers the single- and dual-arm
 connections, CAN selectors, and configurable mounting geometry.
