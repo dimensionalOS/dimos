@@ -57,6 +57,10 @@ class ConnectionConfig(ModuleConfig):
             seconds, before it is halted.
     """
 
+    def check_dependencies(self) -> None:
+        if self.model is not None:
+            self.model.check_dependencies()
+
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}

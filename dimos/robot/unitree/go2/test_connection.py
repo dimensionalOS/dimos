@@ -23,6 +23,7 @@ from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import threading
 import time
 from unittest.mock import MagicMock
@@ -37,7 +38,7 @@ from reactivex.testing import TestScheduler
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, check_module_dependencies
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -619,3 +620,11 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     assert (len(received) > 2) is loop
     finished = [call for call in log.info.call_args_list if call.args == ("Replay finished",)]
     assert len(finished) == (0 if loop else 1)
+
+
+def test_replay_address_overrides_mujoco_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "mujoco", None)
+    sim = GlobalConfig(simulation="mujoco", replay=False)
+    check_module_dependencies(GO2Connection.blueprint(ip="replay"), live_config=sim)
+    with pytest.raises(ImportError, match=r"dimos\[sim\]"):
+        check_module_dependencies(GO2Connection.blueprint(ip="mujoco"), live_config=sim)

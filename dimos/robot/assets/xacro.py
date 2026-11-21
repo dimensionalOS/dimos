@@ -32,6 +32,7 @@ from pathlib import Path
 import threading
 
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
+from dimos.utils.optional_dependencies import explain_missing_extra
 
 _lock = threading.Lock()
 
@@ -125,15 +126,8 @@ def expand_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[st
 
     Uses ament_index_python when available, falls back to patching xacro otherwise.
     """
-    try:
+    with explain_missing_extra():
         import xacro
-    except ImportError:
-        msg = (
-            "xacro is required for processing .xacro files. "
-            "Install the manipulation extra: pip install dimos[manipulation]"
-        )
-        raise ImportError(msg)
-    import xacro
 
     if _has_ament:
         ensure_ament_packages(package_paths)

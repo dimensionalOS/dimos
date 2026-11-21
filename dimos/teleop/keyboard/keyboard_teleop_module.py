@@ -107,6 +107,7 @@ class KeyboardTeleopModule(Module):
     """
 
     config: KeyboardTeleopConfig
+    required_imports = ("pygame",)
 
     ee_twist_command: Out[TwistStamped]
     gripper_command: Out[Float32]

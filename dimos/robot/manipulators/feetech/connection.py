@@ -49,6 +49,7 @@ from dimos.robot.manipulators.feetech.calibration import (
 )
 from dimos.robot.manipulators.feetech.robot import FeetechRobot
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 logger = setup_logger()
 # The trajectory task treats a JointState in this frame as a streamed jog that
@@ -84,6 +85,19 @@ class FeetechConnectionConfig(ConnectionConfig):
         if self.joint_commands:
             raise ValueError("Feetech connections only read; they take no commands")
         return self
+
+
+class DualFeetechConnectionConfig(FeetechConnectionConfig):
+    def check_dependencies(self) -> None:
+        super().check_dependencies()
+        if any(port.strip() for port in self.serial_ports().values()):
+            check_imports("scservo_sdk")
+
+    left_serial_port: str = ""
+    right_serial_port: str = ""
+
+    def serial_ports(self) -> dict[str, str]:
+        return {"left": self.left_serial_port, "right": self.right_serial_port}
 
 
 class FeetechConnection(ConnectionModule):

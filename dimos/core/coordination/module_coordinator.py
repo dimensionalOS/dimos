@@ -39,7 +39,7 @@ from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor
-from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
+from dimos.core.module import ModuleBase, ModuleConfig, ModuleSpec, is_module_type
 from dimos.core.resource import Resource
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import (
@@ -58,6 +58,7 @@ from dimos.spec.utils import (
 )
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
@@ -570,7 +571,7 @@ class ModuleCoordinator(Resource):
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
-        check_module_dependencies(blueprint, parsed_config)
+        check_module_dependencies(blueprint, parsed_config, live_config=self._global_config)
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
@@ -1046,14 +1047,38 @@ def _run_configurators(blueprint: Blueprint) -> None:
 
 
 def check_module_dependencies(
-    blueprint: Blueprint, parsed_config: ParsedBlueprintConfig | None = None
+    blueprint: Blueprint,
+    parsed_config: ParsedBlueprintConfig | None = None,
+    *,
+    live_config: GlobalConfig | None = None,
 ) -> None:
-    """Check active modules' dependencies before allocating runtime resources."""
-    _, module_kwargs, _ = _resolve_blueprint_config(blueprint, parsed_config)
+    """Check active modules using the global settings they will receive in their workers."""
+    global_values, module_kwargs, _ = _resolve_blueprint_config(
+        blueprint, parsed_config, sparse_globals=live_config is not None
+    )
+    g = (global_config if live_config is None else live_config).model_copy(update=global_values)
     for atom in blueprint.active_blueprints:
         kwargs = dict(atom.kwargs)
         kwargs.update(module_kwargs.get(atom.name, {}))
+        kwargs["g"] = g
         atom.module.check_dependencies(**kwargs)
+        config_cls = module_config_cls(atom)
+        if (
+            issubclass(config_cls, ModuleConfig)
+            and config_cls.check_dependencies is not ModuleConfig.check_dependencies
+        ):
+            module_config = validate_module_config(
+                atom, {k: v for k, v in kwargs.items() if k in config_cls.model_fields}, g
+            )
+            cast("ModuleConfig", module_config).check_dependencies()
+    active_streams = stream_name_types(blueprint)
+    for key, transport in blueprint.transport_map.items():
+        if key in active_streams:
+            if isinstance(transport, TransportSpec):
+                config = transport.kwargs.get("config") or transport.config_cls
+            else:
+                config = getattr(transport, "_config", None)
+            check_imports(*getattr(config, "required_imports", ()))
 
 
 def _check_requirements(blueprint: Blueprint) -> None:

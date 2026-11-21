@@ -38,7 +38,7 @@ from collections.abc import Callable
 import contextlib
 import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
@@ -66,6 +66,8 @@ if TYPE_CHECKING:
 
 class BrokerConfig(ProviderConfig):
     """Hosted teleop broker access. ``api_key`` is required; the rest defaults."""
+
+    required_imports: ClassVar[tuple[str, ...]] = ("aiortc",)
 
     broker_url: str = DEFAULT_BROKER_URL
     api_key: str | None = None

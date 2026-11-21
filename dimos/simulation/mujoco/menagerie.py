@@ -20,7 +20,16 @@ import shutil
 
 from filelock import FileLock
 
+from dimos.utils.optional_dependencies import check_imports, explain_missing_extra
+
 SIM_INSTALL_HINT = "Simulation dependencies are not installed. Run `uv sync --extra sim --inexact` to install them."
+
+
+def check_mujoco_dependencies() -> None:
+    check_imports("mujoco")
+    # Locating the playground also works on a warm checkout without importing JAX.
+    with explain_missing_extra():
+        menagerie_path()
 
 
 def menagerie_path() -> Path:
@@ -28,7 +37,7 @@ def menagerie_path() -> Path:
     # importing mujoco_playground (a 4 s import: torch, jax, mjx).
     spec = importlib.util.find_spec("mujoco_playground")
     if spec is None or not spec.submodule_search_locations:
-        raise ImportError(SIM_INSTALL_HINT)
+        raise ModuleNotFoundError(SIM_INSTALL_HINT, name="mujoco_playground")
     package_dir = Path(next(iter(spec.submodule_search_locations)))
     return package_dir / "external_deps" / "mujoco_menagerie"
 

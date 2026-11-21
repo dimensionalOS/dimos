@@ -48,9 +48,11 @@ from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.simulation.mujoco.menagerie import check_mujoco_dependencies
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.optional_dependencies import check_imports
 
 if sys.version_info < (3, 13):
     from typing_extensions import Self, TypeVar
@@ -71,6 +73,13 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(ModuleConfig):
+    def check_dependencies(self) -> None:
+        mode = self.backend(self.ip)
+        if mode == "mujoco":
+            check_mujoco_dependencies()
+        elif mode == "webrtc" and self.camera:
+            check_imports("aiortc")
+
     ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -92,16 +101,18 @@ class ConnectionConfig(ModuleConfig):
     # keeps publishing either way.
     publish_tf: bool = True
 
+    def backend(self, ip: str | None) -> str:
+        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
+        if ip in ("fake", "mock", "replay") or mode == "replay":
+            return "replay"
+        if ip == "mujoco" or mode in ("mujoco", "true"):
+            return "mujoco"
+        return mode
+
     @model_validator(mode="after")
     def validate_connection(self) -> Self:
         self.validate_ip()
-        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
-        # make_connection gives these offline IP aliases precedence over simulation.
-        if (
-            mode == "dimsim"
-            and self.ip not in ("fake", "mock", "replay", "mujoco")
-            and self.g.transport != "lcm"
-        ):
+        if self.backend(self.ip) == "dimsim" and self.g.transport != "lcm":
             raise ValueError(
                 "DimSim publishes over LCM only; the transport is "
                 f"{self.g.transport!r}. Use --transport lcm with --simulation dimsim."
@@ -174,16 +185,15 @@ def make_connection(
     aes_128_key: str | None = None,
     velocity_api: bool = False,
 ) -> Go2ConnectionProtocol:
-    mode = connection_type(replay=cfg.g.replay, simulation=cfg.g.simulation).lower()
-
-    if ip in ("fake", "mock", "replay") or mode == "replay":
+    mode = cfg.backend(ip)
+    if mode == "replay":
         return ReplayConnection(
             dataset=cfg.g.replay_db,
             loop=cfg.replay_loop,
             exit_on_complete=cfg.replay_exit,
             module_rpc_name=cfg.rpc_name,
         )
-    elif ip == "mujoco" or mode in ("mujoco", "true"):
+    elif mode == "mujoco":
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
         return MujocoConnection(cfg.mujoco, robot_model=cfg.g.robot_model)
