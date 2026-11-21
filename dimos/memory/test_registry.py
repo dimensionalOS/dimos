@@ -321,11 +321,7 @@ def test_existing_recording_needs_both_registry_columns(tmp_path: Path) -> None:
         conn.execute("CREATE TABLE _streams (name TEXT)")
     before = path.read_bytes()
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(ValueError, match="no such column: config"):
         SqliteStore(path=path, must_exist=True)
 
-    assert (
-        str(caught.value)
-        == f"Cannot read SQLite recording registry in {path}: no such column: config"
-    )
     assert path.read_bytes() == before

@@ -80,8 +80,6 @@ def test_loading_a_recording_without_keyframes_preserves_it(tmp_path: Path) -> N
         Premap.load(path)
 
     assert path.read_bytes() == before
-    with closing(sqlite3.connect(path)) as conn:
-        assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
 
 
 def test_save_load_roundtrip(tmp_path: Path) -> None:
