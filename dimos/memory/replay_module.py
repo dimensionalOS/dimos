@@ -37,13 +37,15 @@ from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, 
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex import Observable
-
     from dimos.memory.replay import Replay, ReplayStream
+    from dimos.memory.stream import Stream
+    from dimos.memory.type.observation import Observation
+    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
@@ -135,37 +137,76 @@ class ReplayModule(Module):
         replay: Replay = store.replay(
             speed=self.config.speed,
             loop=self.config.loop,
-            seek=self.config.seek,
-            duration=self.config.duration,
         )
-        # Open every stream before pinning the anchor, so setup time does not
-        # put the playback behind the wall clock from the start.
-        streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs
-        }
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
         # would spend that lead time emitting nothing.
-        static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
-        timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
+        static: dict[str, DimosMsg] = {}
+        timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
+        timed_starts = []
+        outputs = self.outputs
+        has_window = self.config.seek is not None or self.config.duration is not None
+        # Relative offsets use the whole recording, even when only one topic is published.
+        types = (
+            stream_payload_types(store) if has_window else {n: p.type for n, p in outputs.items()}
+        )
+        for name, payload_type in types.items():
+            stream: ReplayStream[DimosMsg] = replay.stream(name)
+            if issubclass(payload_type, TFMessage):
+                # Frozen frames describe the coordinate system even when their
+                # original source stamp is outside the selected time window.
+                rows = store.stream(name, TFMessage)
+                frozen, edges = _frozen_tf(rows)
+                if frozen.transforms:
+                    if name in outputs:
+                        static[name] = frozen
+                    dynamic = rows.filter(partial(_has_dynamic_tf, edges))
+                    try:
+                        start = dynamic.order_by("ts").first().ts
+                    except LookupError:
+                        continue
+                    stream = replay.stream(
+                        name,
+                        autocast=partial(_dynamic_tf, edges),
+                        source=dynamic.time_range(start, float("inf")),
+                    )
+            elif stream.count() > 1 and stream.first_ts() == stream.last_ts():
+                if name in outputs and (message := stream.first()) is not None:
+                    static[name] = message
+                continue
+            first_ts = stream.first_ts()
+            if first_ts is not None:
+                timed_starts.append(first_ts)
+                if name in outputs:
+                    timed_streams[name] = stream
+
+        if timed_starts and has_window:
+            replay.set_relative_window(
+                min(timed_starts), seek=self.config.seek, duration=self.config.duration
+            )
+            # Pin the wall clock to the first frame inside the requested window.
+            timed_starts = [
+                ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
+            ]
+        for name, message in static.items():
+            if isinstance(message, TFMessage):
+                outputs[name].publish(message)
         progress = ReplayProgress(str(path))
-        progress.start(replay, (s for n, s in streams.items() if n not in static))
+        progress.start(replay, timed_streams.values())
         replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
-        for name, port in self.outputs.items():
-            stream = streams[name]
+        for name, port in outputs.items():
             logger.info("Replaying %s -> %s", name, port)
             if name in static:
                 self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, stream.first()))
+                    interval(1.0).subscribe(partial(_republish, port, static[name]))
                 )
-                continue
-            # Not a late subscriber, just behind by the setup of the streams
-            # subscribed before it, which on a loaded machine exceeds the
-            # late tolerance and would drop its first frames.
-            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
-            self.register_disposable(progress.track(timed).subscribe(port.publish))
+            if name in timed_streams:
+                self.register_disposable(
+                    progress.track(timed_streams[name].observable(skip_late=False)).subscribe(
+                        port.publish
+                    )
+                )
         progress.seal()
 
     @rpc
@@ -174,6 +215,45 @@ class ReplayModule(Module):
         if self._store is not None:
             self._store.stop()
             self._store = None
+
+
+def _has_dynamic_tf(edges: set[tuple[str, str]], row: Observation[TFMessage]) -> bool:
+    return not row.data.transforms or any(
+        (t.frame_id, t.child_frame_id) not in edges for t in row.data.transforms
+    )
+
+
+def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
+    # Older recordings can carry both fixed and changing edges in one row.
+    return TFMessage(
+        *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
+    )
+
+
+def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
+    """Find fixed edges in a finite recording, independent of playback bounds."""
+    all_static = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
+    # A changing stamp disqualifies the edge. Only the last stamp and count
+    # are kept for each edge, irrespective of the length of the recording.
+    stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
+    for row in rows:
+        for transform in row.data.transforms:
+            edge = (transform.frame_id, transform.child_frame_id)
+            previous = stamps.get(edge, (transform.ts, 0))
+            if previous is not None:
+                stamps[edge] = (
+                    (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
+                )
+    edges = {
+        edge for edge, stamp in stamps.items() if stamp is not None and (all_static or stamp[1] > 1)
+    }
+    transforms: dict[bytes, Transform] = {}
+    if edges:
+        for row in rows:
+            for transform in row.data.transforms:
+                if (transform.frame_id, transform.child_frame_id) in edges:
+                    transforms[transform.lcm_encode()] = transform
+    return TFMessage(*transforms.values()), edges
 
 
 def _republish(port: Out[Any], msg: Any, _tick: int) -> None:

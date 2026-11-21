@@ -320,7 +320,7 @@ def test_build_saves_portable_schema_before_native_capture(
     recorder.start()
     start.assert_called_once_with()
     native_config = recorder.config.to_config_dict()
-    assert set(native_config) == {"store", "encoding_threads", "streams"}
+    assert set(native_config) == {"store", "encoding_threads", "streams", "preserve_zero_stamps"}
     store: dict[str, object] = {"kind": format, "path": str(directory / payload)}
     if format == "mcap":
         store["attachments"] = [

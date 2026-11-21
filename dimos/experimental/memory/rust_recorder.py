@@ -117,12 +117,7 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Configuration for :class:`RustRecorder`.
-
-    Python owns artifact lifecycle and stream registration. The native process
-    receives only ``store``, ``encoding_threads``, and the internally resolved
-    ``streams`` list over stdin.
-    """
+    """Configuration for the native memory recorder and its input streams."""
 
     executable: str = "result/bin/dimos-memory-recorder"
     build_command: str | None = "nix build -L path:."
@@ -181,6 +176,7 @@ class RustRecorderConfig(NativeModuleConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
+        config["preserve_zero_stamps"] = self.g.preserve_zero_stamps
         # Older recorder binaries reject unknown stream fields, even null ones.
         config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
         return config

@@ -37,6 +37,7 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.recording import message_timestamp, recording_rows
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -79,12 +80,17 @@ class TransportRecorder:
 
     A stream is opened on its first message, so its codec can depend on what the
     stream carries: depth images are stored losslessly, colour images as JPEG.
+    Nonempty TF batches are stored as one TFMessage per transform at its source
+    timestamp, matching the native recorder. Queue limits still count batches.
     """
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
         self._topics = topics
-        self._queue: queue.Queue[tuple[str, type, Any, float] | None] = queue.Queue(queue_size)
+        self._preserve_zero_stamps = global_config.preserve_zero_stamps
+        self._queue: queue.Queue[tuple[str, type, Any, float, float] | None] = queue.Queue(
+            queue_size
+        )
         self._streams: dict[str, Stream[Any]] = {}
         self.dropped = 0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
@@ -92,14 +98,20 @@ class TransportRecorder:
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
-            name, stream_type, msg, ts = item
+            name, stream_type, msg, ts, received = item
             try:
                 stream = self._streams.get(name)
                 if stream is None:
                     codec = codec_for(stream_type, sample=msg)
                     stream = self.store.stream(name, stream_type, codec=codec)
                     self._streams[name] = stream
-                stream.append(msg, ts=ts)
+                for payload, source_ts in recording_rows(
+                    msg,
+                    ts,
+                    reception_ts=received,
+                    preserve_zero_stamps=self._preserve_zero_stamps,
+                ):
+                    stream.append(payload, ts=source_ts)
             except Exception:
                 logger.exception("--record: failed to append to %s", name)
 
@@ -122,8 +134,10 @@ class TransportRecorder:
 
         def on_msg(msg: Any) -> None:
             try:
-                ts = getattr(msg, "ts", None) or time.time()
-                self._queue.put_nowait((name, stream_type, msg, ts))
+                received = time.time()
+                self._queue.put_nowait(
+                    (name, stream_type, msg, message_timestamp(msg, received), received)
+                )
             except queue.Full:
                 self.dropped += 1
                 if self.dropped % 1000 == 1:

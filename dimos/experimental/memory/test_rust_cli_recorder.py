@@ -225,6 +225,18 @@ def test_launch_config_uses_default_or_configured_threads(
     assert process.signals == [signal.SIGTERM]
 
 
+def test_cli_passes_simulation_clock_to_native_recorder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+    process = _FakeProcess()
+    session = _start_fake_session(tmp_path, monkeypatch, process)
+    try:
+        assert json.loads(process.stdin.data)["config"]["preserve_zero_stamps"] is True
+    finally:
+        session.stop()
+
+
 def test_process_exit_before_ready_fails_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
