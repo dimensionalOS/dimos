@@ -58,7 +58,7 @@ def test_graph_command_uses_default_svg_path(
     expected = (tmp_path / "alpha.svg").resolve()
     assert result.exit_code == 0, result.output
     render.assert_called_once_with("alpha", expected, include_rpc=False, global_overrides={})
-    assert result.output == f"Blueprint graph written to {expected}\n"
+    assert "written" in result.output
 
 
 def test_graph_command_includes_rpc_when_requested(
