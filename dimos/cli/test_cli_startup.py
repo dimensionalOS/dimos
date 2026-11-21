@@ -36,6 +36,9 @@ HELP_TIMEOUT_SECONDS = 8
         (["run", "coordinator-basic", "--simulation", "status", "--help"], {}, 2, "status"),
         (["show-config"], {"SIMULATION": "mujco"}, 2, "mujco"),
         (["--simulation", "TrUe", "show-config"], {}, 0, "simulation: mujoco"),
+        # A bare flag given first leaves the following subcommand to run.
+        (["--simulation", "run", "demo-mcp-stress-test", "--help"], {}, 0, "stresstestmodule"),
+        (["--record", "show-config"], {}, 0, "record: sqlite"),
     ],
 )
 def test_simulator_selection(args: list[str], env: dict[str, str], code: int, word: str) -> None:
