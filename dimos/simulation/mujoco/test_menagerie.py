@@ -15,10 +15,12 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from git import Actor, Repo
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.robot.assets.git_cache import GitAssetCache
-from dimos.simulation.mujoco import model
+from dimos.simulation.mujoco import menagerie, model
 
 
 def test_model_reads_meshes_from_the_pinned_checkout(tmp_path: Path, mocker: MockerFixture) -> None:
@@ -37,3 +39,26 @@ def test_model_reads_meshes_from_the_pinned_checkout(tmp_path: Path, mocker: Moc
         "https://github.com/google-deepmind/mujoco_menagerie.git",
         "1b86ece576591213e2b666ebf59508454200ca97",
     )
+
+
+@pytest.mark.parametrize("at_pin", [True, False])
+def test_legacy_checkout_must_match_pin(
+    tmp_path: Path, mocker: MockerFixture, at_pin: bool
+) -> None:
+    legacy = tmp_path / "external_deps" / "mujoco_menagerie"
+    with Repo.init(legacy) as repo:
+        actor = Actor("Fixture", "fixture@example.com")
+        pin = repo.index.commit("asset pin", author=actor, committer=actor).hexsha
+        other = repo.index.commit("other revision", author=actor, committer=actor).hexsha
+        repo.git.checkout(pin if at_pin else other)
+
+    mocker.patch.object(menagerie, "_MENAGERIE_COMMIT", pin)
+    mocker.patch(
+        "importlib.util.find_spec",
+        return_value=SimpleNamespace(submodule_search_locations=[str(tmp_path)]),
+    )
+    cached = tmp_path / "cached"
+    resolve = mocker.patch.object(GitAssetCache, "resolve", return_value=cached)
+
+    assert menagerie.menagerie_path() == (legacy if at_pin else cached)
+    assert resolve.call_count == (0 if at_pin else 1)
