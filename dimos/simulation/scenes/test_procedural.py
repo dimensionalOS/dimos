@@ -17,7 +17,6 @@ from __future__ import annotations
 from collections import deque
 import itertools
 import math
-import sys
 
 import numpy as np
 from numpy.typing import NDArray
@@ -328,12 +327,13 @@ def test_small_object_length_is_drawn_unless_given_and_zero_removes_it() -> None
     assert bare.params == small_object(3).params
 
 
-@pytest.mark.skipif(
-    sys.platform == "darwin", reason="pinned on Linux, macOS rounds this scene differently"
-)
 def test_hidden_object_is_deterministic_and_pinned() -> None:
-    assert hidden_object(3).digest() == hidden_object(3).digest() == "d536559f053535e1"
-    assert hidden_object(3).digest() != hidden_object(4).digest()
+    assert (
+        hidden_object(3).portable_digest()
+        == hidden_object(3).portable_digest()
+        == "efded9e9d7a39f4b"
+    )
+    assert hidden_object(3).portable_digest() != hidden_object(4).portable_digest()
     assert hidden_object(3, object_length=0.0).params == hidden_object(3).params
 
 
@@ -651,12 +651,11 @@ def test_bar_spans_two_posts_at_trunk_height_and_zero_leaves_the_posts() -> None
         assert [b for b in bare.boxes if b.kind == "clutter"] == posts
 
 
-@pytest.mark.skipif(
-    sys.platform == "darwin", reason="pinned on Linux, macOS rounds this scene differently"
-)
 def test_hidden_pole_is_deterministic_and_pinned() -> None:
-    assert hidden_pole(3).digest() == hidden_pole(3).digest() == "59f6bcd9199c58e6"
-    assert hidden_pole(3).digest() != hidden_pole(4).digest()
+    assert (
+        hidden_pole(3).portable_digest() == hidden_pole(3).portable_digest() == "fadbd48003c497a2"
+    )
+    assert hidden_pole(3).portable_digest() != hidden_pole(4).portable_digest()
     assert hidden_pole(3, pole_width=0.0).params == hidden_pole(3).params
 
 

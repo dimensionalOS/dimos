@@ -379,6 +379,13 @@ def test_thumbnail_is_the_lowest_seed_room_at_the_middle_level(tmp_path: Path) -
         for seed in (2, 1)
         for value in (0.02, 0.06, 0.2)
     ]
+    # The sample was frozen on a host that rounded its geometry differently.
+    sample_case = cases[4]
+    cases[4] = replace(
+        sample_case,
+        scene_digest="other-host",
+        portable_scene_digest=sample_case.scene().portable_digest(),
+    )
     run = tmp_path / "run"
     _run(run, cases, [_result(case, "success") for case in cases])
     picture = thumbnail(load(run))
