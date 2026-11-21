@@ -151,16 +151,18 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
-            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
+            # The passive viewer needs mjpython on macOS.
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
             executable = (
                 sys.executable
-                if sys.platform != "darwin"
+                if sys.platform != "darwin" or self.config.headless
                 else find_executable("mjpython") or "mjpython"
             )
             env = os.environ.copy()
+            if self.config.headless and sys.platform == "linux":
+                env.setdefault("MUJOCO_GL", "egl")
             if sys.platform == "darwin":
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
                 libdir = Path(sysconfig.get_config_var("LIBDIR") or "")

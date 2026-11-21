@@ -12,15 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
+import sys
 from typing import Literal
 
+from pydantic import Field
+
+from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig
+
+
+def _headless_by_default() -> bool:
+    return global_config.viewer == "none" or (
+        sys.platform == "linux" and not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+    )
 
 
 class MujocoConfig(BaseConfig):
     """Settings for the Unitree MuJoCo subprocess."""
 
+    headless: bool = Field(
+        default_factory=_headless_by_default,
+        description="Disable the MuJoCo window. Defaults on for viewer none or displayless Linux.",
+    )
     camera_position: tuple[float, float, float, float, float, float] = (
         -0.906,
         0.008,
