@@ -279,9 +279,9 @@ the previous instance. A wrapper that fails or enters a different directory leav
 the previous instance running. These checks also apply to `--force`.
 
 Credential options such as `--go2connection.aes-128-key` are not saved with the
-command. Set them in the environment (`GO2CONNECTION__AES_128_KEY`) before restarting.
-The replacement validates its configuration first, so a missing credential leaves
-the previous instance running.
+command. Set them in the environment (`GO2CONNECTION__AES_128_KEY`) before restarting,
+or the replacement runs without them. It validates its configuration first, so a
+missing required credential leaves the previous instance running.
 
 ### `dimos log`
 
