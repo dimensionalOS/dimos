@@ -31,8 +31,8 @@ from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
     format_validation_error,
 )
-from dimos.core.coordination.blueprint_config.values import plain, plain_mapping
-from dimos.core.coordination.blueprints import BlueprintAtom
+from dimos.core.coordination.blueprint_config.values import deep_merge, plain, plain_mapping
+from dimos.core.coordination.blueprints import BlueprintAtom, transport_config_name
 from dimos.core.global_config import GlobalConfig
 
 
@@ -62,6 +62,18 @@ def validate_module_config(
         return config_cls.model_validate(prepared)
     except ValidationError as error:
         raise BlueprintConfigError(format_validation_error(atom.name, error)) from error
+
+
+def validate_transport_config(
+    config_cls: type[BaseModel], pinned: Mapping[str, Any], overrides: Mapping[str, Any]
+) -> BaseModel:
+    values = plain_mapping(pinned)
+    deep_merge(values, overrides)
+    try:
+        return config_cls.model_validate(prepare_model_input(config_cls, values))
+    except ValidationError as error:
+        name = f"transports.{transport_config_name(config_cls)}"
+        raise BlueprintConfigError(format_validation_error(name, error)) from error
 
 
 def leaf_fields(

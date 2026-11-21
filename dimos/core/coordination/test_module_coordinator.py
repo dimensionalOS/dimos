@@ -27,6 +27,7 @@ from dimos.core._test_future_annotations_helper import (
     FutureModuleIn,
     FutureModuleOut,
 )
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
     Blueprint,
@@ -56,6 +57,7 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
+from dimos.hosted.fragment_compiler import compile_fragments
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -1394,8 +1396,50 @@ def test_spec_config_kwarg_reaches_provider_config() -> None:
     unconditionally — silently dropping the spec kwarg."""
     spec = CloudflareTransport.spec("state_reliable", robot_type="go2")
     bp = Blueprint(blueprints=(), transport_map=MappingProxyType({("s", bytes): spec}))
-    t = _materialize_transports(bp, {})[("s", bytes)]
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        _materialize_transports(bp, {})
+    t = _materialize_transports(bp, {"broker": {"api_key": "example"}})[("s", bytes)]
     assert t._config.robot_type == "go2"
+
+
+def test_disabled_hosted_module_releases_its_broker_key_requirement() -> None:
+    bp = autoconnect(SourceModule.blueprint(), TargetModule.blueprint()).solidify()
+    bp = bp.remappings(
+        [
+            (SourceModule, "color_image", "shared"),
+            (TargetModule, "remapped_data", "shared"),
+        ]
+    ).transports({("shared", Data1): CloudflareTransport.spec("state_reliable_back")})
+    shared = bp.disabled_modules(SourceModule)
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        BlueprintConfigParser(shared).parse(environ={})
+
+    disabled = shared.disabled_modules(TargetModule)
+    BlueprintConfigParser(disabled).parse(environ={})
+    assert _materialize_transports(disabled, {}) == {}
+
+
+def test_hosted_transport_uses_the_executing_hosts_environment() -> None:
+    bp = (
+        SourceModule.blueprint()
+        .transports({("color_image", Data1): CloudflareTransport.spec("state_reliable_back")})
+        .hosted(host="robot")
+    )
+    root = BlueprintConfigParser(bp).parse(["--transports.broker.robot-name", "camera"], environ={})
+    fragment = compile_fragments(
+        bp,
+        {SourceModule.name: "robot"},
+        run_id="run-1",
+        revision="rev",
+        overrides=root.file_and_cli,
+    )["robot"].load_payload()
+    parser = BlueprintConfigParser(fragment.blueprint)
+    with pytest.raises(BlueprintConfigError, match="api_key"):
+        parser.parse(environ={}, overrides=fragment.overrides)
+    host = parser.parse(
+        environ={"TRANSPORTS__BROKER__API_KEY": "host-key"}, overrides=fragment.overrides
+    )
+    assert host.transport_overrides()["broker"] == {"robot_name": "camera", "api_key": "host-key"}
 
 
 def test_materialize_transports_deep_merges_sparse_nested_overrides() -> None:

@@ -40,11 +40,14 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from pydantic import Field
+
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
     ProviderConfig,
+    ProviderCredential,
     wait_connected,
 )
 from dimos.utils.logging_config import setup_logger
@@ -68,7 +71,9 @@ class BrokerConfig(ProviderConfig):
     """Hosted teleop broker access. ``api_key`` is required; the rest defaults."""
 
     broker_url: str = DEFAULT_BROKER_URL
-    api_key: str | None = None
+    api_key: ProviderCredential = Field(
+        description="Create a robot API key in the Dimensional console under API keys. Set it with TRANSPORTS__BROKER__API_KEY or the run option."
+    )
     robot_id: str | None = None
     robot_name: str = "robot"
     robot_type: str | None = None
@@ -116,17 +121,10 @@ class BrokerProvider(AsyncProviderBase):
     OUTBOUND_CHANNELS = ("state_reliable_back", "map_unreliable")
 
     def __init__(self, config: BrokerConfig | None = None) -> None:
+        config = config or BrokerConfig.model_validate({})
         if not WEBRTC_AVAILABLE:
             raise RuntimeError("aiortc and aiohttp required: pip install dimos[webrtc]")
         super().__init__()
-        config = config or BrokerConfig()
-        if not config.api_key:
-            raise RuntimeError(
-                "BrokerConfig.api_key required "
-                "(set --transports.broker.api-key=dimos_sk_... or "
-                "TRANSPORTS__BROKER__API_KEY=dimos_sk_...; "
-                "create one in the Dimensional console: API keys -> Create key)"
-            )
         self._broker_url = config.broker_url.rstrip("/")
         self._api_key = config.api_key
         self._robot_id = config.robot_id or ""

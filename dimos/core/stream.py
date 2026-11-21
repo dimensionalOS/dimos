@@ -143,12 +143,29 @@ class TransportSpec:
 
     @property
     def config_cls(self) -> type[BaseModel] | None:
-        # Set by transports that expose a pydantic config override surface
-        return self.cls._config_cls
+        """The selected config schema for transports that accept runtime overrides."""
+        default = self.cls._config_cls
+        config = self.kwargs.get("config")
+        if default is not None and isinstance(config, BaseModel):
+            return type(config)
+        return default
+
+    @property
+    def config_kwargs(self) -> Mapping[str, Any]:
+        """Fields pinned by the blueprint, before runtime overrides are applied."""
+        config_cls = self.config_cls
+        if config_cls is None:
+            return {}
+        config = self.kwargs.get("config")
+        if isinstance(config, config_cls):
+            return dict(config)
+        return {key: value for key, value in self.kwargs.items() if key in config_cls.model_fields}
 
     def build(self, config: BaseModel | None = None) -> Transport[Any]:
-        extra = {"config": config} if config is not None else {}
-        return self.cls(*self.args, **self.kwargs, **extra)
+        kwargs = dict(self.kwargs)
+        if config is not None:
+            kwargs["config"] = config
+        return self.cls(*self.args, **kwargs)
 
 
 class Stream(Generic[T]):

@@ -40,6 +40,7 @@ from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
     ProviderConfig,
+    ProviderCredential,
     wait_connected,
     wait_open,
 )
@@ -84,8 +85,8 @@ class CloudflareConfig(ProviderConfig):
     distinct peers (robot ↔ operator) is the broker provider's job.
     """
 
-    app_id: str | None = None
-    app_secret: str | None = None
+    app_id: ProviderCredential
+    app_secret: ProviderCredential
     stun_url: str = "stun:stun.cloudflare.com:3478"
     ordered: bool = False
     max_retransmits: int | None = 0
@@ -98,17 +99,10 @@ class CloudflareProvider(AsyncProviderBase):
     """Two-session (pub + sub) Cloudflare Realtime SFU provider."""
 
     def __init__(self, config: CloudflareConfig | None = None) -> None:
+        config = config or CloudflareConfig.model_validate({})
         if not WEBRTC_AVAILABLE:
             raise RuntimeError("aiortc and aiohttp required: pip install dimos[webrtc]")
         super().__init__()
-        config = config or CloudflareConfig()
-        if not config.app_id or not config.app_secret:
-            raise RuntimeError(
-                "CloudflareConfig.app_id and app_secret required "
-                "(set --transports.cloudflare.app-id=... and "
-                "--transports.cloudflare.app-secret=..., or the "
-                "TRANSPORTS__CLOUDFLARE__APP_ID / TRANSPORTS__CLOUDFLARE__APP_SECRET env form)"
-            )
         self._app_secret = config.app_secret
         self._config = config
         self._base_url = f"https://rtc.live.cloudflare.com/v1/apps/{config.app_id}"
