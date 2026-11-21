@@ -273,7 +273,7 @@ def render(
         lines.append(
             f'    {node_id} [label="{label}", shape=component, style=filled, '
             f'fillcolor="{RPC_COLOR}35", color="{RPC_COLOR}", '
-            'fontcolor="{theme.FOREGROUND}", width=0, height=0, '
+            f'fontcolor="{theme.FOREGROUND}", width=0, height=0, '
             'margin="0.1,0.05", fontsize=9];'
         )
         lines.append(
