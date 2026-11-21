@@ -351,8 +351,7 @@ class In(Stream[T], ObservableMixin[T]):
     ) -> None:
         super().__init__(type, name, owner, transport)
         self._local: Subject[T] = Subject()
-        # callbacks subscribed while there was no transport, each with what unsubscribes it
-        self._early: list[tuple[Callable[[T], Any], SerialDisposable]] = []
+        self._transport_assigned: Subject[Transport[T]] = Subject()
         self._connections = CompositeDisposable()
         self._forward_lock = threading.RLock()
 
@@ -381,11 +380,8 @@ class In(Stream[T], ObservableMixin[T]):
     def transport(self, value: Transport[T]) -> None:
         with self._forward_lock:
             self._transport = value
-            early, self._early = (self._early, []) if value is not None else ([], self._early)
-        # A callback subscribed before there was a transport now hears what it delivers.
-        for cb, subscription in early:
-            if not subscription.is_disposed:
-                subscription.disposable = Disposable(value.subscribe(cb, self))
+        if value is not None:
+            self._transport_assigned.on_next(value)
 
     def connect(self, value: Out[T]) -> None:
         """Forward a local output until this input stops."""
@@ -404,6 +400,7 @@ class In(Stream[T], ObservableMixin[T]):
     def stop(self) -> None:
         with self._forward_lock:
             self._connections.dispose()
+        self._transport_assigned.on_completed()
         self._local.on_completed()
         super().stop()
 
@@ -416,8 +413,15 @@ class In(Stream[T], ObservableMixin[T]):
         with self._forward_lock:
             if (transport := self.transport) is None:
                 subscription = SerialDisposable()
-                subscription.disposable = self._local.subscribe(cb)
-                self._early.append((cb, subscription))
+
+                def bind(value: Transport[T]) -> None:
+                    # Replacing the local subscriptions also stops listening for assignments.
+                    subscription.disposable = Disposable(value.subscribe(cb, self))
+
+                subscription.disposable = CompositeDisposable(
+                    self._local.subscribe(cb),
+                    self._transport_assigned.subscribe(bind, on_completed=subscription.dispose),
+                )
                 return subscription.dispose
         return transport.subscribe(cb, self)
 

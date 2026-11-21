@@ -14,11 +14,13 @@
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+import gc
 import threading
 import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
+import weakref
 
 import pytest
 
@@ -363,6 +365,25 @@ def test_a_callback_subscribed_before_the_transport_hears_what_it_delivers(
     assert received == [1] and stream is sink
     unsubscribe()
     transport.subscribe.return_value.assert_called_once_with()
+
+
+@pytest.mark.parametrize("stop", [False, True], ids=["unsubscribe", "stop"])
+def test_ended_local_subscription_is_released_before_transport_assignment(stop: bool) -> None:
+    sink: In[int] = In(int, "numbers")
+    callback = Mock()
+    observer = weakref.ref(callback)
+    unsubscribe = sink.subscribe(callback)
+    if stop:
+        sink.stop()
+    else:
+        unsubscribe()
+    del callback
+    gc.collect()
+    assert observer() is None
+
+    transport = Mock(spec=Transport)
+    sink.transport = transport
+    transport.subscribe.assert_not_called()
 
 
 def test_stopping_input_during_output_publish_skips_pending_forward() -> None:
