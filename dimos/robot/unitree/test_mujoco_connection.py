@@ -15,6 +15,7 @@
 from collections.abc import Callable, Iterator
 from io import BytesIO
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -414,7 +415,7 @@ def test_simulator_window_and_renderer(
     monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(global_config, "viewer", viewer)
     monkeypatch.setattr(mujoco_connection, "find_executable", lambda name: name)
-    for key in ("DISPLAY", "WAYLAND_DISPLAY", "MUJOCO_GL"):
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "MUJOCO_GL"):
         monkeypatch.delenv(key, raising=False)
     if display:
         monkeypatch.setenv(display, ":1")
@@ -431,3 +432,28 @@ def test_simulator_window_and_renderer(
         assert popen.call_args.args[0][0] == executable
     finally:
         connection.stop()
+
+
+def test_viewer_child_can_use_inherited_wayland_socket(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(global_config, "viewer", "rerun")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    real_popen = subprocess.Popen
+
+    def viewer(command: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        probe = "import os; os.write(int(os.environ['WAYLAND_SOCKET']), b'x')"
+        return real_popen([command[0], "-c", probe], **kwargs)
+
+    display, peer = socket.socketpair()
+    with display, peer:
+        monkeypatch.setenv("WAYLAND_SOCKET", str(display.fileno()))
+        connection = _bare_connection(monkeypatch, viewer)
+        try:
+            assert not connection.config.headless
+            assert connection.process is not None
+            assert connection.process.wait(timeout=5) == 0
+            peer.settimeout(5)
+            assert peer.recv(1) == b"x"
+        finally:
+            connection.stop()

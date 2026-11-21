@@ -18,6 +18,7 @@
 import atexit
 import base64
 from collections.abc import Callable
+from contextlib import nullcontext
 import functools
 import json
 import logging
@@ -47,7 +48,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
-from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.simulation.mujoco.config import MujocoConfig, inherited_wayland_socket
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
     LIDAR_FPS,
@@ -170,12 +171,17 @@ class MujocoConnection:
                     existing = env.get("DYLD_LIBRARY_PATH", "")
                     env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
 
-            self.process = subprocess.Popen(
-                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-            )
+            with nullcontext() if self.config.headless else inherited_wayland_socket() as display:
+                env.pop("WAYLAND_SOCKET", None)
+                if display is not None:
+                    env["WAYLAND_SOCKET"] = str(display.fileno())
+                self.process = subprocess.Popen(
+                    [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    pass_fds=(display.fileno(),) if display is not None else (),
+                )
 
         except Exception as e:
             self.shm_data.cleanup()
