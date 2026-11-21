@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import os
 from pathlib import Path
 import re
@@ -163,16 +164,16 @@ class DimSimProcess:
             t.start()
 
 
-def prepare() -> None:
-    """Build DimSim's frontend and install its headless Chromium ahead of a run.
+def prepare(*, with_deps: bool = False) -> None:
+    """Check DimSim's headless browser and build the frontend ahead of a run.
 
-    ``start()`` does both lazily, inside the blueprint's startup window; CI
+    ``start()`` does both lazily inside the blueprint's startup window. CI
     runs this first (bin/dimsim-prepare) because ``git clean -ffdx`` leaves
     every job with a cold checkout.
     """
     deno_path = ensure_deno()
-    subprocess.run([*_deno_cmd(deno_path, _DIMSIM_DIR), "build"], check=True)
-    ensure_playwright_chromium(deno_path)
+    ensure_playwright_chromium(deno_path, with_deps=with_deps)
+    subprocess.run([*_deno_cmd(deno_path, _DIMSIM_DIR), "build", "--headless"], check=True)
 
 
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
@@ -200,3 +201,15 @@ def _check_lfs_stubs(scene: str) -> None:
             f"{shown}{more}\n"
             'Fetch them with: git lfs pull --include="misc/DimSim/**"'
         )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Prepare the DimSim frontend and headless browser."
+    )
+    parser.add_argument(
+        "--with-deps",
+        action="store_true",
+        help="Install Chromium system dependencies (may require sudo).",
+    )
+    prepare(with_deps=parser.parse_args().with_deps)
