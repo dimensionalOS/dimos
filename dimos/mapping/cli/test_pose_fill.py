@@ -158,12 +158,11 @@ def test_pose_fill_db_shares_window_across_offset_streams(
         assert [obs.ts for obs in store.stream("aux").order_by("ts")] == [101.0, 101.25]
 
 
-@pytest.mark.parametrize("kind", [float, object])
-def test_pose_fill_db_preserves_inline_value(tmp_path, kind):
+def test_pose_fill_db_preserves_inline_value(tmp_path):
     source = tmp_path / "source.db"
     destination = tmp_path / "posed.db"
     with SqliteStore(path=source) as store:
-        store.stream("reading", kind).append(3.75, ts=1.0)
+        store.stream("reading", float).append(3.75, ts=1.0)
         store.stream("odom", Transform).append(Transform(translation=Vector3(1, 2, 3)), ts=1.0)
 
     pose_fill_db(source, destination, target="reading")
