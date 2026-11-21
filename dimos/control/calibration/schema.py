@@ -133,7 +133,7 @@ class AppliedFile(BaseConfig):
 
     path: str
     sha256: str
-    created: datetime
+    created: str
 
 
 class ArmConfigState(BaseConfig):
