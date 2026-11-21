@@ -284,13 +284,18 @@ class ReplayConnection(CompositeResource):
         self._pending_streams.append(stream)
         return self._tracked(stream.observable())
 
-    def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete so end-of-playback can be reported."""
+    def prepare_playback(self) -> None:
+        """Validate the selected inputs and report their timing before subscribing."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
+            self.replay.require_recorded_frames(self._pending_streams, source=self.dataset)
             self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
             self._pending_streams.clear()
+
+    def seal_subscriptions(self) -> None:
+        """Mark the subscription set complete so end-of-playback can be reported."""
+        self.prepare_playback()
         self._progress.seal()
 
     def _on_complete(self) -> None:
@@ -415,6 +420,7 @@ class GO2Connection(Module, Camera, Pointcloud):
                 self.connection.odom_stream()
                 if self.config.camera:
                     self.connection.video_stream()
+                self.connection.prepare_playback()
             except BaseException:
                 self.connection.stop()
                 self._rollback_start()

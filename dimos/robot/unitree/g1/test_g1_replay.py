@@ -156,3 +156,23 @@ def test_mesh_replay_warns_about_missing_inputs_and_delivers_odometry(tmp_path, 
             "realsense_depth_image",
             "tf",
         }
+
+
+def test_empty_recorded_outputs_differ_from_an_empty_playback_window(tmp_path: Path) -> None:
+    path = tmp_path / "recording.db"
+    with SqliteStore(path=path) as store:
+        store.stream("pointlio_odometry", Odometry)
+        store.stream("tf", TFMessage)
+        store.stream("temperature", int).append(20, ts=0.0)
+
+    replay = G1Replay(dataset=str(path))
+    try:
+        with pytest.raises(ValueError, match="pointlio_odometry"):
+            replay.start()
+    finally:
+        replay.stop()
+
+    with SqliteStore(path=path) as store:
+        store.stream("pointlio_odometry").append(Odometry(ts=0.0), ts=0.0)
+    with G1Replay(dataset=str(path), seek=10.0):
+        pass

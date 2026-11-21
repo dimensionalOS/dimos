@@ -642,3 +642,19 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     assert (len(received) > 2) is loop
     finished = [call for call in log.info.call_args_list if call.args == ("Replay finished",)]
     assert len(finished) == (0 if loop else 1)
+
+
+def test_empty_recorded_outputs_fail_before_go2_subscribes(tmp_path, mocker):
+    path = tmp_path / "empty.db"
+    with SqliteStore(path=path) as store:
+        store.stream("odom", PoseStamped)
+    module = GO2Connection(
+        g=GlobalConfig(replay=True, replay_db=str(path)), camera=False, lidar=False
+    )
+    subscribe = mocker.patch.object(module.cmd_vel, "subscribe")
+    try:
+        with pytest.raises(ValueError, match="odom"):
+            module.start()
+        subscribe.assert_not_called()
+    finally:
+        module.stop()

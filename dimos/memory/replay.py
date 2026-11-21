@@ -39,7 +39,7 @@ from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator, Mapping
+    from collections.abc import Callable, Collection, Generator, Iterator, Mapping
 
     from dimos.memory.stream import Stream
 
@@ -114,7 +114,16 @@ class Replay(Configurable):
                 f"Enabled: {', '.join(sorted(enabled)) or '(none)'}. "
                 f"Recorded: {', '.join(sorted(available)) or '(none)'}."
             )
+        self.require_recorded_frames(streams.values(), source=source)
         return streams
+
+    def require_recorded_frames(
+        self, streams: Collection[ReplayStream[Any]], *, source: str | Path
+    ) -> None:
+        """Check the original streams so seeking past their last frame remains valid."""
+        if not any(self.store.stream(stream.name).count() for stream in streams):
+            names = ", ".join(sorted(stream.name for stream in streams))
+            raise ValueError(f"No recorded frames for the selected streams in {source}: {names}")
 
     def first_ts(self) -> float | None:
         """Earliest source timestamp across non-empty streams in the underlying store.
