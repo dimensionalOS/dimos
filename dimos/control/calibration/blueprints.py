@@ -15,8 +15,7 @@
 """The ``<robot>-calibrate`` blueprints: a Damiao connection that takes ``set_config``, and the calibration module.
 
 The module's ``position_command`` and the connection's ``joint_state`` connect by name.
-``dimos run <robot>-calibrate`` runs one and ``dimos shell`` drives the module's RPCs;
-``calibrated_robot`` reads the robot a blueprint calibrates off it.
+``dimos run <robot>-calibrate`` runs one and ``dimos shell`` drives the module's RPCs.
 """
 
 from __future__ import annotations
@@ -24,10 +23,9 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.control.calibration.module import CalibrationModule
-from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection
-from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 
 
 def calibration_blueprint(connection: type[DamiaoConnection], **defaults: Any) -> MetaBlueprint:
@@ -36,14 +34,3 @@ def calibration_blueprint(connection: type[DamiaoConnection], **defaults: Any) -
         arm_connection(connection, config_writes=True),
         CalibrationModule.blueprint(robot=connection.robot, **defaults),
     )
-
-
-def calibrated_robot(blueprint: Blueprint | MetaBlueprint) -> DamiaoRobot:
-    """The robot a calibration blueprint hands its calibration module."""
-    [atom] = [
-        atom
-        for atom in autoconnect(blueprint).solidify().blueprints
-        if atom.module is CalibrationModule
-    ]
-    robot: DamiaoRobot = atom.kwargs["robot"]
-    return robot

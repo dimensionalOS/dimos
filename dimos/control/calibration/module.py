@@ -41,9 +41,11 @@ from dimos.control.calibration.gravity_fit import Measurement
 from dimos.control.calibration.gravity_poses import ArmModel, Pose
 from dimos.control.calibration.motion import HoldMode, Motion, Sample, plan_path
 from dimos.control.calibration.schema import (
+    ARMS_STATE_DIR,
     AppliedFile,
     ArmCalibrationError,
     bake_into_urdf,
+    calibration_path,
     load_for_spec,
 )
 from dimos.control.calibration.spec import (
@@ -256,6 +258,9 @@ class CalibrationStatus(BaseConfig):
         if self.question is not None:
             lines += [f"? {self.question}", "  answer: " + " | ".join(self.answers)]
         return "\n".join(lines)
+
+    def _repr_pretty_(self, printer: Any, cycle: bool) -> None:
+        printer.text(str(self))
 
 
 def _rows(steps: list[tuple[str, str | None]]) -> list[StepRow]:
@@ -629,16 +634,29 @@ class Calibration:
 
 
 def bake_calibration(
-    spec: ArmCalibrationSpec, state: dict[str, Any], urdf_path: str, out_path: str | None = None
+    robot: DamiaoRobot, urdf_path: str, out_path: str | None = None, root: Path = ARMS_STATE_DIR
 ) -> str:
-    """Bake the fitted links of the file the arm runs (``state``: its ``get_config`` entry) into
-    the URDF at ``urdf_path``; the path written, ``out_path`` or ``calibrated.urdf`` beside it."""
-    if state["file"] is None:
-        raise ArmCalibrationError(f"{spec.arm_id} runs no calibration file, so nothing is fitted")
-    file = Path(state["file"]["path"])
-    out = Path(out_path) if out_path else file.with_name("calibrated.urdf")
-    out.write_text(bake_into_urdf(load_for_spec(spec, file), Path(urdf_path).read_text()))
-    return str(out)
+    """Bake the fitted links of every arm of ``robot`` with a calibration file under ``root`` into
+    the URDF at ``urdf_path``, written to ``out_path`` (default: ``calibrated.urdf`` in the
+    robot's directory there); says what it wrote and which arms have no file."""
+    baked, missing = [], []
+    for spec in specs_from_damiao_robot(robot):
+        path, arm = calibration_path(spec.arm_id, root), spec.arm_id.rsplit("/", 1)[-1]
+        if path.exists():
+            baked.append((arm, load_for_spec(spec, path)))
+        else:
+            missing.append(arm)
+    if not baked:
+        raise ArmCalibrationError(f"no arm of {robot.name} has a calibration file under {root}")
+    out = (
+        Path(out_path)
+        if out_path
+        else calibration_path(robot.name, root).with_name("calibrated.urdf")
+    )
+    urdf = bake_into_urdf([calibration for _, calibration in baked], Path(urdf_path).read_text())
+    out.write_text(urdf)
+    skipped = "".join(f"; {arm} has no calibration file" for arm in missing)
+    return f"wrote {out}: baked {', '.join(arm for arm, _ in baked)}{skipped}"
 
 
 class CalibrationModule(Module):
@@ -739,7 +757,7 @@ class CalibrationModule(Module):
 
     @rpc
     def bake(self, urdf_path: str, out_path: str | None = None) -> str:
-        """Write the URDF at ``urdf_path`` with the fitted links of the file this arm runs to
-        ``out_path`` (default: ``calibrated.urdf`` beside that file); returns the path written."""
-        state = self._connection.get_config()[self._spec.arm_id]
-        return bake_calibration(self._spec, state, urdf_path, out_path)
+        """Write the URDF at ``urdf_path`` with the fitted links of every arm of the robot that
+        has a calibration file to ``out_path`` (default: ``calibrated.urdf`` beside the robot's
+        files); says what it wrote, e.g. "wrote ...: baked left; right has no calibration file"."""
+        return bake_calibration(self.robot, urdf_path, out_path)
