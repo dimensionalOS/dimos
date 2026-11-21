@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import stat
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -42,9 +43,13 @@ _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
 
 
 def _source_digest(root: Path) -> bytes:
-    """Identify the recorder inputs, including relative names, contents and executable modes."""
+    """Compare the entries and file attributes preserved in a Nix source tree."""
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
     digest = hashlib.sha256()
-    for parent, directories, files in os.walk(root):
+    for parent, directories, files in os.walk(root, onerror=raise_walk_error):
         directory = Path(parent)
         if directory == root:
             # Nix outputs and local build trees are outside the recorder package inputs.
@@ -58,14 +63,19 @@ def _source_digest(root: Path) -> bytes:
             directories[:] = [name for name in directories if name not in ignored]
             files = [name for name in files if name not in ignored]
         directories.sort()
-        for name in sorted(files + [d for d in directories if (directory / d).is_symlink()]):
+        for name in sorted(files + directories):
             path = directory / name
             digest.update(os.fsencode(path.relative_to(root)) + b"\0")
-            if path.is_symlink():
-                digest.update(b"L" + os.fsencode(path.readlink()) + b"\0")
-            else:
-                digest.update(b"X" if path.stat().st_mode & 0o111 else b"F")
+            mode = path.lstat().st_mode
+            if stat.S_ISDIR(mode):
+                digest.update(b"D")
+            elif stat.S_ISLNK(mode):
+                digest.update(b"L" + os.fsencode(os.readlink(path)) + b"\0")
+            elif stat.S_ISREG(mode):
+                digest.update(b"X" if mode & stat.S_IXUSR else b"F")
                 digest.update(hashlib.sha256(path.read_bytes()).digest())
+            else:
+                raise RuntimeError(f"Unsupported file type in recorder sources: {path}")
     return digest.digest()
 
 

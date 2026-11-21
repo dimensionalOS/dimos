@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import socket
 from typing import Any, TypeVar
 
 import pytest
@@ -30,6 +31,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorderConfig,
     RustSqliteStoreConfig,
     RustStreamSpec,
+    _source_digest,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
@@ -427,3 +429,48 @@ def test_managed_recorder_checks_sources_before_reusing_a_package(
     (source / "Cargo.lock").write_text("edited input")
     with pytest.raises(RuntimeError, match="exit 127"):
         prepare()
+
+
+def test_recorder_source_uses_only_owner_execute_permission(tmp_path):
+    source = tmp_path / "lib.rs"
+    source.touch()
+    source.chmod(0o444)
+    regular = _source_digest(tmp_path)
+    source.chmod(0o654)
+    assert _source_digest(tmp_path) == regular
+    source.chmod(0o744)
+    assert _source_digest(tmp_path) != regular
+
+
+def test_recorder_source_includes_empty_directories(tmp_path):
+    empty_tree = _source_digest(tmp_path)
+    directory = tmp_path / "assets"
+    directory.mkdir()
+    with_directory = _source_digest(tmp_path)
+    assert with_directory != empty_tree
+    directory.chmod(0o700)
+    assert _source_digest(tmp_path) == with_directory
+
+
+def test_recorder_source_keeps_the_literal_symlink_target(tmp_path):
+    link = tmp_path / "input"
+    link.symlink_to("./absent")
+    original = _source_digest(tmp_path)
+    link.unlink()
+    link.symlink_to("absent")
+    assert _source_digest(tmp_path) != original
+
+
+def test_recorder_source_refuses_special_files(tmp_path, monkeypatch):
+    # A relative socket path also works in long checkout or temporary directories.
+    monkeypatch.chdir(tmp_path)
+    with socket.socket(socket.AF_UNIX) as special:
+        special.bind("input.sock")
+        with pytest.raises(RuntimeError, match="input.sock"):
+            _source_digest(tmp_path)
+
+
+def test_recorder_source_refuses_an_unreadable_directory(tmp_path, mocker):
+    mocker.patch("os.scandir", side_effect=PermissionError)
+    with pytest.raises(PermissionError):
+        _source_digest(tmp_path)
