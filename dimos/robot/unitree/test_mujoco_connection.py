@@ -29,6 +29,7 @@ from pytest_mock import MockerFixture
 import structlog
 from structlog.testing import LogCapture
 
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -46,6 +47,10 @@ class _FakeShmWriter:
     def __init__(self) -> None:
         self.seq = 0  # the sequence number every sensor read reports
         self.run_signaled = False
+        self.command = np.zeros(6, dtype=np.float32)
+
+    def write_command(self, linear: NDArray[Any], angular: NDArray[Any]) -> None:
+        self.command = np.concatenate((linear, angular))
 
     def is_ready(self) -> bool:
         return True
@@ -354,3 +359,23 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
     np.testing.assert_allclose(message.points_f32(), points)
 
     assert quiet_connection.get_lidar_message() is None  # same frame again
+
+
+@pytest.mark.parametrize("replacement_duration", [0.0, 2.0], ids=["continuous", "timed"])
+def test_expired_move_cannot_stop_a_newer_command(
+    quiet_connection: MujocoConnection, mocker: MockerFixture, replacement_duration: float
+) -> None:
+    writer = quiet_connection.shm_data
+    assert isinstance(writer, _FakeShmWriter)
+    timers = mocker.patch.object(threading, "Timer", side_effect=[mocker.Mock(), mocker.Mock()])
+    quiet_connection.move(Twist(linear=[0.25, 0, 0]), duration=1.0)
+    expire_first = timers.call_args.args[1]
+    quiet_connection.move(Twist(linear=[0, 0.5, 0]), duration=replacement_duration)
+
+    # A timer can already have entered its callback when cancel() is called.
+    expire_first()
+    np.testing.assert_array_equal(writer.command, [0, 0.5, 0, 0, 0, 0])
+
+    if replacement_duration:
+        timers.call_args.args[1]()
+        np.testing.assert_array_equal(writer.command, np.zeros(6))
