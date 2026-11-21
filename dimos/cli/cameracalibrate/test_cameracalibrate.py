@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import cv2
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from dimos.cli.cameracalibrate.cameracalibrate import (
@@ -707,7 +708,14 @@ def test_load_frames_from_folder_count_order_and_pixels(tmp_path: Path) -> None:
     assert np.array_equal(frames[2], np.full((h, w, 3), (70, 80, 90), dtype=np.uint8))
 
 
-def test_find_chessboard_corners_synthetic_board_returns_expected_count() -> None:
+@pytest.mark.parametrize("refined_shape", [(-1, 1, 2), (-1, 2)])
+def test_find_chessboard_corners_synthetic_board_returns_expected_count(
+    mocker: MockerFixture, refined_shape: tuple[int, ...]
+) -> None:
+    refine = cv2.cornerSubPix
+    mocker.patch.object(
+        cv2, "cornerSubPix", side_effect=lambda *args: refine(*args).reshape(refined_shape)
+    )
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     corners = find_chessboard_corners(gray, cols, rows)

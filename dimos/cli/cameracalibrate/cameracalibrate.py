@@ -308,7 +308,7 @@ def _find_chessboard_corners_exact(gray: np.ndarray, cols: int, rows: int) -> np
         # Classic detector already gave pixel locations; refine to sub-pixel accuracy.
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
         refined = cv2.cornerSubPix(g_cv, corners, (11, 11), (-1, -1), criteria)
-        return cast("np.ndarray", refined)
+        return np.asarray(refined, dtype=np.float32).reshape(cols * rows, 1, 2)
 
     # Classic detector missed: try SB again with exhaustive flags (slower, higher recall).
     return _find_chessboard_corners_sb(g_cv, cols, rows, exhaustive=True)
