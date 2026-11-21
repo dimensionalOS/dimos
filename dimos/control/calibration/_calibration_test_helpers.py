@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test helpers: robot models from disk only, never downloaded, and arms heavier than modelled.
+"""Test helpers: robot models from disk only, never downloaded, arms heavier than modelled, and
+the toy arm's calibration deployed as ``dimos run`` deploys it.
 
 Robot models come from Git LFS archives and cached description repositories.
 Inside ``offline_robot_assets`` a cached checkout is used as it is (no fetch),
@@ -25,7 +26,9 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+import threading
 from typing import Any
 from unittest import mock
 
@@ -33,8 +36,12 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 import pytest
+from reactivex.disposable import Disposable
 
+from dimos.control.calibration._fake_arm import FakeArm
+from dimos.control.calibration._toy_arm import TOY_URDF as TOY_ARM_URDF, toy_arm
 from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.module import CalibrationModule
 from dimos.control.calibration.schema import (
     ArmCalibration,
     GravityCalibration,
@@ -47,9 +54,17 @@ from dimos.control.calibration.spec import (
     specs_from_damiao_robot,
     urdf_sha256,
 )
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.damiao.robot import DamiaoRobot
+from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
 import dimos.utils.data as lfs_data
 
 
@@ -120,7 +135,7 @@ def perturbed_model(
     return model
 
 
-# A toy arm and calibration file shared with the CLI tests.
+# A toy arm and calibration file for the schema and bake tests.
 SHA = "a" * 64
 CREATED = datetime(2026, 11, 18, 9, 30, tzinfo=timezone.utc)
 
@@ -185,3 +200,86 @@ def calibration(**fields: object) -> ArmCalibration:
     }
     values.update(fields)
     return ArmCalibration.model_validate(values)
+
+
+TOY_ARM_MODEL = RobotModel.from_urdf_string(TOY_ARM_URDF)
+TOY_ARM_JOINTS = ["yaw", "shoulder", "elbow"]
+TOY_ROBOT = DamiaoRobot(
+    buses=[
+        DamiaoBus(
+            arm=[
+                DamiaoMotor(name, "DM4310", i + 1, i + 17) for i, name in enumerate(TOY_ARM_JOINTS)
+            ],
+            kp=[20.0] * 3,
+            kd=[1.0] * 3,
+        )
+    ],
+    model=TOY_ARM_MODEL,
+    gravity_model=TOY_ARM_MODEL,
+    base_link="base",
+    joint_names=TOY_ARM_JOINTS,
+    name="toy",
+)
+
+
+class ToyConnection(Module):
+    """The toy arm's connection: a ``FakeArm`` ticked every reading period, in real time."""
+
+    joint_state: Out[JointState]
+    position_command: In[JointState]
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._lock = threading.RLock()
+        self._stopped = threading.Event()
+        super().__init__(**kwargs)
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._arm = FakeArm(toy_arm())
+        self._arm.listener = self.joint_state.publish
+        self.register_disposable(Disposable(self.position_command.subscribe(self._command)))
+        threading.Thread(target=self._tick, daemon=True, name="toy-arm").start()
+
+    def _tick(self) -> None:
+        while not self._stopped.wait(self._arm.period_s):
+            with self._lock:
+                self._arm.tick()
+
+    def _command(self, msg: JointState) -> None:
+        with self._lock:
+            self._arm.command(msg)
+
+    @rpc
+    def stop(self) -> None:
+        self._stopped.set()
+        super().stop()
+
+    @rpc
+    def get_config(self) -> dict[str, Any]:
+        with self._lock:
+            return self._arm.get_config()
+
+    @rpc
+    def set_config(self, patch: dict[str, Any], save: bool = False) -> dict[str, Any]:
+        with self._lock:
+            return self._arm.set_config(patch, save)
+
+
+@contextmanager
+def toy_run(**settings: Any) -> Iterator[None]:
+    """The toy arm's calibration deployed in this process, its coordinator on the bus as
+    ``dimos run`` serves it, so ``Dimos.connect()`` reaches it as ``dimos shell`` does."""
+    blueprint = autoconnect(
+        ToyConnection.blueprint(),
+        CalibrationModule.blueprint(robot=TOY_ROBOT, floor_z_m=-0.45, min_x_m=-1.0, **settings),
+    ).solidify()
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ=os.environ, overrides={"g": {"viewer": "none"}}
+    )
+    coordinator = ModuleCoordinator.build(blueprint, parsed, reserve_rpc_name=CoordinatorRPC.NAME)
+    try:
+        coordinator.start_rpc_service()
+        yield
+    finally:
+        coordinator.stop()

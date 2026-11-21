@@ -36,6 +36,7 @@ import pinocchio as pin
 
 from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.module import Operator, RunState
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
@@ -69,6 +70,7 @@ class FakeArm:
         self.live: dict[str, tuple[float, float]] = {}
         self.floating: dict[str, float] = {}
         self.file: dict[str, Any] = {}
+        self.path = "fake/calibration.json"
         self.listener: Callable[[JointState], None] | None = None
         self.last_command: float | None = None
         self.commands: list[float] = []
@@ -93,7 +95,9 @@ class FakeArm:
                 "gains": {j: {"kp": kp, "kd": kd} for j, (kp, kd) in self.gains().items()},
                 "floating": sorted(self.floating),
                 "links": copy.deepcopy(self.file.get("links", {})),
-                "file": {"path": "fake/calibration.json"} if self.file else None,
+                "file": {"path": self.path, "sha256": "0" * 64, "created": "2026-11-21T00:00:00Z"}
+                if self.file
+                else None,
                 "can_float": True,
                 "deadman_timeout_s": self.deadman_s,
             }
@@ -195,22 +199,29 @@ class FakeArm:
         raise AssertionError(f"still waiting after {max_ticks} ticks at t={self.t:.2f} s")
 
 
-class FakeOperator:
-    """Answers the module's operator calls at once: ``answer(prompt, choices)`` picks the reply."""
+class FakeOperator(Operator):
+    """Answers each question as it is asked with ``pick(prompt, answers)``, and keeps what it saw.
 
-    def __init__(self, answer: Callable[[str, list[str]], str] | None = None) -> None:
-        self.answer = answer or (lambda prompt, choices: choices[0])
+    ``done`` is how the run ended: whether it was done, its summary, and whether the arm is home.
+    """
+
+    def __init__(self, pick: Callable[[str, list[str]], str] | None = None) -> None:
+        super().__init__("fake", [])
+        self.pick = pick or (lambda prompt, answers: answers[0])
         self.shown: list[str] = []
         self.asked: list[str] = []
         self.done: tuple[bool, str, bool] | None = None
 
-    def call(self, name: str, args: list[Any], reply: Callable[[Any], None]) -> None:
-        if name == "show":
-            self.shown.append(args[0])
-            reply(None)
-        elif name == "ask":
-            self.asked.append(args[0])
-            reply(self.answer(args[0], args[1]))
-        else:
-            self.done = (args[0], args[1], args[2])
-            reply(None)
+    def show(self, text: str) -> None:
+        super().show(text)
+        self.shown.append(text)
+
+    def ask(self, prompt: str, answers: list[str]) -> threading.Event:
+        answered = super().ask(prompt, answers)
+        self.asked.append(prompt)
+        assert self.answer(self.pick(prompt, answers)) == "ok"
+        return answered
+
+    def finish(self, state: RunState, summary: str, home: bool) -> None:
+        super().finish(state, summary, home)
+        self.done = (state == "done", summary, home)
