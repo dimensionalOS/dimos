@@ -90,6 +90,8 @@ class MySkillContainer(Module):
 | `set_gps_travel_points(points)` | `GpsNavSkillContainer` | Navigate via GPS waypoints |
 | `map_query(query_sentence)` | `OsmSkill` | Search OpenStreetMap with VLM |
 
+The legacy `dimos.skills.visual_navigation_skills.FollowHuman` class has been retired. In a blueprint that includes `dimos.agents.skills.person_follow.PersonFollowSkillContainer`, call `follow_person(query)` with a description and use `stop_following()` to end tracking.
+
 ## MCP
 
 All agentic blueprints use two modules: `McpServer` and `Agent`.
