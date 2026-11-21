@@ -127,9 +127,9 @@ def parse(raw: Any) -> LaunchConfig:
     if other is not None:
         raise LaunchConfigError(f"overrides has `{other}` next to `global`/`modules`")
     global_, modules, secrets = (
-        raw.get("global") or {},
-        raw.get("modules") or {},
-        raw.get("secrets") or [],
+        raw.get("global", {}),
+        raw.get("modules", {}),
+        raw.get("secrets", []),
     )
     if not isinstance(global_, dict):
         raise LaunchConfigError("overrides.global must be an object")
