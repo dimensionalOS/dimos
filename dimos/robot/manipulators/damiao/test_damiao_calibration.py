@@ -134,7 +134,7 @@ def test_auto_applies_each_arms_saved_file(start, boundary, calibration_root):
     assert state["rig/left"]["file"] == {
         "path": str(path),
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "created": "2026-11-17T09:30:00Z",
+        "created": "2026-11-17T09:30:00+00:00",
     }
     assert state["rig/left"]["links"] == {
         "link2": {"mass_kg": 2.0, "com_m": [0.1, 0.0, 0.0], "merged_links": []}
