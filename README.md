@@ -234,6 +234,8 @@ dimos stop                                # Shut down
 ```
 
 > Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
+>
+> Connect a coding agent (Claude Code, Codex, Cursor, …): [dimos/agents/mcp/README.md](dimos/agents/mcp/README.md)
 
 # dimTELE: Remote Teleop
 
