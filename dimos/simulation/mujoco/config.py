@@ -43,10 +43,28 @@ def inherited_wayland_socket() -> AbstractContextManager[socket.socket | None]:
     return nullcontext()
 
 
+def _wayland_display_is_listening() -> bool:
+    """Whether WAYLAND_DISPLAY names a compositor socket that accepts connections."""
+    name = os.getenv("WAYLAND_DISPLAY")
+    if not name:
+        return False
+    # An absolute WAYLAND_DISPLAY is used as given; a name is looked up in XDG_RUNTIME_DIR.
+    path = os.path.join(os.getenv("XDG_RUNTIME_DIR", ""), name)
+    if not os.path.isabs(path):
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX) as probe:
+            probe.setblocking(False)
+            probe.connect(path)
+    except OSError:
+        return False
+    return True
+
+
 def _headless_by_default() -> bool:
     if global_config.viewer == "none":
         return True
-    if sys.platform != "linux" or os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"):
+    if sys.platform != "linux" or os.getenv("DISPLAY") or _wayland_display_is_listening():
         return False
     with inherited_wayland_socket() as display:
         return display is None

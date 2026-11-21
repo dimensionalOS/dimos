@@ -18,6 +18,7 @@ import os
 import socket
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import threading
 import time
 from typing import Any
@@ -364,12 +365,17 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
 
 @pytest.mark.self_hosted
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux EGL offscreen rendering")
-@pytest.mark.parametrize("robot", ["unitree_go2", "unitree_g1"])
-def test_headless_simulation_delivers_frames(robot: str, monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.delenv("DISPLAY", raising=False)
-    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    monkeypatch.delenv("MUJOCO_GL", raising=False)
-    monkeypatch.setattr(global_config, "viewer", "none")
+@pytest.mark.parametrize(
+    ("robot", "viewer"),
+    [("unitree_go2", "none"), ("unitree_g1", "rerun")],
+    ids=["go2-viewer-none", "g1-no-display"],
+)
+def test_headless_simulation_delivers_frames(
+    robot: str, viewer: str, monkeypatch: MonkeyPatch
+) -> None:
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "MUJOCO_GL"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(global_config, "viewer", viewer)
 
     connection = MujocoConnection(MujocoConfig(), robot_model=robot)
     try:
@@ -393,7 +399,8 @@ def test_headless_simulation_delivers_frames(robot: str, monkeypatch: MonkeyPatc
     [
         ("linux", "rerun", None, None, None, True, "egl"),
         ("linux", "rerun", "DISPLAY", None, None, False, None),
-        ("linux", "rerun", "WAYLAND_DISPLAY", None, None, False, None),
+        # The name alone is not a display: nothing listens on it here.
+        ("linux", "rerun", "WAYLAND_DISPLAY", None, None, True, "egl"),
         ("linux", "none", "DISPLAY", None, None, True, "egl"),
         ("linux", "rerun", "DISPLAY", True, "osmesa", True, "osmesa"),
         ("linux", "none", "DISPLAY", False, None, False, None),
@@ -432,6 +439,28 @@ def test_simulator_window_and_renderer(
         assert popen.call_args.args[0][0] == executable
     finally:
         connection.stop()
+
+
+@pytest.mark.parametrize("named_by", ["name", "path"])
+def test_named_wayland_display_needs_a_listener(monkeypatch: MonkeyPatch, named_by: str) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(global_config, "viewer", "rerun")
+    for key in ("DISPLAY", "WAYLAND_SOCKET", "XDG_RUNTIME_DIR"):
+        monkeypatch.delenv(key, raising=False)
+    # A pytest tmp_path can exceed the length limit of a Unix socket path.
+    with TemporaryDirectory() as runtime:
+        path = os.path.join(runtime, "wayland-1")
+        if named_by == "name":
+            monkeypatch.setenv("XDG_RUNTIME_DIR", runtime)
+            monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+        else:
+            monkeypatch.setenv("WAYLAND_DISPLAY", path)
+        with socket.socket(socket.AF_UNIX) as compositor:
+            compositor.bind(path)
+            compositor.listen()
+            assert not MujocoConfig().headless
+        # The socket file outlives the compositor that was listening on it.
+        assert MujocoConfig().headless
 
 
 def test_viewer_child_can_use_inherited_wayland_socket(monkeypatch: MonkeyPatch) -> None:
