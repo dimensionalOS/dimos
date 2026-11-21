@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# LIBERO's own runtime, provisioned by uv; nothing is installed into dimos's environment.
+# LiberoSim sets LIBERO_PYTHON and LIBERO_DEPS from dimos/simulation/libero/benchmark.py.
+set -euo pipefail
+with=()
+for dep in ${LIBERO_DEPS}; do with+=(--with "$dep"); done
+# RUST_LOG is meant for the native's zenoh; uv would read it too and log its resolver.
+exec env -u RUST_LOG uv run -q --no-project --python "${LIBERO_PYTHON}" "${with[@]}" \
+  env RUST_LOG="${RUST_LOG:-}" python "$(dirname "$0")/server.py"
