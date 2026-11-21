@@ -1,7 +1,7 @@
 # Calibrate a Damiao arm
 
 `dimos arm calibrate` walks one Damiao arm through a calibration from your terminal. It fits the arm's link masses and its kp/kd gains, and saves them to one file per arm that the arm loads every time it starts.
-It works with `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `openarm`.
+It works with every robot that has a `<robot>-calibrate` blueprint: `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `openarm`.
 
 ## Before you start
 

@@ -20,6 +20,7 @@ See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint
+from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
-openyam_calibrate = calibration_blueprint(OpenYamConnection, "openyam").remappings([])
+openyam_calibrate = calibration_blueprint(OpenYamConnection, OPENYAM).remappings([])

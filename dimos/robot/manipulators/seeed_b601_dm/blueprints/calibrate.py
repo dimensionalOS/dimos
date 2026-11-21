@@ -20,6 +20,7 @@ See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint
+from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 
-b601_dm_calibrate = calibration_blueprint(B601DMConnection, "b601-dm").remappings([])
+b601_dm_calibrate = calibration_blueprint(B601DMConnection, B601_DM).remappings([])

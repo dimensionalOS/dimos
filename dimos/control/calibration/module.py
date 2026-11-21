@@ -39,14 +39,19 @@ from dimos.control.calibration import steps
 from dimos.control.calibration.gravity_fit import Measurement
 from dimos.control.calibration.gravity_poses import ArmModel, Pose
 from dimos.control.calibration.motion import HoldMode, Motion, Sample, plan_path
-from dimos.control.calibration.robots import KNOWN_ROBOTS, arm_spec
-from dimos.control.calibration.spec import ArmCalibrationSpec, motor_torque_limit_nm
+from dimos.control.calibration.spec import (
+    ArmCalibrationSpec,
+    arm_name,
+    motor_torque_limit_nm,
+    specs_from_damiao_robot,
+)
 from dimos.control.calibration.step_analysis import RestNoise, StepMetrics
 from dimos.control.calibration.steps import AbortedError, SkippedError, StalledError
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -60,7 +65,6 @@ class CalibrationModuleConfig(ModuleConfig):
     """Which arm to calibrate, and how. These are all of the calibration's settings.
 
     Attributes:
-        robot: A ``robots.KNOWN_ROBOTS`` key, e.g. "dual-openyam".
         arm: The arm ("left"), its bus ("left_arm") or its id; needed when the robot has several.
         floor_z_m: The table's height from the arm's base, m. Required, with ``min_x_m``.
         min_x_m: The fingertip stays in front of this x from the base, m.
@@ -103,7 +107,6 @@ class CalibrationModuleConfig(ModuleConfig):
         confirm_each: Ask before every move, not only at the start of each step.
     """
 
-    robot: str
     arm: str | None = None
     floor_z_m: float | None = None
     min_x_m: float | None = None
@@ -137,8 +140,6 @@ class CalibrationModuleConfig(ModuleConfig):
 
     @model_validator(mode="after")
     def _check(self) -> Self:
-        if self.robot not in KNOWN_ROBOTS:
-            raise ValueError(f"unknown robot {self.robot!r}; known: {', '.join(KNOWN_ROBOTS)}")
         unknown = set(self.steps) - set(steps.STEPS)
         if unknown:
             raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(steps.STEPS)}")
@@ -155,11 +156,11 @@ class CalibrationModuleConfig(ModuleConfig):
             raise ValueError("step_deltas_deg needs a positive and a negative step")
         return self
 
-    def arm_spec(self) -> ArmCalibrationSpec:
+    def arm_spec(self, robot: DamiaoRobot) -> ArmCalibrationSpec:
         """The arm's spec on the bench guard; refused without one or above its velocity limits."""
         if self.floor_z_m is None or self.min_x_m is None:
             raise ValueError("give the table height and the front line: floor_z_m and min_x_m")
-        spec = arm_spec(self.robot, self.arm).on_bench(self.floor_z_m, self.min_x_m)
+        spec = _choose_arm(robot, self.arm).on_bench(self.floor_z_m, self.min_x_m)
         limits = {joint.name: joint.velocity for joint in spec.model.load().joints}
         slow = {
             name: f"{math.degrees(limit):.0f}"
@@ -169,6 +170,20 @@ class CalibrationModuleConfig(ModuleConfig):
         if slow:
             raise ValueError(f"speed_deg_s {self.speed_deg_s:g} exceeds URDF limits (deg/s) {slow}")
         return spec
+
+
+def _choose_arm(robot: DamiaoRobot, arm: str | None) -> ArmCalibrationSpec:
+    """One arm of ``robot``, by arm ("left"), bus ("left_arm") or arm id; optional for one arm."""
+    specs = specs_from_damiao_robot(robot)
+    names = [spec.arm_id.rsplit("/", 1)[-1] for spec in specs]
+    if arm is None:
+        if len(specs) != 1:
+            raise ValueError(f"{robot.name} has several arms; choose one of {names}")
+        return specs[0]
+    for spec, bus in zip(specs, robot.buses, strict=True):
+        if arm in (spec.arm_id, spec.arm_id.rsplit("/", 1)[-1], bus.name, arm_name(bus.name)):
+            return spec
+    raise ValueError(f"{robot.name} has no arm {arm!r}; choose one of {names}")
 
 
 class ArmConfigSpec(Spec, Protocol):
@@ -453,7 +468,11 @@ class Calibration:
 
 
 class CalibrationModule(Module):
-    """Calibrates one arm (see the module docstring); ``abort`` is its only RPC."""
+    """Calibrates one arm of ``robot`` (see the module docstring); ``abort`` is its only RPC.
+
+    Args:
+        robot: The robot its connection deploys, from ``calibration_blueprint``; not a setting.
+    """
 
     config: CalibrationModuleConfig
     _connection: ArmConfigSpec
@@ -462,11 +481,15 @@ class CalibrationModule(Module):
 
     _calibration: Calibration | None = None
 
+    def __init__(self, robot: DamiaoRobot, **kwargs: Any) -> None:
+        self.robot = robot
+        super().__init__(**kwargs)
+
     @rpc
     def start(self) -> None:
         super().start()
-        spec = self.config.arm_spec()
-        motors = {m.name: m for bus in KNOWN_ROBOTS[self.config.robot].buses for m in bus.arm}
+        spec = self.config.arm_spec(self.robot)
+        motors = {m.name: m for bus in self.robot.buses for m in bus.arm}
         rpc_client = self.rpc
 
         def call(name: str, args: list[Any], reply: Callable[[Any], None]) -> Any:

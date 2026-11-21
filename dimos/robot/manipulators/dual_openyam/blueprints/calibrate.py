@@ -20,8 +20,9 @@ See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 dual_openyam_calibrate = calibration_blueprint(
-    DualOpenYamConnection, "dual-openyam", arm="left"
+    DualOpenYamConnection, DUAL_OPENYAM, arm="left"
 ).remappings([])
