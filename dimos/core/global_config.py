@@ -144,15 +144,18 @@ class GlobalConfig(BaseSettings):
             super().__setattr__(name, value)
 
     def update(self, **kwargs: object) -> None:
-        """Update config fields in place."""
+        """Validate the complete set of overrides before updating this instance."""
         for key in kwargs:
             if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
         if self is _pending_config:
             get_global_config(**kwargs)
             return
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+        if not kwargs:
+            return
+        updated = type(self).model_validate({**self.model_dump(), **kwargs})
+        self.__dict__.update(updated.__dict__)
+        self.model_fields_set.update(kwargs)
 
     @property
     def parsed_robot_ips(self) -> tuple[str, ...]:
