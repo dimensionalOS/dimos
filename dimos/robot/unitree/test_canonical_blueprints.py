@@ -33,8 +33,11 @@ from dimos.robot.unitree.go2.connection import GO2_BASE_JOINTS
 @pytest.mark.parametrize("name", ["coordinator", "rpp_controller", "holonomic_controller"])
 def test_go2_shipped_connections_and_tasks(name):
     module = importlib.import_module(f"dimos.robot.unitree.go2.blueprints.basic.unitree_go2_{name}")
-    blueprint = getattr(module, f"unitree_go2_{name}")
-    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    blueprint = getattr(module, f"unitree_go2_{name}").solidify()
+    # A documentation-range IP: parsing only validates config, it never connects.
+    parsed = BlueprintConfigParser(blueprint).parse(
+        [], environ={}, global_overrides={"robot_ip": "192.0.2.1"}
+    )
     atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
     config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
     assert not config.hardware
@@ -67,7 +70,7 @@ def test_g1_shipped_basic_and_groot_backends(simulation, monkeypatch):
                 f"dimos.robot.unitree.g1.blueprints.basic.unitree_g1_{name}"
             )
             module = importlib.reload(module)
-            bp = getattr(module, f"unitree_g1_{name}")
+            bp = getattr(module, f"unitree_g1_{name}").solidify()
             parsed = BlueprintConfigParser(bp).parse(
                 [], environ={}, global_overrides={"simulation": simulation}
             )

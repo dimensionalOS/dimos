@@ -48,6 +48,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Replace UnitreeWebRTCConnection in go2.connection so the webrtc branch
     runs without dialing out."""
     stub = MagicMock(name="UnitreeWebRTCConnection")
-    monkeypatch.setattr("dimos.robot.unitree.connection.UnitreeWebRTCConnection", stub)
+    monkeypatch.setattr(go2_conn, "UnitreeWebRTCConnection", stub)
     return stub
 
 
@@ -450,10 +451,7 @@ def test_canonical_lifecycle_deadman_and_post_stop_no_replay(monkeypatch):
         command = JointState(name=list(go2_conn.GO2_BASE_JOINTS), velocity=[0.2, 0.0, 0.0])
         commands.publish(command)
         assert backend.move.call_count == 1
-        deadline = time.monotonic() + 2.0
-        while not conn.status().deadman_fired and time.monotonic() < deadline:
-            time.sleep(0.005)
-        assert conn.status().deadman_fired
+        wait_until(lambda: conn.status().deadman_fired, timeout=2.0)
         assert backend.stop_movement.call_count == 1
         conn.stop()
         commands.publish(command)
@@ -679,6 +677,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     log = mocker.patch("dimos.memory.replay_progress.logger")
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
     module.set_transport("odom", mocker.Mock())
     received = []
     try:

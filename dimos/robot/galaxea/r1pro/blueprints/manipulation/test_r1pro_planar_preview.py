@@ -110,8 +110,8 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         coordinator.stop()
 
 
-def test_real_control_declares_planar_velocity_joints_without_position_commands() -> None:
-    """Measured planar joints are ordinary velocity-only hardware interfaces."""
+def test_real_control_declares_body_velocity_joints_without_position_commands() -> None:
+    """The chassis body axes are velocity-only joints on the connection."""
     coordinator = _coordinator_config(r1pro_control().solidify())
 
     # The real robot is driven through R1ProConnection: no hardware adapters.
@@ -121,6 +121,5 @@ def test_real_control_declares_planar_velocity_joints_without_position_commands(
 
     (declaration,) = coordinator.connections
     assert all(
-        declaration.joint_commands[joint] == (Interface.VELOCITY,)
-        for joint in R1PRO_PLANAR_BASE.joint_names
+        declaration.joint_commands[joint] == (Interface.VELOCITY,) for joint in R1PRO_BASE_JOINTS
     )
