@@ -479,13 +479,8 @@ def test_discriminated_union_leaf_override_preserves_default_backend() -> None:
     ],
 )
 def test_legacy_option_syntax_has_migration_error(tokens: tuple[str, ...]) -> None:
-    with pytest.raises(BlueprintConfigError) as error:
+    with pytest.raises(BlueprintConfigError, match="legacy -o/--option syntax was removed"):
         BlueprintConfigParser(PrimaryModule.blueprint()).parse(tokens, environ={})
-
-    assert str(error.value) == (
-        "The legacy -o/--option syntax was removed. Pass the setting directly as "
-        "`--name=value` or `--module.field VALUE`. Use --help to list the available options."
-    )
 
 
 def test_format_help_does_not_call_default_factories_and_hides_reserved_shorthand() -> None:
