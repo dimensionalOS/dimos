@@ -380,6 +380,49 @@ def test_layered_launch_keeps_bullet_text_and_only_preserves_masked_secrets(
     )
 
 
+@pytest.mark.parametrize(
+    ("layer", "asked", "token"),
+    [
+        ({"module_defaults": {"reader": {"token": "saved-value"}}}, "•••", "saved-value"),
+        ({"module_defaults": {"reader": {"token": "saved-value"}}}, "typed-value", "typed-value"),
+        ({"module_defaults": {}}, "•••", None),
+        # POST /active/launch has no saved layer: its config is launched as sent
+        (None, "•••", "•••"),
+    ],
+    ids=["saved", "explicit", "empty", "unlayered"],
+)
+def test_a_mask_stands_for_a_saved_secret_only_on_the_layered_route(
+    client: TestClient,
+    launch_targets: AsyncMock,
+    mocker: MockerFixture,
+    layer: dict[str, Any] | None,
+    asked: str,
+    token: str | None,
+) -> None:
+    launch_targets.side_effect = None
+    launch_targets.return_value = {"reader": ["token"]}
+    mocker.patch.object(launches, "launch_env_defaults", return_value={})
+    spawn = mocker.patch.object(launches, "_spawn", return_value=2_000_000_000)
+    response = client.post(
+        "/active/launch" if layer is None else "/active/launch-with-defaults",
+        json={
+            "blueprint": "demo",
+            "config": {"modules": {"reader": {"token": asked}}},
+            **(layer or {}),
+        },
+    )
+    assert response.status_code == 200, response.text
+    command, _, _, env = spawn.call_args.args
+    assert env.get("READER__TOKEN") == token
+    assert not any("reader" in arg for arg in command)
+    remembered = json.loads(launches.request_file().read_text())
+    assert remembered["modules"] == ({"reader": {"token": token}} if token else {})
+    assert response.json()["config"]["modules"] == ({"reader": {"token": "•••"}} if token else {})
+    # the remembered launch is what a relaunch repeats
+    assert client.post("/active/relaunch").status_code == 200
+    assert spawn.call_args.args[3].get("READER__TOKEN") == token
+
+
 def test_launch_introspection_receives_global_mode_settings(
     client: TestClient, checkout: Path, launch_targets: AsyncMock
 ) -> None:

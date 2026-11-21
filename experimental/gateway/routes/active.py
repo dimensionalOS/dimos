@@ -126,8 +126,7 @@ async def start_request(
         raise ApiError(400, "give exactly one of blueprint or module")
     name = check_name(request.module if request.blueprint is None else request.blueprint)
     launch_config = launches.parse(request.config)
-    if module_defaults is not None:
-        launch_config.module_defaults = module_defaults
+    launch_config.module_defaults = module_defaults
     return await started(state, name, launch_config)
 
 

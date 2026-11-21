@@ -78,7 +78,8 @@ class LaunchConfig:
     args: list[str] = field(default_factory=list)
     # POST /active/exec: exactly these args (a relaunch keeps it that way)
     exact: bool = False
-    module_defaults: ModuleValues = field(default_factory=dict)
+    # POST /active/launch-with-defaults: the saved layer under `modules` (None: a launch without one)
+    module_defaults: ModuleValues | None = None
 
     def normalized(self) -> LaunchConfig:
         """Normalize global overrides without changing raw exec requests or adding defaults."""
@@ -86,7 +87,7 @@ class LaunchConfig:
 
     def with_module_defaults(self, targets: ConfigTargets) -> LaunchConfig:
         """Overlay at the served CLI's field boundaries, before argv, secrets and the remembered launch."""
-        if not self.module_defaults:
+        if self.module_defaults is None:
             return self
         modules: ModuleValues = {}
         names = {_option_name(name.replace("/", "_")): name for name in targets}
@@ -123,7 +124,7 @@ class LaunchConfig:
                         values.pop(key, None)
                     else:
                         values[key] = value
-        return replace(self, modules={m: f for m, f in modules.items() if f}, module_defaults={})
+        return replace(self, modules={m: f for m, f in modules.items() if f}, module_defaults=None)
 
     def secret_paths(self, targets: ConfigTargets | None = None) -> list[str]:
         return secret_paths(self.global_, self.modules, self.secrets, targets)
