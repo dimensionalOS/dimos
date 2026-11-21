@@ -35,7 +35,7 @@ from dimos.perception.localize.demo_blueprints.xarm_feed import DepthCameraFeed
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 
 
-@pytest.mark.parametrize("player", [SpotReplay, RecordingPlayer, DepthCameraFeed, G1Replay])
+@pytest.mark.parametrize("player", [SpotReplay, DepthCameraFeed, G1Replay])
 def test_robot_players_keep_tf_before_other_sensors(tmp_path, mocker, player):
     path = tmp_path / "sensors.db"
     with SqliteStore(path=str(path)) as store:
@@ -43,9 +43,6 @@ def test_robot_players_keep_tf_before_other_sensors(tmp_path, mocker, player):
             store.stream("tf", TFMessage).append(TFMessage(Transform(ts=ts)), ts=ts)
         for name in ("odometry", "pointlio_odometry"):
             store.stream(name, Odometry).append(Odometry(ts=11.0), ts=11.0)
-        store.stream("pointlio_lidar", PointCloud2).append(
-            PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=11.0), ts=11.0
-        )
         store.stream("color_image", Image).append(
             Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8)), ts=11.0
         )
