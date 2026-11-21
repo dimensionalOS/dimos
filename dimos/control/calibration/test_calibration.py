@@ -65,6 +65,7 @@ def arm() -> ArmModel:
 def calibration(arm: ArmModel, operator: Operator, fake: FakeArm, **settings: Any) -> Calibration:
     config = CalibrationModuleConfig(
         poses=4,
+        min_poses=3,
         speed_deg_s=50.0,
         grid_points=400,
         confirm_poses=2,

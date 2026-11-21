@@ -66,8 +66,20 @@ class SkippedError(Exception):
     """The operator skipped what was asked."""
 
 
-class StalledError(RuntimeError):
+class MotionError(RuntimeError):
+    """A motion ended off its target or unsettled; ``detail`` names the joints and how far."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(reason)
+        self.detail = detail or reason
+
+
+class StalledError(MotionError):
     """A joint fell behind its target by more than its motor can push."""
+
+
+class UnsettledError(MotionError):
+    """A move ended unsettled: a joint oscillates in place, or it held ``max_hold_s``."""
 
 
 TITLES = {
@@ -170,6 +182,26 @@ def _dither(
     )
 
 
+def _halt(run: Calibration) -> None:
+    """Stream nothing past the connection's deadman, so it holds the arm where it is."""
+    deadman = float(run.state["deadman_timeout_s"])
+    run.stream(run.motion([run.measured()], "fixed", 2.0 * deadman, publish=False))
+
+
+def _set_aside(
+    run: Calibration, aside: dict[str, str], what: str, how: str, error: MotionError
+) -> None:
+    run.show(f"{what} {how}: {error.detail}")
+    aside[what] = error.detail
+    _halt(run)
+
+
+def _listed(how: str, aside: dict[str, str]) -> str:
+    if not aside:
+        return ""
+    return f", {len(aside)} {how}: " + "; ".join(f"{what} ({why})" for what, why in aside.items())
+
+
 def _gravity_poses(run: Calibration) -> list[Pose]:
     if run.poses is None:
         pose_set = generate_poses(
@@ -232,6 +264,8 @@ def gravity_poses(run: Calibration) -> str:
         f"{run.config.stuck_fraction:.0%} of the way, then returns home."
     )
     visited: list[np.ndarray] = []
+    skipped: dict[str, str] = {}
+    dropped: dict[str, str] = {}
     redone = 0
     for k, pose in enumerate(poses, 1):
         where = f"pose {k}/{len(poses)}"
@@ -241,15 +275,22 @@ def gravity_poses(run: Calibration) -> str:
             rest = run.move(target, pose.name)
         except SkippedError:
             continue
+        except MotionError as error:
+            _set_aside(run, skipped, pose.name, "skipped", error)
+            continue
         visited.append(target)
         run.baseline[pose.name] = _rest_error(run, rest, target)
         for j, (joint, dither) in enumerate(dithers.items(), 1):
             run.progress(f"{where} · dither {j}/{len(dithers)} {joint}")
-            measurement = _dither(run, pose.name, target, joint, dither)
-            if measurement.stuck:
-                redone += 1
-                wider = min(2.0 * dither, run.config.max_dither_deg)
-                measurement = _dither(run, pose.name, target, joint, wider)
+            try:
+                measurement = _dither(run, pose.name, target, joint, dither)
+                if measurement.stuck:
+                    redone += 1
+                    wider = min(2.0 * dither, run.config.max_dither_deg)
+                    measurement = _dither(run, pose.name, target, joint, wider)
+            except MotionError as error:
+                _set_aside(run, dropped, f"{joint} at {pose.name}", "dropped", error)
+                continue
             run.measurements.append(measurement)
     run.home(visited)
     stuck, unfollowed = stuck_pairs(run.measurements)
@@ -260,8 +301,16 @@ def gravity_poses(run: Calibration) -> str:
                 f"\n  {joint}: every pair stuck, friction not cancelled" for joint in unfollowed
             )
         )
+    measured, least = len({m.pose for m in run.measurements}), run.config.min_poses
+    if measured < least:
+        raise RuntimeError(
+            f"only {measured} of {len(poses)} poses measured; need at least {least} (min_poses)"
+            + _listed("skipped", skipped)
+            + _listed("dropped", dropped)
+        )
     return (
-        f"{len(visited)} of {len(poses)} poses, {len(run.measurements)} dither pairs, "
+        f"{len(visited)} of {len(poses)} poses{_listed('skipped', skipped)}, "
+        f"{len(run.measurements)} dither pairs{_listed('dropped', dropped)}, "
         f"{redone} redone at twice the dither, {len(stuck)} stuck"
     )
 
@@ -571,8 +620,10 @@ def _gains_text(gains: dict[str, dict[str, float]]) -> str:
 
 def _revisit(
     run: Calibration, poses: list[Pose], patch: dict[str, Any] | None
-) -> dict[str, np.ndarray]:
-    rests, visited = {}, []
+) -> tuple[dict[str, np.ndarray], dict[str, str]]:
+    """Each pose's rest error, and why each pose that did not settle was skipped; a stall with
+    a ``patch`` still raises."""
+    rests, skipped, visited = {}, {}, []
     for k, pose in enumerate(poses, 1):
         run.progress(f"pose {k}/{len(poses)}")
         target = np.asarray(pose.joints_rad)
@@ -580,10 +631,15 @@ def _revisit(
             rest = run.move(target, pose.name, patch=patch)
         except SkippedError:
             continue
+        except MotionError as error:
+            if patch is not None and isinstance(error, StalledError):
+                raise
+            _set_aside(run, skipped, pose.name, "skipped", error)
+            continue
         visited.append(target)
         rests[pose.name] = _rest_error(run, rest, target)
     run.home(visited, patch)
-    return rests
+    return rests, skipped
 
 
 def _rms_deg(errors: list[np.ndarray]) -> np.ndarray:
@@ -610,10 +666,10 @@ def confirm_tracking(run: Calibration) -> str:
     )
     if proposed and any(pose.name not in run.baseline for pose in poses):
         run.show("No first visit of these poses in this run: a first pass with the running gains")
-        run.baseline.update(_revisit(run, poses, None))
+        run.baseline.update(_revisit(run, poses, None)[0])
     held = {joint: dict(zip(("kp", "kd"), run.gains(joint), strict=True)) for joint in proposed}
     try:
-        rests = _revisit(run, poses, {"gains": proposed} if proposed else None)
+        rests, skipped = _revisit(run, poses, {"gains": proposed} if proposed else None)
     except StalledError as error:
         if not proposed:
             raise
@@ -622,6 +678,13 @@ def confirm_tracking(run: Calibration) -> str:
         if run.ask(f"{error}; the proposed gains are undone. Go home?", ["home", "stay"]) == "home":
             run.home()
         return f"gains not saved: {error}"
+    unsettled = {name: why for name, why in skipped.items() if name in run.baseline}
+    if proposed and unsettled:
+        run.configure({"gains": held})
+        run.proposed = {}
+        return "gains not saved: " + "; ".join(
+            f"{name} does not settle with them ({why})" for name, why in unsettled.items()
+        )
     names = [name for name in rests if name in run.baseline]
     if not names:
         if proposed:
@@ -650,7 +713,10 @@ def confirm_tracking(run: Calibration) -> str:
             "rest_rms_deg": dict(zip(run.arm.joint_names, map(float, before), strict=True))
         },
     }
-    compared = f"{len(names)} poses compared; worst joint now {after.max():.3f} deg RMS"
+    compared = (
+        f"{len(names)} poses compared{_listed('skipped', skipped)}; "
+        f"worst joint now {after.max():.3f} deg RMS"
+    )
     run.proposed = {}
     if worse:
         run.configure({"gains": held})

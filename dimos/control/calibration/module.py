@@ -62,6 +62,7 @@ from dimos.control.calibration.steps import (
     AbortedError,
     SkippedError,
     StalledError,
+    UnsettledError,
     plan,
 )
 from dimos.core.core import rpc
@@ -89,6 +90,8 @@ class CalibrationModuleConfig(ModuleConfig):
         floor_z_m: The table's height from the arm's base, m. Required, with ``min_x_m``.
         min_x_m: The fingertip stays in front of this x from the base, m.
         poses: How many gravity poses to visit.
+        min_poses: The fewest gravity poses the fit needs; a pose that does not settle is
+            skipped, and with fewer measured gravity_poses fails.
         speed_deg_s: Peak joint speed of every move; at most 60 and the URDF velocity limits.
         max_hold_s: A hold that waits to settle and has not after this long ends not converging.
         rest_window_s: How long the arm sits still to measure its noise; a hold is settled
@@ -131,6 +134,7 @@ class CalibrationModuleConfig(ModuleConfig):
     floor_z_m: float | None = None
     min_x_m: float | None = None
     poses: int = Field(default=12, ge=3)
+    min_poses: int = Field(default=8, ge=1)
     speed_deg_s: float = Field(default=10.0, gt=0.0, le=60.0)
     rest_window_s: float = Field(default=0.5, gt=0.0)
     max_hold_s: float = Field(default=5.0, gt=0.0)
@@ -163,6 +167,8 @@ class CalibrationModuleConfig(ModuleConfig):
         unknown = set(self.steps) - set(STEPS)
         if unknown:
             raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(STEPS)}")
+        if self.min_poses > self.poses:
+            raise ValueError("min_poses must not exceed poses")
         if self.dither_deg > self.max_dither_deg:
             raise ValueError("dither_deg must not exceed max_dither_deg")
         if self.max_hold_s <= 2.0 * self.rest_window_s:
@@ -593,7 +599,9 @@ class Calibration:
                     self._motion = None
         if motion.error:
             logger.warning(f"motion ended: {motion.error}")
-            raise (StalledError if motion.stalled else RuntimeError)(motion.error)
+            if motion.stalled:
+                raise StalledError(motion.error, f"stalled, {motion.detail}")
+            raise RuntimeError(motion.error)
         return motion
 
     def move(
@@ -616,7 +624,7 @@ class Calibration:
             if motion.detail:
                 reason = f"{reason}: {motion.detail}"
             logger.warning(reason)
-            raise RuntimeError(reason)
+            raise UnsettledError(reason, motion.detail)
         self.at_home = what == "home"
         return motion
 
