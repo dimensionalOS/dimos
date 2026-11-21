@@ -31,9 +31,11 @@ calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+import threading
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -45,10 +47,16 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.utils.logging_config import setup_logger
 
-# rl_deploy's basic flat gait; vendor-mode M20Connection walks on 0x3002 (flat agile), which this controller's
-# basic_flat -> navi_flat switch does not yet reproduce (it faulted on the robot 2026-11-21)
+# rl_deploy's basic flat gait, the entry gait rl_control is started on (as rl_deploy accepts it)
 BASIC_FLAT_GAIT = 0x1001
+
+NavigationTerrain = Literal["flat", "stairs"]
+# rl_deploy's agile navigation gaits, the ones vendor-mode M20Connection walks on (flat 0x3002 NaviFlat, stairs 0x3003)
+NAVIGATION_GAITS: dict[str, int] = {"flat": 0x3002, "stairs": 0x3003}
+
+logger = setup_logger()
 
 
 class M20ControllerConfig(NativeModuleConfig):
@@ -88,8 +96,14 @@ class M20ControllerConfig(NativeModuleConfig):
     # policy: seconds without a new command before the velocity is zeroed, over the TOML's
     # safety.command_timeout_s (0 keeps the TOML's; the native config takes no None)
     command_timeout_s: float = Field(default=0.0, ge=0.0)
-    # policy: the gait code walking starts on until a gait_cmd changes it
+    # policy: the gait code rl_control is entered on (rl_deploy's accepted entry gaits; 0x1001 basic flat)
     gait: int = BASIC_FLAT_GAIT
+    # standup(): the agile gait switched to once rl_control's stand-in is over (M20Connection's default is stairs)
+    navigation_terrain: NavigationTerrain = "stairs"
+
+    def to_config_dict(self) -> dict[str, Any]:
+        # navigation_terrain is the Python RPCs' alone; the native struct rejects unknown fields
+        return {k: v for k, v in super().to_config_dict().items() if k != "navigation_terrain"}
 
 
 class M20Controller(NativeModule):
@@ -110,15 +124,108 @@ class M20Controller(NativeModule):
     controller_state: Out[String]
 
     @rpc
-    def stand(self) -> None:
-        """Stand up, then walk on the configured gait: the state machine goes on to rl_control by itself."""
-        self.gait_cmd.transport.publish(UInt32(self.config.gait))
-        self.motion_cmd.transport.publish(String("rl_control"))
+    def start(self) -> None:
+        super().start()
+        self._state = ""
+        self._navigate_once_walking: int | None = None
+        self._state_lock = threading.Lock()
+        self.register_disposable(
+            Disposable(self.controller_state.subscribe(self._on_controller_state))
+        )
+
+    def _on_controller_state(self, msg: String) -> None:
+        with self._state_lock:
+            self._state = msg.data
+            gait, walking = self._navigate_once_walking, msg.data == "RlControl"
+            if walking:
+                self._navigate_once_walking = None
+        # the state machine holds a gait change until rl_control's stand-in is over, as rl_deploy does
+        if walking and gait is not None:
+            self.gait_cmd.transport.publish(UInt32(gait))
 
     @rpc
-    def lie_down(self) -> None:
-        """Lie down."""
+    def standup(self) -> bool:
+        """Stand up, enter rl_control on the entry gait, then switch to the navigation terrain's agile gait (as vendor-mode M20Connection does)."""
+        with self._state_lock:
+            self._navigate_once_walking = NAVIGATION_GAITS[self.config.navigation_terrain]
+        self.gait_cmd.transport.publish(UInt32(self.config.gait))
+        self.motion_cmd.transport.publish(String("rl_control"))
+        return True
+
+    @rpc
+    def liedown(self) -> bool:
+        """Zero the velocity and lie down."""
+        with self._state_lock:
+            self._navigate_once_walking = None
+        self.stop_movement()
         self.motion_cmd.transport.publish(String("lie_down"))
+        return True
+
+    @rpc
+    def stand(self) -> bool:
+        """Same as standup()."""
+        return self.standup()
+
+    @rpc
+    def lie_down(self) -> bool:
+        """Same as liedown()."""
+        return self.liedown()
+
+    @rpc
+    def passive(self) -> bool:
+        """Go limp (no gains), from any state."""
+        self.stop_movement()
+        self.motion_cmd.transport.publish(String("passive"))
+        return True
+
+    @rpc
+    def damp(self) -> bool:
+        """Joint damping: the legs sink slowly instead of holding (rl_deploy's fault response)."""
+        self.stop_movement()
+        self.motion_cmd.transport.publish(String("joint_damping"))
+        return True
+
+    @rpc
+    def set_navigation_terrain(self, terrain: NavigationTerrain) -> bool:
+        """Select the agile gait for flat ground or stairs; applied now while walking, else by the next standup()."""
+        gait = NAVIGATION_GAITS.get(terrain)
+        if gait is None:
+            logger.error(f"unsupported M20 navigation terrain: {terrain}")
+            return False
+        self.config.navigation_terrain = terrain
+        with self._state_lock:
+            walking = self._state == "RlControl"
+        if walking:
+            self.stop_movement()
+            self.gait_cmd.transport.publish(UInt32(gait))
+        return True
+
+    @rpc
+    def stop_movement(self) -> None:
+        """Publish a zero velocity now (later commands still move it)."""
+        self.cmd_vel.transport.publish(Twist.zero())
+
+    @rpc
+    def controller_status(self) -> str:
+        """The state machine's latest state (e.g. "RlControl", "StandUp", "JointDamping (fault: ...)")."""
+        with self._state_lock:
+            return self._state
+
+    @rpc
+    def dock(self) -> bool:
+        """Not available on the pure-Rust stack: docking is the vendor charge_manager's (vendor mode, M20Connection.dock)."""
+        logger.error(
+            "M20 dock: the pure-Rust stack has no charge manager; switch to the vendor stack (m20_vendor) to dock"
+        )
+        return False
+
+    @rpc
+    def undock(self) -> bool:
+        """Not available on the pure-Rust stack: undocking is the vendor charge_manager's (vendor mode, M20Connection.undock)."""
+        logger.error(
+            "M20 undock: the pure-Rust stack has no charge manager; switch to the vendor stack (m20_vendor) to undock"
+        )
+        return False
 
 
 if TYPE_CHECKING:
