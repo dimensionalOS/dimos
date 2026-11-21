@@ -428,7 +428,7 @@ tests = [
     "dimos-cdrgen==0.1.0",
     "build>=1.2.2",
     # Test runner
-    "pytest>=8.3.5",
+    "pytest==8.3.5",
     "pytest-asyncio==1.4.0",
     "pytest-mock==3.15.0",
     "pytest-env==1.1.5",
@@ -494,7 +494,7 @@ lint = [
     "aiortc>=1.14.0",
     "ipython",
     "openai-whisper",
-    "pytest>=8.3.5",
+    "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
     "roboplan==0.8.0",
@@ -562,6 +562,7 @@ override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
+    "pytest==8.3.5", # because gtsam screwed up their dev dependencies
     # langgraph-prebuilt>=1.0.9 imports ExecutionInfo from langgraph.runtime,
     # which only exists in langgraph>=1.1; langchain==1.2.3 caps langgraph<1.1.
     "langgraph-prebuilt<=1.0.8",
