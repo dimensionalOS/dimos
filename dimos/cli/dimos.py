@@ -46,10 +46,28 @@ os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 from dotenv import load_dotenv
 import typer
 
+from dimos.core.config_aliases import resolve_global_values
+
 # Load before CLI imports freeze config/state paths, so a daemon re-exec and
 # later status/stop commands resolve the same registry. Keep tests isolated.
 if "PYTEST_VERSION" not in os.environ:
+    # Keep an exported setting ahead of any alternate spelling supplied by dotenv.
+    inherited = os.environ.copy()
     load_dotenv()
+    # Import the field schema after dotenv sets state paths, before GlobalConfig validates values.
+    from dimos.core.global_config_fields import global_environment_aliases
+
+    aliases_by_field = global_environment_aliases()
+    introduced = os.environ.keys() - inherited.keys()
+    preferred = resolve_global_values(os.environ, aliases_by_field, allow_qualified=True)
+    preferred.update(resolve_global_values(inherited, aliases_by_field, allow_qualified=True))
+    for field, value in preferred.items():
+        aliases = aliases_by_field[field]
+        spellings = {alias.upper() for alias in aliases}
+        for name in introduced:
+            if name.upper().removeprefix("G__") in spellings:
+                del os.environ[name]
+        os.environ[aliases[0].upper()] = value
 
 from dimos.cli.cache import app as cache_app
 from dimos.cli.can import app as can_app

@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, ValidationError
+from pydantic import ValidationError
 
+from dimos.core.config_aliases import resolve_global_values
 from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
     format_validation_error,
@@ -36,8 +37,13 @@ from dimos.core.coordination.blueprint_config.schema import (
     coerce_environment_value,
     normalize_option_name,
 )
-from dimos.core.coordination.blueprint_config.values import deep_set, plain_mapping
+from dimos.core.coordination.blueprint_config.values import (
+    deep_set,
+    normalize_mapping_keys,
+    plain_mapping,
+)
 from dimos.core.global_config import ENV_FILE, GlobalConfig
+from dimos.core.global_config_fields import global_environment_aliases
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -115,14 +121,26 @@ REQUIRED_ENVIRONMENT_MIGRATIONS = frozenset(
 def configuration_environment(
     environ: Mapping[str, str] | None,
 ) -> Mapping[str, str]:
+    aliases = global_environment_aliases()
+    names = {name.lower() for choices in aliases.values() for name in choices}
+
+    def canonical(source: Mapping[str, str]) -> dict[str, str]:
+        other = {
+            name: value
+            for name, value in source.items()
+            if name.lower().removeprefix("g__") not in names
+        }
+        return {**other, **resolve_global_values(source, aliases, allow_qualified=True)}
+
     if environ is None:
-        if ENV_FILE is None:
-            environ = os.environ
-        else:
+        environ = canonical(os.environ)
+        if ENV_FILE is not None:
             from_dotenv = {
                 key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None
             }
-            environ = {**from_dotenv, **os.environ}
+            environ = {**canonical(from_dotenv), **environ}
+    else:
+        environ = canonical(environ)
     removed = sorted(name for name in environ if name.upper() in REMOVED_ENVIRONMENT_NAMES)
     required = [name for name in removed if name.upper() in REQUIRED_ENVIRONMENT_MIGRATIONS]
     if required:
@@ -141,6 +159,14 @@ def configuration_environment(
             replacements={name: REMOVED_ENVIRONMENT_NAMES[name.upper()] for name in removed},
         )
     return environ
+
+
+def normalize_global_keys(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge global field names and their aliases under the same key at each source."""
+    normalized = normalize_mapping_keys(values)
+    names = global_environment_names()
+    other = {name: value for name, value in normalized.items() if name.lower() not in names}
+    return {**other, **resolve_global_values(normalized, global_environment_aliases())}
 
 
 def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -197,7 +223,8 @@ def merge_global_environment(
             continue
         parts = tuple(part.lower().replace("-", "_") for part in raw_name.split("__"))
         if len(parts) >= 2 and parts[0] == "g":
-            set_coerced(parts[1:], raw_name, value)
+            field = global_env_names.get(parts[1], parts[1])
+            set_coerced((field, *parts[2:]), raw_name, value)
 
 
 def _global_option_targets() -> dict[str, OptionTarget]:
@@ -271,14 +298,8 @@ def reserved_global_short_names() -> set[str]:
 
 
 def global_environment_names() -> dict[str, str]:
-    names: dict[str, str] = {}
-    for field_name, info in GlobalConfig.model_fields.items():
-        names[field_name.lower()] = field_name
-        alias = info.validation_alias
-        if isinstance(alias, str):
-            names[alias.lower()] = field_name
-        elif isinstance(alias, AliasChoices):
-            for choice in alias.choices:
-                if isinstance(choice, str):
-                    names[choice.lower()] = field_name
-    return names
+    return {
+        name.lower(): field
+        for field, choices in global_environment_aliases().items()
+        for name in choices
+    }
