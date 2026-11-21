@@ -108,12 +108,23 @@ GO2_MODEL = RobotModel.from_root_link("base_link", name="go2").with_added_joints
 )
 
 
+GO2_JOINT_COMMANDS: dict[str, tuple[Interface, ...]] = {
+    name: (Interface.VELOCITY,) for name in GO2_BASE_JOINTS
+}
+
+
+def go2_joint_connection() -> JointConnectionConfig:
+    """The Go2 as a coordinator sees it: robot name, model and velocity-only body joints.
+
+    For a coordinator's ``connections``. ``ConnectionConfig()`` would need a robot IP.
+    """
+    return JointConnectionConfig(source="go2", model=GO2_MODEL, joint_commands=GO2_JOINT_COMMANDS)
+
+
 class ConnectionConfig(JointConnectionConfig):
     source: str = "go2"
     model: RobotModel | None = GO2_MODEL
-    joint_commands: dict[str, tuple[Interface, ...]] = {
-        name: (Interface.VELOCITY,) for name in GO2_BASE_JOINTS
-    }
+    joint_commands: dict[str, tuple[Interface, ...]] = GO2_JOINT_COMMANDS
     odom_timeout_s: float = Field(default=0.2, gt=0.0, allow_inf_nan=False)
     ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
