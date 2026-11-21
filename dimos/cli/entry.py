@@ -25,7 +25,18 @@ import sys
 
 
 def main() -> None:
-    from dimos.cli.dimos import cli_main
+    from pydantic import ValidationError
+
+    try:
+        from dimos.cli.dimos import cli_main
+    except ValidationError as error:
+        # Environment settings are loaded while CLI commands are registered.
+        if error.title != "GlobalConfig":
+            raise
+        detail = error.errors(include_url=False)[0]
+        field = ".".join(map(str, detail["loc"]))
+        print(f"Invalid global setting {field}: {detail['msg']}", file=sys.stderr)
+        raise SystemExit(2) from None
 
     cli_main()
 

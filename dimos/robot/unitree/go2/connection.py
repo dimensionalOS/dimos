@@ -183,7 +183,7 @@ def make_connection(
             exit_on_complete=cfg.replay_exit,
             module_rpc_name=cfg.rpc_name,
         )
-    elif ip == "mujoco" or mode in ("mujoco", "true"):
+    elif ip == "mujoco" or mode == "mujoco":
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
         return MujocoConnection(cfg.mujoco, robot_model=cfg.g.robot_model)
