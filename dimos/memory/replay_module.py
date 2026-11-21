@@ -42,8 +42,6 @@ from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex import Observable
-
     from dimos.memory.replay import Replay, ReplayStream
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
@@ -139,56 +137,65 @@ class ReplayModule(Module):
         replay: Replay = store.replay(
             speed=self.config.speed,
             loop=self.config.loop,
-            seek=self.config.seek,
-            duration=self.config.duration,
         )
-        # Open every stream before pinning the anchor, so setup time does not
-        # put the playback behind the wall clock from the start.
-        streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs
-        }
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
         # would spend that lead time emitting nothing.
         static: dict[str, DimosMsg] = {}
-        timed_streams: dict[str, Observable[DimosMsg]] = {}
+        timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
         timed_starts = []
-        for name, stream in streams.items():
-            if issubclass(self.outputs[name].type, TFMessage):
+        outputs = self.outputs
+        has_window = self.config.seek is not None or self.config.duration is not None
+        # Relative offsets use the whole recording, even when only one topic is published.
+        types = (
+            stream_payload_types(store) if has_window else {n: p.type for n, p in outputs.items()}
+        )
+        for name, payload_type in types.items():
+            stream: ReplayStream[DimosMsg] = replay.stream(name)
+            if issubclass(payload_type, TFMessage):
                 # Frozen frames describe the coordinate system even when their
                 # original source stamp is outside the selected time window.
                 rows = store.stream(name, TFMessage)
                 frozen, edges = _frozen_tf(rows)
                 if frozen.transforms:
-                    static[name] = frozen
+                    if name in outputs:
+                        static[name] = frozen
                     dynamic = rows.filter(partial(_has_dynamic_tf, edges))
                     try:
                         start = dynamic.order_by("ts").first().ts
                     except LookupError:
                         continue
-                    stream = streams[name] = replay.stream(
+                    stream = replay.stream(
                         name,
                         autocast=partial(_dynamic_tf, edges),
                         source=dynamic.time_range(start, float("inf")),
                     )
             elif stream.count() > 1 and stream.first_ts() == stream.last_ts():
-                message = stream.first()
-                if message is not None:
+                if name in outputs and (message := stream.first()) is not None:
                     static[name] = message
                 continue
             first_ts = stream.first_ts()
             if first_ts is not None:
                 timed_starts.append(first_ts)
-                timed_streams[name] = stream.observable(skip_late=False)
+                if name in outputs:
+                    timed_streams[name] = stream
+
+        if timed_starts and has_window:
+            replay.set_relative_window(
+                min(timed_starts), seek=self.config.seek, duration=self.config.duration
+            )
+            # Pin the wall clock to the first frame inside the requested window.
+            timed_starts = [
+                ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
+            ]
         for name, message in static.items():
             if isinstance(message, TFMessage):
-                self.outputs[name].publish(message)
+                outputs[name].publish(message)
         progress = ReplayProgress(str(path))
-        progress.start(replay, (streams[n] for n in timed_streams))
+        progress.start(replay, timed_streams.values())
         replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
-        for name, port in self.outputs.items():
+        for name, port in outputs.items():
             logger.info("Replaying %s -> %s", name, port)
             if name in static:
                 self.register_disposable(
@@ -196,7 +203,9 @@ class ReplayModule(Module):
                 )
             if name in timed_streams:
                 self.register_disposable(
-                    progress.track(timed_streams[name]).subscribe(port.publish)
+                    progress.track(timed_streams[name].observable(skip_late=False)).subscribe(
+                        port.publish
+                    )
                 )
         progress.seal()
 
