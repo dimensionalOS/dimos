@@ -348,28 +348,14 @@ class RelayBridgeModule(Module):
                         )
                     )
             self._manifest = manifest.model_dump()
-            self._url = self.config.relay_url or self.config.g.relay_url
+            self._url = self.config.effective_relay_url
             self._ca = self.config.relay_ca if self._url is not None else None
             self._key = self.config.relay_key if self._url is not None else None
-            if self._url is not None and self.config.serve_dir is not None:
-                raise RuntimeError(
-                    "serve_dir requires the spawned local relay (--local-relay); "
-                    "an external relay (--relay-url) cannot serve local files"
-                )
-            if self.config.rtc_file is not None:
-                if self._url is not None:
-                    raise RuntimeError(
-                        "rtc_file requires the spawned local relay (--local-relay); "
-                        "an external relay (--relay-url) carries its own Cloudflare configuration"
-                    )
-                if not Path(self.config.rtc_file).is_file():
-                    raise RuntimeError(f"rtc_file does not exist: {self.config.rtc_file}")
             if self._url is None:
                 # Probe before the (expensive) build: a start that will lose
                 # the port must not rewrite the dist a running relay serves.
                 probe_local_port(self.config.local_port)
-                # Before the build too: fail fast on a typo'd directory.
-                self._serve_dir = self._resolve_serve_dir()
+                self._serve_dir = Path(self.config.serve_dir) if self.config.serve_dir else None
                 if self.config.web_build:
                     try:
                         await self._build_web_dist()
@@ -401,18 +387,6 @@ class RelayBridgeModule(Module):
                         # An orphaned Deno child would outlive this process holding
                         # its port (it has no PDEATHSIG), so surface cleanup failure.
                         logger.exception("relay bridge: stopping the local relay failed")
-
-    def _resolve_serve_dir(self) -> Path | None:
-        """Validated config.serve_dir; a clean labeled error beats the
-        relay child dying with a stderr-tail dump."""
-        if self.config.serve_dir is None:
-            return None
-        path = Path(self.config.serve_dir)
-        if not path.is_dir():
-            raise RuntimeError(
-                f"serve_dir does not exist or is not a directory: {self.config.serve_dir}"
-            )
-        return path
 
     async def _build_web_dist(self) -> None:
         """Build the web dists (checkouts only) before spawning the relay.

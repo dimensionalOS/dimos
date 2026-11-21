@@ -207,6 +207,10 @@ export function installUnhandledRejectionGuard(): void {
 }
 
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
+  const port = options.port ?? 7780;
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new RangeError("--port must be an integer between 0 and 65535");
+  }
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
   const loopback = LOOPBACK_HOSTS.has(host);
@@ -279,7 +283,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       httpServer = Deno.serve(
         {
           hostname: host,
-          port: options.port ?? 7780,
+          port,
           onListen: () => {},
           cert: options.cert,
           key: options.key,
@@ -294,7 +298,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         await httpServer.shutdown();
         httpServer = undefined;
         if (
-          tls && options.port === 0 && e instanceof Deno.errors.AddrInUse &&
+          tls && port === 0 && e instanceof Deno.errors.AddrInUse &&
           attempt < EPHEMERAL_PORT_ATTEMPTS - 1
         ) continue;
         throw new Error(
