@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
 import os
 import socket
 import subprocess
+import sys
 import threading
 from typing import Any
 from urllib.parse import urlparse
@@ -37,37 +39,74 @@ logger = setup_logger()
 _VIEWER_RUST_LOG = "info,re_viewer::app=error,winit::platform_impl::linux::x11::window=warn"
 
 
+def _wayland_socket_fd(value: str) -> int:
+    """Return the borrowed descriptor if it is a connected Unix stream socket."""
+    fd = int(value)
+    display = socket.socket(fileno=fd)
+    try:
+        if display.family != socket.AF_UNIX or display.type != socket.SOCK_STREAM:
+            raise ValueError("expected a Unix stream socket")
+        display.getpeername()
+    finally:
+        display.detach()
+    return fd
+
+
+def _launch_native(command: list[str], wayland_fd: int | None) -> bool:
+    env = {**os.environ, "RUST_LOG": os.environ.get("RUST_LOG", _VIEWER_RUST_LOG)}
+    if wayland_fd is not None:
+        env["WAYLAND_SOCKET"] = str(wayland_fd)
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=None if wayland_fd == 0 else subprocess.DEVNULL,
+            start_new_session=True,
+            env=env,
+            pass_fds=(wayland_fd,) if wayland_fd is not None else (),
+        )
+    except FileNotFoundError:
+        return False
+    except OSError:
+        logger.warning("Failed to launch %s", command[0], exc_info=True)
+        return False
+
+    # The viewer outlives the bridge; reap it if it closes before this process exits.
+    threading.Thread(target=process.wait, name="dimos-viewer-reaper", daemon=True).start()
+    return True
+
+
 def spawn_viewer(
     server_uri: str, memory_limit: str, websocket_url: str = RERUN_WEBSOCKET_URL
 ) -> bool:
     """Launch our custom viewer directly, falling back to stock Rerun if unavailable."""
-    try:
-        process = subprocess.Popen(
-            [
-                find_executable("dimos-viewer") or "dimos-viewer",
-                "--connect",
-                server_uri,
-                "--ws-url",
-                websocket_url,
-                "--memory-limit",
-                memory_limit,
-                "--expect-data-soon",
-            ],
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            env={**os.environ, "RUST_LOG": os.environ.get("RUST_LOG", _VIEWER_RUST_LOG)},
-        )
-    except FileNotFoundError:
-        pass
-    except OSError:
-        logger.warning(
-            "dimos-viewer failed to spawn, falling back to stock rerun",
-            exc_info=True,
-        )
-    else:
-        # The viewer outlives the bridge; reap it if it closes before this process exits.
-        threading.Thread(target=process.wait, name="dimos-viewer-reaper", daemon=True).start()
+    wayland_fd = None
+    if sys.platform == "linux":
+        if (value := os.environ.get("WAYLAND_SOCKET")) is not None:
+            try:
+                wayland_fd = _wayland_socket_fd(value)
+            except (OSError, ValueError, OverflowError) as exc:
+                logger.info("Cannot use WAYLAND_SOCKET for the native Rerun viewer: %s", exc)
+                return False
+        elif not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            logger.info("No Linux display available for the native Rerun viewer")
+            return False
+
+    options = ["--connect", server_uri, "--memory-limit", memory_limit, "--expect-data-soon"]
+    custom = find_executable("dimos-viewer") or "dimos-viewer"
+    if _launch_native([custom, *options, "--ws-url", websocket_url], wayland_fd):
         return True
+
+    if wayland_fd is not None:
+        # Both rr.spawn and the stock Python CLI wrapper can close the display descriptor.
+        # Use the same executable (or override) as rerun_cli and pass the socket directly.
+        stock = os.environ.get("RERUN_CLI_PATH")
+        if stock is None:
+            try:
+                stock = str(files("rerun_cli").joinpath("rerun"))
+            except ModuleNotFoundError:
+                logger.info("The stock Rerun viewer is unavailable")
+                return False
+        return _launch_native([stock, *options], wayland_fd)
 
     import rerun as rr
 

@@ -16,7 +16,9 @@
 
 import os
 import shutil
+import socket
 import subprocess
+import sys
 import threading
 from unittest.mock import ANY
 
@@ -50,10 +52,95 @@ class TestViewerBinaryInstallation:
 
 
 class TestViewerLaunch:
-    @pytest.mark.parametrize("beside_interpreter", [True, False])
-    def test_custom_viewer_connects_without_sdk_version_check(
-        self, mocker, monkeypatch, tmp_path, beside_interpreter
+    @pytest.fixture(autouse=True)
+    def graphical_session(self, monkeypatch):
+        monkeypatch.delenv("WAYLAND_SOCKET", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        monkeypatch.setenv("DISPLAY", ":0")
+
+    def test_displayless_linux_skips_native_viewers(self, mocker, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "linux")
+        for name in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET"):
+            monkeypatch.delenv(name, raising=False)
+        launch = mocker.patch.object(subprocess, "Popen")
+        sdk_spawn = mocker.patch.object(rr, "spawn")
+
+        assert not spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
+
+        launch.assert_not_called()
+        sdk_spawn.assert_not_called()
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="Wayland passes a Unix socket descriptor")
+    @pytest.mark.parametrize("binary", ["dimos-viewer", "rerun"])
+    def test_viewer_receives_the_wayland_socket(self, monkeypatch, tmp_path, binary):
+        monkeypatch.delenv("DISPLAY")
+        monkeypatch.delenv("RERUN_CLI_PATH", raising=False)
+        if binary == "rerun":
+            monkeypatch.setattr(
+                "dimos.visualization.rerun.init.find_executable",
+                lambda name: str(tmp_path / "missing")
+                if name == "dimos-viewer"
+                else shutil.which(name),
+            )
+        display, compositor = socket.socketpair()
+        with display, compositor:
+            monkeypatch.setenv("WAYLAND_SOCKET", str(display.fileno()))
+            compositor.settimeout(10)
+            assert spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
+            # The actual viewer must issue a wl_display request on the inherited connection.
+            header = compositor.recv(8, socket.MSG_WAITALL)
+            assert len(header) == 8
+            assert int.from_bytes(header[:4], sys.byteorder) == 1
+            assert not os.get_inheritable(display.fileno())
+
+    @pytest.mark.skipif(os.name != "posix", reason="requires Unix file descriptors")
+    @pytest.mark.parametrize("value", ["invalid", "closed", "file", "unconnected"])
+    def test_unusable_wayland_socket_skips_both_viewers(self, monkeypatch, mocker, tmp_path, value):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.delenv("DISPLAY")
+        with (
+            (tmp_path / "regular").open("w") as plain,
+            socket.socket(socket.AF_UNIX) as unconnected,
+        ):
+            closed = os.dup(plain.fileno())
+            os.close(closed)
+            invalid = {
+                "invalid": "unknown",
+                "closed": str(closed),
+                "file": str(plain.fileno()),
+                "unconnected": str(unconnected.fileno()),
+            }
+            monkeypatch.setenv("WAYLAND_SOCKET", invalid[value])
+            launch = mocker.patch.object(subprocess, "Popen")
+            sdk_spawn = mocker.patch.object(rr, "spawn")
+            assert not spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
+            launch.assert_not_called()
+            sdk_spawn.assert_not_called()
+
+    @pytest.mark.skipif(os.name != "posix", reason="requires Unix file descriptors")
+    def test_unavailable_socket_viewers_allow_headless_operation(
+        self, monkeypatch, mocker, tmp_path
     ):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.delenv("DISPLAY")
+        missing = str(tmp_path / "missing-viewer")
+        monkeypatch.setenv("RERUN_CLI_PATH", missing)
+        monkeypatch.setattr("dimos.visualization.rerun.init.find_executable", lambda _: missing)
+        sdk_spawn = mocker.patch.object(rr, "spawn")
+        display, compositor = socket.socketpair()
+        with display, compositor:
+            monkeypatch.setenv("WAYLAND_SOCKET", str(display.fileno()))
+            assert not spawn_viewer("rerun+http://127.0.0.1:9877/proxy", "25%")
+            sdk_spawn.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("beside_interpreter", "display_variable"), [(True, "DISPLAY"), (False, "WAYLAND_DISPLAY")]
+    )
+    def test_custom_viewer_connects_without_sdk_version_check(
+        self, mocker, monkeypatch, tmp_path, beside_interpreter, display_variable
+    ):
+        monkeypatch.delenv("DISPLAY")
+        monkeypatch.setenv(display_variable, ":0" if display_variable == "DISPLAY" else "wayland-1")
         monkeypatch.delenv("RUST_LOG", raising=False)
         monkeypatch.setenv("PATH", "")
         # The viewer beside the interpreter is launched, whatever PATH holds.
@@ -78,15 +165,16 @@ class TestViewerLaunch:
                 str(viewer) if beside_interpreter else "dimos-viewer",
                 "--connect",
                 server_uri,
-                "--ws-url",
-                "ws://localhost:4321/ws",
                 "--memory-limit",
                 "25%",
                 "--expect-data-soon",
+                "--ws-url",
+                "ws://localhost:4321/ws",
             ],
             stdin=subprocess.DEVNULL,
             start_new_session=True,
             env=ANY,
+            pass_fds=(),
         )
         assert launch.call_args.kwargs["env"]["RUST_LOG"] == _VIEWER_RUST_LOG
         sdk_spawn.assert_not_called()
