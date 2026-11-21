@@ -12,15 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import AbstractContextManager, nullcontext
+import os
 from pathlib import Path
+import socket
+import sys
 from typing import Literal
 
+from pydantic import Field
+
+from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig
+
+
+def inherited_wayland_socket() -> AbstractContextManager[socket.socket | None]:
+    """Return a scoped duplicate of the connected Wayland stream, if supplied."""
+    value = os.getenv("WAYLAND_SOCKET")
+    if sys.platform == "linux" and value is not None:
+        try:
+            inherited = socket.socket(fileno=int(value))
+            try:
+                if inherited.family == socket.AF_UNIX and inherited.type == socket.SOCK_STREAM:
+                    inherited.getpeername()
+                    # The simulator redirects stdout/stderr, even if one is the inherited socket.
+                    return inherited.dup()
+            finally:
+                inherited.detach()
+        except (OSError, ValueError, OverflowError):
+            pass
+    return nullcontext()
+
+
+def _headless_by_default() -> bool:
+    if global_config.viewer == "none":
+        return True
+    if sys.platform != "linux" or os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"):
+        return False
+    with inherited_wayland_socket() as display:
+        return display is None
 
 
 class MujocoConfig(BaseConfig):
     """Settings for the Unitree MuJoCo subprocess."""
 
+    headless: bool = Field(
+        default_factory=_headless_by_default,
+        description="Disable the MuJoCo window. Defaults on for viewer none or displayless Linux.",
+    )
     camera_position: tuple[float, float, float, float, float, float] = (
         -0.906,
         0.008,

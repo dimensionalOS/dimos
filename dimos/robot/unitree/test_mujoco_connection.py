@@ -14,9 +14,12 @@
 
 from collections.abc import Callable, Iterator
 from io import BytesIO
+import os
+import socket
 import subprocess
 import sys
 import threading
+import time
 from typing import Any
 
 # Imported before subprocess.Popen is patched: mujoco's own import spawns a subprocess.
@@ -29,6 +32,7 @@ from pytest_mock import MockerFixture
 import structlog
 from structlog.testing import LogCapture
 
+from dimos.core.global_config import global_config
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -120,7 +124,9 @@ class _QuietProcess:
         self.terminate()
 
 
-def _bare_connection(monkeypatch: MonkeyPatch, popen: Callable[..., Any]) -> MujocoConnection:
+def _bare_connection(
+    monkeypatch: MonkeyPatch, popen: Callable[..., Any], config: MujocoConfig | None = None
+) -> MujocoConnection:
     """A MujocoConnection whose subprocess, shared memory and logging are doubles."""
     monkeypatch.setattr(mujoco_connection, "ensure_menagerie", lambda: None)
     monkeypatch.setattr(mujoco_connection, "get_data", lambda _name: None)
@@ -128,7 +134,7 @@ def _bare_connection(monkeypatch: MonkeyPatch, popen: Callable[..., Any]) -> Muj
     monkeypatch.setattr(mujoco_connection.subprocess, "Popen", popen)
     monkeypatch.setattr(mujoco_connection.atexit, "register", lambda *_args: None)
     monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
-    return MujocoConnection(MujocoConfig())
+    return MujocoConnection(config or MujocoConfig())
 
 
 def test_start_drains_subprocess_output_larger_than_a_pipe(
@@ -354,3 +360,100 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
     np.testing.assert_allclose(message.points_f32(), points)
 
     assert quiet_connection.get_lidar_message() is None  # same frame again
+
+
+@pytest.mark.self_hosted
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux EGL offscreen rendering")
+@pytest.mark.parametrize("robot", ["unitree_go2", "unitree_g1"])
+def test_headless_simulation_delivers_frames(robot: str, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("MUJOCO_GL", raising=False)
+    monkeypatch.setattr(global_config, "viewer", "none")
+
+    connection = MujocoConnection(MujocoConfig(), robot_model=robot)
+    try:
+        connection.start()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if (
+                connection.get_video_frame() is not None
+                and connection.get_odom_message() is not None
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("No simulated image and odometry received")
+    finally:
+        connection.stop()
+
+
+@pytest.mark.parametrize(
+    ("platform", "viewer", "display", "override", "backend", "headless", "child_backend"),
+    [
+        ("linux", "rerun", None, None, None, True, "egl"),
+        ("linux", "rerun", "DISPLAY", None, None, False, None),
+        ("linux", "rerun", "WAYLAND_DISPLAY", None, None, False, None),
+        ("linux", "none", "DISPLAY", None, None, True, "egl"),
+        ("linux", "rerun", "DISPLAY", True, "osmesa", True, "osmesa"),
+        ("linux", "none", "DISPLAY", False, None, False, None),
+        ("darwin", "rerun", None, True, None, True, None),
+        ("darwin", "rerun", None, None, None, False, None),
+    ],
+)
+def test_simulator_window_and_renderer(
+    monkeypatch: MonkeyPatch,
+    mocker: MockerFixture,
+    platform: str,
+    viewer: str,
+    display: str | None,
+    override: bool | None,
+    backend: str | None,
+    headless: bool,
+    child_backend: str | None,
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(global_config, "viewer", viewer)
+    monkeypatch.setattr(mujoco_connection, "find_executable", lambda name: name)
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "MUJOCO_GL"):
+        monkeypatch.delenv(key, raising=False)
+    if display:
+        monkeypatch.setenv(display, ":1")
+    if backend:
+        monkeypatch.setenv("MUJOCO_GL", backend)
+    config = MujocoConfig() if override is None else MujocoConfig(headless=override)
+    popen = mocker.Mock(return_value=_QuietProcess())
+    connection = _bare_connection(monkeypatch, popen, config)
+    try:
+        assert connection.config.headless is headless
+        assert popen.call_args.kwargs["env"].get("MUJOCO_GL") == child_backend
+        assert os.getenv("MUJOCO_GL") == backend
+        executable = "mjpython" if platform == "darwin" and not headless else sys.executable
+        assert popen.call_args.args[0][0] == executable
+    finally:
+        connection.stop()
+
+
+def test_viewer_child_can_use_inherited_wayland_socket(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(global_config, "viewer", "rerun")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    real_popen = subprocess.Popen
+
+    def viewer(command: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        probe = "import os; os.write(int(os.environ['WAYLAND_SOCKET']), b'x')"
+        return real_popen([command[0], "-c", probe], **kwargs)
+
+    display, peer = socket.socketpair()
+    with display, peer:
+        monkeypatch.setenv("WAYLAND_SOCKET", str(display.fileno()))
+        connection = _bare_connection(monkeypatch, viewer)
+        try:
+            assert not connection.config.headless
+            assert connection.process is not None
+            assert connection.process.wait(timeout=5) == 0
+            peer.settimeout(5)
+            assert peer.recv(1) == b"x"
+        finally:
+            connection.stop()
