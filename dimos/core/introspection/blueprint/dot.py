@@ -161,9 +161,9 @@ def render(
             # Apply remapping
             remapped_name = blueprint_set.remapping_map.get((bp.name, conn.name), conn.name)
             key = (remapped_name, conn.type)
-            if conn.direction == "out":
+            if conn.can_publish:
                 producers[key].append(bp.module)  # type: ignore[index]
-            else:
+            if conn.can_subscribe:
                 consumers[key].append(bp.module)  # type: ignore[index]
 
     # Find all active channels (have both producers AND consumers)
