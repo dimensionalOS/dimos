@@ -71,9 +71,15 @@ class ReplayProgress:
         )
 
     def play(self, stream: ReplayStream[T]) -> Observable[T]:
-        """Prime the cursor now and start its clock when all selected streams are ready."""
+        """Start initial subscribers together and let later subscribers join the running clock."""
 
-        return self.track(stream.observable(skip_late=False, start_on=self._ready))
+        def factory(_scheduler: SchedulerBase | None) -> Observable[T]:
+            with self._lock:
+                if self._sealed:
+                    return stream.observable()
+            return stream.observable(skip_late=False, start_on=self._ready)
+
+        return self.track(defer(factory))
 
     def track(self, source: Observable[T]) -> Observable[T]:
         def factory(_scheduler: SchedulerBase | None) -> Observable[T]:
@@ -93,10 +99,10 @@ class ReplayProgress:
         with self._lock:
             if self._sealed:
                 return
+            if self._anchor is not None:
+                replay, ts = self._anchor
+                replay.pin_anchor(ts)
             self._sealed = True
-        if self._anchor is not None:
-            replay, ts = self._anchor
-            replay.pin_anchor(ts)
         self._ready.on_next(None)
         self._ready.on_completed()
         self._maybe_finish()

@@ -682,3 +682,19 @@ def test_direct_sensor_subscriptions_start_together_at_seal(staggered_sensor_rec
         scheduler.advance_by(2)
 
     assert received == [(0.5, 10.0), (1.0, 10.5), (1.5, 11.0)]
+
+
+def test_late_subscriber_joins_the_running_sensor_clock(staggered_sensor_recording, mocker):
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: scheduler.clock))
+    received = []
+    with go2_conn.ReplayConnection(dataset=str(staggered_sensor_recording)) as connection:
+        odom = connection.odom_stream()
+        with odom.subscribe(scheduler=scheduler):
+            connection.seal_subscriptions()
+            scheduler.advance_to(0.5)
+            with odom.subscribe(
+                lambda msg: received.append((scheduler.clock, msg.ts)), scheduler=scheduler
+            ):
+                scheduler.advance_to(2.0)
+    assert received == [(1.0, 11.0)]
