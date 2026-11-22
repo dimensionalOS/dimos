@@ -138,10 +138,34 @@ def test_a_step_that_barely_moves_is_stuck_and_skips_overshoot_and_settle(
 def test_a_buzzing_rest_fails(rng: np.random.Generator, noise: RestNoise) -> None:
     kp, kd = 30.0, 1.55
     t, q, dq = simulate(kp, kd)
-    buzz = 0.05 * np.sin(2 * math.pi * 5 * t)
-    q, dq = noisy(rng, q + buzz, dq + 0.05 * 2 * math.pi * 5 * np.cos(2 * math.pi * 5 * t))
+    buzz = 0.2 * np.sin(2 * math.pi * 5 * t)
+    q, dq = noisy(rng, q + buzz, dq + 0.2 * 2 * math.pi * 5 * np.cos(2 * math.pi * 5 * t))
     metrics = analyze_step(event(kp, kd), t, q, dq, noise, **ANALYSIS)
     assert metrics.buzzing and any("buzzes" in reason for reason in metrics.failures)
+
+
+@pytest.mark.parametrize(
+    ("rms", "rest_peak", "limit", "buzzing"),
+    [
+        (0.43, 0.42, 1.26, False),
+        (2.0, 0.42, 1.26, True),
+        (82.98, 1.26, 3.78, True),
+        (1.1, 0.5, 1.5, False),
+        (0.9, 0.2, 1.0, False),
+        (1.1, 0.2, 1.0, True),
+    ],
+)
+def test_a_step_buzzes_past_one_deg_s_and_three_times_its_rest_peak(
+    rms: float, rest_peak: float, limit: float, buzzing: bool
+) -> None:
+    kp, kd = 30.0, 2.0 * math.sqrt(30.0 * INERTIA)
+    t, q, _ = simulate(kp, kd)
+    dq = rms * math.sqrt(2.0) * np.sin(2 * math.pi * 10 * t)
+    rest = RestNoise(window_s=0.49, band_deg=0.01, speed_peak_deg_s=rest_peak)
+    metrics = analyze_step(event(kp, kd), t, q, dq, rest, **ANALYSIS)
+    assert metrics.buzz_rms_deg_s == pytest.approx(rms) and metrics.buzzing is buzzing
+    buzz = f"+2 deg step buzzes at {rms:.2f} deg/s RMS (limit {limit:.2f})"
+    assert metrics.failures == ((buzz,) if buzzing else ())
 
 
 def test_samples_that_stop_short_or_are_not_finite_raise(noise: RestNoise) -> None:
