@@ -23,8 +23,6 @@ from dimos.control.contract.convert import (
     imu_to_values,
     joint_state_from_values,
     joint_state_to_values,
-    motor_command_from_values,
-    motor_command_to_values,
     motor_joints,
 )
 from dimos.control.contract.keys import Interface
@@ -32,7 +30,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 
 
 def test_a_joint_state_gives_only_the_fields_asked_for() -> None:
@@ -83,28 +80,6 @@ def test_motor_joints_are_the_models_moving_joints_named_in_full() -> None:
     assert motor_joints(model, "g1") == ["g1/left_knee", "g1/right_knee"]
     named = model.with_renamed_joints({"left_knee": "g1/left_knee", "right_knee": "g1/right_knee"})
     assert motor_joints(named, "g1") == ["g1/left_knee", "g1/right_knee"]
-
-
-def test_a_motor_command_round_trips_in_joint_order() -> None:
-    joints = ["g1/a", "g1/b"]
-    msg = MotorCommandArray(q=[0.1, 0.2], dq=[0.3, 0.4], kp=[10, 20], kd=[1, 2], tau=[5, 6])
-    values = motor_command_to_values(msg, joints)
-    assert values["g1/b/position"] == 0.2
-    assert values["g1/a/effort"] == 5.0
-    assert values["g1/b/kd"] == 2.0
-    assert len(values) == 10
-    back = motor_command_from_values(values, joints, ts=7.0)
-    assert (back.q, back.dq, back.kp, back.kd, back.tau) == (msg.q, msg.dq, msg.kp, msg.kd, msg.tau)
-    assert back.timestamp == 7.0
-
-
-def test_a_motor_command_of_the_wrong_size_or_missing_values_raises() -> None:
-    with pytest.raises(ValueError, match="1 joints, expected 2"):
-        motor_command_to_values(MotorCommandArray(q=[0.1]), ["g1/a", "g1/b"])
-    with pytest.raises(ValueError, match=r"missing values \['g1/a/kd'\]"):
-        motor_command_from_values(
-            {"g1/a/position": 0, "g1/a/velocity": 0, "g1/a/effort": 0, "g1/a/kp": 0}, ["g1/a"]
-        )
 
 
 def test_an_imu_round_trips_all_ten_readings() -> None:

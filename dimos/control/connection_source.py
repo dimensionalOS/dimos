@@ -45,7 +45,6 @@ from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.task import ControlMode, JointStateSnapshot, MotorCommand
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -54,7 +53,6 @@ Values = dict[str, float]
 
 POSITION_COMMAND = "position_command"
 VELOCITY_COMMAND = "velocity_command"
-MOTOR_COMMAND = "motor_command"
 JOINT_STATE = "joint_state"
 IMU = "imu"
 
@@ -63,7 +61,6 @@ IMU = "imu"
 COMMAND_PORTS: Mapping[str, type] = {
     POSITION_COMMAND: JointState,
     VELOCITY_COMMAND: JointState,
-    MOTOR_COMMAND: MotorCommandArray,
 }
 #: The kinds of port a coordinator reads a robot's readings from, each with
 #: the message it carries. Named ``<robot>_<kind>`` too.
@@ -139,9 +136,9 @@ class ConnectionSource:
             stiffness, so tasks such as hand guiding may follow them by hand.
 
     Raises:
-        ValueError: If the coordinator cannot drive it: no reading port, a
-            motor port, joints that can neither take a velocity nor be held
-            at a position they report, or joint ports without a model.
+        ValueError: If the coordinator cannot drive it: no reading port,
+            joints that can neither take a velocity nor be held at a
+            position they report, or joint ports without a model.
     """
 
     def __init__(
@@ -156,11 +153,6 @@ class ConnectionSource:
         robot = config.source
         if commands and not readings:
             raise ValueError(f"{robot!r} reports nothing; it needs a reading port")
-        if MOTOR_COMMAND in commands:
-            raise ValueError(
-                f"{robot!r}: {robot}_{MOTOR_COMMAND} needs stiffness and damping, "
-                "which the coordinator cannot send"
-            )
         table = limits_of(config)
         self._robot = robot
         self._timeout = reading_timeout_s

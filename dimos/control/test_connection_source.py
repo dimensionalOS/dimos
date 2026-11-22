@@ -415,8 +415,6 @@ def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
 def test_a_robot_it_cannot_drive_is_refused() -> None:
     with pytest.raises(ValueError, match="reports nothing"):
         arm(readings=())
-    with pytest.raises(ValueError, match="arm_motor_command needs stiffness"):
-        arm(commands=("motor_command",))
     with pytest.raises(ValueError, match="cannot be held"):
         arm(commands=("position_command",), readings=("odom",))
     with pytest.raises(ValueError, match="told nothing"):

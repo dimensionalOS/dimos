@@ -15,7 +15,7 @@
 """Turn the standard robot messages into named values, and back.
 
 Connection modules and the coordinator talk in standard messages
-(``JointState``, ``MotorCommandArray``, ``Imu``).
+(``JointState``, ``Imu``).
 Inside, both work with named values such as ``{"arm/joint1/position": 0.3}``.
 These functions convert between the two, and both sides use the same ones, so
 they always agree on what each field means.
@@ -37,12 +37,11 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from dimos.control.contract.keys import SEPARATOR, Interface
-from dimos.control.contract.limits import PD_INTERFACES, movable_joints
+from dimos.control.contract.limits import movable_joints
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 
 if TYPE_CHECKING:
     from dimos.robot.assets.model import RobotModel
@@ -69,12 +68,8 @@ IMU_INTERFACES: tuple[Interface, ...] = (
 
 
 def motor_joints(model: RobotModel, source: str) -> list[str]:
-    """The joints a MotorCommandArray carries, in its order: every joint of
-    the model that moves, named in full, e.g. "g1/left_knee".
-
-    The message has no names, so the sender and the connection module must
-    both build the order with this.
-    """
+    """Every joint of the model that moves, in model order, named in full,
+    e.g. "g1/left_knee"."""
     return [
         joint.name if SEPARATOR in joint.name else f"{source}{SEPARATOR}{joint.name}"
         for joint in movable_joints(model)
@@ -145,38 +140,6 @@ def joint_state_from_values(
         velocity=columns.get(Interface.VELOCITY),
         effort=columns.get(Interface.EFFORT),
     )
-
-
-def motor_command_to_values(msg: MotorCommandArray, joints: Sequence[str]) -> dict[str, float]:
-    """Joint values from a MotorCommandArray.
-
-    Args:
-        msg: One entry per joint: target position ``q`` (rad), speed ``dq``
-            (rad/s), extra torque ``tau`` (Nm), stiffness ``kp``, damping ``kd``.
-        joints: The joint each entry is for, from ``motor_joints``.
-
-    Raises:
-        ValueError: If the message is not one entry per joint.
-    """
-    if msg.num_joints != len(joints) or len(msg.q) != len(joints):
-        raise ValueError(f"MotorCommandArray has {len(msg.q)} joints, expected {len(joints)}")
-    # The message's columns, in the order of PD_INTERFACES.
-    columns = (msg.q, msg.dq, msg.tau, msg.kp, msg.kd)
-    return {
-        _key(joint, interface): float(column[i])
-        for i, joint in enumerate(joints)
-        for interface, column in zip(PD_INTERFACES, columns, strict=True)
-    }
-
-
-def motor_command_from_values(
-    values: Mapping[str, float], joints: Sequence[str], ts: float | None = None
-) -> MotorCommandArray:
-    """A MotorCommandArray from each joint's position, velocity, effort, kp
-    and kd, in the order of ``joints`` (from ``motor_joints``)."""
-    _require(values, joints, PD_INTERFACES)
-    q, dq, tau, kp, kd = ([values[_key(j, i)] for j in joints] for i in PD_INTERFACES)
-    return MotorCommandArray(q=q, dq=dq, kp=kp, kd=kd, tau=tau, timestamp=ts)
 
 
 def imu_to_values(imu: Imu, sensor: str) -> dict[str, float]:
