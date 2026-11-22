@@ -257,6 +257,7 @@ Default behavior: send SIGTERM and wait up to 30s before SIGKILL. This gives wor
 ### `dimos restart`
 
 Restart the running instance with the same original arguments.
+The replacement reloads the dotenv files for its working directory and preserves explicit environment overrides.
 
 ```bash
 dimos restart [--force]

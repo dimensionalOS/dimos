@@ -23,10 +23,10 @@ from dotenv.main import DotEnv
 
 
 @cache
-def load_project_dotenv() -> dict[str, str]:
+def _load_project_dotenv() -> tuple[dict[str, str], set[str]]:
     """Load project values before installation defaults and remember them for the agent filter."""
     if "PYTEST_VERSION" in os.environ:
-        return {}
+        return {}, set()
 
     project = Path.cwd() / ".env"
     paths = [project]
@@ -47,6 +47,7 @@ def load_project_dotenv() -> dict[str, str]:
             if value is not None and inherited.get(name) == value:
                 dotenv[name] = value
 
+    injected: set[str] = set()
     for name in os.environ.keys() - inherited.keys():
         if name.upper().startswith("HOST__"):
             # HostConfig reads the machine checkout's own file.
@@ -54,4 +55,20 @@ def load_project_dotenv() -> dict[str, str]:
         else:
             # Keep the actual value after dotenv interpolation and shell overrides.
             dotenv[name] = os.environ[name]
-    return dotenv
+            injected.add(name)
+    return dotenv, injected
+
+
+def load_project_dotenv() -> dict[str, str]:
+    """Return values used by the agent's environment filter."""
+    return _load_project_dotenv()[0]
+
+
+def restart_environment() -> dict[str, str]:
+    """A new CLI resolves its project from the caller's current shell exports."""
+    dotenv, injected = _load_project_dotenv()
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name not in injected or dotenv[name] != value
+    }

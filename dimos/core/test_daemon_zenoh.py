@@ -79,10 +79,14 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: st
     }
     cwd = None
     if blueprint == "demo-mcp-stress-test":
-        # Exercise a dotenv-only registry path from outside the checkout.
+        # Exercise a dotenv-only registry path from outside the checkout. Import
+        # the CLI from here too, so the installation lookup ends at this file
+        # instead of reading the developer's .env.
+        (tmp_path / "dimos").symlink_to(Path(__file__).resolve().parents[1])
         (tmp_path / ".env").write_text(f"XDG_STATE_HOME={env.pop('XDG_STATE_HOME')}\n")
         env.pop("PYTEST_VERSION", None)
         env["HOME"] = str(tmp_path / "home")
+        env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), env.get("PYTHONPATH", "")])
         cwd = tmp_path
     # File, not pipe: the daemon's forkserver inherits the CLI's stdout/stderr
     # and holds them open forever, so a pipe would block subprocess.run.

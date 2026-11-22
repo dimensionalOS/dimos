@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 import typer
 
+from dimos.cli.project_env import restart_environment
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.coordination.coordinator_rpc import CoordinatorAlreadyRunningError
 from dimos.core.daemon import (
@@ -546,7 +547,7 @@ def restart(
 
     typer.echo(f"  Running: {' '.join(argv)}")
     try:
-        os.execvp(argv[0], argv)
+        os.execvpe(argv[0], argv, restart_environment())
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)
