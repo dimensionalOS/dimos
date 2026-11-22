@@ -28,7 +28,7 @@ from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
-from dimos.control.task import ControlMode
+from dimos.control.task import ControlMode, JointImpedance
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -267,6 +267,9 @@ def test_a_task_driving_a_joint_in_a_way_it_does_not_accept_raises() -> None:
 
     with pytest.raises(ValueError, match="velocity"):
         source.command({J1: (0.2, ControlMode.VELOCITY)})
+    impedance = JointImpedance(position=0.2, velocity=None, effort=None, stiffness=10, damping=None)
+    with pytest.raises(ValueError, match="takes no IMPEDANCE command"):
+        source.command({J1: (impedance, ControlMode.IMPEDANCE)})
 
 
 def test_each_kind_of_command_goes_to_its_own_port() -> None:

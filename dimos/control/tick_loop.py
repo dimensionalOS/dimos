@@ -37,6 +37,7 @@ from dimos.control.task import (
     ControlTask,
     CoordinatorState,
     JointCommandOutput,
+    JointImpedance,
     JointStateSnapshot,
     ResourceClaim,
     SensorStateSnapshot,
@@ -62,7 +63,7 @@ class JointWinner(NamedTuple):
     """Tracks the winning task for a joint during arbitration."""
 
     priority: int
-    value: float
+    value: float | JointImpedance  # JointImpedance exactly when mode is IMPEDANCE
     mode: ControlMode
     task_name: str
 
@@ -294,7 +295,7 @@ class TickLoop:
         self,
         commands: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]],
     ) -> tuple[
-        dict[str, tuple[float, ControlMode, str]],
+        dict[str, tuple[float | JointImpedance, ControlMode, str]],
         dict[str, dict[str, str]],
     ]:
         """Per-joint arbitration with mode conflict detection.
@@ -312,11 +313,13 @@ class TickLoop:
                 continue
 
             values = output.get_values()
-            if values is None:
+            if values is None and output.mode is not ControlMode.IMPEDANCE:
                 continue
 
             for i, joint_name in enumerate(output.joint_names):
-                candidate = JointWinner(claim.priority, values[i], output.mode, task.name)
+                # values is None here only for an IMPEDANCE output.
+                value = output.impedance(i) if values is None else values[i]
+                candidate = JointWinner(claim.priority, value, output.mode, task.name)
 
                 # First claim on this joint
                 if joint_name not in winners:
@@ -401,7 +404,7 @@ class TickLoop:
 
     def _write_all_connections(
         self,
-        joint_commands: dict[str, tuple[float, ControlMode, str]],
+        joint_commands: dict[str, tuple[float | JointImpedance, ControlMode, str]],
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -424,11 +427,15 @@ class TickLoop:
                     for joint, (value, mode, _) in joint_commands.items()
                     if self._joint_to_hardware.get(joint) == name
                 }
-                positions.update(
-                    (joint, winners[joint][0])
-                    for joint in source.joint_names
-                    if joint in winners and winners[joint][1] in _POSITION_MODES
-                )
+                for joint in source.joint_names:
+                    if joint not in winners:
+                        continue
+                    value, mode = winners[joint]
+                    if isinstance(value, JointImpedance):
+                        if value.position is not None:
+                            positions[joint] = value.position
+                    elif mode in _POSITION_MODES:
+                        positions[joint] = value
                 try:
                     publish(name, source.command(winners))
                 except Exception as e:

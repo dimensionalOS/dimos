@@ -42,7 +42,7 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
 from dimos.control.contract.limits import Limits, limits as limits_of
-from dimos.control.task import ControlMode, JointStateSnapshot
+from dimos.control.task import ControlMode, JointImpedance, JointStateSnapshot
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -402,7 +402,7 @@ class ConnectionSource:
 
     def command(
         self,
-        winners: Mapping[str, tuple[float, ControlMode]],
+        winners: Mapping[str, tuple[float | JointImpedance, ControlMode]],
     ) -> Values:
         """The complete command to send the robot this tick, by key.
 
@@ -413,10 +413,10 @@ class ConnectionSource:
 
         Raises:
             ValueError: If a task drives a joint in a way it does not accept,
-                e.g. by velocity when it only takes a position, tells it a
-                position outside its limit, or tells a joint a non-finite
-                speed. The robot then gets no command this tick and its holds
-                are left as they were.
+                e.g. by velocity when it only takes a position, or by IMPEDANCE;
+                tells it a position outside its limit; or tells a joint a
+                non-finite speed. The robot then gets no command this tick and
+                its holds are left as they were.
         """
         interfaces = {name: _INTERFACE_BY_MODE.get(mode) for name, (_, mode) in winners.items()}
         # Check every task value first: the connection module refuses the
@@ -427,6 +427,8 @@ class ConnectionSource:
             if name not in joints:
                 raise ValueError(f"Unknown joint {name}")
             joint = joints[name]
+            if isinstance(value, JointImpedance):
+                raise ValueError(f"{name}: {self._robot!r} takes no IMPEDANCE command")
             interface = interfaces[name]
             if interface is None or interface not in joint.command_keys:
                 raise ValueError(f"{joint.name} cannot be told its {interface}")
@@ -446,6 +448,7 @@ class ConnectionSource:
                 interface = interfaces[joint.name]
                 assert interface is not None
                 value, _ = winners[joint.name]
+                assert not isinstance(value, JointImpedance)
                 limit = self._limits[joint.command_keys[interface]]
                 if limit.clamp:
                     assert limit.lo is not None and limit.hi is not None
