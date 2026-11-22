@@ -1,20 +1,20 @@
 # FlowBase
 
-Holonomic base control over Portal RPC. Coordinator side lives here; the
-driver runs on the i2rt base.
+Holonomic base control over Portal RPC. `FlowBaseConnection`
+([connection.py](connection.py)) lives here; the driver runs on the i2rt base.
 
 ## External system
 
 ```mermaid
 flowchart LR
     subgraph NUC["Dev NUC"]
-        CC["ControlCoordinator"]
+        CC["ControlCoordinator"] --> FC["FlowBaseConnection"]
     end
-    NUC <-->|"Portal RPC @ 172.6.2.20:11323<br/>set_target_velocity / get_odometry"| PI["FlowBase Pi<br/>(driver as systemd, off-NUC)"]
+    FC <-->|"Portal RPC @ 172.6.2.20:11323<br/>set_target_velocity / get_odometry"| PI["FlowBase Pi<br/>(driver as systemd, off-NUC)"]
 ```
 
-The base driver is off-NUC. The dev NUC runs the ControlCoordinator, which
-speaks Portal RPC to the Pi.
+The base driver is off-NUC. The dev NUC runs the ControlCoordinator and
+`FlowBaseConnection`, which speaks Portal RPC to the Pi.
 
 ## 1. FlowBase driver
 
@@ -53,21 +53,25 @@ dimos run coordinator-flowbase
 dimos run coordinator-flowbase-keyboard-teleop
 ```
 
-Both use the `flowbase` adapter against `172.6.2.20:11323` and
-publish/subscribe on LCM `/cmd_vel` + `/coordinator_joint_state`.
+Both run `FlowBaseConnection` against `172.6.2.20:11323`. Twist comes in on
+`cmd_vel`; `odometry` and `coordinator_joint_state` go out.
 
 ### Blueprint notes
 
 - **`coordinator-flowbase-keyboard-teleop`** opens a small pygame window —
   **focus that window** to drive. Controls: W/S forward-back · Q/E strafe ·
-  A/D turn · Shift boost · Ctrl slow · Space stop · ESC quit.
+  A/D turn · Shift boost (to 0.8 m/s) · Ctrl slow · Space stop · ESC quit.
 - **`coordinator-flowbase`** is just the bare driver; you publish `/cmd_vel`
   from somewhere else.
 
 ## Notes
 
-- Frame convention: FlowBase uses inverted Y/yaw. The adapter negates
-  `vy` and `wz` before sending — commands in / odometry out are standard
-  ROS frame.
-- Address override: edit `_flowbase_twist_base(address=...)` in
-  [mobile.py](../../../control/blueprints/mobile.py).
+- Joints: `base/base_forward`, `base/base_lateral` (m/s, up to 0.8) and
+  `base/base_turn` (rad/s, up to 3.0), the limits of the base's firmware.
+  A faster command is refused.
+- Frame convention: FlowBase uses inverted Y/yaw. The connection negates
+  `vy` and `wz` before sending, and `y` and yaw of the odometry it reads,
+  so commands in and odometry out are standard ROS frame.
+- Address override: `--flowbaseconnection.address host:port` after the
+  blueprint name. Blueprints are in
+  [mobile.py](../../control/blueprints/mobile.py).
