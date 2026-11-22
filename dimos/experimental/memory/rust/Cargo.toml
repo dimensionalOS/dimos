@@ -10,7 +10,7 @@ anyhow = "1"
 crc32fast = "1"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 lz4_flex = "0.14.0"
 mcap = { version = "0.25.0", default-features = false, features = ["zstd"] }

@@ -19,7 +19,7 @@ required-features = ["module"]
 # The body the law is parameterized from.
 dimos-local-planner = { path = "../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
