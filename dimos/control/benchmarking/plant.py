@@ -415,10 +415,8 @@ GO2_PLANT_PROFILE = RobotPlantProfile(
 )
 
 # FlowBase (holonomic Portal-RPC twist base). Operator-side blueprint:
-# the existing `coordinator-flowbase-keyboard-teleop` already publishes
-# /coordinator/joint_state with positions=[x,y,yaw] from the flowbase
-# adapter's read_odometry. No new blueprint, no bridge, no Connection
-# module needed — just this profile entry.
+# `coordinator-flowbase-keyboard-teleop`, whose FlowBaseConnection
+# publishes the pose [x, y, yaw] on `odometry`.
 #
 # The vy channel is excited (FlowBase strafes natively) so vy is in the
 # excited_channels tuple. sim_plant is the vendored 2026-06-09 hw fit.
@@ -427,7 +425,7 @@ FLOWBASE_PLANT_PROFILE = RobotPlantProfile(
     robot_id="flowbase",
     blueprint="coordinator-flowbase-keyboard-teleop",
     sim_blueprint="coordinator-sim-fopdt-flowbase",
-    joint_prefix="base",  # coordinator_flowbase uses make_twist_base_joints("base")
+    joint_prefix="base",  # FlowBaseConnection's joints are base/base_forward, ...
     vx_max=0.8,
     wz_max=1.2,
     tick_rate_hz=10.0,

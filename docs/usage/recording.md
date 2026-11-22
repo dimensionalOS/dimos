@@ -128,7 +128,7 @@ dimos map pose-fill recordings/<run-id>/memory.db --target color_image --pose-so
 
 - `--target` is the stream that gets the poses (default `lidar`).
 - `--pose-source` is a stream of pose messages, such as `PoseStamped` or `Odometry` (default `odom`). Each target observation takes the pose nearest in time.
-- The copy lands beside the source as `memory_posed.db`. Run the command on the copy to fill another stream.
+- By default, the copy lands beside the source as `<source>_posed.db`. The printed `dimos mem summary` command shows pose counts for the copied streams. Run pose-fill on the copy to fill another stream.
 - Target observations with no pose within `--tolerance` (default 0.1 s) are left out of the copy.
 - MCAP recordings cannot be pose-filled. Record with `--record sqlite` for spatial queries.
 
