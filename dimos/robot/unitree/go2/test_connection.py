@@ -407,7 +407,10 @@ def test_body_command_and_pose_derived_feedback(connection):
     q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
     conn._publish_tf(PoseStamped(ts=10.0, position=[2.0, 3.0, 0.0], orientation=q))
     conn.joint_state.publish.assert_not_called()  # No invented first rate.
-    conn.odometry.publish.assert_not_called()
+    # The pose still goes out; only the rate is unknown, so the twist is zero.
+    first = conn.odometry.publish.call_args.args[0]
+    assert first.ts == 10.0
+    assert [first.twist.linear.x, first.twist.angular.z] == pytest.approx([0.0, 0.0])
     conn._publish_tf(PoseStamped(ts=10.1, position=[1.99, 3.04, 0.0], orientation=q))
     state = conn.joint_state.publish.call_args.args[0]
     odom = conn.odometry.publish.call_args.args[0]
@@ -604,8 +607,9 @@ def test_replay_opens_recording_and_emits_typed_odometry(
     ]
 
 
-def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
-    """A legacy Go2 DDS recording holds nav_msgs.Odometry, which GO2Connection cannot publish."""
+def test_replay_accepts_legacy_dds_odometry(tmp_path: Path) -> None:
+    """A legacy Go2 DDS recording holds nav_msgs.Odometry. Since the odom ->
+    odometry rename that is the normal shape, so it is converted, not rejected."""
     path = tmp_path / "legacy.mcap"
     with path.open("wb") as output:
         writer = Writer(output)
@@ -617,8 +621,7 @@ def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
         writer.finish()
 
     with go2_conn.ReplayConnection(dataset=str(path)) as conn:
-        with pytest.raises(TypeError, match="PoseStamped odometry.*'odom'.*Odometry"):
-            conn.odom_stream()
+        assert conn.odom_stream() is not None
 
 
 @pytest.mark.parametrize("payload_module", ["builtins.dict", "unavailable_sensor_package.Frame"])
@@ -678,7 +681,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
     mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
-    module.set_transport("odom", mocker.Mock())
+    module.set_transport("odometry", mocker.Mock())
     received = []
     try:
         with Disposable(module.odometry.subscribe(lambda msg: received.append(msg.ts))):
