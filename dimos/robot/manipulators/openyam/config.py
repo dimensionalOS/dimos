@@ -107,7 +107,13 @@ def make_openyam_model_config(
                 )
             ],
             auto_convert_meshes=True,
-            collision_exclusion_pairs=[],
+            # The hand and fingers are sibling links with overlapping gripper
+            # collision meshes, so parent-child exclusions do not cover them.
+            collision_exclusion_pairs=[
+                ("hand", "hand_right_finger"),
+                ("hand", "hand_left_finger"),
+                ("hand_right_finger", "hand_left_finger"),
+            ],
             home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
         ),
         robot,
