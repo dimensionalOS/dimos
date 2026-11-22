@@ -137,20 +137,16 @@ class PoseStamped(Pose, Timestamped):
         """Convert to rerun Transform3D format.
 
         Returns a Transform3D that can be logged to Rerun to position
-        child entities in the transform hierarchy.
+        child entities in the transform hierarchy. A zero quaternion (no
+        heading) is rendered with identity rotation without changing the pose.
         """
+        # Lazy import keeps the optional viewer dependency out of message imports.
         import rerun as rr
 
+        orientation = Quaternion() if self.orientation.is_zero() else self.orientation
         return rr.Transform3D(
             translation=[self.x, self.y, self.z],
-            rotation=rr.Quaternion(
-                xyzw=[
-                    self.orientation.x,
-                    self.orientation.y,
-                    self.orientation.z,
-                    self.orientation.w,
-                ]
-            ),
+            rotation=orientation.to_rerun(),
         )
 
     def to_rerun_arrow(self, length: float = 0.5):  # type: ignore[no-untyped-def]
