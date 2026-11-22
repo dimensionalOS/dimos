@@ -9,14 +9,13 @@ dimos --record --simulation run unitree-go2
 dimos --record --robot-ip 192.168.123.161 run unitree-go2
 ```
 
-Bare `--record` means `--record sqlite`. SQLite lands at
-`recordings/<run-id>/memory.db`; MCAP lands at
-`recordings/<run-id>/memory.mcap`. The Desktop Launcher writes to the folder
-shown in the Recordings app (the gateway's `GET /history/recordings`). A
-standalone run defaults to the checkout's `recordings/` directory or
-`~/.local/state/dimos/recordings/` for an installed package. Set
-`DIMOS_RECORDINGS_DIR` to record under another folder. `<run-id>` is the
-same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
+Bare `--record` means `--record sqlite`. SQLite writes `<run-id>/memory.db`
+and MCAP writes `<run-id>/memory.mcap` under the recording root. The Desktop
+Launcher uses the folder shown in the Recordings app (`GET /history/recordings`).
+A standalone run uses `DIMOS_RECORDINGS_DIR` if set. Otherwise it writes to
+the checkout's `recordings/` directory or, with default XDG settings,
+`~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
+same `YYYYMMDD-HHMMSS-<4 hex>-<blueprint>` used by the run's `logs/` directory.
 
 ## Experimental Rust engine
 
@@ -72,7 +71,7 @@ none of the selected streams is recordable, startup fails.
 
 `dimos mem summary` and `dimos mem rerun` accept a `.db` or `.mcap` path, a
 dataset name in cwd/project/data (including LFS), or a recording folder name
-such as `20260830-120000-unitree-go2`. They also find cloud downloads by their
+such as `20260830-120000-1a2b-unitree-go2`. They also find cloud downloads by their
 stored filename or stem, original filename or stem, timestamp-and-ID tag, or
 upload ID prefix. Downloads store only the first eight ID characters; use that
 stored ID or a shorter unique prefix, not the full upload ID.
