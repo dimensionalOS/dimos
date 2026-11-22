@@ -282,6 +282,8 @@ all_modules = {
     "episode-driver": "dimos.navigation.bench.driver.EpisodeDriver",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
     "eval-module": "dimos.evals.module.EvalModule",
+    "flow-base-connection": "dimos.robot.flowbase.connection.FlowBaseConnection",
+    "flow-base-coordinator": "dimos.control.blueprints.mobile.FlowBaseCoordinator",
     "front-camera": "dimos.teleop.hosted.blueprints.cloudflare.FrontCamera",
     "g1-collection-recorder": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop.G1CollectionRecorder",
     "g1-connection": "dimos.robot.unitree.g1.connection.G1Connection",
