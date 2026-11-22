@@ -153,8 +153,9 @@ enum Job {
     SeedPrepared(Option<SeedPartition>),
 }
 
-/// Messages the handlers can queue ahead of the worker before they wait.
-const JOB_QUEUE_CAPACITY: usize = 256;
+/// Messages the handlers can queue ahead of the worker before they wait. One, so a
+/// worker that falls behind blocks the handler and the transport drops stale frames.
+const JOB_QUEUE_CAPACITY: usize = 1;
 
 /// How long a load may go without a tile, with live clouds keeping the
 /// worker busy, before it is reported as starved.
@@ -1278,15 +1279,12 @@ mod tests {
     async fn queued_jobs_go_ahead_of_seed_tiles() {
         let (tx, mut rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
         tx.send(lidar_job(1)).await.unwrap();
-        tx.send(lidar_job(2)).await.unwrap();
-
         assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(1));
-        assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(2));
         assert!(matches!(next_turn(&mut rx, true).await, Turn::SeedTile));
         assert!(matches!(next_turn(&mut rx, true).await, Turn::SeedTile));
 
-        tx.send(lidar_job(3)).await.unwrap();
-        assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(3));
+        tx.send(lidar_job(2)).await.unwrap();
+        assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(2));
         assert!(matches!(next_turn(&mut rx, true).await, Turn::SeedTile));
 
         drop(tx);
