@@ -40,6 +40,7 @@ from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
+    XARM7_SIM_HOME,
     XARM7_SIM_PATH,
     XARM_ARMS,
     XArmType,
@@ -127,7 +128,7 @@ keyboard_teleop_xarm7 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, 7),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7, reset_joint_positions=XARM7_SIM_HOME),
 )
 
 _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
@@ -276,7 +277,7 @@ coordinator_teleop_xarm7 = autoconnect(
     ),
     # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
-    *mujoco_if_sim(XARM7_SIM_PATH, 7),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7, reset_joint_positions=XARM7_SIM_HOME),
 )
 
 coordinator_teleop_xarm6 = autoconnect(
