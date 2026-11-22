@@ -105,3 +105,20 @@ After a planning failure, inspect the error, correct the target, and retry.
 If motion is still active or its outcome is uncertain, call **cancel** and inspect its
 result before issuing another motion. Cancellation does not clear hardware errors.
 """
+
+MANIPULATION_SIM_SCAN_PROMPT = """\
+
+# Scan Workflow for the Default Simulation Scene
+For each scan, including a repeated request:
+1. Call **state** until it reads ready before collecting viewpoints, so perception
+   records both poses even after a cold start.
+2. Collect fresh viewpoints using the first step of the Pick Workflow.
+3. Call **localize** with a time window covering those viewpoints. Use a longer
+   window if they took longer than 30 seconds.
+For "Scan for objects" or another scan request without specific labels, search with:
+localize(objects="{objects}", start=-30, duration=30)
+These are search labels, not evidence that an object was detected. Do not substitute
+generic labels such as "object", "objects", "all", or "any".
+Report only objects returned by localize, with their ids and positions. Do not pick
+anything unless asked. If the user names specific objects, search for those labels.
+"""
