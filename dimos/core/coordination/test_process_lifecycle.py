@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
@@ -149,6 +150,40 @@ def test_kill_run_processes_tolerates_psutil_errors(mocker: MockerFixture, run_i
     mocker.patch("psutil.process_iter", return_value=[bad])
 
     assert kill_run_processes(run_id) == 0
+
+
+def test_kill_run_processes_skips_process_whose_environ_raises_system_error(
+    mocker: MockerFixture, spawn_tagged, run_id: str
+) -> None:
+    # psutil 7.2.2 on macOS fails this way for a process that exits mid-scan
+    # (giampaolo/psutil#2854). The sweep must skip it and still kill the run.
+    exiting = spawn_tagged(f"test-{uuid.uuid4().hex[:12]}")
+    target = spawn_tagged(run_id)
+    real_environ = psutil.Process.environ
+
+    def environ(proc: psutil.Process) -> dict[str, str]:
+        if proc.pid == exiting.pid:
+            raise SystemError(
+                "<built-in function proc_environ> returned a result with an exception set"
+            ) from PermissionError(errno.EACCES, "force permission denied")
+        return real_environ(proc)
+
+    mocker.patch.object(psutil.Process, "environ", environ)
+
+    assert kill_run_processes(run_id) == 1
+    assert _wait_gone(target)
+
+
+def test_kill_run_processes_raises_unrelated_system_error(
+    mocker: MockerFixture, run_id: str
+) -> None:
+    bad = mocker.MagicMock(spec=psutil.Process)
+    bad.info = {"pid": 99999999}
+    bad.environ.side_effect = SystemError("bad argument to internal function")
+    mocker.patch("psutil.process_iter", return_value=[bad])
+
+    with pytest.raises(SystemError, match="bad argument"):
+        kill_run_processes(run_id)
 
 
 def test_wait_for_pid_exit_returns_when_pid_gone():

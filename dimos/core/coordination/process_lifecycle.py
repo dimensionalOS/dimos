@@ -58,6 +58,13 @@ def _iter_matching_processes(
         except OSError:
             # /proc entry may transiently fail on slow systems.
             continue
+        except SystemError as error:
+            # psutil 7.2.2 on macOS raises this for a process that exits while
+            # being read, chained from the AccessDenied PermissionError it meant
+            # to raise (giampaolo/psutil#2854, fixed in psutil 8.0).
+            if not isinstance(error.__cause__, PermissionError):
+                raise
+            continue
         if env.get(env_var) == run_id:
             matches.append(proc)
     return matches
