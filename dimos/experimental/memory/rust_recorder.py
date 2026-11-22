@@ -141,8 +141,8 @@ class RustEventConfig(BaseModel):
     """
 
     kind: Literal["events"] = "events"
-    pre_s: float = Field(default=30.0, ge=0, description="Full-rate seconds before a trigger.")
-    post_s: float = Field(default=60.0, ge=0, description="Full-rate seconds after a trigger.")
+    pre_s: float = Field(default=10.0, ge=0, description="Full-rate seconds before a trigger.")
+    post_s: float = Field(default=20.0, ge=0, description="Full-rate seconds after a trigger.")
     segment_s: float = Field(default=10.0, gt=0, description="Seconds per window segment.")
     sync_s: float = Field(
         default=1.0,
