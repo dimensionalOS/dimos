@@ -129,8 +129,7 @@ class PGOVoxelMapper(Module):
             )
             if self._map_path.exists():
                 premap = Premap.load(self._map_path)
-            if premap is None or not len(premap):
-                premap = None
+            if premap is None:
                 logger.info(
                     f"PGO premap: no keyframes in {self._map_path.name} yet, starting a new map"
                 )
