@@ -273,12 +273,12 @@ def test_depth_round_trip_preserves_metric_values_and_invalid_pixels() -> None:
                 "camera_info",
                 "coordinator_joint_state",
                 "tf",
-                "odom",
+                "odometry",
                 "ee_twist_command",
                 "gripper_command",
             },
         ),
-        ("unitree-go2", {"color_image", "camera_info", "lidar", "odom", "tf", "cmd_vel"}),
+        ("unitree-go2", {"color_image", "camera_info", "lidar", "odometry", "tf", "cmd_vel"}),
     ],
 )
 def test_one_bridge_wires_to_whatever_the_robot_provides(robot: str, connected: set[str]) -> None:

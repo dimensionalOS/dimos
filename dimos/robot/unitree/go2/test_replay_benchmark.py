@@ -25,7 +25,7 @@ import threading
 import pytest
 
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -33,11 +33,11 @@ REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
 RUN_TIMEOUT = 420.0  # spawn -> exit deadline, inside the test timeout
 # GO2Connection source streams. camera_info is deliberately absent: it is
 # published by a 1 Hz forever-loop thread, so it never quiesces.
-WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image))
-# Validity floors double as the realtime keep-up check. odom is small and
+WATCHED = (("odometry", Odometry), ("lidar", PointCloud2), ("color_image", Image))
+# Validity floors double as the realtime keep-up check. odometry is small and
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
-FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
+FLOOR_FRACTION = {"odometry": 0.9, "lidar": 0.9, "color_image": 0.5}
 # When set, write the tracked series (memory/threads/network/disk/instructions) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 # With DIMOS_BENCH_METRICS: perf events (e.g. "instructions:u,cycles:u") counted over
@@ -49,8 +49,9 @@ PERF_EVENTS = os.environ.get("DIMOS_BENCH_PERF_EVENTS") if METRICS_PATH else Non
 def _expected_counts(db_path: str) -> dict[str, int]:
     """Per-stream message totals straight from the DB.
 
-    Mirrors ReplayConnection's stream-name fallback (mid360-era recordings use
-    go2_lidar/go2_odom, older ones lidar/odom).
+    Mirrors ReplayConnection's stream-name fallback (post-rename recordings use
+    go2_odometry/odometry, mid360-era ones go2_lidar/go2_odom, older ones
+    lidar/odom).
     """
     from dimos.memory.store.sqlite import SqliteStore
 
@@ -66,7 +67,9 @@ def _expected_counts(db_path: str) -> dict[str, int]:
             raise KeyError(f"none of {names!r} in {db_path!r}; available: {available}")
 
         return {
-            "odom": store.stream(first_present("go2_odom", "odom")).count(),
+            "odometry": store.stream(
+                first_present("go2_odometry", "odometry", "go2_odom", "odom")
+            ).count(),
             "lidar": store.stream(first_present("go2_lidar", "lidar")).count(),
             "color_image": store.stream("color_image").count(),
         }
