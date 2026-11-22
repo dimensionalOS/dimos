@@ -33,9 +33,15 @@ from dimos.robot.manipulators.feetech.calibration import (
     FeetechMotorCalibration,
 )
 from dimos.robot.manipulators.feetech.robot import FeetechRobot
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 FEETECH_EXTRA = "leader-teleop"
 FEETECH_COMM_SUCCESS = 0
+# Bit 0 of a servo's status byte: supply voltage outside its configured range.
+FEETECH_VOLTAGE_ERROR = 1
+_voltage_warned: set[int] = set()
 _FEETECH_ENCODER_TICKS = FEETECH_POSITION_SPAN + 1
 
 
@@ -73,7 +79,16 @@ def _read_motor_position(packet_handler: Any, motor_id: int) -> int:
         if len(values) >= 3:
             comm_result = values[-2]
             error = values[-1]
-            if comm_result != FEETECH_COMM_SUCCESS or error != 0:
+            # A voltage flag alone leaves the encoder reading valid, and these
+            # motors are only read, so it is reported once instead of failing.
+            if error == FEETECH_VOLTAGE_ERROR and comm_result == FEETECH_COMM_SUCCESS:
+                if motor_id not in _voltage_warned:
+                    _voltage_warned.add(motor_id)
+                    logger.warning(
+                        "Feetech motor reports a supply voltage fault; still reading its position",
+                        motor_id=motor_id,
+                    )
+            elif comm_result != FEETECH_COMM_SUCCESS or error != 0:
                 raise RuntimeError(
                     f"Feetech motor {motor_id} position read failed with result {values!r}"
                 )
