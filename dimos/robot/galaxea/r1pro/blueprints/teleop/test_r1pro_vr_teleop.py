@@ -52,6 +52,7 @@ from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import (
     make_r1pro_vr_teleop,
 )
 from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_HOME_POSE,
     R1PRO_PLANAR_BASE,
     make_r1pro_model_config,
 )
@@ -328,6 +329,58 @@ def shared_chain(mocker):
     mocker.patch.object(coordinator, "_leader", mocker.Mock(), create=True)
     with SharedChain(coordinator=coordinator) as chain:
         yield chain
+
+
+def test_arm_home_reaches_preset_holds_torso_and_requires_explicit_reenable(shared_chain):
+    chain = shared_chain
+    coordinator = chain.coordinator
+    joint = "r1pro/left_arm_joint4"
+    home = R1PRO_HOME_POSE["left_arm_joint4"]
+    wait_until(lambda: joint in coordinator.get_joint_positions(), timeout=2)
+    coordinator._dispatch("leader_joint_command", JointState(name=[joint], position=[home - 0.2]))
+    wait_until(lambda: coordinator.get_joint_positions()[joint] < home - 0.15, timeout=3)
+    torso = {n: q for n, q in coordinator.get_joint_positions().items() if "torso_joint" in n}
+
+    result = coordinator.home_arms()
+    assert result["tracking_paused"] is True
+    # Incoming device goals must not replace the recovery trajectory.
+    coordinator._dispatch("leader_joint_command", JointState(name=[joint], position=[home - 0.5]))
+    wait_until(lambda: coordinator.get_arm_home_status()["state"] == "reached", timeout=5)
+    assert coordinator.get_joint_positions()[joint] == pytest.approx(home, abs=0.03)
+    assert {n: coordinator.get_joint_positions()[n] for n in torso} == pytest.approx(torso)
+    assert coordinator.get_arm_home_status()["tracking_paused"] is True
+
+    # Re-selecting even the SAME input is an explicit new enable after homing.
+    coordinator.select_teleop_source("leader")
+    coordinator._dispatch("leader_joint_command", JointState(name=[joint], position=[home - 0.2]))
+    wait_until(lambda: coordinator.get_joint_positions()[joint] < home - 0.1, timeout=3)
+    assert coordinator.get_arm_home_status()["tracking_paused"] is False
+
+
+def test_cancel_arm_home_does_not_resume_old_teleop(shared_chain):
+    coordinator = shared_chain.coordinator
+    wait_until(lambda: len(coordinator.get_joint_positions()) >= 18, timeout=2)
+    coordinator.home_arms()
+    result = coordinator.cancel_arm_home()
+    assert result["state"] == "cancelled"
+    assert result["tracking_paused"] is True
+    assert coordinator._trajectory_task is not None
+    assert coordinator._trajectory_task.is_active() is False
+    coordinator._dispatch(
+        "leader_joint_command", JointState(name=["r1pro/left_arm_joint4"], position=[-1.2])
+    )
+    assert coordinator._trajectory_task.is_active() is False
+
+
+def test_arm_home_refuses_missing_feedback_and_estop(shared_chain, mocker):
+    coordinator = shared_chain.coordinator
+    mocker.patch.object(coordinator, "get_joint_positions", return_value={})
+    with pytest.raises(RuntimeError, match="feedback"):
+        coordinator.home_arms()
+    coordinator.set_estop(True)
+    with pytest.raises(RuntimeError, match="emergency-stopped"):
+        coordinator.home_arms()
+    coordinator._leader.pause.assert_not_called()
 
 
 def test_shared_stack_handover_clears_intent_and_requires_released_webxr_clutches(shared_chain):

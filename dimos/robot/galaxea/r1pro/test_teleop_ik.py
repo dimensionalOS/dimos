@@ -18,12 +18,15 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.control.contract.limits import limits
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _webxr_blueprint
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_real import make_joylo_real
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import R1PRO_VR_TARGET_FRAMES
 from dimos.robot.galaxea.r1pro.config import R1PRO_HOME_POSE
+from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo import TORSO, UPPER
 from dimos.robot.galaxea.r1pro.teleop_coordinator import shared_teleop_tasks
 from dimos.robot.galaxea.r1pro.teleop_ik import R1ProPinkPoseTargetSolver
@@ -130,6 +133,31 @@ def test_elbow_soft_stop_overtravel_recovers_with_a_legal_command():
     command = solver.step(targets, measured, 0.01)
     recovered = dict(zip(command.name, command.position, strict=True))[elbow]
     assert lower <= recovered < lower + 0.02
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_hardware_ik_recovers_elbow_inside_connection_command_limits(side):
+    coordinator = next(
+        atom
+        for atom in make_joylo_real(webxr=True).active_blueprints
+        if atom.name == "ControlCoordinator"
+    )
+    task = next(t for t in coordinator.kwargs["tasks"] if t.type == "teleop_ik")
+    params = {k: v for k, v in task.params.items() if k not in ("bindings", "solver_type")}
+    frames = tuple(R1PRO_VR_TARGET_FRAMES.values())
+    solver = R1ProPinkPoseTargetSolver(
+        PoseTargetIKTaskConfig(joint_names=tuple(task.joint_names), target_frames=frames, **params)
+    )
+    allowed = limits(R1ProConnectionConfig())
+    positions = {name: R1PRO_HOME_POSE[name.split("/")[-1]] for name in UPPER}
+    elbow = f"r1pro/{side}_arm_joint4"
+    # The real trace: legal in the old IK model, outside the connection soft stop.
+    positions[elbow] = -2.0740894625047934
+    measured = JointState(name=list(positions), position=list(positions.values()))
+    command = solver.step(solver.frame_poses(measured, frames), measured, 0.01)
+    for name, value in zip(command.name, command.position, strict=True):
+        bound = allowed[f"{name}/position"]
+        assert bound.lo <= value <= bound.hi, name
 
 
 @pytest.fixture

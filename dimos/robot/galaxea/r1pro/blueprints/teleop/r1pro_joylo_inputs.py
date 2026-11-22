@@ -98,7 +98,7 @@ def _operator_blueprint(left_only: bool = False, *, require_leaders: bool = True
 
 
 def _webxr_blueprint() -> Blueprint:
-    """CC's headset page, on the coordinator's WebXR ports; it runs beside the operator."""
+    """Calibrated headset inputs on the coordinator's WebXR ports."""
     task = next(t for t in shared_teleop_tasks(dict.fromkeys(UPPER, 1.0)) if t.type == "teleop_ik")
     model = task.params["robot_model"].model
     joints = {joint.name: joint for joint in model.load().joints}
@@ -192,7 +192,7 @@ def _control_blueprint(
                     )
                 ],
                 motion_limits=motion_limits,
-                tasks=shared_teleop_tasks(velocity_limits)
+                tasks=shared_teleop_tasks(velocity_limits, command_model=declaration.model)
                 if webxr
                 else joylo_tasks(velocity_limits),
             ),

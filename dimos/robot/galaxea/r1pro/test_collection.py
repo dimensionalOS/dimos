@@ -27,6 +27,7 @@ from dimos.robot.assets.model import UsdModel
 from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_sim2
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_desktop import (
+    make_joylo_desktop,
     r1pro_openarm_joylo_real,
 )
 from dimos.robot.galaxea.r1pro.collection import CAMERAS, r1pro_collection
@@ -125,22 +126,33 @@ def test_collection_contract_has_explicit_selection_and_rpc_episode_controls():
         r1pro_collection(cameras=("missing",))
 
 
-def test_hardware_run_records_robot_streams_with_robot_side_producers():
+def test_hardware_run_starts_without_recording_options():
     blueprint = r1pro_openarm_joylo_real
+    BlueprintConfigParser(blueprint).parse([], environ={})
+    names = {atom.name for atom in blueprint.active_blueprints}
+    assert {"recorder", "episodes"}.isdisjoint(names)
+    assert {"ControlCoordinator", "r1projoylo", "r1prowebxr"} <= names
+    assert resolve_module_refs(blueprint)["ControlCoordinator", "_leader"] == "r1projoylo"
+
+
+def test_hardware_collection_records_robot_streams_with_robot_side_producers():
+    blueprint = make_joylo_desktop(recording=True)
     modules = {atom.name: atom for atom in blueprint.active_blueprints}
     recorder = modules["recorder"]
     required_inputs = set(recorder.kwargs["input_types"]) | {"status"}
     robot = next(p for p in blueprint.hosted_placements if p.tags == {"r1pro": True})
     assert robot.module_names[0] == "recorder"
     assert "episodes" in robot.module_names
+    assert "r1prowebxr" in robot.module_names
+    assert "r1proleaderconnection" not in robot.module_names
     for port in recorder.streams:
         if port.name not in required_inputs:
             continue
         topic = blueprint.remapping_map.get((recorder.name, port.name), port.name)
         publishers = _publishers(blueprint, topic, port.type)
         assert len(publishers) == 1, (port.name, publishers)
-        # Operator calibration metadata crosses the link; state, actions and
-        # camera evidence stay beside the robot-side recorder.
+        # Headset mapping, state, actions and camera evidence stay beside the
+        # robot-side recorder; only the physical leaders need the operator host.
         if port.name in {
             "arm_calibration_state",
             "arm_retarget_state",
@@ -151,8 +163,7 @@ def test_hardware_run_records_robot_streams_with_robot_side_producers():
             "right_cartesian_command",
         }:
             assert publishers == ["r1prowebxr"]
-        else:
-            assert publishers[0] in robot.module_names
+        assert publishers[0] in robot.module_names
     schema = recorder.kwargs["recording_schema"]
     assert {feature.stream for feature in schema.action.values()} == {
         "coordinator_joint_command",
@@ -164,7 +175,7 @@ def test_hardware_run_records_robot_streams_with_robot_side_producers():
 
 
 def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
-    real, sim = r1pro_openarm_joylo_real, r1pro_openarm_joylo_sim2
+    real, sim = make_joylo_desktop(recording=True), r1pro_openarm_joylo_sim2
     hardware = {atom.name: atom for atom in real.active_blueprints}
     simulated = {atom.name: atom for atom in sim.active_blueprints}
     assert set(hardware) - set(simulated) == HARDWARE

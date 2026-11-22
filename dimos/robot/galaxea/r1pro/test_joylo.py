@@ -522,6 +522,46 @@ def test_joycons_drive_lift_grip_and_pause_as_with_the_leader_arms(hands):
     assert output.velocity == (0.0, 0.0, 0.0)
 
 
+@pytest.mark.parametrize("source", ["leader", "hands"])
+def test_x_toggles_tracking_off_and_requires_a_new_press_to_reenable(controller, source):
+    controller.set_arm_source(source)
+    send = feed_hands if source == "hands" else feed
+    x = JoyConReading(frozenset({"X"}))
+    send(controller, 0.0)
+    send(controller, 0.02, right=x)
+    assert controller.active
+    send(controller, 0.04, right=x)
+    assert controller.active  # A held button is one press.
+    send(controller, 0.06)
+
+    output = send(controller, 0.08, right=x)
+
+    assert not controller.active
+    assert controller.recovery_deadline is None
+    assert output.velocity == (0.0, 0.0, 0.0)
+    assert output.hands == (HandsOutput(False, None) if source == "hands" else None)
+    send(controller, 0.10, right=x)
+    assert not controller.active
+    send(controller, 0.12)
+    assert not controller.active
+    send(controller, 0.14, right=x)
+    assert controller.active
+
+
+def test_x_cancels_hand_tracking_recovery_without_waiting_for_poses(hands):
+    feed_hands(hands, 0.04)  # Release the initial enable press.
+    feed_hands(hands, 0.40, left_hand=None)
+    assert hands.recovery_deadline is not None
+
+    output = feed_hands(hands, 0.42, left_hand=None, right=JoyConReading(frozenset({"X"})))
+
+    assert not hands.active
+    assert hands.recovery_deadline is None
+    assert output.hands == HandsOutput(False, None)
+    feed_hands(hands, 0.44)
+    assert not hands.active  # Fresh poses cannot undo the operator's stop.
+
+
 def test_a_lost_hand_or_head_stops_following_and_a_brief_loss_recovers_in_place(hands):
     before = feed_hands(hands, 0.04).hands.poses
     output = feed_hands(hands, 0.4, left_hand=None)

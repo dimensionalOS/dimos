@@ -22,7 +22,7 @@ The added opening links are invisible measurement frames, not physical bodies.
 """
 
 from dimos.constants import CACHE_DIR
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
     _camera_transports,
@@ -86,20 +86,27 @@ _vision = (
     .transports(_camera_transports)
 )
 
-# The recorder lives beside control and cameras, so laptop/network loss cannot
-# remove the robot-side evidence. It starts first and shuts down last.
-# The launch requires --recorder.recording and --episodes.task.
-# r1pro-openarm-joylo-sim2 is this stack on the simulated robot and cameras.
-r1pro_openarm_joylo_real = autoconnect(
-    autoconnect(
-        r1pro_collection(),
-        # Operator video uses head_*_color / wrist_*_color independently of
-        # the paired, rectified RGB-D streams used by the mesh and recorder.
-        make_joylo_real(publish_odom_tf=True, enable_wrist_color=True, webxr=True),
-        _webxr_joystick_blueprint(),
-        _vision,
-    ).hosted(tags={"r1pro": True}),
-    _operator_blueprint().hosted(local=True),
-    _webxr_blueprint().hosted(local=True),
-    UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
-).global_config(viewer="none", transport="zenoh", n_workers=11)
+
+def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
+    """Compose hardware teleop, optionally with robot-side recording and episodes.
+
+    Recording compositions require --recorder.recording and --episodes.task.
+    """
+    return autoconnect(
+        autoconnect(
+            # When requested, the recorder starts first and shuts down last.
+            *([r1pro_collection()] if recording else []),
+            # Operator video uses head_*_color / wrist_*_color independently of
+            # the paired, rectified RGB-D streams used by the mesh and recorder.
+            make_joylo_real(publish_odom_tf=True, enable_wrist_color=True, webxr=True),
+            # Retarget beside feedback and IK, where headset poses arrive.
+            _webxr_blueprint(),
+            _webxr_joystick_blueprint(),
+            _vision,
+        ).hosted(tags={"r1pro": True}),
+        _operator_blueprint().hosted(local=True),
+        UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
+    ).global_config(viewer="none", transport="zenoh", n_workers=11)
+
+
+r1pro_openarm_joylo_real = make_joylo_desktop()

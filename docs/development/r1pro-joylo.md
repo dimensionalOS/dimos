@@ -14,10 +14,12 @@ the hardware blueprint below connects the same operator inputs to vendor ROS.
 
 Both are the same composition (`blueprints/teleop/r1pro_joylo_inputs.py`): the
 operator devices, the headset page, JoyLo, `R1ProTeleopCoordinator` with its
-tasks, the recorder and the episode control. Stream names, message types, camera
+tasks, with optional hardware recording and episode control. Stream names, message types, camera
 sizes and RPCs are the same, so an app or a dataset tool needs no simulation
 case. `test_simulation_is_the_hardware_stack_on_a_simulated_robot` holds this.
-Both launches require `--recorder.recording <new folder>` and
+Hardware recording is currently disabled: `r1pro-openarm-joylo-real` includes
+neither the recorder nor episode monitor and needs no recording options.
+Simulation still requires `--recorder.recording <new folder>` and
 `--episodes.task "<task>"`; see [the backend contract](/docs/development/r1pro-teleop-backend.md).
 
 The simulation differs in three declared ways: its own tracking rates
@@ -82,7 +84,7 @@ A camera has one color stream, its own: `head_left_color`, `head_right_color`,
 `wrist_left_color` and `wrist_right_color`. These forward the cameras' existing
 JPEG frames at acquisition rate (30 Hz), with latest-frame delivery and no
 decode/resize/re-encode on the robot. The operator's camera screens show them
-and the recorder keeps `head_left_color`, `wrist_left_color` and
+and, when explicitly included, the recorder keeps `head_left_color`, `wrist_left_color` and
 `wrist_right_color`.
 
 `R1SpatialSensors` adds depth, and no color. The head cameras have a single
@@ -226,7 +228,7 @@ for the R1 Pro profile.
 
 | Control | Effect |
 |---|---|
-| Release, then press X | Enable following the fixed calibrated leader joint positions |
+| Release, then press X | Toggle following the fixed calibrated leader joint positions on/off |
 | Home | Pause all following and zero base velocity |
 | Minus / plus | Toggle the left / right arm lock |
 | Hold L / R | Hold the corresponding three wrist joints |
@@ -302,7 +304,7 @@ Every Joy-Con function stays with JoyLo:
 
 | Control | Effect with the hands |
 |---|---|
-| Release, then press X | Enable: each arm goes to its hand at the arm speed limit, then stays with it |
+| Release, then press X | Toggle hand tracking on/off; when enabled, each arm goes to its hand at the arm speed limit |
 | Home | Pause all following and zero base velocity |
 | Minus / plus | Lock the left / right arm where it is; again, it goes to its hand |
 | Hold L / R | Hold that hand's orientation; its position still follows |

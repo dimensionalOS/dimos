@@ -20,7 +20,7 @@ physical speed limiter in the frontend.
 | `ControlCoordinator` | `get_teleop_source()` | Read `source` (`leader` or `webxr`) and `webxr_ready` (headset clutches have been released since selection). |
 | `ControlCoordinator` | `select_teleop_source(source)` | Select `leader` or `webxr`, finish the current tick, clear old task targets and holds, pause JoyLo, and preserve any existing estop. Selection is idempotent. |
 | `R1ProJoylo` | `status()`, `pause()` | Read leader/Joy-Con health and authority; pause requires a fresh physical enable press to rearm JoyLo. |
-| `episodes` | `command(event)` | `start`, `save`, `discard`, or `toggle`. Returns `EpisodeStatus`. Included in the normal hardware blueprint. |
+| `episodes` | `command(event)` | `start`, `save`, `discard`, or `toggle`. Returns `EpisodeStatus`. Only present when collection is included. |
 | `episodes` | `get_status()` | Read recording state, saved/discarded counts, last event, timestamp, and task label. |
 
 `motion_settings: String` publishes the full group dictionary as JSON at startup
@@ -69,21 +69,21 @@ stale. Recorder actions use command streams; observations use measured state.
 
 ## Collection deployment
 
-Recording is included in the distributed `r1pro-openarm-joylo-real` blueprint.
-Keep the existing robot host selection and operator device settings, and add a new,
-absolute **robot-side** recording directory and a task description at launch:
+Recording is currently disabled in `r1pro-openarm-joylo-real`: the recorder and
+episode monitor are omitted, and no recording directory or task is required.
+Keep the existing robot host selection and operator device settings:
 
 ```bash
-dimos run r1pro-openarm-joylo-real \
-  --recorder.recording /home/nvidia/recordings/pick-bottle-001 \
-  --episodes.task "pick up the bottle"
+dimos run r1pro-openarm-joylo-real
 ```
 
-Both options are required; no directory is overwritten or task label invented.
-No separate recorder blueprint or `--record` process is needed.
+For an explicit hardware collection composition, use
+`make_joylo_desktop(recording=True)` from `r1pro_joylo_desktop.py`. That composition
+requires `--recorder.recording <new robot-side folder>` and `--episodes.task "<task>"`;
+no directory is overwritten or task label invented.
 
 `r1pro-openarm-joylo-sim2` is the same stack on the simulated robot, with the
-same two required options, recorder, episode RPCs, streams and camera sizes. A
+two required recording options, recorder, episode RPCs, streams and camera sizes. A
 session recorded there has the shape of one recorded on the robot.
 
 The recorder observes the coordinator's dispatched actions, measured robot state,

@@ -198,6 +198,21 @@ def test_an_rpc_is_called_on_one_instance(client: TestClient, dimos: dict[str, A
     assert len(app.calls) == 2
 
 
+def test_rpc_does_not_wait_for_stream_discovery(client, dimos, monkeypatch):
+    def unavailable_streams(self):
+        raise TimeoutError("stream discovery unavailable")
+
+    monkeypatch.setattr(FakeDimos, "list_streams", unavailable_streams)
+
+    called = client.post(
+        "/active/modules/robot1:speaker/rpcs/speak", json={"kwargs": {"text": "hi"}}
+    )
+
+    assert called.json() == {"ok": True, "result": {"said": "hi"}, "error": None}
+    assert client.post("/active/modules/robot1:speaker/rpcs/fly").status_code == 404
+    assert dimos["apps"][-1].calls == [("robot1/speaker/speak", {"text": "hi"})]
+
+
 def test_restart_and_stop_go_by_the_instances_class(
     client: TestClient, dimos: dict[str, Any]
 ) -> None:

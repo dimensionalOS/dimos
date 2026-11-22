@@ -412,10 +412,19 @@ class JoyloController:
         )
         healthy = not stale and present
         authority_reading = self.readings[self.authority_index]
+        # An explicit second enable press stops even if hand/leader tracking is temporarily
+        # missing. Otherwise recovery could silently resume after the operator toggled off.
+        disable_edge = (
+            authority_reading is not None
+            and self.enable_button in authority_reading.pressed
+            and self.enable_released
+            and self.enable_button not in self.previous_buttons[self.authority_index]
+            and (self.active or self.recovery_deadline is not None)
+        )
         if (
             "joycon" not in stale
             and authority_reading is not None
-            and self.pause_button in authority_reading.pressed
+            and (self.pause_button in authority_reading.pressed or disable_edge)
         ):
             self.pause(f"Paused; release {self.enable_button} before enabling")
         if self.recovery_deadline is not None and now >= self.recovery_deadline:
@@ -448,7 +457,7 @@ class JoyloController:
                 and self.enable_released
                 and self.enable_button not in self.previous_buttons[self.authority_index]
             )
-            if self.pause_button in authority or (self.left_only and self.active and enable_edge):
+            if self.pause_button in authority:
                 self.pause(f"Paused; release {self.enable_button} before enabling")
                 if self.capture_hold:
                     self._capture()

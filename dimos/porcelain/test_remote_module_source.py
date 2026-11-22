@@ -25,7 +25,7 @@ import uuid
 import pytest
 from reactivex.disposable import Disposable
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.core import rpc
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import GlobalConfig
@@ -119,6 +119,30 @@ def test_connect_skill_call(running_app, client):
 def test_connect_rpc_method_call(client):
     module = client.StressTestModule
     assert module.ping() == "pong"
+
+
+def test_remote_rpc_availability_comes_from_deployment(mocker):
+    coordinator = mocker.patch(
+        "dimos.porcelain.remote_module_source.CoordinatorRPC.connect"
+    ).return_value
+    coordinator.call.return_value = [
+        ModuleDescriptor(
+            "StressTestModule",
+            "dimos.core.demos.stress_test_module.StressTestModule",
+            ["remote_status"],
+            "robot/module",
+        )
+    ]
+    coordinator.rpc.call_sync.return_value = ({"connected": True}, mocker.Mock())
+    source = RemoteModuleSource()
+    try:
+        module = source.get_module("robot/module")
+        assert module.remote_status() == {"connected": True}
+        with pytest.raises(AttributeError, match="has no @rpc method named 'ping'"):
+            module.ping()
+        coordinator.rpc.call_sync.assert_called_once_with("robot/module/remote_status", ((), {}))
+    finally:
+        source.close()
 
 
 def test_typed_lookup_calls_the_same_remote_module(client, running_app):

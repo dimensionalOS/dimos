@@ -140,7 +140,9 @@ class Live:
                 self._connected_to = run
             return self._app
 
-    def modules(self, scanned: dict[str, Any] | None) -> list[dict[str, Any]]:
+    def modules(
+        self, scanned: dict[str, Any] | None, *, include_streams: bool = True
+    ) -> list[dict[str, Any]]:
         """Each instance with its RPCs (doc, params and skill flag as the last scan found them) and streams."""
         from experimental.gateway.introspect import base_rpcs
 
@@ -148,7 +150,7 @@ class Live:
         by_class = {
             module["class"]: module for module in (scanned or {}).get("modules", {}).values()
         }
-        streams = self.streams()
+        streams = self.streams() if include_streams else []
         found = []
         for instance in app.list_modules():
             module_id = instance_id(instance.instance_name)
@@ -179,8 +181,10 @@ class Live:
             )
         return sorted(found, key=lambda module: module["id"])
 
-    def module(self, scanned: dict[str, Any] | None, module_id: str) -> dict[str, Any]:
-        modules = self.modules(scanned)
+    def module(
+        self, scanned: dict[str, Any] | None, module_id: str, *, include_streams: bool = True
+    ) -> dict[str, Any]:
+        modules = self.modules(scanned, include_streams=include_streams)
         found = next((listed for listed in modules if listed["id"] == module_id), None)
         if found is None:
             running = ", ".join(listed["id"] for listed in modules) or "none"
@@ -207,7 +211,9 @@ class Live:
         args: list[Any],
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
-        module = self.module(scanned, module_id)
+        # Calling an advertised RPC does not require discovering every stream.
+        # A slow stream query must not hold up control and calibration requests.
+        module = self.module(scanned, module_id, include_streams=False)
         if name not in {rpc["name"] for rpc in module["rpcs"]}:
             listed = ", ".join(rpc["name"] for rpc in module["rpcs"])
             raise ApiError(404, f"{module_id} has no RPC {name} (its RPCs: {listed})")
