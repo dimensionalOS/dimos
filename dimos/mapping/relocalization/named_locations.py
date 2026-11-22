@@ -29,7 +29,7 @@ logger = setup_logger()
 
 
 def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:
-    """The locations in the last snapshot on *stream* of a .db or .mcap."""
+    """The last locations snapshot in a .db or .mcap, or none if the stream is absent."""
     from dimos.mapping.relocalization.module import find_stream
     from dimos.memory.cli.dataset import open_store
 
@@ -39,7 +39,6 @@ def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:
     with open_store(path, decode_metadata=True) as store:
         name = find_stream(store.list_streams(), stream)
         if name is None:
-            logger.warning(f"{path} has no {stream!r} stream, starting with no named locations")
             return {}
         last: InteractiveMarkerUpdate = store.stream(name).last().data
     return {named.name: pose_of(named) for named in last.poses}
