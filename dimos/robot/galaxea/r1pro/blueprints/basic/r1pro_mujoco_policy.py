@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WebXR dual-wrist run45 policy in a hardware-free MuJoCo assembly."""
+"""WebXR dual-wrist R1 Pro policy in a hardware-free MuJoCo assembly."""
 
 import os
 from pathlib import Path
@@ -60,7 +60,7 @@ class R1ProPolicyCoordinator(ControlCoordinator):
             },
         )
         if self.config.tick_rate != 1 / DT:
-            raise ValueError("R1 Pro run45 policy requires a 50 Hz coordinator")
+            raise ValueError("R1 Pro policy requires a 50 Hz coordinator")
         return R1ProPolicyTask(cfg.name, cfg.params["model_path"], cfg.priority)
 
 

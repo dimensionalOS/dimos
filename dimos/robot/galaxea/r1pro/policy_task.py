@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CPU run45 dual-wrist actor, called at 50 Hz by ControlCoordinator."""
+"""CPU R1 Pro dual-wrist actor, called at 50 Hz by ControlCoordinator."""
 
 from pathlib import Path
 import time
@@ -58,7 +58,7 @@ class R1ProActor:
         path = Path(model_path).expanduser()
         if not path.is_file():
             raise FileNotFoundError(
-                f"Set R1PRO_POLICY_ONNX to a run45 ABI checkpoint; missing {path}"
+                f"Set R1PRO_POLICY_ONNX to a compatible R1 Pro ONNX checkpoint; missing {path}"
             )
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = opts.inter_op_num_threads = 1

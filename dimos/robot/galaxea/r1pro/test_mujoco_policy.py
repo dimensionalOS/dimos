@@ -43,7 +43,7 @@ from dimos.robot.galaxea.r1pro.policy_task import R1ProPolicyTask, pack_goal
 def bundle_dir():
     root = os.getenv("R1PRO_SIM_BUNDLE")
     if not root:
-        pytest.skip("External run45 demo bundle: set R1PRO_SIM_BUNDLE")
+        pytest.skip("External R1 Pro demo bundle: set R1PRO_SIM_BUNDLE")
     assert (Path(root) / "assets" / XML).is_file()
     pytest.importorskip("mujoco")
     return root

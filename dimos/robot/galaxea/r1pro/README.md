@@ -135,16 +135,15 @@ The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
 `R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
 `--mid360.host_ip` override them).
 
-## Run45 policy simulation (no ROS or hardware)
+## R1 Pro policy simulation (no ROS or hardware)
 
 Use the DimOS `sim`, `cpu`, and `planning` extras. Point `R1PRO_SIM_BUNDLE` at
-an unpacked `r1pro-web-demo` checkout (or an identical offline copy), with
-`assets/r1pro-holonomic-run45.xml`, `assets/BUNDLE.json`, `assets/meshes/`,
-and `models/r1pro_run45_upperdr_8000u.onnx`. Neither meshes nor weights are
-vendored. This mirrors DimOS's separation of code from MuJoCo assets, but
-uses explicit local paths rather than fetching an unpublished bundle. The
-run45 XML hash is checked; `R1PRO_POLICY_ONNX` can override the checkpoint
-with another export of the same ABI.
+an unpacked `r1pro-web-demo` bundle with `assets/BUNDLE.json`, `assets/meshes/`,
+the pinned `assets/r1pro-holonomic-run45.xml` plant, and the default
+`models/r1pro_run46_upperdr_8000u.onnx`. The plant and model files stay outside
+DimOS. To fall back to run45@8k, set
+`R1PRO_POLICY_ONNX="$R1PRO_SIM_BUNDLE/models/r1pro_run45_upperdr_8000u.onnx"`
+before launching.
 
 ```sh
 CUDA_VISIBLE_DEVICES="" R1PRO_SIM_BUNDLE=/home/cc/work/r1pro-web-demo \

@@ -28,7 +28,7 @@ from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
 
 DT = 0.02
 SUBSTEPS = 10
-CHECKPOINT = "r1pro_run45_upperdr_8000u.onnx"
+CHECKPOINT = "r1pro_run46_upperdr_8000u.onnx"
 XML = "r1pro-holonomic-run45.xml"
 XML_SHA256 = "650388ef5e711d473ac896a07ccffcba0fdbc34c7b9bb5561e75e037e5ed0796"
 
