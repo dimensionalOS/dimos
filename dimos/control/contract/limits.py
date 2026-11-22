@@ -14,10 +14,11 @@
 
 """Which keys a robot accepts, and how far each may go.
 
-A connection's per-joint interface declaration and robot model define one
-key-to-Limits table. Only declared interfaces need bounds; a velocity-only
-prismatic joint does not need a bounded position. ``validate_command`` checks
-every command against this table.
+A connection's per-joint interface declaration, robot model and stiffness
+and damping maximums define one key-to-Limits table. Only declared
+interfaces need bounds; a velocity-only prismatic joint does not need a
+bounded position. ``validate_command`` checks every command against this
+table.
 """
 
 from __future__ import annotations
@@ -41,8 +42,8 @@ PD_INTERFACES: tuple[Interface, ...] = (
     Interface.POSITION,
     Interface.VELOCITY,
     Interface.EFFORT,
-    Interface.KP,
-    Interface.KD,
+    Interface.STIFFNESS,
+    Interface.DAMPING,
 )
 
 
@@ -79,13 +80,17 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
     """Every key a robot accepts, with how far each may go, from its config.
 
     Only declared interfaces get keys, in model order. Declare PD_INTERFACES
-    for joints driven by position, velocity, effort and gains together. Bounds
-    come from the model; commands outside these bounds are rejected.
+    for joints driven by position, velocity, effort and gains together.
+    Position, velocity and effort bounds come from the model, and a command
+    outside them is refused. Stiffness and damping go from 0 up to the
+    joint's ``max_stiffness`` and ``max_damping``, and a command above that
+    is lowered to it.
 
     Raises:
         ValueError: If joints are commanded without a model, no joint of the
-            model moves, the model lacks a bound a command needs, or the
-            config commands nothing.
+            model moves, the model lacks a bound a command needs, a joint is
+            told stiffness or damping without its maximum, or the config
+            commands nothing.
     """
     source = config.source
     if not config.joint_commands:
@@ -98,6 +103,7 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
     unknown = config.joint_commands.keys() - joints.keys()
     if unknown:
         raise ValueError(f"{source!r} declares joints absent from its model: {sorted(unknown)}")
+    maximums = {Interface.STIFFNESS: config.max_stiffness, Interface.DAMPING: config.max_damping}
     table: dict[str, Limits] = {}
     for name, joint in joints.items():
         if name not in config.joint_commands:
@@ -108,7 +114,13 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
             key = Key(f"{full_name}/{interface}")
             if key.source != source:
                 raise ValueError(f"joint {name!r} belongs to another source than {source!r}")
-            table[key] = model_limit(joint, interface)
+            most = maximums.get(interface)
+            if most is None:
+                table[key] = model_limit(joint, interface)
+            elif name in most:
+                table[key] = Limits(0.0, most[name], clamp=True)
+            else:
+                raise ValueError(f"joint {name!r} is told {interface} but has no max_{interface}")
     if not table:
         raise ValueError(f"{source!r} is told nothing: set joint_commands")
     return table
@@ -131,14 +143,14 @@ def movable_joints(model: RobotModel) -> tuple[JointDescription, ...]:
 def model_limit(joint: JointDescription, interface: Interface) -> Limits:
     """How far a joint may be told to go on one interface, from its model.
 
-    Position, velocity and effort come from the model's ``<limit>`` tag.
-    Stiffness and damping (kp, kd) are any size from 0 up. A bound the model
-    lacks is an error, never "no limit"; the one exception is the position
-    of a joint that spins freely.
+    Position, velocity and effort come from the model's ``<limit>`` tag. A
+    bound the model lacks is an error, never "no limit"; the one exception is
+    the position of a joint that spins freely. A model has no stiffness or
+    damping bound; ``limits`` takes those from the config.
 
     Raises:
-        ValueError: If the model lacks the bound, or a joint is not told
-            ``interface``.
+        ValueError: If the model lacks the bound, or ``interface`` is not
+            position, velocity or effort.
     """
     match interface:
         case Interface.POSITION:
@@ -158,8 +170,8 @@ def model_limit(joint: JointDescription, interface: Interface) -> Limits:
             bound = joint.velocity
         case Interface.EFFORT:
             bound = joint.effort
-        case Interface.KP | Interface.KD:
-            return Limits(0.0, None)
+        case Interface.STIFFNESS | Interface.DAMPING:
+            raise ValueError(f"a model has no {interface} bound; set max_{interface} in the config")
         case _:
             raise ValueError(f"a joint is not told {interface}; only {', '.join(PD_INTERFACES)}")
     if bound is None:

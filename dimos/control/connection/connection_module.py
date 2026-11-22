@@ -53,6 +53,12 @@ class ConnectionConfig(ModuleConfig):
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
             listed joints are commanded; planar axes are ordinary joints.
+        max_stiffness: Model joint name to the most stiffness it may be told,
+            in Nm/rad. Needed for every joint that accepts stiffness; a higher
+            value is lowered to it.
+        max_damping: Model joint name to the most damping it may be told, in
+            Nm·s/rad. Needed for every joint that accepts damping; a higher
+            value is lowered to it.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
     """
@@ -60,6 +66,8 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
+    max_stiffness: dict[str, float] = {}
+    max_damping: dict[str, float] = {}
     deadman_timeout_s: float = 0.1
 
 

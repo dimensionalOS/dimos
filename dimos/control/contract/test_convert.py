@@ -14,11 +14,14 @@
 
 from __future__ import annotations
 
+from dimos_lcm.control_msgs import DynamicJointState
 import pytest
 
 from dimos.control._control_test_helpers import fake_arm_model
 from dimos.control.contract.convert import (
     IMU_INTERFACES,
+    dynamic_joint_state_from_values,
+    dynamic_joint_state_to_values,
     imu_from_values,
     imu_to_values,
     joint_state_from_values,
@@ -49,8 +52,8 @@ def test_a_malformed_joint_state_raises() -> None:
         joint_state_to_values(
             JointState(name=["a/j1", "a/j2"], position=[0.1]), (Interface.POSITION,)
         )
-    with pytest.raises(ValueError, match="no 'kp' field"):
-        joint_state_to_values(JointState(name=["a/j1"]), ("kp",))
+    with pytest.raises(ValueError, match="no 'stiffness' field"):
+        joint_state_to_values(JointState(name=["a/j1"]), ("stiffness",))
 
 
 def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
@@ -73,6 +76,25 @@ def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
         joint_state_from_values(values, ["arm/j1", "arm/j2"])
     with pytest.raises(ValueError, match="no position"):
         joint_state_from_values(values, ["arm/j3"])
+
+
+def test_a_dynamic_joint_state_round_trips_whichever_numbers_each_joint_has() -> None:
+    values = {
+        "arm/j1/position": 0.1,
+        "arm/j1/velocity": 0.2,
+        "arm/j1/effort": 1.5,
+        "arm/j1/stiffness": 30.0,
+        "arm/j1/damping": 2.0,
+        "arm/j2/position": -0.3,
+        "arm/j2/stiffness": 10.0,
+    }
+    msg = dynamic_joint_state_from_values(values, ["arm/j1", "arm/j2"], ts=5.25)
+
+    decoded = DynamicJointState.lcm_decode(msg.lcm_encode())
+
+    assert (decoded.header.stamp.sec, decoded.header.stamp.nsec) == (5, 250_000_000)
+    assert decoded.joint_names == ["arm/j1", "arm/j2"]
+    assert dynamic_joint_state_to_values(decoded) == values
 
 
 def test_motor_joints_are_the_models_moving_joints_named_in_full() -> None:
