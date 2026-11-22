@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+from collections.abc import Generator
 from contextlib import suppress
 import faulthandler
 import hashlib
@@ -175,6 +176,18 @@ def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
         return True
     return None
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    report = yield
+    # pytest-error-for-skips only handles runtest reports, not importorskip at module level.
+    if collector.config.getoption("--error-for-skips", default=False) and report.skipped:
+        report.outcome = "failed"
+        report.longrepr = f"Forbidden skipped collection: {report.longrepr}"
+    return report
 
 
 def pytest_configure(config):
