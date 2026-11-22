@@ -22,9 +22,15 @@ from dimos.robot.galaxea.r1pro.joylo import ARMS
 from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 
 
+def _solid(blueprint):  # type: ignore[no-untyped-def]
+    """autoconnect() gives a MetaBlueprint; its atoms exist once it is solidified."""
+    return blueprint.solidify() if hasattr(blueprint, "solidify") else blueprint
+
+
+
 @pytest.mark.parametrize("left_only", [False, True])
 def test_operator_ports_and_joint_routes_select_the_requested_arms(left_only, mocker):
-    parsed = BlueprintConfigParser(_operator_blueprint(left_only)).parse(
+    parsed = BlueprintConfigParser(_operator_blueprint(left_only).solidify()).parse(
         [
             "--r1proleaderconnection.left-serial-port=left-port",
             "--r1proleaderconnection.right-serial-port=right-port",

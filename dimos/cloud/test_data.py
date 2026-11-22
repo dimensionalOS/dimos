@@ -13,13 +13,17 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
+import tarfile
+import tempfile
 import time
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import typer
@@ -27,6 +31,8 @@ import typer
 from dimos.cloud import cli, data as cd
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 
 
 class FakeTransport:
@@ -39,6 +45,7 @@ class FakeTransport:
         self.fail_at = 0  # fail the Nth put, once
         self.epoch = 0  # presign generation; URLs from older epochs are expired
         self.expire_at = 0  # bump epoch before the Nth put, once
+        self.previews: dict[str, dict[str, Any]] = {}
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.endswith("/uploads") and method == "POST":
@@ -67,6 +74,10 @@ class FakeTransport:
                 "limits": {"total_gb": 250, "daily_gb": 25, "max_file_gb": 50, "trust": "new"},
                 "message": "storage at 0% of quota",
             }
+        if path.endswith("/preview") and method == "PUT":
+            assert body
+            self.previews[path.split("/")[4]] = body
+            return {}
         if path.endswith("/uploads"):
             return {"uploads": [dict(id=k, **v) for k, v in self.uploads.items()]}
         uid = path.split("/")[4]
@@ -159,6 +170,88 @@ def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport,
     assert (
         hashlib.sha256(out.read_bytes()).hexdigest() == hashlib.sha256(db.read_bytes()).hexdigest()
     )
+
+
+@pytest.mark.parametrize("mode", ["default", "configured", "in_tree", "symlink_root"])
+def test_directory_upload(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    cloud, transport, db = env
+    tree = db.parent / "dataset"
+    scratch = tree / "tmp"
+    scratch.mkdir(parents=True)
+    (tree / ".hidden").write_bytes(b"data")
+    (tree / "link").symlink_to("tmp", target_is_directory=True)
+    source = tree
+    if mode == "symlink_root":
+        source = db.parent / "alias"
+        source.symlink_to(tree, target_is_directory=True)
+    staging = db.parent / "staging" if mode == "configured" else db.parent
+    if mode in ("configured", "in_tree"):
+        cloud.backend.staging_dir = staging if mode == "configured" else scratch
+    if mode == "in_tree":
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    mtimes = [p.stat().st_mtime_ns for p in (tree, scratch)]
+    tar_paths: list[Path] = []
+    real_open = tarfile.open
+
+    def track_tar(name: Path, mode: Literal["w", "r:"]) -> tarfile.TarFile:
+        if mode == "w":
+            tar_paths.append(name)
+            return real_open(name, "w")
+        return real_open(name, "r:")
+
+    monkeypatch.setattr(tarfile, "open", track_tar)
+    result = cloud.upload(source, robot_id="go2", kind="dataset", chunk_mb=1)
+    uid = result["upload_id"]
+    uploaded = transport.uploads[uid]
+    assert uploaded["robot_id"] == "go2"
+    assert uploaded["kind"] == "dataset"
+    assert uploaded["part_size"] == 2**20
+    name = source.name
+    assert uploaded["filename"] == f"{name}.tar.lz4"
+    assert uploaded["content_encoding"] == "lz4"
+    assert uploaded["blob"].startswith(b"\x04\x22\x4d\x18")  # LZ4 frame magic
+    if mode != "in_tree":  # Pull still uses the configured staging directory.
+        pulled = cloud.pull(uid)
+        assert pulled.name.endswith(f"{name}.tar")
+        with tarfile.open(pulled, "r:") as tar:
+            assert tar.getnames() == [name, f"{name}/.hidden", f"{name}/link", f"{name}/tmp"]
+            link = tar.getmember(f"{name}/link")
+            assert link.issym() and link.linkname == "tmp"
+            hidden = tar.extractfile(f"{name}/.hidden")
+            assert hidden is not None and hidden.read() == b"data"
+    retry = cloud.upload(source)
+    assert retry["skipped"] and retry["upload_id"] == uid  # FakeTransport dedupes by SHA-256.
+    assert [p.stat().st_mtime_ns for p in (tree, scratch)] == mtimes
+    assert all(p.parent.parent == staging and not p.parent.exists() for p in tar_paths)
+    assert len(tar_paths) == 2 and not list(scratch.iterdir())
+
+
+def test_directory_upload_cleans_up_after_tar_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "file").write_bytes(b"data")
+    staging = tmp_path / "staging"
+    transport = FakeTransport()
+    cloud = CloudData(MultipartBackend(DataApi(transport), "", staging, retries=0))
+
+    def disk_usage(path: Path) -> Any:
+        assert path.is_relative_to(staging)
+        return shutil._ntuple_diskusage(10, 6, 4)  # type: ignore[attr-defined]
+
+    def fail_add(tar: tarfile.TarFile, *args: Any, **kwargs: Any) -> None:
+        assert tar.fileobj is not None
+        tar.fileobj.write(b"partial tar")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(tarfile.TarFile, "add", fail_add)
+    with pytest.raises(OSError, match="No space left on device"):
+        cloud.upload(tree)
+    assert not transport.uploads and not list(staging.iterdir())
 
 
 def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -349,7 +442,6 @@ def test_upload_refuses_when_staging_partition_is_full(
     env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cloud, _, db = env
-    import shutil
 
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):
@@ -361,7 +453,6 @@ def test_pull_refuses_when_disk_is_full(
 ) -> None:
     cloud, _, db = env
     uid = cloud.upload(db)["upload_id"]
-    import shutil
 
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):
@@ -549,3 +640,80 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_mcap_recording_sends_preview_with_joystick(
+    env: tuple[CloudData, FakeTransport, Path],
+) -> None:
+    writer_mod = pytest.importorskip("mcap.writer")
+    cloud, t, db = env
+    path = db.parent / "teleop.mcap"
+    with path.open("wb") as f:
+        w = writer_mod.Writer(f)
+        w.start(profile="dimos", library="test")
+        chans = {
+            name: w.register_channel(
+                topic=name,
+                message_encoding="lcm",
+                schema_id=0,
+                metadata={
+                    "dimos.payload_type": payload,
+                    "dimos.observation_time": "publish_time",
+                },
+            )
+            for name, payload in (
+                ("odom", "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped"),
+                ("joy", "dimos.msgs.sensor_msgs.Joy.Joy"),
+            )
+        }
+        for i in range(3):
+            ns = (100 + i) * 10**9
+            pose = PoseStamped(ts=100.0 + i, position=[i, 0, 0.3], frame_id="world")
+            joy = Joy(ts=100.0 + i, axes=[0.0, 0.5, -1.0, 0.0], buttons=[1, 0, 0])
+            for name, msg in (("odom", pose), ("joy", joy)):
+                w.add_message(
+                    channel_id=chans[name], log_time=ns, publish_time=ns, data=msg.lcm_encode()
+                )
+        w.finish()
+
+    r = cloud.upload(path, robot_id="go2")
+    assert r["preview"].startswith("sent")
+    doc = t.previews[r["upload_id"]]
+    assert doc["streams"]["joystick"]["count"] == 3
+    assert [s[1:] for s in doc["joy"]] == [[[0.0, 0.5, -1.0, 0.0], [1, 0, 0]]] * 3
+
+
+def test_mcap_upload_sends_its_preview(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
+
+    cloud, _t, db = env
+    mcap = db.parent / "run.mcap"
+    write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
+    before = mcap.read_bytes()
+    assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    assert mcap.read_bytes() == before
+
+
+def test_an_mcap_recording_gets_a_manifest_so_it_can_be_previewed(tmp_path: Path) -> None:
+    """No manifest means no console preview, and the manifest used to be read by opening the
+    recording as sqlite — which every .mcap fails, whatever the preview could have made of it."""
+    writer = pytest.importorskip("mcap.writer")
+    path = tmp_path / "run.mcap"
+    with path.open("wb") as out:
+        w = writer.Writer(out)
+        w.start(profile="dimos", library="test")
+        w.register_channel(
+            topic="dimos/lidar/sensor_msgs.PointCloud2", message_encoding="lcm", schema_id=0
+        )
+        w.finish()
+
+    manifest = cd._manifest(path)
+    assert manifest is not None
+    assert [s["name"] for s in manifest["streams"]] == ["lidar"]
+    assert manifest["streams"][0]["payload_module"].endswith("PointCloud2")
+
+
+def test_a_file_that_is_no_recording_has_no_manifest(tmp_path: Path) -> None:
+    junk = tmp_path / "notes.txt"
+    junk.write_text("not a recording")
+    assert cd._manifest(junk) is None

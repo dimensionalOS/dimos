@@ -21,7 +21,11 @@ Starts paused. The existing vendor stack must be started and checked explicitly.
 import math
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _control_blueprint
+from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import _wrist_cameras
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
+    _camera_transports,
+    _control_blueprint,
+)
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection, R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo import ARMS, TORSO, JoyloConfig
 from dimos.robot.galaxea.r1pro.motion import motion_groups
@@ -29,11 +33,6 @@ from dimos.robot.galaxea.r1pro.motion import motion_groups
 _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
     tracking_speed=1.0,
-    enable_wrist_color=True,
-    # Forward the camera's compressed frames as they arrive. RGB-D has its own
-    # slower processing rate and must not set the operator video's cadence.
-    color_publish_hz=0.0,
-    enable_wrist_depth=False,
     publish_odom_tf=True,
 )
 _profile = JoyloConfig(
@@ -48,11 +47,24 @@ def make_joylo_real(
     *, publish_odom_tf: bool = True, enable_wrist_color: bool = True, webxr: bool = False
 ) -> Blueprint:
     """Compose hardware control with an explicit owner for odometry and wrist video."""
-    declaration = _declaration.model_copy(
-        update={"publish_odom_tf": publish_odom_tf, "enable_wrist_color": enable_wrist_color}
-    )
+    declaration = _declaration.model_copy(update={"publish_odom_tf": publish_odom_tf})
+    connection = R1ProConnection.blueprint(**declaration.model_dump())
+    if enable_wrist_color:
+        # The connection no longer carries wrist video: each D405's colour comes
+        # straight off V4L2 (640x480 JPEG at 30 fps), on the same stream names.
+        connection = autoconnect(
+            connection,
+            autoconnect(*_wrist_cameras())
+            .remappings(
+                [
+                    ("wrist_left", "jpeg_out", "wrist_left_color"),
+                    ("wrist_right", "jpeg_out", "wrist_right_color"),
+                ]
+            )
+            .transports(_camera_transports),
+        )
     return _control_blueprint(
-        R1ProConnection.blueprint(**declaration.model_dump()),
+        connection,
         R1ProConnection,
         _declaration,
         joylo=_profile.model_dump(),

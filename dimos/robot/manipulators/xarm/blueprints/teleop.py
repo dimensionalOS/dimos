@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
@@ -339,7 +339,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _teleop(arm: XArmType) -> Blueprint:
+def _teleop(arm: XArmType) -> MetaBlueprint:
     """Jog an xArm's end and open and close its xArm Gripper from the Desktop
     Manipulation app, through ``XArmConnection``. ``UsdManager`` serves the
     arm's URDF and puts its joints on tf, so the app can draw it.

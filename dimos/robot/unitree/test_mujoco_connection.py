@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
+from io import BytesIO
 import subprocess
 import sys
 import threading
@@ -24,10 +25,16 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 from pytest import MonkeyPatch
+from pytest_mock import MockerFixture
+import structlog
+from structlog.testing import LogCapture
 
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.utils import logging_config
 
 
 class _FakeShmNames:
@@ -241,6 +248,100 @@ def quiet_connection(monkeypatch: MonkeyPatch) -> Iterator[MujocoConnection]:
     connection.stop()
 
 
+@pytest.fixture
+def output_relay(
+    monkeypatch: MonkeyPatch, mocker: MockerFixture
+) -> Iterator[tuple[MujocoConnection, LogCapture]]:
+    # Exercise the real output pump without launching a simulator or a reader thread.
+    mocker.patch.object(MujocoConnection, "_launch")
+    connection = _bare_connection(monkeypatch, mocker.Mock())
+    logs = LogCapture()
+    monkeypatch.setattr(
+        mujoco_connection,
+        "logger",
+        structlog.wrap_logger(
+            structlog.testing.CapturingLogger(),
+            processors=[logs],
+            wrapper_class=structlog.stdlib.BoundLogger,
+        ),
+    )
+    yield connection, logs
+    connection.stop()
+
+
+@pytest.mark.parametrize(
+    "level,message",
+    [
+        ("debug", "Checking endpoints"),
+        ("info", "No errors or warnings reported"),
+        ("warning", "Zenoh endpoints not linked ..."),
+        ("error", "Connection lost"),
+        ("critical", "Connection lost"),
+        ("warning", ""),
+    ],
+)
+def test_output_preserves_formatted_log_level_without_nested_header(
+    output_relay: tuple[MujocoConnection, LogCapture],
+    monkeypatch: MonkeyPatch,
+    mocker: MockerFixture,
+    level: str,
+    message: str,
+) -> None:
+    connection, logs = output_relay
+    # A child writing to a pipe uses this uncolored renderer. Derive its header
+    # here so tests catch mismatches with the actual console format.
+    monkeypatch.setattr(logging_config, "_CONSOLE_USE_COLORS", False)
+    line = (
+        logging_config._compact_console_processor(
+            None,
+            level,
+            {
+                "timestamp": "2026-11-08T11:49:45.039Z",
+                "level": level,
+                "logger": "otocol/service/zenohservice.py",
+                "event": message,
+            },
+        )
+        + "\n"
+    )
+    with BytesIO(line.encode()) as output:
+        connection.process = mocker.Mock(stdout=output, stderr=None, poll=lambda: 0)
+        connection._pump_subprocess_output()
+
+    assert logs.entries == [
+        {
+            "event": f"[mujoco] {message}",
+            "log_level": level,
+            "subprocess_logger": "otocol/service/zenohservice.py",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "line,level,message",
+    [
+        (b"Simulator ready\n", "info", "Simulator ready"),
+        (b"WARNING: unstable simulation\n", "warning", "WARNING: unstable simulation"),
+        (b"ERROR: model unavailable\n", "warning", "ERROR: model unavailable"),
+        (b"FATAL: model unavailable\n", "warning", "FATAL: model unavailable"),
+        (b"Invalid byte: \xff\n", "info", "Invalid byte: \ufffd"),
+    ],
+)
+def test_output_keeps_unformatted_diagnostics(
+    output_relay: tuple[MujocoConnection, LogCapture],
+    mocker: MockerFixture,
+    line: bytes,
+    level: str,
+    message: str,
+) -> None:
+    connection, logs = output_relay
+    with BytesIO(b"\n" + line + b"\n") as output:
+        connection.process = mocker.Mock(stdout=output, stderr=None, poll=lambda: 0)
+        connection._pump_subprocess_output()
+
+    assert logs.entries == [{"event": f"[mujoco] {message}", "log_level": level}]
+
+
 def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
     quiet_connection: MujocoConnection, monkeypatch: MonkeyPatch
 ) -> None:
@@ -255,3 +356,19 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
     np.testing.assert_allclose(message.points_f32(), points)
 
     assert quiet_connection.get_lidar_message() is None  # same frame again
+
+
+def test_stop_movement_sends_zero_speed(
+    quiet_connection: MujocoConnection, monkeypatch: MonkeyPatch
+) -> None:
+    sent: list[tuple[list[float], list[float]]] = []
+    assert quiet_connection.shm_data is not None
+    monkeypatch.setattr(
+        quiet_connection.shm_data,
+        "write_command",
+        lambda linear, angular: sent.append((linear.tolist(), angular.tolist())),
+        raising=False,
+    )
+    quiet_connection.move(Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.2)))
+    quiet_connection.stop_movement()
+    assert sent[-1] == ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])

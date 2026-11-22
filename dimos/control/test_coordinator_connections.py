@@ -937,21 +937,25 @@ def system(request: pytest.FixtureRequest) -> Iterator[ModuleCoordinator]:
     base_declaration = ConnectionConfig(
         **FakeBaseConfig().model_dump(include=set(ConnectionConfig.model_fields))
     )
-    blueprint = autoconnect(
-        Robots.blueprint(
-            connections=[arm_declaration, base_declaration],
-            tasks=[joint_trajectory_task(MOCK_JOINTS)],
-            reading_timeout_s=getattr(request, "param", 10.0),
-        ),
-        FakeArm.blueprint(**arm_declaration.model_dump()),
-        FakeBase.blueprint(**base_declaration.model_dump(), initial_yaw=math.pi / 2),
-    ).remappings(
-        [
-            (FakeArm, "position_command", "mock_position_command"),
-            (Robots, "mock_joint_state", "joint_state"),
-            (FakeBase, "velocity_command", "go2_velocity_command"),
-            (FakeBase, "joint_state", "go2_joint_state"),
-        ]
+    blueprint = (
+        autoconnect(
+            Robots.blueprint(
+                connections=[arm_declaration, base_declaration],
+                tasks=[joint_trajectory_task(MOCK_JOINTS)],
+                reading_timeout_s=getattr(request, "param", 10.0),
+            ),
+            FakeArm.blueprint(**arm_declaration.model_dump()),
+            FakeBase.blueprint(**base_declaration.model_dump(), initial_yaw=math.pi / 2),
+        )
+        .solidify()
+        .remappings(
+            [
+                (FakeArm, "position_command", "mock_position_command"),
+                (Robots, "mock_joint_state", "joint_state"),
+                (FakeBase, "velocity_command", "go2_velocity_command"),
+                (FakeBase, "joint_state", "go2_joint_state"),
+            ]
+        )
     )
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},

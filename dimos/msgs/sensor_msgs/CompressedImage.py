@@ -115,13 +115,13 @@ class CompressedImage(Timestamped):
 
             arr = TurboJPEG().decode(self.data, pixel_format=TJPF_RGB)
             fmt = ImageFormat.RGB
-        elif self.format.startswith("png"):
+        elif self.format.startswith(("png", "webp")):
             import cv2
             import numpy as np
 
             arr = cv2.imdecode(np.frombuffer(self.data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
             if arr is None:
-                raise ValueError("PNG decoding failed")
+                raise ValueError(f"{self.format} decoding failed")
             if arr.ndim == 2:
                 fmt = ImageFormat.GRAY16 if arr.dtype == np.uint16 else ImageFormat.GRAY
             elif arr.shape[2] == 4:

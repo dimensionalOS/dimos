@@ -5,8 +5,8 @@ Full autonomous navigation, mapping, and agentic control on a real Go2. No ROS r
 ## Requirements
 
 - Unitree Go2 Pro or Air (stock firmware 1.1.7+, no jailbreak needed)
-- Ubuntu 22.04/24.04 with CUDA GPU (recommended), or macOS (experimental)
-- Python 3.10 or newer, which the installer provides
+- Ubuntu 22.04/24.04/26.04 with CUDA GPU (recommended), or macOS (experimental)
+- Python 3.12
 
 ## Install
 

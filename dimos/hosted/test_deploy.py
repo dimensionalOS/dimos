@@ -42,7 +42,9 @@ def test_deployed_holds_the_run_token_and_starts_and_stops_hosts_side_by_side(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch("dimos.hosted.deploy.code_revision", return_value="r")
-    blueprint = autoconnect(Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b"))
+    blueprint = autoconnect(
+        Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b")
+    ).solidify()
     rpc = mocker.MagicMock()
     # Both start calls, then both stop calls, must be in flight at once, or a barrier breaks.
     both_started = threading.Barrier(2, timeout=5)
@@ -147,7 +149,9 @@ def test_a_failed_start_stops_the_run_without_waiting_for_the_other_starts(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch("dimos.hosted.deploy.code_revision", return_value="r")
-    blueprint = autoconnect(Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b"))
+    blueprint = autoconnect(
+        Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b")
+    ).solidify()
     rpc = mocker.MagicMock()
     b_started, release_b = threading.Event(), threading.Event()
     stopped: list[str] = []

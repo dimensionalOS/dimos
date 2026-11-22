@@ -74,6 +74,12 @@ from dimos.teleop.webxr.module import WebXRTeleopModule
 from dimos.utils.testing.waiting import wait_until
 
 
+def _solid(blueprint):  # type: ignore[no-untyped-def]
+    """autoconnect() gives a MetaBlueprint; its atoms exist once it is solidified."""
+    return blueprint.solidify() if hasattr(blueprint, "solidify") else blueprint
+
+
+
 @pytest.fixture(autouse=True)
 def no_http_server(mocker):
     # These are decoder/control tests. HTTPS startup has its own module tests.
@@ -605,7 +611,7 @@ def test_source_selection_does_not_clear_estop_or_replay_old_leader_packets(shar
 
 def test_fake_backend_is_the_default_and_uses_no_ros() -> None:
     blueprint = make_r1pro_vr_teleop()
-    modules = {atom.module for atom in blueprint.blueprints}
+    modules = {atom.module for atom in _solid(blueprint).blueprints}
     assert FakeR1ProConnection in modules
     assert R1ProConnection not in modules
     # Building the fake stack never pulled in ROS or vendor modules.
@@ -616,7 +622,7 @@ def test_fake_backend_is_the_default_and_uses_no_ros() -> None:
 def test_registered_blueprint_is_the_fake_backend() -> None:
     from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import r1pro_vr_teleop
 
-    modules = {atom.module for atom in r1pro_vr_teleop.blueprints}
+    modules = {atom.module for atom in _solid(r1pro_vr_teleop).blueprints}
     assert FakeR1ProConnection in modules
     assert R1ProConnection not in modules
 
@@ -624,7 +630,7 @@ def test_registered_blueprint_is_the_fake_backend() -> None:
 def test_real_backend_assembles_r1pro_connection_without_starting_it() -> None:
     """The real path is assembly-checked only: never built, never started."""
     blueprint = make_r1pro_vr_teleop(backend="real", boot_vendor_stack=False)
-    modules = {atom.module for atom in blueprint.blueprints}
+    modules = {atom.module for atom in _solid(blueprint).blueprints}
     assert R1ProConnection in modules
     assert FakeR1ProConnection not in modules
 
@@ -638,11 +644,11 @@ def _twist_wiring(blueprint: Any) -> tuple[set[str], set[str]]:
     """Twist stream names after remapping, split into producers and consumers."""
     produced: set[str] = set()
     consumed: set[str] = set()
-    for atom in blueprint.active_blueprints:
+    for atom in _solid(blueprint).active_blueprints:
         for conn in atom.streams:
             if conn.type is not Twist:
                 continue
-            name = blueprint.remapping_map.get((atom.name, conn.name), conn.name)
+            name = _solid(blueprint).remapping_map.get((atom.name, conn.name), conn.name)
             assert isinstance(name, str)
             if conn.direction in ("out", "inout"):
                 produced.add(name)
@@ -669,17 +675,17 @@ def test_thumbstick_twist_is_the_only_chassis_command_path(monkeypatch: pytest.M
         produced, consumed = _twist_wiring(blueprint)
         assert produced == {"twist_command"}, produced
         assert consumed == {"twist_command"}, consumed
-        teleop_atom = next(a for a in blueprint.blueprints if a.module is JoystickTeleopMapper)
-        connection_atom = next(a for a in blueprint.blueprints if a.module is connection_cls)
+        teleop_atom = next(a for a in _solid(blueprint).blueprints if a.module is JoystickTeleopMapper)
+        connection_atom = next(a for a in _solid(blueprint).blueprints if a.module is connection_cls)
         # The teleop module's sticks produce the bus twist; the connection's
         # cmd_vel input is the per-robot base port, fed by the coordinator.
-        assert blueprint.remapping_map[(teleop_atom.name, "base_twist")] == "twist_command"
+        assert _solid(blueprint).remapping_map[(teleop_atom.name, "base_twist")] == "twist_command"
         assert (
-            blueprint.remapping_map[(connection_atom.name, "velocity_command")]
+            _solid(blueprint).remapping_map[(connection_atom.name, "velocity_command")]
             == "r1pro_velocity_command"
         )
         # No explicit bus override either.
-        assert {name for (name, msg_type) in blueprint.transport_map if msg_type is Twist} == set()
+        assert {name for (name, msg_type) in _solid(blueprint).transport_map if msg_type is Twist} == set()
 
     coordinator = R1ProVrCoordinator(
         connections=[FakeR1ProConnectionConfig()],
@@ -708,7 +714,7 @@ def test_blueprint_teleop_scaling_matches_the_base_range() -> None:
     vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
     for backend in ("fake", "real"):
         blueprint = make_r1pro_vr_teleop(backend=backend, boot_vendor_stack=False)
-        atom = next(a for a in blueprint.blueprints if a.module is JoystickTeleopMapper)
+        atom = next(a for a in _solid(blueprint).blueprints if a.module is JoystickTeleopMapper)
         assert atom.kwargs["base_linear_speed"] == pytest.approx(min(vx, vy, 0.3))
         assert atom.kwargs["base_angular_speed"] == pytest.approx(min(wz, 0.5))
 

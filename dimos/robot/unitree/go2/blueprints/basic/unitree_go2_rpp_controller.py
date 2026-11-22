@@ -52,7 +52,6 @@ which composes this controller with the Benchmarker in one process.
 
 from __future__ import annotations
 
-from dimos.control.connection.connection_module import ConnectionConfig as JointConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
@@ -62,7 +61,11 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
-from dimos.robot.unitree.go2.connection import GO2_BASE_JOINTS, ConnectionConfig, GO2Connection
+from dimos.robot.unitree.go2.connection import (
+    GO2_BASE_JOINTS,
+    GO2Connection,
+    go2_joint_connection,
+)
 from dimos.robot.unitree.go2.coordinator import Go2Coordinator
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
@@ -80,11 +83,7 @@ unitree_go2_rpp_controller = (
             instance_name="ControlCoordinator",
             publish_joint_state=True,
             publish_robot_joint_states=True,
-            connections=[
-                JointConnectionConfig(
-                    **ConnectionConfig().model_dump(include=set(JointConnectionConfig.model_fields))
-                )
-            ],
+            connections=[go2_joint_connection()],
             tasks=[
                 # Idle/teleop velocity task. Priority 20 so a held WASD key
                 # preempts the priority-10 follower for repositioning.

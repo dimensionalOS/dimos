@@ -22,13 +22,16 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.connection.connection_module import ConnectionConfig as JointConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.unitree.go2.connection import GO2_BASE_JOINTS, ConnectionConfig, GO2Connection
+from dimos.robot.unitree.go2.connection import (
+    GO2_BASE_JOINTS,
+    GO2Connection,
+    go2_joint_connection,
+)
 from dimos.robot.unitree.go2.coordinator import Go2Coordinator
 
 _go2_joints = list(GO2_BASE_JOINTS)
@@ -38,17 +41,15 @@ unitree_go2_coordinator = (
         GO2Connection.blueprint(obstacle_avoidance=False),
         Go2Coordinator.blueprint(
             instance_name="ControlCoordinator",
-            connections=[
-                JointConnectionConfig(
-                    **ConnectionConfig().model_dump(include=set(JointConnectionConfig.model_fields))
-                )
-            ],
+            connections=[go2_joint_connection()],
             tasks=[
                 TaskConfig(
                     name="vel_go2",
                     type="twist_velocity",
                     joint_names=_go2_joints,
-                    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+                    params={
+                        "axes": ["linear.x", "linear.y", "angular.z"],
+                    },
                     priority=10,
                 ),
             ],

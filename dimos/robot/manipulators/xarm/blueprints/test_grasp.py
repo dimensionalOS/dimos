@@ -44,7 +44,7 @@ def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
     }
 
 
-@pytest.mark.parametrize("blueprint", [xarm_grasp, xarm_grasp_graspgenx])
+@pytest.mark.parametrize("blueprint", [xarm_grasp.solidify(), xarm_grasp_graspgenx.solidify()])
 def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> None:
     topics = _topics(blueprint)
     planner_map = topics[ManipulationModule, "voxel_map"]
@@ -62,7 +62,7 @@ def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> 
     }
 
 
-@pytest.mark.parametrize("blueprint", [xarm_grasp, xarm_grasp_graspgenx])
+@pytest.mark.parametrize("blueprint", [xarm_grasp.solidify(), xarm_grasp_graspgenx.solidify()])
 def test_pick_and_place_finds_the_box_filter(blueprint: Blueprint) -> None:
     providers = [
         atom.module

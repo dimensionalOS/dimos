@@ -309,6 +309,4 @@ r1pro_vr_teleop = make_r1pro_vr_teleop(backend="fake").global_config(transport="
 r1pro_vr_teleop_real = make_r1pro_vr_teleop(
     backend="real",
     tracking_speed=0.2,
-    enable_wrist_color=False,
-    enable_wrist_depth=False,
 ).global_config(transport="zenoh")

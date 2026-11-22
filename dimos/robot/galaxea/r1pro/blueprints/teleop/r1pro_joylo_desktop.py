@@ -109,4 +109,5 @@ def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
     ).global_config(viewer="none", transport="zenoh", n_workers=11)
 
 
-r1pro_openarm_joylo_real = make_joylo_desktop()
+# autoconnect(...) is what the registry generator recognises as a runnable blueprint.
+r1pro_openarm_joylo_real = autoconnect(make_joylo_desktop())

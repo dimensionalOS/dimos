@@ -62,11 +62,17 @@ SIMULATION = {
 }
 
 
+def _solid(blueprint):  # type: ignore[no-untyped-def]
+    """autoconnect() gives a MetaBlueprint; its atoms exist once it is solidified."""
+    return blueprint.solidify() if hasattr(blueprint, "solidify") else blueprint
+
+
+
 def _publishers(blueprint, name, kind):
     """The modules that write one stream, after remapping."""
     return [
         atom.name
-        for atom in blueprint.active_blueprints
+        for atom in _solid(blueprint).active_blueprints
         for output in atom.streams
         if output.direction == "out"
         and output.type is kind
@@ -115,7 +121,7 @@ def test_incomplete_sources_cannot_silently_become_training_data(tmp_path, fault
 
 def test_collection_contract_has_explicit_selection_and_rpc_episode_controls():
     graph = r1pro_collection(cameras=("head", "right_wrist"))
-    recorder, episodes = graph.active_blueprints
+    recorder, episodes = _solid(graph).active_blueprints
     assert recorder.name == "recorder"
     assert episodes.name == "episodes"
     assert episodes.kwargs["button_map"] == {}
@@ -129,7 +135,7 @@ def test_collection_contract_has_explicit_selection_and_rpc_episode_controls():
 def test_hardware_run_starts_without_recording_options():
     blueprint = r1pro_openarm_joylo_real
     BlueprintConfigParser(blueprint).parse([], environ={})
-    names = {atom.name for atom in blueprint.active_blueprints}
+    names = {atom.name for atom in _solid(blueprint).active_blueprints}
     assert {"recorder", "episodes"}.isdisjoint(names)
     assert {"ControlCoordinator", "r1projoylo", "r1prowebxr"} <= names
     assert resolve_module_refs(blueprint)["ControlCoordinator", "_leader"] == "r1projoylo"
@@ -137,7 +143,7 @@ def test_hardware_run_starts_without_recording_options():
 
 def test_hardware_collection_records_robot_streams_with_robot_side_producers():
     blueprint = make_joylo_desktop(recording=True)
-    modules = {atom.name: atom for atom in blueprint.active_blueprints}
+    modules = {atom.name: atom for atom in _solid(blueprint).active_blueprints}
     recorder = modules["recorder"]
     required_inputs = set(recorder.kwargs["input_types"]) | {"status"}
     robot = next(p for p in blueprint.hosted_placements if p.tags == {"r1pro": True})
@@ -176,8 +182,8 @@ def test_hardware_collection_records_robot_streams_with_robot_side_producers():
 
 def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
     real, sim = make_joylo_desktop(recording=True), r1pro_openarm_joylo_sim2
-    hardware = {atom.name: atom for atom in real.active_blueprints}
-    simulated = {atom.name: atom for atom in sim.active_blueprints}
+    hardware = {atom.name: atom for atom in _solid(real).active_blueprints}
+    simulated = {atom.name: atom for atom in _solid(sim).active_blueprints}
     assert set(hardware) - set(simulated) == HARDWARE
     assert set(simulated) - set(hardware) == SIMULATION
     shared = set(hardware) & set(simulated)
@@ -217,7 +223,7 @@ def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
     def outputs(blueprint, names):
         return {
             (blueprint.remapping_map.get((atom.name, s.name), s.name), s.type)
-            for atom in blueprint.active_blueprints
+            for atom in _solid(blueprint).active_blueprints
             if atom.name in names
             for s in atom.streams
             if s.direction == "out" and s.name != "tf"

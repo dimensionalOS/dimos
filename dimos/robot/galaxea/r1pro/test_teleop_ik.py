@@ -36,6 +36,12 @@ from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 
+def _solid(blueprint):  # type: ignore[no-untyped-def]
+    """autoconnect() gives a MetaBlueprint; its atoms exist once it is solidified."""
+    return blueprint.solidify() if hasattr(blueprint, "solidify") else blueprint
+
+
+
 def test_elbow_posture_improves_without_moving_grippers_or_torso():
     task = next(t for t in shared_teleop_tasks(dict.fromkeys(UPPER, 1.0)) if t.type == "teleop_ik")
     params = {
@@ -139,7 +145,7 @@ def test_elbow_soft_stop_overtravel_recovers_with_a_legal_command():
 def test_hardware_ik_recovers_elbow_inside_connection_command_limits(side):
     coordinator = next(
         atom
-        for atom in make_joylo_real(webxr=True).active_blueprints
+        for atom in _solid(make_joylo_real(webxr=True)).active_blueprints
         if atom.name == "ControlCoordinator"
     )
     task = next(t for t in coordinator.kwargs["tasks"] if t.type == "teleop_ik")
@@ -162,7 +168,7 @@ def test_hardware_ik_recovers_elbow_inside_connection_command_limits(side):
 
 @pytest.fixture
 def calibrated_r1(mocker, tmp_path):
-    blueprint = _webxr_blueprint().active_blueprints[0]
+    blueprint = _solid(_webxr_blueprint()).active_blueprints[0]
     module = CalibratedArmTeleopModule(**blueprint.kwargs, calibration_directory=tmp_path)
     mocker.patch.object(ArmTeleopModule, "start")
     mocker.patch.object(module.robot_feedback, "subscribe", return_value=lambda: None)

@@ -87,10 +87,12 @@ jobs:
       CACHIX_CACHE_NAME: dimensionalos
     outputs:
       needs-build-linux: ${{ steps.decide.outputs.linux }}
+      needs-build-linux-arm: ${{ steps.decide.outputs.linux-arm }}
       needs-build-macos: ${{ steps.decide.outputs.macos }}
       inputs-hash: ${{ steps.hash.outputs.inputs-hash }}
       # The run that uploaded each platform's marker; empty when there is none.
       marker-run-linux: ${{ steps.marker.outputs.linux }}
+      marker-run-linux-arm: ${{ steps.marker.outputs.linux-arm }}
       marker-run-macos: ${{ steps.marker.outputs.macos }}
 
     steps:
@@ -114,15 +116,18 @@ jobs:
               || echo "::warning::Could not look up the $1 publish marker; treating it as missing" >&2
           }
           linux=$(find_marker Linux-X64)
+          linux_arm=$(find_marker Linux-ARM64)
           macos=$(find_marker macOS-ARM64)
           echo "linux=${linux}" >> "$GITHUB_OUTPUT"
+          echo "linux-arm=${linux_arm}" >> "$GITHUB_OUTPUT"
           echo "macos=${macos}" >> "$GITHUB_OUTPUT"
-          echo "Linux marker: ${linux:+run $linux}${linux:-none}; macOS marker: ${macos:+run $macos}${macos:-none}"
+          echo "Linux x86 marker: ${linux:+run $linux}${linux:-none}; Linux arm marker: ${linux_arm:+run $linux_arm}${linux_arm:-none}; macOS marker: ${macos:+run $macos}${macos:-none}"
       - name: Decide which platforms need a publish
         id: decide
         env:
           FORCE: ${{ inputs.force-cachix-build }}
           LINUX_RUN: ${{ steps.marker.outputs.linux }}
+          LINUX_ARM_RUN: ${{ steps.marker.outputs.linux-arm }}
           MACOS_RUN: ${{ steps.marker.outputs.macos }}
         run: |
           emit() {  # $1=output name, $2=the run holding this platform's marker, if any
@@ -133,6 +138,7 @@ jobs:
             fi
           }
           emit linux "$LINUX_RUN"
+          emit linux-arm "$LINUX_ARM_RUN"
           emit macos "$MACOS_RUN"
 
   cachix-build:
@@ -206,6 +212,81 @@ jobs:
         # The manifest is forensics for the marker uploaded below; links.txt maps
         # each result symlink to its store path so consumers can materialise
         # the binaries with --link-results instead of re-running nix.
+        env:
+          CACHIX_CACHE_NAME: dimensionalos
+        run: |
+          mkdir -p .cachix-marker
+          python3 bin/native-modules --inputs-hash \
+            > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
+          python3 bin/native-modules --record-links > .cachix-marker/links.txt
+      - name: Upload publish marker
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+          path: .cachix-marker
+          include-hidden-files: true  # The marker lives in a dot directory.
+          if-no-files-found: error
+          overwrite: true  # A re-run of this job replaces its earlier upload.
+
+  cachix-build-linux-arm:
+    # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️ — holds CACHIX_AUTH_TOKEN, same
+    # as cachix-build; the `if:` guard below is the only thing keeping forks
+    # out. A separate job (not a matrix leg of cachix-build) for the same two
+    # reasons as the macOS one: its job-level `if` must gate entry into the
+    # `cachix` environment on the arm marker alone (matrix context isn't
+    # available in `if:`), and an arm build failure must not fail cachix-build
+    # and block the Linux tests.
+    #
+    # Why this exists at all: every aarch64 consumer — a robot deploy, a dev
+    # cross-building for one — used to start from source, because the cache
+    # only ever held x86_64-linux paths. One arm module's closure is ~550
+    # crates and takes hours to build; published, it is a download.
+    if: |
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.outputs.needs-build-linux-arm == 'true'
+    needs: cachix-build-check
+    timeout-minutes: 300
+    environment: cachix
+    runs-on: ubuntu-24.04-arm  # GitHub-hosted arm64 → runner.arch is ARM64
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Install Nix (with Cachix substituter)
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        # The key includes runner.arch, so this is an arm-only entry, distinct
+        # from the x86 Linux fetcher cache.
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-fetcher-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/native-modules', '**/flake.lock', '**/flake.nix') }}
+          restore-keys: nix-fetcher-build-${{ runner.os }}-${{ runner.arch }}-
+      - name: Authenticate Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: dimensionalos
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build native modules
+        run: python3 bin/native-modules --build
+      - name: Verify Cachix holds the built paths
+        env:
+          CACHIX_CACHE_NAME: dimensionalos
+        run: python3 bin/native-modules --verify-published
+      - name: Record the published inputs manifest
         env:
           CACHIX_CACHE_NAME: dimensionalos
         run: |
@@ -364,8 +445,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: cargo fmt
         run: |
@@ -391,10 +473,10 @@ jobs:
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install dependency for pyaudio and open3d
+      - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libegl1
+          sudo apt-get install -y portaudio19-dev
       - name: Install dependencies
         run: uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
@@ -423,7 +505,7 @@ jobs:
           - check_name: isolated-lerobot-tests
             project: native/python/lerobot
             tests: [dimos_lerobot]
-            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
+            system_packages: [portaudio19-dev, libturbojpeg0-dev, ffmpeg]
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -462,17 +544,21 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        os: [ubuntu-latest, ubuntu-26.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     env:
       CARGO_INCREMENTAL: "0"
+      # Needed because runner's Python does not include sqlite extensions.
+      UV_PYTHON_PREFERENCE: only-managed
     permissions:
       contents: read  # For checkout
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
       - name: Restore cargo build cache
         uses: actions/cache/restore@v4.3.0
         with:
@@ -485,11 +571,14 @@ jobs:
           restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
-      - name: Install dependencies for pyaudio and open3d (Ubuntu)
+        with:
+          enable-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install dependency for pyaudio (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libegl1
+          sudo apt-get install -y portaudio19-dev
       - name: Install dependency for pyaudio (macOS)
         if: runner.os == 'macOS'
         run: brew install portaudio
@@ -525,7 +614,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libturbojpeg portaudio19-dev libegl1
+          sudo apt-get install -y libturbojpeg0-dev portaudio19-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -682,12 +771,12 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        pyver: ['3.10', '3.11', '3.12']
         os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
-          - os: "ubuntu-24.04-arm"
-            pyver: "3.14"
+          - os: "ubuntu-26.04-arm"
+            pyver: "3.12"
             experimental: false
       fail-fast: true
     runs-on: ${{ matrix.os }}
@@ -734,7 +823,7 @@ jobs:
             sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends portaudio19-dev libegl1 libturbojpeg
+          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg0-dev
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -752,8 +841,11 @@ jobs:
           sudo mv /usr/bin/git-lfs /usr/bin/git-lfs.orig
           sudo install -m 0755 bin/git-lfs-guard /usr/bin/git-lfs
           git config --global --unset-all filter.lfs.process || true
-      # The published store paths are x86_64-linux, so the arm leg (and any
-      # future macOS leg) skips provisioning; binary-needing tests skip there.
+      # This leg only consumes the x86_64-linux marker, so the arm leg (and any
+      # future macOS leg) skips provisioning and its binary-needing tests skip
+      # too. cachix-build-linux-arm does publish arm paths now, for robot
+      # deploys and dev cross-builds; wiring this leg to them is a separate
+      # change, because it would also switch on the arm native-module e2e tests.
       # Without a marker (a fork PR whose inputs changed, or an expired
       # artifact when the publish was fork-guarded) the binaries are simply
       # absent: hosted runners never fall back to building the heavy C++ closures.
@@ -815,21 +907,12 @@ jobs:
           files: ./coverage.xml
           flags: OS-${{ matrix.os }},Py-${{ matrix.pyver }}
           use_oidc: true
-          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
-          # the GPG key for the default download path is served from a dead
-          # keybase.io URL, failing every upload. See
-          # codecov/codecov-action#1955 and #2398.
-          use_pypi: true
-          version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7.1.1
         with:
           report_type: test_results
           use_oidc: true
-          # See the "Upload coverage" step above.
-          use_pypi: true
-          version: "11.2.8"
 
   self-hosted-tests:
     # Runs on push, merge_group (trusted — a maintainer must approve + queue the
@@ -868,11 +951,6 @@ jobs:
                 # provision step roots the live closure so GC keeps it.
                 - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
-            # Follows .python-version: the ros-dev image's ROS debs are built
-            # for its Ubuntu's Python and reach the venv through PYTHONPATH, so
-            # the two must match (see docker/ros/Dockerfile). On a mismatch the
-            # skipif_no_ros tests fail at import instead of skipping (conftest).
-            pyver: ""
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
@@ -925,42 +1003,8 @@ jobs:
         with:
           # We persist on disk above, cache would clean some of this up.
           enable-cache: false
-          python-version: ${{ matrix.pyver }}
-      - name: Install codecov CLI
-        # Self-hosted runners have no `pip` on PATH, so codecov-action's
-        # use_pypi can't work here; pre-install the pinned CLI with uv and
-        # point the action at it via `binary`. See codecov/codecov-action#1955
-        # and #2398.
-        run: |
-          uv venv .codecov-venv
-          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
-      - name: Configure headless MuJoCo rendering
-        if: matrix.os == 'Linux'
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends libegl1 libegl-mesa0 libgl1-mesa-dri
-          echo "MUJOCO_GL=egl" >> "$GITHUB_ENV"
-      - name: Start a PulseAudio server for PortAudio
-        # Ubuntu 26.04's PortAudio is built with the PulseAudio host API and
-        # Pa_Initialize fails outright when no server answers, which breaks
-        # `import sounddevice` (unitree_webrtc_connect imports it eagerly).
-        # A daemon with the null sink is enough; root needs --daemonize.
-        # HOME is /github/home, a bind mount owned by the runner's host user,
-        # and PulseAudio refuses a home directory it does not own ("Home
-        # directory not accessible"), daemon and client alike: keep its
-        # runtime and state directories in the container's /tmp instead, and
-        # hand the runtime path to every later step so clients find the socket.
-        if: matrix.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pulseaudio
-          echo "PULSE_RUNTIME_PATH=/tmp/pulse" >> "$GITHUB_ENV"
-          export PULSE_RUNTIME_PATH=/tmp/pulse PULSE_STATE_PATH=/tmp/pulse-state
-          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/pulseaudio.log ||
-            { cat /tmp/pulseaudio.log; exit 1; }
-          uv run python -c "import sounddevice"
       - name: Install Node 24 for the Pi and dimcode CLIs
         uses: actions/setup-node@v7.1.0
         with:
@@ -992,6 +1036,10 @@ jobs:
             echo "ROS_VERSION=$ROS_VERSION"
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
+          # The skipif_no_ros tests skip when rclpy does not import, so an image
+          # whose ROS is built for another Python than the venv's would pass
+          # without running them.
+          uv run python -c "import rclpy"
       - name: Install Nix (with Cachix substituter)
         if: contains(matrix.markers, 'skipif_no_ros')
         # /nix is bind-mounted from the self-hosted runner's host filesystem
@@ -1135,18 +1183,12 @@ jobs:
           files: ./coverage.xml
           flags: SelfHosted-${{ matrix.os }}
           use_oidc: true
-          # Use the pinned CLI from the "Install codecov CLI" step (no pip
-          # on self-hosted runners, and the default cli.codecov.io download
-          # has a broken GPG key fetch). See codecov/codecov-action#1955.
-          binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7.1.1
         with:
           report_type: test_results
           use_oidc: true
-          # See the "Upload coverage" step above.
-          binary: .codecov-venv/bin/codecovcli
       - name: Check disk space
         if: failure()
         run: |
@@ -1199,7 +1241,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg libegl1
+          sudo apt-get install -y portaudio19-dev libturbojpeg0-dev
       # LCM lidar/image UDP fragments drop with small kernel buffers; the
       # in-process configurator (64MB) skips under pytest, so do it here.
       - name: Raise UDP receive buffers for LCM
@@ -1389,9 +1431,3 @@ jobs:
         run_command: send-notifications
         use_oidc: true
         fail_ci_if_error: true
-        # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
-        # the GPG key for the default download path is served from a dead
-        # keybase.io URL, failing every upload. See
-        # codecov/codecov-action#1955 and #2398.
-        use_pypi: true
-        version: "11.2.8"

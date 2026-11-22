@@ -23,13 +23,13 @@ from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 import pytest
-from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.webrtc_connect import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:

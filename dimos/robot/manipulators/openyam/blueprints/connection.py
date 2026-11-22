@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
     arm_declaration,
@@ -32,7 +32,7 @@ _MODEL = make_openyam_model_config(robot="arm")
 _GRIPPER_JOINTS = [OPENYAM_GRIPPER_JOINT]
 
 
-def openyam_connection_control_blueprint() -> Blueprint:
+def openyam_connection_control_blueprint() -> MetaBlueprint:
     """Trajectories and the gripper, with the robot model served to clients."""
     return autoconnect(
         OpenYamCoordinator.blueprint(

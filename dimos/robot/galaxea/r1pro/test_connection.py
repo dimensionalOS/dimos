@@ -38,7 +38,6 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     RosHeader,
     RosImu,
     RosStatusError,
-    RosTime,
     chassis_speed,
     feed_all_segments,
     feed_chassis_interval,
@@ -139,7 +138,6 @@ def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable
         config.setdefault("boot_vendor_stack", False)
         config.setdefault("deadman_timeout_s", DEADMAN_S)
         config.setdefault("sensor_stats_interval_s", 0.0)
-        config.setdefault("enable_wrist_color", False)
         r = Rig(fake_ros, R1ProConnection(**config))
         made.append(r)
         if start:
@@ -149,28 +147,6 @@ def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable
     yield build
     for each in made:
         each.module.stop()
-
-
-@pytest.mark.parametrize("side", ["left", "right"])
-def test_operator_video_forwards_compressed_color_without_depth(rig, side):
-    r = rig(enable_wrist_color=True, enable_wrist_depth=False, color_publish_hz=0)
-    output = r.ports[f"wrist_{side}_color"].sent
-    for index in range(3):
-        # No depth or calibration messages: an operator frame must stand alone.
-        jpeg = bytes([index, 10, 20])
-        r.fake.sensors.feed(
-            f"/hdas/camera_wrist_{side}/color/image_raw/compressed",
-            SimpleNamespace(
-                header=RosHeader(
-                    stamp=RosTime(sec=100, nanosec=index * 10_000_000), frame_id="optical"
-                ),
-                data=jpeg,
-            ),
-        )
-        wait_until(lambda index=index: len(output) == index + 1, timeout=2)
-        assert bytes(output[-1].data) == jpeg
-        assert output[-1].ts == pytest.approx(100 + index * 0.01)
-        assert output[-1].frame_id == "optical"
 
 
 def test_nothing_is_published_until_every_segment_has_reported(
@@ -184,8 +160,9 @@ def test_nothing_is_published_until_every_segment_has_reported(
 
     r.fake.control.feed("/hdas/feedback_torso", joint_feedback(TORSO_Q, 100.1))
     r.fake.control.feed("/hdas/feedback_arm_left", joint_feedback(LEFT_Q, 100.2))
-    time.sleep(2.0 / r.module.config.publish_rate_hz)
-    assert r.readings() == []
+    # Two publish periods with two of three segments reported: still nothing.
+    with pytest.raises(TimeoutError):
+        wait_until(lambda: bool(r.readings()), timeout=2.0 / r.module.config.publish_rate_hz)
 
     r.fake.control.feed("/hdas/feedback_arm_right", joint_feedback(RIGHT_Q, 100.3))
     wait_until(lambda: bool(r.readings()), timeout=5.0)
@@ -264,8 +241,9 @@ def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:
     r = rig()
     assert not r.jaws("left") and not r.jaws("right")
     r.feed_grippers(left=20.0, right=40.0, ts=time.time())
-    wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
-    assert list(r.jaw_readings()[-1].position) == pytest.approx([0.02, 0.04])
+    wait_until(lambda: any(len(msg.name) == 2 for msg in r.jaw_readings()), timeout=5.0)
+    both = next(msg for msg in r.jaw_readings() if len(msg.name) == 2)
+    assert list(both.position) == pytest.approx([0.02, 0.04])
     r.move({"r1pro/left_gripper": 0.02})  # Initial measured-position hold.
     assert not r.jaws("left")
     r.move({"r1pro/left_gripper": 0.05})
@@ -297,6 +275,11 @@ def test_gripper_invalid_feedback_blocks_without_replay(rig, monkeypatch):
     assert len(r.jaws("left")) == 1
     r.feed_status("gripper_left", [RosStatusError(error_code=7)])
     r.move({"r1pro/left_gripper": 0.08})
+    assert len(r.jaws("left")) == 1
+    # The fault keeps blocking after the status reports stop.
+    clock[0] += 0.2
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.085})
     assert len(r.jaws("left")) == 1
     r.feed_status("gripper_left", [RosStatusError()])
     r.move({"r1pro/left_gripper": 0.09})
@@ -343,7 +326,7 @@ def test_physical_assembly_parses_body_resources_without_hardware(name, monkeypa
     module = importlib.import_module(
         f"dimos.robot.galaxea.r1pro.blueprints.{category}.r1pro_{name}"
     )
-    blueprint = getattr(module, f"r1pro_{name}")
+    blueprint = getattr(module, f"r1pro_{name}").solidify()
     parsed = BlueprintConfigParser(blueprint).parse([], environ={})
     atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
     config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))

@@ -33,6 +33,7 @@ from dimos.robot.unitree.g1.wholebody_connection import (
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
@@ -191,10 +192,7 @@ def test_canonical_port_deadman_damping_and_final_firmware_stop(connection, monk
     command = JointState(name=G1_JOINT_NAMES, position=pose)
     commands.publish(command)
     assert len(publisher.frames) == 1
-    deadline = time.monotonic() + 2.0
-    while not connection.status().deadman_fired and time.monotonic() < deadline:
-        time.sleep(0.005)
-    assert connection.status().deadman_fired
+    wait_until(lambda: connection.status().deadman_fired, timeout=2.0)
     assert all(mode == 1 for mode in publisher.modes)
     assert all(q == POS_STOP and kp == 0.0 for q, _, kp, _, _ in publisher.frames[-1])
     connection.stop()

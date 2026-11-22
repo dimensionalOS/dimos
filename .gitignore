@@ -63,7 +63,7 @@ data/*
 !data/.lfs/
 
 # Runtime output
-/MUJOCO_LOG.TXT
+MUJOCO_LOG.TXT
 /logs
 /recordings
 /downloads

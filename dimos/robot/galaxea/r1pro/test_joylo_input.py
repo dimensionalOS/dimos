@@ -25,6 +25,12 @@ from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 from dimos.teleop.joycon.mapping import JoyConReading
 
 
+def _solid(blueprint):  # type: ignore[no-untyped-def]
+    """autoconnect() gives a MetaBlueprint; its atoms exist once it is solidified."""
+    return blueprint.solidify() if hasattr(blueprint, "solidify") else blueprint
+
+
+
 @pytest.fixture(scope="module")
 def parsed(tmp_path_factory):
     # One attached leader and one left Joy-Con are launch options, not a blueprint.

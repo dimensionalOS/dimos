@@ -54,11 +54,15 @@ uv run dimos shell
 ...in the shell:
 
 ```python
+import time
+from dimos.manipulation.sdk import Arm
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
-scan = app.PickAndPlaceModule.scan_objects(XARM_GRASP_PROMPTS)
-for o in scan.metadata["objects"]:   # labels are unreliable, so pick by position
-    print(o["object_id"], app.ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id(o["object_id"]).points_f32().mean(axis=0))
-app.PickAndPlaceModule.pick_object("<object_id>")   # the can, near x=0.57 y=0.00
+print(app.ManipulationLocalize.state())   # repeat until it reads ready
+Arm.from_app(app).move_linear(dy=0.08)   # localize confirms an object from two camera poses
+time.sleep(2.0)   # let the second view reach memory
+for o in app.ManipulationLocalize.scan(XARM_GRASP_PROMPTS, window_s=30.0):   # labels are unreliable, so pick by position
+    print(o["id"], o["label"], o["position"])
+app.PickAndPlaceModule.pick_object("<id>")   # the can, near x=0.57 y=0.00
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 
@@ -72,13 +76,15 @@ Needs the agent credentials and a CUDA or MPS GPU, see [Agentic xArm simulation]
 uv run dimos run xarm-perception-sim-agent
 # In another terminal:
 uv run dimos mcp call get_robot_state
-uv run dimos mcp call scan_objects --json-args '{"prompts": ["cup"]}'
+# localize confirms an object from two camera poses, so look from a second one first
+uv run dimos mcp call move_to_pose --json-args '{"x": 0.4, "y": 0.1, "z": 0.35}'
+uv run dimos mcp call localize --json-args '{"objects": "red cube", "start": -30, "duration": 30}'
 uv run humancli
 ```
 
 * In `humancli` send "Scan for objects." and then "Move 10 cm to the left."
 
-Expected result: MuJoCo shows the arm, a table, an apple, an orange and a cup. `get_robot_state` prints the joints, end-effector pose and gripper state, `scan_objects` reports the cup with an object ID, the agent lists the objects it found, and the arm moves 10 cm sideways.
+Expected result: MuJoCo shows the arm on a table with small blocks, balls, two bowls and a basket. `get_robot_state` prints the joints, end-effector pose and gripper state, `localize` reports the red cube with an `id`, the agent lists the objects it found, and the arm moves 10 cm sideways.
 
 ## 3.5 WebXR headset teleop
 
