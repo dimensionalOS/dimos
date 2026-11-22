@@ -15,7 +15,7 @@
 """Turn the standard robot messages into named values, and back.
 
 Connection modules and the coordinator talk in standard messages
-(``JointState``, ``Imu``).
+(``JointState``, ``DynamicJointState``, ``Imu``).
 Inside, both work with named values such as ``{"arm/joint1/position": 0.3}``.
 These functions convert between the two, and both sides use the same ones, so
 they always agree on what each field means.
@@ -34,10 +34,14 @@ Every ``_from_values`` needs each value its message carries, and raises
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+import time
 from typing import TYPE_CHECKING
 
+from dimos_lcm.control_msgs import DynamicJointState, InterfaceValue
+from dimos_lcm.std_msgs import Header, Time
+
 from dimos.control.contract.keys import SEPARATOR, Interface
-from dimos.control.contract.limits import movable_joints
+from dimos.control.contract.limits import PD_INTERFACES, movable_joints
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -139,6 +143,79 @@ def joint_state_from_values(
         position=columns.get(Interface.POSITION),
         velocity=columns.get(Interface.VELOCITY),
         effort=columns.get(Interface.EFFORT),
+    )
+
+
+def dynamic_joint_state_to_values(msg: DynamicJointState) -> dict[str, float]:
+    """Joint values from every number in a DynamicJointState.
+
+    Each number keeps the name it has in the message, so a name the robot
+    does not accept gives a key its limits table refuses.
+
+    Args:
+        msg: Joints named in full, e.g. "arm/joint1", each with named
+            numbers: position (rad), velocity (rad/s), effort (Nm), stiffness
+            (Nm/rad), damping (Nm·s/rad).
+
+    Raises:
+        ValueError: If the message does not have one set of numbers per
+            joint, or one number per name.
+    """
+    if len(msg.interface_values) != len(msg.joint_names):
+        raise ValueError(
+            f"DynamicJointState has {len(msg.joint_names)} names but "
+            f"{len(msg.interface_values)} sets of numbers"
+        )
+    values: dict[str, float] = {}
+    for joint, numbers in zip(msg.joint_names, msg.interface_values, strict=True):
+        if len(numbers.values) != len(numbers.interface_names):
+            raise ValueError(
+                f"{joint} has {len(numbers.interface_names)} names but {len(numbers.values)} numbers"
+            )
+        values.update(
+            (_key(joint, name), float(v))
+            for name, v in zip(numbers.interface_names, numbers.values, strict=True)
+        )
+    return values
+
+
+def dynamic_joint_state_from_values(
+    values: Mapping[str, float], joints: Sequence[str], ts: float | None = None
+) -> DynamicJointState:
+    """A DynamicJointState for some joints, each with whichever of position,
+    velocity, effort, stiffness and damping ``values`` has for it.
+
+    Args:
+        values: Named values, e.g. ``{"arm/joint1/stiffness": 30.0}``.
+        joints: Which joints, named in full, in the order to list them.
+        ts: When the values were taken, in Unix seconds. Now if ``None``.
+
+    Raises:
+        ValueError: If ``values`` has none of the five for a joint.
+    """
+    numbers = []
+    for joint in joints:
+        names = [interface.value for interface in PD_INTERFACES if _key(joint, interface) in values]
+        numbers.append(
+            InterfaceValue(
+                interface_names_length=len(names),
+                values_length=len(names),
+                interface_names=names,
+                values=[values[_key(joint, name)] for name in names],
+            )
+        )
+    empty = [joint for joint, each in zip(joints, numbers, strict=True) if not each.values]
+    if empty:
+        raise ValueError(f"no position, velocity, effort, stiffness or damping for {empty}")
+    stamp = time.time() if ts is None else ts
+    sec = int(stamp)
+    return DynamicJointState(
+        joint_names_length=len(joints),
+        interface_values_length=len(joints),
+        # A new Header and Time each time: the generated defaults are shared objects.
+        header=Header(seq=0, stamp=Time(sec=sec, nsec=int((stamp - sec) * 1e9)), frame_id=""),
+        joint_names=list(joints),
+        interface_values=numbers,
     )
 
 

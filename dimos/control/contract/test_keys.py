@@ -57,11 +57,11 @@ def test_an_interface_is_its_plain_string() -> None:
 
 def test_parts_read_back() -> None:
     """Each part is available by name; joint is the first two."""
-    key = Key("g1/left_hip_pitch/kp")
+    key = Key("g1/left_hip_pitch/stiffness")
 
     assert key.source == "g1"
     assert key.resource == "left_hip_pitch"
-    assert key.interface == "kp"
+    assert key.interface == "stiffness"
     assert key.joint == "g1/left_hip_pitch"
 
 

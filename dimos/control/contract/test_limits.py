@@ -90,6 +90,12 @@ def config(**fields: Any) -> ConnectionConfig:
     return ConnectionConfig(source="arm", **fields)
 
 
+def gains(model: RobotModel) -> dict[str, dict[str, float]]:
+    """Caps of 40 Nm/rad stiffness and 2 Nm·s/rad damping on every moving joint."""
+    names = [joint.name for joint in movable_joints(model)]
+    return {"max_stiffness": dict.fromkeys(names, 40.0), "max_damping": dict.fromkeys(names, 2.0)}
+
+
 @pytest.fixture
 def model(tmp_path: Path) -> RobotModel:
     """Three turning joints, all alike."""
@@ -154,25 +160,30 @@ def test_each_joint_command_takes_its_own_bound_from_the_model(model: RobotModel
     assert "arm/j1/effort" not in table
 
 
-def test_pd_tells_each_joint_five_things_with_gains_any_size_from_zero(
+def test_pd_tells_each_joint_five_things_with_gains_from_zero_to_their_cap(
     model: RobotModel,
 ) -> None:
-    table = limits(config(model=model, joint_commands=commands(model, *PD_INTERFACES)))
+    pd = commands(model, *PD_INTERFACES)
+    table = limits(config(model=model, joint_commands=pd, **gains(model)))
     assert [key for key in table if key.startswith("arm/j1/")] == [
         f"arm/j1/{interface}" for interface in PD_INTERFACES
     ]
     assert table["arm/j1/effort"] == Limits(-3.0, 3.0)
-    assert table["arm/j1/kp"] == table["arm/j1/kd"] == Limits(0.0, None)
+    assert table["arm/j1/stiffness"] == Limits(0.0, 40.0, clamp=True)
+    assert table["arm/j1/damping"] == Limits(0.0, 2.0, clamp=True)
     assert len(table) == 15
+    with pytest.raises(ValueError, match="'j1' is told stiffness but has no max_stiffness"):
+        limits(config(model=model, joint_commands=pd))
 
 
 def test_duplicate_declared_interfaces_share_their_keys(model: RobotModel) -> None:
     both = config(
         model=model,
         joint_commands=commands(model, *PD_INTERFACES, Interface.POSITION),
+        **gains(model),
     )
     assert limits(both) == limits(
-        config(model=model, joint_commands=commands(model, *PD_INTERFACES))
+        config(model=model, joint_commands=commands(model, *PD_INTERFACES), **gains(model))
     )
 
 
@@ -201,7 +212,8 @@ def test_model_limit_reads_one_joint() -> None:
     assert model_limit(joint, Interface.POSITION) == Limits(-1.0, 2.0)
     assert model_limit(joint, Interface.VELOCITY) == Limits(-3.0, 3.0)
     assert model_limit(joint, Interface.EFFORT) == Limits(-4.0, 4.0)
-    assert model_limit(joint, Interface.KP) == Limits(0.0, None)
+    with pytest.raises(ValueError, match="max_stiffness"):
+        model_limit(joint, Interface.STIFFNESS)
 
 
 @pytest.mark.parametrize(
@@ -284,7 +296,9 @@ def test_a_config_that_commands_nothing_is_refused(model: RobotModel) -> None:
 
 
 def test_the_table_crosses_processes(model: RobotModel) -> None:
-    table = limits(config(model=model, joint_commands=commands(model, *PD_INTERFACES)))
+    table = limits(
+        config(model=model, joint_commands=commands(model, *PD_INTERFACES), **gains(model))
+    )
     assert roundtrip(table) == table
 
 
@@ -323,6 +337,7 @@ def test_the_in_repo_g1_drives_every_joint_that_moves() -> None:
             source="g1",
             model=(g1 := RobotModel.from_file(G1_URDF)),
             joint_commands=commands(g1, *PD_INTERFACES),
+            **gains(g1),
         )
     )
     joints = list(dict.fromkeys(key.rsplit("/", 1)[0] for key in table))
@@ -339,6 +354,7 @@ def test_the_in_repo_g1_gets_its_bounds_from_its_model() -> None:
             source="g1",
             model=(g1 := g1_leg_model()),
             joint_commands=commands(g1, *PD_INTERFACES),
+            **gains(g1),
         )
     )
     assert table["g1/left_hip_pitch/position"] == Limits(-2.5307, 2.8798)
