@@ -42,6 +42,7 @@ import time
 from typing import Any, ClassVar
 import uuid
 
+from dimos_lcm.control_msgs import DynamicJointState
 from pydantic import Field, ValidationError, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
@@ -68,9 +69,9 @@ from dimos.control.calibration.schema import (
 )
 from dimos.control.calibration.spec import model_name, model_sha256
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
-from dimos.control.contract.convert import joint_state_to_values
-from dimos.control.contract.keys import Interface
-from dimos.control.contract.limits import limits as limits_of, movable_joints
+from dimos.control.contract.convert import dynamic_joint_state_to_values, joint_state_to_values
+from dimos.control.contract.keys import Interface, Key
+from dimos.control.contract.limits import PD_INTERFACES, limits as limits_of, movable_joints
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -80,6 +81,7 @@ from dimos.robot.manipulators.damiao.arm import (
     MIT_KP_MAX,
     ArmReading,
     DamiaoArm,
+    Impedance,
     check_mit_gains,
 )
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
@@ -131,9 +133,16 @@ class DamiaoConnectionConfig(ConnectionConfig):
     config_writes: bool = False
 
     @model_validator(mode="after")
-    def _position_only(self) -> Self:
-        if any(interfaces != (Interface.POSITION,) for interfaces in self.joint_commands.values()):
-            raise ValueError("Damiao connections accept position commands only")
+    def _position_or_motor_command(self) -> Self:
+        allowed = (frozenset({Interface.POSITION}), frozenset(PD_INTERFACES))
+        told = [frozenset(interfaces) for interfaces in self.joint_commands.values()]
+        if any(interfaces not in allowed for interfaces in told):
+            raise ValueError(
+                "Damiao connections accept position commands only, or all five of "
+                "position, velocity, effort, stiffness and damping"
+            )
+        if self.teach and frozenset(PD_INTERFACES) in told:
+            raise ValueError("teaching holds stiffness at 0, so it takes position commands only")
         return self
 
 
@@ -149,16 +158,21 @@ class _ArmFile:
 
 
 class DamiaoConnection(ConnectionModule):
-    """Own one Damiao robot, its measured states and position targets.
+    """Own one Damiao robot, its measured states and its targets.
 
-    ``get_config`` and ``set_config`` read and change how each arm is held;
-    see the module docstring.
+    Commands arrive on ``position_command`` or ``motor_command``. Arm
+    joints declared with all of ``PD_INTERFACES`` also take speed, extra
+    torque, stiffness and damping; see ``DamiaoArm.command`` for what an
+    unset number means. The jaws take a position only. ``get_config`` and
+    ``set_config`` read and change how each arm is held; see the module
+    docstring.
     """
 
     #: The robot this connection deploys: motors, gains, grippers and models.
     robot: ClassVar[DamiaoRobot]
     config: DamiaoConnectionConfig
     position_command: In[JointState]
+    motor_command: In[DynamicJointState]
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -196,6 +210,13 @@ class DamiaoConnection(ConnectionModule):
         assert self.config.model is not None
         if {joint.name for joint in movable_joints(self.config.model)} != set(self.joint_names):
             raise ValueError("connection model joints must match the vendor topology")
+        jaws = [
+            name
+            for name in self.robot.gripper_joint_names
+            if Interface.STIFFNESS in self.config.joint_commands.get(name, ())
+        ]
+        if jaws:
+            raise ValueError(f"Damiao jaws take position commands only: {jaws}")
         self._state_frame = self.frame(self.config.model.load().root_link)
         ports = self.can_ports()
         if len(ports) != len(self.robot.buses) or any(not port.strip() for port in ports):
@@ -253,6 +274,13 @@ class DamiaoConnection(ConnectionModule):
                 self.register_disposable(
                     Disposable(self.position_command.subscribe(self._on_position))
                 )
+                if any(
+                    Interface.STIFFNESS in interfaces
+                    for interfaces in self.config.joint_commands.values()
+                ):
+                    self.register_disposable(
+                        Disposable(self.motor_command.subscribe(self._on_motor_command))
+                    )
                 self._reader = threading.Thread(
                     target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
                 )
@@ -538,19 +566,29 @@ class DamiaoConnection(ConnectionModule):
             return
         self.command(values)
 
+    def _on_motor_command(self, msg: DynamicJointState) -> None:
+        try:
+            values = dynamic_joint_state_to_values(msg)
+        except ValueError as error:
+            self._report(str(error), rejection=True)
+            return
+        self.command(values)
+
     def write(self, values: Values) -> None:
         if self._fault is not None:
             raise RuntimeError(self._fault)
         arm = self._arm
         if arm is None:
             raise RuntimeError("Damiao robot is inactive")
-        prefix = f"{self.config.source}/"
-        arm.command(
-            {
-                key.removeprefix(prefix).removesuffix("/position"): value
-                for key, value in values.items()
-            }
-        )
+        targets: dict[str, float] = {}
+        numbers: dict[str, dict[str, float]] = {}
+        for name, value in values.items():
+            key = Key(name)
+            if key.interface == Interface.POSITION:
+                targets[key.resource] = value
+            else:
+                numbers.setdefault(key.resource, {})[key.interface] = value
+        arm.command(targets, {joint: Impedance(**each) for joint, each in numbers.items()})
 
     def halt(self) -> None:
         """Undo the live changes and hold every joint where it is (``DamiaoArm.hold``)."""
