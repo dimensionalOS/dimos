@@ -78,7 +78,10 @@ uv run dimos --zenoh-connect tcp/<robot-ip>:7447 run go2-nav-viewer
 uv run dimos mem rerun go2_dds_stairs.mcap --seconds 60
 ```
 
-* The viewer shows the camera, the odometry and the surface map. Click a point in the 3D view. The robot drives there.
+* Hardware: the DimOS Viewer shows the camera, the odometry and the surface map. Click a point in the 3D view. The robot drives there.
+* Recording: `mem rerun` opens the stock "Rerun Viewer", separate from the DimOS Viewer. The command returns after conversion. `--seconds 60` limits the recording data converted, not how long the viewer stays open. Close the viewer window by hand before the next check. Ctrl+C and `dimos stop` do not close it after the command has returned.
+
+The recording step unpacks `data/go2_dds_stairs.mcap` if needed (about 395 MB) and writes `data/go2_dds_stairs.rrd` alongside it on each run (about 44 MB for this command, ignored by Git). Both files remain after the viewer closes, using about 439 MB in total. If you need to reclaim that space, remove those two files after closing the viewer. Keep `data/.lfs/go2_dds_stairs.mcap.tar.gz` so the dataset can be unpacked again.
 
 Expected result: the robot reaches the clicked goal, and the recording plays its point cloud, odometry and camera in Rerun.
 
