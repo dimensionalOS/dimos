@@ -13,6 +13,7 @@ retry_s = 2.0
 not_charging_s = 60.0
 nav_timeout_s = 600.0
 goal_attempts = 3
+reverse_loops = 3
 dock_attempts = 3
 CHARGING = 1
 DISCHARGING = 2
@@ -108,6 +109,7 @@ if = "power == DISCHARGING"
 goto = "Patrol"
 
 # Walks the goals in a loop until the battery is low, then resumes at the same goal.
+# Every reverse_loops loops, it turns around and walks them in the other direction.
 # After a dock gives up, the robot walks a full loop before it tries the dock again.
 [[node]]
 name = "Patrol"
@@ -133,7 +135,7 @@ set = { streak = "0" }
 [[node]]
 name = "Lookup"
 activity = "locate"
-args = { name = "goals[goal.index % size(goals)]" }
+args = { name = "goals[goal.index / size(goals) / reverse_loops % 2 == 0 ? goal.index % size(goals) : (2 * size(goals) - 2 - goal.index % size(goals)) % size(goals)]" }
 result = "goal.pose"
 
 [[node.transition]]
