@@ -38,8 +38,8 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -984,7 +984,7 @@ def test_lcm_schema_joins_user_params_in_the_request_only() -> None:
             r"'note': builtins\.dict is not a DimOS message",
         ),
         (Channel("traj", JointTrajectory), r"'traj': .*declares its own LCM fingerprint"),
-        (Channel("motors", MotorCommandArray), r"'motors': .*dimos_lcm.*@web_encoder"),
+        (Channel("motors", JointCommand), r"'motors': .*dimos_lcm.*@web_encoder"),
         (Channel("poses", bytes), r"'poses': .*not supported by json\.v1"),
     ],
     ids=["id_type_mismatch", "lcm_id_on_dict", "foreign_fingerprint", "no_schema", "no_lcm"],
