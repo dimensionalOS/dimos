@@ -30,11 +30,13 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
@@ -64,7 +66,7 @@ class DroneConnectionModule(Module):
     tracking_status: In[Any]
 
     # Outputs
-    odom: Out[PoseStamped]
+    odometry: Out[Odometry]
     gps_location: Out[LatLon]
     status: Out[Any]  # JSON status
     telemetry: Out[Any]  # Full telemetry JSON
@@ -169,8 +171,16 @@ class DroneConnectionModule(Module):
         """Publish odometry and TF transforms."""
         self._odom = msg
 
-        # Publish odometry
-        self.odom.publish(msg)
+        # Publish odometry. The flight controller reports pose only, so the
+        # twist stays zero rather than being integrated from consecutive poses.
+        self.odometry.publish(
+            Odometry(
+                ts=msg.ts,
+                frame_id=msg.frame_id or "world",
+                child_frame_id="base_link",
+                pose=Pose(msg.position, msg.orientation),
+            )
+        )
 
         # Publish base_link transform
         base_link = Transform(

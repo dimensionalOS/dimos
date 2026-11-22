@@ -25,6 +25,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
@@ -38,7 +39,7 @@ class FakeCamera(Module):
 
 
 class FakeOdom(Module):
-    odom: Out[PoseStamped]
+    odometry: Out[Odometry]
 
 
 class StubSpatialMemory(Module):

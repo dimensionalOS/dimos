@@ -238,9 +238,7 @@ class R1ProConnection(ConnectionModule):
     imu_torso: Out[Imu]
 
     # Base feedback. `odometry` carries the wheel odometry as pose + twist
-    # for navigation consumers (voxel map, planner); `odom` is the same pose
-    # as a PoseStamped, gated with the tf by config.publish_odom_tf.
-    odom: Out[PoseStamped]
+    # for navigation consumers (voxel map, planner).
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
@@ -866,7 +864,6 @@ class R1ProConnection(ConnectionModule):
             )
         )
         if self.config.publish_odom_tf:
-            self.odom.publish(pose)
             self.tf.publish(TFMessage(Transform.from_pose(self.config.frame_id, pose)))
 
     # Aggregated joint_state publish loop

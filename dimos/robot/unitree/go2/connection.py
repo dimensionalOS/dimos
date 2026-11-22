@@ -22,7 +22,7 @@ import time
 from typing import Any, Protocol
 
 from pydantic import Field, model_validator
-from reactivex import empty
+from reactivex import empty, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from scipy.spatial.transform import Rotation
@@ -324,7 +324,8 @@ class ReplayConnection(CompositeResource):
 
     def _stream_name(self, *names: str) -> str:
         """Return the first of ``names`` present in the dataset (stream naming
-        changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
+        changed over time: recordings made after the odom -> odometry rename use
+        go2_odometry/odometry, mid360 ones go2_lidar/go2_odom, older ones
         lidar/odom)."""
         available = self.replay.list_streams()
         for name in names:
@@ -377,14 +378,22 @@ class ReplayConnection(CompositeResource):
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        name = self._stream_name("go2_odom", "odom")
+        name = self._stream_name("go2_odometry", "odometry", "go2_odom", "odom")
         kind = self.replay.store.stream(name).data_type
+        if kind is not None and issubclass(kind, Odometry):
+            # Recordings made after the odom -> odometry rename hold
+            # nav_msgs.Odometry (as do legacy Go2 DDS ones); the replay pipeline
+            # downstream of here drives TF from the pose alone.
+            odometry: ReplayStream[Odometry] = self.replay.stream(name)
+
+            def as_pose(msg: Odometry) -> PoseStamped:
+                return msg.to_pose_stamped()
+
+            return self._replay_observable(odometry).pipe(ops.map(as_pose))
         if kind is None or not issubclass(kind, PoseStamped):
-            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
-            # it kills the odom subscriber and leaves lidar and video without TF.
             raise TypeError(
-                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
-                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
+                f"Go2 replay needs PoseStamped or Odometry odometry, but stream {name!r} "
+                f"in dataset {self.dataset!r} holds {kind.__name__ if kind else None}"
             )
         stream: ReplayStream[PoseStamped] = self.replay.stream(name)
         return self._replay_observable(stream)
@@ -417,7 +426,6 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
     velocity_command: In[JointState]
     joint_state: Out[JointState]
     pointcloud: Out[PointCloud2]
-    odom: Out[PoseStamped]
     odometry: Out[Odometry]
     lidar: Out[PointCloud2]
     color_image: Out[Image]
@@ -590,6 +598,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         with self._odom_lock:
             previous = self._previous_odom
             self._previous_odom = copy.deepcopy(msg)
+        twist: Twist | None = None
         if (
             previous is not None
             and msg.frame_id == previous.frame_id
@@ -612,21 +621,22 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                         velocity=[linear.x, linear.y, angular.z],
                     )
                 )
-                self.odometry.publish(
-                    Odometry(
-                        ts=msg.ts,
-                        frame_id=self.config.odom_frame_id,
-                        child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
-                        pose=Pose(msg.position, msg.orientation),
-                        twist=twist,
-                    )
-                )
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
             self.tf.publish(TFMessage(*transforms))
-        if self.odom.transport:
-            self.odom.publish(msg)
+        # Every measured pose goes out, twist-bearing or not. The first sample
+        # after start, and the one after an odom_timeout_s gap, have no interval
+        # to rate from, and pose consumers must not lose them.
+        self.odometry.publish(
+            Odometry(
+                ts=msg.ts,
+                frame_id=self.config.odom_frame_id,
+                child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
+                pose=Pose(msg.position, msg.orientation),
+                twist=twist if twist is not None else Twist(),
+            )
+        )
 
     def publish_camera_info(self) -> None:
         while not self._camera_info_stop.is_set():

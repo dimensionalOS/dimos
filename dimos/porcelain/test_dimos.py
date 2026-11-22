@@ -58,15 +58,15 @@ class TickerModule(Module):
 
 
 class RecordingSource(Module):
-    odom: Out[PoseStamped]
+    pose: Out[PoseStamped]
 
     @rpc
     def emit(self, ts: float) -> None:
-        self.odom.publish(PoseStamped(ts=ts))
+        self.pose.publish(PoseStamped(ts=ts))
 
 
 class RuntimeRecordingSource(Module):
-    odom: Out[PoseStamped]
+    pose: Out[PoseStamped]
     runtime_pose: Out[PoseStamped]
     ignored: Out[PoseStamped]
     raw: Out[dict]
@@ -74,7 +74,7 @@ class RuntimeRecordingSource(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.odom.publish(PoseStamped(ts=2.0))
+        self.pose.publish(PoseStamped(ts=2.0))
         self.runtime_pose.publish(PoseStamped(ts=3.0))
         self.ignored.publish(PoseStamped(ts=4.0))
         self.raw.publish({"value": 5})
@@ -90,7 +90,7 @@ def recording_app(app, tmp_path: Path, monkeypatch, request):
         record_engine="python",
         replay=False,
     )
-    monkeypatch.setattr(global_config, "record_topics", "odom,runtime_*,raw")
+    monkeypatch.setattr(global_config, "record_topics", "pose,runtime_*,raw")
     monkeypatch.setattr(tap, "recording_dir", lambda: tmp_path)
     app.run(RecordingSource)
     try:
@@ -114,17 +114,17 @@ def test_run_adds_streams_to_active_recording(recording_app, tmp_path: Path, rem
         with tap.recording(coordinator):
             with SqliteStore(path=str(tmp_path / "memory.db"), must_exist=True) as store:
                 app.RecordingSource.emit(1.0)
-                wait_until(lambda: "odom" in store.list_streams(), timeout=5)
+                wait_until(lambda: "pose" in store.list_streams(), timeout=5)
                 target.run(RuntimeRecordingSource)
                 wait_until(
                     lambda: "runtime_pose" in store.list_streams()
-                    and store.stream("odom", PoseStamped).count() >= 2,
+                    and store.stream("pose", PoseStamped).count() >= 2,
                     timeout=5,
                 )
 
     with SqliteStore(path=str(tmp_path / "memory.db"), must_exist=True) as store:
-        assert sorted(store.list_streams()) == ["odom", "runtime_pose"]
-        assert [o.ts for o in store.stream("odom", PoseStamped)] == [1.0, 2.0]
+        assert sorted(store.list_streams()) == ["pose", "runtime_pose"]
+        assert [o.ts for o in store.stream("pose", PoseStamped)] == [1.0, 2.0]
         assert [o.ts for o in store.stream("runtime_pose", PoseStamped)] == [3.0]
 
 
@@ -217,9 +217,9 @@ def test_peek_stream_receives_external_odometry(app, transport, remote):
             app._coordinator.start_rpc_service()
             client = Dimos.connect()
             stack.callback(client.stop)
-        publisher = stack.enter_context(make_transport("/odom", PoseStamped))
+        publisher = stack.enter_context(make_transport("/pose", PoseStamped))
         executor = stack.enter_context(ThreadPoolExecutor())
-        result = executor.submit(client.peek_stream, "odom", timeout=3.0)
+        result = executor.submit(client.peek_stream, "pose", timeout=3.0)
 
         def publish_until_done():
             publisher.publish(expected)

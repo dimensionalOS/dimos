@@ -19,7 +19,7 @@ follows paths purely over the transport:
 
     OUT  path   (nav_msgs/Path)         -- the reference path for one run
     OUT  speed  (std_msgs/Float32, m/s) -- the target/cruise speed for one run
-    IN   odom   (geometry_msgs/PoseStamped) -- the robot's executed pose
+    IN   odometry   (nav_msgs/Odometry) -- the robot's executed pose
     IN   cmd_vel(geometry_msgs/Twist)       -- the command sent to the robot
     IN   operator_command (std_msgs/Int8)      -- operator advance/skip/quit (hw)
 
@@ -72,6 +72,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
@@ -392,7 +393,7 @@ class Benchmarker(Module):
 
     path: Out[NavPath]
     speed: Out[Float32]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     cmd_vel: In[Twist]
     operator_command: In[Int8]
 
@@ -408,7 +409,11 @@ class Benchmarker(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.odom.subscribe(self._recorder.on_odom)))
+        self.register_disposable(
+            Disposable(
+                self.odometry.subscribe(lambda msg: self._recorder.on_odom(msg.to_pose_stamped()))
+            )
+        )
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._recorder.on_cmd_vel)))
         if self.config.gate_source == "stream":
             self.register_disposable(

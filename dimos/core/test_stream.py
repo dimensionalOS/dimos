@@ -76,7 +76,7 @@ class SubscriberBase(Module):
 
     @rpc
     def active_subscribers(self):
-        return self.odom.transport.active_subscribers
+        return self.odometry.transport.active_subscribers
 
     @rpc
     def sub1_msgs_len(self) -> int:
@@ -88,17 +88,17 @@ class SubscriberBase(Module):
 
 
 class ClassicSubscriber(SubscriberBase):
-    odom: In[Odometry]
+    odometry: In[Odometry]
     unsub: Callable[[], None] | None = None
     unsub2: Callable[[], None] | None = None
 
     @rpc
     def sub1(self) -> None:
-        self.unsub = self.odom.subscribe(self._sub1_callback)
+        self.unsub = self.odometry.subscribe(self._sub1_callback)
 
     @rpc
     def sub2(self) -> None:
-        self.unsub2 = self.odom.subscribe(self._sub2_callback)
+        self.unsub2 = self.odometry.subscribe(self._sub2_callback)
 
     @rpc
     def unsub_all(self) -> None:
@@ -111,7 +111,7 @@ class ClassicSubscriber(SubscriberBase):
 
 
 class RXPYSubscriber(SubscriberBase):
-    odom: In[Odometry]
+    odometry: In[Odometry]
     unsub: Callable[[], None] | None = None
     unsub2: Callable[[], None] | None = None
 
@@ -119,11 +119,11 @@ class RXPYSubscriber(SubscriberBase):
 
     @rpc
     def sub1(self) -> None:
-        self.unsub = self.odom.observable().subscribe(self._sub1_callback)
+        self.unsub = self.odometry.observable().subscribe(self._sub1_callback)
 
     @rpc
     def sub2(self) -> None:
-        self.unsub2 = self.odom.observable().subscribe(self._sub2_callback)
+        self.unsub2 = self.odometry.observable().subscribe(self._sub2_callback)
 
     @rpc
     def unsub_all(self) -> None:
@@ -136,11 +136,11 @@ class RXPYSubscriber(SubscriberBase):
 
     @rpc
     def get_next(self):
-        return self.odom.get_next()
+        return self.odometry.get_next()
 
     @rpc
     def start_hot_getter(self) -> None:
-        self.hot = self.odom.hot_latest()
+        self.hot = self.odometry.hot_latest()
 
     @rpc
     def stop_hot_getter(self) -> None:
@@ -189,7 +189,7 @@ def test_subscription(dimos, subscriber_class) -> None:
 
     subscriber = dimos.deploy(subscriber_class)
 
-    subscriber.odom.connect(robot.odometry)
+    subscriber.odometry.connect(robot.odometry)
 
     robot.start()
     subscriber.sub1()
@@ -231,7 +231,7 @@ def odometry_publisher(dimos):
 
 def test_get_next(dimos, odometry_publisher) -> None:
     subscriber = dimos.deploy(RXPYSubscriber)
-    subscriber.odom.connect(odometry_publisher.odometry)
+    subscriber.odometry.connect(odometry_publisher.odometry)
 
     # The replay thread imports open3d between odometry samples, which exceeded
     # get_next's timeout on a loaded runner. Publish only what we test.
@@ -261,7 +261,7 @@ def test_hot_getter(dimos) -> None:
     robot.mov.transport = pLCMTransport("/mov")
 
     subscriber = dimos.deploy(RXPYSubscriber)
-    subscriber.odom.connect(robot.odometry)
+    subscriber.odometry.connect(robot.odometry)
 
     robot.start()
 

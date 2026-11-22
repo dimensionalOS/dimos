@@ -185,8 +185,11 @@ def _validate_layout_node(node: Any, panel_ids: set[str], seen: set[str]) -> Any
 
 
 # The map panels: channels[0] is the map (latest rx in the kind's encoding),
-# channels[1] (optional) the pose.json.v1 rx pose marker.
+# channels[1] (optional) the rx pose marker (pose.json.v1 or odometry.json.v1).
 _MAP_ENCODINGS = {"map2d": "costmap.zlib.v1", "map3d": "voxels.zlib.v1"}
+# geometry_msgs.PoseStamped and nav_msgs.Odometry carry the same marker
+# payload under different ids; a pose slot takes either.
+POSE_ENCODINGS = ("pose.json.v1", "odometry.json.v1")
 
 
 def _check_map_panel(panel: PanelSpec, ch_ids: dict[str, ChannelSpec], encoding: str) -> None:
@@ -200,10 +203,11 @@ def _check_map_panel(panel: PanelSpec, ch_ids: dict[str, ChannelSpec], encoding:
         )
     if len(panel.channels) == 2:
         pose = ch_ids[panel.channels[1]]
-        if pose.encoding != "pose.json.v1" or pose.dir != "rx":
+        if pose.encoding not in POSE_ENCODINGS or pose.dir != "rx":
             raise ManifestError(
                 code,
-                f"{panel.kind} panel {panel.id} pose channel must be a pose.json.v1 rx channel",
+                f"{panel.kind} panel {panel.id} pose channel must be a "
+                f"{' or '.join(POSE_ENCODINGS)} rx channel",
             )
 
 

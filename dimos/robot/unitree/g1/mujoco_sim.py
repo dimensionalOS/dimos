@@ -24,11 +24,13 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -51,7 +53,7 @@ class G1SimConnection(G1ConnectionBase):
     config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
-    odom: Out[PoseStamped]
+    odometry: Out[Odometry]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
@@ -99,7 +101,15 @@ class G1SimConnection(G1ConnectionBase):
             self._stop_event.wait(1.0)
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        self.odom.publish(msg)
+        # The backend hands over pose only, so the twist stays zero.
+        self.odometry.publish(
+            Odometry(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                child_frame_id="base_link",
+                pose=Pose(msg.position, msg.orientation),
+            )
+        )
 
         base_link = Transform.from_pose("base_link", msg)
 

@@ -98,7 +98,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     module._imu_base_qpos_slice = slice(3, 7)
     module._imu_gyro_slice = slice(0, 3)
     module._imu_accel_slice = slice(3, 6)
-    module.odom = MagicMock()
+    module.odometry = MagicMock()
     module.imu = MagicMock()
 
     class _FakeHooks:

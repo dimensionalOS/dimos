@@ -46,6 +46,7 @@ from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.experimental.dannav.geometry.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
@@ -213,7 +214,7 @@ class DanLocalPlanner(Module):
     config: DanLocalPlannerConfig
 
     planner_path: In[Path]  # from MLSPlannerNative.path (remapped)
-    odom: In[PoseStamped]  # from GO2Connection.odom
+    odometry: In[Odometry]  # from GO2Connection.odom
     goal: In[PoseStamped]  # from MovementManager.goal, the click or cancel signal
 
     path: Out[Path]  # to DanHolonomicTC.path
@@ -227,7 +228,9 @@ class DanLocalPlanner(Module):
         super().start()
         # Subscribe odom and goal before paths so the gate has the latest robot
         # pose and armed goal when a planner path arrives.
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
+            Disposable(self.odometry.subscribe(lambda msg: self._on_odom(msg.to_pose_stamped())))
+        )
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.planner_path.subscribe(self._on_planner_path)))
 

@@ -266,7 +266,7 @@ def patch_relay(
 def make_bridge(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    wire: tuple[str, ...] = ("color_image", "odom"),
+    wire: tuple[str, ...] = ("color_image", "odometry"),
     available_channels: tuple[str, ...] | None = None,
     manifest: dict[str, Any] | None = None,
     hello_errors: tuple[Exception | None, ...] = (),
@@ -320,8 +320,8 @@ def image_transport(module: RelayBridgeModule) -> FakeTransport:
     return transport
 
 
-def odom_transport(module: RelayBridgeModule) -> FakeTransport:
-    transport = module.odom.transport
+def odometry_transport(module: RelayBridgeModule) -> FakeTransport:
+    transport = module.odometry.transport
     assert isinstance(transport, FakeTransport)
     return transport
 

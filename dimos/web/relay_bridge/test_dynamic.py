@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import Channel, cockpit
@@ -247,7 +248,7 @@ def test_blueprint_atom_discovers_exact_stream_refs():
     assert atom.module_refs == ()
     assert atom.streams == (
         StreamRef(name="color_image", type=Image, direction="in"),
-        StreamRef(name="odom", type=PoseStamped, direction="in"),
+        StreamRef(name="odometry", type=Odometry, direction="in"),
         StreamRef(name="global_costmap", type=OccupancyGrid, direction="in"),
         StreamRef(name="tele_cmd_vel", type=Twist, direction="out"),
         StreamRef(name="operator_note", type=str, direction="out"),
@@ -291,7 +292,7 @@ def test_module_init_constructs_runtime_streams(local_modules):
     generated = make_relay_bridge_class(_MAIN_SPECS)
     module = generated()
     local_modules.append(module)
-    assert sorted(module.inputs) == ["color_image", "global_costmap", "odom", "sensor_ping"]
+    assert sorted(module.inputs) == ["color_image", "global_costmap", "odometry", "sensor_ping"]
     assert sorted(module.outputs) == ["operator_note", "tele_cmd_vel"]
     assert isinstance(module.sensor_ping, In)
     assert module.sensor_ping.type is Vector3

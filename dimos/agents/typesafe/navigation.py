@@ -88,8 +88,7 @@ class TypeSafeNavigationConfig(TypeSafeAgentConfig):
 class TypeSafeNavigationAgent(TypeSafeAgent):
     config: TypeSafeNavigationConfig
 
-    odom: In[PoseStamped]
-    odometry: In[Odometry]  # same pose, nav_msgs flavour (habitat)
+    odometry: In[Odometry]
     detections_3d: In[Detection3DArray]
     detections_2d: In[Detection2DArray]
     lidar: In[PointCloud2]
@@ -115,10 +114,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
         self._latest: dict[str, LatestReader[Any]] = {}
 
     def trigger(self) -> Observable[object]:
-        pose: Observable[object] = self.odom.observable().pipe(
-            ops.merge(self.odometry.observable().pipe(ops.map(self._pose_of)))
-        )
-        return pose
+        return self.odometry.observable().pipe(ops.map(self._pose_of))
 
     @staticmethod
     def _pose_of(o: Odometry) -> PoseStamped:

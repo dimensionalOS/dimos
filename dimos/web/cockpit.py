@@ -400,12 +400,13 @@ class Map2D(Panel):
 
     kind: ClassVar[str] = "map2d"
     costmap: str = "global_costmap"
-    pose: str | None = "odom"
+    pose: str | None = "odometry"
     path: str | None = field(default=None, kw_only=True)
     click: str | None = field(default=None, kw_only=True)
     stop: str | None = field(default=None, kw_only=True)
     costmap_hz: float = field(default=5.0, kw_only=True)
     pose_hz: float = field(default=20.0, kw_only=True)
+    pose_encoding: str = field(default="odometry.json.v1", kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -439,7 +440,7 @@ class Map2D(Panel):
             )
         ]
         if self.pose is not None:
-            requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
+            requests.append(ChannelRequest(self.pose, "rx", self.pose_encoding, self.pose_hz))
         return tuple(requests)
 
 
@@ -455,12 +456,13 @@ class Map3D(Panel):
 
     kind: ClassVar[str] = "map3d"
     cloud: str = "global_map"
-    pose: str | None = "odom"
+    pose: str | None = "odometry"
     path: str | None = field(default=None, kw_only=True)
     click: str | None = field(default=None, kw_only=True)
     res: float = field(default=0.05, kw_only=True)
     max_hz: float = field(default=1.0, kw_only=True)
     pose_hz: float = field(default=20.0, kw_only=True)
+    pose_encoding: str = field(default="odometry.json.v1", kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -506,7 +508,7 @@ class Map3D(Panel):
             )
         ]
         if self.pose is not None:
-            requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
+            requests.append(ChannelRequest(self.pose, "rx", self.pose_encoding, self.pose_hz))
         return tuple(requests)
 
 
@@ -692,7 +694,7 @@ def _default_preset() -> Row:
     right (1/3)."""
     return Row(
         Video("color_image"),
-        Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
+        Col(Map2D(costmap="global_costmap", pose="odometry"), Teleop(), shares=[3, 1]),
         shares=[2, 1],
     )
 

@@ -44,8 +44,7 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
 class ReplanningAStarPlanner(Module, NavigationInterface):
     config: ReplanningAStarPlannerConfig
 
-    odom: In[PoseStamped]  # TODO: Use TF.
-    odometry: In[Odometry]
+    odometry: In[Odometry]  # TODO: Use TF.
     global_costmap: In[OccupancyGrid]
     goal_request: In[PoseStamped]
     clicked_point: In[PointStamped]
@@ -73,7 +72,6 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     def start(self) -> None:
         super().start()
 
-        self.register_disposable(Disposable(self.odom.subscribe(self._planner.handle_odom)))
         self.register_disposable(
             Disposable(
                 self.odometry.subscribe(

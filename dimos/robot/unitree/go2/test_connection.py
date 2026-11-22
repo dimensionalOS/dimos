@@ -369,7 +369,7 @@ def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connectio
             odom_frame_id="go2_odom",
         )
         conn.tf = MagicMock()
-        conn.odom = MagicMock()
+        conn.odometry = MagicMock()
         built.append(conn)
         return conn
 
@@ -385,14 +385,14 @@ def test_publish_tf_off_keeps_odometry_on_its_port(
     conn = connection(publish_tf=False)
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 0
-    assert conn.odom.publish.call_count == 1
+    assert conn.odometry.publish.call_count == 1
 
 
 def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
     conn = connection(publish_tf=True)
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 1
-    assert conn.odom.publish.call_count == 1
+    assert conn.odometry.publish.call_count == 1
 
 
 def test_body_command_and_pose_derived_feedback(connection):
@@ -681,7 +681,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     module.set_transport("odom", mocker.Mock())
     received = []
     try:
-        with Disposable(module.odom.subscribe(lambda msg: received.append(msg.ts))):
+        with Disposable(module.odometry.subscribe(lambda msg: received.append(msg.ts))):
             module.start()
             scheduler.advance_by(10)
     finally:

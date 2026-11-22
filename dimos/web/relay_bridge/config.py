@@ -116,7 +116,7 @@ def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> d
         side_panels.append(
             Map2D(
                 costmap="global_costmap",
-                pose="odom" if "odom" in present else None,
+                pose="odometry" if "odometry" in present else None,
                 costmap_hz=config.costmap_max_hz,
                 pose_hz=config.odom_max_hz,
             )

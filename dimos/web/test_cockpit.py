@@ -85,7 +85,7 @@ from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 # and need the TS side reviewed too.
 GO2_LAYOUT = Row(
     Video("color_image"),
-    Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
+    Col(Map2D(costmap="global_costmap", pose="odometry"), Teleop(), shares=[3, 1]),
     shares=[2, 1],
 )
 
@@ -103,9 +103,9 @@ GO2_MANIFEST = {
             "requiredScope": None,
         },
         {
-            "ch": "odom",
+            "ch": "odometry",
             "dir": "rx",
-            "encoding": "pose.json.v1",
+            "encoding": "odometry.json.v1",
             "delivery": "reliable",
             "maxHz": 20.0,
             "params": {},
@@ -139,7 +139,7 @@ GO2_MANIFEST = {
             "id": "p1",
             "kind": "map2d",
             "title": "",
-            "channels": ["global_costmap", "odom"],
+            "channels": ["global_costmap", "odometry"],
             "params": {},
         },
         {"id": "p2", "kind": "teleop", "title": "", "channels": ["tele_cmd_vel"], "params": {}},
@@ -582,7 +582,7 @@ def test_map2d_nav_channels_blueprint() -> None:
         (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["publish"])
         for c in manifest["channels"]
     ] == [
-        ("odom", "rx", "pose.json.v1", "reliable", 20.0, "none"),
+        ("odometry", "rx", "odometry.json.v1", "reliable", 20.0, "none"),
         ("global_costmap", "rx", "costmap.zlib.v1", "latest", 5.0, "none"),
         ("path", "rx", "path.json.v1", "latest", 10.0, "none"),
         ("clicked_point", "tx", "point.json.v1", "reliable", 5.0, "shared"),
@@ -590,7 +590,7 @@ def test_map2d_nav_channels_blueprint() -> None:
     ]
     (panel,) = manifest["panels"]
     # The map2d slots stay costmap + pose; the nav streams ride the params.
-    assert panel["channels"] == ["global_costmap", "odom"]
+    assert panel["channels"] == ["global_costmap", "odometry"]
     assert panel["params"] == {"path": "path", "click": "clicked_point", "stop": "stop_movement"}
     assert parse_manifest(manifest).model_dump() == manifest
     # Generated ports autoconnect to the planner's by name + type.
@@ -616,12 +616,12 @@ def test_map3d_blueprint() -> None:
         (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["params"])
         for c in manifest["channels"]
     ] == [
-        ("odom", "rx", "pose.json.v1", "reliable", 20.0, {}),
+        ("odometry", "rx", "odometry.json.v1", "reliable", 20.0, {}),
         ("global_map", "rx", "voxels.zlib.v1", "latest", 1.0, {"res": 0.05}),
     ]
     (panel,) = manifest["panels"]
     assert panel["kind"] == "map3d"
-    assert panel["channels"] == ["global_map", "odom"]
+    assert panel["channels"] == ["global_map", "odometry"]
     assert panel["params"] == {}
     assert parse_manifest(manifest).model_dump() == manifest
     # The map is a generated port, wired to the mapper's global_map by name + type.
@@ -658,7 +658,7 @@ def test_map3d_navigation_shares_the_map2d_channels(with_map2d: bool) -> None:
         5.0,
     )
     panel = next(panel for panel in manifest["panels"] if panel["kind"] == "map3d")
-    assert panel["channels"] == ["global_map", "odom"]
+    assert panel["channels"] == ["global_map", "odometry"]
     assert panel["params"] == {"path": "path", "click": "clicked_point"}
     ports = {(stream.name, stream.direction): stream.type for stream in atom.streams}
     assert ports[("clicked_point", "out")] is PointStamped
@@ -887,14 +887,16 @@ def test_explicit_channel_conflicts_with_panel_raise(channel: Channel) -> None:
 
 
 def test_builtin_stream_type_and_table_mismatches() -> None:
-    with pytest.raises(ValueError, match="does not match the bridge port type PoseStamped"):
-        cockpit(channels=[Channel("odom", Twist, encoding="pose.json.v1")])
+    with pytest.raises(ValueError, match="does not match the bridge port type Odometry"):
+        cockpit(channels=[Channel("odometry", Twist, encoding="odometry.json.v1")])
     with pytest.raises(
-        ValueError, match="'odom' encodes pose.json.v1, not geometry_msgs.PoseStamped.lcm.v1"
+        ValueError, match="'odometry' encodes odometry.json.v1, not nav_msgs.Odometry.lcm.v1"
     ):
-        cockpit(channels=[Channel("odom", PoseStamped)])
-    with pytest.raises(ValueError, match="'odom' delivers reliable, not latest"):
-        cockpit(channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", delivery="latest")])
+        cockpit(channels=[Channel("odometry", Odometry)])
+    with pytest.raises(ValueError, match="'odometry' delivers reliable, not latest"):
+        cockpit(
+            channels=[Channel("odometry", Odometry, encoding="odometry.json.v1", delivery="latest")]
+        )
 
 
 def test_json_v1_requires_explicit_codec_for_large_types() -> None:
@@ -1013,7 +1015,9 @@ def test_user_registered_lcm_v1_encoding_wins() -> None:
 def test_lcm_channels_fit_the_control_payload_cap() -> None:
     # Every LCM channel adds its schema (150 B to 1.5 KB) to the hello frame.
     channels = [
-        Channel("odometry", Odometry),
+        # Distinct from the map panel's odometry.json.v1 marker channel: one
+        # stream name carries one encoding.
+        Channel("raw_odometry", Odometry),
         Channel("lidar", PointCloud2, max_hz=5.0),
         Channel("tf", TFMessage),
         Channel("joints", JointState),
@@ -1075,7 +1079,7 @@ def test_channel_ordering_builtins_then_customs_then_publish() -> None:
     (atom,) = blueprint.blueprints
     assert [c["ch"] for c in atom.kwargs["manifest"]["channels"]] == [
         "color_image",
-        "odom",
+        "odometry",
         "global_costmap",
         "target_pose",
         "ops_note",

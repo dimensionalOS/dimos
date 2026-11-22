@@ -1,5 +1,5 @@
 // C++ robot control example
-// Subscribes to robot pose and publishes twist commands
+// Subscribes to robot odometry and publishes twist commands
 
 #include <lcm/lcm-cpp.hpp>
 #include <cmath>
@@ -8,26 +8,27 @@
 #include <atomic>
 #include <chrono>
 
-#include "geometry_msgs/PoseStamped.hpp"
 #include "geometry_msgs/Twist.hpp"
+#include "nav_msgs/Odometry.hpp"
 
 class RobotController {
 public:
     RobotController() : lcm_(), running_(true) {}
 
-    void onPose(const lcm::ReceiveBuffer*, const std::string&,
-                const geometry_msgs::PoseStamped* msg) {
-        const auto& pos = msg->pose.position;
-        const auto& ori = msg->pose.orientation;
-        printf("[pose] x=%.2f y=%.2f z=%.2f | qw=%.2f\n",
-               pos.x, pos.y, pos.z, ori.w);
+    void onOdometry(const lcm::ReceiveBuffer*, const std::string&,
+                    const nav_msgs::Odometry* msg) {
+        const auto& pos = msg->pose.pose.position;
+        const auto& ori = msg->pose.pose.orientation;
+        const auto& lin = msg->twist.twist.linear;
+        printf("[odometry] x=%.2f y=%.2f z=%.2f | qw=%.2f | vx=%.2f\n",
+               pos.x, pos.y, pos.z, ori.w, lin.x);
     }
 
     void run() {
-        lcm_.subscribe("/odom#geometry_msgs.PoseStamped", &RobotController::onPose, this);
+        lcm_.subscribe("/odometry#nav_msgs.Odometry", &RobotController::onOdometry, this);
 
         printf("Robot control started\n");
-        printf("Subscribing to /odom, publishing to /cmd_vel\n");
+        printf("Subscribing to /odometry, publishing to /cmd_vel\n");
         printf("Press Ctrl+C to stop.\n\n");
 
         // Publisher thread

@@ -60,7 +60,6 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
         stale_s=5.0,
         give_up_s=0.3,
     )
-    a.odom.transport = LCMTransport("/test_typesafe/odom", PoseStamped)
     a.cmd_vel.transport = LCMTransport("/test_typesafe/cmd_vel", Twist)
     a.goal.transport = LCMTransport("/test_typesafe/goal", PoseStamped)
     for name in (
@@ -88,7 +87,9 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
 
 
 def odom(a: TypeSafeNavigationAgent, x: float = 0.0) -> None:
-    a.odom.transport.publish(PoseStamped(position=(x, 0, 0.4), frame_id="world"))
+    a.odometry.transport.publish(
+        Odometry(ts=time.time(), frame_id="world", pose=Pose(position=(x, 0, 0.4)))
+    )
 
 
 def scene(a: TypeSafeNavigationAgent, robot_x: float = 0.0) -> None:

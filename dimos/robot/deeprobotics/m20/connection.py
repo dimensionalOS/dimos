@@ -204,7 +204,6 @@ class M20Connection(Module):
     odometry: In[Odometry]
     motion_state_cmd: Out[Int32]
     gait_cmd: Out[UInt32]
-    odom: Out[PoseStamped]
     goal: Out[PoseStamped]
     battery: Out[BatteryState]
 
@@ -239,7 +238,6 @@ class M20Connection(Module):
         self.register_disposable(Disposable(self.command_ready.subscribe(self._on_command_ready)))
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
         self._stopping.clear()
         self._basic_server.start()
         if self.config.auto_stand:
@@ -726,9 +724,6 @@ class M20Connection(Module):
         with self._state_condition:
             self._gait_state = int(msg.data)
             self._state_condition.notify_all()
-
-    def _on_odometry(self, odometry: Odometry) -> None:
-        self.odom.publish(odometry.to_pose_stamped())
 
     def _ensure_rl_control(self) -> bool:
         with self._lock:

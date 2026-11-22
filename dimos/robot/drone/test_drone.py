@@ -353,7 +353,7 @@ class TestReplayMode(unittest.TestCase):
             published_video = []
             published_status = []
 
-            module.odom = MagicMock(
+            module.odometry = MagicMock(
                 publish=lambda x: (
                     published_odom.append(x),
                     print(
@@ -725,7 +725,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
         published_telemetry = []
         module.telemetry = MagicMock(publish=lambda x: published_telemetry.append(x))
         module.status = MagicMock()
-        module.odom = MagicMock()
+        module.odometry = MagicMock()
         module.tf = MagicMock()
         module.video = MagicMock()
         module.movecmd = MagicMock()

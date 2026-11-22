@@ -36,6 +36,7 @@ from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
@@ -138,7 +139,7 @@ class SecurityModule(Module):
 
     config: SecurityModuleConfig
 
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
     global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     color_image: In[Image]
@@ -177,7 +178,9 @@ class SecurityModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
+            Disposable(self.odometry.subscribe(lambda msg: self._on_odom(msg.to_pose_stamped())))
+        )
         self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._router.handle_occupancy_grid))
         )
