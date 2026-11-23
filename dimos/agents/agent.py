@@ -15,7 +15,7 @@
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, Lock, RLock, Thread
+from threading import Event, RLock, Thread
 import time
 from typing import Any
 import uuid
@@ -112,7 +112,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
-    _infer_lock: Lock
+    _answers: dict[int, BaseMessage | None]
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
@@ -131,7 +131,8 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             daemon=True,
         )
         self._stop_event = Event()
-        self._infer_lock = Lock()
+        # The last message of each turn infer() is waiting on, by id() of its input.
+        self._answers = {}
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
@@ -346,13 +347,12 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         """Send x like a message on human_input and return the answer once the queue is empty."""
         if not self._thread.is_alive():
             raise RuntimeError("Agent is not running; it starts with the blueprint")
-        # One infer() at a time, or two callers would both read the later answer.
-        with self._infer_lock:
-            self._message_queue.put(x)
-            self._message_queue.join()
-            if self._stop_event.is_set():
-                raise RuntimeError("Agent stopped before it answered")
-            answer = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
+        self._answers[id(x)] = None
+        self._message_queue.put(x)
+        self._message_queue.join()
+        answer = self._answers.pop(id(x))
+        if not isinstance(answer, AIMessage):
+            raise RuntimeError("Agent stopped before it answered")
         if TURN_FAILED_KEY in answer.additional_kwargs:
             raise RuntimeError(str(answer.text))
         return answer
@@ -469,6 +469,8 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
                 )
             )
 
+        if id(message) in self._answers:
+            self._answers[id(message)] = self._history[-1]
         if self._message_queue.empty():
             self.agent_idle.publish(True)
 

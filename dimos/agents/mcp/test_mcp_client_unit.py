@@ -575,24 +575,38 @@ class _SlowGraph(_AnswersGraph):
         yield from super().stream(state, stream_mode)
 
 
-def test_overlapping_infer_calls_each_get_their_own_answer(
+class _EchoGraph:
+    """Answers each message with its own text, after a short pause."""
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        question = state["messages"][-1].content
+        time.sleep(0.002)
+        yield {"model": {"messages": [AIMessage(content=f"answer to {question}")]}}
+
+
+def test_infer_under_load_gives_every_caller_its_own_answer(
     running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(running_agent, "_state_graph", _SlowGraph())
+    """200 concurrent infer() calls, with 200 stream messages arriving among them."""
+    monkeypatch.setattr(running_agent, "_state_graph", _EchoGraph())
     answers: dict[str, str] = {}
 
     def ask(question: str) -> None:
         answers[question] = str(running_agent.infer(HumanMessage(question)).text)
 
-    callers = [Thread(target=ask, args=(question,)) for question in ("a", "b")]
-    for caller in callers:
+    questions = [f"q{i}" for i in range(200)]
+    callers = [Thread(target=ask, args=(question,)) for question in questions]
+    for i, caller in enumerate(callers):
         caller.start()
+        running_agent.add_message(HumanMessage(f"stream {i}"))
     for caller in callers:
-        caller.join(timeout=5)
+        caller.join(timeout=30)
 
-    assert sorted(answers.values()) == ["turn 1", "turn 2"]
-    asked = [m.content for m in running_agent._history if isinstance(m, HumanMessage)]
-    assert [answers[str(q)] for q in asked] == ["turn 1", "turn 2"]
+    assert answers == {question: f"answer to {question}" for question in questions}
+    assert len(running_agent._history) == 800
+    assert running_agent._answers == {}
 
 
 def test_stop_releases_an_infer_call_the_worker_never_took(
