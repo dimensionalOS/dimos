@@ -659,6 +659,32 @@ def test_run_leaves_hosted_dependency_checks_to_the_host(
     assert "blueprint" not in stubbed_run
 
 
+def test_hosted_run_announces_host_discovery_before_waiting(
+    stubbed_run: dict[str, Any], mocker: MockerFixture
+) -> None:
+    mocker.patch.object(
+        get_all_blueprints,
+        "get_by_name_or_exit",
+        return_value=RunModuleA.blueprint().hosted(host="robot-host"),
+    )
+    mocker.patch("dimos.hosted.machine.local_host", return_value=None)
+    mocker.patch("dimos.hosted.client.root_rpc")
+    mocker.patch("signal.signal")
+    echo = mocker.spy(lifecycle.typer, "echo")
+
+    def wait_for_hosts(*args: Any, **kwargs: Any) -> None:
+        echo.assert_any_call("Waiting for Hosts...")
+        raise TimeoutError("no live Host named or identified by 'robot-host'")
+
+    mocker.patch("dimos.hosted.deploy.wait_for_hosts", side_effect=wait_for_hosts)
+
+    result = CliRunner().invoke(main, ["--zenoh-connect", "tcp/127.0.0.1:7447", "run", "alpha"])
+
+    assert result.exit_code == 1, result.output
+    assert "Waiting for Hosts..." in result.output
+    assert "Error: no live Host named or identified by 'robot-host'" in result.output
+
+
 @pytest.mark.parametrize(
     ("module", "options", "message"),
     [
