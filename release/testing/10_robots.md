@@ -67,10 +67,14 @@ Expected result: each teleop window drives only its own robot, and the echo prin
 
 ## 10.5 Go2 over DDS on the Jetson
 
-Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)), and a laptop that reaches the Jetson on port 7447. Without the Host `go2-nav` stops with `no Host router on this machine`.
+Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, the dimos Host running on the Jetson (see the [Host daemon check](05_cli-and-api.md#510-host-daemon)), and a laptop that reaches the Jetson on port 7447. Without the Host `go2-nav` stops with `no Host router on this machine`.
+
+A Host listens only on loopback by default, and then the laptop viewer shows no camera or map. If `uv run dimos host config` prints `listen` as `tcp/127.0.0.1:7447`, open the Host with the first two commands below. `tcp/0.0.0.0` listens on every interface, and `go2-nav` still reaches the Host on loopback. With `iface/<name>` as the first endpoint `go2-nav` stops with `the Host router listens on ...`. Anyone who reaches port 7447 can run code on the Jetson, so use a network you trust. `uv run dimos host config listen=` and a restart close the Host again.
 
 ```bash
 # On the Jetson:
+uv run dimos host config listen=tcp/0.0.0.0
+uv run dimos host restart   # also starts a Host that is not running
 uv run dimos run go2-nav --mid360.lidar-ip <lidar-ip>
 # On the laptop:
 uv run dimos --zenoh-connect tcp/<robot-ip>:7447 run go2-nav-viewer
