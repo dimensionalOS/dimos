@@ -12,25 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! charge_manager's dock / undock sequence, stepped once per control tick ([`Docking`]), and the command source that
-//! puts it in front of the operator's ([`DockingCommands`]).
+//! charge_manager's dock / undock sequence stepped once per control tick ([`Docking`]), and the command source that
+//! puts it in front of the operator's ([`DockingCommands`]). The per-pose decisions are [`super::vendor::ChargeCore`];
+//! this is what blocks in the vendor, as phases:
 //!
-//! Dock (from standing in rl_control, the dock in sight and near): NaviCharge (0x3001); stand gait_settle_s; steer to
-//! the staging point staging_x_m out from the docked point, then to the fine point (docked_x_m out from the posts),
-//! each reached when settle_sweeps sweeps taken standing still agree it is within tolerance; FinetuneStand (0x3004),
-//! whose pose inputs can shift the body onto the remaining error (finetune_adjust); lie down; once the legs are passive m20-battery's rule (in the bus
-//! backend) sends the charge-enable request, and every pack's charge MOS must come on within charge_confirm_s. No
-//! charge: stand, back to the staging point and approach again (charge_manager's NoChargePlug_way = goBack), `retries`
-//! times, then back off as an undock does. Undock: stand on NaviCharge, back to exit_distance_m beyond the docked
-//! point, BasicFlat.
+//! Dock (DoChargeTask + goToPileAction): the detector restarts and FindTarget waits for its first pose; the obstacle
+//! check opens looking ahead; NaviCharge, held gait_settle_ms (WideWalk); the loop: the start point, the staging point,
+//! the fine point, every pose steering; FinetuneStand (setFineTuneStandMode); its loop of pose inputs; (0, 0, 0,
+//! sit_z) for sit_hold_ms; lie down; power_on_ms, then first_detection_current_timeout for every pack's charge MOS.
+//! No charge: stand on NaviCharge, retry_settle_ms, approach again (adjust_posture_times); used up, NoChargePlug_way:
+//! goBack stands, restarts the detector and undocks, sitDown stays lying.
 //!
-//! Steer is charge_manager's: normalized axes, per axis 0 inside the tolerance, else gain x error clamped to
-//! [min_axes, max_axes]. Between sweeps the error is predicted from what the steer covered since the last one.
+//! Undock (DoOverChargeTask + exitPileAction, only from charging or after a failure): the detector restarts and
+//! FindTarget waits (lying); the obstacle check opens looking back; stand (StandUp2WideWalk); back off to the exit
+//! staging point and on to where docking started (back_way); restore_ms, then the gait docking started from.
 //!
-//! Safety: refuses unless standing in rl_control with no fault and the stand-in over; a controller fault, the state
-//! leaving the one a phase needs, or an operator motion command ends it; no dock pose for dock_lost_s while driving
-//! lies the robot down (charge_manager's reaction to a target timeout) or, backing off, stops it. Every limit is a
-//! count of control ticks or sweeps; none reads a clock.
+//! In every loop a pose missing for pose_wait_ms stops the robot, and enough in a row restart the detector (a FindTarget
+//! that fails lies the robot down). A steer holds until the next or steer_timeout_ms (rl_deploy). Every time is
+//! counted in control ticks.
+//!
+//! Ours on top: refuses unless standing in rl_control with no fault and the stand-in over; a controller fault lies the
+//! robot down; an operator motion command ends it.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -38,6 +40,10 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 
 use super::config::SequenceConfig;
+use super::vendor::{
+    ChargeCore, ChargeManagerToml, ChargeParams, Direction, Event, Failure, NoCharge, Outcome,
+    ReflectorFilter, Steer, TargetPose,
+};
 use super::{ChargeReading, DockPose};
 use crate::commands::CommandSource;
 use crate::config::Config;
@@ -65,21 +71,31 @@ impl Request {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Phase {
     Idle,
-    /// docking: switching to the approach gait, then standing gait_settle_s
+    /// the detector restarted: waiting for its first pose (FindTarget)
+    FindTarget,
+    /// switching to NaviCharge, then held gait_settle_ms (WideWalk)
     EnterGait,
-    ToStaging,
-    ToFine,
+    /// goToPileAction's loop: the start point, the staging point, the fine point
+    Approach,
+    /// switching to FinetuneStand (setFineTuneStandMode)
+    EnterFinetune,
     Finetune,
+    /// (0, 0, 0, sit_z) held sit_hold_ms
+    SitHold,
     LyingDown,
+    /// power_on_ms, then up to first_detection_current_timeout for the charge
     ConfirmCharge,
-    /// no charge: standing up again to retry from the staging point
+    /// no charge: standing on NaviCharge again, then retry_settle_ms
     StandForRetry,
-    /// lying on the dock with every pack charging (held until undock or an operator motion command)
+    /// lying on the dock (charging, or waiting for it after NoChargePlug_way = sitDown), until undock
     Charging,
-    /// undocking (or giving up): standing on the approach gait
+    /// the detector restarting mid-loop (FindTarget again)
+    Restart,
+    /// undocking (or giving up): StandUp2WideWalk
     StandUp,
     BackOff,
-    ExitGait,
+    /// undocked: restore_ms, then the gait docking started from
+    Restore,
 }
 
 /// What the sequence needs from the controller each tick.
@@ -89,6 +105,8 @@ pub struct View {
     pub fault: bool,
     pub runner: Option<String>,
     pub stand_in: bool,
+    /// the gait walking is on
+    pub gait: u32,
     /// control ticks the controller has been in `state`
     pub state_ticks: u64,
 }
@@ -104,6 +122,7 @@ impl View {
         }
         self.fault = c.fault.is_some();
         self.stand_in = c.in_stand_in();
+        self.gait = c.gait();
         if self.runner.as_deref() != c.current_runner() {
             self.runner = c.current_runner().map(String::from);
         }
@@ -116,6 +135,10 @@ impl View {
     fn on(&self, runner: &str) -> bool {
         !self.stand_in && self.runner.as_deref() == Some(runner)
     }
+
+    fn lying(&self) -> bool {
+        self.is(State::LieDown) || self.is(State::Passive)
+    }
 }
 
 /// The command the sequence sends this tick.
@@ -124,8 +147,8 @@ pub struct Output {
     pub target: Target,
     pub gait: u32,
     pub axes: [f64; 3],
-    /// FinetuneStand's pose inputs (dx, dy, yaw) while finetuning
-    pub pose: Option<[f64; 3]>,
+    /// FinetuneStand's pose inputs (dx, dy, yaw, height) while finetuning
+    pub pose: Option<[f64; 4]>,
 }
 
 /// The sequence's state as published (dock_state).
@@ -142,96 +165,108 @@ pub struct Status {
     pub charging: bool,
     pub packs_present: u8,
     pub packs_charge_mos_on: u8,
-    /// the robot's offset from the fine point in the dock frame (x m out, y m left, yaw deg; small-angle) as the
-    /// settle sweeps measured it
-    pub fine_point: Option<[f64; 3]>,
+    /// charge_manager's (x m, y m, yaw rad) at the fine point
+    pub fine_point: Option<[f32; 3]>,
+    /// where docking started (mInit: x m out from docked, y m, yaw rad), the undock's goal with back_way = auto
+    pub start_point: Option<[f32; 3]>,
+    /// the obstacle check is open, looking this way (the detector module runs it)
+    pub obstacle: Option<Direction>,
+    /// stopped for an obstacle this far (m)
+    pub obstacle_stop: Option<f32>,
+    /// charge_manager.toml is read
+    pub vendor_config: bool,
 }
 
-#[derive(Default)]
-struct Settle {
-    sweeps: u32,
-    sum: [f64; 3],
+/// What a FindTarget / stand-up leads to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Dock,
+    Undock,
+    BackOff,
+    /// stood up after giving up: restart the detector, then back off
+    FindTarget,
+}
+
+/// One pose's charge_manager inputs from our detector's pose.
+fn target_pose(p: &DockPose, docked_x: f64) -> (f64, f64, f64) {
+    let [out, y, yaw] = p.robot_in_dock();
+    (docked_x - out, -y, yaw)
 }
 
 pub struct Docking {
-    cfg: SequenceConfig,
+    seq: SequenceConfig,
     hz: f64,
     charge_enabled: bool,
     approach_runner: String,
     finetune_runner: String,
-    exit_runner: String,
-    command_max: [f64; 3],
-    lie_ticks: u64,
+    core: Option<ChargeCore>,
+    filter: ReflectorFilter,
+    pose_offset_x: f64,
     phase: Phase,
     ticks_in_phase: u64,
-    approach_ticks: u64,
-    retries: u32,
+    /// control ticks since start
+    tick: u64,
+    next: Next,
+    resume: Phase,
     giving_up: bool,
-    pose: Option<DockPose>,
-    pose_seq: Option<u64>,
-    ticks_since_pose: u64,
-    new_sweep: bool,
-    settle: Option<Settle>,
+    /// the last sequence failed (charge_manager's error state: an undock is allowed)
+    failed: bool,
     /// the phase's runner is up (ticks_in_phase counts from then)
     on_runner: bool,
-    /// finetune: sweeps still to skip while the last adjustment takes effect
-    finetune_wait: u32,
-    axes: [f64; 3],
-    offset: [f64; 3],
+    pose_seq: Option<u64>,
+    /// the pose the detector's output stage published this tick
+    published: Option<TargetPose>,
+    /// tick of the last loop wake (a pose or a missed wait)
+    woke_at: u64,
+    /// the last steer and the tick it went out
+    steer: Option<(Steer, u64)>,
     target: Target,
     gait: u32,
+    /// the gait to restore after an undock (mInitRobotGaitStatus_)
+    restore_gait: u32,
     charge: Option<ChargeReading>,
-    charge_seq_at_lie: u64,
+    /// the charge counts from readings after this one (the vendor clears its flag at the dock's start)
+    charge_seq_at_start: u64,
+    obstacle: Option<(Option<f32>, u64)>,
+    obstacle_open: bool,
+    obstacle_seq_at_open: u64,
     status: Status,
-}
-
-fn sign(v: f64) -> f64 {
-    if v < 0.0 {
-        -1.0
-    } else {
-        1.0
-    }
 }
 
 impl Docking {
     /// `charge_enabled`: the bus backend runs m20-battery's charge-enable rule (without it nothing can charge).
-    pub fn new(cfg: &Config, charge_enabled: bool) -> Docking {
-        let seq = cfg.dock.sequence.clone();
+    /// `vendor`: charge_manager.toml, once read (docking refuses until then).
+    pub fn new(cfg: &Config, charge_enabled: bool, vendor: Option<&ChargeManagerToml>) -> Docking {
+        let seq = cfg.dock.sequence;
         let runner = |gait: u32| cfg.runner_for_gait(gait).to_string();
-        let approach_runner = runner(seq.approach_gait);
-        let command_max = cfg
-            .runners
-            .get(&approach_runner)
-            .map(|r| r.command_max)
-            .unwrap_or([0.0; 3]);
-        let hz = cfg.timing.control_hz;
-        Docking {
+        let mut d = Docking {
+            approach_runner: runner(seq.approach_gait),
             finetune_runner: runner(seq.finetune_gait),
-            exit_runner: runner(seq.exit_gait),
-            approach_runner,
-            command_max,
-            // lie-down's spline, then its damping phase: the legs are passive after both
-            lie_ticks: (2.0 * cfg.states.lie_down.phase_s * hz).ceil() as u64,
-            hz,
+            hz: cfg.timing.control_hz,
             charge_enabled,
+            core: None,
+            filter: ReflectorFilter::new(&cfg.dock.filter),
+            pose_offset_x: cfg.dock.filter.pose_offset_x,
             phase: Phase::Idle,
             ticks_in_phase: 0,
-            approach_ticks: 0,
-            retries: 0,
+            tick: 0,
+            next: Next::Dock,
+            resume: Phase::Approach,
             giving_up: false,
-            pose: None,
-            pose_seq: None,
-            ticks_since_pose: u64::MAX / 2,
-            new_sweep: false,
-            settle: None,
+            failed: false,
             on_runner: false,
-            finetune_wait: 0,
-            axes: [0.0; 3],
-            offset: [0.0; 3],
+            pose_seq: None,
+            published: None,
+            woke_at: 0,
+            steer: None,
             target: Target::Passive,
             gait: seq.approach_gait,
+            restore_gait: seq.default_restore_gait,
             charge: None,
-            charge_seq_at_lie: 0,
+            charge_seq_at_start: 0,
+            obstacle: None,
+            obstacle_open: false,
+            obstacle_seq_at_open: 0,
             status: Status {
                 phase: Phase::Idle,
                 active: false,
@@ -242,9 +277,36 @@ impl Docking {
                 packs_present: 0,
                 packs_charge_mos_on: 0,
                 fine_point: None,
+                start_point: None,
+                obstacle: None,
+                obstacle_stop: None,
+                vendor_config: false,
             },
-            cfg: seq,
+            seq,
+        };
+        if let Some(t) = vendor {
+            d.set_vendor(t);
         }
+        d
+    }
+
+    /// Take charge_manager.toml (only while idle).
+    pub fn set_vendor(&mut self, t: &ChargeManagerToml) -> bool {
+        if self.active() {
+            return false;
+        }
+        let start = self.core.as_ref().map(|c| c.start_point());
+        let mut core = ChargeCore::new(ChargeParams::from_toml(t), &self.seq);
+        if let Some(p) = start {
+            core.set_start_point(p);
+        }
+        self.core = Some(core);
+        self.status.vendor_config = true;
+        true
+    }
+
+    pub fn has_vendor(&self) -> bool {
+        self.core.is_some()
     }
 
     pub fn phase(&self) -> Phase {
@@ -260,46 +322,119 @@ impl Docking {
         self.phase != Phase::Idle
     }
 
-    fn ticks(&self, seconds: f64) -> u64 {
-        (seconds * self.hz).round() as u64
+    fn ms(&self, ticks: u64) -> u64 {
+        (ticks as f64 * 1000.0 / self.hz).round() as u64
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.ms(self.tick)
+    }
+
+    fn ticks(&self, ms: u64) -> u64 {
+        (ms as f64 * self.hz / 1000.0).round() as u64
+    }
+
+    fn phase_ms(&self) -> u64 {
+        self.ms(self.ticks_in_phase)
     }
 
     fn set_phase(&mut self, phase: Phase) {
         self.phase = phase;
         self.ticks_in_phase = 0;
-        self.settle = None;
         self.on_runner = false;
-        self.finetune_wait = 0;
-        self.axes = [0.0; 3];
+    }
+
+    fn params(&self) -> Option<&ChargeParams> {
+        self.core.as_ref().map(|c| &c.params)
+    }
+
+    fn charged(&self, r: &ChargeReading) -> bool {
+        let all = self.params().map_or(true, |p| p.all_battery_charge);
+        r.packs_present > 0
+            && if all {
+                r.packs_charge_mos_on >= r.packs_present
+            } else {
+                r.packs_charge_mos_on > 0
+            }
+    }
+
+    fn open_obstacle(&mut self) {
+        let avoid = self.params().is_some_and(|p| p.obstacle_avoid);
+        self.obstacle_open = avoid;
+        self.obstacle_seq_at_open = self.obstacle.map_or(0, |o| o.1);
+        self.status.obstacle_stop = None;
+    }
+
+    /// The obstacle check's newest reading since it opened.
+    fn obstacle_reading(&self) -> Option<f32> {
+        if !self.obstacle_open {
+            return None;
+        }
+        self.obstacle
+            .filter(|o| o.1 > self.obstacle_seq_at_open)
+            .and_then(|o| o.0)
     }
 
     /// End the sequence with `result`; `target` is what the controller is left with.
     fn finish(&mut self, target: Target, result: impl Into<String>, error: bool) -> Option<Output> {
         self.target = target;
-        self.axes = [0.0; 3];
+        self.steer = None;
+        self.obstacle_open = false;
+        if let Some(c) = self.core.as_mut() {
+            c.end();
+        }
         self.set_phase(Phase::Idle);
         self.status.result = result.into();
         self.status.error = error;
+        self.failed = error;
         self.giving_up = false;
         Some(self.output(None))
     }
 
-    fn output(&self, pose: Option<[f64; 3]>) -> Output {
+    /// Fail standing on BasicFlat (NarrowWalk).
+    fn finish_basic_flat(&mut self, result: impl Into<String>) -> Option<Output> {
+        self.gait = self.seq.basic_flat_gait;
+        self.finish(Target::RlControl, result, true)
+    }
+
+    /// The steer as normalized axes, zeroed steer_timeout_ms after it went out.
+    fn axes(&self) -> [f64; 3] {
+        match self.steer {
+            Some((s, at)) if self.tick - at <= self.ticks(self.seq.steer_timeout_ms) => {
+                [s.x as f64, s.y as f64, s.yaw as f64]
+            }
+            _ => [0.0; 3],
+        }
+    }
+
+    /// FinetuneStand's pose inputs from the steer (rl_deploy): dx, dy, yaw scaled, height = max(-z, 0).
+    fn pose_inputs(&self) -> [f64; 4] {
+        let s = self.steer.map(|s| s.0).unwrap_or_default();
+        let k = self.seq.finetune_pose_scale;
+        [
+            k[0] * s.x as f64,
+            k[1] * s.y as f64,
+            k[2] * s.yaw as f64,
+            (-(s.z as f64)).max(0.0),
+        ]
+    }
+
+    fn output(&self, pose: Option<[f64; 4]>) -> Output {
+        let axes = if pose.is_some() {
+            [0.0; 3]
+        } else {
+            self.axes()
+        };
         Output {
             target: self.target,
             gait: self.gait,
-            axes: self.axes,
+            axes,
             pose,
         }
     }
 
-    fn charged(&self, r: &ChargeReading) -> bool {
-        r.packs_present > 0
-            && if self.cfg.all_packs_charge {
-                r.packs_charge_mos_on >= r.packs_present
-            } else {
-                r.packs_charge_mos_on > 0
-            }
+    fn send(&mut self, steer: Steer) {
+        self.steer = Some((steer, self.tick));
     }
 
     /// Ask for a dock, an undock or a stop. Returns why it was refused, if it was.
@@ -309,7 +444,7 @@ impl Docking {
                 if self.active() {
                     let lying = matches!(
                         self.phase,
-                        Phase::LyingDown | Phase::ConfirmCharge | Phase::Charging
+                        Phase::SitHold | Phase::LyingDown | Phase::ConfirmCharge | Phase::Charging
                     );
                     self.finish(
                         if lying { Target::LieDown } else { self.target },
@@ -322,6 +457,9 @@ impl Docking {
             Request::Dock => {
                 if self.active() {
                     return Err(format!("busy ({:?})", self.phase));
+                }
+                if self.core.is_none() {
+                    return Err("charge_manager.toml is not read yet".into());
                 }
                 if !self.charge_enabled {
                     return Err(
@@ -336,110 +474,64 @@ impl Docking {
                         if view.stand_in { ", stand-in running" } else { "" }
                     ));
                 }
-                let fresh = self.ticks_since_pose <= self.ticks(self.cfg.dock_lost_s);
-                let Some(pose) = self.pose.filter(|_| fresh) else {
-                    return Err("the dock is not in sight".into());
-                };
-                let distance = pose.x.hypot(pose.y);
-                if distance > self.cfg.max_start_distance_m {
-                    return Err(format!(
-                        "the dock is {distance:.2} m away (at most {:.2})",
-                        self.cfg.max_start_distance_m
-                    ));
-                }
-                self.retries = 0;
-                self.approach_ticks = 0;
+                // goToPileAction records the gait to restore after the undock
+                self.restore_gait = view.gait;
                 self.status.fine_point = None;
                 self.status.result.clear();
                 self.status.error = false;
+                self.failed = false;
+                self.status.retries = 0;
+                self.charge_seq_at_start = self.charge.map_or(0, |r| r.seq);
                 self.target = Target::RlControl;
-                self.gait = self.cfg.approach_gait;
-                self.set_phase(Phase::EnterGait);
+                self.gait = view.gait;
+                self.find_target(Next::Dock);
                 Ok(())
             }
             Request::Undock => {
-                if self.active() && self.phase != Phase::Charging {
-                    return Err(format!("busy ({:?})", self.phase));
+                if self.core.is_none() {
+                    return Err("charge_manager.toml is not read yet".into());
                 }
-                let standable = [State::LieDown, State::Passive, State::RlControl]
-                    .iter()
-                    .any(|s| view.is(*s));
-                if view.fault || !standable {
+                let charging_now = self.charge.is_some_and(|r| self.charged(&r));
+                let allowed = self.phase == Phase::Charging
+                    || (!self.active() && (self.failed || charging_now));
+                if !allowed {
                     return Err(format!(
-                        "undock needs the robot lying, passive or in rl_control with no fault (state {:?})",
-                        view.state
+                        "charge_manager undocks only while charging or after a failed sequence ({:?})",
+                        self.phase
                     ));
+                }
+                if view.fault {
+                    return Err("undock needs no controller fault".into());
                 }
                 self.status.result.clear();
                 self.status.error = false;
+                self.failed = false;
                 self.giving_up = false;
-                self.begin_stand_up();
+                self.find_target(Next::Undock);
                 Ok(())
             }
         }
     }
 
-    fn begin_stand_up(&mut self) {
-        self.target = Target::RlControl;
-        self.gait = self.cfg.approach_gait;
-        self.set_phase(Phase::StandUp);
+    /// Restart the detector and wait for its first pose.
+    fn find_target(&mut self, next: Next) {
+        self.filter.restart();
+        // a pose published before the restart is not the detector's first
+        self.published = None;
+        self.next = next;
+        self.steer = None;
+        self.set_phase(Phase::FindTarget);
     }
 
-    /// Steer toward `goal_x` out along the dock's axis; true once settle sweeps taken standing still agree it is
-    /// within `tol` (m, m, deg).
-    fn drive(&mut self, goal_x: f64, tol: [f64; 3], min_axes: [f64; 3]) -> bool {
-        let tol = [tol[0], tol[1], tol[2].to_radians()];
-        let Some(pose) = self.pose else {
-            self.axes = [0.0; 3];
-            return false;
-        };
-        let e = pose.error_to(goal_x);
-        if let Some(s) = self.settle.as_mut() {
-            self.axes = [0.0; 3];
-            if self.new_sweep {
-                s.sweeps += 1;
-                // the first sweep after stopping is still moving: averaged from the second on
-                if s.sweeps > 1 {
-                    for (sum, e) in s.sum.iter_mut().zip(e) {
-                        *sum += e;
-                    }
-                }
-                if s.sweeps > self.cfg.settle_sweeps {
-                    let n = (s.sweeps - 1) as f64;
-                    let mean = [s.sum[0] / n, s.sum[1] / n, s.sum[2] / n];
-                    self.settle = None;
-                    if (0..3).all(|k| mean[k].abs() <= tol[k]) {
-                        if self.phase == Phase::ToFine {
-                            self.status.fine_point =
-                                Some([mean[0], mean[1], -mean[2].to_degrees()]);
-                        }
-                        return true;
-                    }
-                }
-            }
-            return false;
+    fn stand_up(&mut self, next: Next, view: &View) {
+        self.target = Target::RlControl;
+        // StandUp2WideWalk changes nothing when already standing
+        if !view.is(State::RlControl) {
+            self.gait = self.seq.approach_gait;
         }
-        // predicted error: what the steer covered since the sweep is already behind the robot
-        let age = self.ticks_since_pose as f64 / self.hz;
-        let mut axes = [0.0; 3];
-        let mut inside = true;
-        for k in 0..3 {
-            let predicted = e[k] - self.axes[k] * self.command_max[k] * age;
-            // driven into half the tolerance, judged on all of it: drift while settling stays inside
-            if predicted.abs() <= tol[k] / 2.0 || self.command_max[k] <= 0.0 {
-                continue;
-            }
-            inside = false;
-            let wanted = self.cfg.gain[k] * predicted.abs() / self.command_max[k];
-            axes[k] = sign(predicted) * wanted.clamp(min_axes[k], self.cfg.max_axes[k]);
-        }
-        if inside {
-            self.settle = Some(Settle::default());
-            self.axes = [0.0; 3];
-        } else {
-            self.axes = axes;
-        }
-        false
+        self.next = next;
+        self.steer = None;
+        self.set_phase(Phase::StandUp);
     }
 
     /// One control tick: the newest dock pose (with its sweep count) and battery reading, the controller as last seen.
@@ -449,37 +541,104 @@ impl Docking {
         pose: Option<(DockPose, u64)>,
         charge: Option<ChargeReading>,
     ) -> Option<Output> {
-        self.ingest(pose, charge);
+        self.ingest(pose, charge, None);
         self.advance(view)
     }
 
-    /// Take this tick's newest dock pose (with its sweep count) and battery reading.
-    pub fn ingest(&mut self, pose: Option<(DockPose, u64)>, charge: Option<ChargeReading>) {
-        self.new_sweep = false;
-        match pose {
-            Some((p, seq)) if self.pose_seq != Some(seq) => {
-                self.pose = Some(p);
+    /// Take this tick's newest dock pose (with its sweep count), battery reading and obstacle reading (nearest
+    /// occupied cell, m, or none, with its count).
+    pub fn ingest(
+        &mut self,
+        pose: Option<(DockPose, u64)>,
+        charge: Option<ChargeReading>,
+        obstacle: Option<(Option<f32>, u64)>,
+    ) {
+        self.published = None;
+        if let Some((p, seq)) = pose {
+            if self.pose_seq != Some(seq) {
                 self.pose_seq = Some(seq);
-                self.ticks_since_pose = 0;
-                self.new_sweep = true;
+                let (x, y, yaw) = target_pose(&p, self.seq.docked_x_m);
+                if let Some([lx, ly, lyaw]) = self.filter.sweep(x - self.pose_offset_x, y, yaw) {
+                    self.published = Some(TargetPose {
+                        x: (lx + self.pose_offset_x) as f32,
+                        y: ly as f32,
+                        yaw: lyaw as f32,
+                    });
+                }
             }
-            _ => self.ticks_since_pose = self.ticks_since_pose.saturating_add(1),
         }
         if let Some(r) = charge {
             self.charge = Some(r);
-            let charging = self.charged(&r);
-            self.status.charging =
-                charging && matches!(self.phase, Phase::ConfirmCharge | Phase::Charging);
+            self.status.charging = self.charged(&r) && self.phase == Phase::Charging;
             self.status.packs_present = r.packs_present;
             self.status.packs_charge_mos_on = r.packs_charge_mos_on;
+        }
+        if let Some(o) = obstacle {
+            self.obstacle = Some(o);
+        }
+    }
+
+    /// A loop's pose handling: the core's steer / stop, or a missed wait.
+    fn loop_tick(&mut self, view: &View) -> Option<Outcome> {
+        let now = self.now_ms();
+        let Some(p) = self.published else {
+            if self.tick - self.woke_at >= self.ticks(self.seq.pose_wait_ms) {
+                self.woke_at = self.tick;
+                let core = self.core.as_mut()?;
+                let w = core.wait_timed_out();
+                if w.stop {
+                    self.send(Steer::default());
+                }
+                if w.restart {
+                    self.resume = self.phase;
+                    self.filter.restart();
+                    self.set_phase(Phase::Restart);
+                }
+            }
+            return None;
+        };
+        self.woke_at = self.tick;
+        let navigating = view.is(State::RlControl)
+            && (view.on(&self.approach_runner) || view.on(&self.finetune_runner));
+        let obstacle = self.obstacle_reading();
+        let out = self.core.as_mut()?.on_pose(now, p, navigating, obstacle);
+        if out.stop {
+            self.send(Steer::default());
+        }
+        if let Some(s) = out.steer {
+            self.send(s);
+        }
+        self.status.obstacle_stop = match out.event {
+            Some(Event::Obstacle(d)) => Some(d),
+            _ => None,
+        };
+        Some(out)
+    }
+
+    fn failed(&mut self, why: Failure) -> Option<Output> {
+        match why {
+            Failure::NotNavigating => self.finish(
+                self.target,
+                "not on NaviCharge / FinetuneStand in rl_control",
+                true,
+            ),
+            Failure::ApproachTimeout => self.finish_basic_flat("not at the dock in time"),
+            Failure::ObstacleTimeout => self.finish_basic_flat("stopped for an obstacle too long"),
+            Failure::ExitTimeout => self.finish_basic_flat("not undocked in time"),
+            Failure::BadSteer => self.finish(self.target, "non-finite steer", true),
         }
     }
 
     /// Advance one control tick on what `ingest` took, the controller as last seen.
     pub fn advance(&mut self, view: &View) -> Option<Output> {
+        self.tick += 1;
         self.status.phase = self.phase;
         self.status.active = self.active();
-        self.status.retries = self.retries;
+        self.status.obstacle = if self.obstacle_open {
+            self.core.as_ref().map(|c| c.direction)
+        } else {
+            None
+        };
         if !self.active() {
             return None;
         }
@@ -487,17 +646,36 @@ impl Docking {
         if view.fault {
             return self.finish(Target::LieDown, "controller fault", true);
         }
-        let lost = self.ticks_since_pose > self.ticks(self.cfg.dock_lost_s);
-        let transition_limit = self.ticks(self.cfg.transition_limit_s);
-        let settle = self.ticks(self.cfg.gait_settle_s);
-        let s = self.cfg.clone();
+        let limit = (self.seq.transition_limit_s * self.hz).round() as u64;
         match self.phase {
             Phase::Idle => None,
-            Phase::EnterGait | Phase::StandForRetry | Phase::StandUp => {
-                if !view.is(State::RlControl)
-                    && !view.is(State::StandUp)
-                    && self.phase == Phase::EnterGait
-                {
+            Phase::FindTarget => {
+                if self.published.is_some() {
+                    match self.next {
+                        Next::Dock => {
+                            self.open_obstacle();
+                            let now = self.now_ms();
+                            self.core.as_mut()?.begin_dock(now);
+                            self.gait = self.seq.approach_gait;
+                            self.set_phase(Phase::EnterGait);
+                        }
+                        Next::Undock => {
+                            self.open_obstacle();
+                            self.stand_up(Next::BackOff, view);
+                        }
+                        Next::BackOff | Next::FindTarget => {
+                            self.open_obstacle();
+                            self.begin_back_off();
+                        }
+                    }
+                } else if self.phase_ms() > self.params()?.find_target_ms {
+                    let target = self.target;
+                    return self.finish(target, "the dock is not in sight", true);
+                }
+                Some(self.output(None))
+            }
+            Phase::EnterGait | Phase::StandForRetry => {
+                if !view.is(State::RlControl) && self.phase == Phase::EnterGait {
                     return self.finish(
                         Target::RlControl,
                         format!("left rl_control ({:?})", view.state),
@@ -505,244 +683,231 @@ impl Docking {
                     );
                 }
                 if view.is(State::RlControl) && view.on(&self.approach_runner) {
-                    // standing on the approach runner: hold still gait_settle_s, then go
                     if !self.on_runner {
                         self.on_runner = true;
                         self.ticks_in_phase = 0;
-                    } else if self.ticks_in_phase >= settle {
-                        self.approach_ticks = 0;
-                        let next = if self.phase == Phase::StandUp {
-                            Phase::BackOff
+                    } else {
+                        let settle = if self.phase == Phase::EnterGait {
+                            self.seq.gait_settle_ms
                         } else {
-                            Phase::ToStaging
+                            self.seq.retry_settle_ms
                         };
-                        self.set_phase(next);
+                        if self.phase_ms() >= settle {
+                            if self.phase == Phase::StandForRetry {
+                                // the back-off steer, at once overwritten by the stale finetune struct (0, 0, 0, sit_z)
+                                self.send(Steer {
+                                    z: self.seq.sit_z,
+                                    ..Default::default()
+                                });
+                            }
+                            self.woke_at = self.tick;
+                            self.set_phase(Phase::Approach);
+                        }
                     }
-                } else if self.ticks_in_phase > transition_limit {
+                } else if self.ticks_in_phase > limit {
                     return self.finish(
                         Target::RlControl,
-                        format!(
-                            "no {} after {:.0} s",
-                            self.approach_runner, s.transition_limit_s
-                        ),
+                        format!("no {}", self.approach_runner),
                         true,
                     );
                 }
                 Some(self.output(None))
             }
-            Phase::ToStaging | Phase::ToFine => {
-                if !view.is(State::RlControl) {
-                    return self.finish(
-                        self.target,
-                        format!("left rl_control ({:?})", view.state),
-                        true,
-                    );
-                }
-                if lost {
-                    return self.finish(Target::LieDown, "lost the dock while approaching", true);
-                }
-                self.approach_ticks += 1;
-                if self.approach_ticks > self.ticks(s.approach_limit_s) {
-                    return self.finish(
-                        Target::RlControl,
-                        format!("not at the dock after {:.0} s", s.approach_limit_s),
-                        true,
-                    );
-                }
-                let reached = if self.phase == Phase::ToStaging {
-                    self.drive(
-                        s.docked_x_m + s.staging_x_m,
-                        s.staging_tolerance,
-                        s.min_axes,
-                    )
-                } else {
-                    self.drive(
-                        s.docked_x_m - s.distance_compensation_x_m,
-                        s.tolerance,
-                        s.min_axes,
-                    )
-                };
-                if reached {
-                    if self.phase == Phase::ToStaging {
-                        self.set_phase(Phase::ToFine);
-                    } else {
-                        self.offset = [0.0; 3];
-                        self.gait = s.finetune_gait;
-                        self.set_phase(Phase::Finetune);
+            Phase::Approach => {
+                if let Some(out) = self.loop_tick(view) {
+                    if let Some(p) = out.start_point {
+                        self.status.start_point = Some(p);
+                    }
+                    match out.event {
+                        Some(Event::FineReached(p)) => {
+                            self.status.fine_point = Some(p);
+                            self.gait = self.seq.finetune_gait;
+                            self.set_phase(Phase::EnterFinetune);
+                            return Some(self.output(Some([0.0; 4])));
+                        }
+                        Some(Event::Failed(why)) => return self.failed(why),
+                        _ => {}
                     }
                 }
                 Some(self.output(None))
+            }
+            Phase::EnterFinetune => {
+                let up = view.on(&self.finetune_runner);
+                if up || self.phase_ms() >= self.seq.finetune_gait_wait_ms {
+                    let now = self.now_ms();
+                    self.core.as_mut()?.finetune_started(now);
+                    self.woke_at = self.tick;
+                    self.set_phase(Phase::Finetune);
+                }
+                Some(self.output(Some([0.0; 4])))
             }
             Phase::Finetune => {
-                if !view.is(State::RlControl) {
-                    return self.finish(
-                        self.target,
-                        format!("left rl_control ({:?})", view.state),
-                        true,
-                    );
-                }
-                if lost {
-                    return self.finish(Target::LieDown, "lost the dock while finetuning", true);
-                }
-                let params = |o: [f64; 3]| -> [f64; 3] {
-                    std::array::from_fn(|k| (o[k] / s.finetune_body_per_param[k]).clamp(-1.0, 1.0))
-                };
-                if !self.on_runner {
-                    if !view.on(&self.finetune_runner) {
-                        if self.ticks_in_phase > transition_limit {
-                            return self.finish(
-                                Target::RlControl,
-                                format!("no {}", self.finetune_runner),
-                                true,
-                            );
-                        }
-                        return Some(self.output(Some([0.0; 3])));
+                if let Some(out) = self.loop_tick(view) {
+                    match out.event {
+                        Some(Event::FinetuneDone(_)) => self.set_phase(Phase::SitHold),
+                        Some(Event::Failed(why)) => return self.failed(why),
+                        _ => {}
                     }
-                    self.on_runner = true;
-                    self.ticks_in_phase = 0;
                 }
-                // on the finetune runner: gait_settle_s standing, then adjusting until finetune_limit_s
-                let limit = if s.finetune_adjust {
-                    settle + self.ticks(s.finetune_limit_s)
-                } else {
-                    settle
-                };
-                if self.ticks_in_phase > limit {
+                if self.phase == Phase::Restart {
+                    return Some(self.output(None));
+                }
+                Some(self.output(Some(self.pose_inputs())))
+            }
+            Phase::SitHold => {
+                if self.phase_ms() >= self.seq.sit_hold_ms {
                     self.target = Target::LieDown;
                     self.set_phase(Phase::LyingDown);
                     return Some(self.output(None));
                 }
-                if s.finetune_adjust && self.ticks_in_phase > settle && self.new_sweep {
-                    if let Some(pose) = self.pose {
-                        let e = pose.error_to(s.docked_x_m - s.distance_compensation_x_m);
-                        let tol = [s.tolerance[0], s.tolerance[1], s.tolerance[2].to_radians()];
-                        self.finetune_sweep(e, tol);
-                    }
-                }
-                if self.phase == Phase::LyingDown {
-                    return Some(self.output(None));
-                }
-                Some(self.output(Some(params(self.offset))))
+                Some(self.output(Some(self.pose_inputs())))
             }
             Phase::LyingDown => {
-                if view.is(State::LieDown) && view.state_ticks >= self.lie_ticks {
-                    self.charge_seq_at_lie = self.charge.map_or(0, |r| r.seq);
+                if view.is(State::LieDown) {
                     self.set_phase(Phase::ConfirmCharge);
-                } else if !view.is(State::LieDown) && self.ticks_in_phase > transition_limit {
-                    return self.finish(
-                        Target::LieDown,
-                        format!("did not lie down ({:?})", view.state),
-                        true,
-                    );
+                } else if self.ticks_in_phase > limit {
+                    return self.no_charge(view);
                 }
                 Some(self.output(None))
             }
             Phase::ConfirmCharge => {
-                if !view.is(State::LieDown) {
+                if !view.lying() {
                     return self.finish(
                         self.target,
                         format!("left lie_down ({:?})", view.state),
                         true,
                     );
                 }
-                let fresh = self.charge.filter(|r| r.seq > self.charge_seq_at_lie);
-                if fresh.is_some_and(|r| self.charged(&r)) {
-                    self.status.charging = true;
-                    self.status.result = "docked, charging".into();
-                    self.status.error = false;
-                    self.set_phase(Phase::Charging);
-                } else if self.ticks_in_phase > self.ticks(s.charge_confirm_s) {
-                    if self.retries < s.retries {
-                        self.retries += 1;
-                        self.target = Target::RlControl;
-                        self.gait = s.approach_gait;
-                        self.set_phase(Phase::StandForRetry);
-                    } else {
-                        // give up: back off as an undock does, then report
-                        self.giving_up = true;
-                        self.begin_stand_up();
+                let p = self.params()?.clone();
+                let elapsed = self.phase_ms();
+                if elapsed >= self.seq.power_on_ms {
+                    let fresh = self.charge.filter(|r| r.seq > self.charge_seq_at_start);
+                    if fresh.is_some_and(|r| self.charged(&r)) {
+                        self.obstacle_open = false;
+                        if let Some(c) = self.core.as_mut() {
+                            c.end();
+                        }
+                        self.status.charging = true;
+                        self.status.result = "docked, charging".into();
+                        self.status.error = false;
+                        self.set_phase(Phase::Charging);
+                    } else if elapsed - self.seq.power_on_ms > p.charge_confirm_ms {
+                        return self.no_charge(view);
                     }
                 }
                 Some(self.output(None))
             }
             Phase::Charging => {
-                if !view.is(State::LieDown) && !view.is(State::Passive) {
+                if !view.lying() {
+                    // the vendor cancels a charge the robot was stood up from
+                    return self.finish(self.target, "stood up while on the dock", false);
+                }
+                Some(self.output(None))
+            }
+            Phase::Restart => {
+                if self.published.is_some() {
+                    self.core.as_mut()?.restarted();
+                    self.woke_at = self.tick;
+                    let resume = self.resume;
+                    self.set_phase(resume);
+                    self.on_runner = true;
+                } else if self.phase_ms() > self.params()?.find_target_ms {
+                    return self.finish(Target::LieDown, "lost the dock", true);
+                }
+                Some(self.output(None))
+            }
+            Phase::StandUp => {
+                if view.is(State::RlControl) && !view.stand_in {
+                    let on_gait = view.on(&self.approach_runner);
+                    // StandUp2WideWalk returns at once when already standing, else once on NaviCharge
+                    if on_gait || self.gait != self.seq.approach_gait {
+                        if self.next == Next::FindTarget {
+                            self.find_target(Next::BackOff);
+                        } else {
+                            self.begin_back_off();
+                        }
+                    }
+                } else if self.ticks_in_phase > limit {
                     return self.finish(
                         self.target,
-                        format!("left lie_down while charging ({:?})", view.state),
+                        format!("did not stand ({:?})", view.state),
                         true,
                     );
                 }
                 Some(self.output(None))
             }
             Phase::BackOff => {
-                if !view.is(State::RlControl) {
-                    return self.finish(
-                        self.target,
-                        format!("left rl_control ({:?})", view.state),
-                        true,
-                    );
-                }
-                if lost {
-                    // too close for the lidar to see the posts at first: back straight out until it does
-                    if self.ticks_in_phase <= self.ticks(s.dock_lost_s) {
-                        self.axes = [-s.exit_min_axes[0], 0.0, 0.0];
-                        return Some(self.output(None));
+                if let Some(out) = self.loop_tick(view) {
+                    match out.event {
+                        Some(Event::ExitReached) => {
+                            self.obstacle_open = false;
+                            if let Some(c) = self.core.as_mut() {
+                                c.end();
+                            }
+                            self.set_phase(Phase::Restore);
+                        }
+                        Some(Event::Failed(why)) => return self.failed(why),
+                        _ => {}
                     }
-                    return self.finish(Target::RlControl, "lost the dock while backing off", true);
-                }
-                if self.drive(
-                    s.docked_x_m + s.exit_distance_m,
-                    s.exit_tolerance,
-                    s.exit_min_axes,
-                ) {
-                    self.gait = s.exit_gait;
-                    self.set_phase(Phase::ExitGait);
                 }
                 Some(self.output(None))
             }
-            Phase::ExitGait => {
-                if view.is(State::RlControl) && view.on(&self.exit_runner) {
-                    let (result, error) = if self.giving_up {
-                        (
-                            format!("no charge after {} tries; backed off", self.retries + 1),
+            Phase::Restore => {
+                if self.phase_ms() >= self.seq.restore_ms {
+                    self.gait = self.restore_gait;
+                    let tries = self.status.retries + 1;
+                    return if self.giving_up {
+                        self.finish(
+                            Target::RlControl,
+                            format!("no charge after {tries} tries; backed off"),
                             true,
                         )
                     } else {
-                        ("undocked".to_string(), false)
+                        self.finish(Target::RlControl, "undocked", false)
                     };
-                    return self.finish(Target::RlControl, result, error);
-                }
-                if self.ticks_in_phase > transition_limit {
-                    return self.finish(
-                        Target::RlControl,
-                        format!("no {}", self.exit_runner),
-                        true,
-                    );
                 }
                 Some(self.output(None))
             }
         }
     }
 
-    /// One finetune adjustment from a sweep's error: inside the tolerance lie down, else shift the body onto it and
-    /// let settle_sweeps sweeps pass before judging again.
-    fn finetune_sweep(&mut self, e: [f64; 3], tol: [f64; 3]) {
-        if self.finetune_wait > 0 {
-            self.finetune_wait -= 1;
-            return;
+    fn begin_back_off(&mut self) {
+        let now = self.now_ms();
+        if let Some(core) = self.core.as_mut() {
+            let kick = core.begin_exit(now);
+            self.send(kick);
         }
-        self.finetune_wait = self.cfg.settle_sweeps;
-        if (0..3).all(|k| e[k].abs() <= tol[k]) {
-            self.target = Target::LieDown;
-            self.set_phase(Phase::LyingDown);
-            return;
-        }
-        for k in 0..3 {
-            if e[k].abs() > tol[k] {
-                self.offset[k] += e[k];
+        self.woke_at = self.tick;
+        self.set_phase(Phase::BackOff);
+    }
+
+    /// No charge after lying down: retry, or (tries used up) NoChargePlug_way.
+    fn no_charge(&mut self, view: &View) -> Option<Output> {
+        let core = self.core.as_mut()?;
+        match core.no_charge() {
+            NoCharge::Retry => {
+                self.status.retries += 1;
+                self.target = Target::RlControl;
+                self.gait = self.seq.approach_gait;
+                self.steer = None;
+                self.set_phase(Phase::StandForRetry);
+            }
+            NoCharge::Exhausted => {
+                core.end();
+                self.obstacle_open = false;
+                if self.params()?.no_charge_go_back {
+                    self.giving_up = true;
+                    self.stand_up(Next::FindTarget, view);
+                    self.gait = self.seq.approach_gait;
+                } else {
+                    // sitDown: lie on the dock and wait for a charge
+                    self.status.result = "no charge; lying on the dock".into();
+                    self.status.error = true;
+                    self.set_phase(Phase::Charging);
+                }
             }
         }
+        Some(self.output(None))
     }
 }
 
@@ -753,6 +918,10 @@ pub struct DockFeed {
     pub pose: Mutex<Option<(DockPose, u64)>>,
     pub charge: Mutex<Option<ChargeReading>>,
     pub request: Mutex<Option<Request>>,
+    /// the obstacle check's newest reading (nearest occupied cell m, or none) and its count
+    pub obstacle: Mutex<Option<(Option<f32>, u64)>>,
+    /// charge_manager.toml, once read (taken when docking is idle)
+    pub vendor: Mutex<Option<ChargeManagerToml>>,
 }
 
 /// The docking sequence in front of the operator's command source. While it drives, the operator's velocity-only
@@ -794,10 +963,11 @@ impl<C: CommandSource> DockingCommands<C> {
 
     fn command(&self, out: &Output) -> UserCommand {
         let mut params = BTreeMap::new();
-        if let Some([dx, dy, yaw]) = out.pose {
+        if let Some([dx, dy, yaw, height]) = out.pose {
             params.insert("dx".to_string(), dx);
             params.insert("dy".to_string(), dy);
             params.insert("yaw".to_string(), yaw);
+            params.insert("height".to_string(), height);
         }
         UserCommand {
             target: out.target,
@@ -836,9 +1006,15 @@ impl<C: CommandSource> CommandSource for DockingCommands<C> {
                 passthrough = Some(c);
             }
         }
+        if !self.docking.active() {
+            if let Some(t) = self.feed.vendor.try_lock().ok().and_then(|mut v| v.take()) {
+                self.docking.set_vendor(&t);
+            }
+        }
         let pose = self.feed.pose.try_lock().ok().and_then(|p| *p);
         let charge = self.feed.charge.try_lock().ok().and_then(|c| *c);
-        self.docking.ingest(pose, charge);
+        let obstacle = self.feed.obstacle.try_lock().ok().and_then(|o| *o);
+        self.docking.ingest(pose, charge, obstacle);
         let request = self.feed.request.try_lock().ok().and_then(|mut r| r.take());
         if let Some(request) = request {
             if let Err(why) = self.docking.request(request, &self.view) {
@@ -884,12 +1060,19 @@ mod tests {
         Config::load(&path).unwrap()
     }
 
+    fn vendor() -> ChargeManagerToml {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/charge_manager.toml");
+        ChargeManagerToml::load(path.to_str().unwrap()).unwrap().0
+    }
+
     fn standing(runner: &str) -> View {
         View {
             state: Some(State::RlControl),
             fault: false,
             runner: Some(runner.into()),
             stand_in: false,
+            gait: 0x3003,
             state_ticks: 10_000,
         }
     }
@@ -902,119 +1085,163 @@ mod tests {
         }
     }
 
-    /// A docking that has seen the dock `d` m ahead.
-    fn seen(cfg: &Config, d: f64) -> Docking {
-        let mut k = Docking::new(cfg, true);
-        k.step(&standing("navi_charge"), Some((facing(d), 1)), None);
-        k
+    /// Sweeps every 100 ticks until `phase` (or `ticks` pass).
+    fn run_until(
+        k: &mut Docking,
+        view: &View,
+        d: f64,
+        seq: &mut u64,
+        phase: Phase,
+        ticks: u64,
+    ) -> Option<Output> {
+        let mut last = None;
+        for t in 0..ticks {
+            if t % 100 == 0 {
+                *seq += 1;
+            }
+            last = k.step(view, Some((facing(d), *seq)), None).or(last);
+            if k.phase() == phase {
+                break;
+            }
+        }
+        last
     }
 
     #[test]
-    fn refuses_unless_standing_in_rl_control_with_the_dock_near() {
+    fn refuses_without_the_vendor_config_charge_enable_or_standing() {
         let cfg = cfg();
-        let mut k = seen(&cfg, 2.0);
+        let v = vendor();
+        assert!(Docking::new(&cfg, true, None)
+            .request(Request::Dock, &standing("navi_charge"))
+            .is_err());
+        assert!(Docking::new(&cfg, false, Some(&v))
+            .request(Request::Dock, &standing("navi_charge"))
+            .is_err());
         let mut lying = standing("navi_charge");
         lying.state = Some(State::LieDown);
-        assert!(k.request(Request::Dock, &lying).is_err());
-        let mut faulted = standing("navi_charge");
-        faulted.fault = true;
-        assert!(k.request(Request::Dock, &faulted).is_err());
-        let mut stand_in = standing("six_axis_stand");
-        stand_in.stand_in = true;
-        assert!(k.request(Request::Dock, &stand_in).is_err());
-        assert!(seen(&cfg, 5.0)
-            .request(Request::Dock, &standing("navi_charge"))
+        assert!(Docking::new(&cfg, true, Some(&v))
+            .request(Request::Dock, &lying)
             .is_err());
-        // never saw it
-        assert!(Docking::new(&cfg, true)
-            .request(Request::Dock, &standing("navi_charge"))
-            .is_err());
-        // seen too long ago
-        let mut stale = seen(&cfg, 2.0);
-        for _ in 0..=stale.ticks(cfg.dock.sequence.dock_lost_s) {
-            stale.step(&standing("navi_charge"), Some((facing(2.0), 1)), None);
-        }
-        assert!(stale
-            .request(Request::Dock, &standing("navi_charge"))
-            .is_err());
-        // no charge-enable rule: nothing would charge
-        let mut off = Docking::new(&cfg, false);
-        off.step(&standing("navi_charge"), Some((facing(2.0), 1)), None);
-        assert!(off
-            .request(Request::Dock, &standing("navi_charge"))
-            .is_err());
+        let mut k = Docking::new(&cfg, true, Some(&v));
         assert!(k.request(Request::Dock, &standing("navi_charge")).is_ok());
-        assert_eq!(k.phase(), Phase::EnterGait);
+        assert_eq!(k.phase(), Phase::FindTarget);
+        // undock only while charging or after a failure
+        assert!(Docking::new(&cfg, true, Some(&v))
+            .request(Request::Undock, &lying)
+            .is_err());
     }
 
-    /// Runs the sequence to the approach with the dock at `d` (fresh sweeps every 100 ticks).
-    fn approaching(cfg: &Config, d: f64) -> (Docking, u64) {
-        let mut k = seen(cfg, d);
+    #[test]
+    fn find_target_waits_for_the_detectors_sixteenth_sweep_and_fails_without() {
+        let cfg = cfg();
+        let v = vendor();
+        let mut k = Docking::new(&cfg, true, Some(&v));
         let view = standing("navi_charge");
         k.request(Request::Dock, &view).unwrap();
-        let mut seq = 1;
-        for t in 0..3000u64 {
-            if t % 100 == 0 {
-                seq += 1;
-            }
-            let out = k.step(&view, Some((facing(d), seq)), None).unwrap();
-            assert_eq!((out.target, out.gait), (Target::RlControl, 0x3001));
-        }
-        assert_eq!(k.phase(), Phase::ToStaging);
-        (k, seq)
-    }
-
-    #[test]
-    fn steers_toward_the_staging_point_at_least_the_minimum() {
-        let cfg = cfg();
-        let (mut k, seq) = approaching(&cfg, 2.0);
-        let off = DockPose {
-            x: 2.8,
-            y: 0.2,
-            yaw: PI,
-        };
-        let out = k
-            .step(&standing("navi_charge"), Some((off, seq + 1)), None)
-            .unwrap();
-        let s = &cfg.dock.sequence;
-        // ~1 m to the staging point: forward, capped; 0.2 m to the left: at least the minimum lateral
-        assert!((out.axes[0] - s.max_axes[0]).abs() < 1e-9, "{:?}", out.axes);
-        assert!(out.axes[1] >= s.min_axes[1] - 1e-9, "{:?}", out.axes);
-        assert_eq!(out.axes[2], 0.0);
-    }
-
-    #[test]
-    fn losing_the_dock_while_approaching_lies_down() {
-        let cfg = cfg();
-        let (mut k, seq) = approaching(&cfg, 2.0);
-        let mut last = None;
-        for _ in 0..=k.ticks(cfg.dock.sequence.dock_lost_s) + 1 {
-            if let Some(out) = k.step(&standing("navi_charge"), Some((facing(2.0), seq)), None) {
-                last = Some(out);
-            }
+        let mut seq = 0;
+        // 15 sweeps held back: still finding at 1.5 s, through on the 16th
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::EnterGait, 1550);
+        assert_eq!(k.phase(), Phase::EnterGait);
+        assert_eq!(seq, 16);
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        k.request(Request::Dock, &view).unwrap();
+        for _ in 0..2001 {
+            k.step(&view, None, None);
         }
         assert_eq!(k.phase(), Phase::Idle);
-        assert_eq!(
-            last.map(|o| (o.target, o.axes)),
-            Some((Target::LieDown, [0.0; 3]))
-        );
-        assert!(k.status().error && k.status().result.contains("lost"));
+        assert!(k.status().error && k.status().result.contains("not in sight"));
+    }
+
+    #[test]
+    fn a_missing_pose_stops_the_robot_and_resumes() {
+        let cfg = cfg();
+        let v = vendor();
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        let view = standing("navi_charge");
+        k.request(Request::Dock, &view).unwrap();
+        let mut seq = 0;
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+        // steering toward the staging point after the six start samples
+        let out = run_until(&mut k, &view, 2.0, &mut seq, Phase::Idle, 1000).unwrap();
+        assert!(out.axes[0] > 0.0, "{:?}", out.axes);
+        // no pose for 150 ms: rl_deploy zeroes the steer; 200 ms: charge_manager stops; still docking
+        let mut out = None;
+        for _ in 0..250 {
+            out = k.step(&view, Some((facing(2.0), seq)), None);
+        }
+        assert_eq!(out.unwrap().axes, [0.0; 3]);
+        assert_eq!(k.phase(), Phase::Approach);
     }
 
     #[test]
     fn a_fault_or_leaving_rl_control_ends_it() {
         let cfg = cfg();
-        let (mut k, seq) = approaching(&cfg, 2.0);
-        let mut v = standing("navi_charge");
-        v.fault = true;
-        let out = k.step(&v, Some((facing(2.0), seq)), None).unwrap();
+        let v = vendor();
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        let view = standing("navi_charge");
+        k.request(Request::Dock, &view).unwrap();
+        let mut seq = 0;
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+        let mut v2 = view.clone();
+        v2.fault = true;
+        let out = k.step(&v2, Some((facing(2.0), seq)), None).unwrap();
         assert_eq!((out.target, out.axes), (Target::LieDown, [0.0; 3]));
         assert!(!k.active() && k.status().error);
-        let (mut k, seq) = approaching(&cfg, 2.0);
-        let mut v = standing("navi_charge");
-        v.state = Some(State::JointDamping);
-        k.step(&v, Some((facing(2.0), seq)), None);
+        // a pose while not on NaviCharge in rl_control: charge_manager's 0x1008
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        k.request(Request::Dock, &view).unwrap();
+        let mut seq = 0;
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+        let mut v3 = view.clone();
+        v3.state = Some(State::JointDamping);
+        for t in 0..200u64 {
+            if t % 100 == 0 {
+                seq += 1;
+            }
+            k.step(&v3, Some((facing(2.0), seq)), None);
+        }
         assert!(!k.active() && k.status().error);
+    }
+
+    #[test]
+    fn an_obstacle_stops_the_approach_and_ends_it_on_basic_flat_after_ten_seconds() {
+        let cfg = cfg();
+        let v = vendor();
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        let view = standing("navi_charge");
+        k.request(Request::Dock, &view).unwrap();
+        let mut seq = 0;
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+        assert_eq!(k.status().obstacle, Some(Direction::Front));
+        let mut last = None;
+        for t in 0..11_000u64 {
+            if t % 100 == 0 {
+                seq += 1;
+            }
+            k.ingest(Some((facing(2.0), seq)), None, Some((Some(0.15), seq)));
+            last = k.advance(&view).or(last);
+            if t == 1000 {
+                assert_eq!(k.status().obstacle_stop, Some(0.15));
+                assert_eq!(last.as_ref().unwrap().axes, [0.0; 3]);
+            }
+        }
+        let last = last.unwrap();
+        assert_eq!(k.phase(), Phase::Idle);
+        assert_eq!((last.target, last.gait), (Target::RlControl, 0x1001));
+        assert!(k.status().error);
+        // a cell at 0.335 (the posts) is no obstacle
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        k.request(Request::Dock, &view).unwrap();
+        let mut seq = 0;
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+        for t in 0..2000u64 {
+            if t % 100 == 0 {
+                seq += 1;
+            }
+            k.ingest(Some((facing(2.0), seq)), None, Some((Some(0.335), seq)));
+            k.advance(&view);
+        }
+        assert_eq!(k.status().obstacle_stop, None);
     }
 
     /// An inner source that replays a list, one per poll.
@@ -1047,62 +1274,28 @@ mod tests {
         };
         let mut c = DockingCommands::new(
             Replay(vec![walk.clone()]),
-            Docking::new(&cfg, true),
+            Docking::new(&cfg, true, None),
             feed.clone(),
             Box::new(|_| {}),
         );
         c.view = standing("navi_charge");
-        // the operator's walk passes while idle
+        // the operator's walk passes while idle; charge_manager.toml arrives through the feed
         assert_eq!(c.poll(0.0).map(|u| u.velocity), Some(walk.velocity));
-        *feed.pose.lock().unwrap() = Some((facing(2.0), 1));
+        *feed.vendor.lock().unwrap() = Some(vendor());
         c.poll(0.0);
+        assert!(c.docking.has_vendor());
         *feed.request.lock().unwrap() = Some(Request::Dock);
         let out = c.poll(0.0).unwrap();
-        assert_eq!((out.gait, out.velocity), (0x3001, None));
+        assert_eq!(out.velocity, None);
         // navigation's velocity keeps arriving: ignored
         c.inner.0.push(walk.clone());
         let out = c.poll(0.0).unwrap();
-        assert_eq!((out.gait, out.velocity), (0x3001, None));
+        assert_eq!(out.velocity, None);
         assert!(c.docking.active() && !c.expires());
         // the operator lies it down: docking ends, the command goes through
         c.inner.0.push(lie.clone());
         let out = c.poll(0.0).unwrap();
         assert_eq!(out.target, Target::LieDown);
         assert!(!c.docking.active());
-    }
-
-    #[test]
-    fn after_docking_a_velocity_command_keeps_the_target_docking_left() {
-        let cfg = cfg();
-        let feed = Arc::new(DockFeed::default());
-        let stand = UserCommand {
-            target: Target::RlControl,
-            gait: 0x3003,
-            motion_seq: 2,
-            ..Default::default()
-        };
-        let mut c = DockingCommands::new(
-            Replay(vec![stand.clone()]),
-            Docking::new(&cfg, true),
-            feed.clone(),
-            Box::new(|_| {}),
-        );
-        c.view = standing("navi_charge");
-        c.poll(0.0);
-        *feed.pose.lock().unwrap() = Some((facing(2.0), 1));
-        *feed.request.lock().unwrap() = Some(Request::Dock);
-        c.poll(0.0);
-        // lost dock: docking lies the robot down and ends
-        for _ in 0..=c.docking.ticks(cfg.dock.sequence.dock_lost_s) + 3001 {
-            c.poll(0.0);
-        }
-        assert!(!c.docking.active());
-        // a cmd_vel (same motion_seq) must not stand it back up
-        c.inner.0.push(UserCommand {
-            velocity: Some([0.2, 0.0, 0.0]),
-            ..stand
-        });
-        let out = c.poll(0.0).unwrap();
-        assert_eq!(out.target, Target::LieDown);
     }
 }

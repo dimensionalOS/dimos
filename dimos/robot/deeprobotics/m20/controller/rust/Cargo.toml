@@ -70,9 +70,15 @@ validator = { version = "0.21", features = ["derive"], optional = true }
 m20-ecan = "0.3.2"
 # examples/dock_pcap: the Airy decoder, to run the dock detector on recorded captures
 robosense-airy = "0.1.2"
+# tests/vendor_replay: the vendor logs are gzipped fixtures
+flate2 = "1"
 
 [[example]]
 name = "dock_pcap"
+required-features = ["module"]
+
+[[example]]
+name = "charge_replay"
 required-features = ["module"]
 
 [package.metadata.dimos.module.m20_controller]
@@ -86,6 +92,8 @@ motion_cmd = "std_msgs.String"
 gait_cmd = "std_msgs.UInt32"
 dock_pose = "geometry_msgs.PoseStamped"
 dock_cmd = "std_msgs.String"
+dock_obstacle = "std_msgs.Float32"
+charge_manager_config = "std_msgs.String"
 
 [package.metadata.dimos.module.m20_controller.outputs]
 joint_state = "sensor_msgs.JointState"
@@ -96,6 +104,7 @@ battery_right = "sensor_msgs.BatteryState"
 command_ready = "std_msgs.Bool"
 controller_state = "std_msgs.String"
 dock_state = "std_msgs.String"
+body_height = "std_msgs.Float32"
 
 [package.metadata.dimos.module.m20_dock_detector]
 path = "m20_controller::dock::detector_module::M20DockDetector"
@@ -103,9 +112,13 @@ python = "dimos.robot.deeprobotics.m20.controller.dock_detector:M20DockDetector"
 
 [package.metadata.dimos.module.m20_dock_detector.inputs]
 lidar = "sensor_msgs.PointCloud2"
+dock_state = "std_msgs.String"
+body_height = "std_msgs.Float32"
 
 [package.metadata.dimos.module.m20_dock_detector.outputs]
 dock_pose = "geometry_msgs.PoseStamped"
+dock_obstacle = "std_msgs.Float32"
+charge_manager_config = "std_msgs.String"
 
 # tests run the policies: optimize dependencies (tract) without paying for release LTO links
 [profile.dev.package."*"]

@@ -660,6 +660,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dimos-module",
+ "flate2",
  "lcm-msgs",
  "libc",
  "m20-battery",

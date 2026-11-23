@@ -20,6 +20,8 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct DockConfig {
     pub detector: DetectorConfig,
+    pub filter: FilterConfig,
+    pub obstacle: ObstacleConfig,
     pub sequence: SequenceConfig,
 }
 
@@ -53,56 +55,91 @@ pub struct DetectorConfig {
     pub post_radius_m: f64,
 }
 
-/// The dock / undock sequence (charge_manager v4.0.30's, NOS charge_manager.toml).
+/// reflective_column_node's output stage (compiled into it; the binary's numbers).
 #[derive(Debug, Clone, Deserialize)]
+pub struct FilterConfig {
+    /// its lidar position (x m, negative = in front of the posts) kept only in this range, and |y| (m) at most this
+    pub x_range: [f64; 2],
+    pub max_y: f64,
+    /// the published pose's x is the lidar position's plus this (m)
+    pub pose_offset_x: f64,
+    /// after a (re)start: sweeps held back, and the sigmas the start fix keeps samples within
+    pub start_sweeps: usize,
+    pub start_sigmas: f64,
+    /// a sweep this far (m) from the sweep before is dropped
+    pub max_jump_m: f64,
+}
+
+/// charge_manager's obstacle check: the numbers that are not in charge_manager.toml.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObstacleConfig {
+    /// the lidar driver drops returns closer than this (m) to the lidar
+    pub min_lidar_range_m: f64,
+    /// the body height (MotionInfo.height) estimate: base_link above the wheel axles plus this (m)
+    pub wheel_radius_m: f64,
+    /// ours: the body height goes to the detector module when it has moved this far (m) since the last
+    pub body_height_step_m: f64,
+}
+
+/// The dock / undock sequence's numbers that charge_manager compiles in (charge_manager.toml has the rest, read at
+/// startup; see super::vendor).
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub struct SequenceConfig {
-    /// gaits: approach and exit on NaviCharge, in-place adjustment on FinetuneStand, BasicFlat after undocking
+    /// gaits: NaviCharge (approach, undock), FinetuneStand, BasicFlat (NarrowWalk) and the gait restored after an
+    /// undock when no dock this run recorded one
     pub approach_gait: u32,
     pub finetune_gait: u32,
-    pub exit_gait: u32,
-    /// the staging point the approach goes to first: this far (m) out from the docked point along the dock's axis
-    pub staging_x_m: f64,
-    /// base_link's distance (m) out along the dock's axis when docked
+    pub basic_flat_gait: u32,
+    pub default_restore_gait: u32,
+    /// base_link's distance (m) out along the dock's axis when docked (our detector's frame to charge_manager's)
     pub docked_x_m: f64,
-    /// docked this much (m) further forward than docked_x_m
-    pub distance_compensation_x_m: f64,
-    /// undock backs this far (m) out from docked_x_m
-    pub exit_distance_m: f64,
-    /// at the fine point (m, m, deg); at the staging point and the undock's end point (m, m, deg)
-    pub tolerance: [f64; 3],
-    pub staging_tolerance: [f64; 3],
-    pub exit_tolerance: [f64; 3],
-    /// normalized steer (x, y, yaw): the least the approach and the exit send while off the goal, and the most
-    pub min_axes: [f64; 3],
-    pub exit_min_axes: [f64; 3],
-    pub max_axes: [f64; 3],
-    /// steer = gain x error (1/s), in physical units before normalizing by the gait's command_max
-    pub gain: [f64; 3],
-    /// a goal counts as reached when this many sweeps, taken standing still, agree (their mean is within tolerance)
-    pub settle_sweeps: u32,
-    /// no dock pose for this long (s, counted in control ticks) while driving: stop (and lie down when docking)
-    pub dock_lost_s: f64,
-    /// the approach (staging + fine point) gives up after this long (s, in ticks)
-    pub approach_limit_s: f64,
-    /// after the switch to the approach gait's runner, stand this long (s, in ticks) before steering
-    pub gait_settle_s: f64,
-    /// a gait switch or a stand-up not done after this long (s, in ticks) fails the sequence
+    /// VelocityController (kp, ki, kd) for x, y, yaw
+    pub pid_x: [f32; 3],
+    pub pid_y: [f32; 3],
+    pub pid_yaw: [f32; 3],
+    /// the start point is chosen once this many poses with x > 0 are taken (the next one)
+    pub start_samples: u32,
+    /// staging point: reached inside delta + margin (m, m, rad); steer maxima; x / y minima (yaw: min_speed_yaw)
+    pub staging_margin: [f64; 3],
+    pub staging_max: [f32; 3],
+    pub staging_min: [f32; 2],
+    /// fine point: reached inside delta + margin; steer maxima (minima: min_speed_*)
+    pub fine_margin: [f64; 3],
+    pub fine_max: [f32; 3],
+    /// undock: steer maxima (minima: ext_min_speed_*); the exit staging point counts as passed this far before it
+    pub exit_max: [f32; 3],
+    pub exit_staging_margin: f64,
+    /// FinetuneStand: z = k x step, k from 2 up to z_last; done inside delta after min_ms, or after max_ms; then z =
+    /// sit_z held sit_hold_ms before lying down
+    pub finetune_z_step: f64,
+    pub finetune_z_last: u32,
+    pub finetune_min_ms: u64,
+    pub finetune_max_ms: u64,
+    pub sit_z: f32,
+    pub sit_hold_ms: u64,
+    /// setFineTuneStandMode waits this long (ms) for FinetuneStand, then goes on regardless
+    pub finetune_gait_wait_ms: u64,
+    /// rl_deploy's /STEER on FinetuneStand: dx, dy, yaw pose inputs = these x steer x, y, yaw; height = max(-z, 0)
+    pub finetune_pose_scale: [f64; 3],
+    /// the steer x written (five times) before an undock's loop and a retry's approach
+    pub back_off_x: f32,
+    /// limits (ms): the approach (from the dock's start, again from FinetuneStand), the undock, an obstacle stop
+    pub approach_limit_ms: u64,
+    pub exit_limit_ms: u64,
+    pub obstacle_limit_ms: u64,
+    /// a wait for the next pose (ms) before it counts as missed (and the robot stops)
+    pub pose_wait_ms: u64,
+    /// rl_deploy zeroes the steer this long (ms) after the last one
+    pub steer_timeout_ms: u64,
+    /// held still (ms): after the switch to NaviCharge (WideWalk), after a retry's stand-up, before the undock's gait
+    /// is restored
+    pub gait_settle_ms: u64,
+    pub retry_settle_ms: u64,
+    pub restore_ms: u64,
+    /// lying, the power-on (three charge-enable requests 2 s apart) before the charge is checked (ms)
+    pub power_on_ms: u64,
+    /// ours: a stand-up / gait switch / lie-down not done in this long (s) fails the sequence
     pub transition_limit_s: f64,
-    /// FinetuneStand adjusts for at most this long (s, in ticks), then lies down regardless
-    pub finetune_limit_s: f64,
-    /// FinetuneStand shifts the body onto the remaining error (charge_manager's in-place adjustment); off, it only
-    /// stands on the finetune gait for gait_settle_s before lying down
-    pub finetune_adjust: bool,
-    /// FinetuneStand: base_link moves this far (m, m, rad) per unit of its pose inputs dx, dy, yaw
-    pub finetune_body_per_param: [f64; 3],
-    /// after lying down (legs passive), wait this long (s, in ticks) for every pack's charge MOS
-    pub charge_confirm_s: f64,
-    /// with no charge: stand, back to the staging point and try again this many more times
-    pub retries: u32,
-    /// every present pack must report its charge MOS on (else one is enough)
-    pub all_packs_charge: bool,
-    /// the dock farther than this (m) or not in sight when docking starts: refuse
-    pub max_start_distance_m: f64,
 }
 
 fn positive(name: &str, v: f64) -> Result<()> {
@@ -140,55 +177,43 @@ impl DockConfig {
         }
         let s = &self.sequence;
         for (name, v) in [
-            ("sequence.staging_x_m", s.staging_x_m),
             ("sequence.docked_x_m", s.docked_x_m),
-            ("sequence.exit_distance_m", s.exit_distance_m),
-            ("sequence.dock_lost_s", s.dock_lost_s),
-            ("sequence.approach_limit_s", s.approach_limit_s),
             ("sequence.transition_limit_s", s.transition_limit_s),
-            ("sequence.finetune_limit_s", s.finetune_limit_s),
-            ("sequence.charge_confirm_s", s.charge_confirm_s),
-            ("sequence.max_start_distance_m", s.max_start_distance_m),
+            ("filter.max_y", self.filter.max_y),
+            ("filter.max_jump_m", self.filter.max_jump_m),
+            ("filter.start_sigmas", self.filter.start_sigmas),
+            ("obstacle.wheel_radius_m", self.obstacle.wheel_radius_m),
+            (
+                "obstacle.body_height_step_m",
+                self.obstacle.body_height_step_m,
+            ),
         ] {
             positive(name, v)?;
         }
-        if !(s.gait_settle_s.is_finite() && s.gait_settle_s >= 0.0) {
-            bail!("dock.sequence.gait_settle_s must be a non-negative number of seconds");
+        if self.filter.x_range[0] >= self.filter.x_range[1] || self.filter.start_sweeps == 0 {
+            bail!("dock.filter: x_range ascending and start_sweeps at least 1");
         }
-        for (name, v) in [
-            ("tolerance", s.tolerance),
-            ("staging_tolerance", s.staging_tolerance),
-            ("exit_tolerance", s.exit_tolerance),
-            ("gain", s.gain),
-            ("finetune_body_per_param", s.finetune_body_per_param),
-        ] {
-            if v.iter().any(|x| !(x.is_finite() && *x != 0.0))
-                || (name != "finetune_body_per_param" && v.iter().any(|x| *x < 0.0))
-            {
-                bail!("dock.sequence.{name}: three finite non-zero entries (positive except finetune_body_per_param)");
-            }
+        if s.pose_wait_ms == 0 || s.finetune_z_last < 3 || s.finetune_min_ms > s.finetune_max_ms {
+            bail!("dock.sequence: pose_wait_ms > 0, finetune_z_last >= 3, finetune_min_ms <= finetune_max_ms");
         }
-        for (name, v) in [
-            ("min_axes", s.min_axes),
-            ("exit_min_axes", s.exit_min_axes),
-            ("max_axes", s.max_axes),
-        ] {
-            if v.iter()
-                .any(|x| !(x.is_finite() && (0.0..=1.0).contains(x)))
-            {
-                bail!("dock.sequence.{name}: entries in [0, 1]");
-            }
-        }
-        if s.min_axes.iter().zip(&s.max_axes).any(|(lo, hi)| lo > hi)
-            || s.exit_min_axes
+        let finite = s
+            .pid_x
+            .iter()
+            .chain(&s.pid_y)
+            .chain(&s.pid_yaw)
+            .chain(&s.staging_max)
+            .chain(&s.staging_min)
+            .chain(&s.fine_max)
+            .chain(&s.exit_max)
+            .all(|v| v.is_finite());
+        if !finite
+            || s.staging_max
                 .iter()
-                .zip(&s.max_axes)
-                .any(|(lo, hi)| lo > hi)
+                .chain(&s.fine_max)
+                .chain(&s.exit_max)
+                .any(|v| *v <= 0.0)
         {
-            bail!("dock.sequence: min_axes / exit_min_axes above max_axes");
-        }
-        if s.settle_sweeps == 0 {
-            bail!("dock.sequence.settle_sweeps must be at least 1");
+            bail!("dock.sequence: finite gains, positive steer maxima");
         }
         Ok(())
     }

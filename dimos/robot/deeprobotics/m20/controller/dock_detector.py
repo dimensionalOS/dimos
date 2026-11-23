@@ -15,8 +15,10 @@
 """The M20 dock detector: the charging dock's two reflector posts in the front Airy's sweeps -> ``dock_pose``.
 
 The vendor's reflective_column_node, in Rust (``rust/src/dock/detector.rs``, tunables in ``rust/m20_controller.toml``
-``[dock.detector]``). It runs next to the lidars (NOS) so full sweeps never reach the controller's board; the
-controller's docking sequence (``M20Controller.dock()``) reads the ~10 Hz pose it publishes.
+``[dock.detector]``), and charge_manager's obstacle check (``rust/src/dock/obstacle.rs``) on both Airys while the
+controller's ``dock_state`` opens it, with the controller's ``body_height`` -> ``dock_obstacle``. It reads the vendor's
+``charge_manager.toml`` on NOS and publishes its text on ``charge_manager_config`` for the controller. It runs next to
+the lidars (NOS) so full sweeps never reach the controller's board.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.std_msgs.String import String
 from dimos.robot.deeprobotics.m20 import constants as c
 
 
@@ -41,15 +45,21 @@ class M20DockDetectorConfig(NativeModuleConfig):
     lidar_frame_id: str = c.FRONT_LIDAR_FRAME
     mount_xyz: tuple[float, float, float] = c.FRONT_LIDAR_XYZ_M
     mount_rpy: tuple[float, float, float] = c.FRONT_LIDAR_RPY
+    # the rear Airy's sweeps (the obstacle check looks back with them) and its mount
+    rear_lidar_frame_id: str = c.REAR_LIDAR_FRAME
+    rear_mount_xyz: tuple[float, float, float] = c.REAR_LIDAR_XYZ_M
+    rear_mount_rpy: tuple[float, float, float] = c.REAR_LIDAR_RPY
     # an m20_controller.toml path for [dock.detector] ("" = the one built in)
     controller_config: str = ""
+    # the vendor's charge_manager.toml (on NOS)
+    charge_manager_toml: str = "/opt/robot/share/charge_manager/config/charge_manager.toml"
     # dock_pose's frame
     frame_id: str = "base_link"
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
         # JSON arrays, as the rust [f64; 3] reads them
-        for key in ("mount_xyz", "mount_rpy"):
+        for key in ("mount_xyz", "mount_rpy", "rear_mount_xyz", "rear_mount_rpy"):
             config[key] = list(getattr(self, key))
         return config
 
@@ -60,7 +70,11 @@ class M20DockDetector(NativeModule):
     config: M20DockDetectorConfig
 
     lidar: In[PointCloud2]
+    dock_state: In[String]
+    body_height: In[Float32]
     dock_pose: Out[PoseStamped]
+    dock_obstacle: Out[Float32]
+    charge_manager_config: Out[String]
 
 
 if TYPE_CHECKING:

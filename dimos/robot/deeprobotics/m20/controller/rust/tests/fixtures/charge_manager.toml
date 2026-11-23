@@ -1,0 +1,66 @@
+# 额外调整检测电流次数，整数类型
+adjust_posture_times = 2
+# 第一次趴下检测电流等待时间，单位秒，整数类型
+first_detection_current_timeout = 5
+# 接收雷达数据超时时间，单位秒
+tag_receive_timeout = 2
+# 电桩位置允许偏差值，单位mm
+delta_x = 6
+delta_y = 3
+delta_yaw = 3
+# 退桩位置允许偏差值，单位mm
+ext_delta_x = 90
+ext_delta_y = 90
+ext_delta_yaw = 70
+# 退桩最小速度,归一化 /1000
+ext_min_speed_x = 200
+ext_min_speed_y = 250
+ext_min_speed_yaw = 140
+# 进桩最小速度,归一化 /1000
+min_speed_x = 180
+min_speed_y = 250
+min_speed_yaw = 100
+#进桩预备点 x位置 单位m
+pre_point_x = 1.0
+#退桩预备点 x位置 单位m
+pre_exitPile_point_x = 0.6
+# 后退方式: 退至充电起始点 "auto" or 固定距离 "fixed"
+back_way = "auto"
+#后退距离,单位为m
+exit_pile_distance_x = 1.3
+# 进桩后，电桩无电流处理方式: 退回进桩点 "goBack" or 爬下等待电流 "sitDown"
+NoChargePlug_way = "goBack"
+#进桩后，电桩无电流重试方式： true——桩上微调 false：退桩再进桩
+RetryMethod_InPlace = false
+#电流和mos检测方式 必须打开一个 否则无法检测到是否成功充上电
+current_detection = false
+mos_detection = true
+#全部电池充电状态监测 true:所有电池仓电池充上电才视为成功 false:一块电池上电即成功
+all_battery_charge = true
+#偏移补偿距离 单位cm 正值为前向偏移
+DistanceCompensationX = 0.0
+#避障距离，单位m
+ObstacleAvoidDis = 0.3
+#避障使能 true:开启避障 false:关闭避障
+ObstacleAvoid_enable = true
+# ============   mOD相关参数  ===============
+mOD_hz = 10.0
+# ------ 雷达点云裁切范围（M）--------
+lidar_z_min = -0.2    # 机体下方范围 -- 已弃用，使用机身当前高度与充电桩高度差来计算
+lidar_z_max = 0.3     # 机体上方范围
+lidar_x_min = 0.45     # 点云裁切机体，狗长度/2，同时用于计算障碍距离
+lidar_y_min = 0.25     # 点云裁切机体，狗宽度/2，内部矩形Y边界（正数）
+lidar_x_max = 0.9     # 检测范围X边界（正数）
+lidar_y_max = 0.3     # 检测范围Y边界（正数）
+lidar_yaw = 60.0      # 度, 范围为[0, 90], 根据运动方向取前或后的点云进行检测处理，自动对称取扇形范围
+
+charge_pile_h = 0.25    # 充电桩高度
+
+# ------- 方法选择 --------
+obstacle_count_method = "grid"     # "cluster" or "grid"
+# ------- 聚类参数 --------
+cluster_count_distance = 0.3            # 两个点被视为同一簇的最大距离--越小则障碍物分割越精细，噪声敏感；越大则将相邻障碍点进行合并
+cluster_points_count_min = 10      # 簇被识别为有效障碍物的最小点数 -- 越小则对稀疏点云越敏感，越大越能对噪声进行过滤
+# ----- 概率栅格参数 -------
+grid_size = 0.3                       # 栅格分辨率(m)
+grid_occu_num = 20                    # 占用概率阈值

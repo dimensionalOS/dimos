@@ -407,6 +407,8 @@ use std::sync::{Arc, Mutex};
 
 use m20_controller::dock::detector::{detect, Detection, Mount};
 use m20_controller::dock::docking::{DockFeed, Docking, DockingCommands, Phase, Request, Status};
+use m20_controller::dock::obstacle::{body_height, nearest_obstacle, GridParams};
+use m20_controller::dock::vendor::ChargeManagerToml;
 use m20_controller::dock::{wrap, ChargeReading};
 
 /// The sim's charging dock (world.py charge_dock): the posts' midpoint in the world and the dock's turn.
@@ -456,6 +458,20 @@ fn front_mount() -> ([f64; 3], [f64; 3]) {
     )
 }
 
+fn rear_mount() -> ([f64; 3], [f64; 3]) {
+    // REAR_LIDAR_XYZ_M / REAR_LIDAR_RPY
+    (
+        [-0.32028, 0.0, -0.013],
+        [0.0, -std::f64::consts::FRAC_PI_2, 0.0],
+    )
+}
+
+/// NOS's charge_manager.toml (tests/fixtures).
+fn vendor() -> ChargeManagerToml {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/charge_manager.toml");
+    ChargeManagerToml::load(path.to_str().unwrap()).unwrap().0
+}
+
 /// Stand up on NaviCharge, dock(), and once it ends (charging or not) undock(); stop when that ends.
 fn dock_run(run: DockRun) -> Option<DockResult> {
     let dir = common::policy_dir()?;
@@ -484,7 +500,7 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
     let (now_cb, changes_cb) = (now.clone(), changes.clone());
     let mut commands = DockingCommands::new(
         ScriptedCommands::new(vec![lie, stand]),
-        Docking::new(&cfg, true),
+        Docking::new(&cfg, true, Some(&vendor())),
         feed.clone(),
         Box::new(move |status| {
             let tick = now_cb.load(Ordering::Relaxed);
@@ -496,6 +512,11 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
     let stop = AtomicBool::new(false);
     let (xyz, rpy) = front_mount();
     let mount = Mount::from_xyz_rpy(xyz, rpy);
+    let (rear_xyz, rear_rpy) = rear_mount();
+    let rear = Mount::from_xyz_rpy(rear_xyz, rear_rpy);
+    let grid = GridParams::from_toml(&vendor());
+    let min_range = cfg.dock.obstacle.min_lidar_range_m;
+    let mut obstacle_checks = 0u64;
     let elevations: Vec<f64> = (0..96)
         .map(|b| b as f64 * 90.0 / 95.0)
         .filter(|e| *e >= 25.0)
@@ -536,6 +557,36 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
                     "azimuths_deg": azimuths, "range_noise_m": 0.01, "seed": 1,
                 });
                 let points = hw.lidar(&request).unwrap();
+                // charge_manager's obstacle check while open, as m20_dock_detector_module runs it (both Airys)
+                if let Some(direction) = statuses
+                    .last()
+                    .and_then(|(_, st, _): &(f64, Status, [f64; 3])| st.obstacle)
+                {
+                    let rear_request = serde_json::json!({
+                        "mount_xyz": rear_xyz, "mount_rpy": rear_rpy, "elevations_deg": elevations,
+                        "azimuths_deg": azimuths, "range_noise_m": 0.01, "seed": 2,
+                    });
+                    let rear_points = hw.lidar(&rear_request).unwrap();
+                    let base = |p: &[f32; 4], m: &Mount| {
+                        let v = [p[0] as f64, p[1] as f64, p[2] as f64];
+                        let r = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                        (r >= min_range).then(|| {
+                            let b = m.to_base(v);
+                            [b[0] as f32, b[1] as f32, b[2] as f32]
+                        })
+                    };
+                    let all = points
+                        .iter()
+                        .filter_map(|p| base(p, &mount))
+                        .chain(rear_points.iter().filter_map(|p| base(p, &rear)));
+                    let height =
+                        body_height(&cfg.robot, &tick.state.q, cfg.dock.obstacle.wheel_radius_m);
+                    obstacle_checks += 1;
+                    *feed.obstacle.lock().unwrap() = Some((
+                        nearest_obstacle(all, direction, height, &grid),
+                        obstacle_checks,
+                    ));
+                }
                 if let Detection::Found { pose, .. } = detect(points, &mount, &cfg.dock.detector) {
                     sweeps += 1;
                     *feed.pose.lock().unwrap() = Some((pose, sweeps));
@@ -589,6 +640,7 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
             let docking_started = statuses
                 .iter()
                 .any(|(_, st, _)| st.phase == Phase::EnterGait);
+            // undock from charging, or (after a failure) as charge_manager allows
             if docking_started && !undock_asked && ended(phase) {
                 let at = statuses.last().map_or(0.0, |s| s.0);
                 // a moment of lying (charging) or standing first
@@ -646,7 +698,7 @@ fn dock_and_undock(scene: DockScene) {
         return;
     };
     no_fall(&result);
-    let fine = entered(&result, Phase::Finetune).expect("never reached the fine point");
+    let fine = entered(&result, Phase::EnterFinetune).expect("never reached the fine point");
     let e = [
         fine.2[0] - seq.docked_x_m,
         fine.2[1],
@@ -666,45 +718,61 @@ fn dock_and_undock(scene: DockScene) {
     );
     let charging = entered(&result, Phase::Charging).expect("never charging");
     assert!(charging.1.charging && charging.1.packs_charge_mos_on == 2);
+    let start = charging.1.start_point.expect("no start point");
     let last = result.statuses.last().unwrap();
     println!(
-        "undocked at {:.1} s: {:.4} m out ({:+.4} m from docked + {}), y {:+.4} m, yaw {:+.2} deg; {:?}",
+        "undocked at {:.1} s: {:.4} m out (start point {start:?} + docked), y {:+.4} m, yaw {:+.2} deg; {:?}",
         last.0,
         last.2[0],
-        last.2[0] - seq.docked_x_m - seq.exit_distance_m,
-        seq.exit_distance_m,
         last.2[1],
         last.2[2].to_degrees(),
         last.1
     );
-    // the fine point as the sequence measured it within the vendor's tolerances (charge_manager delta_x / _y / _yaw),
-    // and the truth within them plus the sim detector's bias there: up to ~4 mm (the standing body's 1-2 deg of tilt
-    // through the lidar's 0.45 m above the posts, and beam quantization; the detector takes base_link as level)
+    // the fine point as charge_manager measured it, inside its delta + margin (what ends its fine approach), and the
+    // truth within that plus the sim detector's bias there: up to ~4 mm (the standing body's 1-2 deg of tilt through
+    // the lidar's 0.45 m above the posts, and beam quantization; the detector takes base_link as level)
+    let v = vendor();
+    let delta = [
+        v.delta_x as f64 / 1000.0,
+        v.delta_y as f64 / 1000.0,
+        v.delta_yaw as f64 / 100.0,
+    ];
+    let reach: Vec<f64> = (0..3).map(|k| delta[k] + seq.fine_margin[k]).collect();
     let measured = fine.1.fine_point.expect("no fine point measured");
     for k in 0..3 {
         assert!(
-            measured[k].abs() <= seq.tolerance[k],
+            (measured[k] as f64).abs() < reach[k],
             "measured fine point {measured:?}"
         );
     }
     const SIM_DETECTOR_BIAS_M: f64 = 0.004;
     assert!(
-        e[0].abs() <= seq.tolerance[0] + SIM_DETECTOR_BIAS_M,
+        e[0].abs() <= reach[0] + SIM_DETECTOR_BIAS_M,
         "fine x {:+.4}",
         e[0]
     );
     assert!(
-        e[1].abs() <= seq.tolerance[1] + SIM_DETECTOR_BIAS_M,
+        e[1].abs() <= reach[1] + SIM_DETECTOR_BIAS_M,
         "fine y {:+.4}",
         e[1]
     );
-    assert!(e[2].abs() <= seq.tolerance[2], "fine yaw {:+.2}", e[2]);
+    assert!(e[2].to_radians().abs() <= reach[2], "fine yaw {:+.2}", e[2]);
     assert_eq!(last.1.phase, Phase::Idle);
     assert!(!last.1.error, "{}", last.1.result);
     assert_eq!(last.1.result, "undocked");
-    let out = last.2[0] - seq.docked_x_m - seq.exit_distance_m;
-    assert!(out.abs() <= seq.exit_tolerance[0], "undock {out:+.3} m off");
-    assert_eq!(result.controller.current_runner(), Some("basic_flat"));
+    // back_way = auto: back to where docking started, inside ext_delta
+    let ext = [v.ext_delta_x as f64 / 1000.0, v.ext_delta_y as f64 / 1000.0];
+    let out = last.2[0] - seq.docked_x_m - start[0] as f64;
+    assert!(
+        out.abs() <= ext[0] + SIM_DETECTOR_BIAS_M,
+        "undock {out:+.3} m off its goal"
+    );
+    assert!((last.2[1] - start[1] as f64).abs() <= ext[1] + SIM_DETECTOR_BIAS_M);
+    // the gait docking started from (0x3001 in these runs) restored
+    assert_eq!(
+        result.controller.current_runner(),
+        Some(cfg.runner_for_gait(0x3001))
+    );
 }
 
 /// ~2 m in front of the dock with a lateral offset and a heading error: dock, charge, undock.
@@ -727,11 +795,13 @@ fn dock_charge_undock_offset_other_side() {
     });
 }
 
-/// The charge MOS never comes on: lie down, stand, back to the staging point and retry twice, then back off.
+/// The charge MOS never comes on: lie down, stand, back to the staging point and retry (adjust_posture_times), then
+/// NoChargePlug_way = goBack: back off to where docking started.
 #[test]
 fn dock_without_charge_retries_then_backs_off() {
     let cfg = common::config();
     let seq = &cfg.dock.sequence;
+    let v = vendor();
     let Some(result) = dock_run(DockRun {
         scene: DockScene {
             post_x: 2.6,
@@ -751,7 +821,7 @@ fn dock_without_charge_retries_then_backs_off() {
         .count();
     let last = result.statuses.last().unwrap();
     println!("{lie_downs} tries; {:?}", last.1);
-    assert_eq!(lie_downs as u32, seq.retries + 1);
+    assert_eq!(lie_downs as i32, v.adjust_posture_times + 1);
     assert!(entered(&result, Phase::StandForRetry).is_some());
     assert!(entered(&result, Phase::Charging).is_none());
     assert!(
@@ -759,9 +829,10 @@ fn dock_without_charge_retries_then_backs_off() {
         "{}",
         last.1.result
     );
-    let out = last.2[0] - seq.docked_x_m - seq.exit_distance_m;
+    let start = last.1.start_point.expect("no start point");
+    let out = last.2[0] - seq.docked_x_m - start[0] as f64;
     assert!(
-        out.abs() <= seq.exit_tolerance[0],
-        "backed off {out:+.3} m off"
+        out.abs() <= v.ext_delta_x as f64 / 1000.0 + 0.004,
+        "backed off {out:+.3} m off its goal"
     );
 }

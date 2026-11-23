@@ -22,13 +22,19 @@
 //!   confirm every pack's charge MOS (m20-battery's rule sends the charge-enable request on its own), retry by
 //!   backing off; undock stands up and backs away.
 //!
-//! The tunables are `[dock]` in m20_controller.toml, copied from charge_manager.toml where it has them.
+//! - [`vendor`]: charge_manager's config file and per-pose logic, and reflective_column_node's output stage.
+//! - [`obstacle`]: charge_manager's obstacle check (the detector module runs it next to the lidars).
+//!
+//! charge_manager.toml is read at startup; `[dock]` in m20_controller.toml holds what the binaries compile in.
 
 pub mod config;
 pub mod detector;
 #[cfg(feature = "module")]
 pub mod detector_module;
 pub mod docking;
+pub mod obstacle;
+pub mod vendor;
+pub mod vendor_log;
 
 /// The dock in base_link: the midpoint between the posts (m) and the direction of the dock's outward axis (rad), the
 /// axis in the floor plane perpendicular to the posts' line that points from the posts toward an arriving robot. A

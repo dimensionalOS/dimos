@@ -28,8 +28,9 @@ calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
   the motors only with ``allow_gains=True``; off (the default) every command that holds a joint goes out as the
   sitting command, so the state machine runs but nothing moves. Never turn it on without an operator's go.
 - Docking (owner + policy): ``dock()`` / ``undock()`` run the vendor charge_manager's sequence inside the controller
-  (``rust/src/dock``) on the dock pose from ``M20DockDetector`` (``dock_pose``) and the packs' charge MOS;
-  ``charge_status()`` is its latest status.
+  (``rust/src/dock``, with the vendor's own ``charge_manager.toml``) on the dock pose and the obstacle check from
+  ``M20DockDetector`` (``dock_pose``, ``dock_obstacle``) and the packs' charge MOS; ``charge_status()`` is its
+  latest status.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.utils.logging_config import setup_logger
@@ -105,6 +107,9 @@ class M20ControllerConfig(NativeModuleConfig):
     gait: int = BASIC_FLAT_GAIT
     # standup(): the agile gait switched to once rl_control's stand-in is over (M20Connection's default is stairs)
     navigation_terrain: NavigationTerrain = "stairs"
+    # policy: the vendor's charge_manager.toml (docking reads it at startup); a board without it takes the copy
+    # M20DockDetector publishes from NOS
+    charge_manager_toml: str = "/opt/robot/share/charge_manager/config/charge_manager.toml"
 
     def to_config_dict(self) -> dict[str, Any]:
         # navigation_terrain is the Python RPCs' alone; the native struct rejects unknown fields
@@ -122,6 +127,8 @@ class M20Controller(NativeModule):
     gait_cmd: In[UInt32]
     dock_pose: In[PoseStamped]
     dock_cmd: In[String]
+    dock_obstacle: In[Float32]
+    charge_manager_config: In[String]
     joint_state: Out[JointState]
     joint_command: Out[JointState]
     battery: Out[BatteryState]
@@ -130,6 +137,7 @@ class M20Controller(NativeModule):
     command_ready: Out[Bool]
     controller_state: Out[String]
     dock_state: Out[String]
+    body_height: Out[Float32]
 
     @rpc
     def start(self) -> None:
@@ -243,9 +251,10 @@ class M20Controller(NativeModule):
     def dock(self) -> bool:
         """Dock and charge: from standing in rl_control with the dock (its two reflector posts) in sight ahead.
 
-        The controller runs charge_manager's sequence: NaviCharge to the staging point and the fine point,
-        FinetuneStand, lie down, confirm every pack's charge MOS, retry by backing off. Returns whether the request
-        was sent; the controller may still refuse it (charge_status()["result"] says why)."""
+        The controller runs charge_manager's sequence: NaviCharge to the staging point and the fine point (stopping
+        for obstacles ahead), FinetuneStand, lie down, confirm every pack's charge MOS, retry from the staging point.
+        Returns whether the request was sent; the controller may still refuse it (charge_status()["result"] says
+        why)."""
         if not self._can_sequence("dock"):
             return False
         with self._state_lock:
@@ -260,7 +269,9 @@ class M20Controller(NativeModule):
 
     @rpc
     def undock(self) -> bool:
-        """Stand up on NaviCharge, back 1.3 m off the dock, switch to BasicFlat. Returns whether the request was sent."""
+        """While charging (or after a failed dock): stand on NaviCharge, back off to where docking started (1.3 m out
+        when no dock this run recorded one), switch back to the gait docking started from. Returns whether the request
+        was sent."""
         if not self._can_sequence("undock"):
             return False
         with self._state_lock:

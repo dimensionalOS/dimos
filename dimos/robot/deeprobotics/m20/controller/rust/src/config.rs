@@ -593,7 +593,8 @@ impl Config {
         for gait in [
             self.dock.sequence.approach_gait,
             self.dock.sequence.finetune_gait,
-            self.dock.sequence.exit_gait,
+            self.dock.sequence.basic_flat_gait,
+            self.dock.sequence.default_restore_gait,
         ] {
             if !self.runners.values().any(|r| r.gaits.contains(&gait)) {
                 bail!("dock.sequence gait {gait:#x} has no runner");

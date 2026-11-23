@@ -324,10 +324,24 @@ def _dim_slam_on_nos() -> Blueprint:
 
 
 def _dock_detector_on_nos() -> Blueprint:
-    """The controller's dock pose: a driver of the front Airy of its own (the shared stream drops intensity, which the
-    reflector posts are found by), out to the detector's range, and the detector beside it, so its full-intensity sweeps
-    never leave NOS; only ~10 small poses a second cross to the controller on AOS."""
+    """The controller's dock pose and obstacle check: drivers of both Airys of their own (the shared stream drops
+    intensity, which the reflector posts are found by, and voxels away the points charge_manager's obstacle check
+    counts), out to the detector's range, and the detector beside them, so their full sweeps never leave NOS; only ~10
+    small poses and obstacle readings a second cross to the controller on AOS."""
     c = constants
+    dock_driver = {
+        "lidar": "dock_lidar",
+        "imu": "dock_lidar_imu",
+        "suffix": "_dock",
+        "publish_mount": False,
+        "point_format": "full",
+        "body_filter": False,
+        "enable_imu": False,
+        # the vendor driver's (NOS node_driver config.yaml): charge_manager's obstacle check never sees nearer returns
+        "min_distance": 0.2,
+        # the detector looks 3.5 m out at most ([dock.detector] max_range_m)
+        "max_distance": 4.0,
+    }
     return autoconnect(
         _airy(
             c.FRONT_LIDAR_FRAME,
@@ -336,15 +350,16 @@ def _dock_detector_on_nos() -> Blueprint:
             c.FRONT_LIDAR_PORTS,
             c.FRONT_LIDAR_XYZ_M,
             c.FRONT_LIDAR_RPY,
-            lidar="dock_lidar",
-            imu="dock_lidar_imu",
-            suffix="_dock",
-            publish_mount=False,
-            point_format="full",
-            body_filter=False,
-            enable_imu=False,
-            # the detector looks 3.5 m out at most ([dock.detector] max_range_m)
-            max_distance=4.0,
+            **dock_driver,
+        ).hosted(tags=NOS),
+        _airy(
+            c.REAR_LIDAR_FRAME,
+            c.REAR_LIDAR_GROUP,
+            c.REAR_LIDAR_IP,
+            c.REAR_LIDAR_PORTS,
+            c.REAR_LIDAR_XYZ_M,
+            c.REAR_LIDAR_RPY,
+            **dock_driver,
         ).hosted(tags=NOS),
         M20DockDetector.blueprint()
         .remappings([(M20DockDetector, "lidar", "dock_lidar")])

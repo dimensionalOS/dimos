@@ -591,16 +591,51 @@ policies match to float precision once their state lines up. Rules this settled 
 
 ## Docking (charge_manager's sequence in the Rust controller)
 
+The sequence is charge_manager v4.0.30's, decompiled (`rust/src/dock/vendor.rs`; Ghidra of NOS
+/opt/robot/share/charge_manager/bin), on its own charge_manager.toml read at startup [C]:
+
+- Steer per dock pose (10 Hz), f32 with the binary's fused multiply-adds: incremental PID (x, y: 1.2 / 0 / 0.2; yaw
+  1.4 / 0 / 0.1, yaw negated) through limitSpeed (clamp to +-max, anything nearer 0 than min out to +-min). Staging
+  point (x - pre_point_x): max (0.8, 1.0, 0.8), min (0.35, 0.45, min_speed_yaw), reached inside delta + (0.04, 0.08,
+  0.03); fine point: max (0.7, 0.8, 0.4), min (min_speed_*), reached inside delta + (0.003, 0.003, 0.015). delta_yaw
+  is /100 (rad). No stop-and-settle: it steers every pose and goes on the pose it is inside.
+- The first 6 poses with x > 0 are not steered; the least-|y| one is the start point (mInit), the undock's goal with
+  back_way = auto.
+- FinetuneStand (0x3004): steer = the raw (x, y, yaw) error and z = -0.05 k (k 2 -> 20); rl_deploy feeds it as
+  pose inputs dx -24 x, dy -18 y, yaw 7 yaw, height max(-z, 0). Done inside delta after 3 s, or at 4 s; then (0, 0,
+  0, -1.1) held 1 s, lie down, 6 s of charge-enable, then up to first_detection_current_timeout for every pack's charge
+  MOS. No charge: stand on NaviCharge, 2 s, back to the staging point (adjust_posture_times), then goBack (undock).
+- A pose missing 200 ms stops the robot (rl_deploy zeroes the steer at 150 ms); 400 in a row restart the detector,
+  and a failed FindTarget lies the robot down. The approach and the undock each fail after 60 s (BasicFlat).
+- The obstacle check (ObstacleDetection, grid): base_link points of both Airys, z in [charge_pile_h - body height,
+  0.3], x in [0, 0.9] ahead (approach) or [-0.9, 0] behind (undock, retry), |y| <= 0.3, outside the body box (0.45 x
+  0.25); 0.3 m cells, 20 points occupy one; the nearest occupied centre from (+-0.45, 0). Under ObstacleAvoidDis
+  (0.3: only the cell 0.3-0.6 m out, at 0.15) the robot stops; 10 s stopped fails on BasicFlat. The dock's posts sit in
+  the next cell (0.335, logged through every vendor dock). Not in FinetuneStand.
+- Undock (only from charging or after a failure): the detector restarts and must see the dock (lying), stand, back off
+  to the exit staging point (pre_exitPile_point_x - 0.1) and on to the start point (ext_delta), 2 s, then the gait
+  docking started from.
+- reflective_column_node's output stage: positions outside x [-4, -0.05], |y| 1.5 dropped; after a restart 15 sweeps
+  held back, the 16th publishes the last within 3 sigma (FindTarget's ~1.5 s); a position 0.8 m from the one before
+  dropped. Neither binary reads the IMU or tf (no such DDS topic in either); the cloud is base_link as mounted.
+
+`cargo test --release --test vendor_replay` (and `examples/charge_replay.rs` on any charge_manager log) replays
+charge_manager's own logs through the core: all of NOS's (2026-11-04 to 11-23: 100 docks, 94 undocks, 24580 poses)
+give every steer to the log's 6 decimals (max 2.7e-6) and all 1559 events (staging, fine point, FinetuneStand done,
+974 obstacle stops, retries, undock staging / end) at the same pose; one 4 s limit decision falls within 1 ms of its
+threshold (the log's wall clock cannot place it) and one line was cut off by a restart.
+
 `cargo test --release --test sim_sequence dock` docks the Rust controller in the sim: world.py's `charge_dock` (two
-retro-reflective posts, intensity 250 against 30 for everything else) seen by a ray-cast front Airy (96 beams over
-0-90 deg, 0.4 deg azimuth, 1 cm range noise) through the post detector at 10 Hz, and battery packs whose charge MOS
-comes on when the robot lies with base_link within 3 cm (along the dock's axis) and 2 cm (across) of the docked
-point (an assumption about the pads; lying down settles base_link 1.4-2 cm back from where it stood). From
-~2 m out with a lateral offset and a turned dock it reaches the fine point within charge_manager's 6 mm / 3 mm /
-3 deg, lies down, confirms charging and undocks 1.3 m back; with no charge it retries twice from the staging point and
-backs off. FinetuneStand's pose inputs move the standing body (sim: dx, dy, yaw 0.5 -> -5.6 cm, -5.9 cm, -11 deg), but
-lying down re-centres the body over the feet (14 cm off after 4 s of adjustment), so the in-place adjustment is off
-(`finetune_adjust`) and the lying pose is what NaviCharge's approach left.
+retro-reflective posts, intensity 250 against 30 for everything else) seen by ray-cast Airys (96 beams over 0-90 deg,
+0.4 deg azimuth, 1 cm range noise) through the post detector at 10 Hz, and battery packs whose charge MOS comes on
+when the robot lies with base_link within 3 cm (along the dock's axis) and 2 cm (across) of the docked point (an
+assumption about the pads). From ~2 m out with a lateral offset and a turned dock it reaches the fine point, lies down,
+confirms charging and undocks to where it started; with no charge it retries twice from the staging point and backs
+off. With FinetuneStand as the vendor drives it (raw-error pose inputs, the body lowered to height 1.0 then 1.1, 1 s
+held, then lie down) the sim lies 2.0-3.1 cm short of the docked point and 3.4-3.8 deg turned (fine point within 1 cm),
+so the 3 cm contact window charges one scene on the first try and the other on its last retry. The vendor charged on
+the first try in 94 of its 100 logged docks (one more after a retry): the suspect is the sim's lie-down (base_link settling back 1.4-2 cm, foot slip
+on the lowered stance) and the assumed pad window, not the sequence.
 
 Checked against a vendor dock (NOS dock_rec 2026-11-21: tcpdump of both Airys' multicast, charge_manager's log),
 `examples/dock_pcap.rs` + `dock_compare.py`. The posts return intensity 200-255 (the floor 100-150), stand ~0.6 m,

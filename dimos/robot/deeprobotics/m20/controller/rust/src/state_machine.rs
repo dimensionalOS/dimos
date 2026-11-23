@@ -221,6 +221,11 @@ impl Controller {
         self.runner.as_deref()
     }
 
+    /// The gait code walking is on (the last one commanded).
+    pub fn gait(&self) -> u32 {
+        self.gait
+    }
+
     /// A stand-in policy is running (rl_control's entry or a gait switch's), before the gait's own runner.
     pub fn in_stand_in(&self) -> bool {
         self.stand_in.is_some()

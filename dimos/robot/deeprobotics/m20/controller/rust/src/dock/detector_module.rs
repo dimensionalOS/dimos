@@ -12,20 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The dock detector as a dimos module (reflective_column_node's replacement): one lidar's sweeps in, the dock's
-//! pose in base_link out on `dock_pose` for every sweep that shows both posts (none when it does not: the controller's
-//! docking counts how long it has gone without one). It runs next to the lidars so full sweeps never cross to the
-//! controller's board; the controller gets ~10 small poses a second.
+//! The dock detector as a dimos module (reflective_column_node's replacement, and charge_manager's obstacle check):
+//! the front lidar's sweeps in, the dock's pose in base_link out on `dock_pose` for every sweep that shows both posts
+//! (none when it does not: the controller's docking counts how long it has gone without one). While the controller's
+//! `dock_state` says the obstacle check is open, every front sweep with the newest rear one and the controller's
+//! `body_height` goes through it (super::obstacle) onto `dock_obstacle`. It reads charge_manager.toml (NOS's) for the
+//! check and publishes its text on `charge_manager_config` for the controller (at start, and whenever dock_state says
+//! the controller has none). It runs next to the lidars so full sweeps never cross to the controller's board.
 
 use std::time::Duration;
 
 use dimos_module::{native_config, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::Header;
+use lcm_msgs::std_msgs::{self, Float32, Header};
+use serde::Deserialize;
 use tracing::{info, warn};
 
 use super::detector::{detect, Detection, Mount};
+use super::obstacle::{nearest_obstacle, GridParams};
+use super::vendor::{ChargeManagerToml, Direction};
 
 #[native_config]
 #[derive(Clone)]
@@ -35,10 +41,33 @@ pub struct Config {
     /// that lidar's mount in base_link (m; roll, pitch, yaw rad)
     mount_xyz: [f64; 3],
     mount_rpy: [f64; 3],
+    /// the rear lidar's sweeps (the obstacle check looks back with them) and its mount
+    rear_lidar_frame_id: String,
+    rear_mount_xyz: [f64; 3],
+    rear_mount_rpy: [f64; 3],
     /// an m20_controller.toml path for [dock.detector]; empty uses the one built in
     controller_config: String,
+    /// charge_manager.toml (NOS's)
+    charge_manager_toml: String,
     /// dock_pose's frame
     frame_id: String,
+}
+
+/// What the detector reads from the controller's dock_state.
+#[derive(Deserialize)]
+struct DockState {
+    obstacle: Option<Direction>,
+    vendor_config: bool,
+}
+
+/// The obstacle check's inputs.
+struct Obstacles {
+    grid: GridParams,
+    min_range: f64,
+    front: Mount,
+    rear: Mount,
+    /// the newest rear sweep's points in base_link that the check could keep
+    rear_points: Vec<[f32; 3]>,
 }
 
 #[derive(Module)]
@@ -48,9 +77,25 @@ pub struct M20DockDetector {
     lidar: Input<PointCloud2>,
     #[output(encode = PoseStamped::encode)]
     dock_pose: Output<PoseStamped>,
+    /// the controller's docking status (JSON): whether the obstacle check is open and which way it looks
+    #[input(decode = std_msgs::String::decode, handler = on_dock_state)]
+    dock_state: Input<std_msgs::String>,
+    /// the controller's body height (m), for the obstacle check's floor cut
+    #[input(decode = Float32::decode, handler = on_body_height)]
+    body_height: Input<Float32>,
+    /// the obstacle check: the nearest occupied cell (m), -1 for none
+    #[output(encode = Float32::encode)]
+    dock_obstacle: Output<Float32>,
+    /// charge_manager.toml's text
+    #[output(encode = std_msgs::String::encode)]
+    charge_manager_config: Output<std_msgs::String>,
     #[config]
     config: Config,
     detector: Option<(super::config::DetectorConfig, Mount)>,
+    obstacles: Option<Obstacles>,
+    charge_manager_text: Option<String>,
+    direction: Option<Direction>,
+    height: Option<f64>,
     /// the dock in sight on the last sweep (logged on a change)
     seen: Option<bool>,
 }
@@ -139,22 +184,122 @@ impl M20DockDetector {
         };
         let mount = Mount::from_xyz_rpy(self.config.mount_xyz, self.config.mount_rpy);
         info!(frame = %self.config.lidar_frame_id, ?mount, "looking for the dock's reflector posts");
+        match ChargeManagerToml::load(&self.config.charge_manager_toml) {
+            Ok((t, text)) => {
+                self.obstacles = Some(Obstacles {
+                    grid: GridParams::from_toml(&t),
+                    min_range: cfg.dock.obstacle.min_lidar_range_m,
+                    front: mount,
+                    rear: Mount::from_xyz_rpy(
+                        self.config.rear_mount_xyz,
+                        self.config.rear_mount_rpy,
+                    ),
+                    rear_points: Vec::new(),
+                });
+                self.charge_manager_text = Some(text);
+                self.publish_charge_manager_config().await;
+            }
+            Err(error) => warn!(
+                error = format!("{error:#}"),
+                "no charge_manager.toml: no obstacle check, and docking cannot start"
+            ),
+        }
         self.detector = Some((cfg.dock.detector, mount));
     }
 
+    async fn publish_charge_manager_config(&self) {
+        if let Some(text) = &self.charge_manager_text {
+            let msg = std_msgs::String { data: text.clone() };
+            if let Err(error) = self.charge_manager_config.publish(&msg).await {
+                warn!(%error, "cannot publish charge_manager.toml");
+            }
+        }
+    }
+
+    async fn on_dock_state(&mut self, msg: std_msgs::String) {
+        let Ok(state) = serde_json::from_str::<DockState>(&msg.data) else {
+            return;
+        };
+        if self.direction != state.obstacle {
+            info!(direction = ?state.obstacle, "obstacle check");
+            self.direction = state.obstacle;
+        }
+        if !state.vendor_config {
+            self.publish_charge_manager_config().await;
+        }
+    }
+
+    async fn on_body_height(&mut self, msg: Float32) {
+        if msg.data.is_finite() {
+            self.height = Some(msg.data as f64);
+        }
+    }
+
+    /// Points in base_link from a lidar's sweep, without those the lidar driver drops (closer than min_range).
+    fn base_points<'a>(
+        points: &'a [[f32; 4]],
+        mount: &Mount,
+        min_range: f64,
+    ) -> impl Iterator<Item = [f32; 3]> + 'a {
+        let mount = *mount;
+        points.iter().filter_map(move |p| {
+            let v = [p[0] as f64, p[1] as f64, p[2] as f64];
+            let r = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            if !(r.is_finite() && r >= min_range) {
+                return None;
+            }
+            let b = mount.to_base(v);
+            Some([b[0] as f32, b[1] as f32, b[2] as f32])
+        })
+    }
+
+    async fn check_obstacles(&mut self, front: &[[f32; 4]]) {
+        let (Some(direction), Some(height), Some(o)) =
+            (self.direction, self.height, self.obstacles.as_ref())
+        else {
+            return;
+        };
+        let points =
+            Self::base_points(front, &o.front, o.min_range).chain(o.rear_points.iter().copied());
+        let nearest = nearest_obstacle(points, direction, height, &o.grid);
+        let msg = Float32 {
+            data: nearest.unwrap_or(-1.0),
+        };
+        if let Err(error) = self.dock_obstacle.publish(&msg).await {
+            warn!(%error, "cannot publish the obstacle check");
+        }
+    }
+
     async fn on_lidar(&mut self, cloud: PointCloud2) {
+        if cloud.header.frame_id == self.config.rear_lidar_frame_id {
+            if let (Some(o), Ok(points)) = (self.obstacles.as_mut(), cloud_points(&cloud)) {
+                let (g, rear, min_range) = (o.grid.clone(), o.rear, o.min_range);
+                o.rear_points = Self::base_points(&points, &rear, min_range)
+                    .filter(|p| {
+                        p[0].abs() as f64 <= g.x_max
+                            && p[1].abs() as f64 <= g.y_max
+                            && p[2] as f64 <= g.z_max
+                    })
+                    .collect();
+            }
+            return;
+        }
         if cloud.header.frame_id != self.config.lidar_frame_id {
             return;
         }
-        let Some((cfg, mount)) = &self.detector else {
+        if self.detector.is_none() {
             return;
-        };
+        }
         let points = match cloud_points(&cloud) {
             Ok(points) => points,
             Err(error) => {
                 dimos_module::warn_throttled!(Duration::from_secs(5), %error, "dropping cloud");
                 return;
             }
+        };
+        self.check_obstacles(&points).await;
+        let Some((cfg, mount)) = &self.detector else {
+            return;
         };
         let detection = detect(points, mount, cfg);
         let seen = matches!(detection, Detection::Found { .. });

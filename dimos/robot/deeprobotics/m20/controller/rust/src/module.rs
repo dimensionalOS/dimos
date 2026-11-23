@@ -36,13 +36,14 @@ use std::time::Duration;
 use dimos_module::{native_config, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{PoseStamped, Twist};
 use lcm_msgs::sensor_msgs::{BatteryState, Imu, JointState};
-use lcm_msgs::std_msgs::{self, Bool, UInt32};
+use lcm_msgs::std_msgs::{self, Bool, Float32, UInt32};
 use m20_ecan::tap::{TapRecord, TapSocket};
 use m20_ecan::Direction;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
 use crate::dock::docking::{DockFeed, Request};
+use crate::dock::vendor::ChargeManagerToml;
 use crate::dock::{ChargeReading, DockPose};
 use crate::hardware::ecan::{ImuSample, ImuSource};
 use crate::publish::frames::{Batteries, FrameHandler, Published};
@@ -101,6 +102,9 @@ pub struct Config {
     command_timeout_s: f64,
     /// policy: the vendor gait code walking starts on until a gait_cmd changes it (Python default 0x1001 basic flat).
     gait: u32,
+    /// policy: charge_manager.toml (NOS's, docking reads it); when this board has none, the copy the dock detector
+    /// module publishes on charge_manager_config is taken
+    charge_manager_toml: String,
 }
 
 #[derive(Module)]
@@ -120,6 +124,12 @@ pub struct M20Controller {
     /// "dock", "undock" or "cancel"
     #[input(decode = std_msgs::String::decode, handler = on_dock_cmd)]
     dock_cmd: Input<std_msgs::String>,
+    /// charge_manager's obstacle check from m20_dock_detector_module: the nearest occupied cell (m), -1 for none
+    #[input(decode = Float32::decode, handler = on_dock_obstacle)]
+    dock_obstacle: Input<Float32>,
+    /// charge_manager.toml's text from m20_dock_detector_module (read on NOS)
+    #[input(decode = std_msgs::String::decode, handler = on_charge_manager_config)]
+    charge_manager_config: Input<std_msgs::String>,
 
     #[output(encode = JointState::encode)]
     joint_state: Output<JointState>,
@@ -140,6 +150,9 @@ pub struct M20Controller {
     /// policy: the docking sequence's status (JSON: phase, active, result, error, charging, packs, fine_point)
     #[output(encode = std_msgs::String::encode)]
     dock_state: Output<std_msgs::String>,
+    /// policy: base_link's height above the wheels' contact (m, from the joints), for the dock's obstacle check
+    #[output(encode = Float32::encode)]
+    body_height: Output<Float32>,
 
     #[config]
     config: Config,
@@ -160,6 +173,10 @@ pub struct Shared {
     dock: Arc<DockFeed>,
     /// dock poses received
     dock_poses: std::sync::atomic::AtomicU64,
+    /// obstacle readings received
+    dock_obstacles: std::sync::atomic::AtomicU64,
+    /// charge_manager.toml was taken (this board's or the detector module's copy)
+    vendor_read: AtomicBool,
 }
 
 /// The body IMU as the loop reads it: the newest sample, if it is fresh.
@@ -341,6 +358,26 @@ impl M20Controller {
         );
         let (dock_status, dock_status_rx) = watch::channel(None::<std_msgs::String>);
         forward(dock_status_rx, self.dock_state.clone(), "dock_state");
+        let (body_height, body_height_rx) = watch::channel(None::<Float32>);
+        forward(body_height_rx, self.body_height.clone(), "body_height");
+        if config.policy && !config.charge_manager_toml.is_empty() {
+            match ChargeManagerToml::load(&config.charge_manager_toml) {
+                Ok((t, _)) => {
+                    info!(path = %config.charge_manager_toml, "charge_manager.toml read");
+                    self.shared.vendor_read.store(true, Ordering::Relaxed);
+                    *self
+                        .shared
+                        .dock
+                        .vendor
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = Some(t);
+                }
+                Err(error) => info!(
+                    error = format!("{error:#}"),
+                    "no charge_manager.toml on this board; docking waits for the dock detector module's copy"
+                ),
+            }
+        }
         let latest = Latest {
             joint_state,
             joint_command,
@@ -356,7 +393,9 @@ impl M20Controller {
         let spawned = if config.mode == "owner" && config.policy {
             std::thread::Builder::new()
                 .name("m20-controller".into())
-                .spawn(move || run_policy(&config, latest, shared, status, dock_status))
+                .spawn(move || {
+                    run_policy(&config, latest, shared, status, dock_status, body_height)
+                })
         } else if config.mode == "owner" {
             std::thread::Builder::new()
                 .name("m20-ecan-owner".into())
@@ -448,6 +487,39 @@ impl M20Controller {
             .unwrap_or_else(|p| p.into_inner()) = Some((pose, seq));
     }
 
+    async fn on_dock_obstacle(&mut self, msg: Float32) {
+        let seq = self.shared.dock_obstacles.fetch_add(1, Ordering::Relaxed) + 1;
+        let reading = (msg.data >= 0.0).then_some(msg.data);
+        *self
+            .shared
+            .dock
+            .obstacle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some((reading, seq));
+    }
+
+    async fn on_charge_manager_config(&mut self, msg: std_msgs::String) {
+        if self.shared.vendor_read.load(Ordering::Relaxed) {
+            return;
+        }
+        match ChargeManagerToml::parse(&msg.data) {
+            Ok(t) => {
+                info!("charge_manager.toml from the dock detector module");
+                self.shared.vendor_read.store(true, Ordering::Relaxed);
+                *self
+                    .shared
+                    .dock
+                    .vendor
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(t);
+            }
+            Err(error) => warn!(
+                error = format!("{error:#}"),
+                "bad charge_manager.toml from the dock detector module"
+            ),
+        }
+    }
+
     async fn on_dock_cmd(&mut self, msg: std_msgs::String) {
         match Request::parse(&msg.data) {
             Some(request) => {
@@ -503,8 +575,10 @@ fn run_policy(
     shared: Arc<Shared>,
     status: watch::Sender<Option<Status>>,
     dock_status: watch::Sender<Option<std_msgs::String>>,
+    body_height: watch::Sender<Option<Float32>>,
 ) {
     use crate::dock::docking::{Docking, DockingCommands};
+    use crate::dock::obstacle;
     use crate::hardware::bus::{BusHardware, Sink};
     use crate::policy::{RunnerSet, ThreadedPolicy};
     use crate::rt::{self, Pacing};
@@ -632,7 +706,7 @@ fn run_policy(
         allow_gains = cfg.ecan.allow_gains,
         "owning the motor bus with the walking policy: rl_deploy's startup, then 1 kHz"
     );
-    let docking = Docking::new(&cfg, cfg.ecan.charge_enable);
+    let docking = Docking::new(&cfg, cfg.ecan.charge_enable, None);
     let mut commands = DockingCommands::new(
         SharedCommands {
             shared: shared.clone(),
@@ -648,6 +722,7 @@ fn run_policy(
     let mut controller = Controller::new(cfg.clone());
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let mut last: Option<Status> = None;
+    let mut last_height = f64::NAN;
     let result = rt::run(
         &cfg,
         &mut hardware,
@@ -658,6 +733,14 @@ fn run_policy(
         &shared.stop,
         |hw, tick| {
             startup_done.store(!hw.in_startup(), Ordering::Relaxed);
+            let height =
+                obstacle::body_height(&cfg.robot, &tick.state.q, cfg.dock.obstacle.wheel_radius_m);
+            if !((height - last_height).abs() < cfg.dock.obstacle.body_height_step_m) {
+                last_height = height;
+                body_height.send_replace(Some(Float32 {
+                    data: height as f32,
+                }));
+            }
             let c = tick.controller;
             let now = Status {
                 ready: c.state == State::RlControl && c.fault.is_none(),
@@ -710,6 +793,7 @@ fn run_policy(
     _: Arc<Shared>,
     _: watch::Sender<Option<Status>>,
     _: watch::Sender<Option<std_msgs::String>>,
+    _: watch::Sender<Option<Float32>>,
 ) {
     warn!("the policy on the motor bus needs Linux (the vendor motor-bus socket)");
 }
@@ -931,7 +1015,7 @@ mod tests {
             "frame_id": "base_link", "guard_max_torque": 1.0, "guard_max_velocity": 0.5,
             "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
             "controller_config": "", "policy_dir": "", "imu_timeout_s": 0.05,
-            "command_timeout_s": command_timeout_s, "gait": 0x3002,
+            "command_timeout_s": command_timeout_s, "gait": 0x3002, "charge_manager_toml": "",
         });
         serde_json::from_value(fields).unwrap()
     }

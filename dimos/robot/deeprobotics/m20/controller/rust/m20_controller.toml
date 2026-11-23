@@ -591,10 +591,11 @@ obs = [
 action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset", leg_scale = [0.25], wheel_scale = 10.0 }
 
 # ---------------------------------------------------------------------------------------------------------------
-# Docking (src/dock): charge_manager v4.0.30's dock / undock sequence and reflective_column_node's post detector, both
-# from NOS /opt/robot/share/charge_manager. "toml:" = charge_manager.toml's key; "log:" = charge_manager's own strings
-# and change_log.md; "sim:" = not in the vendor config (compiled into the binaries), set for the sim dock
-# (world.py charge_dock) and to be measured on the real dock.
+# Docking (src/dock): DeepRobotics charge_manager v4.0.30 and reflective_column_node (NOS
+# /opt/robot/share/charge_manager/bin), decompiled. Their config file, charge_manager.toml, is read at startup (src/dock/
+# vendor.rs; module config charge_manager_toml); only what the binaries compile in is here. "bin:" = the binary (function
+# / address), "rl_deploy:" = rl_deploy's /STEER handling (SPEC.md [C], m20_policy_sim/replay.py), "driver:" = NOS
+# /opt/robot/share/node_driver/config/config.yaml, "recording:" / "sim:" = measured here, not the vendor's.
 [dock.detector]
 # recording (NOS dock_rec 2026-11-21, front Airy, robot on the dock): the posts return 200-255 (mostly 255), the
 # floor around them 100-150
@@ -605,11 +606,11 @@ min_range_m = 0.1
 # base_link heights kept: the posts stand ~0.6 m (recording) and base_link is ~0.45 m up standing, ~0.2 m lying
 min_z_m = -0.55
 max_z_m = 0.4
-# toml lidar_yaw = 60.0: the sector (deg either side) charge_manager looks into ahead
+# ours: the sector (deg either side) searched ahead (reflective_column_node reads no config; its sector is not decoded)
 half_angle_deg = 60.0
 # sim: bounds the clustering (a 0.8 m post 0.3 m from the lidar gives ~20000 returns at the Airy's 0.2 deg)
 max_points = 100000
-# sim: returns closer than this (m) are one post; toml cluster_points_count_min = 10 (its obstacle clusters)
+# sim: returns closer than this (m) are one post, and a post needs this many
 cluster_distance_m = 0.1
 min_cluster_points = 10
 # a post-sized cluster (m): recording, a post's saturated returns bloom to 0.25 m across at 1.9 m; below the spacing
@@ -623,63 +624,88 @@ post_spacing_m = 0.374
 spacing_tolerance_m = 0.05
 post_radius_m = 0.025
 
+[dock.filter]
+# bin reflective_column_node ProcessPointCloudData: the lidar position kept only for x in [-4, -0.05] (0x17f830) and
+# |y| <= 1.5, and pubPose adds 0.76 (0x17f7d8, f32) to x
+x_range = [-4.0, -0.05]
+max_y = 1.5
+pose_offset_x = 0.7599999904632568
+# bin: the first 15 positions after the service's start (Location ctor 0x110 = 0xf) go to FilterPositionData (the last
+# within 3 sigma of their mean); then a position more than 0.8 m (0x17f838) from the one before is not published
+start_sweeps = 15
+start_sigmas = 3.0
+max_jump_m = 0.8
+
+[dock.obstacle]
+# driver: min_distance 0.2 on both Airys (the obstacle check reads the driver's merged /LIDAR/POINTS)
+min_lidar_range_m = 0.2
+# sim (world.py WHEEL_RADIUS): ObstacleDetection takes MotionInfo.height (rl_deploy's, not decoded); ours is base_link
+# above the wheel axles from the joints plus this
+wheel_radius_m = 0.09
+# ours: the body height crosses to the detector module (NOS) when it moves this far (m), not every 1 kHz tick
+body_height_step_m = 0.0005
+
 [dock.sequence]
-# log: "Enable Charge Gait" (0x3001 NaviCharge), the in-place adjustment on 0x3004 FinetuneStand, "Enable BasicFlat
-# Gait" (0x1001) after undocking
+# bin: WideWalk "Enable Charge Gait" 0x3001, setFineTuneStandMode 0x3004, NarrowWalk "BasicFlat" 0x1001, and
+# RobotCommander's initial mInitRobotGaitStatus_ 0x1001 (restored after an undock no dock this run set)
 approach_gait = 0x3001
 finetune_gait = 0x3004
-exit_gait = 0x1001
-# toml pre_point_x = 1.0, out from the docked point (charge_manager's target poses are the robot relative to the
-# docked point: x 0.0 docked, "reached the staging point" at x 0.99; 2026-11-21 13:27 dock log)
-staging_x_m = 1.0
-# recording: base_link 0.735 m out from the posts' midpoint docked, both lying on the dock (186 sweeps, sd 0.2 mm) and
-# fitted to charge_manager's poses while it undocked (its x is the robot relative to the docked point); with
-# post_radius_m 0.025, which shifts every distance alike. charge_manager's own target is compiled in
+basic_flat_gait = 0x1001
+default_restore_gait = 0x1001
+# recording: base_link 0.735 m out from the posts' midpoint docked, our detector's x minus charge_manager's (186
+# sweeps lying on the dock, dock_compare.py); with detector.post_radius_m, which shifts every distance alike
 docked_x_m = 0.735
-# toml DistanceCompensationX = 0.0 (cm, positive = further forward)
-distance_compensation_x_m = 0.0
-# toml exit_pile_distance_x = 1.3 (back_way = "auto": back to where docking started; ours backs this far)
-exit_distance_m = 1.3
-# toml delta_x = 6, delta_y = 3 (mm), delta_yaw = 3 (deg)
-tolerance = [0.006, 0.003, 3.0]
-# toml ext_delta_x = 90, ext_delta_y = 90 (mm), ext_delta_yaw = 70 (no unit given; read as deg, so the exit barely
-# checks its heading); the staging point uses the same (its own tolerance is compiled in)
-staging_tolerance = [0.09, 0.09, 70.0]
-exit_tolerance = [0.09, 0.09, 70.0]
-# toml min_speed_x / _y / _yaw = 180 / 250 / 100 and ext_min_speed_* = 200 / 250 / 140 ("normalized /1000")
-min_axes = [0.18, 0.25, 0.10]
-exit_min_axes = [0.20, 0.25, 0.14]
-# sim (m20_policy_sim run_all DOCK, the sim dock that passed at 0.005 m): P gain 1 /s on x and y, 2 /s on yaw, capped at
-# 0.3 m/s, 0.1 m/s, 0.3 rad/s = these normalized by NaviCharge's command_max (0.5, 0.3, 0.5)
-gain = [1.0, 1.0, 2.0]
-max_axes = [0.6, 0.34, 0.6]
-# sim: sweeps (10 Hz) standing still that must agree a goal is reached; the first after stopping is not counted
-settle_sweeps = 3
-# toml tag_receive_timeout = 2 (s without the dock pose); log v4.0.16: a target timeout lies the robot down
-dock_lost_s = 2.0
-# log: "Get into charging pile more than 1 min, so return GOTOSTACKFAILED"
-approach_limit_s = 60.0
-# log v4.0.19: "after switching gait, wait two seconds before sending velocity"
-gait_settle_s = 2.0
-# sim: a stand-up (3 s) or gait switch (its 1.5 s stand-in) not done in this long fails
-transition_limit_s = 10.0
-# 81 vendor docks (charge_manager logs): FinetuneStand adjusts in place for up to 4 s, then lies down regardless
-# (log v4.0.16: "on an in-place adjustment timeout, lie down and try charging")
-finetune_limit_s = 4.0
-# sim: off. The pose inputs shift the body over the feet and lying down puts it back over them: after 4 s of
-# adjustment the robot lay 14 cm off the fine point it had reached, without it 0.8 cm (sim_sequence dock tests)
-finetune_adjust = false
-# sim (scratch run of finetune_stand, pose input 0.5 each): base_link moved -0.056 m, -0.059 m, -11 deg (-0.19 rad)
-# per 0.5 of dx, dy, yaw; rl_deploy's /STEER on 0x3004 feeds them as -24 x, -18 y, 7 yaw (SPEC.md)
-finetune_body_per_param = [-0.112, -0.118, -0.384]
-# toml first_detection_current_timeout = 5 (s after lying down)
-charge_confirm_s = 5.0
-# toml adjust_posture_times = 2, NoChargePlug_way = "goBack", RetryMethod_InPlace = false
-retries = 2
-# toml mos_detection = true, all_battery_charge = true (current_detection = false)
-all_packs_charge = true
-# sim: refuse to start with the dock farther than this (log: "the distance from the charging pile is a bit far")
-max_start_distance_m = 3.0
+# bin ChargeManager ctor: VelocityController(1.2, 0, 0.2) for x and y, (1.4, 0, 0.1) for yaw
+pid_x = [1.2, 0.0, 0.2]
+pid_y = [1.2, 0.0, 0.2]
+pid_yaw = [1.4, 0.0, 0.1]
+# bin goToPileAction: the start point is the least-|y| of the first 6 poses with x > 0 (`5 < local_4b8`)
+start_samples = 5
+# bin goToPileAction: staging reached inside delta + (0.04, 0.08, 0.03) (0x20d778-88); limitSpeed(x, 0.8, 0.35),
+# (y, 1.0, 0.45), (yaw, 0.8, min_speed_yaw)
+staging_margin = [0.04, 0.08, 0.03]
+staging_max = [0.8, 1.0, 0.8]
+staging_min = [0.35, 0.45]
+# bin goToPileAction: fine point reached inside delta + (0.003, 0.003, 0.015) (0x20d770, 0x20d790); limitSpeed(x,
+# 0.7, min_speed_x), (y, 0.8, min_speed_y), (yaw, 0.4, min_speed_yaw)
+fine_margin = [0.003, 0.003, 0.015]
+fine_max = [0.7, 0.8, 0.4]
+# bin exitPileAction: limitSpeed(*, 0.7, ext_min_speed_*); the exit staging point passed at x > pre_exitPile_point_x
+# - 0.1 (0x20d768)
+exit_max = [0.7, 0.7, 0.7]
+exit_staging_margin = 0.1
+# bin goToPileAction: z = k * -0.05 (0x20d798), k from 2, held at 20 once past 19; done inside delta after 3000 ms or
+# after 4000 ms; then (0, 0, 0, -1.1) and sleep(1) before SitDown
+finetune_z_step = -0.05
+finetune_z_last = 20
+finetune_min_ms = 3000
+finetune_max_ms = 4000
+sit_z = -1.1
+sit_hold_ms = 1000
+# bin setFineTuneStandMode: waits 5 s (5000000000 ns) for gait 0x3004, then returns regardless
+finetune_gait_wait_ms = 5000
+# rl_deploy: FinetuneStand (0x3004) reads /STEER as pose inputs dx = -24 x, dy = -18 y, yaw = 7 yaw, height = max(-z, 0)
+finetune_pose_scale = [-24.0, -18.0, 7.0]
+# bin: Steer x 0xbf4ccccd (-0.8) written five times before exitPileAction's loop and after a retry's stand-up
+back_off_x = -0.8
+# bin: "more than 1 min" (60000 ms) for the approach and the undock; an obstacle stop fails past 10000 ms (0x2711)
+approach_limit_ms = 60000
+exit_limit_ms = 60000
+obstacle_limit_ms = 10000
+# bin: each wait for a pose is a 200 ms pthread_cond_timedwait; a timeout calls stopMove
+pose_wait_ms = 200
+# rl_deploy: the steer is zeroed 0.15 s after the last one
+steer_timeout_ms = 150
+# bin: sleep(2) after WideWalk, after a retry's StandUp2WideWalk, and between restoreInitRobotStatus and
+# restoreInitRobotGaitStatus
+gait_settle_ms = 2000
+retry_settle_ms = 2000
+restore_ms = 2000
+# bin: Open12vPower(3) after SitDown: three charge-enable writes with sleep(2) after each, then the charge check
+power_on_ms = 6000
+# ours (the vendor retries a command 3 more times, 5-6 s each, 0xe4): a stand-up, gait switch or lie-down not done
+# in this long fails the sequence
+transition_limit_s = 21.0
 
 # The eth1 motor bus (backends "ecan" and "bus"); everything not set here takes the values seen on the robot.
 [ecan]
