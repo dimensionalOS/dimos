@@ -224,10 +224,13 @@ pub struct EcanBus {
     charge: Option<Charge>,
 }
 
-/// The charge-enable request on this bus: m20-battery's rule fed by the board's battery frames and the legs' gains.
+/// The charge-enable request on this bus: requests from the dock sequence (charge_manager's /BATTERY_CHARGE_ENABLE,
+/// which rl_deploy turns into frames with no rule of its own) and, unless turned off, m20-battery's rule fed by the
+/// board's battery frames and the legs' gains.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub struct Charge {
     rule: m20_battery::charge::ChargeEnabler,
+    rule_on: bool,
     legs_passive: bool,
     // request frames still to send, one per tick in place of a joint command
     pending: usize,
@@ -237,9 +240,21 @@ impl Charge {
     pub fn new() -> Self {
         Charge {
             rule: m20_battery::charge::ChargeEnabler::new(),
+            rule_on: true,
             legs_passive: false,
             pending: 0,
         }
+    }
+
+    /// m20-battery's lie-down / battery-report rule on (the default) or off (requests only, as rl_deploy has it).
+    pub fn set_rule(&mut self, on: bool) {
+        self.rule_on = on;
+    }
+
+    /// One request (rl_deploy, per /BATTERY_CHARGE_ENABLE 1): 3 frames on the next 3 ticks, in place of their joint
+    /// commands (a request during a burst restarts it).
+    pub fn request(&mut self) {
+        self.pending = m20_battery::charge::FRAMES_PER_REQUEST;
     }
 
     /// Note the command about to go out; a switch to no position gain on any leg is a lie-down.
@@ -253,6 +268,9 @@ impl Charge {
 
     /// A frame from the board: a battery report may ask for a request.
     pub fn on_frame(&mut self, frame: &[u8]) {
+        if !self.rule_on {
+            return;
+        }
         if let Ok(report) = m20_battery::BatteryReport::from_ethernet(frame) {
             if self.rule.on_report(&report, self.legs_passive)
                 == m20_battery::charge::Decision::Request
@@ -308,6 +326,21 @@ impl EcanBus {
             buf: vec![0u8; 2048],
             charge: cfg.charge_enable.then(Charge::new),
         })
+    }
+
+    /// A charge-enable request from the dock sequence (charge_manager writing /BATTERY_CHARGE_ENABLE 1): 3 frames on
+    /// the next 3 ticks. Off (no frames) unless [ecan] charge_enable.
+    pub fn request_charge_enable(&mut self) {
+        if let Some(charge) = self.charge.as_mut() {
+            charge.request();
+        }
+    }
+
+    /// m20-battery's own lie-down / battery-report rule on or off (off when the dock sequence sends the requests).
+    pub fn set_charge_rule(&mut self, on: bool) {
+        if let Some(charge) = self.charge.as_mut() {
+            charge.set_rule(on);
+        }
     }
 
     fn with_imu(&mut self, mut s: RobotState) -> Result<RobotState> {

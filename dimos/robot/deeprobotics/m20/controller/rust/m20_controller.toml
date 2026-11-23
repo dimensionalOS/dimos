@@ -42,6 +42,10 @@ shank_length = 0.25
 control_hz = 1000
 # control ticks per policy step (50 Hz)
 policy_decimation = 20
+# stand-up / lie-down splines and their 3 s / 4 s limits on rl_deploy's clock: f32(stamp) - f32(stamp at entry), the
+# stamp being seconds since the bus opened (rl_deploy: since it started), so the targets step at that f32's resolution
+# (under 1 ms for 4.5 h, 15.6 ms from 1.5 days; robot 2026-11-24). false: control ticks
+f32_state_clock = true
 
 # the 1 kHz loop and the policy thread each own an isolated A76 core (AOS isolcpus 0,4-7) at SCHED_FIFO; the
 # controller refuses to run unless both are placed and confirmed (a 20 ms bus gap off a shared core faults the stand)
@@ -716,6 +720,16 @@ retry_settle_ms = 2000
 restore_ms = 2000
 # bin: Open12vPower(3) after SitDown: three charge-enable writes with sleep(2) after each, then the charge check
 power_on_ms = 6000
+# bin Open12vPower: sleep(2) after each charge-enable write; Start, charging: a 3 s (3000000000 ns) wait, then
+# Open12vPower(1), so a write every 5 s (an undock asked for in the sleep waits for its end)
+charge_sleep_ms = 2000
+charge_wait_ms = 3000
+# bin ObstacleDetection::Open: nanosleep 10 ms (0x20f2a0: 0 s, 10000000 ns) when it opens the check
+obstacle_open_ms = 10
+# bin StandUp2WideWalk: MotionState 1, sleep(2), MotionState 17 and Gait 0x3001, then the wait for 0x3001
+stand_rl_control_ms = 2000
+# bin exitPileAction: the -0.8 back-off kick is written 5 times
+back_off_writes = 5
 # ours (the vendor retries a command 3 more times, 5-6 s each, 0xe4): a stand-up, gait switch or lie-down not done
 # in this long fails the sequence
 transition_limit_s = 21.0

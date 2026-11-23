@@ -133,7 +133,9 @@ fn main() -> Result<()> {
             other => bail!("unknown argument {other}"),
         }
     }
-    let cfg = Config::load(&config)?;
+    let mut cfg = Config::load(&config)?;
+    // the states on control ticks: ticks.bin stamps are wall-clock seconds, not rl_deploy's seconds since its start
+    cfg.timing.f32_state_clock = false;
     let bytes = std::fs::read(dir.join("ticks.bin")).context("ticks.bin")?;
     let ticks = Ticks(
         bytes

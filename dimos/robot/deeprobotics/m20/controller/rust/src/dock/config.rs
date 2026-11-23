@@ -150,6 +150,15 @@ pub struct SequenceConfig {
     pub restore_ms: u64,
     /// lying, the power-on (three charge-enable requests 2 s apart) before the charge is checked (ms)
     pub power_on_ms: u64,
+    /// Open12vPower's sleep after each charge-enable write; charging, the wait before the next one (ms)
+    pub charge_sleep_ms: u64,
+    pub charge_wait_ms: u64,
+    /// ObstacleDetection::Open's sleep when it opens the check (ms)
+    pub obstacle_open_ms: u64,
+    /// StandUp2WideWalk: stand, then this long (ms) before rl_control and NaviCharge
+    pub stand_rl_control_ms: u64,
+    /// the back-off kick is written this many times
+    pub back_off_writes: u32,
     /// ours: a stand-up / gait switch / lie-down not done in this long (s) fails the sequence
     pub transition_limit_s: f64,
 }

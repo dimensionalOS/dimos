@@ -81,6 +81,84 @@ pub fn leg_pose_for_height(robot: &Robot, h: f64, hipx: f64) -> [f64; JOINTS] {
     ]
 }
 
+/// rl_deploy's cubic (GetCubicSplinePos, and StandUpState / LieDownState::Run's copies of it; aarch64 disassembly):
+/// the coefficients' numerators in f32 with its fused multiply-adds, each coefficient rounded to f32, the polynomial
+/// in f64, the position and velocity rounded to f32. Holds p1 (velocity 0) from `total` on.
+pub fn vendor_cubic(p0: f32, v0: f32, p1: f32, t: f32, total: f32) -> (f32, f32) {
+    if t >= total {
+        return (p1, 0.0);
+    }
+    let a3n = p0.mul_add(2.0, total.mul_add(v0, -(p1 + p1)));
+    let a2n = (-p0).mul_add(3.0, (-(v0 + v0)).mul_add(total, p1 * 3.0));
+    let td = total as f64;
+    // pow(x, 3.0) of an f32 x: x * x is exact, so this rounds once, as glibc's pow does
+    let a2 = (a2n as f64 / (td * td)) as f32 as f64;
+    let a3 = (a3n as f64 / (td * td * td)) as f32 as f64;
+    let t2 = t as f64 * t as f64;
+    let q = a3.mul_add(t2 * t as f64, a2 * t2);
+    let q = (((v0 * t) as f64 + q) + p0 as f64) as f32;
+    let dq = (a3 * 3.0).mul_add(t2, (a2 + a2) * t as f64);
+    (q, (v0 as f64 + dq) as f32)
+}
+
+/// rl_deploy's leg IK for a hip-to-wheel height (StandUpState's, in f32 with its FMAs and f64 acos): hipy, knee,
+/// each clamped to the front leg's range. `hh`: h x h as it has it (LieDownState folds 0.03 x 0.03 at compile time).
+fn vendor_leg_ik(robot: &Robot, h: f32, hh: Option<f32>) -> (f32, f32) {
+    let (l1, l2) = (robot.thigh_length as f32, robot.shank_length as f32);
+    let clamp = |q: f32, k: usize| {
+        let (lo, hi) = (robot.ik_lower[k] as f32, robot.ik_upper[k] as f32);
+        if q > hi {
+            hi
+        } else if q < lo {
+            lo
+        } else {
+            q
+        }
+    };
+    if h.abs() >= l1 + l2 {
+        // rl_deploy: "error height input", 0
+        return (0.0, 0.0);
+    }
+    let (hipy_num, knee_num) = match hh {
+        None => (
+            (-l2).mul_add(l2, l1.mul_add(l1, h * h)),
+            (-h).mul_add(h, l1.mul_add(l1, l2 * l2)),
+        ),
+        Some(hh) => (
+            (-l2).mul_add(l2, l1.mul_add(l1, hh)),
+            l1.mul_add(l1, l2 * l2) - hh,
+        ),
+    };
+    let hipy = -((hipy_num as f64 / ((h as f64 + h as f64) * l1 as f64)).acos() as f32);
+    let knee = (PI - ((knee_num / ((l1 + l1) * l2)) as f64).acos()) as f32;
+    (clamp(hipy, 1), clamp(knee, 2))
+}
+
+/// The 16 joint targets of an IK leg pose (hipy, knee) with hipx, mirrored as rl_deploy mirrors them.
+fn vendor_pose(hipx: f32, hipy: f32, knee: f32) -> [f32; JOINTS] {
+    [
+        hipx, hipy, knee, 0.0, -hipx, hipy, knee, 0.0, hipx, -hipy, -knee, 0.0, -hipx, -hipy,
+        -knee, 0.0,
+    ]
+}
+
+/// rl_deploy's stand-up / lie-down phase 1 (t <= total): each joint's cubic from the entry (q, dq) to `goal`; the
+/// wheels' velocity 0.
+fn vendor_phase_one(
+    goal: &[f32; JOINTS],
+    q0: &[f64; JOINTS],
+    dq0: &[f64; JOINTS],
+    t: f32,
+    total: f32,
+    c: &mut JointCommand,
+) {
+    for i in 0..JOINTS {
+        let (q, dq) = vendor_cubic(q0[i] as f32, dq0[i] as f32, goal[i], t, total);
+        c.q[i] = q as f64;
+        c.dq[i] = if i % 4 == 3 { 0.0 } else { dq as f64 };
+    }
+}
+
 /// Gains tiled to every joint (Config::validate checks they tile); a list that does not tile gives zero gains.
 fn tiled(v: &[f64]) -> [f64; JOINTS] {
     tile(v, JOINTS)
@@ -149,6 +227,9 @@ pub struct Controller {
     pub state: State,
     state_time: f64,
     time: f64,
+    /// the hardware stamp now and at the state's entry (f32_state_clock)
+    stamp: f64,
+    enter_stamp: f64,
     enter_q: [f64; JOINTS],
     enter_dq: [f64; JOINTS],
     pub fault: Option<String>,
@@ -165,6 +246,8 @@ pub struct Controller {
     runner: Option<String>,
     runner_gains: BTreeMap<String, ([f64; JOINTS], [f64; JOINTS])>,
     targets: Option<Targets>,
+    /// the runner whose step the targets (and gains) are from
+    targets_runner: Option<String>,
     gain_scale: f64,
     reset_pending: bool,
     activate_pending: bool,
@@ -187,6 +270,8 @@ impl Controller {
             state: State::Passive,
             state_time: 0.0,
             time: 0.0,
+            stamp: 0.0,
+            enter_stamp: 0.0,
             enter_q: [0.0; JOINTS],
             enter_dq: [0.0; JOINTS],
             fault: None,
@@ -203,6 +288,7 @@ impl Controller {
             runner: None,
             runner_gains,
             targets: None,
+            targets_runner: None,
             gain_scale: 1.0,
             reset_pending: false,
             activate_pending: false,
@@ -312,7 +398,10 @@ impl Controller {
 
     fn next_state(&self, target: Target) -> State {
         let st = &self.cfg.states;
-        let t = self.state_time;
+        let t = match self.state {
+            State::StandUp | State::LieDown => self.spline_time(),
+            _ => self.state_time,
+        };
         if self.state != State::JointDamping
             && (target == Target::JointDamping || self.fault.is_some())
         {
@@ -363,6 +452,7 @@ impl Controller {
         }
         self.state = next;
         self.state_time = 0.0;
+        self.enter_stamp = s.stamp;
         self.enter_q = s.q;
         self.enter_dq = s.dq;
         let enable = &self.cfg.states.enable;
@@ -381,6 +471,7 @@ impl Controller {
             };
             self.runner = None;
             self.targets = None;
+            self.targets_runner = None;
             self.start_stand_in(self.gait, true);
             self.rl_entries += 1;
         }
@@ -424,6 +515,7 @@ impl Controller {
             self.fault = None;
         }
         self.last_stamp = Some(s.stamp);
+        self.stamp = s.stamp;
         let target = self.effective_target(cmd);
         let next = self.next_state(target);
         if next != self.state {
@@ -484,6 +576,16 @@ impl Controller {
         self.time = time;
     }
 
+    /// Seconds in the state for the stand-up / lie-down splines and limits: rl_deploy's f32(stamp) - f32(entry
+    /// stamp) with f32_state_clock, else control ticks.
+    fn spline_time(&self) -> f64 {
+        if self.cfg.timing.f32_state_clock {
+            (self.stamp as f32 - self.enter_stamp as f32) as f64
+        } else {
+            self.state_time
+        }
+    }
+
     fn constant(&self, kp: &[f64], kd: &[f64]) -> JointCommand {
         let (kp, kd) = gains(kp, kd);
         JointCommand {
@@ -491,6 +593,50 @@ impl Controller {
             kd,
             ..Default::default()
         }
+    }
+
+    /// StandUpState::Run as rl_deploy computes it (f32_state_clock): its f32 clock, cubic, IK and 1 ms difference.
+    fn vendor_stand_up(&self, mut c: JointCommand) -> JointCommand {
+        let p = &self.cfg.states.stand_up;
+        let robot = &self.cfg.robot;
+        let (t, total) = (self.spline_time() as f32, p.phase_s as f32);
+        let hipx = p.hipx as f32;
+        if t <= total {
+            let (hipy, knee) = vendor_leg_ik(robot, p.crouch_height as f32, None);
+            let goal = vendor_pose(hipx, hipy, knee);
+            vendor_phase_one(&goal, &self.enter_q, &self.enter_dq, t, total, &mut c);
+            return c;
+        }
+        let (h0, h1) = (p.crouch_height as f32, p.stand_height as f32);
+        let tt = t - total;
+        let h = if tt < total {
+            vendor_cubic(h0, 0.0, h1, tt, total).0
+        } else {
+            h1
+        };
+        // the height 1 ms on (0.001 as an f32)
+        let step = 0.001f32;
+        let h_next = if tt < total && tt + step < total {
+            vendor_cubic(h0, 0.0, h1, tt + step, total).0
+        } else {
+            h1
+        };
+        let (hipy, knee) = vendor_leg_ik(robot, h, None);
+        let (hipy_next, knee_next) = vendor_leg_ik(robot, h_next, None);
+        let q = vendor_pose(hipx, hipy, knee);
+        let (dhipy, dknee) = ((hipy_next - hipy) / step, (knee_next - knee) / step);
+        for i in 0..JOINTS {
+            c.q[i] = q[i] as f64;
+            // hipx and the wheels: 0 (not mirrored); hind hipy / knee negated
+            c.dq[i] = match (i % 4, i >= 8) {
+                (1, false) => dhipy as f64,
+                (2, false) => dknee as f64,
+                (1, true) => -dhipy as f64,
+                (2, true) => -dknee as f64,
+                _ => 0.0,
+            };
+        }
+        c
     }
 
     fn stand_up(&self) -> JointCommand {
@@ -501,7 +647,10 @@ impl Controller {
             kd,
             ..Default::default()
         };
-        let (t, total) = (self.state_time, p.phase_s);
+        if self.cfg.timing.f32_state_clock {
+            return self.vendor_stand_up(c);
+        }
+        let (t, total) = (self.spline_time(), p.phase_s);
         if t <= total {
             let goal = leg_pose_for_height(&self.cfg.robot, p.crouch_height, p.hipx);
             for (i, &target) in goal.iter().enumerate() {
@@ -538,7 +687,7 @@ impl Controller {
     fn lie_down(&self) -> JointCommand {
         let p = &self.cfg.states.lie_down;
         let (kp, kd) = gains(&p.kp, &p.kd);
-        let (t, total) = (self.state_time, p.phase_s);
+        let (t, total) = (self.spline_time(), p.phase_s);
         if t > 2.0 * total {
             return JointCommand::default();
         }
@@ -548,12 +697,27 @@ impl Controller {
                 ..Default::default()
             };
         }
-        let goal = leg_pose_for_height(&self.cfg.robot, p.lie_height, p.hipx);
         let mut c = JointCommand {
             kp,
             kd,
             ..Default::default()
         };
+        if self.cfg.timing.f32_state_clock {
+            // LieDownState::Run: its goal's h x h folded to an f32 at compile time
+            let h = p.lie_height as f32;
+            let (hipy, knee) = vendor_leg_ik(&self.cfg.robot, h, Some(h * h));
+            let goal = vendor_pose(p.hipx as f32, hipy, knee);
+            vendor_phase_one(
+                &goal,
+                &self.enter_q,
+                &self.enter_dq,
+                t as f32,
+                total as f32,
+                &mut c,
+            );
+            return c;
+        }
+        let goal = leg_pose_for_height(&self.cfg.robot, p.lie_height, p.hipx);
         for (i, &target) in goal.iter().enumerate() {
             (c.q[i], c.dq[i]) = cubic(self.enter_q[i], self.enter_dq[i], target, 0.0, t, total);
             if i % 4 == 3 {
@@ -599,7 +763,9 @@ impl Controller {
             }
             None => {
                 // a gait change after entry (rl_deploy's gait-change marker) is followed as is
+                // (a change of the commanded gait since the last one: switching back to the entry gait counts)
                 let gait = if cmd.gait != self.entry_raw_gait {
+                    self.entry_raw_gait = cmd.gait;
                     cmd.gait
                 } else {
                     self.gait
@@ -618,18 +784,23 @@ impl Controller {
             }
         };
         if self.runner.as_deref() != Some(wanted.as_str()) {
+            // rl_deploy's policy thread keeps its 50 Hz cadence through a switch (robot, 2026-11-24); a fresh
+            // rl_control steps at once
+            if self.runner.is_none() {
+                self.since_offer = self.cfg.timing.policy_decimation;
+                self.gain_scale = 1.0;
+            }
             self.runner = Some(wanted.clone());
             // rl_deploy keeps one object per runner: its history and last action carry over to the next use
             self.reset_pending = false;
             self.activate_pending = true;
-            self.since_offer = self.cfg.timing.policy_decimation;
-            self.gain_scale = 1.0;
         }
         if let Some(result) = policy.take_result() {
             if result.runner == wanted {
                 match result.targets {
                     Ok(t) => {
                         self.targets = Some(t);
+                        self.targets_runner = Some(result.runner.clone());
                         self.gain_scale = result.gain_scale;
                         self.counters.policy_steps += 1;
                         self.counters.last_inference_s = result.inference_s;
@@ -661,9 +832,11 @@ impl Controller {
                 self.counters.policy_offers_refused += 1;
             }
         }
+        // the previous runner's gains (and scale) hold until the new runner's first step lands, as its targets do
+        let gains_of = self.targets_runner.as_ref().unwrap_or(&wanted);
         let (mut kp, mut kd) = self
             .runner_gains
-            .get(&wanted)
+            .get(gains_of)
             .copied()
             .unwrap_or(([0.0; JOINTS], [0.0; JOINTS]));
         // legs only: on the robot NaviCharge's x1.3 start-up gains left the wheels' kd at 0.6

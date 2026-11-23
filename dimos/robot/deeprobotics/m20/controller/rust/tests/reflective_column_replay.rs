@@ -19,8 +19,9 @@
 //! and outlier removal, each cluster's z / y ratio, the posts' point counts, their centres and the position and yaw.
 //!
 //! The captures (each skipped, saying so, when absent): ~/datasets/m20/recording_20261120_163604/lidar_raw.pcap
-//! (2026-11-20 16:36-16:38 CST: an undock and a dock from ~1.8 m) and ~/datasets/m20/dock_rec_20261121/
-//! lidar_20261121_132117.pcap (2026-11-21 13:21-13:28: docks and undocks), against the logs cut from those days'
+//! (2026-11-20 16:36-16:38 CST: an undock and a dock from ~1.8 m), ~/datasets/m20/dock_rec_20261121/
+//! lidar_20261121_132117.pcap (2026-11-21 13:21-13:28: docks and undocks) and ~/datasets/m20/dock_rec_20261124/nos/
+//! lidar_20261124_054951.pcap (2026-11-24 05:50-05:52: an undock and a dock), against the logs cut from those days'
 //! (tests/fixtures). M20_DOCK_PCAP + M20_DOCK_RC_LOG (a raw /var/opt/robot/log/<day>/reflective_column_node.<day>.log,
 //! or .gz) run one other capture instead.
 
@@ -235,6 +236,10 @@ fn every_logged_sweep_matches_reflective_column_node() {
             home.join("datasets/m20/dock_rec_20261121/lidar_20261121_132117.pcap"),
             fixture("reflective_column_node_20261121_1321.log.gz"),
         ),
+        (
+            home.join("datasets/m20/dock_rec_20261124/nos/lidar_20261124_054951.pcap"),
+            fixture("reflective_column_node_20261124.log.gz"),
+        ),
     ];
     if let Some(pcap) = std::env::var_os("M20_DOCK_PCAP") {
         let log = std::env::var_os("M20_DOCK_RC_LOG").expect("M20_DOCK_PCAP needs M20_DOCK_RC_LOG");
@@ -244,7 +249,7 @@ fn every_logged_sweep_matches_reflective_column_node() {
         if pcap.exists() {
             check(&pcap, &log);
         } else {
-            println!("no capture at {}: skipped", pcap.display());
+            eprintln!("\n*** SKIPPED: no capture at {} ***\n", pcap.display());
         }
     }
 }

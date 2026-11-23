@@ -59,6 +59,10 @@ pub struct Robot {
 pub struct Timing {
     pub control_hz: f64,
     pub policy_decimation: u64,
+    /// stand-up / lie-down time as rl_deploy keeps it: the hardware stamp (s since the bus opened) cast to f32, now
+    /// minus entry (its splines step at the f32 resolution of that stamp); false: control ticks
+    #[serde(default)]
+    pub f32_state_clock: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

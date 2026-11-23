@@ -57,7 +57,8 @@ pub fn motor_commands(
                 // protocol constant: the M20's one motor board (m20-ecan, rl_deploy's frames)
                 board_id: 0x79,
                 joint,
-                position: calibration.motor_position(joint, cmd.q[i] as f32),
+                // rl_deploy's f32 conversion (Calibration::m20's offsets, as rl_deploy rounds them)
+                position: crate::frames::vendor_motor_position(i, cmd.q[i] as f32),
                 velocity: calibration.urdf_rate(joint, cmd.dq[i] as f32),
                 torque: calibration.urdf_rate(joint, cmd.tau[i] as f32),
                 kp: cmd.kp[i] as f32,
@@ -75,7 +76,13 @@ pub fn robot_state(joints: &[m20_ecan::JointState], calibration: &Calibration) -
     for j in joints {
         let i = j.joint.index();
         if i < JOINTS {
-            s.q[i] = calibration.urdf_position(j.joint, j.position) as f64;
+            let q = crate::frames::vendor_joint_position(i, j.position);
+            // single-turn hip / knee encoders into (-pi, pi] (only ever off when the encoder wraps)
+            s.q[i] = if i % 4 == 3 || (-std::f32::consts::PI < q && q <= std::f32::consts::PI) {
+                q as f64
+            } else {
+                calibration.urdf_position(j.joint, j.position) as f64
+            };
             s.dq[i] = calibration.urdf_rate(j.joint, j.velocity) as f64;
             s.tau[i] = calibration.urdf_rate(j.joint, j.torque) as f64;
         }
@@ -90,6 +97,10 @@ pub struct BusHardware {
     imu: Box<dyn ImuSource>,
     sink: Sink,
     charge: Option<BusCharge>,
+    /// m20-battery's rule decides requests (off: only request_charge_enable does)
+    charge_rule: bool,
+    /// ticks still to send a requested charge-enable frame in place of the command
+    charge_ticks: usize,
     reply_timeout: Duration,
     started: std::time::Instant,
     last: Option<RobotState>,
@@ -112,10 +123,27 @@ impl BusHardware {
             imu,
             sink,
             charge: charge_enable.then(BusCharge::new),
+            charge_rule: true,
+            charge_ticks: 0,
             reply_timeout: Duration::from_secs_f64(reply_timeout_s),
             started: std::time::Instant::now(),
             last: None,
         })
+    }
+
+    /// A charge-enable request from the dock sequence (charge_manager's /BATTERY_CHARGE_ENABLE 1), as rl_deploy sends
+    /// it: 3 frames on the next 3 ticks in place of whatever command they had (stand, lie-down or enable frames).
+    /// Nothing unless built with charge_enable.
+    pub fn request_charge_enable(&mut self) {
+        if self.charge.is_some() {
+            self.bus.owner.queue_charge_enable();
+            self.charge_ticks = m20_battery::charge::FRAMES_PER_REQUEST;
+        }
+    }
+
+    /// m20-battery's own lie-down / battery-report rule on (the default) or off (the dock sequence sends requests).
+    pub fn set_charge_rule(&mut self, on: bool) {
+        self.charge_rule = on;
     }
 
     /// Still sending rl_deploy's startup (status words are not yet meaningful).
@@ -130,7 +158,7 @@ impl BusHardware {
     fn see(&mut self, t: u64, direction: Direction, frame: &[u8]) -> Option<RobotState> {
         (self.sink)(t, direction, frame);
         if let Some(charge) = self.charge.as_mut() {
-            if charge.on_frame(direction, frame) {
+            if charge.on_frame(direction, frame) && self.charge_rule {
                 self.bus.owner.queue_charge_enable();
             }
         }
@@ -143,20 +171,29 @@ impl BusHardware {
     }
 
     /// Send one tick and take what came back; the joint state of this tick's reply if it arrived in time.
-    fn step(&mut self, commands: Option<&[m20_ecan::JointCommand]>) -> Result<Option<RobotState>> {
+    /// A charge-enable frame went out (the board answers none: no reply is waited for).
+    fn step(
+        &mut self,
+        commands: Option<&[m20_ecan::JointCommand]>,
+    ) -> Result<(Option<RobotState>, bool)> {
+        let mut wait_reply = true;
         if let Some(sent) = self.bus.tick(commands)? {
+            wait_reply = !matches!(
+                decode_ethernet(&sent.frame, sent.direction),
+                Ok((_, Message::ChargeEnable))
+            );
             self.see(sent.timestamp_ns, sent.direction, &sent.frame);
         }
         let mut state = None;
         for f in self.bus.drain() {
             state = self.see(f.timestamp_ns, f.direction, &f.frame).or(state);
         }
-        if state.is_none() {
+        if state.is_none() && wait_reply {
             if let Some(f) = self.bus.recv_timeout(self.reply_timeout) {
                 state = self.see(f.timestamp_ns, f.direction, &f.frame);
             }
         }
-        Ok(state)
+        Ok((state, !wait_reply))
     }
 
     fn with_imu(&mut self, mut s: RobotState) -> Result<RobotState> {
@@ -181,20 +218,33 @@ impl Hardware for BusHardware {
                     return self.with_imu(s);
                 }
             }
-            if let Some(s) = self.step(None)? {
+            if let (Some(s), _) = self.step(None)? {
                 self.last = Some(s);
             }
         }
     }
 
     fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {
+        // a requested charge-enable frame goes out in place of this tick's command (the owner swaps it in only for a
+        // command that holds nothing)
+        let cmd = if self.charge_ticks > 0 {
+            self.charge_ticks -= 1;
+            &JointCommand::default()
+        } else {
+            cmd
+        };
         let commands = motor_commands(cmd, &self.calibration);
         match self.step(Some(&commands))? {
-            Some(s) => {
+            (Some(s), _) => {
                 self.last = Some(s.clone());
                 self.with_imu(s)
             }
-            None => bail!("no joint-state reply within {:?}", self.reply_timeout),
+            // the board does not answer a charge-enable frame: the tick runs on the last state, as rl_deploy's does
+            (None, true) if self.last.is_some() => {
+                let s = self.last.clone().unwrap_or_default();
+                self.with_imu(s)
+            }
+            (None, _) => bail!("no joint-state reply within {:?}", self.reply_timeout),
         }
     }
 }

@@ -51,6 +51,23 @@ pub fn vendor_calibration() -> (Vec<f64>, Vec<f64>) {
     (offset, VENDOR_DIRECTION.to_vec())
 }
 
+/// rl_deploy's joint angle from a motor angle (EcanHardwareInterface::Handler, its FMA): f32(deg / 180 x pi +
+/// motor x direction), the sum in f64; hips and knees left as they are (rl_deploy does not wrap them).
+pub fn vendor_joint_position(i: usize, motor: f32) -> f32 {
+    let deg = VENDOR_OFFSET_DEG[i] as f32 as f64;
+    (deg / 180.0).mul_add(
+        std::f64::consts::PI,
+        (motor * VENDOR_DIRECTION[i] as f32) as f64,
+    ) as f32
+}
+
+/// rl_deploy's motor angle for a joint target (EcanHardwareInterface::SetJointCommand): (q - offset) x direction in
+/// f32, its offset f32(f32(deg / 180) x pi).
+pub fn vendor_motor_position(i: usize, q: f32) -> f32 {
+    let offset = ((VENDOR_OFFSET_DEG[i] as f32 / 180.0) as f64 * std::f64::consts::PI) as f32;
+    (q - offset) * VENDOR_DIRECTION[i] as f32
+}
+
 /// Joint index (robot order) of a unit: can_ch = leg 0..3, can_id = 2 hipx, 3 hipy, 4 knee, 5 wheel.
 pub fn joint_index(can_ch: u8, can_id: u16) -> Option<usize> {
     if can_ch < 4 && (2..=5).contains(&can_id) {
@@ -68,6 +85,8 @@ pub struct Mapping {
     pub board_id: u8,
     pub control_word: u16,
     pub enable_control_word: u16,
+    /// the vendor calibration: positions convert in f32 as rl_deploy converts them
+    pub vendor: bool,
 }
 
 impl Mapping {
@@ -80,11 +99,23 @@ impl Mapping {
             board_id: cfg.board_id,
             control_word: cfg.control_word,
             enable_control_word: cfg.enable_control_word,
+            vendor: {
+                let (offset, direction) = vendor_calibration();
+                tile(&cfg.position_offset, JOINTS)? == offset
+                    && tile(&cfg.direction, JOINTS)? == direction
+            },
         })
     }
 
     fn to_joint(&self, i: usize, motor: f64) -> f64 {
-        let q = self.direction[i] * (motor - self.offset[i]);
+        let q = if self.vendor {
+            vendor_joint_position(i, motor as f32) as f64
+        } else {
+            self.direction[i] * (motor - self.offset[i])
+        };
+        if self.vendor && (i % 4 == 3 || (-std::f64::consts::PI < q && q <= std::f64::consts::PI)) {
+            return q;
+        }
         // single-turn hip / knee encoders: the (-pi, pi] branch, as the vendor picks at startup; wheels accumulate
         if i % 4 == 3 {
             q
@@ -118,7 +149,12 @@ pub fn encode_command(
             payload.extend_from_slice(&[0u8; 16]);
             payload.extend_from_slice(&map.enable_control_word.to_le_bytes());
         } else {
-            payload.extend_from_slice(&((cmd.q[i] / dir + map.offset[i]) as f32).to_le_bytes());
+            let motor = if map.vendor {
+                vendor_motor_position(i, cmd.q[i] as f32)
+            } else {
+                (cmd.q[i] / dir + map.offset[i]) as f32
+            };
+            payload.extend_from_slice(&motor.to_le_bytes());
             payload.extend_from_slice(&((cmd.dq[i] / dir) as f32).to_le_bytes());
             payload.extend_from_slice(&((cmd.tau[i] / dir) as f32).to_le_bytes());
             payload.extend_from_slice(&gain_i16(cmd.kp[i], map.kp_scale).to_le_bytes());

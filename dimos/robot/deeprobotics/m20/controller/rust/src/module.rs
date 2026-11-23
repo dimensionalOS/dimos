@@ -42,7 +42,7 @@ use m20_ecan::Direction;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use crate::dock::docking::{DockFeed, Request};
+use crate::dock::docking::{DockFeed, Request, CHARGE_ENABLE_PARAM, CHARGE_ENABLE_SEQ_PARAM};
 use crate::dock::vendor::ChargeManagerToml;
 use crate::dock::{ChargeReading, DockPose};
 use crate::hardware::ecan::{ImuSample, ImuSource};
@@ -706,6 +706,8 @@ fn run_policy(
         allow_gains = cfg.ecan.allow_gains,
         "owning the motor bus with the walking policy: rl_deploy's startup, then 1 kHz"
     );
+    // charge_manager's charge-enables come from the dock sequence (rl_deploy has no rule of its own)
+    hardware.set_charge_rule(false);
     let docking = Docking::new(&cfg, cfg.ecan.charge_enable, None);
     let mut commands = DockingCommands::new(
         SharedCommands {
@@ -723,6 +725,7 @@ fn run_policy(
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let mut last: Option<Status> = None;
     let mut last_height = f64::NAN;
+    let mut charge_enable_seq = 0.0;
     let result = rt::run(
         &cfg,
         &mut hardware,
@@ -733,6 +736,17 @@ fn run_policy(
         &shared.stop,
         |hw, tick| {
             startup_done.store(!hw.in_startup(), Ordering::Relaxed);
+            let p = &tick.user.params;
+            if let (Some(&v), Some(&seq)) =
+                (p.get(CHARGE_ENABLE_PARAM), p.get(CHARGE_ENABLE_SEQ_PARAM))
+            {
+                if seq != charge_enable_seq {
+                    charge_enable_seq = seq;
+                    if v == 1.0 {
+                        hw.request_charge_enable();
+                    }
+                }
+            }
             let height =
                 obstacle::body_height(&cfg.robot, &tick.state.q, cfg.dock.obstacle.wheel_radius_m);
             if !((height - last_height).abs() < cfg.dock.obstacle.body_height_step_m) {

@@ -577,7 +577,13 @@ policies match to float precision once their state lines up. Rules this settled 
 - On entering stand_up, lie_down and rl_control rl_deploy sends 3 enable frames (raw zeros, control word 2); the
   state's clock starts at the first of them. Stand-up / lie-down also spline the wheels' position targets to 0
   (velocity 0); the IK clamps to the front leg's ControlParameters range (knee 2.793) before mirroring.
-- rl_deploy times its splines on a wall clock that slips by a tick now and then (up to 0.001 rad here).
+- rl_deploy times its splines on a wall clock that slips by a tick now and then (up to 0.001 rad here). That clock is
+  f32(seconds since rl_deploy started), each reply's arrival (EcanHardwareInterface::Handler), now minus entry in f32
+  (StandUp / LieDownState): after 1.5 days up its stand-up and lie-down targets step every 1/64 s (robot, 2026-11-24),
+  and its 3 s / 4 s limits fall on that grid. The Rust controller keeps it ([timing] f32_state_clock, the stamp being
+  seconds since the bus opened) with rl_deploy's f32 arithmetic and FMAs (aarch64 disassembly): the cubic's
+  coefficients, the IK, the 1 ms difference of phase 2, the joint / motor angle conversions
+  (tests/ecan_dock_rec_20261124.rs).
 - Runners keep their history, last action and phase across gait switches and rl_control entries; start-up gains
   (NaviCharge x1.3, 29 steps, legs only) restart on every switch to the runner.
 - The gait phase advances before it is observed. 36-frame runners, when fresh, hold the default pose for 37 steps
@@ -653,6 +659,36 @@ At the fine point the two agree to about a millimetre. The approach's +2 cm acro
 in from 0.2 m to the side, is not explained by a frame convention; the likeliest cause is the body's roll while
 stepping sideways (the detector takes base_link as level; the sim shows the same few-mm effect standing).
 charge_manager's own detector glitched on 5 of 67 undock poses (0.45-0.5 m across for one sweep).
+
+## Checked against a fresh vendor dock (2026-11-24 recording, `tests/dock_rec_20261124.rs`)
+
+Recorded with the vendor stack running (NOS: both Airys' raw multicast, every UDP 7400-7700 DDS packet, charge_manager
+and reflective_column_node logs; AOS: rl_deploy's ECAN both ways, DDS, logs): an undock from charging (05:50:23),
+the operator driving, a dock (05:51:07) and the charge confirmed (05:51:31). NOS-local DDS (/LIDAR/POINTS, the
+detector's pose) is shared memory and in no capture, and so is the body IMU on AOS that day.
+
+- Detector: every sweep reflective_column_node logged (390) decoded from the raw capture and run through ours: every
+  logged value (point counts, cluster ratios, post counts, centres, position) as it prints it (`reflective_column_replay`
+  with the capture; `dock_rec_20261124` checks its committed per-sweep poses against the capture bit for bit).
+- Sequence: [`Docking`] fed what charge_manager was fed (rl_deploy's /MOTION_INFO and /BATTERY_DATA as they reached
+  NOS, the ChargeEnable calls and obstacle readings from its log, our detector's poses when reflective_column_node
+  published each) writes what charge_manager wrote to rl_deploy, decoded from the RTPS in the capture (dr_msgs
+  Steer / MotionState / Gait / StdMsgInt32): all 197 the same and in the same order (4 MotionState: 1, 17, 17 restored, 4; 4 Gait: 0x3001,
+  0x3003 restored, 0x3001, 0x3004; 179 Steer, every float bit for bit; 10 charge-enables: 1 every 5 s charging, 0 at
+  the undock's start and end, 1 x 3 at the power-on). 175 on charge_manager's 1 ms tick (within 0.65 ms of the wire);
+  the 18 stops of the undock's pose waits drift up to 3.9 ms later (its 200 ms wait restarts after its own log line
+  and write, ~0.2 ms a wait; ours is 200 ticks); the charge-enable 0 ending the undock is 124 ms later and the
+  charging loop's after the dock 57 ms later (charge_manager closing its detector process over service calls first;
+  ours has none to call). The charge is confirmed on charge_manager's tick. The undock's goal comes from the dock
+  before the recording and is in the log to 6 decimals only: its x is taken as the f32 one ULP off the printed value
+  that the undock's steers imply.
+- New from this recording (charge_manager's binary, now in [`Docking`]): StandUp2WideWalk stands (1), waits 2 s, then
+  rl_control (17) with NaviCharge; ObstacleDetection::Open sleeps 10 ms; the back-off kick goes out 5 times; WideWalk
+  writes the gait only off NaviCharge; the charging loop writes a charge-enable every 5 s (3 s wait, write, 2 s
+  sleep) and an undock asked for during the sleep starts at its end (1.35 s here); the undock writes charge-enable 0
+  at its start and end and restores the motion state, then 2 s later the gait. rl_deploy turns each charge-enable 1
+  into 3 board frames on its next ticks and has no charge rule of its own, so the controller sends the dock
+  sequence's and m20-battery's own rule is off in the policy loop.
 
 ## Building the controller for the robot
 

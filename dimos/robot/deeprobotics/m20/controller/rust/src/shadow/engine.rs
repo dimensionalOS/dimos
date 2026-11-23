@@ -119,7 +119,10 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(cfg: Config, scfg: ShadowConfig, runners: RunnerSet, logger: Logger) -> Engine {
-        let mut controller = Controller::new(cfg.clone());
+        // the states run on control ticks: rl_deploy's f32 clock counts from its own start, which the shadow cannot see
+        let mut tick_clock = cfg.clone();
+        tick_clock.timing.f32_state_clock = false;
+        let mut controller = Controller::new(tick_clock);
         controller.set_fault_checks(false);
         let runner_names = cfg.runners.keys().cloned().collect();
         Engine {
