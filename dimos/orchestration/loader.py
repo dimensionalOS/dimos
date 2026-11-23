@@ -51,8 +51,13 @@ class LoadError(Exception):
 def load_and_check(path: str | Path) -> OrchestratorDefinition:
     """Read an orchestrator file and run the static checks. Raises `LoadError` with every problem."""
     path = Path(path)
+    return check_source(path.read_text(), path)
+
+
+def check_source(source: str, path: Path) -> OrchestratorDefinition:
+    """`load_and_check` for text not yet written to `path`."""
     try:
-        raw: dict[str, JsonValue] = tomllib.loads(path.read_text())
+        raw: dict[str, JsonValue] = tomllib.loads(source)
     except tomllib.TOMLDecodeError as error:
         raise LoadError(path, [f"not valid TOML: {error}"]) from None
     data = _renamed(raw, _FILE_TABLES)
