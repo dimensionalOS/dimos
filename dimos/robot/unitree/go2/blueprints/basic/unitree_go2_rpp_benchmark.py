@@ -25,7 +25,7 @@ talks to it over LCM topics —
 
     Benchmarker.path  -> /path           -> coordinator arms the follower
     Benchmarker.speed -> /speed          -> coordinator retunes the follower
-    Benchmarker.odom  <- /go2/odom       -- the executed pose
+    Benchmarker.odometry <- /go2/odometry -- the executed pose
     Benchmarker.cmd_vel <- /cmd_vel      -- the command sent to the robot
     Benchmarker.operator_command <- /benchmark/gate -- operator advance/skip/quit (teleop)
 
@@ -36,7 +36,7 @@ different controller just by composing a different one here.)
 
 Run (one terminal). Focus the pygame window: WASD to position the robot, then
 ENTER to start each run (K=skip, Backspace=quit). Completion is detected from
-odom automatically::
+odometry automatically::
 
     dimos run unitree-go2-rpp-benchmark
     # afterwards, score offline (the benchmark logs the recordings dir on start):
@@ -54,16 +54,16 @@ from dimos.control.benchmarking.benchmark import Benchmarker
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller import (
     unitree_go2_rpp_controller,
 )
 
-# The Benchmarker's ``odom`` In must read the same topic the controller emits leg
-# odom on (/go2/odom). path/speed/cmd_vel/operator_command already share names+topics with
+# The Benchmarker's ``odometry`` In must read the same topic the controller emits leg
+# odometry on (/go2/odometry). path/speed/cmd_vel/operator_command already share names+topics with
 # the controller blueprint, so they wire up by the controller's transports.
 _BENCHMARK_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
-    ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+    ("odometry", Odometry): LCMTransport("/go2/odometry", Odometry),
 }
 
 

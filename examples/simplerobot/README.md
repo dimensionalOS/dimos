@@ -7,9 +7,9 @@ A minimal virtual robot for testing and development. It implements some of the s
 | Topic      | Type          | Direction | Description                             |
 |------------|---------------|-----------|-----------------------------------------|
 | `/cmd_vel` | `Twist`       | Subscribe | Velocity commands (linear.x, angular.z) |
-| `/odom`    | `PoseStamped` | Publish   | Current pose at 30Hz                    |
+| `/odometry` | `Odometry`   | Publish   | Current pose + commanded twist at 30Hz  |
 
-Physical robots typically publish multiple poses in a relationship as `TransformStamped` in a TF tree, while SimpleRobot publishes `PoseStamped` directly for simplicity.
+Physical robots typically publish multiple poses in a relationship as `TransformStamped` in a TF tree, while SimpleRobot publishes `Odometry` directly for simplicity.
 
 For details on this check [Transforms](/docs/usage/transforms.md)
 

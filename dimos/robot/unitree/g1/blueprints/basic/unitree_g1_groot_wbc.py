@@ -288,10 +288,11 @@ if global_config.simulation == "mujoco":
 
     # Sim backend: MuJoCo engine via SHM.
     _backend, _adapter_address = _scene_mujoco_backend()
-    # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
-    # now - the coordinator no longer polls the whole-body adapter for
-    # base pose (read_odom was dropped from the Protocol). autoconnect
-    # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
+    # MujocoSimModule's ``odometry`` Out is the sole producer of
+    # ``/odometry`` now - the coordinator no longer polls the whole-body
+    # adapter for base pose (read_odom was dropped from the Protocol).
+    # autoconnect maps ``(odometry, Odometry)`` to ``/odometry`` by
+    # default; no override.
 
     _tick_rate = 50.0
     _auto_arm = True

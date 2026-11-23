@@ -286,8 +286,6 @@ def r1pro_control(
                 # did through the whole-body adapter; the torso IMU stays a
                 # plain bus stream.
                 (R1ProCoordinator, "r1pro_imu", "imu_chassis"),
-                # Keeps its name for the navigation consumers that read it.
-                (R1ProConnection, "odom", "chassis_odom"),
                 (HeadLeftCamera, "jpeg_out", "head_left_color"),
                 (HeadRightCamera, "jpeg_out", "head_right_color"),
                 (HeadCameraInfo, "left_info", "head_left_info"),

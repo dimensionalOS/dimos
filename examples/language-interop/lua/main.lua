@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 
 -- Lua robot control example
--- Subscribes to robot pose and publishes twist commands
+-- Subscribes to robot odometry and publishes twist commands
 
 -- Add local msgs folder to path
 local script_dir = arg[0]:match("(.*/)")  or "./"
@@ -9,23 +9,24 @@ package.path = script_dir .. "msgs/?.lua;" .. package.path
 package.path = script_dir .. "msgs/?/init.lua;" .. package.path
 
 local lcm = require("lcm")
-local PoseStamped = require("geometry_msgs.PoseStamped")
+local Odometry = require("nav_msgs.Odometry")
 local Twist = require("geometry_msgs.Twist")
 local Vector3 = require("geometry_msgs.Vector3")
 
 local lc = lcm.lcm.new()
 
 print("Robot control started")
-print("Subscribing to /odom, publishing to /cmd_vel")
+print("Subscribing to /odometry, publishing to /cmd_vel")
 print("Press Ctrl+C to stop.\n")
 
--- Subscribe to pose
-lc:subscribe("/odom#geometry_msgs.PoseStamped", function(channel, msg)
-  msg = PoseStamped.decode(msg)
-  local pos = msg.pose.position
-  local ori = msg.pose.orientation
-  print(string.format("[pose] x=%.2f y=%.2f z=%.2f | qw=%.2f",
-    pos.x, pos.y, pos.z, ori.w))
+-- Subscribe to odometry
+lc:subscribe("/odometry#nav_msgs.Odometry", function(channel, msg)
+  msg = Odometry.decode(msg)
+  local pos = msg.pose.pose.position
+  local ori = msg.pose.pose.orientation
+  local lin = msg.twist.twist.linear
+  print(string.format("[odometry] x=%.2f y=%.2f z=%.2f | qw=%.2f | vx=%.2f",
+    pos.x, pos.y, pos.z, ori.w, lin.x))
 end)
 
 -- Publisher loop

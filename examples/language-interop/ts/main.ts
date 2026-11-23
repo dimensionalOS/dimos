@@ -4,21 +4,22 @@
 // Subscribes to robot odometry and publishes twist commands
 
 import { LCM } from "@dimos/lcm";
-import { geometry_msgs } from "@dimos/msgs";
+import { geometry_msgs, nav_msgs } from "@dimos/msgs";
 
 const lcm = new LCM();
 await lcm.start();
 
 console.log("Robot control started");
-console.log("Subscribing to /odom, publishing to /cmd_vel");
+console.log("Subscribing to /odometry, publishing to /cmd_vel");
 console.log("Press Ctrl+C to stop.\n");
 
-// Subscribe to pose - prints robot position
-lcm.subscribe("/odom", geometry_msgs.PoseStamped, (msg) => {
-  const pos = msg.data.pose.position;
-  const ori = msg.data.pose.orientation;
+// Subscribe to odometry - prints robot position and body velocity
+lcm.subscribe("/odometry", nav_msgs.Odometry, (msg) => {
+  const pos = msg.data.pose.pose.position;
+  const ori = msg.data.pose.pose.orientation;
+  const lin = msg.data.twist.twist.linear;
   console.log(
-    `[pose] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)} | qw=${ori.w.toFixed(2)}`
+    `[odometry] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)} | qw=${ori.w.toFixed(2)} | vx=${lin.x.toFixed(2)}`
   );
 });
 

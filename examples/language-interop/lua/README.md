@@ -28,11 +28,11 @@ lua main.lua
 
 ```
 Robot control started
-Subscribing to /odom, publishing to /cmd_vel
+Subscribing to /odometry, publishing to /cmd_vel
 Press Ctrl+C to stop.
 
-[pose] x=15.29 y=9.62 z=0.00 | qw=0.57
+[odometry] x=15.29 y=9.62 z=0.00 | qw=0.57 | vx=0.50
 [twist] linear=0.50 angular=0.00
-[pose] x=15.28 y=9.63 z=0.00 | qw=0.57
+[odometry] x=15.28 y=9.63 z=0.00 | qw=0.57 | vx=0.50
 ...
 ```
