@@ -16,8 +16,8 @@ from collections.abc import Iterator
 
 import pytest
 
+from dimos.hardware.controllers.esp32_gesture.esp32_gesture_teleop import Esp32GestureTeleop
 from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.teleop.esp32.esp32_gesture_teleop import Esp32GestureTeleop
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def test_gesture_is_published_as_a_tap_on_joy(module: Esp32GestureTeleop, mocker
     publish = mocker.patch.object(module.gesture_joy, "publish")
 
     module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
-    module._on_payload(bytes([0, 1, 2, 35, 2]), now=0.1)  # STAND
+    module._on_payload(bytes([0, 1, 2, 35, 2]), now=0.1)  # B
 
     press, release = published(publish)
     assert press.buttons == [0, 1]
@@ -92,10 +92,10 @@ def test_press_is_held_until_the_release(mocker) -> None:
     publish = mocker.patch.object(module.gesture_joy, "publish")
     try:
         module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
-        module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # STAND, release pending
+        module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # B, release pending
         assert [msg.buttons for msg in published(publish)] == [[0, 1]]
 
-        module._on_payload(bytes([0, 2, 1, 20, 3]), now=0.2)  # SIT releases STAND first
+        module._on_payload(bytes([0, 2, 1, 20, 3]), now=0.2)  # A releases B first
         assert [msg.buttons for msg in published(publish)] == [[0, 1], [0, 0], [1, 0]]
     finally:
         module.stop()  # stop sends the last pending release
@@ -131,11 +131,11 @@ def test_stale_timer_does_not_release_a_newer_tap(mocker) -> None:
     publish = mocker.patch.object(module.gesture_joy, "publish")
     try:
         module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
-        module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # STAND
+        module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # B
         stale = module._release_timer
-        module._on_payload(bytes([0, 2, 1, 20, 3]), now=0.2)  # SIT replaces STAND's timer
+        module._on_payload(bytes([0, 2, 1, 20, 3]), now=0.2)  # A replaces B's timer
         assert stale is not None
-        module._release_after_hold(stale)  # STAND's timer fires late
+        module._release_after_hold(stale)  # B's timer fires late
         assert [msg.buttons for msg in published(publish)] == [[0, 1], [0, 0], [1, 0]]
     finally:
         module.stop()

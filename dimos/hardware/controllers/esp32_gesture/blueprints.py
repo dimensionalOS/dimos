@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.teleop.esp32.esp32_gesture_teleop import Esp32GestureTeleop
+from dimos.hardware.controllers.esp32_gesture.esp32_gesture_teleop import Esp32GestureTeleop
 
-# ESP32 gesture sensor -> Joy on `joystick`. Input only: nothing here moves a robot.
+# ESP32 gesture sensor -> Joy on `gesture_joy`. Input only: nothing here moves a robot.
 teleop_esp32 = autoconnect(
     Esp32GestureTeleop.blueprint(),
 )

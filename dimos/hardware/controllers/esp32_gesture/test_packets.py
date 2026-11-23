@@ -14,17 +14,23 @@
 
 import pytest
 
-from dimos.teleop.esp32.packets import GesturePacket, GestureTracker, decode_packet
+from dimos.hardware.controllers.esp32_gesture.packets import (
+    GesturePacket,
+    GestureTracker,
+    decode_packet,
+)
 
 
-def packet(posture: int, count: int, distance_cm: int = 20) -> GesturePacket:
-    return GesturePacket(state=0, sequence=0, posture=posture, distance_cm=distance_cm, count=count)
+def packet(gesture_id: int, count: int, distance_cm: int = 20) -> GesturePacket:
+    return GesturePacket(
+        state=0, sequence=0, gesture_id=gesture_id, distance_cm=distance_cm, count=count
+    )
 
 
 def test_decode_packet_reads_the_five_bytes() -> None:
     decoded = decode_packet(bytes([1, 7, 2, 18, 3]))
-    assert decoded == GesturePacket(state=1, sequence=7, posture=2, distance_cm=18, count=3)
-    assert decoded.gesture == "STAND"
+    assert decoded == GesturePacket(state=1, sequence=7, gesture_id=2, distance_cm=18, count=3)
+    assert decoded.gesture == "B"
 
 
 @pytest.mark.parametrize(

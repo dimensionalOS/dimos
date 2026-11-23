@@ -20,7 +20,7 @@ whichever module subscribes to ``gesture_joy``.
 
 Each gesture is published as a tap on ``gesture_joy``: one ``Joy`` with that gesture's
 button set to 1, then, ``press_hold_s`` later, one with all buttons 0. ``buttons``
-follows ``GESTURES`` (``[SIT, STAND]``). ``axes[0]`` is how far the hand was from the
+follows ``GESTURES`` (``[A, B]``; the board alternates them). ``axes[0]`` is how far the hand was from the
 sensor, scaled to 0..1 over 0..1 m (1 also means no echo). ``frame_id`` is
 ``"esp32_gesture"``.
 """
@@ -38,14 +38,14 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.teleop.esp32.packets import (
+from dimos.hardware.controllers.esp32_gesture.packets import (
     GESTURES,
     MANUFACTURER_ID,
     GesturePacket,
     GestureTracker,
     decode_packet,
 )
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
