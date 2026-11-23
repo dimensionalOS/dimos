@@ -401,7 +401,7 @@ class ConnectionSource:
                 self._restart = False
                 self._reading_epoch += 1
             if port == JOINT_STATE and self._group_joint_by_key:
-                updated = {
+                updated = mine.keys() & self._group_joint_by_key.keys() | {
                     self._group_joint_by_key[k]
                     for k in mine.keys() & self._group_joint_by_key.keys()
                 }
@@ -452,15 +452,36 @@ class ConnectionSource:
         with self._lock:
             return self._group_feedback_epoch(interface, time.monotonic())
 
+    def group_feedback(self, interface: str) -> tuple[int, float, dict[str, float]] | None:
+        """Snapshot explicitly required state keys, with the oldest receipt."""
+        with self._lock:
+            keys = self._group_feedback_keys(interface)
+            if not self._groups[interface][0].feedback_fields:
+                raise ValueError("group must declare its required feedback fields")
+            epoch = self._group_feedback_epoch(interface, time.monotonic())
+            if epoch is None:
+                return None
+            return (
+                epoch,
+                min(self._joint_receipts[k] for k in keys),
+                {k: self._latest[k] for k in keys},
+            )
+
+    def _group_feedback_keys(self, interface: str) -> Collection[str]:
+        declaration, joints = self._groups[interface]
+        if declaration.feedback_fields:
+            return [f"{joint}/{field}" for joint in joints for field in declaration.feedback_fields]
+        return joints
+
     def _group_feedback_epoch(self, interface: str, now: float) -> int | None:
-        _, joints = self._groups[interface]
+        keys = self._group_feedback_keys(interface)
         if not self._ready(now) or any(
-            now - self._joint_receipts.get(joint, float("-inf")) > self._timeout for joint in joints
+            now - self._joint_receipts.get(key, float("-inf")) > self._timeout for key in keys
         ):
             return None
         # Every component only increases: recovering a covered joint or any
         # required port after a gap cannot revive a previous continuity token.
-        return self._reading_epoch + sum(self._joint_epochs.get(joint, 0) for joint in joints)
+        return self._reading_epoch + sum(self._joint_epochs.get(key, 0) for key in keys)
 
     def route_group(self, task: str, output: GroupCommandOutput, feedback_epoch: int) -> None:
         """Offer the tick winner to its local handler, which may enqueue it."""

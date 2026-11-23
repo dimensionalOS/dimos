@@ -111,6 +111,29 @@ Dual YAM has one pose task per arm. Each controller's grip engages only its own
 arm; releasing it leaves the other arm's task independent. Each trigger controls
 its matching gripper. Both arms share one connection, with one CAN bus per arm.
 
+### Experimental tri-mode reference path (hardware-free)
+
+`openyam_trimode` requires an explicit same-process `LocalPlant` factory and a
+pinned CPU ONNX actor. Quest pose/position and planned joint references share a
+single arm writer; the jaw has a separate write path. The private Quest pose
+stream carries the earlier of the two raw input deadlines on the same host's
+monotonic clock. After a gap, a fresh paired physical release is required before
+another grip can take over. There is no stock hardware startup or arm hold
+fallback in this path.
+
+Do not supply the stock Damiao adapter as a `LocalPlant`. Its target cache
+resends arm MIT rows on a jaw-only `command`, and its host deadman issues a
+measured hold rather than independently stopping the arm on host failure.
+`can-motor-control==0.0.12` exposes separate native arm/jaw sends, but `Robot.tick`
+can return successfully without decoding new state. Motor q/dq accessors return
+cached values (including initial zeros), and the decoded per-motor state sequence
+is internal to Rust, not exposed in Python. Neither a fresh message wrapper nor
+a bus-wide receive count proves new feedback on every arm axis. The stock API
+also provides no verified arm-specific watchdog that expires with jaw traffic
+still running. A physical adapter remains unsupported until both capabilities
+are available and validated, and an operator explicitly commissions the arm and
+its safe state. Host submission is not evidence of motor execution.
+
 ## Motor topology
 
 | Motor | Send ID | Reply ID | Type |

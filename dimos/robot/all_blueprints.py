@@ -417,6 +417,8 @@ all_modules = {
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
     "topic-metadata-module": "dimos.web.relay_bridge.topic_descriptors.TopicMetadataModule",
     "trajectory-follower-native": "dimos.navigation.trajectory_follower.native.TrajectoryFollowerNative",
+    "trimode-coordinator": "dimos.robot.manipulators.openyam.trimode_coordinator.TrimodeCoordinator",
+    "trimode-quest": "dimos.robot.manipulators.openyam.trimode_quest.TrimodeQuest",
     "twist-teleop-module": "dimos.teleop.webxr.extensions.TwistTeleopModule",
     "type-safe-agent": "dimos.agents.typesafe.agent.TypeSafeAgent",
     "type-safe-navigation-agent": "dimos.agents.typesafe.navigation.TypeSafeNavigationAgent",

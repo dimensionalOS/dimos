@@ -19,6 +19,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from dimos.control.contract.convert import JOINT_STATE_FIELDS
+from dimos.control.contract.keys import Interface
+
 
 @dataclass(frozen=True, slots=True)
 class GroupCommandInterface:
@@ -35,6 +38,7 @@ class GroupCommandInterface:
     joint_order: tuple[str, ...] = ()
     frame: str | None = None
     tcp: str | None = None
+    feedback_fields: frozenset[Interface] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.name.strip() or "/" in self.name:
@@ -50,6 +54,8 @@ class GroupCommandInterface:
                 raise ValueError("joint group cannot also declare a frame/TCP")
         elif not self.frame or not self.frame.strip() or not self.tcp or not self.tcp.strip():
             raise ValueError("coordinate group needs a frame and TCP")
+        if not self.feedback_fields <= frozenset(JOINT_STATE_FIELDS):
+            raise ValueError("group feedback fields must be joint state fields")
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,7 +14,10 @@
 
 """OpenYAM keyboard and WebXR teleoperation over its connection."""
 
+from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
+from typing import Literal
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
@@ -34,6 +37,12 @@ from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+from dimos.robot.manipulators.openyam.trimode_coordinator import (
+    LocalPlant,
+    TrimodeCoordinator,
+    trimode_connection,
+)
+from dimos.robot.manipulators.openyam.trimode_quest import TrimodeQuest
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -148,3 +157,28 @@ keyboard_teleop_openyam_planner = autoconnect(
     planner(model=_openyam_model, gripper_tasks={"manipulator": "arm_gripper"}),
     _twist_control([_eef_twist_task(priority=20), _gripper_task(), _trajectory_task(priority=10)]),
 )
+
+
+def openyam_trimode(
+    *,
+    model_path: Path,
+    plant_factory: Callable[[], LocalPlant],
+    quest_mode: Literal["pose", "position"] = "pose",
+) -> MetaBlueprint:
+    """Opt in with an explicit same-process plant; never start stock Damiao here."""
+    return autoconnect(
+        TrimodeQuest.blueprint(zero_button="B"),
+        TrimodeCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[trimode_connection(OpenYamConnection.robot.model)],
+            model_path=model_path,
+            plant_factory=plant_factory,
+            quest_mode=quest_mode,
+        ),
+        ManipulationModule.blueprint(
+            model=_openyam_model,
+            gripper_tasks={"manipulator": "arm_gripper"},
+            kinematics=OPENYAM_QUEST_KINEMATICS,
+            visualization={"backend": "viser"},
+        ),
+    ).remappings([(TrimodeQuest, "right_controller_output", "right_cartesian_command")])
