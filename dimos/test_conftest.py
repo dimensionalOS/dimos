@@ -39,6 +39,9 @@ def test_collection_import_skips_respect_error_for_skips(
     )
     (tmp_path / "test_present.py").write_text("def test_present():\n    assert True\n")
 
+    # This is a new pytest controller, not an outer xdist worker. Give it its
+    # own run ID so its watchdog cannot sweep the parent session's workers.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PYTEST_XDIST_")}
     result = subprocess.run(
         [
             sys.executable,
@@ -52,7 +55,7 @@ def test_collection_import_skips_respect_error_for_skips(
             *options,
         ],
         cwd=tmp_path,
-        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
+        env={**env, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
         capture_output=True,
         text=True,
         timeout=30,
