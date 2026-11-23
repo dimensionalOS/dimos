@@ -16,13 +16,16 @@
 
 from collections.abc import Iterator
 from contextlib import nullcontext
+import errno
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 from typing import IO
 from unittest.mock import MagicMock
 
+import numpy as np
 from pydantic import JsonValue
 import pytest
 from pytest_mock import MockerFixture
@@ -31,6 +34,7 @@ from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
 from dimos.evals.agents.agent_adapter import AgentAdapter
 from dimos.evals.agents.blind import Blind
+from dimos.evals.agents.lib import recording_export
 from dimos.evals.agents.lib.pi_config import Provider, RunPaths, RuntimeConfig
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -46,6 +50,8 @@ from dimos.evals.types import (
     ToolCall,
 )
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import EmbeddedObservation
+from dimos.models.embedding.base import Embedding
 
 
 def test_cli_overrides_reach_pi_adapter() -> None:
@@ -95,6 +101,101 @@ def test_recording_export_contains_only_selected_data(dataset: str, tmp_path: Pa
             (1000.0, 0.0),
             (1001.0, 1.0),
         ]
+
+
+def test_recording_export_copies_embeddings(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.db"
+    exported = tmp_path / "copy.db"
+    query = Embedding(vector=np.array([1.0, 0.0, 0.0], dtype=np.float32))
+    with SqliteStore(path=str(source_path)) as source:
+        embedded = source.stream("color_image_embedded", str)
+        embedded.append("person", ts=1.0, embedding=query)
+        embedded.append(
+            "other", ts=2.0, embedding=Embedding(vector=np.array([0.0, 1.0, 0.0], dtype=np.float32))
+        )
+        recording_file((source.streams.color_image_embedded,), exported)
+
+    with SqliteStore(path=str(exported), must_exist=True) as copy:
+        hits = copy.streams.color_image_embedded.search(query, k=1).to_list()
+        assert len(hits) == 1
+        assert hits[0].data == "person"
+        assert isinstance(hits[0], EmbeddedObservation)
+        assert hits[0].similarity is not None and hits[0].similarity > 0.99
+
+
+def test_recording_export_copies_sqlite_blob_bytes(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.db"
+    exported = tmp_path / "copy.db"
+    payload = "frame-bytes-" + "x" * 256
+    with SqliteStore(path=str(source_path)) as source:
+        source.stream("notes", str).append(payload, ts=1.0)
+        recording_file((source.streams.notes,), exported)
+
+    def blobs(path: Path) -> list[tuple[int, bytes]]:
+        with sqlite3.connect(path) as conn:
+            return conn.execute("SELECT id, data FROM notes_blob").fetchall()
+
+    assert blobs(source_path) == blobs(exported)
+    with SqliteStore(path=str(exported), must_exist=True) as copy:
+        assert [obs.data for obs in copy.streams.notes] == [payload]
+
+
+def test_recording_export_reuses_a_cached_unfiltered_copy(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    source_path = tmp_path / "source.db"
+    first = tmp_path / "first.db"
+    second = tmp_path / "second.db"
+    mocker.patch.object(recording_export, "_CACHE_DIR", tmp_path / "export-cache")
+    mocker.patch.object(recording_export, "_cache_files", {})
+    sql_copy = mocker.spy(recording_export, "_sql_copy")
+    with SqliteStore(path=str(source_path)) as source:
+        source.stream("notes", str).append("hello", ts=1.0)
+        recording_file((source.streams.notes,), first)
+        recording_file((source.streams.notes,), second)
+    assert sql_copy.call_count == 1
+    assert first.read_bytes() == second.read_bytes()
+    assert os.path.samefile(first, second)
+    with SqliteStore(path=str(second), must_exist=True) as copy:
+        assert [obs.data for obs in copy.streams.notes] == ["hello"]
+
+
+def test_recording_export_hardlinks_eval_case_recordings(tmp_path: Path, mocker: MockerFixture) -> None:
+    mocker.patch.object(recording_export, "_cache_files", {})
+    source_path = tmp_path / "source.db"
+    run = tmp_path / "run"
+    first = run / "hand-001" / "recording.db"
+    second = run / "hand-002" / "recording.db"
+    with SqliteStore(path=str(source_path)) as source:
+        source.stream("notes", str).append("hello", ts=1.0)
+        recording_file((source.streams.notes,), first)
+        recording_file((source.streams.notes,), second)
+    exports = list((run / "_recording_exports").glob("*.db"))
+    assert len(exports) == 1
+    assert os.path.samefile(first, exports[0])
+    assert os.path.samefile(second, exports[0])
+    assert first.stat().st_nlink >= 3
+
+
+def test_recording_export_copies_when_hardlink_is_impossible(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    mocker.patch.object(recording_export, "_CACHE_DIR", tmp_path / "export-cache")
+    mocker.patch.object(recording_export, "_cache_files", {})
+    mocker.patch.object(recording_export.os, "link", side_effect=OSError(errno.EXDEV, "cross-device"))
+    source_path = tmp_path / "source.db"
+    first = tmp_path / "first.db"
+    second = tmp_path / "second.db"
+    with SqliteStore(path=str(source_path)) as source:
+        source.stream("notes", str).append("hello", ts=1.0)
+        recording_file((source.streams.notes,), first)
+        recording_file((source.streams.notes,), second)
+    assert first.read_bytes() == second.read_bytes()
+    assert first.stat().st_nlink == 1
+    assert second.stat().st_nlink == 1
+    assert not os.path.samefile(first, second)
+    with SqliteStore(path=str(second), must_exist=True) as copy:
+        assert [obs.data for obs in copy.streams.notes] == ["hello"]
 
 
 @pytest.fixture

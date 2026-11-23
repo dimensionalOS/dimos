@@ -137,6 +137,7 @@ async function open(name: string, model: ReturnType<typeof scriptedModel>, repor
         write: null,
         inventory: null,
         stream_get: null,
+        memory: null,
         agent_module: null,
         job: null,
         background: null,

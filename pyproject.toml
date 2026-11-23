@@ -260,6 +260,7 @@ perception = [
     "lap>=0.5.12",
     "transformers[torch]>=4.53.0,<4.54",
     "huggingface-hub>=0.36",  # OmDet weight download (detection/detectors/omdet.py)
+    "trackers>=2.7,<3",  # Apache BoT-SORT for perception/identity (CMC on, no FastReID)
     "safetensors>=0.8",
     # Florence2 (dimos/models/vl/florence.py) loads via transformers trust_remote_code;
     # its downloaded modeling file imports einops (not captured by package metadata).

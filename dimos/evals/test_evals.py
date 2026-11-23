@@ -69,7 +69,14 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.suites import dimsim_house, dimsim_pointcloud_mapping, examples, go2_smoke, go2_vqa
+from dimos.evals.suites import (
+    dimsim_house,
+    dimsim_pointcloud_mapping,
+    examples,
+    go2_open,
+    go2_smoke,
+    go2_vqa,
+)
 from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
 from dimos.evals.types import (
     EvalCase,
@@ -858,7 +865,14 @@ def test_inside_scores_anywhere_on_the_container_floor(
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
+    for module in (
+        examples,
+        go2_smoke,
+        go2_vqa,
+        go2_open,
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+    ):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {

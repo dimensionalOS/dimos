@@ -58,6 +58,7 @@ export const DETAILS = {
   inventory: Type.Object({ render, background, limit }),
   /** `render` is the exported file a `stream_get export=true` result points to. */
   stream_get: Type.Object({ render, background, limit }),
+  memory: Type.Object({ render, background, limit }),
   agent_module: Type.Object({ render, background, limit }),
   job: Type.Object({ limit }),
   background: Type.Object({ limit }),

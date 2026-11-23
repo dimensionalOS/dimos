@@ -17,16 +17,15 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from dimos.memory.utils.sqlite import conn_lock, open_disposable_sqlite_connection
 from dimos.memory.utils.validation import validate_identifier
 from dimos.memory.vectorstore.base import VectorStore, VectorStoreConfig
-
-if TYPE_CHECKING:
-    from dimos.models.embedding.base import Embedding
+from dimos.models.embedding.base import Embedding
 
 
 class SqliteVectorStoreConfig(VectorStoreConfig):
@@ -123,3 +122,25 @@ class SqliteVectorStore(VectorStore):
         except sqlite3.OperationalError as e:
             if "no such table" not in str(e):
                 raise
+
+    def get(self, stream_name: str, key: int) -> Embedding | None:
+        validate_identifier(stream_name)
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    f'SELECT embedding FROM "{stream_name}_vec" WHERE rowid = ?', (key,)
+                ).fetchone()
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                return None
+            raise
+        if row is None:
+            return None
+        raw = row[0]
+        if isinstance(raw, (bytes, bytearray, memoryview)):
+            vec = np.frombuffer(raw, dtype=np.float32)
+        elif isinstance(raw, str):
+            vec = np.asarray(json.loads(raw), dtype=np.float32)
+        else:
+            vec = np.asarray(raw, dtype=np.float32)
+        return Embedding(vector=np.array(vec, dtype=np.float32, copy=True))

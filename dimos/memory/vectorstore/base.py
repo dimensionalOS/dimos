@@ -65,5 +65,9 @@ class VectorStore(Configurable, CompositeResource):
         """Remove a vector. Silent if missing."""
         ...
 
+    def get(self, stream_name: str, key: int) -> Embedding | None:
+        """The vector for *key*, or None. Default: not stored for lookup."""
+        return None
+
     def serialize(self) -> dict[str, Any]:
         return {"class": qual(type(self)), "config": self.config.model_dump()}

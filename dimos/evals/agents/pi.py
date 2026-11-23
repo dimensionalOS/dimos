@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Sequence
-from contextlib import closing
+from collections.abc import Generator, Iterator
+from contextlib import closing, contextmanager, nullcontext
 import io
 import os
 from pathlib import Path
@@ -26,7 +26,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import IO, TYPE_CHECKING, Any, ClassVar
+from typing import IO, ClassVar
 
 from pydantic import Field, JsonValue, TypeAdapter
 
@@ -42,6 +42,7 @@ from dimos.evals.agents.lib.pi_config import (
 )
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.plain_recording import plain_recording
+from dimos.evals.agents.lib.recording_export import recording_file
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.constants import (
     NO_DIMOS_GUIDANCE,
@@ -60,9 +61,6 @@ from dimos.evals.types import (
     Trajectory,
 )
 
-if TYPE_CHECKING:
-    from dimos.memory.stream import Stream
-
 
 def tool_listing(mcp_url: str) -> str:
     """List each MCP tool's name, arguments, and first description line for Pi."""
@@ -74,21 +72,6 @@ def tool_listing(mcp_url: str) -> str:
         summary = str(t.get("description") or "").strip().partition("\n")[0]
         lines.append(f"- {t['name']}({args}): {summary}")
     return "\n".join(lines)
-
-
-def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
-    """*streams* written to a memory store at *path*, under their own names,
-    so a subprocess can open what the case selected and nothing more."""
-    from dimos.memory.store.sqlite import SqliteStore
-
-    with SqliteStore(path=str(path)) as store:
-        for stream in streams:
-            if stream.name is None:
-                raise ValueError("a stream must be bound to a store to be written out")
-            target: Stream[Any, Any] = store.stream(stream.name, stream.data_type)
-            for obs in stream:
-                target.append(obs.data, ts=obs.ts, pose=obs.pose_tuple, tags=obs.tags)
-    return path
 
 
 _json_object = TypeAdapter(dict[str, JsonValue])
@@ -214,16 +197,15 @@ class PiAdapter(EvalSubject):
     ) -> Trajectory:
         raw_dir = run_dir / "raw"
         events = PiToAtif(
-            raw_dir, TrajectoryBuilder(inputs, name=type(self).__name__, model=self.config.model)
+            self._event_raw_dir(raw_dir),
+            TrajectoryBuilder(inputs, name=type(self).__name__, model=self.config.model),
         )
         if self.config.max_steps == 0:
             return events.trajectory.build("max_steps")
         paths = RunPaths.for_run(run_dir)
         upstream = os.environ.get(f"{self.config.provider.upper()}_BASE_URL", self._base_url)
         limit_reached = run_dir / "pi-request-limit-reached"
-        with model_trace_proxy(
-            raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
-        ) as proxy_url:
+        with self._trace_proxy(raw_dir, upstream, limit_reached) as proxy_url:
             try:
                 self._configure(env, paths, proxy_url)
                 system_prompt = self._prepare_case(env, run_dir)
@@ -238,6 +220,18 @@ class PiAdapter(EvalSubject):
         if events.error and ended_by not in ("timeout", "max_steps"):
             return events.trajectory.build("error", error=events.error, blocked_calls=blocked)
         return events.trajectory.build(ended_by, blocked_calls=blocked)
+
+    def _event_raw_dir(self, raw_dir: Path) -> Path:
+        """Directory PiToAtif reads while the case runs. Defaults to the case raw/ dir."""
+        return raw_dir
+
+    @contextmanager
+    def _trace_proxy(self, raw_dir: Path, upstream: str, limit_reached: Path) -> Iterator[str]:
+        """Forward model HTTP through a local proxy that records this case's traces."""
+        with model_trace_proxy(
+            raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
+        ) as proxy_url:
+            yield proxy_url
 
     def _blocked_calls(self, paths: RunPaths) -> int:
         ready = paths.config / "extensions/runtime-ready.json"
@@ -386,14 +380,20 @@ class PiAdapter(EvalSubject):
         max_steps = self.config.max_steps
         stderr_path = paths.workspace / "pi-stderr.txt"
         paths.cache.mkdir(parents=True, exist_ok=True)
+        process_env = self._build_process_env(paths)
         # The runtime dir hosts Unix sockets, whose paths are capped near 100 bytes; a
         # deeply nested cache (pytest tmp dirs on CI) falls back to the system temp dir.
         parent = (
             paths.cache if len(str(paths.cache / "run-XXXXXXXX" / "dimcode.sock")) < 96 else None
         )
-        with tempfile.TemporaryDirectory(prefix="run-", dir=parent) as runtime:
+        runtime_cm: nullcontext[str] | tempfile.TemporaryDirectory[str]
+        if "XDG_RUNTIME_DIR" in process_env:
+            runtime_cm = nullcontext(process_env["XDG_RUNTIME_DIR"])
+        else:
+            runtime_cm = tempfile.TemporaryDirectory(prefix="run-", dir=parent)
+        with runtime_cm as runtime:
             self._runtime_dir = Path(runtime)
-            process_env = self._build_process_env(paths)
+            Path(runtime).mkdir(parents=True, exist_ok=True)
             process_env["XDG_RUNTIME_DIR"] = runtime
             with (
                 stderr_path.open("w") as stderr,
