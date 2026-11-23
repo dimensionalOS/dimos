@@ -6,6 +6,8 @@ Use the release branch and commit recorded in the [shared setup](README.md#befor
 
 Run on a host that can execute the high-memory simulation tests as well as the default suite. The sync needs CycloneDDS at `/opt/cyclonedds`. See the [Ubuntu apt + symlink shim](../../docs/usage/transports/dds.md#alternative-ubuntu-apt--symlink-shim).
 
+Export `TYPESAFENAVIGATIONAGENT__API_KEY` first (see the [TypeSafe navigation agent check](07_agents.md#74-typesafe-navigation-agent)). Without it `dimos/e2e_tests/test_dimsim_typesafe_agent.py` is skipped and `--error-for-skips` turns that skip into an error.
+
 ```bash
 test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT:?Set RELEASE_COMMIT from the release test record}"
 CYCLONEDDS_HOME=/opt/cyclonedds uv sync --locked --all-extras --all-groups
