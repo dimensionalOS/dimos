@@ -78,6 +78,8 @@ class GlobalConfig(BaseSettings):
     record_window_dir: str = str(
         Path("/dev/shm" if sys.platform == "linux" else tempfile.gettempdir()) / "dimos-recorder"
     )
+    # Most event window data (MiB) waiting to be stored before the oldest segment is stored thinned.
+    record_window_mib: float = Field(default=2048.0, gt=0)
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.
@@ -164,7 +166,11 @@ class GlobalConfig(BaseSettings):
         return value
 
     @field_validator(
-        "record_default_period", "record_type_periods", "record_stream_periods", "record_window_dir"
+        "record_default_period",
+        "record_type_periods",
+        "record_stream_periods",
+        "record_window_dir",
+        "record_window_mib",
     )
     @classmethod
     def _validate_event_setting(cls, value: float | str, info: ValidationInfo) -> float | str:

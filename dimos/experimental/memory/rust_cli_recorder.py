@@ -111,6 +111,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             default_period=global_config.record_default_period,
             type_periods=parse_periods(global_config.record_type_periods),
             stream_periods=parse_periods(global_config.record_stream_periods),
+            max_window_mib=global_config.record_window_mib,
         )
         if global_config.record_events
         else None
