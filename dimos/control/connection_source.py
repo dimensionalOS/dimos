@@ -44,9 +44,7 @@ from dimos.control.contract.keys import SEPARATOR, Interface, Key
 from dimos.control.contract.limits import Limits, limits as limits_of, movable_joints
 from dimos.control.group_command import (
     GroupCommandHandler,
-    GroupCommandInterface,
     GroupCommandLease,
-    GroupCommandOutput,
 )
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
@@ -133,7 +131,6 @@ class _GroupOwner:
     feedback_epoch: int
     issued: int = 0
     written: int = 0
-    expires_at: float = 0.0
 
 
 class ConnectionSource:
@@ -185,7 +182,7 @@ class ConnectionSource:
             or reading_timeout_s <= 0
         ):
             raise ValueError(f"{robot!r}: groups need joint_state and a finite positive timeout")
-        self._groups: dict[str, tuple[GroupCommandInterface, frozenset[str]]] = {}
+        self.group_joints: dict[str, frozenset[str]] = {}
         movable: dict[str, str] = {}
         if config.group_commands:
             if config.model is None:
@@ -194,27 +191,26 @@ class ConnectionSource:
                 j.name: j.name if SEPARATOR in j.name else f"{robot}/{j.name}"
                 for j in movable_joints(config.model)
             }
-            for group in config.group_commands:
-                qualified = f"{robot}/{group.name}"
-                if qualified in self._groups:
-                    raise ValueError(f"duplicate group interface {qualified!r}")
-                if group.joints - movable.keys():
-                    raise ValueError(f"{qualified!r}: unknown or non-movable covered joints")
-                joints = frozenset(movable[j] for j in group.joints)
+            for name, covered in config.group_commands.items():
+                interface = f"{robot}/{name}"
+                if not name.strip() or SEPARATOR in name or not covered or covered - movable.keys():
+                    raise ValueError(
+                        f"{interface!r}: expected a local name and movable model joints"
+                    )
+                joints = frozenset(movable[j] for j in covered)
                 if any(not j.startswith(f"{robot}/") for j in joints):
-                    raise ValueError(f"{qualified!r}: covered joint belongs to another source")
-                self._groups[qualified] = group, joints
+                    raise ValueError(f"{interface!r}: covered joint belongs to another source")
+                self.group_joints[interface] = joints
         self._group_handlers = dict(group_handlers or {})
-        if self._group_handlers.keys() != self._groups.keys():
-            raise ValueError(f"{robot!r}: bind exactly one local handler per group interface")
+        if self._group_handlers.keys() != self.group_joints.keys():
+            raise ValueError(f"{robot!r}: bind one local handler per group")
         # Share the coordinator write/stop boundary. A local handler can
         # use its lease synchronously while the tick holds this lock.
         self._group_lock = group_lock if group_lock is not None else threading.RLock()
         self._group_owners: dict[str, _GroupOwner] = {}
         self._reading_epoch = 0
         self._group_joint_by_key: dict[str, str] = {}
-        self._joint_receipts: dict[str, float] = {}
-        self._joint_epochs: dict[str, int] = {}
+        self._joint_receipts: dict[str, tuple[float, int]] = {}
 
         table = limits_of(config)
         self._robot = robot
@@ -234,8 +230,8 @@ class ConnectionSource:
         for raw_key in table:
             key = Key(raw_key)
             keys.setdefault(key.joint, {})[key.interface] = key
-        if self._groups:
-            covered = frozenset().union(*(joints for _, joints in self._groups.values()))
+        if self.group_joints:
+            covered = set().union(*self.group_joints.values())
             for name in movable.values():
                 if name in covered:
                     keys.setdefault(name, {})
@@ -396,20 +392,18 @@ class ConnectionSource:
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._port_receipts.clear()
+                self._reading_epoch += 1 + sum(gaps for _, gaps in self._joint_receipts.values())
                 self._joint_receipts.clear()
                 self._resumed = True
                 self._restart = False
-                self._reading_epoch += 1
             if port == JOINT_STATE and self._group_joint_by_key:
                 updated = {
                     self._group_joint_by_key[k]
                     for k in mine.keys() & self._group_joint_by_key.keys()
                 }
                 for joint in updated:
-                    previous = self._joint_receipts.get(joint)
-                    if previous is not None and now - previous > self._timeout:
-                        self._joint_epochs[joint] = self._joint_epochs.get(joint, 0) + 1
-                    self._joint_receipts[joint] = now
+                    previous, epoch = self._joint_receipts.get(joint, (now, 0))
+                    self._joint_receipts[joint] = now, epoch + (now - previous > self._timeout)
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
             if port not in reported and all(
@@ -429,23 +423,15 @@ class ConnectionSource:
             self._restart = True
             self._reading_epoch += 1
 
-    @property
-    def group_interfaces(self) -> Mapping[str, tuple[GroupCommandInterface, frozenset[str]]]:
-        """Declared groups, with their resolved physical joint names."""
-        return self._groups.copy()
-
     def retain_group_owners(self, winners: Mapping[str, str]) -> None:
-        """Revoke nonwinning authority before either route emits a replacement."""
-        with self._group_lock:
-            for interface, owner in list(self._group_owners.items()):
-                if winners.get(interface) != owner.task:
-                    del self._group_owners[interface]
+        for interface, owner in list(self._group_owners.items()):
+            if winners.get(interface) != owner.task:
+                del self._group_owners[interface]
 
-    def revoke_group_owners(self, task: str | None = None) -> None:
-        with self._group_lock:
-            for interface, owner in list(self._group_owners.items()):
-                if task is None or owner.task == task:
-                    del self._group_owners[interface]
+    def revoke_group_owners(self, task: str | None) -> None:
+        for interface, owner in list(self._group_owners.items()):
+            if task is None or owner.task == task:
+                del self._group_owners[interface]
 
     def group_feedback_epoch(self, interface: str) -> int | None:
         """Return the group's continuity token only while its feedback is fresh."""
@@ -453,37 +439,32 @@ class ConnectionSource:
             return self._group_feedback_epoch(interface, time.monotonic())
 
     def _group_feedback_epoch(self, interface: str, now: float) -> int | None:
-        _, joints = self._groups[interface]
-        if not self._ready(now) or any(
-            now - self._joint_receipts.get(joint, float("-inf")) > self._timeout for joint in joints
-        ):
+        if not self._ready(now):
             return None
-        # Every component only increases: recovering a covered joint or any
-        # required port after a gap cannot revive a previous continuity token.
-        return self._reading_epoch + sum(self._joint_epochs.get(joint, 0) for joint in joints)
+        epoch = self._reading_epoch
+        for joint in self.group_joints[interface]:
+            received, gaps = self._joint_receipts.get(joint, (float("-inf"), 0))
+            if now - received > self._timeout:
+                return None
+            epoch += gaps
+        return epoch
 
-    def route_group(self, task: str, output: GroupCommandOutput, feedback_epoch: int) -> None:
-        """Offer the tick winner to its local handler, which may enqueue it."""
-        interface = output.interface
-        with self._group_lock, self._lock:
+    def route_group(self, interface: str, task: str, payload: object, feedback_epoch: int) -> None:
+        """Offer a winning payload while the caller holds the shared write/stop lock."""
+        with self._lock:
             now = time.monotonic()
             if feedback_epoch != self._group_feedback_epoch(interface, now):
                 self._group_owners.pop(interface, None)
                 return
             owner = self._group_owners.get(interface)
-            if (
-                owner is None
-                or owner.task != task
-                or owner.feedback_epoch != feedback_epoch
-                or now >= owner.expires_at
-            ):
+            if owner is None or owner.task != task or owner.feedback_epoch != feedback_epoch:
                 owner = self._group_owners[interface] = _GroupOwner(task, feedback_epoch)
-            expires_at = owner.expires_at = now + self._timeout
+            expires_at = now + self._timeout
             owner.issued += 1
             sequence = owner.issued
             # Ownership changed independently of whether the legacy batch
             # on other joints passes validation this tick.
-            for joint in self._groups[interface][1]:
+            for joint in self.group_joints[interface]:
                 self._holds.pop(joint, None)
 
         def guard(write: Callable[[], None]) -> bool:
@@ -502,7 +483,7 @@ class ConnectionSource:
                 return True
 
         try:
-            self._group_handlers[interface](output, GroupCommandLease(expires_at, guard))
+            self._group_handlers[interface](payload, GroupCommandLease(expires_at, guard))
         except Exception:
             self.revoke_group_owners(task)
             raise
@@ -567,7 +548,7 @@ class ConnectionSource:
         self,
         winners: Mapping[str, tuple[float, ControlMode]],
         *,
-        group_joints: frozenset[str] = frozenset(),
+        group_joints: Collection[str] = (),
     ) -> Values:
         """The complete command to send the robot this tick, by key.
 

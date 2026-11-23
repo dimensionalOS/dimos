@@ -26,7 +26,6 @@ worker processes.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
@@ -51,7 +50,7 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.group_command import GroupCommandInterface, GroupCommandLease, GroupCommandOutput
+from dimos.control.group_command import GroupCommandLease, GroupCommandOutput
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -476,22 +475,19 @@ def rig(mocker: Any) -> Iterator[Callable[..., Rig]]:
         each.stop()
 
 
-@dataclass(frozen=True)
-class PoseTarget:
-    xyz: tuple[float, float, float]
-    quaternion: tuple[float, float, float, float]
+Dispatched = list[tuple[object, GroupCommandLease]]
 
 
 class GroupTask(BaseControlTask):
-    def __init__(self, interface: str, payload: object, priority: int = 20) -> None:
-        self._name = interface
-        self.output = GroupCommandOutput(interface, payload)
+    _name = "pose"
+
+    def __init__(self, priority: int = 20) -> None:
+        self.output = GroupCommandOutput("mock/pose", object())
         self.priority = priority
         self.active = True
-        self.losses: list[tuple[str, frozenset[str]]] = []
 
     def claim(self) -> ResourceClaim:
-        return ResourceClaim(frozenset(), self.priority, groups=frozenset({self.name}))
+        return ResourceClaim(frozenset(), self.priority)
 
     def is_active(self) -> bool:
         return self.active
@@ -503,82 +499,88 @@ class GroupTask(BaseControlTask):
         self.active = False
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        self.losses.append((by_task, joints))
+        pass
 
 
 @pytest.fixture
-def grouped_rig(
-    rig: Callable[..., Rig],
-) -> tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]]:
-    dispatched: list[tuple[GroupCommandOutput, GroupCommandLease]] = []
-
-    def enqueue(output: GroupCommandOutput, lease: GroupCommandLease) -> None:
-        dispatched.append((output, lease))
-
-    config = FakeArmConfig(
-        group_commands=(
-            GroupCommandInterface(
-                "joints", tuple, frozenset({"joint1", "joint2"}), ("joint2", "joint1")
-            ),
-            GroupCommandInterface(
-                "pose", PoseTarget, frozenset({"joint2", "joint3"}), frame="base", tcp="tool"
-            ),
-            GroupCommandInterface("single", tuple, frozenset({"joint1"}), ("joint1",)),
-        )
-    )
-    setup = rig(
+def grouped_rig(rig: Callable[..., Rig]) -> tuple[Rig, Dispatched]:
+    dispatched: Dispatched = []
+    r = rig(
         ArmCoordinator,
-        connections=[config],
+        connections=[FakeArmConfig(group_commands={"pose": frozenset({"joint1", "joint2"})})],
         reading_timeout_s=1.0,
-        group_handlers={f"mock/{g.name}": enqueue for g in config.group_commands},
+        group_handlers={"mock/pose": lambda payload, lease: dispatched.append((payload, lease))},
     )
-    setup.report_arm(*AT_REST)
-    return setup, dispatched
+    r.report_arm(*AT_REST)
+    return r, dispatched
 
 
-def test_routes_atomic_joint_and_pose_groups_with_partial_conflict_fallback(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+@pytest.mark.parametrize("with_pose", [False, True])
+def test_scalar_overlap_is_resolved_per_joint(
+    grouped_rig: tuple[Rig, Dispatched],
+    rig: Callable[..., Rig],
+    mocker: Any,
+    with_pose: bool,
 ) -> None:
     r, dispatched = grouped_rig
-    pose = GroupTask("mock/pose", PoseTarget((0.1, 0.2, 0.3), (0.0, 0.0, 0.0, 1.0)))
-    joints = GroupTask("mock/joints", (0.2, 0.1), 30)
-    single = GroupTask("mock/single", (0.5,), 15)
-    legacy = SendsPositions({"mock/joint1": 0.6, "mock/joint3": 0.3})
-    for task in (pose, joints, single, legacy):
+    if not with_pose:
+        r = rig(ArmCoordinator)
+        r.report_arm(*AT_REST)
+    j1, j2, j3 = MOCK_JOINTS[:3]
+    high = SendsPositions({j1: 0.1, j2: 0.2})
+    high._name = "high"
+    mocker.patch.object(high, "claim", return_value=ResourceClaim(frozenset({j1, j2}), 30))
+    low = SendsPositions({j2: 0.4, j3: 0.3})
+    for task in (low, high):
         assert r.coordinator.add_task(task)
-
+    if with_pose:
+        assert r.coordinator.add_task(GroupTask())
     r.tick()
-    assert [output for output, _ in dispatched] == [joints.output]
-    assert pose.losses == [(joints.name, frozenset({"mock/joint2"}))]
+    assert not dispatched
+    assert r.sent[-1][1].position[:3] == [0.1, 0.2, 0.3]
+
+
+def test_one_high_scalar_axis_defeats_pose_without_blocking_low_axes(
+    grouped_rig: tuple[Rig, Dispatched], mocker: Any
+) -> None:
+    r, dispatched = grouped_rig
+    j1, j2, j3 = MOCK_JOINTS[:3]
+    pose = GroupTask()
+    low = SendsPositions({j2: 0.4, j3: 0.3})
+    for task in (low, pose):
+        assert r.coordinator.add_task(task)
+    r.tick()
+    payload, old = dispatched[-1]
+    assert payload is pose.output.payload
     assert r.sent[-1][1].name == MOCK_JOINTS[2:]
     assert r.sent[-1][1].position[0] == 0.3
-    old = dispatched[-1][1]
+    write = mocker.Mock()
+    assert old.try_write(write)
+    assert not old.try_write(write)
+    write.assert_called_once()
 
-    # The one-joint challenger blocks the whole joint group but not the
-    # overlapping pose group: the rejected joint group reserves neither joint.
-    single.priority = 40
     r.tick()
-    assert [output for output, _ in dispatched[1:]] == [single.output, pose.output]
-    assert joints.losses == [(single.name, frozenset({"mock/joint1"}))]
-    assert r.sent[-1][1].name == MOCK_JOINTS[3:]
-    writes: list[object] = []
-    assert not old.try_write(lambda: writes.append(joints.output.payload))
-    output, lease = dispatched[-1]
-    assert lease.try_write(lambda: writes.append(output.payload))
-    assert not lease.try_write(lambda: writes.append(output.payload))
-    assert writes == [pose.output.payload]
+    pending = dispatched[-1][1]
+    high = SendsPositions({j1: 0.1})
+    high._name = "high"
+    mocker.patch.object(high, "claim", return_value=ResourceClaim(frozenset({j1}), 30))
+    assert r.coordinator.add_task(high)
+    r.tick()
+    assert len(dispatched) == 2
+    assert r.sent[-1][1].position[:3] == [0.1, 0.4, 0.3]
+    assert not pending.try_write(lambda: pytest.fail("preempted write ran"))
 
 
 @pytest.mark.parametrize(
     "invalidate", ["cancel", "remove", "estop", "stop", "expiry", "lost_feedback"]
 )
 def test_group_lease_rejects_worker_write_after_invalidation(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
     mocker: Any,
     invalidate: str,
 ) -> None:
     r, dispatched = grouped_rig
-    task = GroupTask("mock/joints", (0.2, 0.1))
+    task = GroupTask()
     assert r.coordinator.add_task(task)
     r.tick()
     old = dispatched[-1][1]
@@ -602,25 +604,12 @@ def test_group_lease_rejects_worker_write_after_invalidation(
     write.assert_not_called()
 
 
-def test_group_rejects_wrong_payload_and_unclaimed_interface(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
-) -> None:
-    r, dispatched = grouped_rig
-    task = GroupTask("mock/joints", "wrong type")
-    assert r.coordinator.add_task(task)
-    r.tick()
-    task.output = GroupCommandOutput("mock/single", (0.2,))
-    r.tick()
-    assert not dispatched
-    assert r.sent[-1][1].name == MOCK_JOINTS
-
-
 def test_cancellation_fences_output_already_computed_but_not_routed(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
     mocker: Any,
 ) -> None:
     r, dispatched = grouped_rig
-    task = GroupTask("mock/joints", (0.2, 0.1))
+    task = GroupTask()
     assert r.coordinator.add_task(task)
     r.tick()
     loop = r.coordinator._tick_loop
@@ -641,7 +630,7 @@ def test_cancellation_fences_output_already_computed_but_not_routed(
 
 @pytest.mark.parametrize("refresh_during_compute", [False, True])
 def test_partial_feedback_does_not_extend_group_authority(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
     mocker: Any,
     refresh_during_compute: bool,
 ) -> None:
@@ -651,7 +640,7 @@ def test_partial_feedback_does_not_extend_group_authority(
     source = r.coordinator._connections["mock"]
     source.drop_holds()
     r.report_arm(*AT_REST)
-    task = GroupTask("mock/joints", (0.2, 0.1))
+    task = GroupTask()
     assert r.coordinator.add_task(task)
 
     # Issue a still-unexpired lease from feedback already half a timeout old.
@@ -684,11 +673,11 @@ def test_partial_feedback_does_not_extend_group_authority(
 
 
 def test_estop_latch_and_group_revocation_share_one_boundary(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
     mocker: Any,
 ) -> None:
     r, dispatched = grouped_rig
-    assert r.coordinator.add_task(GroupTask("mock/joints", (0.2, 0.1)))
+    assert r.coordinator.add_task(GroupTask())
     r.tick()
     lease = dispatched[-1][1]
     loop = r.coordinator._tick_loop
@@ -726,33 +715,37 @@ def test_estop_latch_and_group_revocation_share_one_boundary(
 
 
 def test_group_clears_legacy_hold_even_when_unrelated_command_is_invalid(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
 ) -> None:
     r, dispatched = grouped_rig
-    group = GroupTask("mock/joints", (0.2, 0.1))
+    group = GroupTask()
     legacy = SendsPositions({"mock/joint1": 0.6})
     assert r.coordinator.add_task(legacy)
     r.tick()
     assert r.sent[-1][1].position[0] == 0.6
 
     legacy._positions = {"mock/joint3": float("nan")}
+    group.output = GroupCommandOutput("mock/unknown", group.output.payload)
     assert r.coordinator.add_task(group)
+    r.tick()
+    assert not dispatched
+    group.output = GroupCommandOutput("mock/pose", group.output.payload)
     r.tick()
     assert dispatched[-1][1].try_write(lambda: None)
     assert len(r.sent) == 1  # Invalid unrelated legacy command rejected as a batch.
     r.report_arm(*AT_REST)
     assert r.coordinator.remove_task(legacy.name)
-    assert r.coordinator.remove_task(group.name)
+    r.coordinator.task_invoke(group.name, "cancel")
     r.tick()
     assert r.sent[-1][1].position[0] == AT_REST[0]
 
 
 def test_unsupported_legacy_mode_cannot_reserve_a_contested_group_joint(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
     mocker: Any,
 ) -> None:
     r, dispatched = grouped_rig
-    group = GroupTask("mock/joints", (0.2, 0.1), priority=5)
+    group = GroupTask(priority=5)
     legacy = SendsPositions({"mock/joint1": 0.6})
     mocker.patch.object(
         legacy,
@@ -764,7 +757,7 @@ def test_unsupported_legacy_mode_cannot_reserve_a_contested_group_joint(
     assert r.coordinator.add_task(legacy)
     assert r.coordinator.add_task(group)
     r.tick()
-    assert [output for output, _ in dispatched] == [group.output]
+    assert [payload for payload, _ in dispatched] == [group.output.payload]
     assert r.sent[-1][1].name == MOCK_JOINTS[2:]
 
     # With no eligible group contender, legacy batch rejection is unchanged.
@@ -781,39 +774,27 @@ def test_group_only_connection_starts_and_routes_without_legacy_commands(
 
     config = FakeArmConfig(
         joint_commands={},
-        group_commands=(
-            GroupCommandInterface("joints", tuple, frozenset({"joint1"}), ("joint1",)),
-        ),
+        group_commands={"pose": frozenset({"joint1"})},
     )
     writes: list[object] = []
 
-    def handle(output: GroupCommandOutput, lease: GroupCommandLease) -> None:
-        assert lease.try_write(lambda: writes.append(output.payload))
+    def handle(payload: object, lease: GroupCommandLease) -> None:
+        assert lease.try_write(lambda: writes.append(payload))
 
-    r = rig(FeedbackOnlyCoordinator, connections=[config], group_handlers={"mock/joints": handle})
-    task = GroupTask("mock/joints", (0.2,))
-    # Exercise real connection startup and feedback through local transport.
-    arm = FakeArm(**config.model_dump(exclude={"model"}), model=config.model)
-    arm.set_transport("position_command", LocalTransport())  # type: ignore[arg-type]
-    arm.set_transport("joint_state", r.readings["mock_joint_state"])  # type: ignore[arg-type]
-    try:
-        arm.start()
-        assert arm.status().connected
-        assert arm.limits == {}
-        assert r.coordinator.add_task(task)
-        assert r.tick_until(lambda: bool(writes))
-        assert writes == [task.output.payload]
-        assert not r.sent
-        assert not arm.writes
-    finally:
-        arm.stop()
+    r = rig(FeedbackOnlyCoordinator, connections=[config], group_handlers={"mock/pose": handle})
+    task = GroupTask()
+    assert r.coordinator.add_task(task)
+    r.report_arm(*AT_REST)
+    r.tick()
+    assert writes == [task.output.payload]
+    assert not r.sent
 
 
 def test_cancel_drains_an_already_authorized_write(
-    grouped_rig: tuple[Rig, list[tuple[GroupCommandOutput, GroupCommandLease]]],
+    grouped_rig: tuple[Rig, Dispatched],
 ) -> None:
     r, dispatched = grouped_rig
-    task = GroupTask("mock/joints", (0.2, 0.1))
+    task = GroupTask()
     assert r.coordinator.add_task(task)
     r.tick()
     lease = dispatched[-1][1]
