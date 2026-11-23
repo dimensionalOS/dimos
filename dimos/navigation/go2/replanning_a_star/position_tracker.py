@@ -29,7 +29,7 @@ class PositionTracker:
     _time_window: float
     _max_points: int
     _threshold: float
-    _timestamps: NDArray[np.float32]
+    _timestamps: NDArray[np.float64]
     _positions: NDArray[np.float32]
     _index: int
     _size: int
@@ -43,7 +43,7 @@ class PositionTracker:
 
     def reset_data(self) -> None:
         with self._lock:
-            self._timestamps = np.zeros(self._max_points, dtype=np.float32)
+            self._timestamps = np.zeros(self._max_points, dtype=np.float64)
             self._positions = np.zeros((self._max_points, 2), dtype=np.float32)
             self._index = 0
             self._size = 0
