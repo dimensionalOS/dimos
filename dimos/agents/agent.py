@@ -15,7 +15,7 @@
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, RLock, Thread
+from threading import Event, Lock, RLock, Thread
 import time
 from typing import Any
 import uuid
@@ -112,6 +112,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
+    _infer_lock: Lock
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
@@ -130,6 +131,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             daemon=True,
         )
         self._stop_event = Event()
+        self._infer_lock = Lock()
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
@@ -315,6 +317,9 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        # Messages the worker never took: release any infer() still waiting on them.
+        while not self._thread.is_alive() and self._message_queue.unfinished_tasks:
+            self._message_queue.task_done()
         self._http_client.close()
         super().stop()
 
@@ -341,9 +346,13 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         """Send x like a message on human_input and return the answer once the queue is empty."""
         if not self._thread.is_alive():
             raise RuntimeError("Agent is not running; it starts with the blueprint")
-        self._message_queue.put(x)
-        self._message_queue.join()
-        answer = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
+        # One infer() at a time, or two callers would both read the later answer.
+        with self._infer_lock:
+            self._message_queue.put(x)
+            self._message_queue.join()
+            if self._stop_event.is_set():
+                raise RuntimeError("Agent stopped before it answered")
+            answer = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
         if TURN_FAILED_KEY in answer.additional_kwargs:
             raise RuntimeError(str(answer.text))
         return answer

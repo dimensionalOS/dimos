@@ -50,8 +50,14 @@ def _resolve(cls: type, target: type) -> tuple[Any, ...] | None:
             if inner is None:
                 continue
             binding = dict(zip(getattr(origin, "__parameters__", ()), get_args(base), strict=False))
-            return tuple(binding.get(arg, arg) for arg in inner)
+            return tuple(_bind(arg, binding) for arg in inner)
     return None
+
+
+def _bind(tp: Any, binding: dict[Any, Any]) -> Any:
+    """tp with its type variables replaced, also inside list[T] and the like."""
+    params = getattr(tp, "__parameters__", ())
+    return tp[tuple(binding.get(p, p) for p in params)] if params else binding.get(tp, tp)
 
 
 def _matches(tp: Any, value: Any) -> bool:
@@ -101,7 +107,9 @@ class BaseAgent(Module, Generic[I, O]):
                 f"{cls.__name__} must name its input and output types, "
                 f"e.g. class {cls.__name__}(BaseAgent[str, str])"
             )
-        unbound = [tp for tp in types if isinstance(tp, TypeVar)]
+        unbound = [
+            tp for tp in types if isinstance(tp, TypeVar) or bool(getattr(tp, "__parameters__", ()))
+        ]
         if unbound and not getattr(cls, "__parameters__", ()):
             raise TypeError(f"{cls.__name__} leaves {unbound} of BaseAgent unbound")
         for tp in types:

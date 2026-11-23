@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty
 from threading import RLock, Thread
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, create_autospec, patch
@@ -564,3 +565,56 @@ def test_infer_raises_when_its_turn_fails(
 def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
     with pytest.raises(RuntimeError, match="not running"):
         mcp_client.infer(HumanMessage("too early"))
+
+
+class _SlowGraph(_AnswersGraph):
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        time.sleep(0.3)
+        yield from super().stream(state, stream_mode)
+
+
+def test_overlapping_infer_calls_each_get_their_own_answer(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _SlowGraph())
+    answers: dict[str, str] = {}
+
+    def ask(question: str) -> None:
+        answers[question] = str(running_agent.infer(HumanMessage(question)).text)
+
+    callers = [Thread(target=ask, args=(question,)) for question in ("a", "b")]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=5)
+
+    assert sorted(answers.values()) == ["turn 1", "turn 2"]
+    asked = [m.content for m in running_agent._history if isinstance(m, HumanMessage)]
+    assert [answers[str(q)] for q in asked] == ["turn 1", "turn 2"]
+
+
+def test_stop_releases_an_infer_call_the_worker_never_took(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _SlowGraph())
+    errors: list[BaseException] = []
+
+    def ask() -> None:
+        try:
+            running_agent.infer(HumanMessage("never answered"))
+        except RuntimeError as error:
+            errors.append(error)
+
+    running_agent.add_message(HumanMessage("a turn from the stream"))
+    wait_until(lambda: len(running_agent._history) == 1, timeout=5, interval=0.01)
+    caller = Thread(target=ask)
+    caller.start()
+    wait_until(lambda: running_agent._message_queue.unfinished_tasks == 2, timeout=5, interval=0.01)
+
+    running_agent.stop()
+    caller.join(timeout=5)
+
+    assert not caller.is_alive()
+    assert [str(error) for error in errors] == ["Agent stopped before it answered"]

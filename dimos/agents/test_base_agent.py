@@ -105,6 +105,14 @@ class BytesAgent(OneInput[bytes]):
     pass
 
 
+class Batch(BaseAgent[list[T], str], Generic[T]):
+    pass
+
+
+class IntBatch(Batch[int]):
+    pass
+
+
 def _image() -> Image:
     return Image(data=np.zeros((4, 6, 3), dtype=np.uint8), format=ImageFormat.RGB)
 
@@ -127,6 +135,7 @@ def _robot_query() -> RobotQuery:
         (DictAgent, dict[str, float], list[str]),
         (ReadingAgent, Reading, float),
         (BytesAgent, bytes, str),
+        (IntBatch, list[int], str),
     ],
 )
 def test_an_agent_carries_the_types_it_names(
@@ -197,6 +206,8 @@ def test_an_agent_that_leaves_a_type_open_is_refused_when_defined() -> None:
         (ReadingAgent, {"sensor": "lidar"}, False),
         (BytesAgent, b"raw", True),
         (BytesAgent, "raw", False),
+        (IntBatch, [1, 2], True),
+        (IntBatch, ["a"], False),
     ],
 )
 def test_accepts_checks_a_value_against_the_input_type(
