@@ -81,38 +81,18 @@ def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
 
 ### Whole-group connection commands (opt-in)
 
-Declare `GroupCommandInterface` entries on `ConnectionConfig.group_commands`.
-Each specifies a local name, payload class, and covered movable model joints.
-Supply either `joint_order` (every covered joint exactly once) or a `frame`
-and `tcp`. The task claims the qualified name (`source/interface`) in
-`ResourceClaim.groups` and returns one `GroupCommandOutput(interface, payload)`.
-Treat the payload as immutable. The coordinator checks its declared class;
-device-specific validation, including shape, units, and limits, is the consumer's job.
+Map each indivisible command's local name to its movable model joints in
+`ConnectionConfig.group_commands`. A task returns `GroupCommandOutput("source/name", payload)`;
+its ordinary claim supplies priority. The handler validates the opaque payload.
 
-A group wins only if all covered joints are free in descending task-priority
-order (ties use registration order). Losing groups reserve nothing. Winning
-groups suppress legacy commands and holds for covered joints. When legacy hold
-resumes on those joints, it starts from feedback rather than a pre-group target.
-An unsupported legacy mode cannot reserve a joint against an eligible group.
-Group-only connections can leave `joint_commands` empty; they still require a
-model and a `joint_state` feedback port.
+A group wins all its axes or reserves none. Scalars still win per joint.
+Group-owned joints skip scalar commands and resume holds from feedback.
 
-Bind a local handler with `coordinator.bind_group_handler(interface, handler)`
-before start. The handler receives `(output, lease)`; it should enqueue and
-return promptly. A worker can compute outside the guard, but must call
-`lease.try_write(write)` around the final bounded synchronous write, not around
-another enqueue. The write must not reenter the coordinator. The lease permits
-at most one write, expires within `reading_timeout_s`, and becomes invalid on
-loss of fresh feedback or ownership, cancellation, task removal, e-stop, or stop.
-Each covered joint must report within `reading_timeout_s`; partial joint-state
-updates only refresh the joints they report. Fresh feedback after a gap does not
-revive a lease or authorize output computed across the gap.
-A newer committed payload also invalidates older leases for that group.
-
-The lease is in-process only. A consumer that also accepts legacy commands must
-use a single device writer and must not replay queued legacy commands on joints
-that have since changed ownership. Device fallback and the deadman remain the
-consumer's responsibility; the lease is not a hardware watchdog.
+Use `bind_group_handler` before start. The local `(payload, lease)` handler may
+enqueue; the worker must call `lease.try_write` around the final bounded synchronous
+write, which must not reenter the coordinator. The single-use lease is fenced by
+ownership, feedback freshness, cancellation and stop. It is not a device watchdog.
+A mixed consumer must use one device writer and prevent replay of queued scalars.
 
 ## Files
 

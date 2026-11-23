@@ -50,7 +50,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.connection_source import ConnectionSource
@@ -60,9 +60,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-JointCandidate = tuple[ControlTask, ResourceClaim, JointCommandOutput | None]
-GroupCandidate = tuple[ControlTask, ResourceClaim, GroupCommandOutput]
-TaskOutput = JointCandidate | GroupCandidate
+TaskOutput = tuple[ControlTask, ResourceClaim, JointCommandOutput | GroupCommandOutput | None]
 
 
 class JointWinner(NamedTuple):
@@ -132,11 +130,11 @@ class TickLoop:
         )
         self._connection_command_callback = connection_command_callback
         self._group_interfaces = {
-            interface: (source, declaration, joints)
+            interface: (source, joints)
             for source in self._connections.values()
-            for interface, (declaration, joints) in source.group_interfaces.items()
+            for interface, joints in source.group_joints.items()
         }
-        self._group_sources = {source for source, _, _ in self._group_interfaces.values()}
+        self._group_sources = {source for source, _ in self._group_interfaces.values()}
         self._group_generation = 0  # guarded by hardware_lock
         self._groups_enabled = True
         # Robots already told off for never reporting, so each is told off once.
@@ -249,7 +247,7 @@ class TickLoop:
         generation = self._group_generation
         feedback_epochs = {
             interface: source.group_feedback_epoch(interface)
-            for interface, (source, _, _) in self._group_interfaces.items()
+            for interface, (source, _) in self._group_interfaces.items()
         }
         joint_states, per_hardware = self._read_all_hardware()
         imu_states = self._read_all_imu()
@@ -264,12 +262,16 @@ class TickLoop:
         commands = self._compute_all_tasks(state)
         if self._group_sources:
             with self._hardware_lock:
-                joint_commands, covering, preemptions = self._arbitrate_and_route_groups(
-                    commands, generation, feedback_epochs
+                epochs = (
+                    feedback_epochs
+                    if self._groups_enabled
+                    and generation == self._group_generation
+                    and not (self._tick_thread is not None and self._stop_event.is_set())
+                    else {}
                 )
+                joint_commands, preemptions, covering = self._arbitrate(commands, epochs)
         else:
-            joint_commands, preemptions = self._arbitrate(self._joint_candidates(commands))
-            covering = frozenset()
+            joint_commands, preemptions, covering = self._arbitrate(commands)
 
         self._notify_preemptions(preemptions)
 
@@ -394,8 +396,6 @@ class TickLoop:
                     # Normalize here so arbitration and preemption stay per task/joint.
                     if isinstance(output, list):
                         results.extend((task, claim, command) for command in output)
-                    elif isinstance(output, GroupCommandOutput):
-                        results.append((task, claim, output))
                     else:
                         results.append((task, claim, output))
                 except Exception as e:
@@ -403,140 +403,50 @@ class TickLoop:
 
         return results
 
-    @staticmethod
-    def _joint_candidates(commands: list[TaskOutput]) -> list[JointCandidate]:
-        return [
-            (task, claim, output)
-            for task, claim, output in commands
-            if not isinstance(output, GroupCommandOutput)
-        ]
-
-    def _arbitrate_and_route_groups(
-        self,
-        commands: list[TaskOutput],
-        generation: int,
-        feedback_epochs: dict[str, int | None],
-    ) -> tuple[
-        dict[str, tuple[float, ControlMode, str]], frozenset[str], dict[str, dict[str, str]]
-    ]:
-        """Pick indivisible groups among the per-joint contenders, then route them.
-
-        Caller holds hardware_lock. Ties use existing task order. Greedy
-        priority order ensures that a rejected group reserves *nothing*.
-        """
-        claimed: dict[str, str] = {}
-        joint_winners: dict[str, JointWinner] = {}
-        groups: list[tuple[ConnectionSource, GroupCandidate, frozenset[str], int]] = []
-        preemptions: dict[str, dict[str, str]] = {}
-        active = self._groups_enabled and generation == self._group_generation
-        # Stepped tests need no running thread; a real stopping loop grants no leases.
-        active = active and not (self._tick_thread is not None and self._stop_event.is_set())
-        eligible: dict[int, tuple[ConnectionSource, frozenset[str], int]] = {}
-        contested: dict[str, ConnectionSource] = {}
-        if active:
-            for index, (task, claim, output) in enumerate(commands):
-                if not isinstance(output, GroupCommandOutput):
-                    continue
-                entry = self._group_interfaces.get(output.interface)
-                if entry is None or output.interface not in claim.groups:
-                    logger.warning(
-                        f"Task {task.name} emitted an undeclared group {output.interface}"
-                    )
-                    continue
-                source, declaration, joints = entry
-                if not isinstance(output.payload, declaration.payload_type):
-                    logger.warning(
-                        f"Task {task.name} emitted a wrong payload for {output.interface}"
-                    )
-                    continue
-                epoch = feedback_epochs[output.interface]
-                if epoch is not None and epoch == source.group_feedback_epoch(output.interface):
-                    eligible[index] = source, joints, epoch
-                    contested.update(dict.fromkeys(joints, source))
-
-        if not eligible:
-            for source in self._group_sources:
-                source.retain_group_owners({})
-            joint_commands, preemptions = self._arbitrate(self._joint_candidates(commands))
-            return joint_commands, frozenset(), preemptions
-
-        for index, (task, claim, output) in sorted(
-            enumerate(commands), key=lambda item: -item[1][1].priority
-        ):
-            if (
-                isinstance(output, JointCommandOutput)
-                and (values := output.get_values()) is not None
-            ):
-                for joint, value in zip(output.joint_names, values, strict=True):
-                    source = contested.get(joint)
-                    if source is not None and not source.supports_joint_mode(joint, output.mode):
-                        continue
-                    winner = claimed.get(joint)
-                    if winner is None:
-                        claimed[joint] = task.name
-                        joint_winners[joint] = JointWinner(
-                            claim.priority, value, output.mode, task.name
-                        )
-                    elif winner != task.name:
-                        previous = joint_winners.get(joint)
-                        if previous is not None and previous.priority == claim.priority:
-                            if previous.mode == output.mode:
-                                continue
-                            logger.warning(f"Mode conflict on {joint}; dropping {task.name}")
-                        preemptions.setdefault(task.name, {})[joint] = winner
-            elif isinstance(output, GroupCommandOutput) and index in eligible:
-                source, joints, epoch = eligible[index]
-                overlap = joints & claimed.keys()
-                if overlap:
-                    preemptions.setdefault(task.name, {}).update((j, claimed[j]) for j in overlap)
-                    continue
-                claimed.update(dict.fromkeys(joints, task.name))
-                groups.append((source, (task, claim, output), joints, epoch))
-
-        owners: dict[str, str] = {}
-        covering: set[str] = set()
-        for _, (task, _, output), joints, _ in groups:
-            owners[output.interface] = task.name
-            covering.update(joints)
-        for source in self._group_sources:
-            source.retain_group_owners(owners)
-        for source, (task, _, output), _, epoch in groups:
-            try:
-                source.route_group(task.name, output, epoch)
-            except Exception:
-                logger.exception(f"Failed to route group {output.interface}")
-
-        # Preserve the legacy first-seen joint order for downstream routing.
-        order = dict.fromkeys(
-            joint
-            for _, _, output in commands
-            if isinstance(output, JointCommandOutput) and output.get_values() is not None
-            for joint in output.joint_names
-        )
-        return (
-            {j: (w.value, w.mode, w.task_name) for j in order if (w := joint_winners.get(j))},
-            frozenset(covering),
-            preemptions,
-        )
-
     def _arbitrate(
         self,
-        commands: list[JointCandidate],
+        commands: list[TaskOutput],
+        epochs: dict[str, int | None] | None = None,
     ) -> tuple[
         dict[str, tuple[float, ControlMode, str]],
         dict[str, dict[str, str]],
+        set[str],
     ]:
-        """Per-joint arbitration with mode conflict detection.
+        """Arbitrate scalars per joint; a group can only take all its joints at once.
 
-        Returns:
-            Tuple of:
-            - joint_commands: {joint_name: (value, mode, task_name)}
-            - preemptions: {preempted_task: {joint: winning_task}}
+        When a group can compete, visit candidates in priority order (stable on
+        ties), so a rejected group never blocks a later contender on any axis.
         """
+        eligible: dict[str, int] = {}
+        contested: dict[str, ConnectionSource] = {}
+        for _, _, output in commands:
+            if not isinstance(output, GroupCommandOutput) or not epochs:
+                continue
+            epoch = epochs.get(output.interface)
+            if epoch is None:
+                continue
+            source, joints = self._group_interfaces[output.interface]
+            if epoch == source.group_feedback_epoch(output.interface):
+                eligible[output.interface] = epoch
+                contested.update(dict.fromkeys(joints, source))
+        ordered = sorted(commands, key=lambda entry: -entry[1].priority) if eligible else commands
+        groups: dict[str, tuple[str, object]] = {}
+        covered: dict[str, str] = {}
         winners: dict[str, JointWinner] = {}  # joint_name -> current winner
         preemptions: dict[str, dict[str, str]] = {}  # loser_task -> {joint: winner_task}
 
-        for task, claim, output in commands:
+        for task, claim, output in ordered:
+            if isinstance(output, GroupCommandOutput):
+                if output.interface in eligible:
+                    _, joints = self._group_interfaces[output.interface]
+                    blocked = {j: covered[j] for j in joints & covered.keys()}
+                    blocked.update((j, winners[j].task_name) for j in joints & winners.keys())
+                    if blocked:
+                        preemptions.setdefault(task.name, {}).update(blocked)
+                    else:
+                        groups[output.interface] = task.name, output.payload
+                        covered.update(dict.fromkeys(joints, task.name))
+                continue
             if output is None:
                 continue
 
@@ -545,6 +455,13 @@ class TickLoop:
                 continue
 
             for i, joint_name in enumerate(output.joint_names):
+                if joint_name in covered:
+                    preemptions.setdefault(task.name, {})[joint_name] = covered[joint_name]
+                    continue
+                if (source := contested.get(joint_name)) and not source.supports_joint_mode(
+                    joint_name, output.mode
+                ):
+                    continue
                 candidate = JointWinner(claim.priority, values[i], output.mode, task.name)
 
                 # First claim on this joint
@@ -575,10 +492,33 @@ class TickLoop:
                     preemptions.setdefault(task.name, {})[joint_name] = current.task_name
                 # Same priority + same mode: first wins (keep current)
 
-        # Convert to output format: joint -> (value, mode, task_name)
-        joint_commands = {joint: (w.value, w.mode, w.task_name) for joint, w in winners.items()}
+        if self._group_sources:
+            owners = {interface: task for interface, (task, _) in groups.items()}
+            for source in self._group_sources:
+                source.retain_group_owners(owners)
+            for interface, (task, payload) in groups.items():
+                source, _ = self._group_interfaces[interface]
+                try:
+                    source.route_group(interface, task, payload, eligible[interface])
+                except Exception:
+                    logger.exception(f"Failed to route group {interface}")
 
-        return joint_commands, preemptions
+        # Keep scalar routing's original first-seen order despite sorting the mixed candidates.
+        order = (
+            dict.fromkeys(
+                j
+                for _, _, output in commands
+                if isinstance(output, JointCommandOutput) and output.get_values() is not None
+                for j in output.joint_names
+            )
+            if eligible
+            else winners
+        )
+        return (
+            {j: (w.value, w.mode, w.task_name) for j in order if (w := winners.get(j))},
+            preemptions,
+            set(covered),
+        )
 
     def _notify_preemptions(self, preemptions: dict[str, dict[str, str]]) -> None:
         """Notify each preempted task with affected joints, grouped by winning task."""
@@ -693,7 +633,7 @@ class TickLoop:
     def _write_all_connections(
         self,
         joint_commands: dict[str, tuple[float, ControlMode, str]],
-        group_joints: frozenset[str] = frozenset(),
+        group_joints: Collection[str] = (),
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -717,7 +657,7 @@ class TickLoop:
                 }
                 try:
                     command = source.command(winners, group_joints=group_joints)
-                    if command or not source.group_interfaces:
+                    if command or not source.group_joints:
                         publish(name, command)
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")

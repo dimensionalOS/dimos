@@ -27,7 +27,6 @@ from dimos.control.connection_source import JOINT_STATE, POSITION_COMMAND, Conne
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
-from dimos.control.group_command import GroupCommandInterface
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.core import rpc
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -43,9 +42,6 @@ from dimos.robot.manipulators.openyam.trimode_tasks import (
     QuestReference,
 )
 from dimos.robot.manipulators.openyam.trimode_tracker import (
-    JointGoal,
-    PoseGoal,
-    PositionGoal,
     Tracker,
     Vector,
     load_actor,
@@ -74,32 +70,12 @@ class LocalPlant(Protocol):
 
 
 def trimode_connection(model: RobotModel) -> ConnectionConfig:
-    fields = frozenset({Interface.POSITION, Interface.VELOCITY})
     joints = frozenset(OPENYAM_ARM_JOINTS)
     return ConnectionConfig(
         source="arm",
         model=model,
         joint_commands={OPENYAM_GRIPPER_JOINT.split("/")[-1]: (Interface.POSITION,)},
-        group_commands=(
-            GroupCommandInterface(
-                "tcp_pose", PoseGoal, joints, frame="world", tcp="arm_tcp", feedback_fields=fields
-            ),
-            GroupCommandInterface(
-                "tcp_position",
-                PositionGoal,
-                joints,
-                frame="world",
-                tcp="arm_tcp",
-                feedback_fields=fields,
-            ),
-            GroupCommandInterface(
-                "joint_reference",
-                JointGoal,
-                joints,
-                joint_order=tuple(OPENYAM_ARM_JOINTS),
-                feedback_fields=fields,
-            ),
-        ),
+        group_commands=dict.fromkeys(("tcp_pose", "tcp_position", "joint_reference"), joints),
     )
 
 
@@ -179,6 +155,7 @@ class TrimodeCoordinator(TeleopControlCoordinator):
             [JOINT_STATE],
             self.config.reading_timeout_s,
             group_lock=self._hardware_lock,
+            group_feedback_fields=frozenset({Interface.POSITION, Interface.VELOCITY}),
             group_handlers={i: tracker.offer for i in (POSE, XYZ, JOINT)},
         )
         self._connections["arm"] = source

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.control.group_command import GroupCommandLease, GroupCommandOutput
+from dimos.control.group_command import GroupCommandLease
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -193,12 +193,12 @@ class Tracker:
         self._thread = threading.Thread(target=self._run, name="openyam-trimode", daemon=True)
         self._thread.start()
 
-    def offer(self, output: GroupCommandOutput, lease: GroupCommandLease) -> None:
-        if not isinstance(output.payload, (PoseGoal, PositionGoal, JointGoal)):
+    def offer(self, payload: object, lease: GroupCommandLease) -> None:
+        if not isinstance(payload, (PoseGoal, PositionGoal, JointGoal)):
             raise TypeError("expected an OpenYAM goal")
         with self._condition:
             if not self._closed:
-                self._pending = output.payload, lease
+                self._pending = payload, lease
                 self._condition.notify()
 
     def close(self) -> None:

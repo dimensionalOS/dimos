@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import math
 import time
 
@@ -85,7 +85,7 @@ class QuestReference(BaseControlTask):
         self._epoch: int | None = None
 
     def claim(self) -> ResourceClaim:
-        return ResourceClaim(frozenset(JOINTS), priority=20, groups=frozenset({self._interface}))
+        return ResourceClaim(frozenset(JOINTS), priority=20)
 
     def is_active(self) -> bool:
         return self._session is not None
@@ -220,9 +220,6 @@ class PlannedReference(JointTrajectoryTask):
         self._plan: JointTrajectory | None = None
         self._began: float | None = None
         self._error = ""
-
-    def claim(self) -> ResourceClaim:
-        return replace(super().claim(), groups=frozenset({JOINT}))
 
     def on_joint_command(self, msg: JointState, t_now: float) -> bool:
         return False
