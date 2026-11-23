@@ -136,6 +136,9 @@ def test_incomplete_joint_positions_are_rejected(connection: G1WholeBodyConnecti
 
 def test_canonical_source_routes_model_order_and_keeps_limits(connection, mocker):
     publisher = _wire(connection, soft_start_seconds=0.0)
+    # A stall after an accepted command must not let the 0.1 s default deadman
+    # halt before the frame checks; the deadman has its own test below.
+    connection.config.deadman_timeout_s = 60.0
     connection._connected = True
     # Model loading and assertion timing must not age feedback or fire the deadman.
     clock = mocker.patch.object(wholebody_connection, "time", wraps=time)
@@ -157,6 +160,10 @@ def test_canonical_source_routes_model_order_and_keeps_limits(connection, mocker
     )
     assert source.ready_for_control()
     values = source.command({name: (q, ControlMode.POSITION) for name, q in pose.items()})
+    # Mark the low-state fresh only now. Building the source loaded the G1
+    # model, which can take longer than feedback_timeout_s on a busy runner.
+    connection._low_state = SimpleNamespace()
+    connection._state_received_at = time.monotonic()
     connection.command(values)
     assert [frame[0] for frame in publisher.frames[-1]] == [pose[n] for n in G1_JOINT_NAMES]
     assert all(frame[2:4] == (40.0, 3.0) for frame in publisher.frames[-1])
