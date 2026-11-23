@@ -435,6 +435,8 @@ all_modules = {
     "web-xr-teleop-module": "dimos.teleop.webxr.module.WebXRTeleopModule",
     "webcam-module": "dimos.hardware.sensors.camera.module.WebcamModule",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
+    "wifi-coverage": "dimos.mapping.wifi.module.WifiCoverage",
+    "wifi-monitor": "dimos.hardware.sensors.wifi.module.WifiMonitor",
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
