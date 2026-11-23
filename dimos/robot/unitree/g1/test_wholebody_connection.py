@@ -27,7 +27,6 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.hardware.whole_body.spec import POS_STOP
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
-from dimos.robot.unitree.g1.effectors.low_level import groot_wholebody as wholebody_connection
 from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
@@ -134,16 +133,12 @@ def test_incomplete_joint_positions_are_rejected(connection: G1WholeBodyConnecti
     assert publisher.frames == []
 
 
-def test_canonical_source_routes_model_order_and_keeps_limits(connection, mocker):
+def test_canonical_source_routes_model_order_and_keeps_limits(connection):
     publisher = _wire(connection, soft_start_seconds=0.0)
     # A stall after an accepted command must not let the 0.1 s default deadman
     # halt before the frame checks; the deadman has its own test below.
     connection.config.deadman_timeout_s = 60.0
     connection._connected = True
-    # Model loading and assertion timing must not age feedback or fire the deadman.
-    clock = mocker.patch.object(wholebody_connection, "time", wraps=time)
-    clock.monotonic.return_value = connection._state_received_at
-    mocker.patch.object(connection._loop, "time", clock.monotonic)
     source = ConnectionSource(connection.config, ["position_command"], ["joint_state"], 0.2)
     # A real model-valid pose, including asymmetric knee/ankle limits.
     pose = {
