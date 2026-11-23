@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
+from dimos.control.group_command import GroupCommandOutput as GroupCommandOutput
 from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
@@ -55,15 +56,17 @@ class ResourceClaim:
         priority: Priority level for conflict resolution. Higher wins.
                   Typical values: 10 (trajectory), 50 (WBC), 100 (safety)
         mode: Control mode (POSITION, VELOCITY, TORQUE)
+        groups: Qualified group interface names (``source/interface``).
     """
 
     joints: frozenset[JointName]
     priority: int = 0
     mode: ControlMode = ControlMode.POSITION
+    groups: frozenset[str] = frozenset()
 
     def conflicts_with(self, other: ResourceClaim) -> bool:
         """Check if two claims compete for the same joints."""
-        return bool(self.joints & other.joints)
+        return bool(self.joints & other.joints or self.groups & other.groups)
 
 
 @dataclass
@@ -275,7 +278,7 @@ class ControlTask(Protocol):
 
     def compute(
         self, state: CoordinatorState
-    ) -> JointCommandOutput | list[JointCommandOutput] | None:
+    ) -> JointCommandOutput | list[JointCommandOutput] | GroupCommandOutput | None:
         """Compute output command(s) given current state.
 
         Called by coordinator for active tasks each tick.
@@ -291,9 +294,8 @@ class ControlTask(Protocol):
 
         Returns:
             One JointCommandOutput, a list of outputs for distinct joint groups
-            using different modes, or None to send no command this tick.
-            Every output shares this task's claim priority; arbitration uses
-            each output's mode, not ResourceClaim.mode.
+            using different modes, one whole group payload, or None to send no
+            command this tick. Every output shares this task's claim priority.
         """
         ...
 

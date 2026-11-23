@@ -34,6 +34,7 @@ import uuid
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
+from dimos.control.group_command import GroupCommandInterface
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot.assets.model import RobotModel
@@ -52,7 +53,8 @@ class ConnectionConfig(ModuleConfig):
         model: The robot's model (its URDF): its joints, their order and their
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
-            listed joints are commanded; planar axes are ordinary joints.
+            listed joints accept legacy commands; planar axes are ordinary joints.
+        group_commands: Optional whole-group interfaces for the coordinator.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
     """
@@ -60,6 +62,7 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
+    group_commands: tuple[GroupCommandInterface, ...] = ()
     deadman_timeout_s: float = 0.1
 
 

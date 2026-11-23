@@ -81,6 +81,7 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
     Only declared interfaces get keys, in model order. Declare PD_INTERFACES
     for joints driven by position, velocity, effort and gains together. Bounds
     come from the model; commands outside these bounds are rejected.
+    A group-only connection has an empty legacy limits table.
 
     Raises:
         ValueError: If joints are commanded without a model, no joint of the
@@ -89,6 +90,10 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
     """
     source = config.source
     if not config.joint_commands:
+        if config.group_commands:
+            if config.model is None:
+                raise ValueError(f"{source!r} commands groups but has no model: set `model`")
+            return {}
         raise ValueError(f"{source!r} is told nothing: set joint_commands")
     if config.model is None:
         raise ValueError(f"{source!r} commands joints but has no model: set `model`")

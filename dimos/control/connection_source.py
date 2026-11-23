@@ -41,7 +41,13 @@ from dimos.control.contract.convert import (
     joint_state_to_values,
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
-from dimos.control.contract.limits import Limits, limits as limits_of
+from dimos.control.contract.limits import Limits, limits as limits_of, movable_joints
+from dimos.control.group_command import (
+    GroupCommandHandler,
+    GroupCommandInterface,
+    GroupCommandLease,
+    GroupCommandOutput,
+)
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -121,6 +127,15 @@ class _Joint:
     position_limit: Limits = Limits()
 
 
+@dataclass(slots=True)
+class _GroupOwner:
+    task: str
+    feedback_epoch: int
+    issued: int = 0
+    written: int = 0
+    expires_at: float = 0.0
+
+
 class ConnectionSource:
     """One robot behind a connection module, as the coordinator's tick loop sees it.
 
@@ -153,6 +168,8 @@ class ConnectionSource:
         reading_timeout_s: float,
         *,
         zero_stiffness_joints: Collection[str] = (),
+        group_handlers: Mapping[str, GroupCommandHandler] | None = None,
+        group_lock: threading.RLock | None = None,
     ) -> None:
         robot = config.source
         if commands and not readings:
@@ -162,6 +179,43 @@ class ConnectionSource:
                 f"{robot!r}: {robot}_{MOTOR_COMMAND} needs stiffness and damping, "
                 "which the coordinator cannot send"
             )
+        if config.group_commands and (
+            JOINT_STATE not in readings
+            or not math.isfinite(reading_timeout_s)
+            or reading_timeout_s <= 0
+        ):
+            raise ValueError(f"{robot!r}: groups need joint_state and a finite positive timeout")
+        self._groups: dict[str, tuple[GroupCommandInterface, frozenset[str]]] = {}
+        movable: dict[str, str] = {}
+        if config.group_commands:
+            if config.model is None:
+                raise ValueError(f"{robot!r}: groups need a model")
+            movable = {
+                j.name: j.name if SEPARATOR in j.name else f"{robot}/{j.name}"
+                for j in movable_joints(config.model)
+            }
+            for group in config.group_commands:
+                qualified = f"{robot}/{group.name}"
+                if qualified in self._groups:
+                    raise ValueError(f"duplicate group interface {qualified!r}")
+                if group.joints - movable.keys():
+                    raise ValueError(f"{qualified!r}: unknown or non-movable covered joints")
+                joints = frozenset(movable[j] for j in group.joints)
+                if any(not j.startswith(f"{robot}/") for j in joints):
+                    raise ValueError(f"{qualified!r}: covered joint belongs to another source")
+                self._groups[qualified] = group, joints
+        self._group_handlers = dict(group_handlers or {})
+        if self._group_handlers.keys() != self._groups.keys():
+            raise ValueError(f"{robot!r}: bind exactly one local handler per group interface")
+        # Share the coordinator write/stop boundary. A local handler can
+        # use its lease synchronously while the tick holds this lock.
+        self._group_lock = group_lock if group_lock is not None else threading.RLock()
+        self._group_owners: dict[str, _GroupOwner] = {}
+        self._reading_epoch = 0
+        self._group_joint_by_key: dict[str, str] = {}
+        self._joint_receipts: dict[str, float] = {}
+        self._joint_epochs: dict[str, int] = {}
+
         table = limits_of(config)
         self._robot = robot
         self._timeout = reading_timeout_s
@@ -180,13 +234,23 @@ class ConnectionSource:
         for raw_key in table:
             key = Key(raw_key)
             keys.setdefault(key.joint, {})[key.interface] = key
+        if self._groups:
+            covered = frozenset().union(*(joints for _, joints in self._groups.values()))
+            for name in movable.values():
+                if name in covered:
+                    keys.setdefault(name, {})
+                    self._group_joint_by_key.update(
+                        {f"{name}/{i}": name for i in JOINT_STATE_FIELDS}
+                    )
         self._joints = []
         for name, command_keys in keys.items():
             for interface in command_keys:
                 if interface not in self._joint_ports:
                     raise ValueError(f"{name}: declared {interface} has no command transport")
-            if Interface.VELOCITY not in command_keys and not (
-                Interface.POSITION in command_keys and JOINT_STATE in readings
+            if (
+                command_keys
+                and Interface.VELOCITY not in command_keys
+                and not (Interface.POSITION in command_keys and JOINT_STATE in readings)
             ):
                 raise ValueError(f"{name}: cannot be held; needs velocity or reported position")
             self._joints.append(
@@ -280,6 +344,10 @@ class ConnectionSource:
             raise ValueError(f"{joint_name!r} has no declared position command")
         return self._limits[key]
 
+    def supports_joint_mode(self, joint: str, mode: ControlMode) -> bool:
+        """Whether the joint has a legacy interface for this mode."""
+        return f"{joint}/{_INTERFACE_BY_MODE.get(mode)}" in self._limits
+
     @property
     def command_ports(self) -> list[str]:
         """The kinds of port commands go out on, e.g. ["position_command"]."""
@@ -318,8 +386,8 @@ class ConnectionSource:
         mine = {key: value for key, value in values.items() if key in self._port_keys[port]}
         if not mine:
             return
-        now = time.monotonic()
         with self._lock:
+            now = time.monotonic()
             latest, reported = self._latest, self._reported
             if self._restart or any(
                 now - receipt > self._timeout for receipt in self._port_receipts.values()
@@ -328,8 +396,20 @@ class ConnectionSource:
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._port_receipts.clear()
+                self._joint_receipts.clear()
                 self._resumed = True
                 self._restart = False
+                self._reading_epoch += 1
+            if port == JOINT_STATE and self._group_joint_by_key:
+                updated = {
+                    self._group_joint_by_key[k]
+                    for k in mine.keys() & self._group_joint_by_key.keys()
+                }
+                for joint in updated:
+                    previous = self._joint_receipts.get(joint)
+                    if previous is not None and now - previous > self._timeout:
+                        self._joint_epochs[joint] = self._joint_epochs.get(joint, 0) + 1
+                    self._joint_receipts[joint] = now
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
             if port not in reported and all(
@@ -347,6 +427,85 @@ class ConnectionSource:
         with self._lock:
             self._reported = frozenset()
             self._restart = True
+            self._reading_epoch += 1
+
+    @property
+    def group_interfaces(self) -> Mapping[str, tuple[GroupCommandInterface, frozenset[str]]]:
+        """Declared groups, with their resolved physical joint names."""
+        return self._groups.copy()
+
+    def retain_group_owners(self, winners: Mapping[str, str]) -> None:
+        """Revoke nonwinning authority before either route emits a replacement."""
+        with self._group_lock:
+            for interface, owner in list(self._group_owners.items()):
+                if winners.get(interface) != owner.task:
+                    del self._group_owners[interface]
+
+    def revoke_group_owners(self, task: str | None = None) -> None:
+        with self._group_lock:
+            for interface, owner in list(self._group_owners.items()):
+                if task is None or owner.task == task:
+                    del self._group_owners[interface]
+
+    def group_feedback_epoch(self, interface: str) -> int | None:
+        """Return the group's continuity token only while its feedback is fresh."""
+        with self._lock:
+            return self._group_feedback_epoch(interface, time.monotonic())
+
+    def _group_feedback_epoch(self, interface: str, now: float) -> int | None:
+        _, joints = self._groups[interface]
+        if not self._ready(now) or any(
+            now - self._joint_receipts.get(joint, float("-inf")) > self._timeout for joint in joints
+        ):
+            return None
+        # Every component only increases: recovering a covered joint or any
+        # required port after a gap cannot revive a previous continuity token.
+        return self._reading_epoch + sum(self._joint_epochs.get(joint, 0) for joint in joints)
+
+    def route_group(self, task: str, output: GroupCommandOutput, feedback_epoch: int) -> None:
+        """Offer the tick winner to its local handler, which may enqueue it."""
+        interface = output.interface
+        with self._group_lock, self._lock:
+            now = time.monotonic()
+            if feedback_epoch != self._group_feedback_epoch(interface, now):
+                self._group_owners.pop(interface, None)
+                return
+            owner = self._group_owners.get(interface)
+            if (
+                owner is None
+                or owner.task != task
+                or owner.feedback_epoch != feedback_epoch
+                or now >= owner.expires_at
+            ):
+                owner = self._group_owners[interface] = _GroupOwner(task, feedback_epoch)
+            expires_at = owner.expires_at = now + self._timeout
+            owner.issued += 1
+            sequence = owner.issued
+            # Ownership changed independently of whether the legacy batch
+            # on other joints passes validation this tick.
+            for joint in self._groups[interface][1]:
+                self._holds.pop(joint, None)
+
+        def guard(write: Callable[[], None]) -> bool:
+            with self._group_lock:
+                with self._lock:
+                    now = time.monotonic()
+                    if (
+                        self._group_owners.get(interface) is not owner
+                        or sequence <= owner.written
+                        or now >= expires_at
+                        or owner.feedback_epoch != self._group_feedback_epoch(interface, now)
+                    ):
+                        return False
+                    owner.written = sequence
+                write()
+                return True
+
+        try:
+            self._group_handlers[interface](output, GroupCommandLease(expires_at, guard))
+        except Exception:
+            self.revoke_group_owners(task)
+            raise
 
     def ready_for_control(self, now: float | None = None) -> bool:
         """Whether every required reading port has reported and is fresh.
@@ -360,9 +519,12 @@ class ConnectionSource:
         if now is None:
             now = time.monotonic()
         with self._lock:
-            return len(self._reported) == len(self._needed) and all(
-                now - self._port_receipts[port] <= self._timeout for port in self._needed
-            )
+            return self._ready(now)
+
+    def _ready(self, now: float) -> bool:
+        return len(self._reported) == len(self._needed) and all(
+            now - self._port_receipts[port] <= self._timeout for port in self._needed
+        )
 
     def unreported(self) -> list[str]:
         """The reading ports nothing has ever arrived on, e.g. ["joint_state"]. A
@@ -404,6 +566,8 @@ class ConnectionSource:
     def command(
         self,
         winners: Mapping[str, tuple[float, ControlMode]],
+        *,
+        group_joints: frozenset[str] = frozenset(),
     ) -> Values:
         """The complete command to send the robot this tick, by key.
 
@@ -411,6 +575,7 @@ class ConnectionSource:
             winners: Each winning joint's value and control mode, e.g.
                 ``{"arm/joint1": (0.3, ControlMode.POSITION)}``. Each interface
                 must be authorized by the connection declaration.
+            group_joints: Joints owned by group winners; never held or sent here.
 
         Raises:
             ValueError: If a task drives a joint in a way it does not accept,
@@ -443,6 +608,8 @@ class ConnectionSource:
             self._resumed = False
         values: Values = {}
         for joint in self._joints:
+            if joint.name in group_joints:
+                continue
             if joint.name in winners:
                 interface = interfaces[joint.name]
                 assert interface is not None
