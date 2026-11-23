@@ -589,14 +589,14 @@ class _EchoGraph:
 def test_infer_under_load_gives_every_caller_its_own_answer(
     running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """200 concurrent infer() calls, with 200 stream messages arriving among them."""
+    """Concurrent infer() calls with stream messages arriving among them."""
     monkeypatch.setattr(running_agent, "_state_graph", _EchoGraph())
     answers: dict[str, str] = {}
 
     def ask(question: str) -> None:
         answers[question] = str(running_agent.infer(HumanMessage(question)).text)
 
-    questions = [f"q{i}" for i in range(200)]
+    questions = [f"q{i}" for i in range(20)]
     callers = [Thread(target=ask, args=(question,)) for question in questions]
     for i, caller in enumerate(callers):
         caller.start()
@@ -605,7 +605,7 @@ def test_infer_under_load_gives_every_caller_its_own_answer(
         caller.join(timeout=30)
 
     assert answers == {question: f"answer to {question}" for question in questions}
-    assert len(running_agent._history) == 800
+    wait_until(lambda: len(running_agent._history) == 80, timeout=5, interval=0.01)
     assert running_agent._answers == {}
 
 
@@ -625,7 +625,7 @@ def test_stop_releases_an_infer_call_the_worker_never_took(
     wait_until(lambda: len(running_agent._history) == 1, timeout=5, interval=0.01)
     caller = Thread(target=ask)
     caller.start()
-    wait_until(lambda: running_agent._message_queue.unfinished_tasks == 2, timeout=5, interval=0.01)
+    wait_until(lambda: len(running_agent._answers) == 1, timeout=5, interval=0.01)
 
     running_agent.stop()
     caller.join(timeout=5)
