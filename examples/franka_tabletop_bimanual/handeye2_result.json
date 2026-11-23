@@ -1,0 +1,19 @@
+{
+  "parent_frame": "fr3_hand",
+  "child_frame": "camera_link",
+  "method": "Tsai",
+  "translation_m": [
+    0.03705467748164923,
+    -0.02278010320800355,
+    0.0238098567911242
+  ],
+  "rotation_xyzw": [
+    0.7297326441697066,
+    -0.010101579766344236,
+    0.6835268707821848,
+    0.013388167836829844
+  ],
+  "board_position_spread_m": 0.011912672519629509,
+  "board_rotation_spread_deg": 4.13732793512546,
+  "views": 15
+}

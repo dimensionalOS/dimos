@@ -1,0 +1,19 @@
+{
+  "parent_frame": "fr3_hand",
+  "child_frame": "camera_link",
+  "method": "Horaud",
+  "translation_m": [
+    0.037559713170936156,
+    -0.02114102649265887,
+    0.0019818634979559806
+  ],
+  "rotation_xyzw": [
+    0.715194421930269,
+    -0.007927953319500892,
+    0.6987431922758354,
+    0.013857764760841544
+  ],
+  "board_position_spread_m": 0.019731087991736715,
+  "board_rotation_spread_deg": 3.9484136537897268,
+  "views": 15
+}

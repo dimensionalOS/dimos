@@ -1,0 +1,164 @@
+FAILURE NOTES: tabletop bimanual FR3 setup, Dimensional, 2026-11-22
+=====================================================================
+
+Setup
+-----
+- Two FR3s clamped to one table, about 78 cm apart, each turned inward.
+  "right" = arm 1 (the original), FCI 10.42.0.230, on the laptop's USB ethernet adapter.
+  "left"  = arm 2, FCI 10.43.0.53, on the laptop's built-in ethernet port.
+- dimOS worktree ~/dimos-franka, branch franka-fr3-adapter; blueprint fr3-tabletop-bimanual.
+- Handoff prototype: ~/franka_3_setup/handoff.py (with tabletop.py); log in handoff_log.jsonl.
+
+
+1. RIGHT ARM (arm 1) DROPS ITS SAFETY LINK MID-RUN: HARDWARE, OPEN
+--------------------------------------------------------------------
+What happens
+  The control box loses its internal link to the arm. The arm's light goes off
+  (or the system becomes "not operational"), FCI refuses connections, and the
+  joint stream stops.
+
+When (all on the right arm, all within seconds of a move starting)
+  19:12:58  Desk: "A Fieldbus/Connection error has occurred"; while restarting:
+            "Joint firmware update failed". A Reboot from Desk cleared it.
+  19:40:07  Desk: "A FSoE Connection error has been triggered. The safe connection
+            between the Master Controller and the Arm has been interrupted."
+            "Acknowledge" failed ("error could not be acknowledged"); a full power
+            cycle of both arms cleared it.
+  19:54:33  Same signature during a right-arm-only test (soak.py): 90 planned and
+            straight moves in 3.4 min, with NO gripper commands. The robot's own
+            joint stream went silent about 1 s before any other error.
+
+Why we think it is hardware (arm, its cable, or the control box)
+  - FSoE is the control box <-> arm safety bus; FCI traffic from the laptop does
+    not travel on it.
+  - It reproduces with no gripper commands, and the robot stops sending first.
+  - The left arm, with identical software, has not faulted all day.
+  - The right arm ran about 2 days without this before both arms were moved to a
+    new table this morning (2026-11-22).
+  Caveat: all three faults came after the Hand-in-its-own-process change (19:08).
+  The soak test without Hand commands still faulted, which makes that change an
+  unlikely cause, but its Hand program still polls the Hand's state at 10 Hz.
+
+Already tried
+  Cables inspected and reported fine; Desk Reboot (worked once); full power cycle
+  of both arms (worked); arm cable reseated.
+
+Next
+  - Contact Franka support with the times and messages above, plus the arm and
+    control box serials (Desk -> Settings -> System).
+  - Optional isolation test: power off, swap which control box drives which arm.
+    If the fault follows the arm, it is the arm or its cable; if it stays with the
+    box, it is the box. Re-check IPs and Desk setup afterwards.
+
+Recovering after it happens
+  1. Stop the dimOS stack (Ctrl+C) so nothing keeps reconnecting.
+  2. In Desk: acknowledge the error; if that fails, Shut down, wait about 10 s after
+     the fans stop, and power on.
+  3. Unlock joints, Execution mode, end effector initialised and powered, FCI on.
+  4. Start the stack. Before anything else, lift any arm that stopped low near the
+     table straight up (handoff.py's Arms.straight), then plan it to ready.
+     Initialising the end effector homes the Hand, so it opens and drops what it held.
+
+
+2. FIXED TODAY (software): kept here because they explain earlier symptoms
+---------------------------------------------------------------------------
+a) A leftover dimOS stack held a second Gripper connection to arm 1.
+   Symptom: Hand "Net Exception" / UDP timeouts; Desk "End Effector: Not connected".
+   Fix: stop stale stacks first (pgrep -af "dimos run").
+
+b) Hand calls froze the whole Python process (pylibfranka holds the GIL for about
+   1 s per move or grasp).
+   Symptom: "joints were last read 1.3 s ago", then "the control session ended away
+   from its target", and the arm connection faulted silently.
+   Fix: the Hand runs as its own program (dimos.robot.manipulators.franka.hand_process),
+   commits 56617c379 and 3e25dd66a. Measured on hardware: arm reads every 10 ms
+   through Hand moves.
+
+c) dimOS reported trajectories as COMPLETED even when the arm never moved (the
+   connection was faulted, or the SeparationGuard was holding the arm).
+   Symptom: the handoff continued, and the giver opened with nobody holding the
+   eraser, which dropped it.
+   Fix (handoff.py): every move is checked against the measured joints or TCP;
+   any guard refusal or arm fault stops the cycle; the giver opens only after the
+   receiver's fingers have visibly closed to about the object's width.
+   Still open in dimOS: the trajectory task should not report COMPLETED in these cases.
+
+d) Injecting commands straight onto <side>_position_command interleaved with the
+   coordinator's own repeated hold target, and the connection's jump guard refused
+   the mix. Commands must go through the coordinator (execute_trajectory or a task).
+
+e) The planner did not know about the table, so plans could dip into it.
+   Fix: handoff.py adds a box obstacle with its top 1 cm below the tabletop
+   (flush with the top, the bases count as colliding).
+
+f) The pick re-solved the planned grasp's IK and landed on a contorted, colliding
+   branch; the planner refused it. Fix: reuse the plan's joints, and reject IK
+   solutions that collide or put a hand part at the table.
+
+g) The arm-to-arm calibration had an unexplained 2.7 deg roll and 2 cm rise, which
+   made the left camera see the table tilted.
+   Fix: planar fit (x, y, yaw), since both bases sit flat on one level table;
+   4.3 mm RMS over all board corners.
+
+h) The tripod could not see objects under an arm at ready, and saw cables and the
+   calibration boards as objects.
+   Fix: the wrist cameras act as a fallback; candidates seen by more cameras win;
+   masks for base surroundings (25 cm), the boards, reach, and the table outline.
+
+
+3. RESULTS SO FAR
+-----------------
+- Handover (find -> pick -> present -> take -> place) completed 8 times, in both
+  directions: 5 cycles at about 160 s, then 2 at about 82 s once the handover
+  search got faster (90 s -> 6-10 s). The 9th, a right-arm pick, was interrupted
+  by fault 1 (19:40:07).
+- The separation guard stopped an unplanned trajectory at exactly the predicted
+  point (10.1 cm with a 10 cm test margin).
+
+
+4. 2026-11-22/23, pen demo (pen_demo.py): what went wrong, and the rules it left
+---------------------------------------------------------------------------------
+a) Planned moves with a pen in the Hand drove it into the table, twice (cartesian_reflex
+   on the left arm, ~00:40 and ~00:41). The planner models the arms, the wrist cameras
+   and the table, not what a Hand holds. Rule: with something held, only straight moves
+   near surfaces; planned moves go between raised poses and every trajectory point is
+   checked first (pen_demo.carry), else nothing moves.
+b) Restarting the stack while a Hand held the pen: on startup the connection sent the
+   Hand "move to its current width" (00:59:53), which holds the width without squeezing.
+   A re-grasp from there failed ("libfranka gripper: Command failed!", 01:00:21) and the
+   Hand let go: the pen fell ~22 cm. Rule: never restart the stack or re-grasp with
+   something held; put it down first.
+c) Right arm hardware fault again (~00:53, Desk reboot; earlier 23:01 "Generic joint
+   error" needing the self tests). After the right arm's reboot the planner had no joint
+   readings for either arm (the right Hand's finger was missing from the joint state)
+   until the stack was restarted.
+d) The tripod's reference board was moved between the bases; at night only 4 of its 6
+   corners were read at 1x, and the run fell back to a calibration 3.5 cm off. Fixed:
+   detection on a 2x enlargement (all 6 corners), the last good pose saved to
+   scene_pose.json, re-measured each episode with both arms at ready.
+e) LEFT arm (arm 2) FSoE faults, its first today: 01:03 and 01:09 (2026-11-23). Both
+   about 4 s after a 60 N grasp of the pen at the table, with the fingertips aimed low
+   (TIP_CLEARANCE -3.5 mm, possibly scraping the table): "no command in 0.1 s" (arm
+   idle), "UDP receive: Timeout", then "FCI refused"; Desk: FSoE. Next try: 30 N and the
+   fingertips 1.5 mm higher. Both arms have now shown this fault: worth asking Franka
+   support about what they share (power feed, cabling since the move, firmware).
+f) LEFT arm FSoE again at 01:14:52, during an ordinary planned move from a camera look
+   pose back to ready, with an empty Hand (30 N grip, the higher grasp: no grasp at all
+   in that run). So the grasp was not the cause. Three left faults in 12 minutes, after
+   a whole day without one. Stack stopped; recommended a full shutdown and power-on of
+   both arms and Franka support in the morning.
+g) 01:29:47 (2026-11-23), after a FULL shutdown and power-on of both arms: the left arm
+   stopped on a reflex during a straight 9 cm move down, empty of surprises (holding a
+   pen flat 12 cm over the table, nothing under it), then "UDP receive: Timeout". Fourth
+   left fault in ~25 minutes. A full power cycle did not clear whatever this is.
+
+h) 2026-11-23 morning, after the overnight power-off: no FSoE faults so far. The LEFT
+   arm instead ended most motions 1-8 deg short ("Unexpected reply to a Move command",
+   no reflex, nothing in Desk); the right arm, same software and moves, always reached
+   its goal (0.0-0.3 deg). Not speed-dependent (same at 12%, 25%, 50%). Left port showed
+   13 tx errors since boot, right 0. Worked around: the connection now holds instead of
+   faulting (dimOS 4a7aad27c) and the scripts finish the move (handoff.py b08e5c2).
+   Handover cycle then ran end to end in 86 s, with 6 short endings handled.
+i) 12:04:47 (2026-11-23): RIGHT arm FSoE ("UDP receive: Timeout", then FCI refused),
+   holding the pen upright ~2 cm over the paper, while stepping down to feel for it.
+   Second FSoE today (first: 11:24, also the right arm), after the overnight power-off.

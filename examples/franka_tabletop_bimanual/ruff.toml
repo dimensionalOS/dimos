@@ -1,0 +1,6 @@
+# Hardware scripts for the tabletop bimanual FR3 setup: run by hand against a live
+# stack, so a few library-style rules are relaxed here only.
+extend = "../../pyproject.toml"
+
+[lint]
+extend-ignore = ["B905", "B007", "N818", "F841", "RUF046", "E402", "T201", "RUF005", "RUF007", "UP031"]

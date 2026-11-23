@@ -1,0 +1,18 @@
+{
+  "parent_frame": "fr3_hand",
+  "child_frame": "camera_link",
+  "method": "bundle adjustment",
+  "translation_m": [
+    0.05324686500099513,
+    -0.02012327814011348,
+    0.06228444563585098
+  ],
+  "rotation_xyzw": [
+    0.724976609140031,
+    -0.009628748281918568,
+    0.6886613502307398,
+    0.007857996228064984
+  ],
+  "reprojection_rms_px": 0.5685326457023621,
+  "views": 15
+}
