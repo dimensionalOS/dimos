@@ -16,7 +16,6 @@
 
 from enum import IntEnum
 import json
-import threading
 import time
 from typing import Any
 
@@ -51,6 +50,7 @@ from dimos.robot.unitree.g1.effectors.high_level.commands import (
     execute_g1_command,
 )
 from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
+from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -102,7 +102,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     def __init__(self, *args: Any, g: GlobalConfig = global_config, **kwargs: Any) -> None:
         super().__init__(*args, g=g, **kwargs)
         self._global_config = g
-        self._stop_timer: threading.Timer | None = None
+        self._motion_timer = MotionTimer()
         self._running = False
         self._mode_selected = False
         self.motion_switcher: Any = None
@@ -144,17 +144,15 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
     @rpc
     def stop(self) -> None:
-        if self._stop_timer:
-            self._stop_timer.cancel()
-            self._stop_timer = None
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
+            if self.loco_client is not None:
+                try:
+                    self.loco_client.StopMove()
+                except Exception as e:
+                    logger.error(f"Error stopping robot: {e}")
 
-        if self.loco_client is not None:
-            try:
-                self.loco_client.StopMove()
-            except Exception as e:
-                logger.error(f"Error stopping robot: {e}")
-
-        self._running = False
+            self._running = False
         logger.info("G1 DDS SDK connection stopped")
         super().stop()
 
@@ -169,35 +167,31 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         vy = _boost_above_deadzone(raw_vy, self.config.min_effective_linear_velocity)
         vyaw = _boost_above_deadzone(raw_vyaw, self.config.min_effective_angular_velocity)
 
-        if self._stop_timer:
-            self._stop_timer.cancel()
-            self._stop_timer = None
-
         try:
-            if duration > 0:
-                logger.info(f"Moving: vx={vx}, vy={vy}, vyaw={vyaw}, duration={duration}")
-                code = self.loco_client.SetVelocity(vx, vy, vyaw, duration)
-                if code != 0:
-                    logger.warning(f"SetVelocity returned code: {code}")
-                    return False
-            else:
+            with self._motion_timer.command() as timeout:
+                if duration > 0:
+                    logger.info(f"Moving: vx={vx}, vy={vy}, vyaw={vyaw}, duration={duration}")
+                    code = self.loco_client.SetVelocity(vx, vy, vyaw, duration)
+                    if code != 0:
+                        logger.warning(f"SetVelocity returned code: {code}")
+                        return False
+                    timeout.cancel()
+                else:
 
-                def auto_stop() -> None:
-                    try:
-                        logger.debug("Auto-stop timer triggered")
-                        self.loco_client.StopMove()
-                    except Exception as e:
-                        logger.error(f"Auto-stop failed: {e}")
+                    def auto_stop() -> None:
+                        try:
+                            logger.debug("Auto-stop timer triggered")
+                            self.loco_client.StopMove()
+                        except Exception as e:
+                            logger.error(f"Auto-stop failed: {e}")
 
-                # Send move command before starting the timeout timer to avoid
-                # a race where the timer fires before the move is sent.
-                self.loco_client.Move(vx, vy, vyaw, continous_move=True)
+                    # Send move command before starting the timeout timer to avoid
+                    # a race where the timer fires before the move is sent.
+                    self.loco_client.Move(vx, vy, vyaw, continous_move=True)
 
-                self._stop_timer = threading.Timer(self.config.cmd_vel_timeout, auto_stop)
-                self._stop_timer.daemon = True
-                self._stop_timer.start()
+                    timeout.arm(self.config.cmd_vel_timeout, auto_stop)
 
-            return True
+                return True
         except Exception as e:
             logger.error(f"Failed to send movement command: {e}")
             return False
@@ -230,7 +224,10 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
             elif api_id == API_SET_VELOCITY:
                 velocity = parameter.get("velocity", [0, 0, 0])
                 dur = parameter.get("duration", 1.0)
-                code = self.loco_client.SetVelocity(velocity[0], velocity[1], velocity[2], dur)
+                with self._motion_timer.command() as timeout:
+                    code = self.loco_client.SetVelocity(velocity[0], velocity[1], velocity[2], dur)
+                    if code == 0:
+                        timeout.cancel()
                 return {"code": code}
             else:
                 logger.warning(f"Unsupported API ID: {api_id}")

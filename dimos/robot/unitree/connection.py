@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 import functools
 import json
@@ -34,6 +35,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
@@ -57,6 +59,9 @@ from dimos.utils.sequential_ids import SequentialIds
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 logger = setup_logger()
+
+# Seconds a caller waits for the event loop to take one velocity command.
+_SEND_TIMEOUT = 1.0
 
 
 _T = TypeVar("_T", bound=Timestamped)
@@ -107,7 +112,7 @@ class UnitreeWebRTCConnection(Resource):
     ) -> None:
         self.ip = ip
         self.mode = mode
-        self.stop_timer: threading.Timer | None = None
+        self._motion_timer = MotionTimer()
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT
         self._velocity_api = velocity_api
         self._move_ids = SequentialIds()
@@ -156,10 +161,8 @@ class UnitreeWebRTCConnection(Resource):
         pass
 
     def stop(self) -> None:
-        # Cancel timer
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
 
         async def async_disconnect() -> None:
             try:
@@ -210,38 +213,20 @@ class UnitreeWebRTCConnection(Resource):
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
 
-        async def async_move() -> None:
-            self._publish_movement(x, y, yaw)
-
-        async def async_move_duration() -> None:
-            """Send movement commands continuously for the specified duration."""
-            start_time = time.time()
-            sleep_time = 0.01
-
-            while time.time() - start_time < duration:
-                await async_move()
-                await asyncio.sleep(sleep_time)
-
-        # Cancel existing timer and start a new one
-        if self.stop_timer:
-            self.stop_timer.cancel()
-
-        # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
-        self.stop_timer.daemon = True
-        self.stop_timer.start()
-
         try:
+            with self._motion_timer.command() as timeout:
+                self._send_movement(x, y, yaw)
+                timer = timeout.arm(
+                    duration if duration > 0 else self.cmd_vel_timeout, self._send_stop
+                )
+
             if duration > 0:
-                # Send continuous move commands for the duration
-                future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
-                future.result()
-                # Stop after duration
-                self.stop_movement()
-            else:
-                # Single command for continuous movement
-                future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
-                future.result()
+                # Refresh a timed move at the WebRTC driver's 10 ms cadence.
+                while not timer.finished.wait(0.01):
+                    with self._motion_timer.command() as timeout:
+                        if not timeout.is_current(timer):
+                            break
+                        self._send_movement(x, y, yaw)
             return True
         except Exception as e:
             logger.warning("Failed to send movement command: %s", e)
@@ -495,28 +480,59 @@ class UnitreeWebRTCConnection(Resource):
         """
         return self.video_stream()
 
-    def stop_movement(self) -> None:
-        """Halt the base: publish a zero twist and cancel the auto-stop timer."""
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
+    def _queue_movement(self, x: float, y: float, yaw: float) -> Future[None]:
+        """Publish on the event loop, unless the returned future is cancelled first."""
+        sent: Future[None] = Future()
 
-        async def async_stop() -> None:
-            self._publish_movement(0, 0, 0)
+        def publish() -> None:
+            if not sent.set_running_or_notify_cancel():
+                return
+            try:
+                self._publish_movement(x, y, yaw)
+            except Exception as e:
+                sent.set_exception(e)
+            else:
+                sent.set_result(None)
 
+        self.loop.call_soon_threadsafe(publish)
+        return sent
+
+    def _send_movement(self, x: float, y: float, yaw: float) -> None:
+        """Publish a movement, or raise once it can no longer reach the robot."""
         if not self.loop.is_running():
-            return
+            raise RuntimeError("event loop is not running")
+        sent = self._queue_movement(x, y, yaw)
         try:
-            asyncio.run_coroutine_threadsafe(async_stop(), self.loop).result(timeout=1.0)
-        except Exception as e:
-            logger.warning("Failed to publish stop twist: %s", e)
+            sent.result(timeout=_SEND_TIMEOUT)
+        except FutureTimeoutError:
+            # A stalled loop must not move the robot after the caller gave up. A command
+            # the driver already holds counts as sent, so it still gets its watchdog.
+            if sent.cancel():
+                raise TimeoutError(
+                    f"event loop did not take the command within {_SEND_TIMEOUT} s"
+                ) from None
+            if sent.done():
+                # The driver itself can raise TimeoutError while publishing.
+                sent.result()
+
+    def _send_stop(self) -> None:
+        if self.loop.is_running():
+            try:
+                # Left queued on timeout, so a recovering loop still stops the robot.
+                self._queue_movement(0, 0, 0).result(timeout=_SEND_TIMEOUT)
+            except Exception as e:
+                logger.warning("Failed to publish stop twist: %s", e)
+
+    def stop_movement(self) -> None:
+        """Halt the base and invalidate outstanding commands."""
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
+            self._send_stop()
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
-        # Cancel timer
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
 
         if hasattr(self, "conn"):
 
