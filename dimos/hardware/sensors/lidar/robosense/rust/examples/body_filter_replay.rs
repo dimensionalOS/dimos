@@ -72,6 +72,7 @@ fn decode(pcap_path: &str, out: &str, config: &Config) {
         end_angle: 360.0,
         split: SplitMode::Angle(0.0),
         transform: None,
+        fused_multiply_add: false,
     };
     let filter = FilterConfig {
         voxel: config.voxel,

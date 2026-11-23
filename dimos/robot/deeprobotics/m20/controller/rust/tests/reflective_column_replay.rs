@@ -13,10 +13,10 @@
 // limitations under the License.
 
 //! The detector against reflective_column_node's own log on the same sweeps: a capture of the front Airy (tcpdump of
-//! its multicast) decoded as the vendor driver does it, every sweep through the detector, each sweep the vendor logged
-//! paired with ours (by time, then by its logged post centres), and every logged step compared at the log's precision:
-//! the points after the voxel grid and outlier removal, each cluster's z / y ratio, the posts' point counts, their
-//! centres and the position and yaw.
+//! its multicast) decoded as the vendor driver does it (robosense-airy's fused_multiply_add: rs_driver's GCC aarch64
+//! build to the bit), every sweep through the detector, each sweep the vendor logged paired with ours (by time, then by
+//! its logged post centres), and every logged value printed as the vendor prints it: the points after the voxel grid
+//! and outlier removal, each cluster's z / y ratio, the posts' point counts, their centres and the position and yaw.
 //!
 //! The captures (each skipped, saying so, when absent): ~/datasets/m20/recording_20261120_163604/lidar_raw.pcap
 //! (2026-11-20 16:36-16:38 CST: an undock and a dock from ~1.8 m) and ~/datasets/m20/dock_rec_20261121/
@@ -37,15 +37,16 @@ const FRONT_MSOP: u16 = 6691;
 const FRONT_DIFOP: u16 = 7781;
 /// The log's clock: China Standard Time.
 const CST_S: f64 = 8.0 * 3600.0;
-/// A logged sweep pairs with ours within this (s) of the clock offset, and the log prints 6 decimals.
+/// A logged sweep pairs with ours within this (s) of the clock offset.
 const PAIR_WINDOW_S: f64 = 0.12;
-const PRINT: f64 = 0.5e-6;
 
 /// One sweep as reflective_column_node logged it.
 #[derive(Debug, Default, Clone)]
 struct Logged {
     t: f64,
     trace: Trace,
+    /// the z / y ratios as printed (the trace's are f32)
+    ratios: Vec<f64>,
     position: Option<[f64; 3]>,
 }
 
@@ -119,6 +120,7 @@ fn parse_log(text: &str) -> Vec<Logged> {
                     step1: Some(n),
                     ..Default::default()
                 },
+                ratios: Vec::new(),
                 position: None,
             });
             continue;
@@ -129,6 +131,7 @@ fn parse_log(text: &str) -> Vec<Logged> {
         let v = numbers(body.split_once(':').map_or(body, |s| s.1));
         if body.starts_with("簇 z/y 比例") {
             cur.trace.ratios.push(v[0] as f32);
+            cur.ratios.push(v[0]);
         } else if body.starts_with("反光柱数量:") {
             cur.trace.columns = Some(v[0] as usize);
         } else if body.starts_with("距离差") {
@@ -172,6 +175,7 @@ fn decode_and_detect(pcap: &PathBuf, detector: &Detector) -> Vec<Ours> {
         use_lidar_clock: true,
         dense_points: true,
         ts_first_point: true,
+        fused_multiply_add: true,
         ..Default::default()
     });
     let mut out = Vec::new();
@@ -287,9 +291,8 @@ fn check(pcap: &PathBuf, log: &PathBuf) {
     println!("log clock - capture clock: {:.3} s", offset);
     let (mut paired, mut step1_same, mut ratios_same, mut counts_same, mut found_same) =
         (0, 0, 0, 0, 0);
-    let (mut posed, mut max_center, mut max_pose) = (0, 0.0f64, [0.0f64; 3]);
-    let mut within_print = 0;
-    let mut max_ratio = 0.0f64;
+    let (mut posed, mut centers_same, mut poses_same) = (0, 0, 0);
+    let (mut max_center, mut max_pose, mut max_ratio) = (0.0f64, [0.0f64; 3], 0.0f64);
     for l in &logged {
         // the sweep nearest the logged time; among those within the window, the one whose centres match best
         let Some(o) = ours
@@ -305,34 +308,36 @@ fn check(pcap: &PathBuf, log: &PathBuf) {
         };
         paired += 1;
         step1_same += (o.trace.step1 == l.trace.step1) as usize;
-        let ratios_match = o.trace.ratios.len() == l.trace.ratios.len()
-            && o.trace
-                .ratios
-                .iter()
-                .zip(&l.trace.ratios)
-                .all(|(a, b)| (*a as f64 - *b as f64).abs() <= PRINT + 1e-7);
-        ratios_same += ratios_match as usize;
-        if o.trace.ratios.len() == l.trace.ratios.len() {
-            for (a, b) in o.trace.ratios.iter().zip(&l.trace.ratios) {
-                max_ratio = max_ratio.max((*a as f64 - *b as f64).abs());
-            }
+        let ours_ratios: Vec<f64> = o.trace.ratios.iter().map(|r| *r as f64).collect();
+        let logged_ratios = &l.ratios;
+        ratios_same += printed(&ours_ratios, logged_ratios) as usize;
+        for (a, b) in ours_ratios.iter().zip(logged_ratios) {
+            max_ratio = max_ratio.max((a - b).abs());
         }
         counts_same += (o.trace.counts == l.trace.counts) as usize;
         found_same += (o.position.is_some() == l.position.is_some()) as usize;
-        if let (Some(a), Some(b)) = (o.position, l.position) {
+        if let (Some(a), Some(b), Some(ca), Some(cb)) =
+            (o.position, l.position, o.trace.centers, l.trace.centers)
+        {
             posed += 1;
             max_center = max_center.max(center_gap(&o.trace, &l.trace));
-            let d = [0, 1, 2].map(|k| (a[k] - b[k]).abs());
             for k in 0..3 {
-                max_pose[k] = max_pose[k].max(d[k]);
+                max_pose[k] = max_pose[k].max((a[k] - b[k]).abs());
             }
-            within_print += d.iter().all(|v| *v <= PRINT + 1e-9) as usize;
+            centers_same += printed(&ca.concat(), &cb.concat()) as usize;
+            poses_same += printed(&a, &b) as usize;
+            if !printed(&a, &b) {
+                println!(
+                    "  printed differently at {:.3}: ours {a:?} logged {b:?}",
+                    l.t
+                );
+            }
         }
     }
     println!(
-        "{paired} paired: step1 count equal {step1_same}, ratios equal {ratios_same} (max diff {max_ratio:.1e}), post counts equal {counts_same}, \
-         found / not found alike {found_same}; {posed} with both poses: {within_print} equal to the log's 6 decimals, \
-         max centre diff {max_center:.2e} m, max diff x {:.2e} m y {:.2e} m yaw {:.2e} rad",
+        "{paired} paired: step 1 counts equal {step1_same}, z/y ratios {ratios_same} (max diff {max_ratio:.1e}), post \
+         counts {counts_same}, found / not found {found_same}; {posed} with both poses: centres {centers_same}, poses \
+         {poses_same} as the log prints them; max diff centre {max_center:.2e} m, x {:.2e} m, y {:.2e} m, yaw {:.2e} rad",
         max_pose[0], max_pose[1], max_pose[2]
     );
     assert!(
@@ -344,17 +349,20 @@ fn check(pcap: &PathBuf, log: &PathBuf) {
         posed * 10 >= paired * 8,
         "{posed} of {paired} with both poses"
     );
+    // every value reflective_column_node logs, as it prints it (%f)
     assert_eq!(step1_same, paired, "point counts after step 1 differ");
+    assert_eq!(ratios_same, paired, "cluster z/y ratios print differently");
     assert_eq!(counts_same, paired, "post point counts differ");
     assert_eq!(found_same, paired, "found / not found differ");
-    // robosense-airy's decode rounds x / y / z without the vendor driver's fused multiply-adds (a ULP or two): 84% of
-    // poses print the same, the rest within 3 um (with those FMAs, 384 of 385 print the same on 2026-11-20)
-    assert!(
-        within_print * 100 >= posed * 80,
-        "{within_print} of {posed} poses at the log's precision"
-    );
-    assert!(
-        max_pose.iter().all(|v| *v < 5e-6),
-        "max pose diff {max_pose:?}"
-    );
+    assert_eq!(centers_same, posed, "post centres print differently");
+    assert_eq!(poses_same, posed, "positions print differently");
+}
+
+/// Ours printed as the vendor prints (%f, 6 decimals) equals the logged values.
+fn printed(ours: &[f64], logged: &[f64]) -> bool {
+    ours.len() == logged.len()
+        && ours
+            .iter()
+            .zip(logged)
+            .all(|(a, b)| format!("{a:.6}").parse::<f64>().unwrap() == *b)
 }

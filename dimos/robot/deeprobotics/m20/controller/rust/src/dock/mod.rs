@@ -33,6 +33,7 @@ pub mod detector;
 #[cfg(feature = "module")]
 pub mod detector_module;
 pub mod docking;
+pub mod libm;
 pub mod obstacle;
 pub mod pcl;
 pub mod vendor;

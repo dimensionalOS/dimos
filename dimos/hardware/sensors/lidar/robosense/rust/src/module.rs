@@ -75,6 +75,8 @@ pub struct Config {
     #[validate(range(min = 0.0))]
     max_distance: f32,
     use_lidar_clock: bool,
+    /// true rounds x / y / z as the vendor's rs_driver build does (fused multiply-adds), for consumers that must match it
+    fused_multiply_add: bool,
     start_angle: f32,
     end_angle: f32,
     split_angle: f32,
@@ -163,6 +165,7 @@ impl Config {
                     SplitMode::Angle(self.split_angle)
                 },
                 transform: None,
+                fused_multiply_add: self.fused_multiply_add,
             },
             filter: FilterConfig {
                 voxel: self.voxel,
@@ -606,7 +609,7 @@ mod tests {
             "group": "224.10.10.201", "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.2, "max_distance": 60.0,
-            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
+            "use_lidar_clock": true, "fused_multiply_add": false, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
             "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
             "mount_parent_frame_id": null, "mount_xyz": [0.0, 0.0, 0.0], "mount_rpy": [0.0, 0.0, 0.0],
             "body_filter": false, "body_filter_urdf": null, "body_filter_padding_m": 0.01, "body_filter_links": null,
@@ -643,7 +646,7 @@ mod tests {
             "group": null, "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.0, "max_distance": 0.0,
-            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
+            "use_lidar_clock": true, "fused_multiply_add": false, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
             "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
             "mount_parent_frame_id": "base_link", "mount_xyz": [0.0, 0.0, 0.0], "mount_rpy": [0.0, 0.0, 0.0],
             "body_filter": true, "body_filter_urdf": urdf, "body_filter_padding_m": 0.0, "body_filter_links": null,
@@ -703,7 +706,7 @@ mod tests {
             "group": null, "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.0, "max_distance": 0.0,
-            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
+            "use_lidar_clock": true, "fused_multiply_add": false, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
             "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
             "mount_parent_frame_id": "base_link", "mount_xyz": [0.32028, 0.0, -0.013],
             "mount_rpy": [0.0, -std::f64::consts::FRAC_PI_2, std::f64::consts::PI],

@@ -80,6 +80,8 @@ class AiryConfig(NativeModuleConfig):
     max_distance: float = Field(default=0.0, ge=0)
     # True stamps with the lidar's clock (PTP-synced), False with the host clock at receipt.
     use_lidar_clock: bool = False
+    # True rounds x / y / z as the vendor's rs_driver build (GCC, aarch64) does: its multiply-adds fused.
+    fused_multiply_add: bool = False
     # Azimuth window in degrees (start == end keeps all) and the azimuth where a scan ends.
     start_angle: float = 0.0
     end_angle: float = 360.0

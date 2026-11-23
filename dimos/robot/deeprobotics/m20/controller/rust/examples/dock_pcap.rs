@@ -41,6 +41,7 @@ fn main() -> anyhow::Result<()> {
         dense_points: true,
         use_lidar_clock: true,
         ts_first_point: true,
+        fused_multiply_add: true,
         ..Default::default()
     });
     for g in datagrams.iter().filter(|g| g.dst == FRONT_GROUP) {

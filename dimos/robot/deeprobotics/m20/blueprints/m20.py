@@ -341,6 +341,8 @@ def _dock_detector_on_nos() -> Blueprint:
         # charge_manager's obstacle check see
         "min_distance": 0.2,
         "max_distance": 60.0,
+        # rounded as the vendor driver's build rounds (fused multiply-adds): reflective_column_node's points to the bit
+        "fused_multiply_add": True,
     }
     return autoconnect(
         _airy(

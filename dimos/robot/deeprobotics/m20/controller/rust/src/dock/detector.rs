@@ -27,12 +27,14 @@
 //!    to the high-y one) and the yaw atan2(dx, dy) of that line: the pose reflective_column_node logs as "一次计算--雷达
 //!    位置" and its output stage ([`super::vendor::ReflectorFilter`], the docking's) filters and publishes.
 //!
-//! [`Detector`] turns that into the dock's [`DockPose`] in base_link, placed so charge_manager's inputs from it
-//! (docking's target_pose) are the vendor's.
+//! atan2f / sinf are glibc 2.31's ([`super::libm`]). A post left empty by FilterOutSuctionPoints is a miss here; the
+//! binary reads uninitialised stack there (never in its logs). [`Detector`] turns the pose into the dock's [`DockPose`]
+//! in base_link, placed so charge_manager's inputs from it (docking's target_pose) are the vendor's. Checked against the
+//! vendor's logs by tests/reflective_column_replay.rs and against the real PCL / libm by tools/.
 
 use super::config::{DetectorConfig, DockConfig};
-use super::pcl;
 use super::DockPose;
+use super::{libm, pcl};
 
 /// A lidar's mount in base_link: p_base = rotation * p_lidar + translation.
 #[derive(Debug, Clone, Copy)]
@@ -172,7 +174,7 @@ pub struct Detector {
 /// CalculateCenter: the cloud's centroid (f32), x + push x sinf|atan2f(x, y)| fused in f64.
 fn post_center(cloud: &[pcl::Point], push: f64) -> [f64; 2] {
     let c = pcl::centroid(cloud);
-    let s = c[0].atan2(c[1]).abs().sin() as f64;
+    let s = libm::sinf(libm::atan2f(c[0], c[1]).abs()) as f64;
     [s.mul_add(push, c[0] as f64), c[1] as f64]
 }
 
@@ -227,7 +229,7 @@ impl Detector {
                 && y.abs() < c.y_max
                 && z as f64 > c.z_min
                 && (z as f64) < c.z_max
-                && (y.atan2(x) as f64).abs() <= c.half_angle_rad
+                && (libm::atan2f(y, x) as f64).abs() <= c.half_angle_rad
             {
                 cloud.push([x, y, z, 1.0]);
             }
@@ -336,7 +338,7 @@ impl Detector {
                 let sq = d.map(|v| v * v);
                 let dist = ((sq[0] + sq[1]) + (sq[2] + sq[3])).sqrt();
                 let off = (dist as f64 - c.post_spacing).abs();
-                let angle = (cent[j][1] - cent[i][1]).atan2(cent[j][0] - cent[i][0]);
+                let angle = libm::atan2f(cent[j][1] - cent[i][1], cent[j][0] - cent[i][0]);
                 let deg = (angle as f64 * 180.0) / std::f64::consts::PI;
                 if off < c.spacing_tolerance
                     && deg.abs() < c.pair_angle_deg[1]
@@ -364,11 +366,9 @@ impl Detector {
         }
         if pairs.len() >= 2 {
             // the most lateral pair: the smallest |atan2f(dx, dy)|
-            let mut least = f64::MAX;
+            let mut least = f64::INFINITY;
             for (&i, &j) in &pairs {
-                let a = (cent[i][0] - cent[j][0])
-                    .atan2(cent[i][1] - cent[j][1])
-                    .abs() as f64;
+                let a = libm::atan2f(cent[i][0] - cent[j][0], cent[i][1] - cent[j][1]).abs() as f64;
                 if a < least {
                     (least, bi, bj) = (a, i, j);
                 }
