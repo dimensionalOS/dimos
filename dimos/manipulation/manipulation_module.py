@@ -1025,6 +1025,65 @@ class ManipulationModule(Module):
         return MoveResult(plan_result, execution, delta, check_collision)
 
     @rpc
+    def move_linear_path(
+        self,
+        waypoints: Sequence[tuple[float, float, float]],
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        max_linear_speed: float | None = None,
+        blend_deviation: float | None = None,
+        blocking: bool = True,
+        timeout: float | None = None,
+    ) -> MoveResult:
+        """Move one end effector through world-frame translations from where it is now,
+        in straight lines from one to the next without stopping, keeping its orientation.
+
+        ``blend_deviation`` (m) is how far a corner may be rounded off.
+        """
+        deltas = [(float(w[0]), float(w[1]), float(w[2])) for w in waypoints]
+        last = deltas[-1] if deltas else (0.0, 0.0, 0.0)
+        if not deltas or not all(math.isfinite(v) for w in deltas for v in w):
+            plan_result = PlanResult(PlanStatus.INVALID_TARGET, "waypoints must be finite")
+            return MoveResult(plan_result, None, last, check_collision)
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
+            return MoveResult(plan_result, None, last, check_collision)
+        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        error = self._planning_input_error((group.id,), resolved_speed)
+        if error:
+            return MoveResult(
+                PlanResult(PlanStatus.INVALID_TARGET, error), None, last, check_collision
+            )
+        update: dict[str, float] = {}
+        if max_linear_speed is not None:
+            update["max_linear_speed"] = float(max_linear_speed)
+        if blend_deviation is not None:
+            update["toppra_blend_deviation"] = float(blend_deviation)
+        # The planner wants the path to begin where the TCP is: the identity displacement.
+        plan = self.generate_cartesian_plan(
+            {
+                group.id: [
+                    Transform.identity(),
+                    *(
+                        Transform(translation=Vector3(*d), rotation=Quaternion(0.0, 0.0, 0.0, 1.0))
+                        for d in deltas
+                    ),
+                ]
+            },
+            CartesianPathConfig().model_copy(update=update),
+            speed_scale=resolved_speed,
+            check_collision=check_collision,
+        )
+        if plan is None:
+            plan_result = self._planning_failure()
+            return MoveResult(plan_result, None, last, check_collision)
+        plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+        execution = self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
+        return MoveResult(plan_result, execution, last, check_collision)
+
+    @rpc
     def preview_plan(
         self,
         plan: GeneratedPlan | None = None,

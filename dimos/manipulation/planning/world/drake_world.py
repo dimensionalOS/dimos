@@ -43,7 +43,7 @@ from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Collection, Generator
 
     from numpy.typing import NDArray
 
@@ -921,6 +921,44 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             if not signed_distance_pairs:
                 return float("inf")
             return float(min(pair.distance for pair in signed_distance_pairs))
+
+    def get_min_distance_between(
+        self,
+        ctx: Context,
+        links_a: Collection[str],
+        links_b: Collection[str],
+        max_distance: float = float("inf"),
+    ) -> float:
+        """Least signed distance (m) between any link in ``links_a`` and any in ``links_b``.
+
+        Positive is clearance, negative penetration. Pairs further apart than
+        ``max_distance`` are skipped, so the result is ``inf`` when every pair is.
+        Links are the model's, by name, e.g. two arms' links to keep them apart.
+        """
+        with self._lock:
+            self._require_finalized()
+            robot_data = self._require_model()
+            bodies_a = {
+                self._plant.GetBodyByName(name, robot_data.model_instance).index()
+                for name in links_a
+            }
+            bodies_b = {
+                self._plant.GetBodyByName(name, robot_data.model_instance).index()
+                for name in links_b
+            }
+            scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
+            query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
+            inspector = query_object.inspector()
+
+            def body(geometry_id: Any) -> Any:
+                return self._plant.GetBodyFromFrameId(inspector.GetFrameId(geometry_id)).index()
+
+            least = float("inf")
+            for pair in query_object.ComputeSignedDistancePairwiseClosestPoints(max_distance):
+                a, b = body(pair.id_A), body(pair.id_B)
+                if (a in bodies_a and b in bodies_b) or (a in bodies_b and b in bodies_a):
+                    least = min(least, float(pair.distance))
+            return least
 
     # Collision Checking (context-free, for planning)
 

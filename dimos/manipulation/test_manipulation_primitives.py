@@ -112,6 +112,55 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     execute.assert_called_once_with(blocking=False, timeout=None, plan_id=generated.plan_id)
 
 
+def test_move_linear_path_starts_at_the_tcp_and_passes_every_waypoint(
+    module_factory,
+    mocker: MockerFixture,
+) -> None:
+    module = module_factory()
+    _set_groups(module, _model())
+    generated = _plan()
+    generate = mocker.patch.object(module, "generate_cartesian_plan", return_value=generated)
+    execute = mocker.patch.object(
+        module,
+        "execute",
+        return_value=ExecutionResult(ExecutionStatus.ACCEPTED),
+    )
+
+    result = module.move_linear_path(
+        [(0.0, 0.0, -0.01), (0.02, 0.0, -0.01)],
+        max_linear_speed=0.04,
+        blend_deviation=0.0005,
+        blocking=False,
+    )
+
+    assert result.succeeded
+    targets, config = generate.call_args.args
+    path = targets["tool"]
+    assert path[0] == Transform.identity()  # the planner wants the path to start at the TCP
+    assert [(t.translation.x, t.translation.y, t.translation.z) for t in path[1:]] == [
+        pytest.approx((0.0, 0.0, -0.01)),
+        pytest.approx((0.02, 0.0, -0.01)),
+    ]
+    assert config.max_linear_speed == pytest.approx(0.04)
+    assert config.toppra_blend_deviation == pytest.approx(0.0005)
+    assert result.delta == pytest.approx((0.02, 0.0, -0.01))
+    execute.assert_called_once_with(blocking=False, timeout=None, plan_id=generated.plan_id)
+
+
+def test_move_linear_path_rejects_an_empty_or_unfinite_path(
+    module_factory,
+    mocker: MockerFixture,
+) -> None:
+    module = module_factory()
+    _set_groups(module, _model())
+    generate = mocker.patch.object(module, "generate_cartesian_plan")
+
+    for waypoints in ([], [(0.0, float("nan"), 0.0)]):
+        result = module.move_linear_path(waypoints)
+        assert result.plan.status is PlanStatus.INVALID_TARGET
+    generate.assert_not_called()
+
+
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
     _set_groups(module, _model(home=[0.3]))
