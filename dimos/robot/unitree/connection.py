@@ -105,6 +105,7 @@ class UnitreeWebRTCConnection(Resource):
         mode: str = "ai",
         aes_128_key: str | None = None,
         velocity_api: bool = False,
+        timed_move_resend_period_s: float = 0.01,
     ) -> None:
         self.ip = ip
         self.mode = mode
@@ -112,6 +113,7 @@ class UnitreeWebRTCConnection(Resource):
         self._latest_movement: object | None = None
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT
         self._velocity_api = velocity_api
+        self._timed_move_resend_period_s = timed_move_resend_period_s
         self._move_ids = SequentialIds()
         # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
         self.conn = LegionConnection(
@@ -218,8 +220,7 @@ class UnitreeWebRTCConnection(Resource):
                 )
 
             if duration > 0:
-                # Refresh a timed move at the WebRTC driver's 10 ms cadence.
-                while not timer.finished.wait(0.01):
+                while not timer.finished.wait(self._timed_move_resend_period_s):
                     with self._motion_timer.command() as timeout:
                         if not timeout.is_current(timer):
                             break

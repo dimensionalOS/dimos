@@ -68,6 +68,7 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
         "192.168.123.161",
         aes_128_key="cafe" * 8,
         velocity_api=False,
+        timed_move_resend_period_s=cfg.timed_move_resend_period_s,
     )
 
 
