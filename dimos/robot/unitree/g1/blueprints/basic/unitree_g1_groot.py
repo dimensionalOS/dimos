@@ -21,7 +21,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc import unitree_g1_groot_wbc
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_nav_simple import _unitree_g1_nav_simple
 from dimos.robot.unitree.g1.config import G1
@@ -31,7 +31,7 @@ if global_config.simulation:
     _nav_modules: tuple[Any, ...] = ()
 else:
     _nav_modules = (
-        PointLio.blueprint(host_ip=G1.lidar_host_ip, lidar_ip=G1.lidar_ip),
+        mid360_for_pointlio(host_ip=G1.lidar_host_ip, lidar_ip=G1.lidar_ip),
         _unitree_g1_nav_simple,
     )
 
