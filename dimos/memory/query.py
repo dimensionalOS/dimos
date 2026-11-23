@@ -30,8 +30,7 @@ import sys
 from typing import Any
 
 import numpy as np
-from PIL import Image as PILImage
-from PIL import ImageDraw
+from PIL import Image as PILImage, ImageDraw
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -160,20 +159,16 @@ def _montage_cell(rgb: np.ndarray, label: str) -> PILImage.Image:
     src = PILImage.fromarray(rgb.astype(np.uint8), mode="RGB")
     w, h = src.size
     scale = _MONTAGE_CELL_H / max(h, 1)
-    cell_w = max(1, int(round(w * scale)))
+    cell_w = max(1, round(w * scale))
     resized = src.resize((cell_w, _MONTAGE_CELL_H), PILImage.Resampling.BILINEAR)
-    canvas = PILImage.new(
-        "RGB", (cell_w, _MONTAGE_CELL_H + _MONTAGE_LABEL_H), color=(20, 20, 20)
-    )
+    canvas = PILImage.new("RGB", (cell_w, _MONTAGE_CELL_H + _MONTAGE_LABEL_H), color=(20, 20, 20))
     canvas.paste(resized, (0, _MONTAGE_LABEL_H))
     draw = ImageDraw.Draw(canvas)
     draw.text((6, 6), label, fill=(255, 230, 80))
     return canvas
 
 
-def _compose_montage(
-    panels: Sequence[tuple[float, np.ndarray]], out_path: Path
-) -> str:
+def _compose_montage(panels: Sequence[tuple[float, np.ndarray]], out_path: Path) -> str:
     """Write a labeled strip (2–3 frames) or 2x2 grid (4 frames). Returns the path."""
     cells = [_montage_cell(rgb, f"t={t:.3f}") for t, rgb in panels]
     n = len(cells)
@@ -273,7 +268,9 @@ def dump_caption_jsonl(store: SqliteStore, dest: Path) -> list[ManifestRow]:
         rel = f"{CAPTIONS_DIR}/{day}.jsonl"
         path = dest / rel
         path.write_text(
-            "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows),
+            "".join(
+                json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows
+            ),
             encoding="utf-8",
         )
         manifest.append(
@@ -286,7 +283,9 @@ def dump_caption_jsonl(store: SqliteStore, dest: Path) -> list[ManifestRow]:
             }
         )
     (captions_dir / MANIFEST_FILE).write_text(
-        "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in manifest),
+        "".join(
+            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in manifest
+        ),
         encoding="utf-8",
     )
     if len(manifest) == 1:

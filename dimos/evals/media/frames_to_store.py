@@ -22,9 +22,9 @@ preprocessing: the eval loop opens the store; it does not decode video.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
+from pathlib import Path
 import re
 import tarfile
-from pathlib import Path
 
 import cv2
 import numpy as np

@@ -89,7 +89,9 @@ def embed(
 @mem_app.command()
 def caption(
     path: str = typer.Argument(..., help="Store .db that already has a color image stream."),
-    jsonl: str = typer.Option(..., "--jsonl", help="JSONL rows with t and caption, parsed, or raw."),
+    jsonl: str = typer.Option(
+        ..., "--jsonl", help="JSONL rows with t and caption, parsed, or raw."
+    ),
     dest: str = typer.Option("color_image_caption", "--dest", help="Caption stream to write."),
 ) -> None:
     """Write 1 Hz visual-logger JSON onto a color_image_caption stream."""
@@ -115,7 +117,9 @@ def caption(
 @mem_app.command("dump-captions")
 def dump_captions(
     path: str = typer.Argument(..., help="Store .db that already has color_image_caption."),
-    out: str = typer.Option(..., "--out", help="Directory for captions.jsonl and captions/YYYY-MM-DD.jsonl."),
+    out: str = typer.Option(
+        ..., "--out", help="Directory for captions.jsonl and captions/YYYY-MM-DD.jsonl."
+    ),
 ) -> None:
     """Write 1 Hz captions as one JSONL file per UTC day."""
     from dimos.memory.cli.dataset import AmbiguousDatasetError, open_dataset

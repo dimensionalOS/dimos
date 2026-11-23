@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
-import tarfile
 from pathlib import Path
+import tarfile
 
 import cv2
 import numpy as np

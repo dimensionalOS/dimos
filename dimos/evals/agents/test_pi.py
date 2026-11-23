@@ -160,7 +160,9 @@ def test_recording_export_reuses_a_cached_unfiltered_copy(
         assert [obs.data for obs in copy.streams.notes] == ["hello"]
 
 
-def test_recording_export_hardlinks_eval_case_recordings(tmp_path: Path, mocker: MockerFixture) -> None:
+def test_recording_export_hardlinks_eval_case_recordings(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     mocker.patch.object(recording_export, "_cache_files", {})
     source_path = tmp_path / "source.db"
     run = tmp_path / "run"
@@ -182,7 +184,9 @@ def test_recording_export_copies_when_hardlink_is_impossible(
 ) -> None:
     mocker.patch.object(recording_export, "_CACHE_DIR", tmp_path / "export-cache")
     mocker.patch.object(recording_export, "_cache_files", {})
-    mocker.patch.object(recording_export.os, "link", side_effect=OSError(errno.EXDEV, "cross-device"))
+    mocker.patch.object(
+        recording_export.os, "link", side_effect=OSError(errno.EXDEV, "cross-device")
+    )
     source_path = tmp_path / "source.db"
     first = tmp_path / "first.db"
     second = tmp_path / "second.db"

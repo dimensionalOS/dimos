@@ -88,8 +88,9 @@ def test_inspect_opens_the_nearest_color_frame(recording: Path) -> None:
 
 
 def test_inspect_without_a_nearby_frame_says_so(recording: Path) -> None:
-    with SqliteStore(path=str(recording), must_exist=True) as store, pytest.raises(
-        LookupError, match="no color_image near"
+    with (
+        SqliteStore(path=str(recording), must_exist=True) as store,
+        pytest.raises(LookupError, match="no color_image near"),
     ):
         inspect(store, 80.0, tolerance=1.0)
 
@@ -99,7 +100,9 @@ def test_unknown_op_is_rejected(recording: Path) -> None:
         handle_request({"op": "search", "path": str(recording), "query": "person"})
 
 
-def test_dump_caption_jsonl_writes_one_file_for_a_single_utc_day(recording: Path, tmp_path: Path) -> None:
+def test_dump_caption_jsonl_writes_one_file_for_a_single_utc_day(
+    recording: Path, tmp_path: Path
+) -> None:
     dest = tmp_path / "case"
     dest.mkdir()
     with SqliteStore(path=str(recording), must_exist=True) as store:
@@ -113,7 +116,9 @@ def test_dump_caption_jsonl_writes_one_file_for_a_single_utc_day(recording: Path
     rows = [json.loads(line) for line in root.read_text(encoding="utf-8").splitlines()]
     assert rows[1]["t"] == 5.0
     assert rows[1]["objects_and_text"] == ["white sedan"]
-    manifest = [json.loads(line) for line in (dest / "captions" / "manifest.jsonl").read_text().splitlines()]
+    manifest = [
+        json.loads(line) for line in (dest / "captions" / "manifest.jsonl").read_text().splitlines()
+    ]
     assert manifest == files
 
 
@@ -266,7 +271,9 @@ def test_inspect_multi_t_writes_a_labeled_montage(tmp_path: Path, mocker: Mocker
         2.0: Observation(
             id=2,
             ts=ORIGIN + 2.0,
-            _data=Image.from_numpy(np.full((8, 12, 3), 200, dtype=np.uint8), format=ImageFormat.RGB),
+            _data=Image.from_numpy(
+                np.full((8, 12, 3), 200, dtype=np.uint8), format=ImageFormat.RGB
+            ),
         ),
     }
 

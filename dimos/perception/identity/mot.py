@@ -68,6 +68,7 @@ class BotSortMot:
                 "BoT-SORT needs the Apache `trackers` package (`pip install trackers`). "
                 "Do not use ultralytics track mode."
             ) from exc
+
         def make_tracker() -> Any:
             return BoTSORTTracker(enable_cmc=True)
 
