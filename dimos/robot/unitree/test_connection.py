@@ -35,8 +35,11 @@ from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.webrtc_connect import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
-_FORWARD = {"lx": 0.0, "ly": 0.1, "rx": 0.0, "ry": 0}
 _STOP = {"lx": 0, "ly": 0, "rx": 0, "ry": 0}
+
+
+def _flush(conn: UnitreeWebRTCConnection) -> None:
+    asyncio.run_coroutine_threadsafe(asyncio.sleep(0), conn.loop).result(2)
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:
@@ -127,6 +130,7 @@ def test_move_api_toggle_sends_selected_wire_command(
     try:
         driver.datachannel.pub_sub.publish_without_callback.reset_mock()
         assert connection.move(twist)
+        _flush(connection)
         assert driver.datachannel.pub_sub.publish_without_callback.call_args == expected_call
     finally:
         connection.stop_movement()
@@ -201,10 +205,12 @@ def test_expired_webrtc_move_cannot_overwrite_replacement(built_connection, monk
         assert first.result(timeout=2)
 
     deadlines[0]()  # The old callback was dispatched before cancel.
+    _flush(conn)
     commands = [item.kwargs["data"] for item in publish.call_args_list]
     lateral = {"lx": -0.2, "ly": 0.0, "rx": 0.0, "ry": 0}
     assert commands[commands.index(lateral) :] == [lateral]
     deadlines[1]()
+    _flush(conn)
     assert publish.call_args.kwargs["data"] == {"lx": 0, "ly": 0, "rx": 0, "ry": 0}
 
 
@@ -218,72 +224,50 @@ def _returned(call: Callable[..., Any], *args: Any) -> Any:
     return results[0]
 
 
-@pytest.mark.parametrize(
-    ("stalled_in", "delivered", "expected"),
-    [
-        pytest.param("loop", False, [_STOP], id="loop"),
-        pytest.param("driver", True, [_FORWARD, _STOP], id="driver"),
-    ],
-)
-def test_stalled_send_returns_and_the_stop_still_lands(
-    built_connection, monkeypatch, stalled_in, delivered, expected
-):
+def test_stalled_loop_runs_only_the_newest_command(built_connection, monkeypatch):
     conn, driver = built_connection
-    monkeypatch.setattr(conn_mod, "_SEND_TIMEOUT", 0.05)
     deadlines = []
     monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
     publish = driver.datachannel.pub_sub.publish_without_callback
     stalled, release = threading.Event(), threading.Event()
 
-    def stall(*args, **kwargs):
+    def stall() -> None:
         stalled.set()
         release.wait(10)
 
-    queue = conn.loop.call_soon_threadsafe
-    if stalled_in == "loop":
-        queue(stall)
-        assert stalled.wait(2)
-    else:
-        publish.side_effect = stall
-
-        def queue_until_the_driver_holds_it(*args):
-            handle = queue(*args)
-            stalled.wait(2)
-            return handle
-
-        monkeypatch.setattr(conn.loop, "call_soon_threadsafe", queue_until_the_driver_holds_it)
-
+    conn.loop.call_soon_threadsafe(stall)
+    assert stalled.wait(2)
     try:
-        # Only a command the driver already holds counts as sent and keeps a watchdog.
-        assert _returned(conn.move, Twist(linear=[0.1, 0, 0])) is delivered
-        assert bool(deadlines) is delivered
+        # Neither call waits on the stalled loop.
+        assert _returned(conn.move, Twist(linear=[0.1, 0, 0])) is True
+        assert deadlines
         _returned(conn.stop_movement)
     finally:
         release.set()
-    # Let the recovered loop run everything that was queued behind the stall.
-    asyncio.run_coroutine_threadsafe(asyncio.sleep(0), conn.loop).result(2)
-    assert [item.kwargs["data"] for item in publish.call_args_list] == expected
+    _flush(conn)
+    assert [item.kwargs["data"] for item in publish.call_args_list] == [_STOP]
 
     assert conn.move(Twist(linear=[0, 0.2, 0]))
+    _flush(conn)
     assert publish.call_args.kwargs["data"] == {"lx": -0.2, "ly": 0.0, "rx": 0.0, "ry": 0}
 
 
-def test_move_fails_at_once_when_the_loop_has_stopped(built_connection, monkeypatch):
+def test_move_fails_at_once_when_the_loop_has_stopped(built_connection):
     conn, _driver = built_connection
-    monkeypatch.setattr(conn_mod, "_SEND_TIMEOUT", 30)
     conn.loop.call_soon_threadsafe(conn.loop.stop)
     conn.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
     assert _returned(conn.move, Twist(linear=[0.1, 0, 0])) is False
 
 
-def test_driver_timeout_keeps_previous_watchdog(built_connection, monkeypatch):
+def test_driver_error_keeps_the_watchdog(built_connection, monkeypatch):
     conn, driver = built_connection
     deadlines = []
     monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
-    assert conn.move(Twist(linear=[0.1, 0, 0]))
     publish = driver.datachannel.pub_sub.publish_without_callback
     publish.side_effect = TimeoutError("driver rejected the command")
-    assert not conn.move(Twist(linear=[0, 0.2, 0]))
+    assert conn.move(Twist(linear=[0.1, 0, 0]))
+    _flush(conn)
     publish.side_effect = None
     deadlines[0]()
+    _flush(conn)
     assert publish.call_args.kwargs["data"] == _STOP

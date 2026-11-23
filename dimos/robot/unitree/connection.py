@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 import functools
 import json
@@ -59,9 +58,6 @@ from dimos.utils.sequential_ids import SequentialIds
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 logger = setup_logger()
-
-# Seconds a caller waits for the event loop to take one velocity command.
-_SEND_TIMEOUT = 1.0
 
 
 _T = TypeVar("_T", bound=Timestamped)
@@ -113,6 +109,7 @@ class UnitreeWebRTCConnection(Resource):
         self.ip = ip
         self.mode = mode
         self._motion_timer = MotionTimer()
+        self._latest_movement: object | None = None
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT
         self._velocity_api = velocity_api
         self._move_ids = SequentialIds()
@@ -209,7 +206,7 @@ class UnitreeWebRTCConnection(Resource):
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:
-            bool: True if command was sent successfully
+            bool: True if the command was queued for the robot
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
 
@@ -480,48 +477,28 @@ class UnitreeWebRTCConnection(Resource):
         """
         return self.video_stream()
 
-    def _queue_movement(self, x: float, y: float, yaw: float) -> Future[None]:
-        """Publish on the event loop, unless the returned future is cancelled first."""
-        sent: Future[None] = Future()
+    def _send_movement(self, x: float, y: float, yaw: float) -> None:
+        """Queue a movement on the event loop; a newer one replaces it if the loop has not run it yet."""
+        if not self.loop.is_running():
+            raise RuntimeError("event loop is not running")
+        token = object()
+        self._latest_movement = token
 
         def publish() -> None:
-            if not sent.set_running_or_notify_cancel():
+            if self._latest_movement is not token:
                 return
             try:
                 self._publish_movement(x, y, yaw)
             except Exception as e:
-                sent.set_exception(e)
-            else:
-                sent.set_result(None)
+                logger.warning("Failed to publish movement: %s", e)
 
         self.loop.call_soon_threadsafe(publish)
-        return sent
-
-    def _send_movement(self, x: float, y: float, yaw: float) -> None:
-        """Publish a movement, or raise once it can no longer reach the robot."""
-        if not self.loop.is_running():
-            raise RuntimeError("event loop is not running")
-        sent = self._queue_movement(x, y, yaw)
-        try:
-            sent.result(timeout=_SEND_TIMEOUT)
-        except FutureTimeoutError:
-            # A stalled loop must not move the robot after the caller gave up. A command
-            # the driver already holds counts as sent, so it still gets its watchdog.
-            if sent.cancel():
-                raise TimeoutError(
-                    f"event loop did not take the command within {_SEND_TIMEOUT} s"
-                ) from None
-            if sent.done():
-                # The driver itself can raise TimeoutError while publishing.
-                sent.result()
 
     def _send_stop(self) -> None:
-        if self.loop.is_running():
-            try:
-                # Left queued on timeout, so a recovering loop still stops the robot.
-                self._queue_movement(0, 0, 0).result(timeout=_SEND_TIMEOUT)
-            except Exception as e:
-                logger.warning("Failed to publish stop twist: %s", e)
+        try:
+            self._send_movement(0, 0, 0)
+        except Exception as e:
+            logger.warning("Failed to queue stop twist: %s", e)
 
     def stop_movement(self) -> None:
         """Halt the base and invalidate outstanding commands."""
