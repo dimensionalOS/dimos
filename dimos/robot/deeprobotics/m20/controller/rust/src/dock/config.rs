@@ -25,34 +25,46 @@ pub struct DockConfig {
     pub sequence: SequenceConfig,
 }
 
-/// The reflector-post detector (reflective_column_node's numbers are compiled in; these are the sim dock's).
+/// reflective_column_node's per-sweep numbers (it reads no config file; each is compiled in, at the address noted in
+/// m20_controller.toml), in the float type the binary compares them in.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DetectorConfig {
-    /// a point at or above this intensity (the Airy's 0-255 reflectivity) is a reflector return
-    pub min_intensity: f64,
-    /// kept: points this far (m, floor plane) from the lidar at most, and at least
-    pub max_range_m: f64,
-    pub min_range_m: f64,
-    /// kept: base_link heights (m) between these
-    pub min_z_m: f64,
-    pub max_z_m: f64,
-    /// kept: within this angle (deg) of straight ahead of base_link
-    pub half_angle_deg: f64,
-    /// more reflector returns than this in one sweep: refuse the sweep (bounds the clustering)
-    pub max_points: usize,
-    /// reflector returns closer than this (m, floor plane) are one post
-    pub cluster_distance_m: f64,
-    /// a cluster needs this many returns to be a post
-    pub min_cluster_points: usize,
-    /// a cluster wider than this (m) is not a post (a reflective wall, a sign)
-    pub max_cluster_width_m: f64,
-    /// a post's returns farther than this (m) behind its nearest are ghosts along the ray, dropped
-    pub max_post_depth_m: f64,
-    /// the posts' centre-to-centre distance (m) and how far a pair may be off it
-    pub post_spacing_m: f64,
-    pub spacing_tolerance_m: f64,
-    /// each post's radius (m): a return lies on the near surface, the centre is this far further along the ray
-    pub post_radius_m: f64,
+    /// the vendor lidar driver's front Airy transform into base_link (x y z m, roll pitch yaw rad; f32 as it reads them)
+    pub driver_xyz: [f32; 3],
+    pub driver_rpy: [f32; 3],
+    /// ReciAndTransformPoints: intensity above this, x in (x_min, x_max), |y| < y_max, z in (z_min, z_max) and
+    /// |atan2(y, x)| <= half_angle_rad
+    pub min_intensity: f32,
+    pub x_min: f64,
+    pub x_max: f32,
+    pub y_max: f32,
+    pub z_min: f64,
+    pub z_max: f64,
+    pub half_angle_rad: f64,
+    /// VoxelGrid's leaf (m, all three axes)
+    pub voxel_leaf: f32,
+    /// RadiusOutlierRemoval, on clouds of outlier_min_cloud points or more: a point with outlier_min_neighbors or
+    /// fewer within outlier_radius (m, itself included) is dropped
+    pub outlier_min_cloud: usize,
+    pub outlier_radius: f32,
+    pub outlier_min_neighbors: usize,
+    /// EuclideanClusterExtraction: tolerance (m) and cluster sizes kept
+    pub cluster_tolerance: f32,
+    pub cluster_min: usize,
+    pub cluster_max: usize,
+    /// FilterReflectiveColumn: a cluster is a post when its z extent over its y extent is above this
+    pub column_min_ratio: f32,
+    /// FindTargetRefleColu: a pair's centroids post_spacing (m) apart within spacing_tolerance, their line's angle
+    /// (deg) strictly inside pair_angle_deg, the best pair kept below pair_max_off of the spacing
+    pub post_spacing: f64,
+    pub spacing_tolerance: f64,
+    pub pair_angle_deg: [f64; 2],
+    pub pair_max_off: f64,
+    /// FilterOutSuctionPoints: a post's points nearer than its centroid, within suction_y / suction_z (m) of it
+    pub suction_y: f64,
+    pub suction_z: f64,
+    /// CalculateCenter: a post's centre is its centroid pushed center_push (m) x sin|atan2(x, y)| along x
+    pub center_push: f64,
 }
 
 /// reflective_column_node's output stage (compiled into it; the binary's numbers).
@@ -153,27 +165,39 @@ impl DockConfig {
     pub fn validate(&self) -> Result<()> {
         let d = &self.detector;
         for (name, v) in [
-            ("detector.max_range_m", d.max_range_m),
-            ("detector.cluster_distance_m", d.cluster_distance_m),
-            ("detector.max_cluster_width_m", d.max_cluster_width_m),
-            ("detector.max_post_depth_m", d.max_post_depth_m),
-            ("detector.post_spacing_m", d.post_spacing_m),
-            ("detector.spacing_tolerance_m", d.spacing_tolerance_m),
-            ("detector.half_angle_deg", d.half_angle_deg),
+            ("detector.half_angle_rad", d.half_angle_rad),
+            ("detector.voxel_leaf", d.voxel_leaf as f64),
+            ("detector.outlier_radius", d.outlier_radius as f64),
+            ("detector.cluster_tolerance", d.cluster_tolerance as f64),
+            ("detector.post_spacing", d.post_spacing),
+            ("detector.spacing_tolerance", d.spacing_tolerance),
+            ("detector.pair_max_off", d.pair_max_off),
         ] {
             positive(name, v)?;
         }
-        if !(d.min_range_m.is_finite() && d.min_range_m >= 0.0 && d.min_range_m < d.max_range_m) {
-            bail!("dock.detector.min_range_m must be in [0, max_range_m)");
-        }
-        if d.min_z_m.partial_cmp(&d.max_z_m) != Some(std::cmp::Ordering::Less)
-            || !d.post_radius_m.is_finite()
-            || !d.min_intensity.is_finite()
+        let finite = d
+            .driver_xyz
+            .iter()
+            .chain(&d.driver_rpy)
+            .chain([&d.min_intensity, &d.x_max, &d.y_max, &d.column_min_ratio])
+            .all(|v| v.is_finite())
+            && [
+                d.x_min,
+                d.z_min,
+                d.z_max,
+                d.suction_y,
+                d.suction_z,
+                d.center_push,
+            ]
+            .iter()
+            .chain(&d.pair_angle_deg)
+            .all(|v| v.is_finite());
+        if !finite
+            || d.x_min >= d.x_max as f64
+            || d.z_min >= d.z_max
+            || d.cluster_min > d.cluster_max
         {
-            bail!("dock.detector: min_z_m < max_z_m, finite post_radius_m and min_intensity");
-        }
-        if d.min_cluster_points == 0 || d.max_points == 0 {
-            bail!("dock.detector: min_cluster_points and max_points must be at least 1");
+            bail!("dock.detector: finite numbers, x_min < x_max, z_min < z_max, cluster_min <= cluster_max");
         }
         let s = &self.sequence;
         for (name, v) in [

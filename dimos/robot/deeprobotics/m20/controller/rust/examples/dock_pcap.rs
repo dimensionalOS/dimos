@@ -14,13 +14,12 @@
 
 //! The dock detector on a recorded capture of the front Airy (tcpdump of its MSOP / DIFOP multicast), one JSON line
 //! per sweep: capture time, found, the robot in the dock frame (out from the posts m, y m, yaw rad), the posts'
-//! spacing. Compare with charge_manager's log by dimos/simulation/m20_policy_sim/dock_compare.py.
+//! spacing and reflective_column_node's own position (x, y, yaw). Compare with charge_manager's log by
+//! dimos/simulation/m20_policy_sim/dock_compare.py, or with reflective_column_node's by tests/vendor_replay.rs.
 //!
 //!     cargo run --release --example dock_pcap -- CAPTURE.pcap > sweeps.jsonl
 
-use std::f64::consts::PI;
-
-use m20_controller::dock::detector::{detect, Detection, Mount};
+use m20_controller::dock::detector::{Detection, Detector};
 use robosense_airy::{Decoder, DecoderConfig};
 
 /// The front Airy's multicast group and MSOP / DIFOP ports (dimos/robot/deeprobotics/m20/constants.py).
@@ -33,12 +32,15 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("usage: dock_pcap CAPTURE.pcap");
     };
     let cfg = m20_controller::module::load_controller_config("")?;
-    // FRONT_LIDAR_XYZ_M / FRONT_LIDAR_RPY
-    let mount = Mount::from_xyz_rpy([0.32028, 0.0, -0.013], [0.0, -PI / 2.0, PI]);
+    let detector = Detector::new(&cfg.dock);
     let datagrams = robosense_airy::pcap::read_udp(&path).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut decoder = Decoder::new(DecoderConfig {
-        min_distance: 0.1,
+        // the vendor driver's (node_driver config.yaml)
+        min_distance: 0.2,
         max_distance: 60.0,
+        dense_points: true,
+        use_lidar_clock: true,
+        ts_first_point: true,
         ..Default::default()
     });
     for g in datagrams.iter().filter(|g| g.dst == FRONT_GROUP) {
@@ -57,11 +59,17 @@ fn main() -> anyhow::Result<()> {
             .iter()
             .filter(|p| p.x.is_finite())
             .map(|p| [p.x, p.y, p.z, p.intensity as f32]);
-        let line = match detect(points, &mount, &cfg.dock.detector) {
-            Detection::Found { pose, posts, .. } => {
+        let line = match detector.detect(points) {
+            Detection::Found {
+                pose,
+                vendor,
+                posts,
+                ..
+            } => {
                 let [out, y, yaw] = pose.robot_in_dock();
                 let spacing = (posts[0][0] - posts[1][0]).hypot(posts[0][1] - posts[1][1]);
-                serde_json::json!({"t": g.time, "found": true, "out": out, "y": y, "yaw": yaw, "spacing": spacing})
+                serde_json::json!({"t": g.time, "found": true, "out": out, "y": y, "yaw": yaw, "spacing": spacing,
+                                   "vendor": vendor})
             }
             Detection::Missing(why) => serde_json::json!({"t": g.time, "found": false, "why": why}),
         };

@@ -12,15 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The dock's two retro-reflective posts in one lidar sweep, as reflective_column_node does it (intensity filter,
-//! Euclidean clustering, a pair at the posts' spacing): the high-intensity returns in front of the robot, clustered in
-//! the floor plane, each cluster's centre pushed pi/4 of a post radius along its rays (returns lie on the near side), and
-//! the pair of clusters whose distance best matches the posts' spacing. The dock's pose is their midpoint and the
-//! normal to their line that points at the robot.
+//! reflective_column_node (NOS /opt/robot/share/charge_manager/bin, decompiled) on one sweep, step for step as its
+//! ProcessPointCloudData does it, in its float types:
+//!
+//! 1. ReciAndTransformPoints: the vendor driver's base_link points (its f64 transform of the lidar's, as f32) with
+//!    intensity above 230, in a box and a +-45 deg sector ahead; then a VoxelGrid of 1 cm and, on 20 points or more, a
+//!    RadiusOutlierRemoval ([`super::pcl`]: PCL 1.10's, point order and float sums as it has them).
+//! 2. PointsCloudClustering: Euclidean clusters of 5 cm, 30 points or more; FilterReflectiveColumn keeps those taller
+//!    than 1.8 x their width (z / y extent).
+//! 3. FindTargetRefleColu: the pair of posts whose centroids are nearest 0.4 m apart (within 0.18, 60-120 deg off the x
+//!    axis), the most lateral when several are found; FilterOutSuctionPoints keeps each post's points in front of its
+//!    centroid within 2 cm (y) / 8 cm (z) of it; CalculateCenter: their centroid, x pushed 0.045 x sin|atan2f(x, y)|.
+//! 4. calculateLidarPosition: base_link's position in the posts' frame (origin their midpoint, y along the low-y post
+//!    to the high-y one) and the yaw atan2(dx, dy) of that line: the pose reflective_column_node logs as "一次计算--雷达
+//!    位置" and its output stage ([`super::vendor::ReflectorFilter`], the docking's) filters and publishes.
+//!
+//! [`Detector`] turns that into the dock's [`DockPose`] in base_link, placed so charge_manager's inputs from it
+//! (docking's target_pose) are the vendor's.
 
-use std::collections::HashMap;
-
-use super::config::DetectorConfig;
+use super::config::{DetectorConfig, DockConfig};
+use super::pcl;
 use super::DockPose;
 
 /// A lidar's mount in base_link: p_base = rotation * p_lidar + translation.
@@ -57,282 +68,317 @@ impl Mount {
     }
 }
 
+/// The vendor lidar driver's transform (rs_driver ENABLE_TRANSFORM: translation x Rz(yaw) x Ry(pitch) x Rx(roll) from
+/// its f32 parameters, applied in f64, the result cast to f32).
+#[derive(Debug, Clone, Copy)]
+pub struct DriverTransform {
+    rotation: [[f64; 3]; 3],
+    translation: [f64; 3],
+}
+
+/// Eigen's AngleAxisd(angle, unit axis k).toRotationMatrix().
+fn angle_axis(angle: f64, k: usize) -> [[f64; 3]; 3] {
+    let axis = [0, 1, 2].map(|i| if i == k { 1.0 } else { 0.0 });
+    let (s, c) = angle.sin_cos();
+    let sin_axis = axis.map(|a| s * a);
+    let cos1_axis = axis.map(|a| (1.0 - c) * a);
+    let mut r = [[0.0; 3]; 3];
+    let tmp = cos1_axis[0] * axis[1];
+    r[0][1] = tmp - sin_axis[2];
+    r[1][0] = tmp + sin_axis[2];
+    let tmp = cos1_axis[0] * axis[2];
+    r[0][2] = tmp + sin_axis[1];
+    r[2][0] = tmp - sin_axis[1];
+    let tmp = cos1_axis[1] * axis[2];
+    r[1][2] = tmp - sin_axis[0];
+    r[2][1] = tmp + sin_axis[0];
+    for i in 0..3 {
+        r[i][i] = cos1_axis[i] * axis[i] + c;
+    }
+    r
+}
+
+fn mat_mul(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut r = [[0.0; 3]; 3];
+    for i in 0..3 {
+        for j in 0..3 {
+            r[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+        }
+    }
+    r
+}
+
+impl DriverTransform {
+    pub fn new(xyz: [f32; 3], rpy: [f32; 3]) -> DriverTransform {
+        let [roll, pitch, yaw] = rpy.map(|v| v as f64);
+        let zy = mat_mul(&angle_axis(yaw, 2), &angle_axis(pitch, 1));
+        DriverTransform {
+            rotation: mat_mul(&zy, &angle_axis(roll, 0)),
+            translation: xyz.map(|v| v as f64),
+        }
+    }
+
+    pub fn apply(&self, p: [f32; 3]) -> [f32; 3] {
+        let (r, t) = (&self.rotation, &self.translation);
+        let [x, y, z] = p.map(|v| v as f64);
+        [0, 1, 2].map(|i| (r[i][0] * x + r[i][1] * y + r[i][2] * z + t[i]) as f32)
+    }
+}
+
 /// One sweep's verdict.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Detection {
     Found {
         pose: DockPose,
-        /// the two posts' centres in base_link (x, y)
+        /// reflective_column_node's pose: base_link's x, y (m) in the posts' frame and the yaw (rad)
+        vendor: [f64; 3],
+        /// the posts' centres in base_link (x, y): the low-y one, the high-y one
         posts: [[f64; 2]; 2],
-        /// the reflector returns in each post's cluster
+        /// each post's points after FilterOutSuctionPoints
         points: [usize; 2],
     },
-    /// why not (no reflector returns, one post, no pair at the spacing, too many returns)
+    /// why not (as reflective_column_node logs it)
     Missing(String),
 }
 
-struct Cluster {
-    /// indices of its returns
-    members: Vec<usize>,
+/// What reflective_column_node logs of a sweep, step by step (for checking against its log).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Trace {
+    /// 【step1】点云数量: the points after the voxel grid and outlier removal
+    pub step1: Option<usize>,
+    /// 簇 z/y 比例: each cluster's z / y extent (clusters with a y extent)
+    pub ratios: Vec<f32>,
+    /// 反光柱数量: the posts (when 2 or more)
+    pub columns: Option<usize>,
+    /// 距离差, 角度: each pair outside the spacing or the angles
+    pub rejected: Vec<(f64, f64)>,
+    /// 两反光柱距离误差: the last best spacing error when no pair was kept
+    pub no_pair: Option<f64>,
+    /// 【step 2】: each post's points after FilterOutSuctionPoints (low-y, high-y)
+    pub counts: Option<[usize; 2]>,
+    /// 【step 3】: each post's centre (low-y, high-y; z 0)
+    pub centers: Option<[[f64; 2]; 2]>,
 }
 
-fn find(parent: &mut [usize], mut i: usize) -> usize {
-    while parent[i] != i {
-        parent[i] = parent[parent[i]];
-        i = parent[i];
-    }
-    i
+/// reflective_column_node with its numbers, and where our DockPose puts the dock.
+#[derive(Debug, Clone)]
+pub struct Detector {
+    cfg: DetectorConfig,
+    driver: DriverTransform,
+    /// the dock frame's x of the vendor's posts' frame origin: docked_x_m - pose_offset_x
+    axis_shift: f64,
 }
 
-/// The centre of a post of radius `r` through its returns (least squares on |p - c| - r, Gauss-Newton from `start`):
-/// it does not lean toward wherever the beams happen to land densest. Falls back to `start` when the returns cannot
-/// pin it (a degenerate arc) or it lands more than a radius away (returns bloomed far wider than the post, 1.5 m+ out).
-fn fit_circle(points: &[[f64; 2]], members: &[usize], start: [f64; 2], r: f64) -> [f64; 2] {
-    let mut c = start;
-    for _ in 0..10 {
-        let (mut a, mut b) = ([[0.0f64; 2]; 2], [0.0f64; 2]);
-        for p in members.iter().filter_map(|&i| points.get(i)) {
-            let d = [p[0] - c[0], p[1] - c[1]];
-            let n = d[0].hypot(d[1]);
-            if n < 1e-9 {
-                continue;
-            }
-            let u = [d[0] / n, d[1] / n];
-            for i in 0..2 {
-                b[i] += u[i] * (n - r);
-                for j in 0..2 {
-                    a[i][j] += u[i] * u[j];
-                }
-            }
-        }
-        let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
-        if det.is_nan() || det.abs() <= 1e-6 * (a[0][0] + a[1][1]).powi(2) {
-            return start;
-        }
-        let step = [
-            (a[1][1] * b[0] - a[0][1] * b[1]) / det,
-            (a[0][0] * b[1] - a[1][0] * b[0]) / det,
-        ];
-        c = [c[0] + step[0], c[1] + step[1]];
-        if step[0].hypot(step[1]) < 1e-6 {
-            break;
-        }
-    }
-    let moved = (c[0] - start[0]).hypot(c[1] - start[1]);
-    if c.iter().all(|v| v.is_finite()) && moved <= r {
-        c
+/// CalculateCenter: the cloud's centroid (f32), x + push x sinf|atan2f(x, y)| fused in f64.
+fn post_center(cloud: &[pcl::Point], push: f64) -> [f64; 2] {
+    let c = pcl::centroid(cloud);
+    let s = c[0].atan2(c[1]).abs().sin() as f64;
+    [s.mul_add(push, c[0] as f64), c[1] as f64]
+}
+
+/// calculateLidarPosition(a, b) with z = 0 (its z terms vanish exactly): u = (a - b) / |a - b|, s = a + b; base_link at
+/// x = (-uy sx + ux sy) / 2, y = (-ux sx - uy sy) / 2.
+fn lidar_position(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    let d = [a[0] - b[0], a[1] - b[1]];
+    let n2 = d[1] * d[1] + d[0] * d[0];
+    let u = if n2 > 0.0 {
+        let n = n2.sqrt();
+        [d[0] / n, d[1] / n]
     } else {
-        start
-    }
-}
-
-/// A post's axis from its returns: across the ray the median of their offsets (a saturated reflector's returns bloom
-/// about evenly to both sides, so their spread says nothing about its width), along it one radius beyond the front.
-fn post_centre(
-    points: &[[f64; 2]],
-    members: &[usize],
-    origin: [f64; 2],
-    mean: [f64; 2],
-    front: f64,
-    r: f64,
-) -> [f64; 2] {
-    let (dx, dy) = (mean[0] - origin[0], mean[1] - origin[1]);
-    let n = dx.hypot(dy);
-    if n < 1e-9 {
-        return mean;
-    }
-    let (u, side) = ([dx / n, dy / n], [-dy / n, dx / n]);
-    let mut lateral: Vec<f64> = members
-        .iter()
-        .filter_map(|&i| points.get(i))
-        .map(|p| (p[0] - origin[0]) * side[0] + (p[1] - origin[1]) * side[1])
-        .collect();
-    lateral.sort_by(f64::total_cmp);
-    let Some(&l) = lateral.get(lateral.len() / 2) else {
-        return mean;
+        d
     };
-    let a = front + r;
+    let s = [a[0] + b[0], a[1] + b[1]];
     [
-        origin[0] + a * u[0] + l * side[0],
-        origin[1] + a * u[1] + l * side[1],
+        (-u[1] * s[0] + u[0] * s[1]) / 2.0,
+        (-u[0] * s[0] + -u[1] * s[1]) / 2.0,
     ]
 }
 
-/// Find the dock in a sweep: `points` are (x, y, z, intensity) in the lidar's frame, `mount` places it in base_link.
-pub fn detect(
-    points: impl IntoIterator<Item = [f32; 4]>,
-    mount: &Mount,
-    cfg: &DetectorConfig,
-) -> Detection {
-    let origin = [mount.translation[0], mount.translation[1]];
-    let half_angle = cfg.half_angle_deg.to_radians();
-    // floor-plane returns as measured, and pushed on toward the post's axis (for clustering and a first centre)
-    let mut surface: Vec<[f64; 2]> = Vec::new();
-    let mut kept: Vec<[f64; 2]> = Vec::new();
-    for [x, y, z, intensity] in points {
-        // NaN compares false: never a reflector return
-        if (intensity as f64)
-            .partial_cmp(&cfg.min_intensity)
-            .is_none_or(|o| o.is_lt())
-        {
-            continue;
+impl Detector {
+    pub fn new(dock: &DockConfig) -> Detector {
+        let d = &dock.detector;
+        Detector {
+            cfg: d.clone(),
+            driver: DriverTransform::new(d.driver_xyz, d.driver_rpy),
+            axis_shift: dock.sequence.docked_x_m - dock.filter.pose_offset_x,
         }
-        let p = mount.to_base([x as f64, y as f64, z as f64]);
-        if !p.iter().all(|v| v.is_finite()) || p[2] < cfg.min_z_m || p[2] > cfg.max_z_m {
-            continue;
+    }
+
+    /// Find the dock in a sweep: `points` are (x, y, z, intensity) in the front lidar's frame.
+    pub fn detect(&self, points: impl IntoIterator<Item = [f32; 4]>) -> Detection {
+        self.detect_traced(points, &mut Trace::default())
+    }
+
+    /// [`Self::detect`], noting what reflective_column_node would log in `trace`.
+    pub fn detect_traced(
+        &self,
+        points: impl IntoIterator<Item = [f32; 4]>,
+        trace: &mut Trace,
+    ) -> Detection {
+        let c = &self.cfg;
+        let miss = |why: &str| Detection::Missing(why.to_string());
+        // step 1: ReciAndTransformPoints, VoxelGrid, RadiusOutlierRemoval
+        let mut cloud: Vec<pcl::Point> = Vec::new();
+        for [x, y, z, intensity] in points {
+            let [x, y, z] = self.driver.apply([x, y, z]);
+            if intensity > c.min_intensity
+                && x as f64 > c.x_min
+                && x < c.x_max
+                && y.abs() < c.y_max
+                && z as f64 > c.z_min
+                && (z as f64) < c.z_max
+                && (y.atan2(x) as f64).abs() <= c.half_angle_rad
+            {
+                cloud.push([x, y, z, 1.0]);
+            }
         }
-        let (dx, dy) = (p[0] - origin[0], p[1] - origin[1]);
-        let range = dx.hypot(dy);
-        if range < cfg.min_range_m || range > cfg.max_range_m || dy.atan2(dx).abs() > half_angle {
-            continue;
+        let mut cloud = pcl::voxel_grid(&cloud, [c.voxel_leaf; 3]);
+        if cloud.len() >= c.outlier_min_cloud {
+            cloud = pcl::radius_outlier_removal(
+                &cloud,
+                c.outlier_radius as f64,
+                c.outlier_min_neighbors,
+            );
         }
-        if kept.len() >= cfg.max_points {
-            return Detection::Missing(format!("more than {} reflector returns", cfg.max_points));
+        trace.step1 = Some(cloud.len());
+        if cloud.is_empty() {
+            return miss("点云聚类失败 (no reflector returns)");
         }
-        // returns spread evenly across the post's visible width lie on average pi/4 of a radius in front of its
-        // axis (the mean of sqrt(r^2 - u^2) over u in [-r, r]): push each that far on along its ray
-        let k = if range > 0.0 {
-            std::f64::consts::FRAC_PI_4 * cfg.post_radius_m / range
-        } else {
-            0.0
+        // step 2: PointsCloudClustering, FilterReflectiveColumn
+        let clusters =
+            pcl::euclidean_clusters(&cloud, c.cluster_tolerance, c.cluster_min, c.cluster_max);
+        if clusters.len() < 2 {
+            return miss(&format!(
+                "聚类数量 {} (fewer than 2 clusters)",
+                clusters.len()
+            ));
+        }
+        let mut columns: Vec<Vec<pcl::Point>> = Vec::new();
+        for members in &clusters {
+            let points: Vec<pcl::Point> = members.iter().map(|&i| cloud[i]).collect();
+            let (lo, hi) = pcl::min_max(&points);
+            let width = hi[1] - lo[1];
+            if width != 0.0 {
+                let ratio = (hi[2] - lo[2]).abs() / width.abs();
+                trace.ratios.push(ratio);
+                if ratio > c.column_min_ratio {
+                    columns.push(points);
+                }
+            }
+        }
+        if columns.len() < 2 {
+            return miss("反光柱数量少于2个 (fewer than 2 posts)");
+        }
+        trace.columns = Some(columns.len());
+        // step 3: FindTargetRefleColu, FilterOutSuctionPoints, CalculateCenter
+        let Some([lo, hi]) = self.find_target(&columns, trace) else {
+            return miss("没有找到足够的反光柱簇 (no pair of posts at the spacing)");
         };
-        kept.push([p[0] + k * dx, p[1] + k * dy]);
-        surface.push([p[0], p[1]]);
-    }
-    if kept.is_empty() {
-        return Detection::Missing("no reflector returns".into());
-    }
-    // single-linkage clustering on a grid of cluster_distance cells (neighbours only in the 3 x 3 around a cell)
-    let cell = cfg.cluster_distance_m;
-    let key = |p: &[f64; 2]| ((p[0] / cell).floor() as i64, (p[1] / cell).floor() as i64);
-    let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
-    for (i, p) in kept.iter().enumerate() {
-        grid.entry(key(p)).or_default().push(i);
-    }
-    let mut parent: Vec<usize> = (0..kept.len()).collect();
-    let d2 = cell * cell;
-    for (i, p) in kept.iter().enumerate() {
-        let (cx, cy) = key(p);
-        for nx in cx - 1..=cx + 1 {
-            for ny in cy - 1..=cy + 1 {
-                let Some(bucket) = grid.get(&(nx, ny)) else {
-                    continue;
-                };
-                for &j in bucket.iter().filter(|&&j| j > i) {
-                    let q = &kept[j];
-                    if (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) <= d2 {
-                        let (a, b) = (find(&mut parent, i), find(&mut parent, j));
-                        if a != b {
-                            parent[a] = b;
-                        }
-                    }
-                }
-            }
+        let front = |posts: &[pcl::Point]| -> Vec<pcl::Point> {
+            let m = pcl::centroid(posts);
+            let (mx, my, mz) = (m[0] as f64, m[1] as f64, m[2] as f64);
+            posts
+                .iter()
+                .filter(|p| {
+                    let (x, y, z) = (p[0] as f64, p[1] as f64, p[2] as f64);
+                    x < mx + 0.0
+                        && y < my + c.suction_y
+                        && my - c.suction_y < y
+                        && z < mz + c.suction_z
+                        && mz - c.suction_z < z
+                })
+                .copied()
+                .collect()
+        };
+        let (lo, hi) = (front(&columns[lo]), front(&columns[hi]));
+        trace.counts = Some([lo.len(), hi.len()]);
+        if lo.is_empty() || hi.is_empty() {
+            return miss("a post with no points in front of its centroid");
+        }
+        let (a, b) = (
+            post_center(&lo, c.center_push),
+            post_center(&hi, c.center_push),
+        );
+        trace.centers = Some([a, b]);
+        // step 4: calculateLidarPosition(high-y, low-y) and the line's yaw
+        let [x, y] = lidar_position(b, a);
+        let yaw = (b[0] - a[0]).atan2(b[1] - a[1]);
+        Detection::Found {
+            pose: DockPose::from_robot_in_dock([self.axis_shift - x, -y, yaw]),
+            vendor: [x, y, yaw],
+            posts: [a, b],
+            points: [lo.len(), hi.len()],
         }
     }
-    let mut clusters: HashMap<usize, Cluster> = HashMap::new();
-    for i in 0..kept.len() {
-        let root = find(&mut parent, i);
-        clusters
-            .entry(root)
-            .or_insert(Cluster {
-                members: Vec::new(),
-            })
-            .members
-            .push(i);
-    }
-    let range = |i: usize| (surface[i][0] - origin[0]).hypot(surface[i][1] - origin[1]);
-    let posts: Vec<([f64; 2], usize)> = clusters
-        .values()
-        .filter_map(|c| {
-            // a retro-reflector also returns ghosts behind itself along the ray: keep the near band of the cluster
-            // (its nearest 2% sets the front)
-            let mut ranges: Vec<f64> = c.members.iter().map(|&i| range(i)).collect();
-            ranges.sort_by(f64::total_cmp);
-            let front = ranges.get(ranges.len() / 50).copied()?;
-            let members: Vec<usize> = c
-                .members
-                .iter()
-                .copied()
-                .filter(|&i| range(i) <= front + cfg.max_post_depth_m)
-                .collect();
-            if members.len() < cfg.min_cluster_points {
-                return None;
-            }
-            let (mut lo, mut hi, mut sum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2], [0.0; 2]);
-            for p in members.iter().map(|&i| kept[i]) {
-                for k in 0..2 {
-                    lo[k] = lo[k].min(p[k]);
-                    hi[k] = hi[k].max(p[k]);
-                    sum[k] += p[k];
-                }
-            }
-            if (hi[0] - lo[0]).hypot(hi[1] - lo[1]) > cfg.max_cluster_width_m {
-                return None;
-            }
-            let mean = [sum[0] / members.len() as f64, sum[1] / members.len() as f64];
-            Some((
-                {
-                    let rough =
-                        post_centre(&surface, &members, origin, mean, front, cfg.post_radius_m);
-                    fit_circle(&surface, &members, rough, cfg.post_radius_m)
-                },
-                members.len(),
-            ))
-        })
-        .collect();
-    if posts.len() < 2 {
-        return Detection::Missing(format!(
-            "{} post-sized reflector cluster(s) of {} cluster(s)",
-            posts.len(),
-            clusters.len()
-        ));
-    }
-    // the pair nearest the spacing; ties (within a millimetre) go to the nearer dock
-    let mut best: Option<(f64, f64, usize, usize)> = None;
-    for i in 0..posts.len() {
-        for j in i + 1..posts.len() {
-            let (a, b) = (posts[i].0, posts[j].0);
-            let off = ((a[0] - b[0]).hypot(a[1] - b[1]) - cfg.post_spacing_m).abs();
-            if off > cfg.spacing_tolerance_m {
+
+    /// FindTargetRefleColu: (low-y post, high-y post) indices into `columns`.
+    fn find_target(&self, columns: &[Vec<pcl::Point>], trace: &mut Trace) -> Option<[usize; 2]> {
+        let c = &self.cfg;
+        let n = columns.len();
+        let mut used = vec![false; n];
+        let mut cent = vec![[0.0f32; 4]; n];
+        // pairs (i, j) kept, by i; the last improving pair and its spacing error persist across i, as in the binary
+        let mut pairs: std::collections::BTreeMap<usize, usize> = Default::default();
+        let (mut any, mut best, mut bi, mut bj) = (false, 0.0f64, 0usize, 0usize);
+        for i in 0..n - 1 {
+            if used[i] {
                 continue;
             }
-            let dist = ((a[0] + b[0]) / 2.0).hypot((a[1] + b[1]) / 2.0);
-            let better = match best {
-                None => true,
-                Some((o, d, _, _)) => off < o - 1e-3 || (off < o + 1e-3 && dist < d),
-            };
-            if better {
-                best = Some((off, dist, i, j));
+            cent[i] = pcl::centroid(&columns[i]);
+            used[i] = true;
+            best = f64::MAX;
+            for j in i + 1..n {
+                if used[j] {
+                    continue;
+                }
+                cent[j] = pcl::centroid(&columns[j]);
+                let d: [f32; 4] = [0, 1, 2, 3].map(|k| cent[i][k] - cent[j][k]);
+                let sq = d.map(|v| v * v);
+                let dist = ((sq[0] + sq[1]) + (sq[2] + sq[3])).sqrt();
+                let off = (dist as f64 - c.post_spacing).abs();
+                let angle = (cent[j][1] - cent[i][1]).atan2(cent[j][0] - cent[i][0]);
+                let deg = (angle as f64 * 180.0) / std::f64::consts::PI;
+                if off < c.spacing_tolerance
+                    && deg.abs() < c.pair_angle_deg[1]
+                    && c.pair_angle_deg[0] < deg.abs()
+                {
+                    any = true;
+                    if best > off {
+                        (best, bi, bj) = (off, i, j);
+                    }
+                } else {
+                    trace.rejected.push((off, deg));
+                }
+            }
+            if best < c.pair_max_off {
+                pairs.insert(bi, bj);
+                used[bj] = true;
             }
         }
-    }
-    let Some((_, _, i, j)) = best else {
-        return Detection::Missing(format!(
-            "no pair of the {} post clusters {:.2} m (+- {:.2}) apart",
-            posts.len(),
-            cfg.post_spacing_m,
-            cfg.spacing_tolerance_m
-        ));
-    };
-    let (a, b) = (posts[i].0, posts[j].0);
-    let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-    let (ux, uy) = (b[0] - a[0], b[1] - a[1]);
-    // the normal to the posts' line, pointing at the robot (base_link's origin)
-    let mut normal = [-uy, ux];
-    if normal[0] * -mid[0] + normal[1] * -mid[1] < 0.0 {
-        normal = [uy, -ux];
-    }
-    // left post first, as seen from the robot
-    let (left, right) = if a[1] >= b[1] { (i, j) } else { (j, i) };
-    Detection::Found {
-        pose: DockPose {
-            x: mid[0],
-            y: mid[1],
-            yaw: normal[1].atan2(normal[0]),
-        },
-        posts: [posts[left].0, posts[right].0],
-        points: [posts[left].1, posts[right].1],
+        if !any {
+            return None;
+        }
+        if pairs.is_empty() {
+            trace.no_pair = Some(best);
+            return None;
+        }
+        if pairs.len() >= 2 {
+            // the most lateral pair: the smallest |atan2f(dx, dy)|
+            let mut least = f64::MAX;
+            for (&i, &j) in &pairs {
+                let a = (cent[i][0] - cent[j][0])
+                    .atan2(cent[i][1] - cent[j][1])
+                    .abs() as f64;
+                if a < least {
+                    (least, bi, bj) = (a, i, j);
+                }
+            }
+        }
+        if (cent[bi][1] + cent[bj][1]) * 0.5 <= cent[bi][1] {
+            Some([bj, bi])
+        } else {
+            Some([bi, bj])
+        }
     }
 }
 
@@ -342,15 +388,19 @@ mod tests {
     use crate::dock::wrap;
     use std::f64::consts::PI;
 
-    fn cfg() -> DetectorConfig {
+    fn dock_cfg() -> DockConfig {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
-        crate::config::Config::load(&path).unwrap().dock.detector
+        crate::config::Config::load(&path).unwrap().dock
     }
 
     /// The front Airy's mount (dimos/robot/deeprobotics/m20/constants.py).
     fn front() -> Mount {
         Mount::from_xyz_rpy([0.32028, 0.0, -0.013], [0.0, -PI / 2.0, PI])
     }
+
+    /// The real dock's posts: 0.374 m apart centre to centre, 25 mm radius (world.py charge_dock).
+    const SPACING: f64 = 0.374;
+    const RADIUS: f64 = 0.025;
 
     /// Small deterministic PRNG (xorshift) and a Box-Muller normal.
     struct Rng(u64);
@@ -451,75 +501,97 @@ mod tests {
             .collect()
     }
 
-    fn found(d: &Detection) -> DockPose {
+    fn found(d: &Detection) -> (DockPose, [f64; 3]) {
         match d {
-            Detection::Found { pose, .. } => *pose,
+            Detection::Found { pose, vendor, .. } => (*pose, *vendor),
             Detection::Missing(why) => panic!("not found: {why}"),
         }
     }
 
     #[test]
-    fn mount_puts_the_spin_axis_forward() {
-        let m = front();
-        let fwd = m.to_base([0.0, 0.0, 1.0]);
+    fn the_driver_transform_puts_the_spin_axis_forward() {
+        let d = dock_cfg().detector;
+        let t = DriverTransform::new(d.driver_xyz, d.driver_rpy);
+        let fwd = t.apply([0.0, 0.0, 1.0]);
         assert!(
-            (fwd[0] - 1.32028).abs() < 1e-9 && fwd[1].abs() < 1e-9,
+            (fwd[0] - 1.32028).abs() < 1e-5 && fwd[1].abs() < 1e-5,
             "{fwd:?}"
         );
-        let up = m.to_base([1.0, 0.0, 0.0]);
-        assert!((up[2] - (1.0 - 0.013)).abs() < 1e-9, "{up:?}");
+        let up = t.apply([1.0, 0.0, 0.0]);
+        assert!((up[2] - (1.0 - 0.013)).abs() < 1e-5, "{up:?}");
     }
 
-    /// Accuracy over a grid of distances, lateral offsets and dock yaws, with 1 cm range noise: printed (run with
-    /// --nocapture) and bounded.
+    /// reflective_column_node's log of 2026-11-20 16:36:16.732 (docked): its post centres give its position to the
+    /// log's 6 decimals.
     #[test]
-    fn accuracy_on_synthetic_sweeps() {
-        let cfg = cfg();
+    fn the_position_from_two_centres_is_the_logged_one() {
+        let (lo, hi) = ([0.754140, -0.199226], [0.763291, 0.168756]);
+        let [x, y] = lidar_position(hi, lo);
+        let yaw = (hi[0] - lo[0]).atan2(hi[1] - lo[1]);
+        assert!(
+            (x - -0.758860).abs() < 2e-6 && (y - -0.003633).abs() < 2e-6,
+            "{x} {y}"
+        );
+        assert!((yaw - 0.024864).abs() < 2e-6, "{yaw}");
+    }
+
+    /// The dock's pose gives charge_manager (docking's target_pose: docked_x_m minus the robot's x out, -y, yaw) the
+    /// vendor's position plus pubPose's 0.76, as reflective_column_node publishes it.
+    #[test]
+    fn charge_managers_inputs_are_the_vendors() {
+        let dock = dock_cfg();
+        let detector = Detector::new(&dock);
+        let mut rng = Rng(5);
+        for (dist, lat, yaw_deg) in [(0.76, 0.0, 0.0), (1.2, 0.1, 8.0), (1.8, -0.25, -12.0)] {
+            let posts = dock_posts(dist, lat, PI + f64::to_radians(yaw_deg), SPACING, RADIUS);
+            let (pose, vendor) =
+                found(&detector.detect(sweep(&posts, Some(dist + 0.6), 0.005, &mut rng)));
+            let [out, y, yaw] = pose.robot_in_dock();
+            let cm = [dock.sequence.docked_x_m - out, -y, yaw];
+            let want = [vendor[0] + dock.filter.pose_offset_x, vendor[1], vendor[2]];
+            for k in 0..3 {
+                assert!((cm[k] - want[k]).abs() < 1e-12, "{cm:?} vs {want:?}");
+            }
+        }
+    }
+
+    /// Synthetic sweeps over distances, lateral offsets and dock yaws (1 cm range noise): the dock lands within the
+    /// vendor's centroid method's own error of the posts' axes.
+    #[test]
+    fn finds_the_dock_on_synthetic_sweeps() {
+        let detector = Detector::new(&dock_cfg());
         let mut rng = Rng(0x9e3779b97f4a7c15);
-        let (mut worst, mut sum, mut n) = ([0.0f64; 3], [0.0f64; 3], 0);
-        for &dist in &[0.6, 0.8, 1.0, 1.5, 2.0, 2.5] {
-            for &lat in &[-0.3, 0.0, 0.2] {
-                for &yaw_deg in &[-15.0, 0.0, 10.0] {
+        let mut worst = [0.0f64; 3];
+        for &dist in &[0.76, 1.0, 1.5, 2.0] {
+            for &lat in &[-0.2, 0.0, 0.15] {
+                for &yaw_deg in &[-10.0, 0.0, 10.0] {
                     let yaw = PI + f64::to_radians(yaw_deg);
-                    let posts = dock_posts(dist, lat, yaw, cfg.post_spacing_m, cfg.post_radius_m);
-                    // a post more than 55 deg off the lidar's axis is outside the Airy's forward view: skipped
-                    let lidar_x = front().translation[0];
+                    let posts = dock_posts(dist, lat, yaw, SPACING, RADIUS);
+                    // a post outside reflective_column_node's +-45 deg sector: skipped
                     if posts
                         .iter()
-                        .any(|(c, _, _)| c[1].atan2(c[0] - lidar_x).abs() > 55f64.to_radians())
+                        .any(|(c, _, _)| c[1].atan2(c[0]).abs() > 40f64.to_radians())
                     {
                         continue;
                     }
-                    let pts = sweep(&posts, Some(dist + 0.6), 0.01, &mut rng);
-                    let pose = found(&detect(pts, &front(), &cfg));
+                    let (pose, _) =
+                        found(&detector.detect(sweep(&posts, Some(dist + 0.6), 0.01, &mut rng)));
                     let e = [pose.x - dist, pose.y - lat, wrap(pose.yaw - yaw)];
-                    for k in 0..3 {
-                        worst[k] = worst[k].max(e[k].abs());
-                        sum[k] += e[k] * e[k];
-                    }
-                    n += 1;
                     println!(
-                        "dist {dist:.1} lat {lat:+.1} yaw {yaw_deg:+.0}: error x {:+.4} y {:+.4} m yaw {:+.2} deg",
+                        "dist {dist:.2} lat {lat:+.2} yaw {yaw_deg:+.0}: x {:+.4} y {:+.4} m yaw {:+.2} deg",
                         e[0],
                         e[1],
                         e[2].to_degrees()
                     );
+                    for k in 0..3 {
+                        worst[k] = worst[k].max(e[k].abs());
+                    }
                 }
             }
         }
-        let rms: Vec<f64> = sum.iter().map(|s| (s / n as f64).sqrt()).collect();
-        println!(
-            "{n} sweeps: rms x {:.4} y {:.4} m yaw {:.2} deg; worst x {:.4} y {:.4} m yaw {:.2} deg",
-            rms[0],
-            rms[1],
-            rms[2].to_degrees(),
-            worst[0],
-            worst[1],
-            worst[2].to_degrees()
-        );
-        assert!(worst[0] < 0.004 && worst[1] < 0.006, "worst {worst:?}");
+        assert!(worst[0] < 0.03 && worst[1] < 0.02, "worst {worst:?}");
         assert!(
-            worst[2] < 1f64.to_radians(),
+            worst[2] < 3f64.to_radians(),
             "worst yaw {:.2} deg",
             worst[2].to_degrees()
         );
@@ -527,61 +599,50 @@ mod tests {
 
     #[test]
     fn a_third_reflector_off_the_spacing_is_ignored() {
-        let cfg = cfg();
+        let detector = Detector::new(&dock_cfg());
         let mut rng = Rng(7);
-        let mut posts = dock_posts(1.2, 0.05, PI, cfg.post_spacing_m, cfg.post_radius_m);
-        posts.push(([1.0, 0.6], cfg.post_radius_m, 250.0));
-        let pose = found(&detect(
-            sweep(&posts, None, 0.005, &mut rng),
-            &front(),
-            &cfg,
-        ));
+        let mut posts = dock_posts(1.2, 0.05, PI, SPACING, RADIUS);
+        posts.push(([1.3, 0.6], RADIUS, 250.0));
+        let (pose, _) = found(&detector.detect(sweep(&posts, None, 0.005, &mut rng)));
         assert!(
-            (pose.x - 1.2).abs() < 0.01 && (pose.y - 0.05).abs() < 0.01,
+            (pose.x - 1.2).abs() < 0.03 && (pose.y - 0.05).abs() < 0.02,
             "{pose:?}"
         );
     }
 
     #[test]
     fn plain_surfaces_and_one_post_are_not_a_dock() {
-        let cfg = cfg();
+        let detector = Detector::new(&dock_cfg());
         let mut rng = Rng(11);
-        let dull: Vec<_> = dock_posts(1.0, 0.0, PI, cfg.post_spacing_m, cfg.post_radius_m)
+        let missing = |d: Detection| matches!(d, Detection::Missing(_));
+        // below the intensity threshold (230)
+        let dull: Vec<_> = dock_posts(1.0, 0.0, PI, SPACING, RADIUS)
             .into_iter()
-            .map(|(c, r, _)| (c, r, 40.0))
+            .map(|(c, r, _)| (c, r, 200.0))
             .collect();
-        assert!(matches!(
-            detect(sweep(&dull, Some(1.6), 0.01, &mut rng), &front(), &cfg),
-            Detection::Missing(_)
-        ));
-        let one = vec![([1.0, 0.25], cfg.post_radius_m, 250.0f32)];
-        assert!(matches!(
-            detect(sweep(&one, None, 0.01, &mut rng), &front(), &cfg),
-            Detection::Missing(_)
-        ));
-        // posts at the wrong spacing
-        let wide = dock_posts(1.0, 0.0, PI, cfg.post_spacing_m + 0.3, cfg.post_radius_m);
-        assert!(matches!(
-            detect(sweep(&wide, None, 0.01, &mut rng), &front(), &cfg),
-            Detection::Missing(_)
-        ));
+        assert!(missing(detector.detect(sweep(
+            &dull,
+            Some(1.6),
+            0.01,
+            &mut rng
+        ))));
+        let one = vec![([1.0, 0.15], RADIUS, 250.0f32)];
+        assert!(missing(detector.detect(sweep(&one, None, 0.01, &mut rng))));
+        // posts 0.7 m apart: outside 0.4 +- 0.18
+        let wide = dock_posts(1.0, 0.0, PI, 0.7, RADIUS);
+        assert!(missing(detector.detect(sweep(&wide, None, 0.01, &mut rng))));
     }
 
     #[test]
     fn garbage_points_never_panic() {
-        let cfg = cfg();
+        let detector = Detector::new(&dock_cfg());
         let pts = vec![
             [f32::NAN, 0.0, 1.0, 255.0],
             [f32::INFINITY, 1.0, 1.0, 255.0],
             [0.0, 0.0, 0.0, 255.0],
             [0.0, 0.0, 1.0, f32::NAN],
         ];
-        assert!(matches!(detect(pts, &front(), &cfg), Detection::Missing(_)));
-        // too many returns: refused, not clustered
-        let many = vec![[0.0f32, 0.0, 1.0, 255.0]; cfg.max_points + 1];
-        assert!(matches!(
-            detect(many, &front(), &cfg),
-            Detection::Missing(_)
-        ));
+        assert!(matches!(detector.detect(pts), Detection::Missing(_)));
+        assert!(matches!(detector.detect(Vec::new()), Detection::Missing(_)));
     }
 }

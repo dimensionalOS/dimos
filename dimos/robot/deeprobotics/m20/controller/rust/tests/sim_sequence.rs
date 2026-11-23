@@ -405,7 +405,7 @@ fn realtime_stand_walk_lie() {
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use m20_controller::dock::detector::{detect, Detection, Mount};
+use m20_controller::dock::detector::{Detection, Detector, Mount};
 use m20_controller::dock::docking::{DockFeed, Docking, DockingCommands, Phase, Request, Status};
 use m20_controller::dock::obstacle::{body_height, nearest_obstacle, GridParams};
 use m20_controller::dock::vendor::ChargeManagerToml;
@@ -448,6 +448,10 @@ struct DockResult {
     statuses: Vec<(f64, Status, [f64; 3])>,
     controller: Controller,
     trace: Vec<Sample>,
+    /// where charge_manager docks the sim robot (truth, m out): docked_x_m less the detector's x bias on the sim's
+    /// posts, measured before docking (reflective_column_node's centroid centres sit nearer the axes of the sim's
+    /// ideal cylinders than of the real posts, which docked_x_m was measured on)
+    docked_x: f64,
 }
 
 fn front_mount() -> ([f64; 3], [f64; 3]) {
@@ -481,8 +485,7 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
     let s = run.scene;
     sim.reset(&serde_json::json!({
         "pose": "lie",
-        "terrain": {"kind": "charge_dock", "post_x": s.post_x, "post_y": s.post_y, "post_yaw": s.post_yaw,
-                    "post_spacing": cfg.dock.detector.post_spacing_m, "post_radius": cfg.dock.detector.post_radius_m},
+        "terrain": {"kind": "charge_dock", "post_x": s.post_x, "post_y": s.post_y, "post_yaw": s.post_yaw},
     }))
     .unwrap();
     let threaded = ThreadedPolicy::spawn(RunnerSet::load(&cfg, &dir).unwrap(), || {}).unwrap();
@@ -512,6 +515,7 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
     let stop = AtomicBool::new(false);
     let (xyz, rpy) = front_mount();
     let mount = Mount::from_xyz_rpy(xyz, rpy);
+    let detector = Detector::new(&cfg.dock);
     let (rear_xyz, rear_rpy) = rear_mount();
     let rear = Mount::from_xyz_rpy(rear_xyz, rear_rpy);
     let grid = GridParams::from_toml(&vendor());
@@ -522,7 +526,8 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
         .filter(|e| *e >= 25.0)
         .collect();
     let azimuths: Vec<f64> = (0..900).map(|k| k as f64 * 0.4).collect();
-    let docked_x = cfg.dock.sequence.docked_x_m;
+    let mut docked_x = cfg.dock.sequence.docked_x_m;
+    let mut biases: Vec<f64> = Vec::new();
     let lie_ticks = (2.0 * cfg.states.lie_down.phase_s * cfg.timing.control_hz) as u64;
     let (mut sweeps, mut reports, mut lying_ticks) = (0u64, 0u64, 0u64);
     let (mut dock_asked, mut undock_asked) = (false, false);
@@ -587,7 +592,11 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
                         obstacle_checks,
                     ));
                 }
-                if let Detection::Found { pose, .. } = detect(points, &mount, &cfg.dock.detector) {
+                if let Detection::Found { pose, .. } = detector.detect(points) {
+                    let b = pose.robot_in_dock()[0] - s.robot(&truth)[0];
+                    if !dock_asked {
+                        biases.push(b);
+                    }
                     sweeps += 1;
                     *feed.pose.lock().unwrap() = Some((pose, sweeps));
                 }
@@ -635,6 +644,10 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
             if !dock_asked && c.state == State::RlControl && c.time() > 8.0 {
                 *feed.request.lock().unwrap() = Some(Request::Dock);
                 dock_asked = true;
+                biases.sort_by(f64::total_cmp);
+                let bias = biases[biases.len() / 2];
+                docked_x -= bias;
+                println!("sim detector x bias {bias:+.4} m: docked at {docked_x:.4} m out");
             }
             let ended = |p: Option<Phase>| matches!(p, Some(Phase::Charging) | Some(Phase::Idle));
             let docking_started = statuses
@@ -661,6 +674,7 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
         statuses,
         controller,
         trace,
+        docked_x,
     })
 }
 
@@ -688,11 +702,12 @@ fn entered(result: &DockResult, phase: Phase) -> Option<&(f64, Status, [f64; 3])
 fn dock_and_undock(scene: DockScene) {
     let cfg = common::config();
     let seq = &cfg.dock.sequence;
-    // the sim's contact pads: 3 cm along the dock's axis and 2 cm across it either way of the docked point (an
-    // assumption; the real pads are not measured). Lying down settles base_link 1.4-2 cm back from where it stood.
+    // the sim's contact pads: 4 cm along the dock's axis and 2 cm across it either way of the docked point (an
+    // assumption; the real pads are not measured). FinetuneStand and lying down settle base_link 1.4-3.2 cm back from
+    // the fine point (2.2 cm with the previous detector, 3.2 with reflective_column_node's noisier per-sweep pose).
     let Some(result) = dock_run(DockRun {
         scene,
-        contact: Some([0.03, 0.02]),
+        contact: Some([0.04, 0.02]),
         seconds: 150.0,
     }) else {
         return;
@@ -700,7 +715,7 @@ fn dock_and_undock(scene: DockScene) {
     no_fall(&result);
     let fine = entered(&result, Phase::EnterFinetune).expect("never reached the fine point");
     let e = [
-        fine.2[0] - seq.docked_x_m,
+        fine.2[0] - result.docked_x,
         fine.2[1],
         fine.2[2].to_degrees(),
     ];
@@ -712,7 +727,7 @@ fn dock_and_undock(scene: DockScene) {
     println!(
         "lying at {:.1} s: x {:+.4} m y {:+.4} m yaw {:+.2} deg from the docked point",
         lying.0,
-        lying.2[0] - seq.docked_x_m,
+        lying.2[0] - result.docked_x,
         lying.2[1],
         lying.2[2].to_degrees()
     );
@@ -762,7 +777,7 @@ fn dock_and_undock(scene: DockScene) {
     assert_eq!(last.1.result, "undocked");
     // back_way = auto: back to where docking started, inside ext_delta
     let ext = [v.ext_delta_x as f64 / 1000.0, v.ext_delta_y as f64 / 1000.0];
-    let out = last.2[0] - seq.docked_x_m - start[0] as f64;
+    let out = last.2[0] - result.docked_x - start[0] as f64;
     assert!(
         out.abs() <= ext[0] + SIM_DETECTOR_BIAS_M,
         "undock {out:+.3} m off its goal"
@@ -799,8 +814,6 @@ fn dock_charge_undock_offset_other_side() {
 /// NoChargePlug_way = goBack: back off to where docking started.
 #[test]
 fn dock_without_charge_retries_then_backs_off() {
-    let cfg = common::config();
-    let seq = &cfg.dock.sequence;
     let v = vendor();
     let Some(result) = dock_run(DockRun {
         scene: DockScene {
@@ -830,7 +843,7 @@ fn dock_without_charge_retries_then_backs_off() {
         last.1.result
     );
     let start = last.1.start_point.expect("no start point");
-    let out = last.2[0] - seq.docked_x_m - start[0] as f64;
+    let out = last.2[0] - result.docked_x - start[0] as f64;
     assert!(
         out.abs() <= v.ext_delta_x as f64 / 1000.0 + 0.004,
         "backed off {out:+.3} m off its goal"

@@ -597,32 +597,44 @@ action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset
 # / address), "rl_deploy:" = rl_deploy's /STEER handling (SPEC.md [C], m20_policy_sim/replay.py), "driver:" = NOS
 # /opt/robot/share/node_driver/config/config.yaml, "recording:" / "sim:" = measured here, not the vendor's.
 [dock.detector]
-# recording (NOS dock_rec 2026-11-21, front Airy, robot on the dock): the posts return 200-255 (mostly 255), the
-# floor around them 100-150
-min_intensity = 180.0
-# sim: the approach starts ~2 m out (toml has no detection range); the Airy's own minimum is 0.1 m
-max_range_m = 3.5
-min_range_m = 0.1
-# base_link heights kept: the posts stand ~0.6 m (recording) and base_link is ~0.45 m up standing, ~0.2 m lying
-min_z_m = -0.55
-max_z_m = 0.4
-# ours: the sector (deg either side) searched ahead (reflective_column_node reads no config; its sector is not decoded)
-half_angle_deg = 60.0
-# sim: bounds the clustering (a 0.8 m post 0.3 m from the lidar gives ~20000 returns at the Airy's 0.2 deg)
-max_points = 100000
-# sim: returns closer than this (m) are one post, and a post needs this many
-cluster_distance_m = 0.1
-min_cluster_points = 10
-# a post-sized cluster (m): recording, a post's saturated returns bloom to 0.25 m across at 1.9 m; below the spacing
-max_cluster_width_m = 0.35
-# recording: a post 2 m out trailed ghost returns 0.36 m behind it along the ray; a 5 cm post's own front is shallower
-max_post_depth_m = 0.08
-# recording: the posts 0.374 m apart centre to centre docked (186 sweeps, sd 0.3 mm), 0.36-0.41 m as seen from 2 m;
-# the slack on a pair; each post's radius (m; sim; it shifts every distance alike, so docked_x_m measured with it
-# cancels it)
-post_spacing_m = 0.374
-spacing_tolerance_m = 0.05
-post_radius_m = 0.025
+# reflective_column_node's numbers, per ProcessPointCloudData step, in the float type it compares in. driver: the front
+# Airy's x y z, roll pitch yaw (rs_driver's RSTransformParam floats; its DIFOP angles are 0); the node reads /LIDAR/POINTS
+# already in base_link
+driver_xyz = [0.32028, 0.0, -0.013]
+driver_rpy = [0.0, -1.57079, -3.14159]
+# bin ReciAndTransformPoints: intensity > (float)230 (Location ctor +0xac = 0xe6), (double)x > 0.4 (0x17f7f0), x < 4.0f,
+# |y| < 2.0f, -1.1 (0x17f818) < (double)z < 0.1 (0x17f808), |(double)atan2f(y, x)| <= pi/4 (0x17f820)
+min_intensity = 230.0
+x_min = 0.4
+x_max = 4.0
+y_max = 2.0
+z_min = -1.1
+z_max = 0.1
+half_angle_rad = 0.7853981633974483
+# bin ProcessPointCloudData: VoxelGrid setLeafSize(0.01f, 0.01f, 0.01f) (0x17f828, 0x3c23d70a); then, on 20 points or
+# more (size > 0x13f bytes), RadiusOutlierRemoval radius 0.3f (ctor +0xb0 = 0x3e99999a), min neighbours 15 (+0xb4 = 0xf)
+voxel_leaf = 0.01
+outlier_min_cloud = 20
+outlier_radius = 0.3
+outlier_min_neighbors = 15
+# bin PointsCloudClustering(cloud, clusters, 0.05f, 30): EuclideanClusterExtraction tolerance 0.05, 30 to 20000 points
+# (0x4e20), on a sorted KdTree (KdTree(true))
+cluster_tolerance = 0.05
+cluster_min = 30
+cluster_max = 20000
+# bin FilterReflectiveColumn: |z extent| / |y extent| > 1.8f (0x3fe66666)
+column_min_ratio = 1.8
+# bin FindTargetRefleColu: |sqrtf(centroid distance) - 0.4| (0x17f7f0) < 0.18 (0x17f800), 60 < |angle deg| < 120
+# (immediates), the best pair taken below 0.1 (0x17f808)
+post_spacing = 0.4
+spacing_tolerance = 0.18
+pair_angle_deg = [60.0, 120.0]
+pair_max_off = 0.1
+# bin FilterOutSuctionPoints: x < centroid x, |y - centroid y| < 0.02 (0x17f7e0), |z - centroid z| < 0.08 (0x17f7e8)
+suction_y = 0.02
+suction_z = 0.08
+# bin CalculateCenter: centre x = centroid x + 0.045 (0x17f7d0) x sinf|atan2f(x, y)| (an FMA), y = centroid y
+center_push = 0.045
 
 [dock.filter]
 # bin reflective_column_node ProcessPointCloudData: the lidar position kept only for x in [-4, -0.05] (0x17f830) and
@@ -652,8 +664,9 @@ approach_gait = 0x3001
 finetune_gait = 0x3004
 basic_flat_gait = 0x1001
 default_restore_gait = 0x1001
-# recording: base_link 0.735 m out from the posts' midpoint docked, our detector's x minus charge_manager's (186
-# sweeps lying on the dock, dock_compare.py); with detector.post_radius_m, which shifts every distance alike
+# recording: base_link 0.735 m out from the posts' axes' midpoint docked (186 sweeps lying on the dock, dock_compare.py,
+# a circle fit's x minus charge_manager's); the detector puts the dock docked_x_m - filter.pose_offset_x nearer than
+# reflective_column_node's post centres, so charge_manager's x is the vendor's
 docked_x_m = 0.735
 # bin ChargeManager ctor: VelocityController(1.2, 0, 0.2) for x and y, (1.4, 0, 0.1) for yaw
 pid_x = [1.2, 0.0, 0.2]

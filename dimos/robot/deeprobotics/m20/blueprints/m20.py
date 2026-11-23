@@ -337,10 +337,10 @@ def _dock_detector_on_nos() -> Blueprint:
         "point_format": "full",
         "body_filter": False,
         "enable_imu": False,
-        # the vendor driver's (NOS node_driver config.yaml): charge_manager's obstacle check never sees nearer returns
+        # the vendor driver's (NOS node_driver config.yaml, 0.2 to 60 m): what reflective_column_node and
+        # charge_manager's obstacle check see
         "min_distance": 0.2,
-        # the detector looks 3.5 m out at most ([dock.detector] max_range_m)
-        "max_distance": 4.0,
+        "max_distance": 60.0,
     }
     return autoconnect(
         _airy(

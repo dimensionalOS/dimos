@@ -29,7 +29,7 @@ use lcm_msgs::std_msgs::{self, Float32, Header};
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use super::detector::{detect, Detection, Mount};
+use super::detector::{Detection, Detector, Mount};
 use super::obstacle::{nearest_obstacle, GridParams};
 use super::vendor::{ChargeManagerToml, Direction};
 
@@ -38,14 +38,15 @@ use super::vendor::{ChargeManagerToml, Direction};
 pub struct Config {
     /// only sweeps in this frame are searched (the M20's lidar stream carries both Airys)
     lidar_frame_id: String,
-    /// that lidar's mount in base_link (m; roll, pitch, yaw rad)
+    /// that lidar's mount in base_link (m; roll, pitch, yaw rad) for the obstacle check (the detector takes the vendor
+    /// driver's, [dock.detector] driver_xyz / driver_rpy)
     mount_xyz: [f64; 3],
     mount_rpy: [f64; 3],
     /// the rear lidar's sweeps (the obstacle check looks back with them) and its mount
     rear_lidar_frame_id: String,
     rear_mount_xyz: [f64; 3],
     rear_mount_rpy: [f64; 3],
-    /// an m20_controller.toml path for [dock.detector]; empty uses the one built in
+    /// an m20_controller.toml path for [dock]; empty uses the one built in
     controller_config: String,
     /// charge_manager.toml (NOS's)
     charge_manager_toml: String,
@@ -91,7 +92,7 @@ pub struct M20DockDetector {
     charge_manager_config: Output<std_msgs::String>,
     #[config]
     config: Config,
-    detector: Option<(super::config::DetectorConfig, Mount)>,
+    detector: Option<Detector>,
     obstacles: Option<Obstacles>,
     charge_manager_text: Option<String>,
     direction: Option<Direction>,
@@ -204,7 +205,7 @@ impl M20DockDetector {
                 "no charge_manager.toml: no obstacle check, and docking cannot start"
             ),
         }
-        self.detector = Some((cfg.dock.detector, mount));
+        self.detector = Some(Detector::new(&cfg.dock));
     }
 
     async fn publish_charge_manager_config(&self) {
@@ -298,19 +299,20 @@ impl M20DockDetector {
             }
         };
         self.check_obstacles(&points).await;
-        let Some((cfg, mount)) = &self.detector else {
+        let Some(detector) = &self.detector else {
             return;
         };
-        let detection = detect(points, mount, cfg);
+        let detection = detector.detect(points);
         let seen = matches!(detection, Detection::Found { .. });
         if self.seen != Some(seen) {
             match &detection {
                 Detection::Found {
                     pose,
+                    vendor,
                     posts,
                     points,
                 } => {
-                    info!(?pose, ?posts, ?points, "dock in sight")
+                    info!(?pose, ?vendor, ?posts, ?points, "dock in sight")
                 }
                 Detection::Missing(why) => info!(%why, "dock not in sight"),
             }

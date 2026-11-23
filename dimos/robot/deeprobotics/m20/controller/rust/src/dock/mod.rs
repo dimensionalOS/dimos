@@ -14,8 +14,8 @@
 
 //! Docking onto the M20's charging dock without the vendor charge_manager / reflective_column_node (NOS):
 //!
-//! - [`detector`]: the dock's two retro-reflective posts in a lidar sweep -> the dock's pose in base_link (the
-//!   reflective_column_node's job, /pose_in_apriltag_corrected). Runs in its own module next to the lidars
+//! - [`detector`]: reflective_column_node's per-sweep pose of the dock's two retro-reflective posts (decompiled, step
+//!   for step) -> the dock's pose in base_link. Runs in its own module next to the lidars
 //!   (`m20_dock_detector_module`), so full sweeps never reach the controller's process.
 //! - [`docking`]: charge_manager's dock / undock sequence as a command source in front of the operator's, stepped
 //!   by the controller's 1 kHz loop: NaviCharge to a staging point, then the fine point, FinetuneStand, lie down,
@@ -24,6 +24,7 @@
 //!
 //! - [`vendor`]: charge_manager's config file and per-pose logic, and reflective_column_node's output stage.
 //! - [`obstacle`]: charge_manager's obstacle check (the detector module runs it next to the lidars).
+//! - [`pcl`]: the PCL 1.10 filters reflective_column_node runs, as the library does them.
 //!
 //! charge_manager.toml is read at startup; `[dock]` in m20_controller.toml holds what the binaries compile in.
 
@@ -33,6 +34,7 @@ pub mod detector;
 pub mod detector_module;
 pub mod docking;
 pub mod obstacle;
+pub mod pcl;
 pub mod vendor;
 pub mod vendor_log;
 
@@ -75,6 +77,17 @@ impl DockPose {
         let x = -(c * self.x + s * self.y);
         let y = -(-s * self.x + c * self.y);
         [x, y, wrap(std::f64::consts::PI - self.yaw)]
+    }
+
+    /// The dock whose [`Self::robot_in_dock`] is `r` (x out along the axis, y, yaw 0 = facing the posts).
+    pub fn from_robot_in_dock(r: [f64; 3]) -> DockPose {
+        let yaw = wrap(std::f64::consts::PI - r[2]);
+        let (s, c) = yaw.sin_cos();
+        DockPose {
+            x: -(c * r[0] - s * r[1]),
+            y: -(s * r[0] + c * r[1]),
+            yaw,
+        }
     }
 }
 
@@ -135,5 +148,15 @@ mod tests {
         assert!((r[0] - 1.0).abs() < 1e-12, "{r:?}");
         assert!(r[2].abs() < 1e-12, "{r:?}");
         assert!((r[1] - 0.2).abs() < 1e-12, "{r:?}");
+    }
+
+    #[test]
+    fn from_robot_in_dock_inverts_robot_in_dock() {
+        for r in [[0.76, 0.0, 0.0], [1.3, -0.2, 0.3], [2.0, 0.4, -0.5]] {
+            let back = DockPose::from_robot_in_dock(r).robot_in_dock();
+            for k in 0..3 {
+                assert!((back[k] - r[k]).abs() < 1e-12, "{back:?} vs {r:?}");
+            }
+        }
     }
 }
