@@ -28,7 +28,7 @@
 //
 // Every setting below can be changed from the build command instead of editing the file, e.g.
 //   arduino-cli compile --fqbn esp32:esp32:esp32 \
-//     --build-property "build.extra_flags=-DTRIG_PIN=12 -DECHO_PIN=14" esp32_gesture
+//     --build-property "compiler.cpp.extra_flags=-DTRIG_PIN=12 -DECHO_PIN=14" esp32_gesture
 //
 // The default sensor is an HC-SR04-style ultrasonic module (VCC->3V3, GND->GND, TRIG->TRIG_PIN,
 // ECHO->ECHO_PIN). For another distance sensor, replace readCm(); nothing else depends on it.

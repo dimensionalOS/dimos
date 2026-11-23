@@ -56,13 +56,22 @@ set from the build command, so it runs on any ESP32 and any wiring:
 arduino-cli core install esp32:esp32
 arduino-cli compile --fqbn esp32:esp32:esp32 firmware/esp32_gesture
 arduino-cli upload --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/esp32_gesture
-# other pins or chip, e.g.:
-arduino-cli compile --fqbn esp32:esp32:esp32c3 \
-  --build-property "build.extra_flags=-DTRIG_PIN=4 -DECHO_PIN=5 -DLED_PIN=-1" firmware/esp32_gesture
 ```
 
+One sketch covers every board. The chip is picked with `--fqbn` and the wiring with
+`--build-property "compiler.cpp.extra_flags=-D..."` (use `compiler.cpp.extra_flags`, not
+`build.extra_flags`, which would drop the core's own USB flags):
+
+| Board | `--fqbn` | Extra flags | Status |
+|---|---|---|---|
+| ESP32 DevKitC (WROOM-32) | `esp32:esp32:esp32` | none (defaults) | flashed and run end to end on a Raspberry Pi 5 |
+| ESP32-C3 SuperMini | `esp32:esp32:esp32c3:CDCOnBoot=cdc` | `-DTRIG_PIN=3 -DECHO_PIN=4 -DLED_PIN=8 -DBTN_PIN=9` | compiles; not run on a board |
+| ESP32-S3 DevKitC-1 | `esp32:esp32:esp32s3` | `-DLED_PIN=-1` (its LED is an RGB pixel) | compiles; not run on a board |
+
+On the C3, GPIO18/19 are the USB pins, so the defaults can't be used there.
+
 The default sensor is an HC-SR04-style ultrasonic module (VCC to 3V3, TRIG to GPIO5, ECHO to GPIO18).
-For a different distance sensor, replace `readCm()`. The board's MAC is printed on the serial port at boot.
+For a different distance sensor, replace `readCm()`. At boot the board prints its Bluetooth address (the `address` setting) on the serial port.
 
 What A and B do is up to whatever subscribes to `gesture_joy`; a robot blueprint can map them
 to its own commands (for example sit and stand).
