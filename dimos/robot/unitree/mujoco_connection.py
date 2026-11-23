@@ -18,6 +18,7 @@
 import atexit
 import base64
 from collections.abc import Callable
+from contextlib import nullcontext
 import functools
 import json
 import logging
@@ -48,7 +49,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.robot.unitree.type.odometry import Odometry
-from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.simulation.mujoco.config import MujocoConfig, inherited_wayland_socket
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
     LIDAR_FPS,
@@ -152,16 +153,18 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
-            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
+            # The passive viewer needs mjpython on macOS.
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
             executable = (
                 sys.executable
-                if sys.platform != "darwin"
+                if sys.platform != "darwin" or self.config.headless
                 else find_executable("mjpython") or "mjpython"
             )
             env = os.environ.copy()
+            if self.config.headless and sys.platform == "linux":
+                env.setdefault("MUJOCO_GL", "egl")
             if sys.platform == "darwin":
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
                 libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
@@ -169,12 +172,17 @@ class MujocoConnection:
                     existing = env.get("DYLD_LIBRARY_PATH", "")
                     env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
 
-            self.process = subprocess.Popen(
-                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-            )
+            with nullcontext() if self.config.headless else inherited_wayland_socket() as display:
+                env.pop("WAYLAND_SOCKET", None)
+                if display is not None:
+                    env["WAYLAND_SOCKET"] = str(display.fileno())
+                self.process = subprocess.Popen(
+                    [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    pass_fds=(display.fileno(),) if display is not None else (),
+                )
 
         except Exception as e:
             self.shm_data.cleanup()
