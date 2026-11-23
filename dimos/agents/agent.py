@@ -349,6 +349,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         """Send x like a message on human_input and return the answer once the queue is empty."""
         if not self._thread.is_alive():
             raise RuntimeError("Agent is not running; it starts with the blueprint")
+        x = x.model_copy()  # its own object: the same message can be sent twice at once
         self._answers[id(x)] = Future()
         self._message_queue.put(x)
         answer: AIMessage = self._answers[id(x)].result()

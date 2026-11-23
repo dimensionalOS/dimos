@@ -598,6 +598,8 @@ def test_infer_under_load_gives_every_caller_its_own_answer(
 
     questions = [f"q{i}" for i in range(20)]
     callers = [Thread(target=ask, args=(question,)) for question in questions]
+    same = HumanMessage("same object")
+    callers += [Thread(target=running_agent.infer, args=(same,)) for _ in range(5)]
     for i, caller in enumerate(callers):
         caller.start()
         running_agent.add_message(HumanMessage(f"stream {i}"))
@@ -605,7 +607,8 @@ def test_infer_under_load_gives_every_caller_its_own_answer(
         caller.join(timeout=30)
 
     assert answers == {question: f"answer to {question}" for question in questions}
-    wait_until(lambda: len(running_agent._history) == 80, timeout=5, interval=0.01)
+    wait_until(lambda: len(running_agent._history) == 100, timeout=5, interval=0.01)
+    assert not any(caller.is_alive() for caller in callers)
     assert running_agent._answers == {}
 
 
