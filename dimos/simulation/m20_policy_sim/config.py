@@ -21,7 +21,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: pyproject's tomli
+    import tomli as tomllib
 
 CONFIG_PATH = (
     Path(__file__).resolve().parents[2]
