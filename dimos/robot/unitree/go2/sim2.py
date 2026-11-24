@@ -1,0 +1,188 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A simulated Go2: its locomotion policy runs here, on the world's clock, and drives the joints."""
+
+import asyncio
+from collections.abc import AsyncIterator
+import math
+from pathlib import Path
+from typing import Any
+
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
+import numpy as np
+
+from dimos.core.core import rpc
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    L1_MOUNT,
+    L1_XYZ,
+    MID360_PITCH_DOWN,
+    MID360_XYZ,
+    OPTICAL_RPY,
+)
+from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.mujoco.sensor_world import rotation_matrix
+from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.world_observations import WorldMirror
+from dimos.simulation.go2_legged.policy import Proprioception, load_policy
+from dimos.simulation.go2_legged.robot import (
+    COMMAND_SLEW,
+    CONTROL_DT,
+    projected_gravity,
+    yaw_of,
+)
+
+GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
+    {
+        "l1": (
+            "base",
+            L1_XYZ,
+            (math.radians(L1_MOUNT[0]), math.radians(L1_MOUNT[1]), math.radians(L1_MOUNT[2])),
+        ),
+        "front_camera": ("base", CAMERA_XYZ, (0.0, 0.0, 0.0)),
+        "lidar": ("front_camera", MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
+        "camera": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
+    }
+)
+
+
+class Go2SimConfig(HardwareModuleConfig):
+    usd: UsdModel | None = GO2_USD
+    policy: Path | None = None
+    # Proportional yaw hold while no turn is commanded, rad/s per rad of drift.
+    heading_gain: float = 2.0
+    tf_frames_local: dict[str, str] = {"odom": "odom", "body": "base"}
+    tf_edges: list[tuple[str, str]] = [("odom", "body")]
+
+
+class Go2Sim(HardwareModule):
+    """A Go2 in a simulated world; mount it on a frame of the scene, which is where it starts."""
+
+    config: Go2SimConfig
+    mounts = Mounts("l1", "lidar", "camera")
+    world: SimulatedWorldSpec
+    cmd_vel: In[Twist]
+    world_observations: In[WorldObservations]
+    actions: Out[WorldAction]
+    odom: Out[PoseStamped]
+    joint_state: Out[JointState]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._policy = load_policy(self.config.policy)
+        self._desired = np.zeros(3)
+        self._desired_expires = 0.0
+        self._command = np.zeros(3)
+        self._heading: float | None = None
+        self._start_pose: np.ndarray | None = None
+
+    @property
+    def mounted_frame(self) -> str:
+        return self.frame.odom
+
+    @rpc
+    def simulated_robot(self) -> SimulatedRobot:
+        assert self.config.usd is not None
+        return SimulatedRobot(self.namespace, self.config.usd, held_until_commanded=True)
+
+    async def main(self) -> AsyncIterator[None]:
+        self._world = WorldMirror()
+        self._world.subscribe(self.world_observations, self.world.snapshot)
+        acting = asyncio.create_task(until_it_stops("go2 policy", self._run()))
+        yield
+        acting.cancel()
+
+    async def handle_cmd_vel(self, twist: Twist) -> None:
+        self._desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
+        self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
+
+    async def _run(self) -> None:
+        async for _ in self._world.ticks(1.0 / CONTROL_DT):
+            self._act()
+
+    def _act(self) -> None:
+        policy, world, robot = self._policy, self._world, self.namespace
+        with world.lock:
+            base = world.entity(robot)
+            names, rows = world.joints(robot)
+            stamp = world.stamp()
+        if base is None or base.pose is None or base.velocity is None:
+            return
+        x, y, z, w = base.pose[3:]
+        quat = np.array([w, x, y, z])
+        desired = self._desired if stamp < self._desired_expires else np.zeros(3)
+        self._command += np.clip(desired - self._command, -COMMAND_SLEW, COMMAND_SLEW)
+        if desired[2] == 0:
+            self._heading = yaw_of(quat) if self._heading is None else self._heading
+            turn = self.config.heading_gain * math.remainder(self._heading - yaw_of(quat), math.tau)
+        else:
+            self._heading, turn = None, 0.0
+        joints = dict(zip(names, rows, strict=True))
+        observation = Proprioception(
+            angular_velocity=rotation_matrix(quat).T @ base.velocity[3:],
+            gravity=projected_gravity(quat),
+            joint_position=np.array([joints[name][0] for name in policy.joint_names]),
+            joint_velocity=np.array([joints[name][1] for name in policy.joint_names]),
+        )
+        targets = policy.act(observation, self._command + np.array([0.0, 0.0, turn]))
+        self.actions.publish(
+            world_action(
+                world,
+                JointCommand(robot, tuple(policy.joint_names), position=tuple(map(float, targets))),
+            )
+        )
+        self.joint_state.publish(
+            JointState(
+                ts=stamp,
+                name=list(policy.joint_names),
+                position=observation.joint_position.tolist(),
+                velocity=observation.joint_velocity.tolist(),
+            )
+        )
+        self._publish_pose(base.pose, stamp, {name: float(row[0]) for name, row in joints.items()})
+
+    def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
+        here = Transform(
+            translation=Vector3(*pose[:3]), rotation=Quaternion(*pose[3:7])
+        ).to_matrix()
+        if self._start_pose is None:
+            self._start_pose = here
+        relative = Transform.from_matrix(np.linalg.inv(self._start_pose) @ here)
+        odom = PoseStamped(
+            ts=stamp,
+            frame_id=self.frame.odom,
+            position=[relative.translation.x, relative.translation.y, relative.translation.z],
+            orientation=[
+                relative.rotation.x,
+                relative.rotation.y,
+                relative.rotation.z,
+                relative.rotation.w,
+            ],
+        )
+        self.odom.publish(odom)
+        self.tfbuffer.publish(
+            Transform.from_pose(self.frame.body, odom), *self.usd_transforms(positions, ts=stamp)
+        )
