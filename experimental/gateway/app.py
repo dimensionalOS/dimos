@@ -25,7 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events
 from experimental.gateway.errors import StatusError
-from experimental.gateway.routes import active, catalog, cloud, history, jobs, server, web
+from experimental.gateway.routes import active, agent, catalog, cloud, history, jobs, server, web
 from experimental.gateway.state import API_VERSION, State, site_dirs
 
 
@@ -42,6 +42,10 @@ def create_app(state: State, background: bool = True) -> FastAPI:
                 asyncio.create_task(watch),
                 asyncio.create_task(events.watch_logs(state.bus, state.dimos_dir)),
             ]
+            if state.bus.put is not None and state.bus.namespace is not None:
+                state.background.append(
+                    asyncio.create_task(agent.watch(state.dimos_dir, state.bus))
+                )
         yield
         state.uploads.shutdown()
         for task in state.background:
@@ -50,7 +54,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
         children = [*state.scanner.running(), *state.jobs.tasks]
         for task in children:
             task.cancel()
-        await asyncio.gather(*children, return_exceptions=True)
+        await asyncio.gather(*children, *state.background, return_exceptions=True)
 
     app = FastAPI(
         title="dimos gateway",
@@ -83,6 +87,6 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     async def failed(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"error": str(error) or type(error).__name__}, status_code=500)
 
-    for module in (server, catalog, active, history, cloud, jobs, web):
+    for module in (server, catalog, active, history, cloud, jobs, web, agent):
         app.include_router(module.router)
     return app

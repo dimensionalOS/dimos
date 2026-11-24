@@ -75,10 +75,12 @@ class Bus:
         self.launch_key: tuple[Any, ...] | None = None
         self.live_run_id: str | None = None
 
-    def send(self, event: dict[str, Any]) -> None:
+    def send(self, event: dict[str, Any], *, suffix: str = "") -> None:
         if self.put is None or self.namespace is None:
             return
-        self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
+        self.put(
+            f"{self.namespace}/dimos/events/{event['type']}{suffix}", json.dumps(event).encode()
+        )
 
     def launch(self, launch: dict[str, Any] | None) -> None:
         launch_part = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None

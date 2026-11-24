@@ -632,3 +632,71 @@ class SourceFile(Body):
     file: str
     line: int | None
     text: str
+
+
+class AgentConversationId(Body):
+    conversation: int
+
+
+class AgentConversationRow(Body):
+    id: int
+    parent: dict[str, int] | None
+    title: str
+    cwd: str | None
+    running: dict[str, Any] | None
+    queued: int
+    unread: int
+    costUsd: float
+    updatedAt: int
+
+
+class AgentTranscript(Body):
+    items: list[dict[str, Any]]
+    omitted: int
+
+
+class AgentTurn(Body):
+    run: dict[str, Any]
+    text: str
+
+
+class AgentConversation(Body):
+    transcript: AgentTranscript
+    turn: AgentTurn | None
+
+
+class AgentSubmissionId(Body):
+    submission: int
+
+
+class AgentSubmission(Body):
+    record: dict[str, Any]
+    answer: dict[str, Any] | None
+
+
+class AgentQueuedText(Body):
+    mode: Literal["steer", "followUp"]
+    text: str
+
+
+class AgentJobOutcome(Body):
+    kind: Literal["submitted", "ok", "error", "interrupted"]
+    text: NotRequired[str]
+
+
+class AgentJobRun(Body):
+    run: dict[str, Any]
+    firedAt: int
+    outcome: AgentJobOutcome
+
+
+class AgentJob(Body):
+    name: str
+    conversation: int
+    cron: str
+    timeZone: str
+    action: dict[str, Any]
+    nextDue: int | None
+    upcoming: list[int]
+    createdAt: int
+    runs: list[AgentJobRun]

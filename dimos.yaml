@@ -12,10 +12,10 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 9.2.0
+    version: 9.3.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
-      stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
+      stop, its module instances, RPCs and streams); past runs (logs, recordings); recording uploads to the Dimensional cloud; and on-robot agent conversations and scheduled jobs. It saves no config: each launch
       carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
     /info:
@@ -312,6 +312,55 @@ provides:
       delete:
         description: >-
           Cancel a queued or running upload, or remove a finished one (?id=); with no id, clear the finished uploads
+    /agent/conversations:
+      get:
+        summary: List conversations on the on-robot DimOS Agent
+      post:
+        summary: Start a conversation with a request UUID and optional cwd
+    /agent/conversations/{id}:
+      get:
+        summary: Read the transcript and the current reply. Follow the reply on <namespace>/dimos/events/agent-chat/{id}.
+        parameters:
+          - &conversationId {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    /agent/conversations/{id}/submissions:
+      post:
+        summary: Submit text and images with a request UUID and steer or followUp mode
+        parameters: [*conversationId]
+    /agent/conversations/{id}/submissions/{submission}:
+      get:
+        summary: Look up a durable input and the assistant entry that answered it
+        parameters:
+          - *conversationId
+          - {name: submission, in: path, required: true, schema: {type: integer, minimum: 1}}
+    /agent/conversations/{id}/abort:
+      post:
+        summary: Stop the current turn and return withdrawn user text in queue order
+        parameters: [*conversationId]
+    /agent/conversations/{id}/images/{entry}/{message}/{block}:
+      get:
+        summary: Fetch a transcript image with its original MIME type and base64 data
+        parameters:
+          - *conversationId
+          - {name: entry, in: path, required: true, schema: {type: integer, minimum: 1}}
+          - {name: message, in: path, required: true, schema: {type: integer, minimum: 0}}
+          - {name: block, in: path, required: true, schema: {type: integer, minimum: 0}}
+    /agent/jobs:
+      get:
+        summary: List agent schedules with their next due times and recent outcomes
+      post:
+        summary: Schedule a conversation prompt or a named DimOS skill
+    /agent/jobs/{name}:
+      put:
+        summary: Replace a schedule
+        parameters:
+          - &jobName {name: name, in: path, required: true, schema: {type: string}}
+      delete:
+        summary: Delete a schedule
+        parameters: [*jobName]
+    /agent/jobs/{name}/runs:
+      post:
+        summary: Run the job now using the supplied request UUID
+        parameters: [*jobName]
     /extras:
       get:
         summary: 'dimos''s optional extras: installed, applicable, missing, download size'

@@ -32,6 +32,7 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
+| `/agent` | On-robot DimOS Agent conversations, submissions, images, and scheduled jobs |
 | views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
@@ -65,6 +66,34 @@ const { decodeChannel, geometry_msgs } = await import(`${gateway}/msgs.js`)
 const odom = decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes) // bytes: one message off zenoh or LCM
 const twist = geometry_msgs.Twist.encode({ linear: { x: 0.3 }, angular: { z: 0.5 } }) // a Uint8Array to publish
 ```
+
+## On-robot DimOS Agent
+
+From the checkout the gateway serves, build the pi-durable agent with `dimos agent version` and start it with
+`dimos agent gateway --daemon`.
+Desktop apps declare these HTTP operations in `uses["@dimos-gateway"]`. The gateway connects to
+the agent's private Unix socket. An offline agent returns 503.
+
+| Method | Path | Request or result |
+| --- | --- | --- |
+| GET, POST | `/agent/conversations` | List summaries or create with `{request, cwd?}` and receive `{conversation}`. |
+| GET | `/agent/conversations/{id}` | Read `transcript.items`, its `omitted` count, and `turn` with the active run and partial text. |
+| POST | `/agent/conversations/{id}/submissions` | Send `{request, text, images, whenBusy}` and receive `{submission}`. Each image has `type: "image"`, `mimeType`, and base64 `data`. Use `steer` or `followUp` for `whenBusy`. |
+| GET | `/agent/conversations/{id}/submissions/{submission}` | The durable `record` and its `answer` entry when done. An unanswered record includes its reason. |
+| POST | `/agent/conversations/{id}/abort` | Send `{request}` to stop the turn. The result is the user's withdrawn `{mode, text}` items in queue order. |
+| GET | `/agent/conversations/{id}/images/{entry}/{message}/{block}` | Use the address in a transcript image reference to fetch its stored image. |
+| GET, POST | `/agent/jobs` | List schedules or create one with `{name, conversation, cron, timeZone, action}`. Rows include `nextDue`, `upcoming`, and recent `runs`. |
+| PUT, DELETE | `/agent/jobs/{name}` | Replace the definition or delete the schedule. |
+| POST | `/agent/jobs/{name}/runs` | Send `{request}` to run now and receive the job outcome. |
+
+Generate a request UUID per action and reuse it for retries. A schedule action is either
+`{kind: "notify", text}` or `{kind: "skill", skill, arguments}`. A null `timeZone` uses the agent's zone.
+
+For live chat, subscribe to `<namespace>/dimos/events/agent-chat/{id}` and read the conversation
+on open and reconnect. A `turn` event carries the text so far. Replace the displayed partial on
+each update. Merge `entries` events by their stable entry IDs. A null `turn` marks the end of a
+run and is the time to refresh the snapshot. The gateway also emits `agent-conversations` and
+`agent-jobs` under the usual events prefix when those lists change.
 
 ## Running it yourself
 
