@@ -181,7 +181,7 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
 @cache_usage_locked
 def run(
     ctx: typer.Context,
-    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    robot_types: list[str] | None = typer.Argument(None, help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     choice: list[str] = typer.Option(
@@ -204,6 +204,12 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
+
+    if not robot_types:
+        if show_help:
+            typer.echo(ctx.get_help())
+            return
+        ctx.fail("Missing blueprint name.")
 
     # Log this at the start so that people get immediate feedback that the program has started.
     logger.info("Starting DimOS")
