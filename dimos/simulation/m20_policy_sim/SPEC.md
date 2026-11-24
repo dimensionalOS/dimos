@@ -751,6 +751,26 @@ Still differing [U]: the first step after each rl_control entry and gait switch 
 keeps or rebuilds there is not modelled), basic_flat's command ramp after the six_axis stand-in, the sequence runners
 (six_axis_stand, finetune_stand, 10-13% of steps), and the accelerometer's 20-sample moving average.
 
+### Whole sessions, closed loop (`examples/policy_session.rs`) [C, robot]
+
+Every policy step of the 11-20 14:16 and 16:36 sessions, each runner fed its own previous output, rl_control entries
+and gait switches as above, the operator's commands with rl_deploy's steer timeout (MonitorSteer zeroes the velocity
+when neither steer channel updated within 150 ms, polling every 10 ms: 155 ms fits both sessions), late steps reading
+their on-cadence tick's reply (rl_deploy's policy thread keeps a 20-tick cadence), and FinetuneStand's height from the
+steer's z (HandlerSteer on 0x3004: height = -z, 0 for z > 0). Leg targets within 1e-6 or 4 ULPs (macOS ONNX Runtime
+1.20): 14:16 78% of 4206 steps (basic_stair 91%, navi_charge 91%, basic_flat 78%, finetune_stand 36%, six_axis_stand
+10%); 16:36 71% of 4756 (basic_stair 74%, navi_charge 93%). With rl_deploy's previous action as the last action, 84%
+and 81%. Where they part [U]:
+- The IMU sample: rl_deploy reads the latest sample DDS had delivered, and delivery jitters by ~2 ms, which the
+  capture does not show; at most of 16:36's basic_stair onsets the sample before the latest one (arrived 1.4-1.9 ms
+  before the reply) reproduces rl_deploy's step (e.g. rows 73521, 78221, 84521: 1e-2 .. 4e-3 -> 6e-4 .. 7e-5), and no
+  one offset between the captures fits every step.
+- SixAxisStand in rl_control's entry stand-in (the robot standing up) is off by ~1e-3 from its first inferred step;
+  the runner switched to after it inherits that through the handover (e.g. basic_flat at 14:16 87942).
+- Wheel velocity commands match far less often than leg targets: 10 x a (20 x a) shows the network output's last
+  bits that the leg targets' 0.25 x a + default rounds away, so platform numerics (macOS vs Linux ONNX Runtime) and any
+  input bit show there first.
+
 ## Building the controller for the robot
 
     cd dimos/robot/deeprobotics/m20/controller/rust
