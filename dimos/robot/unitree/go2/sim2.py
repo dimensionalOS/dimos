@@ -54,6 +54,9 @@ from dimos.simulation.go2_legged.robot import (
     projected_gravity,
     yaw_of,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
     {
@@ -101,7 +104,7 @@ class Go2Sim(HardwareModule):
 
     @property
     def mounted_frame(self) -> str:
-        return self.frame.odom
+        return str(self.frame.odom)
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
@@ -116,7 +119,11 @@ class Go2Sim(HardwareModule):
         acting.cancel()
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
-        self._desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
+        desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
+        if not np.isfinite(desired).all():
+            logger.warning(f"go2 sim: ignoring a non-finite cmd_vel (vx, vy, vyaw) = {desired}")
+            return
+        self._desired = desired
         self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
 
     async def _run(self) -> None:
