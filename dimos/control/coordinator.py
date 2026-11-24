@@ -450,6 +450,7 @@ class ControlCoordinator(Module):
                         for joint in self.config.zero_stiffness_joints
                         if joint.startswith(f"{robot}/")
                     ],
+                    frame_owner=self.namespace or None,
                 )
                 self._connections[robot] = source
                 self._command_ports[robot] = {

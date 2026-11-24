@@ -55,12 +55,16 @@ class ConnectionConfig(ModuleConfig):
             listed joints are commanded; planar axes are ordinary joints.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
+        clamp_position: Pull a position past its joint's range back to the
+            range instead of refusing the whole command.
     """
 
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
     deadman_timeout_s: float = 0.1
+    # A position past its joint's range is pulled back to the range instead of refusing the command (a policy's PD target may overshoot it).
+    clamp_position: bool = False
 
 
 @dataclass(frozen=True, slots=True)
