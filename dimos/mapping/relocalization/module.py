@@ -27,7 +27,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 import uuid
 
 import numpy as np
@@ -79,6 +79,10 @@ def _stamped(tf: Transform, ts: float) -> Transform:
         child_frame_id=tf.child_frame_id,
         ts=ts,
     )
+
+
+def _scan_stamp(scan: PointCloud2) -> float | None:
+    return scan.ts
 
 
 class Config(ModuleConfig):
@@ -219,7 +223,7 @@ class PremapModule(Module):
             placed = scans.pipe(
                 ops.map(self._place_scan), ops.filter(lambda scan: scan is not None)
             )
-            return window(placed, self.config.relocalize)
+            return window(cast("Observable[PointCloud2]", placed), self.config.relocalize)
         # A local map is the whole window around the robot, so the latest replaces any waiting during a fold
         self.register_disposable(backpressure(local_maps).subscribe(self._on_local_map))
         return backpressure(self._live_changed).pipe(
@@ -340,7 +344,7 @@ class PremapModule(Module):
         self.publish_tf()
         self.register_disposable(
             rx.merge(
-                self.lidar.observable().pipe(ops.map(lambda scan: scan.ts)),  # type: ignore[no-untyped-call]
+                self.lidar.observable().pipe(ops.map(_scan_stamp)),
                 self.fixes.pipe(ops.map(lambda _: None)),
             ).subscribe(self.publish_tf)
         )
