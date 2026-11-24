@@ -17,42 +17,51 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import suppress
 import math
+import threading
 import time
+from typing import Any
 
 import numpy as np
 from pydantic import Field, FiniteFloat
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.teleop.policy.blending import blend_twist, normalize_weights
+from dimos.teleop.policy.takeover import TakeoverFn, policy_only
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import twist_to_numpy
 
 logger = setup_logger()
 
-Weights6 = tuple[float, float, float, float, float, float]
-TakeoverFn = Callable[[Transform], float | Weights6]
-
-
-def policy_only(pose: Transform) -> float:
-    """Give the policy all six axes."""
-    return 1.0
-
 
 class PolicyTeleopConfig(ModuleConfig):
-    world_frame: str = "world"
-    tcp_frame: str = "link_tcp"
+    """Timeouts use input Unix timestamps; future timestamps are refused.
+
+    Attributes:
+        timeout_s: Common freshness deadline for pose and both velocity inputs.
+        control_hz: Output frequency, including while faulted.
+        world_frame: All commands and measured translations use this frame.
+        tcp_frame: The single TCP controlled by both sources.
+        takeover_fn: Final policy weights, evaluated once on every valid pose tick.
+    """
+
+    world_frame: str = Field(default="world", min_length=1)
+    tcp_frame: str = Field(default="link_tcp", min_length=1)
     control_hz: FiniteFloat = Field(default=30.0, gt=0)
     timeout_s: FiniteFloat = Field(default=0.25, gt=0)
     takeover_fn: TakeoverFn = policy_only
 
 
 class PolicyTeleopModule(Module):
-    """Publish the blended twist, or zero while required inputs are unusable."""
+    """Publish the blended twist, or zero while required inputs are unusable.
+
+    Input handlers and the control loop all run on the module's asyncio loop.
+    """
 
     config: PolicyTeleopConfig
     current_pose: In[Transform]
@@ -60,10 +69,19 @@ class PolicyTeleopModule(Module):
     teleop_command: In[TwistStamped]
     ee_twist_command: Out[TwistStamped]
 
-    _fault: str | None = None
-    _pose: Transform | None = None
-    _policy: TwistStamped | None = None
-    _teleop: TwistStamped | None = None
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pose: Transform | None = None
+        self._policy: TwistStamped | None = None
+        self._teleop: TwistStamped | None = None
+        self._fault: str | None = None
+        self._fault_lock = threading.Lock()
+
+    @rpc
+    def get_fault(self) -> str | None:
+        """Return the latest holding reason, or None when inputs are usable."""
+        with self._fault_lock:
+            return self._fault
 
     async def handle_current_pose(self, msg: Transform) -> None:
         self._pose = msg
@@ -82,18 +100,17 @@ class PolicyTeleopModule(Module):
             or pose.child_frame_id != self.config.tcp_frame
             or not 0 <= now - pose.ts <= self.config.timeout_s
             or not np.isfinite(pose.translation.to_numpy()).all()
-            or not math.isclose(np.linalg.norm(pose.rotation.to_numpy()), 1.0, abs_tol=1e-3)
+            or not np.isfinite(pose.rotation.to_numpy()).all()
+            or not math.isclose(float(np.linalg.norm(pose.rotation.to_numpy())), 1.0, abs_tol=1e-3)
         ):
             raise ValueError("missing, stale or invalid TCP pose")
 
-        weights = np.asarray(self.config.takeover_fn(pose), dtype=float)
-        if weights.shape not in ((), (6,)) or not np.all((weights >= 0) & (weights <= 1)):
-            raise ValueError("expected one or six policy weights between zero and one")
-
-        result = np.zeros(6)
+        # User-supplied code may raise arbitrary exceptions. _tick fails closed.
+        weights = self.config.takeover_fn(pose)
+        alpha = normalize_weights(weights)
         for name, msg, gain in (
-            ("policy", self._policy, weights),
-            ("teleop", self._teleop, 1 - weights),
+            ("policy", self._policy, alpha),
+            ("teleop", self._teleop, 1 - alpha),
         ):
             if not np.any(gain):
                 continue
@@ -103,31 +120,34 @@ class PolicyTeleopModule(Module):
                 or not 0 <= now - msg.ts <= self.config.timeout_s
             ):
                 raise ValueError(f"missing, stale or wrong-frame {name} twist")
-            values = twist_to_numpy(msg)
-            if not np.isfinite(values).all():
-                raise ValueError(f"nonfinite {name} twist")
-            result += gain * values
-        return TwistStamped(ts=now, frame_id=pose.frame_id, linear=result[:3], angular=result[3:])
+        command = blend_twist(self._teleop, self._policy, weights)
+        command.ts = now
+        return command
 
     def _tick(self, now: float) -> None:
         fault = None
         try:
             cmd = self._command(now)
         except Exception as exc:
+            # This is the boundary around user code and untrusted input samples.
             fault = f"{type(exc).__name__}: {exc}"
             cmd = TwistStamped(ts=now, frame_id=self.config.world_frame)
+        with self._fault_lock:
+            previous, self._fault = self._fault, fault
         self.ee_twist_command.publish(cmd)
-        if fault != self._fault:
+        if fault != previous:
             if fault is None:
                 logger.info("Policy teleop inputs ready")
             else:
                 logger.warning("Policy teleop holding position", reason=fault)
-            self._fault = fault
 
     async def _run(self) -> None:
+        loop = asyncio.get_running_loop()
+        period = 1 / self.config.control_hz
         while True:
+            deadline = loop.time() + period
             self._tick(time.time())
-            await asyncio.sleep(1 / self.config.control_hz)
+            await asyncio.sleep(max(0, deadline - loop.time()))
 
     async def main(self) -> AsyncIterator[None]:
         task = asyncio.create_task(self._run())
@@ -138,3 +158,6 @@ class PolicyTeleopModule(Module):
             with suppress(asyncio.CancelledError):
                 await task
             self.ee_twist_command.publish(TwistStamped(frame_id=self.config.world_frame))
+            self._pose = None
+            self._policy = None
+            self._teleop = None
