@@ -560,10 +560,14 @@ class Calibration:
         path: list[np.ndarray],
         mode: HoldMode,
         window_s: float | None = None,
+        patch: dict[str, Any] | None = None,
         **hold: Any,
     ) -> Motion:
-        """A motion along ``path`` with the current gains, noise and settings (``window_s``:
-        a hold's window other than the noise's)."""
+        """A motion along ``path`` with the current noise and settings (``window_s``: a hold's
+        window other than the noise's), at the current gains with the live ``patch`` applied
+        first: its stall limit is theirs, and no sample streams it at the gains before."""
+        if patch is not None:
+            self.configure(patch)
         kp = np.asarray([self.gains(joint)[0] for joint in self.spec.joint_names])
         stall = np.divide(self._torque_limit, kp, out=np.full(kp.shape, np.inf), where=kp > 0.0)
         band = [
@@ -585,16 +589,14 @@ class Calibration:
             **hold,
         )
 
-    def stream(self, motion: Motion, patch: dict[str, Any] | None = None) -> Motion:
-        """Stream ``motion`` until it ends, applying the live ``patch`` once it streams."""
+    def stream(self, motion: Motion) -> Motion:
+        """Stream ``motion`` until it ends."""
         self.at_home = self.at_rest = False
         with self._lock:
             if self._interrupt is not None:
                 raise self._interrupt
             self._motion = motion
         try:
-            if patch is not None:
-                self.configure(patch)
             self.wait(motion.done)
         finally:
             with self._lock:
@@ -616,12 +618,12 @@ class Calibration:
         patch: dict[str, Any] | None = None,
     ) -> Motion:
         """Go to ``target`` along a clear path and settle there, asking first with ``confirm_each``,
-        with the live ``patch`` applied as it streams."""
+        at the gains of the live ``patch``, applied before it streams."""
         if ask and self.config.confirm_each:
             degrees = ", ".join(f"{math.degrees(v):.1f}" for v in target)
             self.confirm(f"Move to {what} [{degrees}] deg?")
         path = plan_path(self.arm, self.measured(), target)
-        motion = self.stream(self.motion(path, "converge"), patch)
+        motion = self.stream(self.motion(path, "converge", patch=patch))
         if motion.ended != "settled":
             reason = f"the arm is {motion.ended} at {what}"
             if motion.detail:

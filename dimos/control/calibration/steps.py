@@ -390,15 +390,17 @@ def float_check(run: Calibration) -> str:
         visited.append(target)
         run.stream(run.motion([target], "fixed", config.hold_s))
         kp, kd = run.gains(joint)
-        motion = run.motion(
-            [target],
-            "fixed",
-            config.float_window_s,
-            floating=i,
-            drift_limit_rad=math.radians(config.float_trip_deg),
-        )
         try:
-            hold = run.stream(motion, patch={"gains": {joint: {"kp": 0.0, "kd": kd}}})
+            hold = run.stream(
+                run.motion(
+                    [target],
+                    "fixed",
+                    config.float_window_s,
+                    patch={"gains": {joint: {"kp": 0.0, "kd": kd}}},
+                    floating=i,
+                    drift_limit_rad=math.radians(config.float_trip_deg),
+                )
+            )
         finally:
             run.configure({"gains": {joint: {"kp": kp, "kd": kd}}})
         drift = analyze_float(
@@ -516,7 +518,7 @@ def step_sweep(run: Calibration) -> str:
                     f"joint {i + 1}/{len(joints)} {joint} · candidate {index + 1}/{len(tried[joint])}"
                 )
                 live = {"gains": {joint: {"kp": pair[0], "kd": pair[1]}}}
-                rest = run.stream(run.motion([pose], "converge"), patch=live)
+                rest = run.stream(run.motion([pose], "converge", patch=live))
                 kp, kd = run.gains(joint)
                 why = None if rest.ended == "settled" else f"{rest.ended} at rest"
                 target = pose.copy()
@@ -545,7 +547,7 @@ def step_sweep(run: Calibration) -> str:
                 if why is not None:
                     run.stopped.setdefault(joint, {})[(kp, kd)] = why
                     run.show(f"{joint} at kp {kp:g} kd {kd:g}: {why}; back to its own gains")
-                    run.stream(run.motion([pose], "converge"), patch=baseline)
+                    run.stream(run.motion([pose], "converge", patch=baseline))
         finally:
             run.configure(baseline)
     run.move(run.arm.home, "home")
@@ -655,7 +657,7 @@ def confirm_tracking(run: Calibration) -> str:
         run.config.tracking_rest_ratio,
     )
     trying = (
-        f" and the proposed gains ({_gains_text(proposed)}), re-applied as each move streams; "
+        f" and the proposed gains ({_gains_text(proposed)}), re-applied before each move; "
         f"they are saved only if no joint stalls and each rests within {ratio:g} times its first "
         "visit or what its friction allows at its new kp"
         if proposed
