@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import math
 import os
 from pathlib import Path
 import threading
@@ -236,7 +237,8 @@ class ToyConnection(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._arm = FakeArm(toy_arm())
+        # No deadman: ticked in real time, a stall in the test process would fire it.
+        self._arm = FakeArm(toy_arm(), deadman_s=math.inf)
         self._arm.listener = self.joint_state.publish
         self.register_disposable(Disposable(self.position_command.subscribe(self._command)))
         threading.Thread(target=self._tick, daemon=True, name="toy-arm").start()

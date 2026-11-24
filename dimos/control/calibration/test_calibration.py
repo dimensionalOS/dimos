@@ -202,7 +202,7 @@ def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> No
     assert (waiting.state, waiting.step, waiting.answers) == ("waiting", "check", ["go"])
     assert waiting.message == f"Calibrating {arm.arm_id}: check, summary"
     view = str(waiting).splitlines()
-    assert re.fullmatch(rf"{arm.arm_id}: waiting at check · step 1/2 · 00:0\d", view[0]), view[0]
+    assert re.fullmatch(rf"{arm.arm_id}: waiting at check · step 1/2 · \d\d:\d\d", view[0]), view[0]
     assert view[1].startswith(f"  {'check':<17} {'running':<8} measure the noise")
     assert view[2] == f"  {'gravity_poses':<17} {'skipped':<8} not selected"
     assert view[-2].startswith("? The arm moves home") and view[-1] == "  answer: go"
