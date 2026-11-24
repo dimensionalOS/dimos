@@ -17,7 +17,7 @@ required-features = ["module"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "60fac317bdba06cdec17b0c8db6945a7c4ba0cf9", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "362e093afb4362c8a7d938768d8616a29c4681e8", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
