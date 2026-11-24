@@ -16,12 +16,14 @@
 
 import importlib
 import math
+from typing import get_type_hints
 
 import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -84,7 +86,18 @@ def test_g1_shipped_groot_backends(simulation, monkeypatch):
             assert len(source.joint_names) == 29
             # Sim and hardware present the same connection; only the module behind it differs.
             connection = MujocoG1Connection if simulation else G1WholeBodyConnection
-            assert any(a.module is connection for a in bp.blueprints)
+            conn_atom = next(a for a in bp.blueprints if a.module is connection)
+            # Built the way the worker builds it: blueprint kwargs, then parsed config on top.
+            config_type = get_type_hints(connection)["config"]
+            conn_config = config_type(
+                **{**conn_atom.kwargs, **parsed.module_kwargs(conn_atom.name)}
+            )
+            declaration = config.connections[0]
+            assert conn_config.source == declaration.source
+            assert conn_config.model == declaration.model
+            assert conn_config.joint_commands == declaration.joint_commands
+            assert conn_config.kp == tuple(G1_GROOT_KP)
+            assert conn_config.kd == tuple(G1_GROOT_KD)
             assert config.tasks[0].params["hardware_id"] == "g1"
             assert config.tasks[0].params["auto_dry_run"] is (not simulation)
     # Leave import-time backend selection consistent with the restored globals.

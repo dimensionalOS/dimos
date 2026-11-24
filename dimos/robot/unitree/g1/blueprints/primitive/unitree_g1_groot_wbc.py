@@ -272,7 +272,8 @@ if global_config.simulation == "mujoco":
 
     # Sim backend: MuJoCo engine, and the G1 in it behind the same ports as the real one.
     _backend: Blueprint | MetaBlueprint = autoconnect(
-        _scene_mujoco_backend(), MujocoG1Connection.blueprint(**_g1_declaration.model_dump())
+        _scene_mujoco_backend(),
+        MujocoG1Connection.blueprint(kp=_g1_declaration.kp, kd=_g1_declaration.kd),
     )
     _backend_remappings: list[Any] = [
         (MujocoG1Connection, "position_command", "g1_position_command"),
@@ -314,7 +315,7 @@ else:
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 
     # Real hardware owns DDS conversion and PD gains; coordinator sends joint positions.
-    _backend = G1WholeBodyConnection.blueprint(**_g1_declaration.model_dump())
+    _backend = G1WholeBodyConnection.blueprint(kp=_g1_declaration.kp, kd=_g1_declaration.kd)
     _backend_remappings = [(G1WholeBodyConnection, "position_command", "g1_position_command")]
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
