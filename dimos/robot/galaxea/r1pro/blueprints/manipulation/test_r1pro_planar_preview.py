@@ -19,7 +19,7 @@ import platform
 
 import pytest
 
-from dimos.control.components import HardwareType, make_twist_base_joints
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTaskConfig,
@@ -36,7 +36,7 @@ from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview impo
     r1pro_planar_preview,
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_PLANAR_BASE
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
 
 
 def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
@@ -61,10 +61,10 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
 
 
 def test_planar_preview_plans_on_the_planar_base_limits() -> None:
-    parsed = BlueprintConfigParser(r1pro_planar_preview).parse(environ={})
+    parsed = BlueprintConfigParser(r1pro_planar_preview.solidify()).parse(environ={})
     atom = next(
         atom
-        for atom in r1pro_planar_preview.active_blueprints
+        for atom in r1pro_planar_preview.solidify().active_blueprints
         if issubclass(atom.module, ManipulationModule)
     )
     manipulation = ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
@@ -82,7 +82,7 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 )
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
-    config = _coordinator_config(r1pro_planar_preview)
+    config = _coordinator_config(r1pro_planar_preview.solidify())
     coordinator = ControlCoordinator(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
@@ -110,23 +110,16 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         coordinator.stop()
 
 
-def test_real_control_keeps_planar_joints_out_of_hardware() -> None:
-    blueprint = r1pro_control()
-    parsed = BlueprintConfigParser(blueprint).parse(environ={})
-    coordinator_atom = next(
-        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
-    )
-    coordinator = ControlCoordinatorConfig.model_validate(
-        parsed.module_kwargs(coordinator_atom.name)
-    )
+def test_real_control_declares_body_velocity_joints_without_position_commands() -> None:
+    """The chassis body axes are velocity-only joints on the connection."""
+    coordinator = _coordinator_config(r1pro_control().solidify())
 
-    assert [hardware.hardware_type for hardware in coordinator.hardware] == [
-        HardwareType.WHOLE_BODY,
-        HardwareType.BASE,
-    ]
-    assert coordinator.hardware[0].joints == R1PRO_UPPER_BODY_JOINTS
-    assert coordinator.hardware[1].joints == make_twist_base_joints("chassis")
-    real_joint_names = {
-        joint_name for hardware in coordinator.hardware for joint_name in hardware.joints
-    }
-    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(real_joint_names)
+    # The real robot is driven through R1ProConnection: no hardware adapters.
+    assert coordinator.hardware == []
+    claimed = {joint for task in coordinator.tasks for joint in task.joint_names}
+    assert claimed == {*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS}
+
+    (declaration,) = coordinator.connections
+    assert all(
+        declaration.joint_commands[joint] == (Interface.VELOCITY,) for joint in R1PRO_BASE_JOINTS
+    )

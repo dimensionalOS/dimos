@@ -16,48 +16,78 @@
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.mock_joint_connection import (
+    MockJointConnection,
+    MockJointConnectionConfig,
+    mock_arm_model,
+)
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.stream import Out
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 
-_mock_hw = HardwareComponent(
-    hardware_id="arm",
-    hardware_type=HardwareType.MANIPULATOR,
-    joints=make_joints("arm", 7),
-    adapter_type="mock",
-)
 
-coordinator_mock = ControlCoordinator.blueprint(
-    hardware=[_mock_hw],
-    tasks=[joint_trajectory_task(_mock_hw.joints)],
-)
+def mock_arm(robot: str, joints: int) -> tuple[ConnectionConfig, Blueprint]:
+    """A mock arm named ``robot`` with ``joints`` turning joints, as the coordinator's
+    declaration and its connection, wired onto ports ``<robot>_position_command``
+    and ``<robot>_joint_state``."""
+    declaration = MockJointConnectionConfig(source=robot, model=mock_arm_model(joints))
+    connection = MockJointConnection.blueprint(
+        **{**declaration.model_dump(), "instance_name": robot}
+    ).remappings(
+        [
+            (robot, "position_command", f"{robot}_position_command"),
+            (robot, "joint_state", f"{robot}_joint_state"),
+        ]
+    )
+    return (
+        ConnectionConfig(
+            source=robot, model=declaration.model, joint_commands=declaration.joint_commands
+        ),
+        connection,
+    )
 
-_mock_left = HardwareComponent(
-    hardware_id="left_arm",
-    hardware_type=HardwareType.MANIPULATOR,
-    joints=make_joints("left_arm", 7),
-    adapter_type="mock",
-)
-_mock_right = HardwareComponent(
-    hardware_id="right_arm",
-    hardware_type=HardwareType.MANIPULATOR,
-    joints=make_joints("right_arm", 6),
-    adapter_type="mock",
+
+class _MockCoordinator(ControlCoordinator):
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+_arm, _arm_connection = mock_arm("arm", 7)
+
+coordinator_mock = autoconnect(
+    _MockCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_arm],
+        tasks=[joint_trajectory_task([f"arm/joint{i + 1}" for i in range(7)])],
+    ),
+    _arm_connection,
 )
 
 
 class _DualMockCoordinator(ControlCoordinator):
-    left_arm_joints: Out[JointState]
-    right_arm_joints: Out[JointState]
+    left_arm_position_command: Out[JointState]
+    left_arm_joint_state: In[JointState]
+    right_arm_position_command: Out[JointState]
+    right_arm_joint_state: In[JointState]
 
 
-coordinator_dual_mock = _DualMockCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    publish_robot_joint_states=True,
-    hardware=[_mock_left, _mock_right],
-    tasks=[
-        joint_trajectory_task([*_mock_left.joints, *_mock_right.joints]),
-    ],
+_left, _left_connection = mock_arm("left_arm", 7)
+_right, _right_connection = mock_arm("right_arm", 6)
+
+coordinator_dual_mock = autoconnect(
+    _DualMockCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_left, _right],
+        tasks=[
+            joint_trajectory_task(
+                [f"left_arm/joint{i + 1}" for i in range(7)]
+                + [f"right_arm/joint{i + 1}" for i in range(6)]
+            ),
+        ],
+    ),
+    _left_connection,
+    _right_connection,
 )

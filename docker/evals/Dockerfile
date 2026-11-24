@@ -1,11 +1,11 @@
 # Eval worker image for `dimos evals run --docker`; see docs/usage/evals-docker.md.
 # Build from the repo root after `git lfs pull --include="misc/DimSim/**"`.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 # Keep in sync with dimos/utils/deno.py (DENO_VERSION) and
 # dimos/simulation/dimsim/deno_utils.py (playwright version).
 ARG DENO_VERSION=v2.9.8
-ARG PLAYWRIGHT_VERSION=1.58.2
+ARG PLAYWRIGHT_VERSION=1.61.0
 ARG PYTHON_VERSION=3.12
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # The self-hosted CI job's apt list plus Chromium's runtime libs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip build-essential pkg-config \
-    libgl1 libturbojpeg portaudio19-dev libusb-1.0-0 \
+    libgl1 libegl1 libopengl0 libturbojpeg0-dev portaudio19-dev libusb-1.0-0 \
     libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \

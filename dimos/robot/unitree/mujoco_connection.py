@@ -18,11 +18,14 @@
 import atexit
 import base64
 from collections.abc import Callable
+from contextlib import nullcontext
 import functools
 import json
+import logging
 import os
 from pathlib import Path
 import pickle
+import re
 import subprocess
 import sys
 import sysconfig
@@ -44,8 +47,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.robot.unitree.type.odometry import Odometry
-from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.simulation.mujoco.config import MujocoConfig, inherited_wayland_socket
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
     LIDAR_FPS,
@@ -61,6 +65,18 @@ from dimos.utils.executable import find_executable
 from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
+
+# DimOS console output is uncolored when the child writes to our pipe.
+_SUBPROCESS_LOG_LINE = re.compile(
+    r"^\d{2}:\d{2}:\d{2}\.\d{3} \[(deb|inf|war|err|cri)\]\[([^\]]*)\] (.*)$"
+)
+_SUBPROCESS_LOG_LEVELS = {
+    "deb": logging.DEBUG,
+    "inf": logging.INFO,
+    "war": logging.WARNING,
+    "err": logging.ERROR,
+    "cri": logging.CRITICAL,
+}
 
 logger = setup_logger()
 
@@ -87,7 +103,7 @@ class MujocoConnection:
         self.robot_model = robot_model
         self.process: subprocess.Popen[bytes] | None = None
         self.shm_data: ShmWriter | None = None
-        self._stop_timer: threading.Timer | None = None
+        self._motion_timer = MotionTimer()
 
         self._stream_threads: list[threading.Thread] = []
         self._output_thread: threading.Thread | None = None
@@ -137,16 +153,18 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
-            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
+            # The passive viewer needs mjpython on macOS.
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
             executable = (
                 sys.executable
-                if sys.platform != "darwin"
+                if sys.platform != "darwin" or self.config.headless
                 else find_executable("mjpython") or "mjpython"
             )
             env = os.environ.copy()
+            if self.config.headless and sys.platform == "linux":
+                env.setdefault("MUJOCO_GL", "egl")
             if sys.platform == "darwin":
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
                 libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
@@ -154,12 +172,17 @@ class MujocoConnection:
                     existing = env.get("DYLD_LIBRARY_PATH", "")
                     env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
 
-            self.process = subprocess.Popen(
-                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-            )
+            with nullcontext() if self.config.headless else inherited_wayland_socket() as display:
+                env.pop("WAYLAND_SOCKET", None)
+                if display is not None:
+                    env["WAYLAND_SOCKET"] = str(display.fileno())
+                self.process = subprocess.Popen(
+                    [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    pass_fds=(display.fileno(),) if display is not None else (),
+                )
 
         except Exception as e:
             self.shm_data.cleanup()
@@ -206,7 +229,22 @@ class MujocoConnection:
             return
         try:
             for raw in process.stdout:
-                line = raw.decode(errors="replace").rstrip()
+                # Retain the space after the header even for an empty message.
+                line = raw.decode(errors="replace").rstrip("\r\n")
+                # Use the child's level, not words in its message, and let our
+                # logger add the sole console header. Keep the source as context.
+                formatted = _SUBPROCESS_LOG_LINE.match(line)
+                if formatted is not None:
+                    level, source, message = formatted.groups()
+                    logger.log(
+                        _SUBPROCESS_LOG_LEVELS[level],
+                        f"[mujoco] {message}",
+                        subprocess_logger=source.strip(),
+                    )
+                    continue
+
+                # Native MuJoCo/library output has no DimOS header.
+                line = line.rstrip()
                 if not line:
                     continue
                 lowered = line.lower()
@@ -225,15 +263,11 @@ class MujocoConnection:
                 logger.warning(f"MuJoCo output pump terminated: {e}")
 
     def stop(self) -> None:
-        if self._is_cleaned_up:
-            return
-
-        self._is_cleaned_up = True
-
-        # Cancel any pending timers
-        if self._stop_timer:
-            self._stop_timer.cancel()
-            self._stop_timer = None
+        with self._motion_timer.command() as timeout:
+            if self._is_cleaned_up:
+                return
+            self._is_cleaned_up = True
+            timeout.cancel()
 
         # Stop all stream threads
         for stop_event in self._stop_events:
@@ -308,8 +342,7 @@ class MujocoConnection:
         return True
 
     def stop_movement(self) -> None:
-        # No webrtc deadman timer in sim; the cmd_vel timeout covers it.
-        pass
+        self.move(Twist())
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         return True
@@ -427,27 +460,26 @@ class MujocoConnection:
         return empty()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        if self._is_cleaned_up or self.shm_data is None:
-            return True
+        """Replace the active command, optionally stopping it after duration seconds."""
+        with self._motion_timer.command() as timeout:
+            writer = self.shm_data
+            if self._is_cleaned_up or writer is None:
+                return True
 
-        linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
-        angular = np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32)
-        self.shm_data.write_command(linear, angular)
+            linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
+            angular = np.array(
+                [twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32
+            )
+            writer.write_command(linear, angular)
+            if duration > 0:
 
-        if duration > 0:
-            if self._stop_timer:
-                self._stop_timer.cancel()
+                def expire() -> None:
+                    zero = np.zeros(3, dtype=np.float32)
+                    writer.write_command(zero, zero)
 
-            def stop_movement() -> None:
-                if self.shm_data:
-                    self.shm_data.write_command(
-                        np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
-                    )
-                self._stop_timer = None
-
-            self._stop_timer = threading.Timer(duration, stop_movement)
-            self._stop_timer.daemon = True
-            self._stop_timer.start()
+                timeout.arm(duration, expire)
+            else:
+                timeout.cancel()
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:

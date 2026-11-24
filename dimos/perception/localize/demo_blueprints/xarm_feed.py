@@ -40,6 +40,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.replay import ReplayStream
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -88,12 +89,15 @@ class DepthCameraFeed(Module):
             "camera_info": self.camera_info,
             "tf": self.tf,
         }
+        progress = ReplayProgress(str(path))
+        progress.start(replay, (replay.stream(name) for name in ports))
         for name, port in ports.items():
             stream: ReplayStream[Any] = replay.stream(name)
             logger.info(
                 f"feed: {path.name}:{name} ({stream.count()} frames at {self.config.speed}x)"
             )
-            self.register_disposable(stream.observable().subscribe(port.publish))
+            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+        progress.seal()
 
 
 xarm_feed = DepthCameraFeed.blueprint()

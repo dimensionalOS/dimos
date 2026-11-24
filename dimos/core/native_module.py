@@ -87,6 +87,18 @@ else:
 
 logger = setup_logger()
 
+# Released native binaries pin the SDK independently of this checkout. Keep
+# their known TF startup diagnostics at info until publishers have had time to
+# start, too. Match both target and message so other failures keep their level.
+_TF_STARTUP_GRACE_S = 10.0
+_TF_STARTUP_MESSAGES = {
+    ("dimos_module::tf", "No transform found between frames"),
+    (
+        "dimos_voxel_ray_tracing::module",
+        "No transform within tolerance of the cloud stamp, dropped a cloud.",
+    ),
+}
+
 
 class LogFormat(enum.Enum):
     TEXT = "text"
@@ -324,6 +336,9 @@ class NativeModule(Module):
     def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
+        if "frame_id_prefix" in self.config.base_fields:
+            # The namespace lives in the instance name, so send the resolved prefix.
+            config_dict["frame_id_prefix"] = self.frame_id_prefix or None
         blob: dict[str, Any] = {
             "topics": topics,
             "config": config_dict or None,
@@ -498,6 +513,7 @@ class NativeModule(Module):
     ) -> None:
         if stream is None:
             return
+        startup_deadline = time.monotonic() + _TF_STARTUP_GRACE_S
         default_log_fn = getattr(logger, level)
         for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
@@ -516,6 +532,12 @@ class NativeModule(Module):
                         if msg_level
                         else level
                     )
+                    if (
+                        method == "warning"
+                        and (data.get("target"), message) in _TF_STARTUP_MESSAGES
+                        and time.monotonic() < startup_deadline
+                    ):
+                        method = "info"
                     getattr(logger, method)(message, module=self._module_label, pid=pid, **data)
                     continue
                 except (json.JSONDecodeError, TypeError, AttributeError):

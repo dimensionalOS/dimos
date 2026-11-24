@@ -75,6 +75,17 @@ def prepare(
 ) -> None:
     """Prepare a dataset using the schema saved with its recording."""
     source = recording.expanduser().resolve()
+    try:
+        has_schema = (source / "schema.json").is_file()
+    except OSError as exc:
+        raise typer.BadParameter(
+            f"Cannot access recording schema: {exc}", param_hint="recording"
+        ) from exc
+    if not has_schema:
+        raise typer.BadParameter(
+            f"Expected a collection directory containing schema.json: {source}",
+            param_hint="recording",
+        )
     target = _require_new_path(output or _default_dataset(source))
     try:
         schema = RecordingSchema.read(source)

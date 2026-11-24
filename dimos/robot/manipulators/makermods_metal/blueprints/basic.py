@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
@@ -29,7 +29,7 @@ from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 _MODEL = make_metal_model_config(robot="arm")
 
 
-def metal_control() -> Blueprint:
+def metal_control() -> MetaBlueprint:
     """Trajectories and the Metal jaw over the connection."""
     return autoconnect(
         DamiaoCoordinator.blueprint(

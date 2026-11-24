@@ -23,110 +23,124 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareType,
-    make_joints,
-    make_twist_base_joints,
-)
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.mock_joint_connection import MockJointConnection, mock_base_model
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
+from dimos.core.module import ModuleBase
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.flowbase.connection import (
+    FLOWBASE_BASE_JOINTS,
+    FlowBaseConfig,
+    FlowBaseConnection,
+)
+from dimos.robot.manipulators.common.mock import mock_arm
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
-_base_joints = make_twist_base_joints("base")
-
-
-def _mock_twist_base(hw_id: str = "base") -> HardwareComponent:
-    """Mock holonomic twist base (3-DOF: vx, vy, wz)."""
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.BASE,
-        joints=make_twist_base_joints(hw_id),
-        adapter_type="mock_twist_base",
-    )
-
-
-def _flowbase_twist_base(
-    hw_id: str = "base",
-    address: str | None = None,
-) -> HardwareComponent:
-    """FlowBase holonomic platform via Portal RPC (3-DOF: vx, vy, wz).
-
-    Address defaults to ``FlowBaseAdapter.DEFAULT_ADDRESS`` when ``None``.
-    """
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.BASE,
-        joints=make_twist_base_joints(hw_id),
-        adapter_type="flowbase",
-        address=address,
-    )
-
-
-# Mock holonomic twist base (3-DOF: vx, vy, wz)
-coordinator_mock_twist_base = ControlCoordinator.blueprint(
-    hardware=[_mock_twist_base()],
-    tasks=[
-        TaskConfig(
-            name="vel_base",
-            type="twist_velocity",
-            joint_names=_base_joints,
-            params={"axes": ["linear.x", "linear.y", "angular.z"]},
-            priority=10,
-        ),
-    ],
-).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
-
-# FlowBase holonomic twist base (3-DOF: vx, vy, wz) over Portal RPC
-coordinator_flowbase = ControlCoordinator.blueprint(
-    hardware=[_flowbase_twist_base()],
-    tasks=[
-        TaskConfig(
-            name="vel_base",
-            type="twist_velocity",
-            joint_names=_base_joints,
-            params={"axes": ["linear.x", "linear.y", "angular.z"]},
-            priority=10,
-        ),
-    ],
-).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
-
-# FlowBase + WASD pygame keyboard teleop in a single blueprint
-coordinator_flowbase_keyboard_teleop = autoconnect(
-    ControlCoordinator.blueprint(
-        hardware=[_flowbase_twist_base()],
-        tasks=[
-            TaskConfig(
-                name="vel_base",
-                type="twist_velocity",
-                joint_names=_base_joints,
-                params={"axes": ["linear.x", "linear.y", "angular.z"]},
-                priority=10,
-            ),
-        ],
-    ),
-    KeyboardTeleop.blueprint(),
-).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
-
-# Mock arm (7-DOF) + mock holonomic base (3-DOF)
-_mock_arm_hw = HardwareComponent(
-    hardware_id="arm",
-    hardware_type=HardwareType.MANIPULATOR,
-    joints=make_joints("arm", 7),
-    adapter_type="mock",
+_MOCK_BASE = ConnectionConfig(
+    source="base",
+    model=mock_base_model("base"),
+    joint_commands={
+        f"base/base_{axis}": (Interface.VELOCITY,) for axis in ("forward", "lateral", "turn")
+    },
+)
+_mock_base_connection = MockJointConnection.blueprint(
+    **{**_MOCK_BASE.model_dump(), "instance_name": "base"}
+).remappings(
+    [
+        ("base", "velocity_command", "base_velocity_command"),
+        ("base", "joint_state", "base_joint_state"),
+    ]
+)
+_vel_base = TaskConfig(
+    name="vel_base",
+    type="twist_velocity",
+    joint_names=list(_MOCK_BASE.joint_commands),
+    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+    priority=10,
 )
 
-coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
-    hardware=[_mock_arm_hw, _mock_twist_base()],
-    tasks=[
-        joint_trajectory_task(_mock_arm_hw.joints),
-        TaskConfig(
-            name="vel_base",
-            type="twist_velocity",
-            joint_names=_base_joints,
-            params={"axes": ["linear.x", "linear.y", "angular.z"]},
-            priority=10,
+
+class FlowBaseCoordinator(ControlCoordinator):
+    """Body speeds out to one FlowBase named "base", and its readings in,
+    through ``FlowBaseConnection``."""
+
+    base_velocity_command: Out[JointState]
+    base_joint_state: In[JointState]
+
+
+# The connection module's ports onto the coordinator's, and Twist in on cmd_vel.
+# The coordinator owns cmd_vel, so the connection's own Twist input is moved off it.
+_FLOWBASE_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (FlowBaseConnection, "cmd_vel", "base_cmd_vel"),
+    (FlowBaseConnection, "velocity_command", "base_velocity_command"),
+    (FlowBaseCoordinator, "base_joint_state", "joint_state"),
+    (FlowBaseCoordinator, "twist_command", "cmd_vel"),
+]
+
+
+def _flowbase_coordinator() -> MetaBlueprint:
+    """A FlowBase behind a coordinator, driven by Twist on ``cmd_vel``."""
+    return autoconnect(
+        FlowBaseCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[FlowBaseConfig()],
+            tasks=[
+                TaskConfig(
+                    name="vel_base",
+                    type="twist_velocity",
+                    joint_names=list(FLOWBASE_BASE_JOINTS),
+                    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+                    priority=10,
+                ),
+            ],
         ),
-    ],
-).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+        FlowBaseConnection.blueprint(),
+    )
+
+
+class _MockBaseCoordinator(ControlCoordinator):
+    base_velocity_command: Out[JointState]
+    base_joint_state: In[JointState]
+
+
+# Mock holonomic base: forward, lateral and turn speeds, driven by Twist on cmd_vel
+coordinator_mock_twist_base = autoconnect(
+    _MockBaseCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_MOCK_BASE],
+        tasks=[_vel_base],
+    ),
+    _mock_base_connection,
+).remappings([(_MockBaseCoordinator, "twist_command", "cmd_vel")])
+
+# FlowBase holonomic base over Portal RPC
+coordinator_flowbase = _flowbase_coordinator().remappings(_FLOWBASE_REMAPS)
+
+# FlowBase + WASD pygame keyboard teleop. Shift boosts to 0.8 m/s, the base's top speed.
+coordinator_flowbase_keyboard_teleop = autoconnect(
+    _flowbase_coordinator(),
+    KeyboardTeleop.blueprint(boost_multiplier=1.6),
+).remappings(_FLOWBASE_REMAPS)
+
+
+class _MockMobileManipCoordinator(_MockBaseCoordinator):
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+_arm, _arm_connection = mock_arm("arm", 7)
+
+# Mock 7-joint arm + mock holonomic base
+coordinator_mobile_manip_mock = autoconnect(
+    _MockMobileManipCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_arm, _MOCK_BASE],
+        tasks=[joint_trajectory_task([f"arm/joint{i + 1}" for i in range(7)]), _vel_base],
+    ),
+    _arm_connection,
+    _mock_base_connection,
+).remappings([(_MockMobileManipCoordinator, "twist_command", "cmd_vel")])

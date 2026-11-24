@@ -29,14 +29,14 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
 
 
 def test_keyboard_teleop_a750_wires_joint_trajectory_execution() -> None:
-    tasks = _coordinator_tasks(keyboard_teleop_a750)
+    tasks = _coordinator_tasks(keyboard_teleop_a750.solidify())
 
     trajectory = next(task for task in tasks if task.name == "joint_trajectory")
     gripper = next(task for task in tasks if task.type == "gripper")
 
     assert trajectory.type == "trajectory"
     assert trajectory.joint_names == [
-        *(f"joint{i}" for i in range(1, 7)),
+        *(f"arm/joint{i}" for i in range(1, 7)),
         "arm/finger",
     ]
     assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/finger"])

@@ -166,7 +166,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 See [installer options](docs/installation/index.md), or platform notes:
 
-- <img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
+- <img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> [Ubuntu 22.04 / 24.04 / 26.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
 - <img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha"> [macOS](docs/installation/osx.md)
 
@@ -209,11 +209,13 @@ dimos run unitree-go2
 | `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped temporal memory replay |
 | `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
-| `dimos --replay run drone-basic` | Drone video + telemetry replay |
-| `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
+| `dimos --replay run drone-basic` | Drone video + telemetry replay (requires `dimos[drone]` extra) |
+| `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay, requires `dimos[drone]` extra) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
+
+Drone replay needs the `drone` extra even without hardware. If it is missing, run `uv pip install 'dimos[drone]'` in your active environment.
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
 
@@ -308,7 +310,8 @@ if __name__ == "__main__":
 ## Blueprints
 
 Blueprints are instructions for how to construct and wire modules. We compose them with
-`autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
+`autoconnect(...)`, which returns a `MetaBlueprint`. Call `.solidify()` to resolve
+choices into a concrete `Blueprint`; streams connect by `(name, type)`.
 
 Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 

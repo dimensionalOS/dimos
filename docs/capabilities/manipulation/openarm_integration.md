@@ -102,10 +102,11 @@ firmware behavior or confirm that every motor supplied fresh feedback.
 
 | Path | Role |
 |---|---|
-| `dimos/robot/manipulators/openarm/connection.py` | native motor declarations, gains, CAN selection, and direct connection |
-| `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints and planning configuration |
+| `dimos/robot/manipulators/openarm/connection.py` | CAN selection and the direct connection |
+| `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints, planning configuration, motor declarations and gains |
 | `dimos/robot/manipulators/openarm/blueprints/` | connection, coordinator, planner, and WebXR compositions |
-| `dimos/robot/manipulators/damiao/damiao_connection.py` | shared native lifecycle |
+| `dimos/robot/manipulators/damiao/connection.py` | shared connection lifecycle: start, stop, state reader, deadman and faults |
+| `dimos/robot/manipulators/damiao/arm.py` | shared native motor layer |
 
 ## Validation
 
