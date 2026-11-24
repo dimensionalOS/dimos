@@ -17,15 +17,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import copy
 import os
-import queue
 import resource
 import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import zenoh
+from zenoh.shm import ShmProvider
 
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
@@ -154,41 +153,53 @@ def _memlock_limit_below(size: int) -> bool:
 
 @pytest.mark.skipif(
     _memlock_limit_below(16 * 1024 * 1024),
-    reason="zenoh cannot lock its shared-memory pool and falls back to TCP",
+    reason="zenoh cannot lock its shared-memory segments under this limit",
 )
-def test_large_payloads_between_local_sessions_go_through_shared_memory(
+def test_local_sessions_link_and_deliver_over_shared_memory(
     zenoh_defaults: None, unused_tcp_port: int
 ) -> None:
     endpoint = f"tcp/127.0.0.1:{unused_tcp_port}"
-    listener = zenoh.open(
-        zenohservice._zenoh_config(ZenohConfig(listen=[endpoint], multicast=False, gossip=False))
-    )
-    dialer = zenoh.open(
-        zenohservice._zenoh_config(ZenohConfig(connect=[endpoint], multicast=False, gossip=False))
-    )
-    received: queue.Queue[tuple[bool, bytes]] = queue.Queue()
-    samples: list[tuple[bool, bytes]] = []
     payload = os.urandom(100_000)
-    try:
-        listener.declare_subscriber(
-            "shm/test",
-            lambda sample: received.put(
-                (sample.payload.as_shm() is not None, sample.payload.to_bytes())
-            ),
-        )
-        # Lazy mode allocates the pool on first use, so that first message goes over TCP.
-        deadline = time.monotonic() + _THREAD_TIMEOUT
-        while not any(via_shm for via_shm, _ in samples) and time.monotonic() < deadline:
-            dialer.put("shm/test", payload)
-            time.sleep(0.1)
-            while not received.empty():
-                samples.append(received.get())
-    finally:
-        dialer.close()
-        listener.close()
+    links_shm: list[bool] = []
+    samples: list[tuple[bool, bytes]] = []
+    linked = threading.Event()
+    matched = threading.Event()
+    received = threading.Event()
 
-    assert any(via_shm for via_shm, _ in samples)
-    assert all(body == payload for _, body in samples)
+    def on_transport(event: zenoh.TransportEvent) -> None:
+        if event.kind == zenoh.SampleKind.PUT:
+            links_shm.append(event.transport.is_shm)  # type: ignore[attr-defined]
+            linked.set()
+
+    def on_matching(status: zenoh.MatchingStatus) -> None:
+        if status.matching:
+            matched.set()
+
+    def receive(sample: zenoh.Sample) -> None:
+        samples.append((sample.payload.as_shm() is not None, sample.payload.to_bytes()))
+        received.set()
+
+    listener_config = ZenohConfig(listen=[endpoint], multicast=False, gossip=False)
+    dialer_config = ZenohConfig(connect=[endpoint], multicast=False, gossip=False)
+    with zenoh.open(zenohservice._zenoh_config(listener_config)) as listener:
+        listener.info.declare_transport_events_listener(on_transport, history=True)
+        listener.declare_subscriber("shm/test", receive)
+        with zenoh.open(zenohservice._zenoh_config(dialer_config)) as dialer:
+            assert linked.wait(_THREAD_TIMEOUT)
+            publisher = dialer.declare_publisher("shm/test")
+            publisher.declare_matching_listener(on_matching)
+            if publisher.matching_status.matching:  # type: ignore[attr-defined]
+                matched.set()
+            assert matched.wait(_THREAD_TIMEOUT)
+            # The message is lost if the provider is freed before delivery.
+            provider = ShmProvider.default_backend(1024 * 1024)
+            buffer = provider.alloc(len(payload))
+            buffer[:] = payload
+            publisher.put(buffer)
+            assert received.wait(_THREAD_TIMEOUT)
+
+    assert links_shm == [True]
+    assert samples == [(True, payload)]
 
 
 def test_different_modes_produce_different_keys() -> None:
