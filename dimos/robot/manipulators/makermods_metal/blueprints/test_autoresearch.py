@@ -22,7 +22,7 @@ from dimos.autoresearch.module import AutoresearchModule, AutoresearchModuleConf
 from dimos.autoresearch.truth_scene import TruthSceneModule
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.recorder import CollectionModule
+from dimos.imitation.collection.recorder import CollectionModule, CollectionModuleConfig
 from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -88,4 +88,6 @@ def test_blueprint_takes_the_session_at_launch_and_offers_only_the_autoresearch_
         2,
     )
     assert parsed.module_configs["recorder"]["recording"] == session / "recording"
+    recorder = CollectionModuleConfig.model_validate(parsed.module_kwargs("recorder"))
+    assert recorder.store.path == str(session / "recording" / "recording.mcap")
     assert parsed.module_kwargs("episodes")["task"] == "lift the cube"
