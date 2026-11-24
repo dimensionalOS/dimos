@@ -16,7 +16,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from functools import cached_property
 import math
 from pathlib import Path
 import time
@@ -42,10 +41,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 from dimos.robot.unitree.g1.config import G1_JOINT_MODEL, G1_JOINT_NAMES
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
@@ -98,7 +97,7 @@ class G1Sim(ConnectionModule, HardwareModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._soft_start: float | None = None
-        self._start: np.ndarray | None = None
+        self._odometry: MountOdometry | None = None
 
     @property
     def joint_names(self) -> list[str]:
@@ -178,24 +177,15 @@ class G1Sim(ConnectionModule, HardwareModule):
             )
         )
 
-    @cached_property
-    def _pelvis_on_mount(self) -> np.ndarray:
-        usd = self.config.usd
-        assert usd is not None
-        root = usd.source_path.parent if usd.source_path is not None else None
-        return usd_frame_pose(usd.usd, usd.root_link, root)
-
     def _odom(self, stamp: float) -> PoseStamped | None:
         base = self._world.entity(self.namespace)
         if base is None or base.pose is None:
             return None
-        here = Transform(
-            translation=Vector3(*base.pose[:3]), rotation=Quaternion(*base.pose[3:7])
-        ).to_matrix()
-        if self._start is None:
-            # Odometry is from the mount the G1 started on, so the pelvis keeps its height above it.
-            self._start = np.linalg.inv(here @ np.linalg.inv(self._pelvis_on_mount))
-        relative = Transform.from_matrix(self._start @ here)
+        if self._odometry is None:
+            usd = self.config.usd
+            assert usd is not None
+            self._odometry = MountOdometry.of(usd, usd.root_link)
+        relative = self._odometry(base.pose)
         return PoseStamped(
             ts=stamp,
             frame_id=self.tf_frames["odom"],
