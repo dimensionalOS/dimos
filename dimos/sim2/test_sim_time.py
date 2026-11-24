@@ -170,9 +170,9 @@ def _per_sim_second(stamps: list[float], start: float) -> float:
     return (len(steady) - 1) / (steady[-1] - steady[0])
 
 
-@pytest.mark.self_hosted  # its camera renders: GitHub-hosted runners have no OpenGL context
+@pytest.mark.self_hosted  # reads the Mid-360 pattern from Git LFS
 @pytest.mark.parametrize("speed", [0.5, 4.0], ids=["half_speed", "four_times_speed"])
-def test_sensors_keep_their_rates_per_sim_second(speed: float) -> None:
+def test_sensors_keep_their_rates_per_sim_second(speed: float, renders: None) -> None:
     readings = _run(seconds=8.0, speed=speed)
     stamps = readings["stamps"]
     counts = {name: len(stamps[name]) for name in RATES}
