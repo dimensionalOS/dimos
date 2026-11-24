@@ -36,7 +36,7 @@ from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import sim
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import ODOM_FRAME, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
@@ -379,3 +379,10 @@ def test_frames_offered_while_one_is_in_flight_are_merged_not_lost() -> None:
     assert len(published) == 2
     assert crate is not None and crate.cbor["note"] == {"a": 1}
     assert crate.pose is not None and crate.pose[:3] == pytest.approx([1.0, 0.0, 0.0])
+
+
+def test_a_robot_is_announced_with_the_frame_its_odometry_is_in(world, robot_model):
+    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model, odom_frame="world")])
+    seen = _Collect()
+    seen.offer(backend.frame())
+    assert seen.world.entity("dog").cbor[ODOM_FRAME] == "world"
