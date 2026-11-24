@@ -49,7 +49,10 @@ def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = 
 
     links = _usd_links_of(pxr, stage)
     world = _world_body(stage)
-    joints = [joint for prim in _joint_prims(pxr, stage) for joint in _joints_of(pxr, prim, world)]
+    joint_prims = _joint_prims(pxr, stage)
+    # Every name the layer already uses: a link or joint this converter adds must not take one.
+    taken = set(links) | {str(prim.GetDisplayName() or prim.GetName()) for prim in joint_prims}
+    joints = [joint for prim in joint_prims for joint in _joints_of(pxr, prim, taken, world)]
     links |= {joint.child: None for joint in joints if joint.child_is_frame}
     links |= _static_bodies_of(pxr, stage, links, joints)
 
@@ -59,7 +62,7 @@ def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = 
 
     for link_name, prim in links.items():
         _write_link(pxr, robot, link_name, prim)
-    joints = joints + _welds_of(pxr, links, joints)
+    joints = joints + _welds_of(pxr, links, joints, taken)
     for joint in joints:
         _write_joint(robot, joint)
 
@@ -172,7 +175,17 @@ class _Joint:
         self.child_is_frame = child_is_frame
 
 
-def _joints_of(pxr: Pxr, prim: Prim, world: str | None = None) -> list[_Joint]:
+def _unused_name(base: str, taken: set[str]) -> str:
+    """``base``, or ``base_2``, ``base_3``... if the layer already uses it; claimed in ``taken``."""
+    name, index = base, 1
+    while name in taken:
+        index += 1
+        name = f"{base}_{index}"
+    taken.add(name)
+    return name
+
+
+def _joints_of(pxr: Pxr, prim: Prim, taken: set[str], world: str | None = None) -> list[_Joint]:
     """The URDF joints one USD joint becomes: itself, or itself and the weld off its anchor.
 
     UsdPhysics puts the joint at localPose0 in body0 and at localPose1 in body1, so at rest
@@ -219,7 +232,7 @@ def _joints_of(pxr: Pxr, prim: Prim, world: str | None = None) -> list[_Joint]:
         name=name,
         kind=kind,
         parent=parent,
-        child=f"{name}_anchor" if anchored else child,
+        child=_unused_name(f"{name}_anchor", taken) if anchored else child,
         origin_xyz=origin_xyz,
         origin_rpy=_rpy_of(child_rotation),
         axis=axis,
@@ -231,7 +244,7 @@ def _joints_of(pxr: Pxr, prim: Prim, world: str | None = None) -> list[_Joint]:
     if not anchored:
         return [moving]
     weld = _Joint(
-        name=f"{name}_anchor_weld",
+        name=_unused_name(f"{name}_anchor_weld", taken),
         kind="fixed",
         parent=moving.child,
         child=child,
@@ -537,7 +550,9 @@ def _append_fragment(parent: ET.Element, fragment: str) -> None:
         logger.warning(f"dropping an unconverted fragment that will not parse: {fragment[:60]}")
 
 
-def _welds_of(pxr: Pxr, links: dict[str, Any], joints: list[_Joint]) -> list[_Joint]:
+def _welds_of(
+    pxr: Pxr, links: dict[str, Any], joints: list[_Joint], taken: set[str]
+) -> list[_Joint]:
     claimed = {joint.child for joint in joints}
     welds = []
     for name, prim in links.items():
@@ -549,7 +564,7 @@ def _welds_of(pxr: Pxr, links: dict[str, Any], joints: list[_Joint]) -> list[_Jo
         xyz, rotation, _ = _decompose(pxr, _pose_in(pxr, prim, ancestor))
         rpy = _rpy_of(rotation)
         parent = str(ancestor.GetDisplayName() or ancestor.GetName())
-        joint_name = f"{name}_weld"
+        joint_name = _unused_name(f"{name}_weld", taken)
         kind = "fixed"
         logger.debug(f"{name} is nested with no joint prim; reading it as welded to {parent}")
         welds.append(
