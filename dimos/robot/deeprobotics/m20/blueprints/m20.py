@@ -427,6 +427,9 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
     )
 
 
+# the M20 Yesense's output frame (yesense_node's data_proc length 0x31)
+YESENSE_FRAME_BYTES = 0x31
+
 _m20_real = autoconnect(
     # the body pose comes from the standing pose or the motor bus (the controller; in its default tap mode it needs
     # rl_deploy with the ecan shim)
@@ -479,6 +482,8 @@ _m20_real = autoconnect(
                 # AOS's vendor kernel hands this UART's bytes only to syscall 0x1cb (what yesense_node calls); read(2)
                 # gets none of them
                 read_syscall=0x1CB,
+                # one frame per read as yesense_node does: the vendor read waits to fill 256 B (5 frames, 25 ms bursts)
+                read_chunk_bytes=YESENSE_FRAME_BYTES,
                 frame_id=constants.IMU_FRAME,
                 imu_xyz=constants.IMU_XYZ_M,
                 mount_rpy_rad=constants.IMU_MOUNT_RPY_RAD,
