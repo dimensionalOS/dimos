@@ -50,6 +50,8 @@ pub struct ControllerStatus {
     /// basic_server's usage mode (0 regular, 1 navigation, 2 assist)
     pub usage_mode: i32,
     pub dock_phase: Option<String>,
+    /// charge_manager's state for it (0 idle, 1 docking, 2 charging, 3 undocking, 5 on the dock without a charge)
+    pub charger_state: Option<i32>,
     pub dock_active: bool,
     pub charging: bool,
 }
@@ -97,6 +99,7 @@ impl ControllerStatus {
                 .then(|| round(obstacle::body_height(&cfg.robot, &tick.command.q, wheel))),
             usage_mode,
             dock_phase: dock.map(|d| format!("{:?}", d.phase)),
+            charger_state: dock.map(crate::basic_server::charger_state_of),
             dock_active: dock.is_some_and(|d| d.active),
             charging: dock.is_some_and(|d| d.charging),
         }
@@ -249,6 +252,7 @@ mod tests {
             commanded_height_incl_wheel_m: Some(0.45),
             usage_mode: 0,
             dock_phase: None,
+            charger_state: None,
             dock_active: false,
             charging: false,
         };

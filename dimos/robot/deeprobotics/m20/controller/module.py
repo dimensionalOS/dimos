@@ -38,6 +38,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 import threading
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
@@ -56,7 +57,23 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.std_msgs.UInt32 import UInt32
-from dimos.robot.deeprobotics.m20.basic_server import USAGE_MODE_NAVIGATION
+from dimos.navigation.spec import cancel_goal
+from dimos.robot.deeprobotics.m20.basic_server import (
+    CHARGE_CHARGING,
+    CHARGE_ENTERING,
+    CHARGE_EXITING,
+    CHARGE_IDLE,
+    CHARGE_ON_DOCK,
+    USAGE_MODE_NAVIGATION,
+)
+from dimos.robot.deeprobotics.m20.connection import (
+    _CHARGE_BUSY_STATES as CHARGE_BUSY_STATES,
+    _CHARGE_COMMAND_GRACE_S as CHARGE_COMMAND_GRACE_S,
+    _CHARGE_LABELS as CHARGE_LABELS,
+    _CHARGE_POLL_S as CHARGE_POLL_S,
+    dock_failure,
+)
+from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.utils.logging_config import setup_logger
 
 # rl_deploy's basic flat gait, the entry gait rl_control is started on (as rl_deploy accepts it)
@@ -85,6 +102,12 @@ _PYTHON_ONLY = frozenset(
         "control_ready_timeout_s",
         "vendor_gait_wait_s",
         "gait_command_attempts",
+        "dock_settle_s",
+        "dock_start_timeout_s",
+        "dock_timeout_s",
+        "undock_timeout_s",
+        "report_max_age_s",
+        "busy_goal_cancel_period_s",
     }
 )
 
@@ -131,6 +154,9 @@ class M20ControllerConfig(NativeModuleConfig):
     charge_manager_toml: str = "/opt/robot/share/charge_manager/config/charge_manager.toml"
     # policy: log the status when the commanded body height moves this far (m); other changes always log
     status_log_height_step_m: float = Field(default=0.05, gt=0.0)
+    # policy: the vendor bridge's cmd_vel clamp (m/s, m/s, rad/s) and command_ready rate
+    cmd_vel_limits: tuple[float, float, float] = (2.0, 1.0, 2.0)
+    command_ready_hz: float = Field(default=10.0, gt=0.0)
     # standup(): M20Connection's timeouts and tries
     stand_timeout_s: float = Field(default=12.0, gt=0.0)
     rl_control_timeout_s: float = Field(default=5.0, gt=0.0)
@@ -139,6 +165,13 @@ class M20ControllerConfig(NativeModuleConfig):
     control_ready_timeout_s: float = Field(default=15.0, gt=0.0)
     vendor_gait_wait_s: float = Field(default=3.0, gt=0.0)
     gait_command_attempts: int = Field(default=2, ge=1)
+    # dock() / undock(): M20Connection's waits
+    dock_settle_s: float = Field(default=1.0, ge=0.0)
+    dock_start_timeout_s: float = Field(default=5.0, gt=0.0)
+    dock_timeout_s: float = Field(default=150.0, gt=0.0)
+    undock_timeout_s: float = Field(default=45.0, gt=0.0)
+    report_max_age_s: float = Field(default=3.0, gt=0.0)
+    busy_goal_cancel_period_s: float = Field(default=1.0, gt=0.0)
 
     def to_config_dict(self) -> dict[str, Any]:
         # the Python RPCs' fields; the native struct rejects unknown fields
@@ -178,12 +211,17 @@ class M20ControllerApi:
     dock_state: Out[String]
     body_height: Out[Float32]
     controller_report: Out[String]
+    # nav goal cancels around docking (M20Connection's)
+    goal: Out[PoseStamped]
 
     @rpc
     def start(self) -> None:
         self._state = ""
         self._dock_state: dict[str, Any] = {}
         self._status: dict[str, Any] = {}
+        self._status_at = 0.0
+        self._charge_job: str | None = None
+        self._last_goal_cancel = 0.0
         self._battery: dict[str, dict[str, Any]] = {}
         self._state_lock = threading.Lock()
         self._status_changed = threading.Condition(self._state_lock)
@@ -192,6 +230,7 @@ class M20ControllerApi:
             Disposable(self._watch("controller_state", self._on_controller_state))
         )
         self.register_disposable(Disposable(self._watch("dock_state", self._on_dock_state)))
+        self.register_disposable(Disposable(self._watch("cmd_vel", self._on_planner_cmd_vel)))
         self.register_disposable(
             Disposable(self._watch("controller_report", self._on_controller_report))
         )
@@ -218,6 +257,7 @@ class M20ControllerApi:
             return
         with self._state_lock:
             self._status = status
+            self._status_at = time.monotonic()
             self._status_changed.notify_all()
 
     def _on_battery(self, name: str, msg: BatteryState) -> None:
@@ -380,11 +420,8 @@ class M20ControllerApi:
 
     def _charge_busy(self) -> bool:
         with self._state_lock:
-            dock = dict(self._dock_state)
-        return bool(dock.get("active") or dock.get("charging")) or dock.get("phase") not in (
-            None,
-            "Idle",
-        )
+            job = self._charge_job
+        return job is not None or self._charger() in CHARGE_BUSY_STATES
 
     def _refuse_while_charging(self, action: str) -> bool:
         if not self._charge_busy():
@@ -420,35 +457,167 @@ class M20ControllerApi:
             return False
         return True
 
-    @rpc
-    def dock(self) -> bool:
-        """Dock and charge: from standing in rl_control with the dock (its two reflector posts) in sight ahead.
+    def _charger(self) -> int | None:
+        """charge_manager's state from the latest controller report; None when older than M20Connection allows."""
+        # no lock: wait predicates call it under the status condition (both are replaced whole)
+        status, at = self._status, self._status_at
+        if not status or time.monotonic() - at > self.config.report_max_age_s:
+            return None
+        state = status.get("charger_state")
+        return state if isinstance(state, int) else None
 
-        The controller runs charge_manager's sequence: NaviCharge to the staging point and the fine point (stopping
-        for obstacles ahead), FinetuneStand, lie down, confirm every pack's charge MOS, retry from the staging point.
-        Returns whether the request was sent; the controller may still refuse it (charge_status()["result"] says
-        why)."""
-        if not self._can_sequence("dock"):
-            return False
+    def _charge_error(self) -> str | None:
         with self._state_lock:
-            state = self._state
+            dock = dict(self._dock_state)
+        return str(dock.get("result")) if dock.get("error") else None
+
+    def _wait_charger(self, ready: Callable[[int | None], bool], timeout_s: float) -> bool:
+        return self._wait_status(lambda _: ready(self._charger()), timeout_s)
+
+    def _cancel_nav_goal(self) -> None:
+        self.goal.publish(cancel_goal(frame_id=WORLD_FRAME))
+
+    def _on_planner_cmd_vel(self, _twist: Twist) -> None:
+        # M20Connection drops velocity while docking or on the dock and cancels the goal (the controller drops it)
+        if not self._charge_busy():
+            return
+        now = time.monotonic()
+        with self._state_lock:
+            cancel = now - self._last_goal_cancel >= self.config.busy_goal_cancel_period_s
+            if cancel:
+                self._last_goal_cancel = now
+        if cancel:
+            logger.warning("M20 dropped velocity while docking or on the dock, cancelling the goal")
+            self._cancel_nav_goal()
+
+    def _dock_refusal(self) -> str | None:
+        status = self._charger()
+        if status is None:
+            return "the robot is not reporting its charge status"
+        with self._state_lock:
+            job, state = self._charge_job, self._status.get("state")
+        if job is not None:
+            return f"a {job} is still running"
+        if status != CHARGE_IDLE:
+            return f"its charge status is {CHARGE_LABELS.get(status, status)}"
         if state != "RlControl":
-            logger.error(
-                f"M20 dock: needs the robot standing in rl_control (controller state {state!r})"
-            )
-            return False
-        self._send("dock_cmd", String("dock"))
-        return True
+            return "the robot is not standing ready to walk"
+        return None
 
     @rpc
-    def undock(self) -> bool:
-        """While charging (or after a failed dock): stand on NaviCharge, back off to where docking started (1.3 m out
-        when no dock this run recorded one), switch back to the gait docking started from. Returns whether the request
-        was sent."""
+    def dock(self) -> None:
+        """M20Connection.dock(): returns once charging, else raises RuntimeError with the reason."""
+        if not self._can_sequence("dock"):
+            raise RuntimeError("Not docking: the controller does not drive the robot.")
+        with self._state_lock:
+            if self._charge_job == "dock":
+                raise RuntimeError("Not docking: a dock is already under way.")
+        refusal = self._dock_refusal()
+        if refusal is not None:
+            raise RuntimeError(f"Not docking: {refusal}.")
+        with self._state_lock:
+            self._charge_job = "dock"
+        self._cancel_nav_goal()
+        try:
+            failure = self._watch_dock()
+        finally:
+            with self._status_changed:
+                if self._charge_job == "dock":
+                    self._charge_job = None
+                self._status_changed.notify_all()
+        logger.info(f"M20 dock: {failure or 'Docked and charging.'}")
+        if failure is not None:
+            raise RuntimeError(failure)
+
+    def _watch_dock(self) -> str | None:
+        # the settle lets an undock cancel the dock before it starts
+        if self._wait_status(lambda _: self._charge_job != "dock", self.config.dock_settle_s):
+            return "Docking cancelled before it started."
+        self._send("dock_cmd", String("dock"))
+        started_at = time.monotonic()
+        entered = False
+        error: str | None = None
+        while True:
+            self._wait_status(lambda _: self._charge_job != "dock", CHARGE_POLL_S)
+            if self._charge_job != "dock":
+                return "Docking cancelled by undock."
+            status = self._charger()
+            error = self._charge_error() or error
+            if status is None:
+                self._send("dock_cmd", String("cancel"))
+                return "Docking failed: the robot stopped reporting its charge status."
+            entered = entered or status != CHARGE_IDLE
+            if status == CHARGE_CHARGING:
+                return None
+            failure = dock_failure(
+                status,
+                entered,
+                time.monotonic() - started_at,
+                start_timeout_s=self.config.dock_start_timeout_s,
+                dock_timeout_s=self.config.dock_timeout_s,
+            )
+            if failure is None:
+                continue
+            if status in (CHARGE_ENTERING, CHARGE_ON_DOCK):
+                self._send("dock_cmd", String("cancel"))
+            detail = "" if error is None else f" ({error})"
+            return f"Docking failed: {failure}{detail}. {self._resume_navigation()}"
+
+    def _resume_navigation(self) -> str:
+        """M20Connection's: navigation mode back once the robot is idle (idle switches it to Basic)."""
+        if not self._wait_charger(lambda s: s == CHARGE_IDLE, self.config.undock_timeout_s):
+            return "The robot did not return to idle, so navigation mode was not restored."
+        with self._state_lock:
+            state = self._status.get("state")
+        if state != "RlControl":
+            return "The robot is not standing. Call standup() before navigating."
+        if not self.standup():
+            return "The robot did not return to navigation mode. Call standup() before navigating."
+        return "The robot is standing ready to navigate."
+
+    @rpc
+    def undock(self) -> None:
+        """M20Connection.undock(): leave the dock, stand ready to navigate; raises RuntimeError on failure."""
         if not self._can_sequence("undock"):
-            return False
-        self._send("dock_cmd", String("undock"))
-        return True
+            raise RuntimeError("Not undocking: the controller does not drive the robot.")
+        charger = self._charger()
+        with self._status_changed:
+            if self._charge_job == "undock":
+                raise RuntimeError("Not undocking: an undock is already under way.")
+            if self._charge_job == "dock":
+                # a dock under way (or still settling) is cancelled by the undock
+                self._charge_job = None
+                self._status_changed.notify_all()
+            elif charger == CHARGE_IDLE:
+                return
+            self._charge_job = "undock"
+        try:
+            if self._charger() != CHARGE_EXITING:
+                self._send("dock_cmd", String("undock"))
+            failure = self._watch_undock()
+            if failure is None and not self.standup():
+                failure = "Off the dock, but the robot did not stand ready to navigate."
+        finally:
+            with self._status_changed:
+                self._charge_job = None
+                self._status_changed.notify_all()
+        logger.info(f"M20 undock: {failure or 'Off the dock and ready to navigate.'}")
+        if failure is not None:
+            raise RuntimeError(failure)
+
+    def _watch_undock(self) -> str | None:
+        started_at = time.monotonic()
+        while True:
+            self._wait_status(lambda _: False, CHARGE_POLL_S)
+            elapsed = time.monotonic() - started_at
+            if elapsed >= CHARGE_COMMAND_GRACE_S:
+                error = self._charge_error()
+                if error is not None:
+                    return f"Undocking failed: {error}."
+                if self._charger() == CHARGE_IDLE:
+                    return None
+            if elapsed >= self.config.undock_timeout_s:
+                return f"Undocking failed: not off the dock after {elapsed:.0f} s."
 
     @rpc
     def cancel_dock(self) -> bool:

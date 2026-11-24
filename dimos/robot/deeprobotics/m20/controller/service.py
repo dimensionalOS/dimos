@@ -44,6 +44,8 @@ logger = setup_logger()
 
 # the service's streams, outside every run's domain
 SERVICE_PREFIX = "dimos/m20_controller/"
+# ports the Python side serves itself (the nav goal cancel)
+PYTHON_PORTS = frozenset({"goal"})
 
 
 def ports() -> tuple[dict[str, type], dict[str, type]]:
@@ -52,6 +54,8 @@ def ports() -> tuple[dict[str, type], dict[str, type]]:
     outputs: dict[str, type] = {}
     for name, hint in get_type_hints(M20Controller).items():
         origin = getattr(hint, "__origin__", None)
+        if name in PYTHON_PORTS:
+            continue
         if origin is In:
             inputs[name] = get_args(hint)[0]
         elif origin is Out:
@@ -84,6 +88,12 @@ class M20ControllerClientConfig(ModuleConfig):
     control_ready_timeout_s: float = Field(default=15.0, gt=0.0)
     vendor_gait_wait_s: float = Field(default=3.0, gt=0.0)
     gait_command_attempts: int = Field(default=2, ge=1)
+    dock_settle_s: float = Field(default=1.0, ge=0.0)
+    dock_start_timeout_s: float = Field(default=5.0, gt=0.0)
+    dock_timeout_s: float = Field(default=150.0, gt=0.0)
+    undock_timeout_s: float = Field(default=45.0, gt=0.0)
+    report_max_age_s: float = Field(default=3.0, gt=0.0)
+    busy_goal_cancel_period_s: float = Field(default=1.0, gt=0.0)
 
 
 class M20ControllerClient(M20ControllerApi, Module):

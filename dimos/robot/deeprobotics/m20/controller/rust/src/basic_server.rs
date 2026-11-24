@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 use crate::commands::CommandSource;
-use crate::dock::docking::{DockingCommands, Phase};
+use crate::dock::docking::{DockingCommands, Phase, Status as DockStatus};
 use crate::state_machine::{Controller, State};
 use crate::types::{Target, UserCommand};
 
@@ -46,16 +46,21 @@ pub trait ChargerState {
     fn charger_state(&self) -> i32;
 }
 
+/// charge_manager's state for our docking's status: 5 (on the dock, no charge) is basic_server.py's CHARGE_ON_DOCK.
+pub fn charger_state_of(status: &DockStatus) -> i32 {
+    match status.phase {
+        Phase::Charging if status.charging => 2,
+        Phase::Charging => 5,
+        Phase::StandUp | Phase::BackOff | Phase::Restore => 3,
+        Phase::Idle => 0,
+        _ if status.active => 1,
+        _ => 0,
+    }
+}
+
 impl<C: CommandSource> ChargerState for DockingCommands<C> {
     fn charger_state(&self) -> i32 {
-        let status = self.docking.status();
-        match status.phase {
-            Phase::Charging => 2,
-            Phase::StandUp | Phase::BackOff | Phase::Restore => 3,
-            Phase::Idle => 0,
-            _ if self.docking.active() => 1,
-            _ => 0,
-        }
+        charger_state_of(self.docking.status())
     }
 }
 

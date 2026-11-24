@@ -106,10 +106,11 @@ S5 walking (any gait, cmd_vel nonzero) · S6 damping / fault · S7 e-stop presse
 The stack's reference is the vendor-mode blueprint (M20Connection + bridge + basic_server). Ranks there:
 1 standup blocking / False, 2 stand after a fault, 3 refuse standup / liedown / terrain while docked, 13 terrain
 confirm: done (pending commit). 4 module stop: lie-down safety net (7a3d455252), service (pending). 12 still-rule:
-done (pending). **Open: 5 stop_movement cancels a dock, 6 undock cancels a dock in progress, 7 / 8 undock and failed
-dock end with M20Connection's _stand(), 9 dock() blocks and raises, 10 goal cancel around docking, 11 undock from on
-the dock not charging, 14 cmd_vel NaN zeroing and the bridge's 0.4 s timeout / clamp, 15 command_ready's inputs,
-18 charge_status() type, 19 move(), 21 odom, 22 motion_state / gait_state topics.**
+done (pending). 7 / 8 undock and failed dock end with M20Connection's _stand(), 9 dock() / undock() block and raise, 10 goal cancel
+around docking (on dock start, and every 1 s while velocity arrives during docking / on the dock), 14 NaN zeroing,
+0.4 s timeout, 2 / 1 / 2 clamp, 15 command_ready at 10 Hz: done (pending commit). **Open: 5, 6, 11 (dock agent:
+docking.rs), 15's /HES_STATUS e-stop input (no e-stop source in our stack yet), 18 charge_status() type, 19 move(),
+21 odom, 22 motion_state / gait_state topics.**
 
 ## Order of fixes
 

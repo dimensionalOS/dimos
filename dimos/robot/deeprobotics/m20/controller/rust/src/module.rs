@@ -99,6 +99,11 @@ pub struct Config {
     /// policy: log the status when the commanded body height moves this far (m); other changes always log
     #[validate(range(exclusive_min = 0.0))]
     status_log_height_step_m: f64,
+    /// policy: |vx|, |vy|, |wz| clamp on cmd_vel (m/s, m/s, rad/s), the vendor bridge's
+    cmd_vel_limits: [f64; 3],
+    /// policy: command_ready's publish rate (Hz), the vendor bridge's
+    #[validate(range(exclusive_min = 0.0))]
+    command_ready_hz: f64,
 }
 
 #[derive(Module)]
@@ -436,8 +441,9 @@ impl M20Controller {
     async fn on_cmd_vel(&mut self, msg: Twist) {
         let v = [msg.linear.x, msg.linear.y, msg.angular.z];
         // the vendor bridge's NaN guard: a non-finite twist is a zero one
+        let limits = self.config.cmd_vel_limits;
         self.current.velocity = Some(if v.iter().all(|x| x.is_finite()) {
-            v
+            std::array::from_fn(|i| v[i].clamp(-limits[i], limits[i]))
         } else {
             [0.0; 3]
         });
@@ -730,6 +736,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     let usage = shared.usage.clone();
     let mut controller = Controller::new(cfg.clone());
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
+    let ready_every = ((cfg.timing.control_hz / config.command_ready_hz).round() as u64).max(1);
     let mut last: Option<Status> = None;
     let mut last_height = f64::NAN;
     let mut charge_enable_seq = 0.0;
@@ -803,7 +810,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
                     None => format!("{:?}", c.state),
                 },
             };
-            if last.as_ref() != Some(&now) || tick.stats.ticks % status_every == 0 {
+            if last.as_ref() != Some(&now) || tick.stats.ticks % ready_every == 0 {
                 status.send_replace(Some(now.clone()));
                 last = Some(now);
             }
@@ -1023,7 +1030,7 @@ mod tests {
             "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
             "controller_config": "", "policy_dir": "",
             "command_timeout_s": command_timeout_s, "gait": 0x3002, "charge_manager_toml": "",
-            "status_log_height_step_m": 0.01,
+            "status_log_height_step_m": 0.01, "cmd_vel_limits": [2.0, 1.0, 2.0], "command_ready_hz": 10.0,
         });
         serde_json::from_value(fields).unwrap()
     }
