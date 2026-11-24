@@ -16,8 +16,8 @@
 
 Plain arrays in degrees and seconds. The first-motion threshold comes from a rest window the
 caller measured (``rest_noise``), widened to the encoder's step when the rest reads one value
-throughout; a step buzzes when its rest moves faster (RMS) than ``BUZZ_MIN_DEG_S`` and three
-times that window's peak speed. The drive has no integrator, so a joint rests short of its
+throughout; a step buzzes when its rest moves faster (RMS) than one step of the velocity reading
+and three times that window's peak speed. The drive has no integrator, so a joint rests short of its
 target by its friction over kp: a step's rest limit is ``rest_limit_deg`` of the joint's
 friction (``sweep_friction_nm``), and it settles once it stays within that limit of where it came to
 rest. A step that moved less than a share of its size is stuck: its overshoot and settle are not
@@ -33,8 +33,6 @@ from dataclasses import dataclass, field
 import math
 
 import numpy as np
-
-BUZZ_MIN_DEG_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -169,7 +167,7 @@ def analyze_step(
     it moved less than ``stuck_fraction`` of the step; it settles once it stays within
     ``rest_limit_deg`` of its rest (at the end of the hold when it never does). It fails when it
     overshoots ``max_overshoot_pct`` (an operator setting) or more of the step, or moves faster at
-    rest (RMS) than ``BUZZ_MIN_DEG_S`` and three times the noise's peak speed. Raises
+    rest (RMS) than one step of the velocity reading and three times the noise's peak speed. Raises
     ``ValueError`` for non-finite samples, a hold no longer than the noise window, or samples
     that stop short.
     """
@@ -192,7 +190,8 @@ def analyze_step(
     overshoot = max(0.0, float(((q - event.target_after_deg) * sign).max()))
     overshoot_pct = 100.0 * overshoot / abs(event.delta_deg)
     buzz = float(np.sqrt(np.mean(np.square(dq[rest]))))
-    buzz_limit = max(BUZZ_MIN_DEG_S, 3.0 * noise.speed_peak_deg_s)
+    # A rest flickering by one step of the velocity reading is the encoder, not a buzz.
+    buzz_limit = max(_quantum(dq), 3.0 * noise.speed_peak_deg_s)
     step = f"{event.delta_deg:+g} deg step"
     failures = []
     if not stuck and overshoot_pct >= max_overshoot_pct:
