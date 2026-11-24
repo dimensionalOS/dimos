@@ -275,3 +275,28 @@ def Material "paint"
     assert looks != root
     assert stage.GetPrimAtPath(looks).GetAttribute("dimos_owner").Get() == "looks"
     assert stage.GetPrimAtPath(root).GetAttribute("dimos_owner").Get() == "root"
+
+
+def test_publishing_a_big_layer_costs_little_more_than_reading_it() -> None:
+    import time
+
+    from dimos.robot.assets.usd_utils.pxr import load_pxr
+
+    pxr = load_pxr()
+    usd = "#usda 1.0\n" + "".join(
+        f'def Xform "x{i}"\n{{\n    double3 xformOp:translate = (1, 2, 3)\n}}\n'
+        for i in range(2000)
+    )
+    publish_usd_assets(usd)
+    start = time.perf_counter()
+    layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
+    layer.ImportFromString(usd)
+    layer.ExportToString()
+    reading = time.perf_counter() - start
+    start = time.perf_counter()
+    publish_usd_assets(usd)
+    publishing = time.perf_counter() - start
+    # Asking each of office 555's 10k prims for six arc lists it does not have once took 16 s.
+    assert publishing < 200 * reading, (
+        f"{publishing:.2f} s to publish a layer read in {reading:.3f} s"
+    )
