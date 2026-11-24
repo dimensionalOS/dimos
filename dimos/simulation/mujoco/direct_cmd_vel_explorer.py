@@ -14,6 +14,7 @@
 
 import math
 import threading
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from dimos.core.transport import PubSubTransport
@@ -24,6 +25,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+_ODOM_TIMEOUT = 5.0
+_WAYPOINT_TIMEOUT = 60.0
 
 
 class DirectCmdVelExplorer:
@@ -62,7 +67,11 @@ class DirectCmdVelExplorer:
 
     def _wait_for_pose(self) -> PoseStamped:
         self._new_pose.clear()
-        self._new_pose.wait(timeout=5.0)
+        if not self._new_pose.wait(timeout=_ODOM_TIMEOUT):
+            raise TimeoutError(
+                f"No fresh /odom received for {_ODOM_TIMEOUT:g} seconds during exploration. "
+                "Check the simulator and odometry transport."
+            )
         assert self._pose is not None, "No odom received"
         return self._pose
 
@@ -80,8 +89,14 @@ class DirectCmdVelExplorer:
 
     def _drive_to(self, target_x: float, target_y: float) -> None:
         """Pursuit controller: steer toward the target while driving forward."""
+        deadline = monotonic() + _WAYPOINT_TIMEOUT
         while True:
             pose = self._wait_for_pose()
+            if monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Failed to reach waypoint ({target_x}, {target_y}) within "
+                    f"{_WAYPOINT_TIMEOUT:g} seconds. Last odom: ({pose.x}, {pose.y})"
+                )
             dx = target_x - pose.x
             dy = target_y - pose.y
             distance = math.hypot(dx, dy)
@@ -100,9 +115,11 @@ class DirectCmdVelExplorer:
                 None,
                 Twist(linear=Vector3(linear, 0, 0), angular=Vector3(0, 0, angular)),
             )
-        self._stop()
 
     def follow_points(self, waypoints: list[tuple[float, float]]) -> None:
-        self._wait_for_pose()
+        """Follow waypoints with bounded odometry and travel waits."""
         for tx, ty in waypoints:
-            self._drive_to(tx, ty)
+            try:
+                self._drive_to(tx, ty)
+            finally:
+                self._stop()
