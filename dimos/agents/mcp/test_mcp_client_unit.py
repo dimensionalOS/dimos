@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty
-from threading import RLock, Thread
+from threading import Event, RLock, Thread
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -28,7 +28,7 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
-from dimos.agents.agent import Agent
+from dimos.agents.agent import Agent, _append_image_to_history
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.testing.mock_model import MockModel
 from dimos.utils.testing.waiting import wait_until
@@ -567,14 +567,6 @@ def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
         mcp_client.infer(HumanMessage("too early"))
 
 
-class _SlowGraph(_AnswersGraph):
-    def stream(
-        self, state: dict[str, list[BaseMessage]], stream_mode: str
-    ) -> Iterator[dict[str, Any]]:
-        time.sleep(0.3)
-        yield from super().stream(state, stream_mode)
-
-
 class _EchoGraph:
     """Answers each message with its own text, after a short pause."""
 
@@ -614,10 +606,27 @@ def test_infer_under_load_gives_every_caller_its_own_answer(
     assert history[1::2] == [f"answer to {question}" for question in history[::2]]
 
 
+class _HeldGraph(_AnswersGraph):
+    """Starts a turn, then holds it until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        self.started.set()
+        self.release.wait(timeout=5)
+        yield from super().stream(state, stream_mode)
+
+
 def test_infer_called_during_a_turn_raises_once_the_agent_stops(
     running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(running_agent, "_state_graph", _SlowGraph())
+    graph = _HeldGraph()
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
     errors: list[BaseException] = []
 
     def ask() -> None:
@@ -627,14 +636,42 @@ def test_infer_called_during_a_turn_raises_once_the_agent_stops(
             errors.append(error)
 
     running_agent.add_message(HumanMessage("a turn from the stream"))
-    wait_until(lambda: len(running_agent._history) == 1, timeout=5, interval=0.01)
+    assert graph.started.wait(timeout=5)
     caller = Thread(target=ask)
     caller.start()
-    time.sleep(0.05)  # the caller is now waiting for the turn in progress
-
-    running_agent.stop()
+    stopper = Thread(target=running_agent.stop)
+    stopper.start()
+    wait_until(running_agent._stop_event.is_set, timeout=5, interval=0.01)
+    graph.release.set()
     caller.join(timeout=5)
+    stopper.join(timeout=5)
 
-    assert not caller.is_alive()
+    assert not caller.is_alive() and not stopper.is_alive()
     assert len(errors) == 1 and "not running" in str(errors[0])
     assert len(running_agent._history) == 2
+
+
+def test_infer_answers_after_the_image_its_tool_returned(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An image comes back as a follow-up message; infer answers once the model has seen it."""
+
+    class _ImageGraph:
+        def stream(
+            self, state: dict[str, list[BaseMessage]], stream_mode: str
+        ) -> Iterator[dict[str, Any]]:
+            last = state["messages"][-1]
+            if TOOL_ORIGIN_KEY in last.additional_kwargs:
+                yield {"model": {"messages": [AIMessage(content="it is red")]}}
+            else:
+                _append_image_to_history(running_agent, "look", "u1", {"type": "image_url"})
+                yield {"model": {"messages": [AIMessage(content="no image yet")]}}
+
+    monkeypatch.setattr(running_agent, "_state_graph", _ImageGraph())
+
+    assert running_agent.infer(HumanMessage("what colour?")).content == "it is red"
+    assert [m.text for m in running_agent._history if isinstance(m, AIMessage)] == [
+        "no image yet",
+        "it is red",
+    ]
+    assert running_agent._message_queue.empty() and running_agent._followups is None
