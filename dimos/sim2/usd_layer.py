@@ -19,13 +19,15 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from dimos.constants import CACHE_DIR
 from dimos.robot.assets.model import UsdModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_CACHE = Path(tempfile.gettempdir()) / "dimos-sim2-usd"
-_ASSETS = Path(tempfile.gettempdir()) / "dimos-usd-assets"
+# Under this user's cache, not the shared temp dir: these files are loaded as scene content.
+_CACHE = CACHE_DIR / "sim2-usd"
+_ASSETS = CACHE_DIR / "usd-assets"
 
 
 def usd_layer(model: UsdModel, transform: Callable[[str], str] | None = None) -> Path:
