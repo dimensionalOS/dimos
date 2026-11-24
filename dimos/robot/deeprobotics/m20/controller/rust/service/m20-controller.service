@@ -1,0 +1,26 @@
+# The M20 controller as a board service on AOS, like the vendor's rl_deploy.service: it owns the motor bus and keeps
+# holding the robot whether or not a dimos run is up (runs reach it as M20ControllerClient, under dimos/m20_controller/).
+# install.sh puts it in /etc/systemd/system; launch.json is the native module's stdin line (service.py writes it).
+[Unit]
+Description=M20 controller (dimos pure-Rust rl_deploy replacement)
+After=network-online.target dimos-host-router.service
+Conflicts=rl_deploy.service
+
+[Service]
+User=user
+SupplementaryGroups=dialout video
+Environment=HOME=/home/user
+ExecStart=/var/opt/robot/data/dimos_host/dimos/robot/deeprobotics/m20/controller/rust/result/bin/m20_controller_module
+StandardInput=file:/var/opt/robot/data/m20_controller/launch.json
+# the motor bus (raw eth1), the 1 kHz loop's SCHED_FIFO and pinning ([realtime] in m20_controller.toml)
+AmbientCapabilities=CAP_NET_RAW CAP_SYS_NICE
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+# a stop lies a standing robot down (safety.shutdown_lie_down_max_s 11 s) and damps 0.5 s before it exits
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

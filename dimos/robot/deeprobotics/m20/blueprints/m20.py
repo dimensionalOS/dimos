@@ -81,6 +81,7 @@ from dimos.robot.deeprobotics.m20.constants import (
 )
 from dimos.robot.deeprobotics.m20.controller.dock_detector import M20DockDetector
 from dimos.robot.deeprobotics.m20.controller.module import M20Controller
+from dimos.robot.deeprobotics.m20.controller.service import M20ControllerClient
 from dimos.robot.deeprobotics.m20.model import (
     M20_MODEL,
     STAND_JOINT_POSITIONS,
@@ -381,11 +382,12 @@ def _python_body_filter(**config: Any) -> Blueprint:
 
 def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
     """Both lidars and where the body is cut out of their scans, for one joint source (standing or controller)."""
+    controller = M20ControllerClient if joints == "service" else M20Controller
     joint_source: Blueprint = (
         M20StandingJointState.blueprint()
         if joints == "standing"
-        else M20Controller.blueprint()
-        .remappings([(M20Controller, "joint_state", "coordinator_joint_state")])
+        else controller.blueprint()
+        .remappings([(controller, "joint_state", "coordinator_joint_state")])
         .hosted(tags=AOS)
     )
     # the lidars' voxel thins the scans on the wire: the rear Airy sees ~5x the front's points at
@@ -434,6 +436,8 @@ _m20_real = autoconnect(
         choices={
             "standing": _lidars_and_body_filter("standing"),
             "controller": _lidars_and_body_filter("controller"),
+            # the m20-controller service on AOS (rust/service), which keeps holding the robot between runs
+            "service": _lidars_and_body_filter("service"),
         },
     ),
     # who takes cmd_vel. off (default): nobody, nothing walks. rl_deploy: the vendor walking controller, through its
@@ -450,11 +454,15 @@ _m20_real = autoconnect(
                 M20Controller.blueprint(
                     mode="owner",
                     policy=True,
-                    # tolerates one late or lost 10 Hz trajectory_follower tick
-                    command_timeout_s=0.3,
+                    # the vendor bridge's cmd_vel timeout (it resends at 10 Hz, so rl_deploy's 0.15 s never fires)
+                    command_timeout_s=0.4,
                 ).hosted(tags=AOS),
                 # dock(): the reflector posts' pose from the front lidar
                 _dock_detector_on_nos(),
+            ),
+            # the controller as a board service (rust/service): a run that stops leaves the robot as it is, as rl_deploy
+            "service": autoconnect(
+                M20ControllerClient.blueprint().hosted(tags=AOS), _dock_detector_on_nos()
             ),
         },
     ),
