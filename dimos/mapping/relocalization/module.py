@@ -46,7 +46,6 @@ from dimos.mapping.relocalization.utils import (
     LiveMap,
     load_locations,
     load_premap,
-    moved,
     resolve_map,
     window,
     yaw_deg,
@@ -101,12 +100,12 @@ class Config(ModuleConfig):
     sparse_cloud_grace_s: float = 10.0
     # Rig preset to align with, see cloud_relocalizer.PRESETS
     relocalize: RelocalizeConfig = MID360
-    # relocalize_once off: the kept live map's voxel edge (m)
+    # relocalize_once off, local_map: the kept live map's voxel edge (m)
     live_voxel_m: float = 0.1
+    # ... local_map: match kept live points within this xy distance (m) of the latest local map; 0 matches them all
+    match_radius_m: float = 30.0
     # ... lidar: a scan's tf must be stamped within this of the scan (s)
     scan_tf_tolerance_s: float = 0.1
-    # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
-    match_radius_m: float = 30.0
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
     global_after_refusals: int = 3
 
@@ -115,7 +114,8 @@ class PremapModule(Module):
     """Loads the premap, keeps its named locations, and places it in the live world frame.
 
     With ``relocalize_once`` off and ``live_cloud="local_map"`` it matches its own map of
-    local_map's live (non-premap) voxels, so the premap never confirms itself. The first fix
+    local_map's live (non-premap) voxels, so the premap never confirms itself, and with
+    ``live_cloud="lidar"`` the preset's window of scans. The first fix
     searches the whole premap and places it in the ray tracer; every later one refines the
     current fix by ICP and only moves ``world -> map``. world_frame must be the frame the
     ray tracer maps in.
@@ -156,8 +156,6 @@ class PremapModule(Module):
         self.live = LiveMap(self.config.live_voxel_m)
         # Fires whenever the kept live map grows, the continuous match's cue
         self._live_changed: Subject[None] = Subject()
-        # Scans placed since the last fold
-        self._scans: list[np.ndarray] = []
         self._center: tuple[float, float] | None = None
         self._refusals = 0
 
@@ -205,15 +203,13 @@ class PremapModule(Module):
                 return window(scans, self.config.relocalize)
             return backpressure(local_maps)
         if self.config.live_cloud == "lidar":
-            # Each scan is placed by the tf at its stamp as it lands; those placed during a fold go in the next one
-            self.register_disposable(
-                backpressure(scans.pipe(ops.filter(self._on_scan))).subscribe(
-                    lambda _: self._keep_scans()
-                )
+            # Each scan is placed by the tf at its stamp as it lands
+            placed = scans.pipe(
+                ops.map(self._place_scan), ops.filter(lambda scan: scan is not None)
             )
-        else:
-            # A local map is the whole window around the robot, so the latest replaces any waiting during a fold
-            self.register_disposable(backpressure(local_maps).subscribe(self._on_local_map))
+            return window(placed, self.config.relocalize)
+        # A local map is the whole window around the robot, so the latest replaces any waiting during a fold
+        self.register_disposable(backpressure(local_maps).subscribe(self._on_local_map))
         return backpressure(self._live_changed).pipe(
             ops.map(
                 lambda _: self.live.cloud(
@@ -222,8 +218,8 @@ class PremapModule(Module):
             )
         )
 
-    def _on_scan(self, scan: PointCloud2) -> bool:
-        """Place *scan* in the live frame for the next fold; False when it has no tf at its stamp."""
+    def _place_scan(self, scan: PointCloud2) -> PointCloud2 | None:
+        """*scan* in the live frame; None when it has no tf at its stamp."""
         to_live = self.tfbuffer.get(
             self._live_frame, scan.frame_id, scan.ts, self.config.scan_tf_tolerance_s
         )
@@ -231,19 +227,8 @@ class PremapModule(Module):
             logger.warning(
                 f"scan skipped: no transform from {scan.frame_id!r} to {self._live_frame!r} at its stamp"
             )
-            return False
-        points = moved(scan.points_f32().reshape(-1, 3), to_live)
-        with self._lock:
-            self._scans.append(points)
-        self._center = (float(to_live.translation.x), float(to_live.translation.y))
-        return True
-
-    def _keep_scans(self) -> None:
-        with self._lock:
-            scans, self._scans = self._scans, []
-        if scans:
-            self.live.add(np.concatenate(scans))
-            self._live_changed.on_next(None)
+            return None
+        return scan.transform(to_live)
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
         to_live = self.frame_to(self._live_frame, cloud.frame_id)

@@ -590,10 +590,8 @@ def test_scans_are_kept_in_map_whatever_world_to_map_does(module):
         dispose=lambda: None,
     )
     scan = PointCloud2.from_numpy(np.asarray([[2, 0, 0]], dtype=np.float32), frame_id="base_link")
-    m._on_scan(scan)
     m.submit(_fix(2.0))
     m.submit(_fix(5.0, 90.0))  # world -> map jumps
-    m._on_scan(scan)
-    m._keep_scans()
-    assert held(m.live) == [(3, 0, 0)]
-    assert m._center == (1.0, 0.0)
+    placed = m._place_scan(scan)
+    assert placed.frame_id == "map"
+    assert placed.points_f32().tolist() == [[3, 0, 0]]

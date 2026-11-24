@@ -43,17 +43,16 @@ m20 = (
         PremapModule.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
-            # at 0.2 m live voxels a right office match scores ~0.5-0.7 and a wrong one ~0.25-0.35
-            relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
-            # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
+            # on 7 raw scans a right office match scores ~0.8 and the best wrong one ~0.6; fewer scans
+            # find wrong places more often, more score right ones under the threshold
+            relocalize=MID360_NAV.model_copy(
+                update={"fitness_threshold": 0.65, "min_frames": 7, "max_frames": 7}
+            ),
+            # body scans placed in map (odometry), so a world -> map jump leaves the recent scans as they were
             live_cloud="lidar",
             relocalize_once=False,
             new_map=True,
-            # a standing robot keeps ~6-7k live voxels at 0.2 m, so the first match waits for 2k, under the 20k default
             min_local_points=2_000,
-            # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
-            live_voxel_m=0.2,
-            match_radius_m=15.0,
         ).remappings([(PremapModule, "lidar", "slam_body_points")]),
     )
     .global_config(
