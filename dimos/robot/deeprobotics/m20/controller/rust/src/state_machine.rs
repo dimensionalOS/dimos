@@ -173,9 +173,8 @@ fn gains(kp: &[f64], kd: &[f64]) -> ([f64; JOINTS], [f64; JOINTS]) {
 
 /// The first non-finite number in a state the faults are judged on, by name.
 fn non_finite_state(s: &RobotState) -> Option<&'static str> {
-    let fields: [(&str, &[f64]); 5] = [
-        ("joint position", &s.q),
-        ("joint velocity", &s.dq),
+    // the joints' NaNs are rl_deploy's counter's (JointWatch)
+    let fields: [(&str, &[f64]); 3] = [
         ("orientation", &s.quat),
         ("gyro", &s.gyro),
         ("stamp", std::slice::from_ref(&s.stamp)),
@@ -190,6 +189,104 @@ fn command_is_finite(c: &JointCommand) -> bool {
     [&c.kp, &c.q, &c.kd, &c.dq, &c.tau]
         .iter()
         .all(|a| a.iter().all(|x| x.is_finite()))
+}
+
+/// rl_deploy's joint-data checks (SafeController::IsJointDataNormal, 0x1773a8, on every 1 ms SafeController tick):
+/// per joint, a run of 31 readings with a NaN in its position, velocity or torque; a run of 51 readings identical to
+/// the one before (a frozen motor; all 16 joints); a run of 31 hip / knee positions more than 0.1 + 0.14 rad past
+/// the range (ControlParameters' front-leg range, mirrored per leg as it builds it; f32 limits, f64 sums). A count
+/// restarts when its condition stops, and the fault with it.
+#[derive(Debug, Clone)]
+pub struct JointWatch {
+    previous: Option<[[f32; 3]; JOINTS]>,
+    nan: [u32; JOINTS],
+    frozen: [u32; JOINTS],
+    out_of_range: [u32; JOINTS],
+    lower: [f32; JOINTS],
+    upper: [f32; JOINTS],
+}
+
+impl JointWatch {
+    pub fn new(robot: &crate::config::Robot) -> JointWatch {
+        let (lo, hi) = (
+            robot.ik_lower.map(|v| v as f32),
+            robot.ik_upper.map(|v| v as f32),
+        );
+        let mut lower = [0.0f32; JOINTS];
+        let mut upper = [0.0f32; JOINTS];
+        // FL as given, FR hipx mirrored, HL hipy / knee mirrored, HR both (the vectors IsJointDataNormal builds)
+        for leg in 0..4 {
+            let (mirror_hipx, mirror_rest) = (leg % 2 == 1, leg >= 2);
+            for j in 0..3 {
+                let mirror = if j == 0 { mirror_hipx } else { mirror_rest };
+                let (l, h) = if mirror {
+                    (-hi[j], -lo[j])
+                } else {
+                    (lo[j], hi[j])
+                };
+                lower[4 * leg + j] = l;
+                upper[4 * leg + j] = h;
+            }
+        }
+        JointWatch {
+            previous: None,
+            nan: [0; JOINTS],
+            frozen: [0; JOINTS],
+            out_of_range: [0; JOINTS],
+            lower,
+            upper,
+        }
+    }
+
+    /// One reading; the fault it raises, if any.
+    pub fn check(&mut self, s: &RobotState, names: &[String]) -> Option<String> {
+        let now: [[f32; 3]; JOINTS] =
+            std::array::from_fn(|i| [s.q[i] as f32, s.dq[i] as f32, s.tau[i] as f32]);
+        let previous = *self.previous.get_or_insert(now);
+        let mut fault = None;
+        for i in 0..JOINTS {
+            let v = now[i];
+            self.nan[i] = if v.iter().any(|x| x.is_nan()) {
+                self.nan[i] + 1
+            } else {
+                0
+            };
+            // f32 ==, as rl_deploy compares (a NaN is never equal)
+            self.frozen[i] = if (0..3).all(|k| v[k] == previous[i][k]) {
+                self.frozen[i] + 1
+            } else {
+                0
+            };
+            if i % 4 != 3 {
+                let q = v[0] as f64;
+                let past =
+                    self.upper[i] as f64 + 0.1 + 0.14 < q || q < self.lower[i] as f64 - 0.1 - 0.14;
+                self.out_of_range[i] = if past { self.out_of_range[i] + 1 } else { 0 };
+            }
+            if fault.is_none() {
+                fault = if self.frozen[i] >= 51 {
+                    Some(format!(
+                        "joint {} frozen for {} readings",
+                        names[i], self.frozen[i]
+                    ))
+                } else if self.nan[i] > 30 {
+                    Some(format!(
+                        "joint {} NaN for {} readings",
+                        names[i], self.nan[i]
+                    ))
+                } else if self.out_of_range[i] > 30 {
+                    Some(format!(
+                        "joint {} at {:.3} rad, beyond its range for {} readings",
+                        names[i], v[0], self.out_of_range[i]
+                    ))
+                } else {
+                    None
+                };
+            }
+        }
+        self.previous = Some(now);
+        fault
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -236,6 +333,7 @@ pub struct Controller {
     blocked_target: Option<Target>,
     last_stamp: Option<f64>,
     stale_run: u64,
+    joint_watch: JointWatch,
     enable_left: u64,
     fault_checks: bool,
     stand_ins_run: std::collections::BTreeSet<u32>,
@@ -264,6 +362,7 @@ pub struct Controller {
 
 impl Controller {
     pub fn new(cfg: Config) -> Controller {
+        let robot = cfg.robot.clone();
         let runner_gains = cfg
             .runners
             .iter()
@@ -283,6 +382,7 @@ impl Controller {
             blocked_target: None,
             last_stamp: None,
             stale_run: 0,
+            joint_watch: JointWatch::new(&robot),
             enable_left: 0,
             fault_checks: true,
             stand_ins_run: Default::default(),
@@ -343,7 +443,9 @@ impl Controller {
     }
 
     /// Recomputed every tick like rl_deploy's SafeController (a fault clears when its cause does).
-    fn check_faults(&self, s: &RobotState) -> Option<String> {
+    fn check_faults(&mut self, s: &RobotState, _cmd: &UserCommand) -> Option<String> {
+        // rl_deploy's joint checks count on every tick, the start-up grace included
+        let joints = self.joint_watch.check(s, &self.cfg.robot.joint_names);
         if !self.fault_checks {
             return None;
         }
@@ -363,18 +465,7 @@ impl Controller {
                 return Some(format!("hardware state stale for {:.3} s", s.stamp - last));
             }
         }
-        let r = &self.cfg.robot;
-        for i in 0..JOINTS {
-            if s.q[i] < r.joint_lower[i] - safety.joint_limit_margin_rad
-                || s.q[i] > r.joint_upper[i] + safety.joint_limit_margin_rad
-            {
-                return Some(format!(
-                    "joint {} at {:.3} rad, beyond its range",
-                    r.joint_names[i], s.q[i]
-                ));
-            }
-        }
-        None
+        joints
     }
 
     /// After a fault the operator's standing request is ignored until they send a different one.
@@ -496,7 +587,7 @@ impl Controller {
         cmd: &UserCommand,
         policy: &mut dyn PolicyService,
     ) -> JointCommand {
-        let fault = self.check_faults(s);
+        let fault = self.check_faults(s, cmd);
         if fault.is_some()
             || self
                 .fault
@@ -944,11 +1035,60 @@ mod tests {
         let mut policy = InlinePolicy::new(RunnerSet::empty());
         c.tick(&s, &UserCommand::default(), &mut policy);
         assert!(c.fault.is_none());
-        s.q[5] = f64::NAN;
+        s.gyro[1] = f64::NAN;
         c.tick(&s, &UserCommand::default(), &mut policy);
         assert!(c.fault.as_deref().is_some_and(|f| f.contains("non-finite")));
         c.tick(&s, &UserCommand::default(), &mut policy);
         assert_eq!(c.state, State::JointDamping);
+    }
+
+    #[test]
+    fn joint_checks_count_like_rl_deploy() {
+        let cfg = config();
+        let names = cfg.robot.joint_names.clone();
+        let base = standing_state(&cfg);
+        let mut w = JointWatch::new(&cfg.robot);
+        let vary = |k: usize| {
+            let mut s = base.clone();
+            s.dq[0] = k as f64 * 1e-3;
+            s.dq[3] = k as f64 * 1e-3;
+            for i in 0..JOINTS {
+                s.tau[i] = (k % 7) as f64 * 0.01 + i as f64;
+                s.dq[i] += (k % 5) as f64 * 1e-4;
+            }
+            s
+        };
+        // hipx FL range [-0.4363, 0.6109]: 0.6109 + 0.24 + 0.001 is past it; 30 readings pass, the 31st faults
+        for k in 0..31 {
+            let mut s = vary(k);
+            s.q[0] = 0.6109 + 0.241;
+            let f = w.check(&s, &names);
+            assert_eq!(f.is_some(), k == 30, "reading {k}: {f:?}");
+        }
+        assert!(
+            w.check(&vary(40), &names).is_none(),
+            "back in range clears it"
+        );
+        // just inside the margin never faults
+        for k in 0..40 {
+            let mut s = vary(k + 100);
+            s.q[0] = 0.6109 + 0.239;
+            assert!(w.check(&s, &names).is_none());
+        }
+        // NaN: the 31st in a row
+        for k in 0..31 {
+            let mut s = vary(k + 200);
+            s.tau[6] = f64::NAN;
+            let f = w.check(&s, &names);
+            assert_eq!(f.is_some(), k == 30, "NaN reading {k}: {f:?}");
+        }
+        // frozen: the 51st identical reading after the first
+        let s = vary(301);
+        assert!(w.check(&s, &names).is_none());
+        for k in 1..=51 {
+            let f = w.check(&s, &names);
+            assert_eq!(f.is_some(), k == 51, "frozen reading {k}: {f:?}");
+        }
     }
 
     #[test]

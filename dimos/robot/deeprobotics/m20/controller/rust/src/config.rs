@@ -88,7 +88,6 @@ pub struct Safety {
     pub startup_grace_s: f64,
     pub state_timeout_s: f64,
     pub command_timeout_s: f64,
-    pub joint_limit_margin_rad: f64,
     /// joint-damping commands sent after a stop request before the process exits
     pub shutdown_damping_ticks: u64,
 }

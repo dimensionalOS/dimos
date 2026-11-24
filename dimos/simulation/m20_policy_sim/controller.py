@@ -140,6 +140,21 @@ class Controller:
         self.rl_entries = 0
         self.stand_in: StandIn | None = None
         self.gait = 0
+        # rl_deploy's joint-data counters (joint_watch)
+        lo, hi = (
+            np.array(self.robot["ik_lower"], np.float32),
+            np.array(self.robot["ik_upper"], np.float32),
+        )
+        lower, upper = np.zeros(16, np.float32), np.zeros(16, np.float32)
+        for leg in range(4):
+            for j in range(3):
+                mirror = leg % 2 == 1 if j == 0 else leg >= 2
+                lower[4 * leg + j], upper[4 * leg + j] = (
+                    (-hi[j], -lo[j]) if mirror else (lo[j], hi[j])
+                )
+        self.watch_lower, self.watch_upper = lower, upper
+        self.watch_prev: np.ndarray | None = None
+        self.watch_nan = self.watch_frozen = self.watch_range = np.zeros(16, np.int64)
         self.entry_raw_gait = 0
         self.policy_tick = 0
         self.enable_left = 0
@@ -153,17 +168,36 @@ class Controller:
             self.runners[name] = r
         return self.runners[name]
 
-    def check_faults(self, s: RobotState) -> str:
+    def joint_watch(self, s: RobotState) -> str:
+        """rl_deploy's IsJointDataNormal (0x1773a8), every tick: per joint a run of 31 NaN readings, of 51 readings
+        identical to the one before (frozen), or of 31 hip / knee positions more than 0.1 + 0.14 rad past the range
+        (ControlParameters' front-leg range, mirrored per leg)."""
+        now = np.stack([s.q, s.dq, s.tau], axis=1).astype(np.float32)
+        prev = self.watch_prev if self.watch_prev is not None else now
+        self.watch_nan = np.where(np.isnan(now).any(axis=1), self.watch_nan + 1, 0)
+        self.watch_frozen = np.where((now == prev).all(axis=1), self.watch_frozen + 1, 0)
+        q = now[:, 0].astype(np.float64)
+        past = (self.watch_upper.astype(np.float64) + 0.1 + 0.14 < q) | (
+            q < self.watch_lower.astype(np.float64) - 0.1 - 0.14
+        )
+        self.watch_range = np.where(past & ~IS_WHEEL, self.watch_range + 1, 0)
+        self.watch_prev = now
+        if (self.watch_frozen >= 51).any():
+            return "joint frozen"
+        if (self.watch_nan > 30).any():
+            return "joint NaN"
+        if (self.watch_range > 30).any():
+            return "joint beyond its range"
+        return ""
+
+    def check_faults(self, s: RobotState, cmd: UserCommand) -> str:
+        joints = self.joint_watch(s)
         safety = self.cfg["safety"]
         if self.time < safety["startup_grace_s"]:
             return ""
         if self.last_stamp is not None and s.stamp - self.last_stamp > safety["state_timeout_s"]:
             return "stale state"
-        lo, hi = np.array(self.robot["joint_lower"]), np.array(self.robot["joint_upper"])
-        margin = safety["joint_limit_margin_rad"]
-        if np.any(s.q < lo - margin) or np.any(s.q > hi + margin):
-            return "joint beyond its range"
-        return ""
+        return joints
 
     def effective_target(self, cmd: UserCommand) -> str:
         """After a fault the operator's standing request is ignored until they send a different one."""
@@ -229,7 +263,7 @@ class Controller:
                 self.stand_in = StandIn(spec, spec["first_s"] if first else spec["later_s"])
 
     def tick(self, s: RobotState, cmd: UserCommand) -> JointCommand:
-        self.fault = self.check_faults(s)
+        self.fault = self.check_faults(s, cmd)
         self.last_stamp = s.stamp
         target = self.effective_target(cmd)
         nxt = self.next_state(target)

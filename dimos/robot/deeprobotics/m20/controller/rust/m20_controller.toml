@@ -79,8 +79,6 @@ state_timeout_s = 0.02
 # no operator command for this long -> velocity axes zeroed (the state is kept): rl_deploy's MonitorSteer checks
 # IsUpdate(150 ms) every 10 ms, so its zeroing lands 150-160 ms after the last sample (recordings: from 155 ms)
 command_timeout_s = 0.155
-# a joint this far beyond its range -> fault
-joint_limit_margin_rad = 0.1
 # joint-damping ticks sent on shutdown before the controller exits
 shutdown_damping_ticks = 500
 
