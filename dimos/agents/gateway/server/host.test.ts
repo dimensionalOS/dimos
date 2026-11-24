@@ -14,13 +14,15 @@ import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contr
 import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import { createHost, webSocketLink } from "@earendil-works/chord";
 import { createServer } from "node:net";
+import { createInterface } from "node:readline";
+import { json } from "node:stream/consumers";
 import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { dirname, join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { gatewayState, stopGateway } from "#dimos/agents/cli/process.ts";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { parseJobName } from "#dimos/agents/harness/jobs/registry.ts";
 import { parseTimeZone } from "#dimos/agents/harness/jobs/cron.ts";
 import { randomUUID } from "node:crypto";
@@ -160,6 +162,69 @@ async function startGateway(
     }
   }
 }
+
+test("sdk CLI replies with JSON and watches entries committed before it attaches", { timeout: 30_000 }, async (t) => {
+  const { root, paths, remove } = await scratch();
+  const scripted = scriptedModel();
+  const faux = scripted.models.getProvider("faux");
+  assert(faux);
+  const gate = new EventEmitter();
+  const secondTurn = once(gate, "started", { signal: t.signal });
+  const finish = once(gate, "finish");
+  t.after(() => {
+    gate.emit("finish");
+  });
+  scripted.script([
+    fauxAssistantMessage("First answer"),
+    async () => {
+      gate.emit("started");
+      await finish;
+      return fauxAssistantMessage("Second answer");
+    },
+  ]);
+  await startGateway(t, root, paths, faux, scripted.model);
+  t.after(remove);
+
+  const sdk = (...args: string[]) =>
+    spawn(process.execPath, [join(PACKAGE, "cli/main.ts"), "sdk", ...args], {
+      env: { ...process.env, XDG_RUNTIME_DIR: dirname(paths.socket) },
+      stdio: ["pipe", "pipe", "inherit"],
+      signal: t.signal,
+    });
+  const call = (body: object, ...args: string[]) => {
+    const child = sdk(...args);
+    child.stdin.end(JSON.stringify(body));
+    return json(child.stdout);
+  };
+  assert.deepEqual(await call({}, "createConversation"), {
+    refusal: "invalid",
+    error: "createConversation: invalid arguments",
+  });
+  const created = (await call({ request: newActionRequest(), cwd: root }, "createConversation")) as {
+    value: { conversation: number };
+  };
+  const id = String(created.value.conversation);
+  for (const text of ["first", "second"])
+    await call({ text, request: newUserRequest(), images: [], whenBusy: "followUp" }, "send", id);
+  await secondTurn;
+  const snapshot = (await call({}, "conversation", id)) as { value: { transcript: { items: unknown[] } } };
+  assert(snapshot.value.transcript.items.length > 1);
+
+  const watcher = sdk("watch");
+  const closed = once(watcher, "close");
+  try {
+    for await (const line of createInterface({ input: watcher.stdout })) {
+      const event = JSON.parse(line);
+      if (event.type !== "agent/chat" || !event.entries) continue;
+      assert.deepEqual(event.entries, snapshot.value.transcript.items);
+      return;
+    }
+    assert.fail("watch exited before emitting the conversation entries");
+  } finally {
+    watcher.stdin.end();
+    await closed;
+  }
+});
 
 test("file and stream references reach the model as ordinary text", { timeout: 120_000 }, async (t) => {
   const { root, paths, remove } = await scratch();
