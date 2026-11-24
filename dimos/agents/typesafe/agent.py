@@ -22,6 +22,7 @@ trigger update, or on the latest snapshot at `max_hz` when set.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import itertools
 import json
 import os
 from pathlib import Path
@@ -80,7 +81,7 @@ class TypeSafeAgent(BaseAgent[SystemOneRequest, Answers]):
         super().__init__(**kwargs)
         self._session = requests.Session()
         self._busy = threading.Lock()
-        self._seq = 0
+        self._seq = itertools.count(1)
 
     def trigger(self) -> Observable[object]:
         """The input stream whose updates drive inference."""
@@ -158,8 +159,8 @@ class TypeSafeAgent(BaseAgent[SystemOneRequest, Answers]):
     def _trace(self, state: object, qs: Mapping[str, Question], answers: Answers) -> None:
         d = Path(os.environ.get("DIMOS_RUN_LOG_DIR", LOG_DIR)) / "typesafe"
         d.mkdir(parents=True, exist_ok=True)
-        self._seq += 1
-        (d / f"{self._seq}-request.json").write_text(
+        seq = next(self._seq)  # taken once: infer() can run from RPC and the trigger at once
+        (d / f"{seq}-request.json").write_text(
             json.dumps({"body": {"state": state, "questions": qs}})
         )
-        (d / f"{self._seq}-response.json").write_text(json.dumps({"body": {"answers": answers}}))
+        (d / f"{seq}-response.json").write_text(json.dumps({"body": {"answers": answers}}))
