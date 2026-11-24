@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
-from concurrent.futures import Future
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -113,7 +112,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
-    _answers: dict[int, Future[Any]]
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
@@ -132,8 +130,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             daemon=True,
         )
         self._stop_event = Event()
-        # One per infer() call in flight, by id() of its input.
-        self._answers = {}
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
@@ -319,10 +315,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        while self._answers:
-            self._answers.popitem()[1].set_exception(
-                RuntimeError("Agent stopped before it answered")
-            )
         self._http_client.close()
         super().stop()
 
@@ -346,14 +338,13 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
 
     @rpc
     def infer(self, x: HumanMessage) -> AIMessage:
-        """Send x like a message on human_input and return the answer once the queue is empty."""
-        if not self._thread.is_alive():
-            raise RuntimeError("Agent is not running; it starts with the blueprint")
-        x = x.model_copy()  # its own object: the same message can be sent twice at once
-        self._answers[id(x)] = Future()
-        self._message_queue.put(x)
-        answer: AIMessage = self._answers[id(x)].result()
-        if TURN_FAILED_KEY in answer.additional_kwargs:
+        """Run one turn on x, under the lock the message loop takes, and return its answer."""
+        with self._lock:
+            if self._state_graph is None or self._stop_event.is_set():
+                raise RuntimeError("Agent is not running; it starts with the blueprint")
+            self._process_message(self._state_graph, x)
+            answer = self._history[-1]
+        if not isinstance(answer, AIMessage) or TURN_FAILED_KEY in answer.additional_kwargs:
             raise RuntimeError(str(answer.text))
         return answer
 
@@ -466,8 +457,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
                 )
             )
 
-        if id(message) in self._answers:
-            self._answers.pop(id(message)).set_result(self._history[-1])
         if self._message_queue.empty():
             self.agent_idle.publish(True)
 

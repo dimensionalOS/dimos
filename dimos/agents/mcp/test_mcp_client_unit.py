@@ -607,12 +607,14 @@ def test_infer_under_load_gives_every_caller_its_own_answer(
         caller.join(timeout=30)
 
     assert answers == {question: f"answer to {question}" for question in questions}
-    wait_until(lambda: len(running_agent._history) == 100, timeout=5, interval=0.01)
     assert not any(caller.is_alive() for caller in callers)
-    assert running_agent._answers == {}
+    wait_until(lambda: len(running_agent._history) == 100, timeout=5, interval=0.01)
+    # Turns never interleave: every question is followed by its own answer.
+    history = [str(message.content) for message in running_agent._history]
+    assert history[1::2] == [f"answer to {question}" for question in history[::2]]
 
 
-def test_stop_releases_an_infer_call_the_worker_never_took(
+def test_infer_called_during_a_turn_raises_once_the_agent_stops(
     running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(running_agent, "_state_graph", _SlowGraph())
@@ -628,10 +630,11 @@ def test_stop_releases_an_infer_call_the_worker_never_took(
     wait_until(lambda: len(running_agent._history) == 1, timeout=5, interval=0.01)
     caller = Thread(target=ask)
     caller.start()
-    wait_until(lambda: len(running_agent._answers) == 1, timeout=5, interval=0.01)
+    time.sleep(0.05)  # the caller is now waiting for the turn in progress
 
     running_agent.stop()
     caller.join(timeout=5)
 
     assert not caller.is_alive()
-    assert [str(error) for error in errors] == ["Agent stopped before it answered"]
+    assert len(errors) == 1 and "not running" in str(errors[0])
+    assert len(running_agent._history) == 2
