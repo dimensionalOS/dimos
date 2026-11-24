@@ -71,6 +71,11 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+# A provider on another Host: its class (or just its rpc names) and its rpc name.
+RemoteModuleRef = tuple[type[ModuleBase] | frozenset[str], str]
+# Per (consumer, ref): one provider, or a ``list[Spec]`` ref's remote providers by list index.
+RemoteModuleRefs = Mapping[tuple[str, str], RemoteModuleRef | Mapping[int, RemoteModuleRef]]
+
 
 class ModuleDescriptor(NamedTuple):
     """Returned by `Coordinator/list_modules` so a remote client can build a proxy."""
@@ -110,6 +115,7 @@ class ModuleCoordinator(Resource):
         self._instance_classes: dict[str, type[ModuleBase]] = {}
         self._deployed_atoms: dict[str, BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[str, str], str] = {}
+        self._resolved_module_ref_lists: dict[tuple[str, str], tuple[str, ...]] = {}
         self._transport_registry: dict[tuple[str, type], Transport[Any]] = {}
         self._transport_observers: list[Callable[[str, type, Transport[Any]], None]] = []
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
@@ -464,8 +470,7 @@ class ModuleCoordinator(Resource):
         *,
         reserve_rpc_name: str | None = None,
         module_rpc_namespace: str | None = None,
-        remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]]
-        | None = None,
+        remote_module_refs: RemoteModuleRefs | None = None,
     ) -> ModuleCoordinator:
         """Resolve an unresolved composition, then build its concrete blueprint.
 
@@ -538,21 +543,51 @@ class ModuleCoordinator(Resource):
         return coordinator
 
     def _create_remote_module_ref_clients(
-        self,
-        targets: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]],
-    ) -> dict[tuple[str, str], RPCClient]:
+        self, targets: RemoteModuleRefs
+    ) -> dict[tuple[str, str], RPCClient | dict[int, RPCClient]]:
         """A client per target: the provider's class, or just its rpc names to keep it unimported."""
+        return {
+            key: (
+                {index: self._remote_module_ref_client(ref) for index, ref in target.items()}
+                if isinstance(target, Mapping)
+                else self._remote_module_ref_client(target)
+            )
+            for key, target in targets.items()
+        }
+
+    def _remote_module_ref_client(self, target: RemoteModuleRef) -> RPCClient:
         from dimos.core.rpc_client import RPCClient
 
-        clients: dict[tuple[str, str], RPCClient] = {}
-        for key, (provider, rpc_name) in targets.items():
-            if isinstance(provider, type):
-                client = RPCClient.remote(provider, remote_name=rpc_name)
-            else:
-                client = RPCClient(None, None, rpc_name, provider)
-            self._remote_module_ref_clients.append(client)
-            clients[key] = client
-        return clients
+        provider, rpc_name = target
+        if isinstance(provider, type):
+            client = RPCClient.remote(provider, remote_name=rpc_name)
+        else:
+            client = RPCClient(None, None, rpc_name, provider)
+        self._remote_module_ref_clients.append(client)
+        return client
+
+    def _set_module_ref_list(
+        self, consumer_key: str, ref_name: str, targets: tuple[str, ...]
+    ) -> None:
+        """Inject a ``list[Spec]`` ref: each target is a deployed instance name or a remote rpc name."""
+        from dimos.core.rpc_client import AsyncSpecProxy
+
+        remote = {client.remote_name: client for client in self._remote_module_ref_clients}
+        instances: list[Any] = [
+            self._deployed_modules[target] if target in self._deployed_modules else remote[target]
+            for target in targets
+        ]
+        (spec,) = [
+            reference.spec
+            for reference in self._deployed_atoms[consumer_key].module_refs
+            if reference.name == ref_name
+        ]
+        if async_methods := _async_methods_of_spec(spec):
+            instances = [AsyncSpecProxy(instance, async_methods) for instance in instances]
+        consumer = self._deployed_modules[consumer_key]
+        setattr(consumer, ref_name, instances)
+        consumer.set_module_ref(ref_name, cast("Any", instances))  # type: ignore[attr-defined]
+        self._resolved_module_ref_lists[consumer_key, ref_name] = targets
 
     def load_blueprint(
         self,
@@ -701,6 +736,11 @@ class ModuleCoordinator(Resource):
             for key, target in self._resolved_module_refs.items()
             if key[0] != name and target != name
         }
+        self._resolved_module_ref_lists = {
+            key: tuple(target for target in targets if target != name)
+            for key, targets in self._resolved_module_ref_lists.items()
+            if key[0] != name
+        }
 
     def restart_module_by_class_name(
         self,
@@ -766,6 +806,12 @@ class ModuleCoordinator(Resource):
             for (consumer, ref_name), target in self._resolved_module_refs.items()
             if consumer == name
         ]
+        # The restarted module's own lists and every list it is in, rebuilt once it is back.
+        ref_lists = {
+            key: targets
+            for key, targets in self._resolved_module_ref_lists.items()
+            if key[0] == name or name in targets
+        }
 
         self._unload_module(name)
 
@@ -818,6 +864,10 @@ class ModuleCoordinator(Resource):
             setattr(new_proxy, ref_name, target_proxy)
             new_proxy.set_module_ref(ref_name, target_proxy)  # type: ignore[attr-defined]
             self._resolved_module_refs[name, ref_name] = target_key
+
+        for (consumer_key, ref_name), targets in ref_lists.items():
+            if consumer_key in self._deployed_modules:
+                self._set_module_ref_list(consumer_key, ref_name, targets)
 
         new_proxy.build()
         new_proxy.start()
@@ -1174,25 +1224,48 @@ def resolve_module_refs(blueprint: Blueprint) -> dict[tuple[str, str], str]:
         for reference in consumer.module_refs:
             if reference.many:
                 continue
-            replacement = blueprint.remapping_map.get((consumer.name, reference.name))
-            spec = (
-                replacement
-                if is_module_type(replacement) or is_spec(replacement)
-                else reference.spec
-            )
+            spec = _remapped_spec(blueprint, consumer.name, reference)
             provider = _resolve_single_ref(consumer, reference, spec, blueprint, disabled)
             if isinstance(provider, str):
                 resolved[consumer.name, reference.name] = provider
     return resolved
 
 
+def resolve_module_ref_lists(blueprint: Blueprint) -> dict[tuple[str, str], tuple[str, ...]]:
+    """Each (consumer, ``list[Spec]`` ref) of ``blueprint``'s active atoms, with its providers in order."""
+    disabled = set(blueprint.disabled_modules_tuple)
+    return {
+        (consumer.name, reference.name): tuple(
+            _resolve_many_ref(
+                consumer,
+                reference,
+                _remapped_spec(blueprint, consumer.name, reference),
+                blueprint,
+                disabled,
+            )
+        )
+        for consumer in blueprint.active_blueprints
+        for reference in consumer.module_refs
+        if reference.many
+    }
+
+
+def _remapped_spec(blueprint: Blueprint, consumer_name: str, reference: Any) -> Any:
+    replacement = blueprint.remapping_map.get((consumer_name, reference.name))
+    return replacement if is_module_type(replacement) or is_spec(replacement) else reference.spec
+
+
 def _resolve_many_ref(
-    bp: Any, module_ref: Any, blueprint: Blueprint, disabled_set: set[type]
+    bp: Any,
+    module_ref: Any,
+    spec: Any,
+    blueprint: Blueprint,
+    disabled_set: set[type],
+    existing_atoms: tuple[BlueprintAtom, ...] = (),
 ) -> list[str]:
-    """Every other active atom meeting a ``list[Spec]`` ref, by instance name, in blueprint order."""
-    spec = module_ref.spec
+    """Every other atom meeting a ``list[Spec]`` ref, by instance name: the blueprint's in order, then ``existing_atoms``."""
     providers = []
-    for other in blueprint.active_blueprints:
+    for other in (*blueprint.active_blueprints, *existing_atoms):
         if other == bp or other.module in disabled_set:
             continue
         meets = (
@@ -1363,7 +1436,10 @@ def _connect_module_refs(
     module_coordinator: ModuleCoordinator,
     existing_atoms: tuple[BlueprintAtom, ...] = (),
     existing_modules: set[type[ModuleBase]] | None = None,
-    remote_module_refs: Mapping[tuple[str, str], ModuleProxyProtocol] | None = None,
+    remote_module_refs: Mapping[
+        tuple[str, str], ModuleProxyProtocol | Mapping[int, ModuleProxyProtocol]
+    ]
+    | None = None,
 ) -> None:
     from dimos.core.coordination.blueprints import DisabledModuleProxy
     from dimos.core.module import is_module_type
@@ -1383,14 +1459,20 @@ def _connect_module_refs(
     disabled_ref_proxies: dict[tuple[str, str], DisabledModuleProxy] = {}
     disabled_set = set(blueprint.disabled_modules_tuple)
 
-    many_refs: dict[tuple[str, str], list[str]] = {}
+    many_refs: dict[tuple[str, str], list[Any]] = {}
 
     for bp in blueprint.active_blueprints:
         for module_ref in bp.module_refs:
             ref_key = (bp.name, module_ref.name)
             declared_spec[ref_key] = module_ref.spec
             if module_ref.many:
-                many_refs[ref_key] = _resolve_many_ref(bp, module_ref, blueprint, disabled_set)
+                spec = mod_and_mod_ref_to_proxy.pop(ref_key, module_ref.spec)
+                local = _resolve_many_ref(
+                    bp, module_ref, spec, blueprint, disabled_set, existing_atoms
+                )
+                many_refs[ref_key] = _interleave(
+                    local, cast("Mapping[int, Any]", external_refs.pop(ref_key, {}))
+                )
                 continue
             if ref_key in external_refs:
                 mod_and_mod_ref_to_proxy[ref_key] = external_refs.pop(ref_key)
@@ -1440,18 +1522,27 @@ def _connect_module_refs(
                 module_coordinator._resolved_module_refs[base_key, ref_name] = target_keys[0]
 
     for (base_key, ref_name), targets in many_refs.items():
-        base_instance = module_coordinator.get_instance(base_key)
-        async_methods = _async_methods_of_spec(declared_spec[base_key, ref_name])
-        instances: list[Any] = [module_coordinator.get_instance(target) for target in targets]
-        if async_methods:
-            instances = [AsyncSpecProxy(instance, async_methods) for instance in instances]
-        setattr(base_instance, ref_name, instances)
-        base_instance.set_module_ref(ref_name, cast("Any", instances))
+        module_coordinator._set_module_ref_list(
+            base_key,
+            ref_name,
+            tuple(target if isinstance(target, str) else target.remote_name for target in targets),
+        )
 
     for (base_key, ref_name), proxy in disabled_ref_proxies.items():
         base_instance = module_coordinator.get_instance(base_key)
         setattr(base_instance, ref_name, proxy)
         base_instance.set_module_ref(ref_name, cast("Any", proxy))
+
+
+def _interleave(local: list[str], remote: Mapping[int, Any]) -> list[Any]:
+    """A list ref's providers: each remote one at its blueprint index, the local ones in order around them."""
+    if any(index >= len(local) + len(remote) for index in remote):
+        raise ValueError(f"Remote list reference indices {sorted(remote)} exceed its providers")
+    pending = iter(local)
+    return [
+        remote[index] if index in remote else next(pending)
+        for index in range(len(local) + len(remote))
+    ]
 
 
 def _async_methods_of_spec(spec: Any) -> frozenset[str]:

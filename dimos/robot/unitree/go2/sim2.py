@@ -27,12 +27,11 @@ from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -43,17 +42,21 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
-from dimos.simulation.go2_legged.policy import Proprioception, load_policy
+from dimos.simulation.go2_legged.policy import Go2Policy, Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import (
     COMMAND_SLEW,
     CONTROL_DT,
     projected_gravity,
     yaw_of,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
     {
@@ -67,6 +70,29 @@ GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with
         "camera": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
     }
 )
+
+
+def with_policy_drives(usd: UsdModel, policy: Go2Policy) -> UsdModel:
+    """The USD with the policy's gains and default pose on its joint drives, which the world holds it at."""
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd.usd, "a robot", usd.source_path.parent if usd.source_path else None)
+    stage = pxr.Usd.Stage.Open(layer)
+    drives = {
+        name: (float(kp), float(kd), float(q))
+        for name, kp, kd, q in zip(
+            policy.joint_names, policy.kp, policy.kd, policy.default_pose, strict=True
+        )
+    }
+    for prim in stage.Traverse():
+        if prim.IsA(pxr.UsdPhysics.RevoluteJoint) and frame_name(prim) in drives:
+            kp, kd, target = drives.pop(frame_name(prim))
+            drive = pxr.UsdPhysics.DriveAPI.Apply(prim, "angular")
+            drive.CreateStiffnessAttr().Set(kp)
+            drive.CreateDampingAttr().Set(kd)
+            drive.CreateTargetPositionAttr().Set(target)
+    if drives:
+        raise ValueError(f"the policy drives joints the USD does not have: {sorted(drives)}")
+    return UsdModel.from_layer(str(layer.ExportToString()), usd.source_path)
 
 
 class Go2SimConfig(HardwareModuleConfig):
@@ -93,15 +119,17 @@ class Go2Sim(HardwareModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._policy = load_policy(self.config.policy)
+        if self.config.usd is not None:
+            self.config.usd = with_policy_drives(self.config.usd, self._policy)
         self._desired = np.zeros(3)
         self._desired_expires = 0.0
         self._command = np.zeros(3)
         self._heading: float | None = None
-        self._start_pose: np.ndarray | None = None
+        self._odometry: MountOdometry | None = None
 
     @property
     def mounted_frame(self) -> str:
-        return self.frame.odom
+        return str(self.frame.odom)
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
@@ -116,7 +144,11 @@ class Go2Sim(HardwareModule):
         acting.cancel()
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
-        self._desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
+        desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
+        if not np.isfinite(desired).all():
+            logger.warning(f"go2 sim: ignoring a non-finite cmd_vel (vx, vy, vyaw) = {desired}")
+            return
+        self._desired = desired
         self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
 
     async def _run(self) -> None:
@@ -164,14 +196,13 @@ class Go2Sim(HardwareModule):
         )
         self._publish_pose(base.pose, stamp, {name: float(row[0]) for name, row in joints.items()})
 
-    def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
-        here = Transform(
-            translation=Vector3(*pose[:3]), rotation=Quaternion(*pose[3:7])
-        ).to_matrix()
-        if self._start_pose is None:
-            self._start_pose = here
-        relative = Transform.from_matrix(np.linalg.inv(self._start_pose) @ here)
-        odom = PoseStamped(
+    def _odom(self, pose: np.ndarray, stamp: float) -> PoseStamped:
+        if self._odometry is None:
+            usd = self.config.usd
+            assert usd is not None
+            self._odometry = MountOdometry.of(usd, usd.root_link)
+        relative = self._odometry(pose)
+        return PoseStamped(
             ts=stamp,
             frame_id=self.frame.odom,
             position=[relative.translation.x, relative.translation.y, relative.translation.z],
@@ -182,6 +213,9 @@ class Go2Sim(HardwareModule):
                 relative.rotation.w,
             ],
         )
+
+    def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
+        odom = self._odom(pose, stamp)
         self.odom.publish(odom)
         self.tfbuffer.publish(
             Transform.from_pose(self.frame.body, odom), *self.usd_transforms(positions, ts=stamp)

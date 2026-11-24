@@ -38,7 +38,8 @@ def _get_blueprint_or_skip(blueprint_name: str) -> Blueprint:
 def _config_kwarg_names(module: type[ModuleBase]) -> set[str]:
     config_type = get_type_hints(module).get("config")
     if isinstance(config_type, type) and issubclass(config_type, BaseModel):
-        return set(config_type.model_fields)
+        fields = config_type.model_fields
+        return set(fields) | {field.alias for field in fields.values() if field.alias}
     return set()
 
 

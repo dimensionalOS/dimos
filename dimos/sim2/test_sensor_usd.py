@@ -64,7 +64,9 @@ def test_a_camera_usd_says_what_it_can_see_from_its_frame() -> None:
     from dimos.sim2.sensor_usd import camera_usd
 
     layer = Sdf.Layer.CreateAnonymous(".usda")
-    assert layer.ImportFromString(camera_usd("camera_link", name="camera", fovy=90.0).usd)
+    assert layer.ImportFromString(
+        camera_usd("camera_link", name="camera", fovy=90.0, aspect=1.0).usd
+    )
     stage = Usd.Stage.Open(layer)
     optics = [prim for prim in stage.Traverse() if prim.IsA(UsdGeom.Camera)]
     assert len(optics) == 1, "one camera, under the frame it looks from"
@@ -74,3 +76,23 @@ def test_a_camera_usd_says_what_it_can_see_from_its_frame() -> None:
     assert math.degrees(2 * math.atan(aperture / 2 / focal)) == pytest.approx(90.0)
     forward = lens.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).TransformDir((0, 0, -1))
     assert tuple(round(axis, 6) for axis in forward) == (0.0, 0.0, 1.0)
+
+
+def test_a_camera_usd_is_as_wide_as_the_images_its_camera_renders() -> None:
+    from pxr import Sdf, Usd, UsdGeom
+
+    camera = _sensor("camera")
+    try:
+        usd, config = camera.get_usd(), camera.config
+    finally:
+        camera.stop()
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    stage = Usd.Stage.Open(layer)
+    lens = UsdGeom.Camera(next(p for p in stage.Traverse() if p.IsA(UsdGeom.Camera)))
+    focal = lens.GetFocalLengthAttr().Get()
+    rendered = 2 * math.atan(math.tan(math.radians(config.fovy) / 2) * config.width / config.height)
+    assert config.width != config.height
+    assert 2 * math.atan(lens.GetHorizontalApertureAttr().Get() / 2 / focal) == pytest.approx(
+        rendered
+    )
