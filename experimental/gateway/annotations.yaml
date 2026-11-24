@@ -309,10 +309,6 @@ robots:
           title: Go2 holonomic controller
           description: A standalone holonomic full-pose controller for a Go2, with keyboard driving.
           recommended_config: *robot_ip_only
-        unitree-go2-keyboard-teleop:
-          title: Go2 keyboard driving (DDS)
-          description: Drive a Go2 with the keyboard through the ControlCoordinator over DDS (SDK2).
-          recommended_config: *robot_ip_only
         unitree-go2-markers:
           title: Go2 with marker detection
           description: Map and navigation plus fiducial marker detection mirrored into TF.
