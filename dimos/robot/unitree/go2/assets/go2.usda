@@ -115,9 +115,8 @@ def Xform "go2" (
 
     def Scope "Geometry"
     {
-        def Xform "base" (
+        def Xform "base_link" (
             apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
-            displayName = "base_link"
         )
         {
             uniform bool newton:jointsAddMobility = 1
@@ -739,8 +738,8 @@ def Xform "go2" (
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
                             uniform token physics:axis = "Y"
-                            rel physics:body0 = </go2/Geometry/base/FL_hip/FL_thigh>
-                            rel physics:body1 = </go2/Geometry/base/FL_hip/FL_thigh/FL_calf>
+                            rel physics:body0 = </go2/Geometry/base_link/FL_hip/FL_thigh>
+                            rel physics:body1 = </go2/Geometry/base_link/FL_hip/FL_thigh/FL_calf>
                             point3f physics:localPos0 = (0, 0, -0.213)
                             point3f physics:localPos1 = (0, 0, 0)
                             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -761,8 +760,8 @@ def Xform "go2" (
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
                         uniform token physics:axis = "Y"
-                        rel physics:body0 = </go2/Geometry/base/FL_hip>
-                        rel physics:body1 = </go2/Geometry/base/FL_hip/FL_thigh>
+                        rel physics:body0 = </go2/Geometry/base_link/FL_hip>
+                        rel physics:body1 = </go2/Geometry/base_link/FL_hip/FL_thigh>
                         point3f physics:localPos0 = (0, 0.0955, 0)
                         point3f physics:localPos1 = (0, 0, 0)
                         quatf physics:localRot0 = (1, 0, 0, 0)
@@ -783,8 +782,8 @@ def Xform "go2" (
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
                     uniform token physics:axis = "X"
-                    rel physics:body0 = </go2/Geometry/base>
-                    rel physics:body1 = </go2/Geometry/base/FL_hip>
+                    rel physics:body0 = </go2/Geometry/base_link>
+                    rel physics:body1 = </go2/Geometry/base_link/FL_hip>
                     point3f physics:localPos0 = (0.1934, 0.0465, 0)
                     point3f physics:localPos1 = (0, 0, 0)
                     quatf physics:localRot0 = (1, 0, 0, 0)
@@ -1171,8 +1170,8 @@ def Xform "go2" (
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
                             uniform token physics:axis = "Y"
-                            rel physics:body0 = </go2/Geometry/base/FR_hip/FR_thigh>
-                            rel physics:body1 = </go2/Geometry/base/FR_hip/FR_thigh/FR_calf>
+                            rel physics:body0 = </go2/Geometry/base_link/FR_hip/FR_thigh>
+                            rel physics:body1 = </go2/Geometry/base_link/FR_hip/FR_thigh/FR_calf>
                             point3f physics:localPos0 = (0, 0, -0.213)
                             point3f physics:localPos1 = (0, 0, 0)
                             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -1193,8 +1192,8 @@ def Xform "go2" (
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
                         uniform token physics:axis = "Y"
-                        rel physics:body0 = </go2/Geometry/base/FR_hip>
-                        rel physics:body1 = </go2/Geometry/base/FR_hip/FR_thigh>
+                        rel physics:body0 = </go2/Geometry/base_link/FR_hip>
+                        rel physics:body1 = </go2/Geometry/base_link/FR_hip/FR_thigh>
                         point3f physics:localPos0 = (0, -0.0955, 0)
                         point3f physics:localPos1 = (0, 0, 0)
                         quatf physics:localRot0 = (1, 0, 0, 0)
@@ -1215,8 +1214,8 @@ def Xform "go2" (
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
                     uniform token physics:axis = "X"
-                    rel physics:body0 = </go2/Geometry/base>
-                    rel physics:body1 = </go2/Geometry/base/FR_hip>
+                    rel physics:body0 = </go2/Geometry/base_link>
+                    rel physics:body1 = </go2/Geometry/base_link/FR_hip>
                     point3f physics:localPos0 = (0.1934, -0.0465, 0)
                     point3f physics:localPos1 = (0, 0, 0)
                     quatf physics:localRot0 = (1, 0, 0, 0)
@@ -1603,8 +1602,8 @@ def Xform "go2" (
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
                             uniform token physics:axis = "Y"
-                            rel physics:body0 = </go2/Geometry/base/RL_hip/RL_thigh>
-                            rel physics:body1 = </go2/Geometry/base/RL_hip/RL_thigh/RL_calf>
+                            rel physics:body0 = </go2/Geometry/base_link/RL_hip/RL_thigh>
+                            rel physics:body1 = </go2/Geometry/base_link/RL_hip/RL_thigh/RL_calf>
                             point3f physics:localPos0 = (0, 0, -0.213)
                             point3f physics:localPos1 = (0, 0, 0)
                             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -1625,8 +1624,8 @@ def Xform "go2" (
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
                         uniform token physics:axis = "Y"
-                        rel physics:body0 = </go2/Geometry/base/RL_hip>
-                        rel physics:body1 = </go2/Geometry/base/RL_hip/RL_thigh>
+                        rel physics:body0 = </go2/Geometry/base_link/RL_hip>
+                        rel physics:body1 = </go2/Geometry/base_link/RL_hip/RL_thigh>
                         point3f physics:localPos0 = (0, 0.0955, 0)
                         point3f physics:localPos1 = (0, 0, 0)
                         quatf physics:localRot0 = (1, 0, 0, 0)
@@ -1647,8 +1646,8 @@ def Xform "go2" (
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
                     uniform token physics:axis = "X"
-                    rel physics:body0 = </go2/Geometry/base>
-                    rel physics:body1 = </go2/Geometry/base/RL_hip>
+                    rel physics:body0 = </go2/Geometry/base_link>
+                    rel physics:body1 = </go2/Geometry/base_link/RL_hip>
                     point3f physics:localPos0 = (-0.1934, 0.0465, 0)
                     point3f physics:localPos1 = (0, 0, 0)
                     quatf physics:localRot0 = (1, 0, 0, 0)
@@ -2035,8 +2034,8 @@ def Xform "go2" (
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
                             uniform token physics:axis = "Y"
-                            rel physics:body0 = </go2/Geometry/base/RR_hip/RR_thigh>
-                            rel physics:body1 = </go2/Geometry/base/RR_hip/RR_thigh/RR_calf>
+                            rel physics:body0 = </go2/Geometry/base_link/RR_hip/RR_thigh>
+                            rel physics:body1 = </go2/Geometry/base_link/RR_hip/RR_thigh/RR_calf>
                             point3f physics:localPos0 = (0, 0, -0.213)
                             point3f physics:localPos1 = (0, 0, 0)
                             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -2057,8 +2056,8 @@ def Xform "go2" (
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
                         uniform token physics:axis = "Y"
-                        rel physics:body0 = </go2/Geometry/base/RR_hip>
-                        rel physics:body1 = </go2/Geometry/base/RR_hip/RR_thigh>
+                        rel physics:body0 = </go2/Geometry/base_link/RR_hip>
+                        rel physics:body1 = </go2/Geometry/base_link/RR_hip/RR_thigh>
                         point3f physics:localPos0 = (0, -0.0955, 0)
                         point3f physics:localPos1 = (0, 0, 0)
                         quatf physics:localRot0 = (1, 0, 0, 0)
@@ -2079,8 +2078,8 @@ def Xform "go2" (
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
                     uniform token physics:axis = "X"
-                    rel physics:body0 = </go2/Geometry/base>
-                    rel physics:body1 = </go2/Geometry/base/RR_hip>
+                    rel physics:body0 = </go2/Geometry/base_link>
+                    rel physics:body1 = </go2/Geometry/base_link/RR_hip>
                     point3f physics:localPos0 = (-0.1934, -0.0465, 0)
                     point3f physics:localPos1 = (0, 0, 0)
                     quatf physics:localRot0 = (1, 0, 0, 0)
@@ -2368,7 +2367,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/FL_hip/FL_hip_joint>
+            rel mjc:target = </go2/Geometry/base_link/FL_hip/FL_hip_joint>
         }
 
         def MjcActuator "FL_thigh"
@@ -2382,7 +2381,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/FL_hip/FL_thigh/FL_thigh_joint>
+            rel mjc:target = </go2/Geometry/base_link/FL_hip/FL_thigh/FL_thigh_joint>
         }
 
         def MjcActuator "FL_calf"
@@ -2396,7 +2395,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 45.43
             uniform double mjc:forceRange:min = -45.43
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/FL_hip/FL_thigh/FL_calf/FL_calf_joint>
+            rel mjc:target = </go2/Geometry/base_link/FL_hip/FL_thigh/FL_calf/FL_calf_joint>
         }
 
         def MjcActuator "FR_hip"
@@ -2410,7 +2409,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/FR_hip/FR_hip_joint>
+            rel mjc:target = </go2/Geometry/base_link/FR_hip/FR_hip_joint>
         }
 
         def MjcActuator "FR_thigh"
@@ -2424,7 +2423,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/FR_hip/FR_thigh/FR_thigh_joint>
+            rel mjc:target = </go2/Geometry/base_link/FR_hip/FR_thigh/FR_thigh_joint>
         }
 
         def MjcActuator "FR_calf"
@@ -2438,7 +2437,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 45.43
             uniform double mjc:forceRange:min = -45.43
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/FR_hip/FR_thigh/FR_calf/FR_calf_joint>
+            rel mjc:target = </go2/Geometry/base_link/FR_hip/FR_thigh/FR_calf/FR_calf_joint>
         }
 
         def MjcActuator "RL_hip"
@@ -2452,7 +2451,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/RL_hip/RL_hip_joint>
+            rel mjc:target = </go2/Geometry/base_link/RL_hip/RL_hip_joint>
         }
 
         def MjcActuator "RL_thigh"
@@ -2466,7 +2465,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/RL_hip/RL_thigh/RL_thigh_joint>
+            rel mjc:target = </go2/Geometry/base_link/RL_hip/RL_thigh/RL_thigh_joint>
         }
 
         def MjcActuator "RL_calf"
@@ -2480,7 +2479,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 45.43
             uniform double mjc:forceRange:min = -45.43
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/RL_hip/RL_thigh/RL_calf/RL_calf_joint>
+            rel mjc:target = </go2/Geometry/base_link/RL_hip/RL_thigh/RL_calf/RL_calf_joint>
         }
 
         def MjcActuator "RR_hip"
@@ -2494,7 +2493,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/RR_hip/RR_hip_joint>
+            rel mjc:target = </go2/Geometry/base_link/RR_hip/RR_hip_joint>
         }
 
         def MjcActuator "RR_thigh"
@@ -2508,7 +2507,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 23.7
             uniform double mjc:forceRange:min = -23.7
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/RR_hip/RR_thigh/RR_thigh_joint>
+            rel mjc:target = </go2/Geometry/base_link/RR_hip/RR_thigh/RR_thigh_joint>
         }
 
         def MjcActuator "RR_calf"
@@ -2522,7 +2521,7 @@ def Xform "go2" (
             uniform double mjc:forceRange:max = 45.43
             uniform double mjc:forceRange:min = -45.43
             uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            rel mjc:target = </go2/Geometry/base/RR_hip/RR_thigh/RR_calf/RR_calf_joint>
+            rel mjc:target = </go2/Geometry/base_link/RR_hip/RR_thigh/RR_calf/RR_calf_joint>
         }
     }
 }
