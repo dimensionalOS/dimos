@@ -47,6 +47,9 @@ exclude = [
     "**/*.js",
     "**/*.svg",
     "**/*.tcss",
+    # orchestration workflow files (not every Cargo.toml / pyproject.toml)
+    "orchestration/**/*.toml",
+    "robot/**/blueprints/**/*.toml",
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
     "robot/manipulators/piper/can_setup.sh",
