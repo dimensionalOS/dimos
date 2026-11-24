@@ -72,3 +72,21 @@ def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
 
     assert len(sensed) == 2, f"{name} mounts the sensors {sorted(sensed)}"
     assert sensed <= frames, f"{name} leaves {sorted(sensed - frames)} out of the world"
+
+
+@pytest.mark.self_hosted  # Go2Sim loads its policy and meshes from Git LFS
+def test_a_simulated_go2_publishes_the_tf_a_real_one_does() -> None:
+    from dimos.robot.unitree.go2.connection import ConnectionConfig
+    from dimos.robot.unitree.go2.sim2 import Go2Sim
+
+    with _hardware("unitree_go2_sim2_l1") as hardware:
+        go2 = next(module for module in hardware if isinstance(module, Go2Sim))
+        edges = {
+            (go2.tf_frames[parent], go2.tf_frames[child]) for parent, child in go2.config.tf_edges
+        }
+        edges.add((go2.mounted_on(), go2.mounted_frame))
+        robot, announced = go2.namespace, go2.simulated_robot().odom_frame
+
+    real_odom = ConnectionConfig.model_fields["odom_frame_id"].default
+    assert edges == {(robot, real_odom), (real_odom, f"{robot}/base_link")}
+    assert announced == real_odom

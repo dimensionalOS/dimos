@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
+from dimos.robot.unitree.go2.connection import ConnectionConfig
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -61,11 +62,11 @@ logger = setup_logger()
 GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
     {
         "l1": (
-            "base",
+            "base_link",
             L1_XYZ,
             (math.radians(L1_MOUNT[0]), math.radians(L1_MOUNT[1]), math.radians(L1_MOUNT[2])),
         ),
-        "front_camera": ("base", CAMERA_XYZ, (0.0, 0.0, 0.0)),
+        "front_camera": ("base_link", CAMERA_XYZ, (0.0, 0.0, 0.0)),
         "lidar": ("front_camera", MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
         "camera": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
     }
@@ -100,7 +101,11 @@ class Go2SimConfig(HardwareModuleConfig):
     policy: Path | None = None
     # Proportional yaw hold while no turn is commanded, rad/s per rad of drift.
     heading_gain: float = 2.0
-    tf_frames_local: dict[str, str] = {"odom": "odom", "body": "base"}
+    # The frames a real Go2 publishes: odometry in its unprefixed odom frame, the body as base_link.
+    tf_frames_local: dict[str, str] = {"body": "base_link"}
+    tf_frames_global: dict[str, str] = {
+        "odom": ConnectionConfig.model_fields["odom_frame_id"].default
+    }
     tf_edges: list[tuple[str, str]] = [("odom", "body")]
 
 
@@ -132,7 +137,9 @@ class Go2Sim(HardwareModule):
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        return SimulatedRobot(self.namespace, self.config.usd, held_until_commanded=True)
+        return SimulatedRobot(
+            self.namespace, self.config.usd, held_until_commanded=True, odom_frame=self.frame.odom
+        )
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
