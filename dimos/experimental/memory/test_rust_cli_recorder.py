@@ -28,11 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
-from dimos.experimental.memory.rust_recorder import (
-    RustContinuousMode,
-    RustEventConfig,
-    RustStreamSpec,
-)
+from dimos.experimental.memory.rust_recorder import RustContinuousMode, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -179,9 +175,7 @@ class _FakeProcess:
         self._exited.set()
 
 
-def _plan(
-    tmp_path: Path, mode: RustContinuousMode | RustEventConfig | None = None
-) -> RustRecordingPlan:
+def _plan(tmp_path: Path) -> RustRecordingPlan:
     return RustRecordingPlan(
         backend="lcm",
         topics={"stream_0": "/odom"},
@@ -195,7 +189,7 @@ def _plan(
         ],
         payload_types={"odom": PoseStamped},
         path=tmp_path / "memory.db",
-        mode=mode or RustContinuousMode(),
+        mode=RustContinuousMode(),
     )
 
 
@@ -203,14 +197,13 @@ def _start_fake_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     process: _FakeProcess,
-    mode: RustContinuousMode | RustEventConfig | None = None,
 ) -> RustRecordingSession:
     monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: tmp_path / "recorder")
     monkeypatch.setattr(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
     )
-    session = RustRecordingSession(_plan(tmp_path, mode))
+    session = RustRecordingSession(_plan(tmp_path))
     session.start()
     return session
 
@@ -276,22 +269,17 @@ def test_unexpected_runtime_exit_is_logged_without_raising(
     error.assert_called_once_with("Experimental Rust recorder exited", status=9)
 
 
-def test_stop_kills_process_that_does_not_flush_and_removes_its_window(
+def test_stop_kills_process_that_does_not_flush(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess(ignore_term=True)
     monkeypatch.setattr(rust_cli_recorder, "_STOP_TIMEOUT", 0.01)
-    window = tmp_path / "windows" / "run"
-    mode = RustEventConfig(default_period=5.0, window_dir=str(window))
-    session = _start_fake_session(tmp_path, monkeypatch, process, mode)
-    window.mkdir(parents=True)
-    (window / "0.seg").write_bytes(b"unstored")
+    session = _start_fake_session(tmp_path, monkeypatch, process)
 
     session.stop()
 
     assert process.signals == [signal.SIGTERM]
     assert process.killed
-    assert not window.exists()
 
 
 def test_custom_lcm_url_reaches_recorder_child(tmp_path, monkeypatch, mocker):

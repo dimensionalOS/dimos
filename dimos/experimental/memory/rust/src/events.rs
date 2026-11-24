@@ -16,7 +16,6 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -30,18 +29,23 @@ use tracing::{info, warn};
 use validator::{Validate, ValidationError};
 
 use crate::store::{self, Observation, RecordingStore, RecordingStoreConfig};
-use crate::window::{
-    remove_window, sync_dir, ClosedSegment, Done, SegmentReader, SegmentWriter, Syncer,
-    WindowManifest,
-};
+use crate::window::{ClosedSegment, Done, SegmentReader, SegmentWriter, Syncer, WindowManifest};
 use crate::{StreamConfig, WRITE_BATCH_SIZE};
 
 const BYTES_PER_MIB: f64 = (1 << 20) as f64;
 
+/// Where window segments live: files in `dir`, or memory the kernel frees when the recorder exits.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum WindowConfig {
+    Disk { dir: PathBuf },
+    Ram,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct EventConfig {
-    pub window_dir: PathBuf,
+    pub window: WindowConfig,
     #[validate(range(min = 0.0))]
     pub pre_s: f64,
     #[validate(range(min = 0.0))]
@@ -99,7 +103,7 @@ enum WindowEvent {
 
 /// Writer-side half of event mode: fills window segments and drives the store thread.
 pub(crate) struct EventWriter {
-    dir: PathBuf,
+    window: WindowConfig,
     segment_s: f64,
     trigger: String,
     stream_indexes: HashMap<String, u16>,
@@ -112,38 +116,26 @@ pub(crate) struct EventWriter {
 }
 
 impl EventWriter {
-    /// Creates the window directory, then opens the store and starts the sync and store threads.
-    /// An existing window fails the start before the store is opened, so its recording is untouched.
+    /// Creates the window, then opens the store and starts the sync and store threads.
+    /// An existing window directory fails the start before the store is opened, so its recording
+    /// is untouched.
     pub fn start(
         config: &EventConfig,
         store_config: &RecordingStoreConfig,
         streams: &[StreamConfig],
         compression_threads: usize,
     ) -> Result<Self> {
-        let dir = config.window_dir.clone();
-        let parent = match dir.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-            _ => PathBuf::from("."),
-        };
-        fs::create_dir_all(&parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-        fs::create_dir(&dir)
-            .with_context(|| format!("failed to create window directory {}", dir.display()))?;
-        sync_dir(&parent)?;
-        WindowManifest {
+        let window = config.window.clone();
+        window.create(&WindowManifest {
             store: store_config.clone(),
             streams: streams.to_vec(),
-        }
-        .write(&dir)?;
+        })?;
         let store = store::open(store_config, streams, compression_threads).or_else(|error| {
-            remove_window(&dir)?;
+            window.remove()?;
             Err(error)
         })?;
-        let segment = SegmentWriter::create(&dir, 0)?;
-        let syncer = Syncer::start(
-            segment.sync_handle()?,
-            Duration::from_secs_f64(config.sync_s),
-        )?;
+        let segment = SegmentWriter::create(&window, 0)?;
+        let syncer = Syncer::start(segment.handle()?, Duration::from_secs_f64(config.sync_s))?;
 
         let periods: Vec<f64> = streams
             .iter()
@@ -162,7 +154,7 @@ impl EventWriter {
             pre_s: config.pre_s,
             max_window_bytes,
             window_bytes: Arc::clone(&window_bytes),
-            dir: dir.clone(),
+            window: window.clone(),
         };
         let store_thread = thread::Builder::new()
             .name("mem2-store".to_string())
@@ -170,7 +162,7 @@ impl EventWriter {
             .context("failed to start memory store thread")?;
 
         Ok(Self {
-            dir,
+            window,
             segment_s: config.segment_s,
             trigger: config.trigger.clone(),
             stream_indexes: streams
@@ -215,8 +207,8 @@ impl EventWriter {
     /// Hands the current segment to the store thread and opens the next one.
     fn hand_off_segment(&mut self) -> Result<()> {
         self.send_open_segment()?;
-        self.segment = SegmentWriter::create(&self.dir, self.segment.index + 1)?;
-        self.syncer.switch(self.segment.sync_handle()?)
+        self.segment = SegmentWriter::create(&self.window, self.segment.index + 1)?;
+        self.syncer.switch(self.segment.handle()?)
     }
 
     /// Seals the open segment and sends it to the store thread if it holds records.
@@ -266,7 +258,7 @@ impl RecordingStore for EventWriter {
 
     fn sync(&mut self) -> Result<()> {
         self.segment.flush()?;
-        self.segment.sync_handle()?.sync_data()?;
+        self.segment.handle()?.sync_data()?;
         Ok(())
     }
 
@@ -287,7 +279,7 @@ impl RecordingStore for EventWriter {
         self.syncer.stop()?;
         self.send_to_store(WindowEvent::Finish)?;
         self.join_store_thread()?;
-        info!(window_dir = %self.dir.display(), "event window drained");
+        info!(window = ?self.window, "event window drained");
         Ok(())
     }
 }
@@ -386,7 +378,7 @@ struct StoreWriter {
     pre_s: f64,
     max_window_bytes: u64,
     window_bytes: Arc<AtomicU64>,
-    dir: PathBuf,
+    window: WindowConfig,
 }
 
 impl StoreWriter {
@@ -423,21 +415,21 @@ impl StoreWriter {
                         "event window over its cap; storing the oldest segment early"
                     );
                 }
-                self.store_segment(&segment)?;
+                self.store_segment(segment)?;
             }
         }
         for segment in segments {
-            self.store_segment(&segment)?;
+            self.store_segment(segment)?;
         }
         self.store.finish()?;
-        remove_window(&self.dir)
+        self.window.remove()
     }
 
     /// Writes the segment's kept observations, makes them durable, then deletes the segment.
-    fn store_segment(&mut self, segment: &ClosedSegment) -> Result<()> {
+    fn store_segment(&mut self, segment: ClosedSegment) -> Result<()> {
         let mut batch = Vec::with_capacity(WRITE_BATCH_SIZE);
         let mut records = 0;
-        for record in SegmentReader::open(&segment.path)? {
+        for record in SegmentReader::new(segment.file)? {
             let record = record?;
             records += 1;
             let stream = usize::from(record.stream);
@@ -461,13 +453,10 @@ impl StoreWriter {
         );
         self.store.write_batch(&batch)?;
         self.store.sync()?;
-        Done {
+        self.window.segment_stored(&Done {
             segment: segment.index,
             stored: self.stored.clone(),
-        }
-        .write(&self.dir)?;
-        fs::remove_file(&segment.path)
-            .with_context(|| format!("failed to delete {}", segment.path.display()))?;
+        })?;
         self.window_bytes.fetch_sub(segment.bytes, Ordering::SeqCst);
         Ok(())
     }
@@ -475,6 +464,7 @@ impl StoreWriter {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::bounded;
@@ -503,9 +493,9 @@ mod tests {
             .count()
     }
 
-    fn event_config(window_dir: PathBuf, max_window_mib: f64) -> EventConfig {
+    fn event_config(dir: PathBuf, max_window_mib: f64) -> EventConfig {
         EventConfig {
-            window_dir,
+            window: WindowConfig::Disk { dir },
             pre_s: 60.0,
             post_s: 60.0,
             segment_s: 10.0,
@@ -625,57 +615,72 @@ mod tests {
     #[test]
     fn a_segment_stored_early_over_the_cap_keeps_its_clip() {
         let dir = tempfile::tempdir().unwrap();
-        let database = dir.path().join("memory.db");
-        let streams = vec![stream("cloud")];
-        let store_config = RecordingStoreConfig::Sqlite {
-            path: database.to_string_lossy().into_owned(),
-        };
-        let mut segment = SegmentWriter::create(dir.path(), 0).unwrap();
-        let cloud = Arc::new(streams[0].clone());
-        for &time in &times()[..80] {
-            let observation = Observation {
-                stream: Arc::clone(&cloud),
-                source_ts: time,
-                reception_ts: time,
-                monotonic_ts: time,
-                data: vec![0],
-            };
-            segment.write(0, &observation).unwrap();
+        let mut windows = vec![WindowConfig::Disk {
+            dir: dir.path().join("window"),
+        }];
+        if cfg!(target_os = "linux") {
+            windows.push(WindowConfig::Ram);
         }
-        let segment = segment.seal().unwrap();
-        let store_writer = StoreWriter {
-            store: store::open(&store_config, &streams, 1).unwrap(),
-            streams: vec![cloud],
-            periods: vec![1.0],
-            last_kept: vec![f64::NEG_INFINITY],
-            stored: vec![0],
-            clips: Clips::new(60.0, 60.0),
-            pre_s: 60.0,
-            max_window_bytes: 0,
-            window_bytes: Arc::new(AtomicU64::new(segment.bytes)),
-            dir: dir.path().to_path_buf(),
-        };
-        let (events, receiver) = unbounded();
-        // The trigger's clip starts at 5 s, and without `Finish` only the cap stores the segment.
-        events.send(WindowEvent::Trigger(65.0)).unwrap();
-        events.send(WindowEvent::Segment(segment)).unwrap();
-        drop(events);
-        store_writer.run(receiver).unwrap();
+        for (run, window) in windows.into_iter().enumerate() {
+            let database = dir.path().join(format!("memory-{run}.db"));
+            let streams = vec![stream("cloud")];
+            let store_config = RecordingStoreConfig::Sqlite {
+                path: database.to_string_lossy().into_owned(),
+            };
+            window
+                .create(&WindowManifest {
+                    store: store_config.clone(),
+                    streams: streams.clone(),
+                })
+                .unwrap();
+            let mut segment = SegmentWriter::create(&window, 0).unwrap();
+            let cloud = Arc::new(streams[0].clone());
+            for &time in &times()[..80] {
+                let observation = Observation {
+                    stream: Arc::clone(&cloud),
+                    source_ts: time,
+                    reception_ts: time,
+                    monotonic_ts: time,
+                    data: vec![0],
+                };
+                segment.write(0, &observation).unwrap();
+            }
+            let segment = segment.seal().unwrap();
+            let store_writer = StoreWriter {
+                store: store::open(&store_config, &streams, 1).unwrap(),
+                streams: vec![cloud],
+                periods: vec![1.0],
+                last_kept: vec![f64::NEG_INFINITY],
+                stored: vec![0],
+                clips: Clips::new(60.0, 60.0),
+                pre_s: 60.0,
+                max_window_bytes: 0,
+                window_bytes: Arc::new(AtomicU64::new(segment.bytes)),
+                window: window.clone(),
+            };
+            let (events, receiver) = unbounded();
+            // The trigger's clip starts at 5 s, and without `Finish` only the cap stores the segment.
+            events.send(WindowEvent::Trigger(65.0)).unwrap();
+            events.send(WindowEvent::Segment(segment)).unwrap();
+            drop(events);
+            store_writer.run(receiver).unwrap();
 
-        let stored: Vec<f64> = Connection::open(&database)
-            .unwrap()
-            .prepare("SELECT json_extract(tags, '$.reception_ts') FROM cloud ORDER BY id")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap();
-        let expected: Vec<f64> = times()[..80]
-            .iter()
-            .copied()
-            .filter(|&time| time >= 5.0 || time.fract() == 0.0)
-            .collect();
-        assert_eq!(stored, expected);
+            let stored: Vec<f64> = Connection::open(&database)
+                .unwrap()
+                .prepare("SELECT json_extract(tags, '$.reception_ts') FROM cloud ORDER BY id")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            let expected: Vec<f64> = times()[..80]
+                .iter()
+                .copied()
+                .filter(|&time| time >= 5.0 || time.fract() == 0.0)
+                .collect();
+            assert_eq!(stored, expected, "{window:?}");
+            window.remove().unwrap();
+        }
     }
 
     #[test]

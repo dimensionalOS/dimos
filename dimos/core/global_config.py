@@ -18,9 +18,7 @@ Module and subsystem settings belong to their owners' configuration classes.
 """
 
 import os
-from pathlib import Path
 import sys
-import tempfile
 from typing import Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
@@ -74,10 +72,9 @@ class GlobalConfig(BaseSettings):
     # override the default, stream names (lidar=2) override both.
     record_type_periods: str = ""
     record_stream_periods: str = ""
-    # Event recording windows go in one subfolder per run here. Linux keeps them in RAM.
-    record_window_dir: str = str(
-        Path("/dev/shm" if sys.platform == "linux" else tempfile.gettempdir()) / "dimos-recorder"
-    )
+    # Keep the event window in RAM instead of beside the recording. Linux only, and lost if
+    # the recorder dies.
+    record_window_ram: bool = False
     # Most event window data (MiB) waiting to be stored before the oldest segment is stored early.
     record_window_mib: float = Field(default=2048.0, gt=0)
     # How every zenoh session this process opens joins the network.
@@ -169,16 +166,20 @@ class GlobalConfig(BaseSettings):
         "record_default_period",
         "record_type_periods",
         "record_stream_periods",
-        "record_window_dir",
+        "record_window_ram",
         "record_window_mib",
     )
     @classmethod
-    def _validate_event_setting(cls, value: float | str, info: ValidationInfo) -> float | str:
+    def _validate_event_setting(
+        cls, value: float | str | bool, info: ValidationInfo
+    ) -> float | str | bool:
         name = info.field_name or ""
         if value != cls.model_fields[name].default and not info.data.get("record_events"):
             raise ValueError(f"--{name.replace('_', '-')} is valid only with --record-events")
         if isinstance(value, str) and name.endswith("_periods"):
             parse_periods(value)
+        if value is True and name == "record_window_ram" and sys.platform != "linux":
+            raise ValueError("--record-window-ram needs Linux")
         return value
 
     def update(self, **kwargs: object) -> None:

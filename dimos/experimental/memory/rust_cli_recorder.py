@@ -20,7 +20,6 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import threading
@@ -113,6 +112,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             type_periods=parse_periods(global_config.record_type_periods),
             stream_periods=parse_periods(global_config.record_stream_periods),
             max_window_mib=global_config.record_window_mib,
+            ram_window=global_config.record_window_ram,
         )
         if global_config.record_events
         else None
@@ -212,11 +212,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
         streams=streams,
         payload_types=payload_types,
         path=path,
-        mode=(
-            RustContinuousMode()
-            if events is None
-            else events.resolve(streams, path, Path(global_config.record_window_dir))
-        ),
+        mode=(RustContinuousMode() if events is None else events.resolve(streams, path)),
     )
 
 
@@ -241,7 +237,6 @@ class RustRecordingSession:
         self._failure: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
-        self._window: Path | None = None
 
     def start(self) -> None:
         executable = prepare_rust_recorder()
@@ -266,9 +261,6 @@ class RustRecordingSession:
         }
         if self.plan.lcm_url is not None:
             env["LCM_DEFAULT_URL"] = self.plan.lcm_url
-        if isinstance(self.plan.mode, RustEventConfig):
-            window = Path(self.plan.mode.window_dir)
-            self._window = None if window.exists() else window
         self._process = subprocess.Popen(
             [executable],
             env=env,
@@ -353,10 +345,4 @@ class RustRecordingSession:
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if process.returncode not in (None, 0):
             logger.warning("Rust recorder stopped with an error", status=process.returncode)
-        if self._window is not None and self._window.exists():
-            logger.warning(
-                "Discarding the event window the Rust recorder left behind",
-                window_dir=str(self._window),
-            )
-            shutil.rmtree(self._window, ignore_errors=True)
         self._process = None

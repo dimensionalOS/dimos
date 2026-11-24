@@ -128,6 +128,22 @@ class RustContinuousMode(BaseModel):
     kind: Literal["continuous"] = "continuous"
 
 
+class RustDiskWindow(BaseModel):
+    """Window segments in a directory, left behind after a crash for recovery."""
+
+    kind: Literal["disk"] = "disk"
+    dir: str
+
+
+class RustRamWindow(BaseModel):
+    """Window segments in memory the kernel frees when the recorder exits, however it exits."""
+
+    kind: Literal["ram"] = "ram"
+
+
+RustWindow: TypeAlias = Annotated[RustDiskWindow | RustRamWindow, Field(discriminator="kind")]
+
+
 class RustEventConfig(BaseModel):
     """Record long runs thinned, with full-rate clips around each trigger.
 
@@ -173,21 +189,27 @@ class RustEventConfig(BaseModel):
         default_factory=dict,
         description="Resolved period of every stream, populated internally before native launch.",
     )
-    window_dir: str = Field(
-        default="",
-        description="Window directory of this run, populated internally before native launch.",
+    ram_window: bool = Field(
+        default=False,
+        exclude=True,
+        description="Keep the window in RAM (Linux only) instead of beside the artifact.",
+    )
+    window: RustWindow | None = Field(
+        default=None,
+        description="Window of this run, populated internally before native launch.",
     )
 
-    def resolve(
-        self, streams: list[RustStreamSpec], artifact: Path, window_root: Path
-    ) -> RustEventConfig:
-        """Fill ``periods`` for every stream and put ``window_dir`` under ``window_root``."""
+    def resolve(self, streams: list[RustStreamSpec], artifact: Path) -> RustEventConfig:
+        """Fill ``periods`` for every stream and put the window in RAM or beside ``artifact``."""
         if self.trigger not in {stream.name for stream in streams}:
             raise ValueError(f"Event recording needs the trigger stream {self.trigger!r}")
         periods = {stream.name: self._period(stream) for stream in streams}
-        return self.model_copy(
-            update={"periods": periods, "window_dir": str(window_root / artifact.parent.name)}
+        window = (
+            RustRamWindow()
+            if self.ram_window
+            else RustDiskWindow(dir=str(artifact.parent / "window"))
         )
+        return self.model_copy(update={"periods": periods, "window": window})
 
     def _period(self, stream: RustStreamSpec) -> float:
         type_name = stream.payload_type.rsplit(".", 1)[-1]

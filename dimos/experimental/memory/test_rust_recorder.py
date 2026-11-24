@@ -146,9 +146,8 @@ def test_stream_periods_override_type_periods_over_the_default_period(tmp_path: 
         stream_periods=parse_periods("global_*=30,lidar=0"),
     )
 
-    native = events.resolve(
-        streams, tmp_path / "run" / "memory.mcap", tmp_path / "windows"
-    ).model_dump()
+    artifact = tmp_path / "run" / "memory.mcap"
+    native = events.resolve(streams, artifact).model_dump()
 
     assert native["periods"] == {
         "color_image": 2.0,
@@ -159,10 +158,10 @@ def test_stream_periods_override_type_periods_over_the_default_period(tmp_path: 
         "tf": 0.0,
         "clip_that": 5.0,
     }
-    assert native["window_dir"] == str(tmp_path / "windows" / "run")
+    assert native["window"] == {"kind": "disk", "dir": str(tmp_path / "run" / "window")}
     assert set(native) == {
         "kind",
-        "window_dir",
+        "window",
         "pre_s",
         "post_s",
         "segment_s",
@@ -171,6 +170,8 @@ def test_stream_periods_override_type_periods_over_the_default_period(tmp_path: 
         "trigger",
         "periods",
     }
+    ram = events.model_copy(update={"ram_window": True}).resolve(streams, artifact)
+    assert ram.model_dump()["window"] == {"kind": "ram"}
 
 
 def test_json_options_cross_the_native_boundary_only_when_configured() -> None:

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! On-disk window segments that hold recent observations before the main file.
+//! Window segments that hold recent observations before the main file.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -25,6 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, RecvTimeoutError, Sender};
 use serde::Serialize;
 
+use crate::events::WindowConfig;
 use crate::store::{Observation, RecordingStoreConfig};
 use crate::StreamConfig;
 
@@ -58,7 +59,7 @@ impl Record {
 #[derive(Debug)]
 pub(crate) struct ClosedSegment {
     pub index: u64,
-    pub path: PathBuf,
+    pub file: File,
     pub newest_ts: f64,
     pub records: u64,
     pub bytes: u64,
@@ -68,8 +69,84 @@ pub(crate) fn segment_path(dir: &Path, index: u64) -> PathBuf {
     dir.join(format!("{index}.seg"))
 }
 
+impl WindowConfig {
+    /// Creates the window. A disk window gets a new directory holding `manifest`.
+    pub(crate) fn create(&self, manifest: &WindowManifest) -> Result<()> {
+        match self {
+            Self::Disk { dir } => {
+                let parent = match dir.parent() {
+                    Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                    _ => PathBuf::from("."),
+                };
+                fs::create_dir_all(&parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+                fs::create_dir(dir).with_context(|| {
+                    format!("failed to create window directory {}", dir.display())
+                })?;
+                sync_dir(&parent)?;
+                manifest.write(dir)
+            }
+            Self::Ram => Ok(()),
+        }
+    }
+
+    /// Creates segment `index`. A disk segment's name is synced so it survives power loss.
+    fn create_segment(&self, index: u64) -> Result<File> {
+        match self {
+            Self::Disk { dir } => {
+                let path = segment_path(dir, index);
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .with_context(|| format!("failed to create segment {}", path.display()))?;
+                sync_dir(dir)?;
+                Ok(file)
+            }
+            Self::Ram => memory_file(index),
+        }
+    }
+
+    /// Marks `done.segment` durable in the store file and deletes it from a disk window.
+    pub(crate) fn segment_stored(&self, done: &Done) -> Result<()> {
+        match self {
+            Self::Disk { dir } => {
+                done.write(dir)?;
+                let path = segment_path(dir, done.segment);
+                fs::remove_file(&path)
+                    .with_context(|| format!("failed to delete {}", path.display()))
+            }
+            Self::Ram => Ok(()),
+        }
+    }
+
+    pub(crate) fn remove(&self) -> Result<()> {
+        match self {
+            Self::Disk { dir } => remove_window(dir),
+            Self::Ram => Ok(()),
+        }
+    }
+}
+
+/// Anonymous memory the kernel frees once every handle closes, however the recorder exits.
+#[cfg(target_os = "linux")]
+fn memory_file(index: u64) -> Result<File> {
+    let fd = rustix::fs::memfd_create(
+        format!("mem2-window-{index}"),
+        rustix::fs::MemfdFlags::CLOEXEC,
+    )
+    .context("failed to create a RAM window segment")?;
+    Ok(File::from(fd))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn memory_file(_index: u64) -> Result<File> {
+    Err(anyhow!("RAM windows need Linux"))
+}
+
 /// Removes the manifest first, so a removal cut short leaves no window that names a recording.
-pub(crate) fn remove_window(dir: &Path) -> Result<()> {
+fn remove_window(dir: &Path) -> Result<()> {
     let manifest = dir.join(MANIFEST_FILE);
     fs::remove_file(&manifest)
         .with_context(|| format!("failed to remove {}", manifest.display()))?;
@@ -77,7 +154,7 @@ pub(crate) fn remove_window(dir: &Path) -> Result<()> {
     fs::remove_dir_all(dir).with_context(|| format!("failed to remove {}", dir.display()))
 }
 
-pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
+fn sync_dir(dir: &Path) -> Result<()> {
     File::open(dir)
         .and_then(|directory| directory.sync_all())
         .with_context(|| format!("failed to sync directory {}", dir.display()))
@@ -90,33 +167,23 @@ pub(crate) struct SegmentWriter {
     pub first_ts: f64,
     newest_ts: f64,
     pub bytes: u64,
-    path: PathBuf,
     file: BufWriter<File>,
 }
 
 impl SegmentWriter {
-    /// Creates segment `index` in `dir` and syncs the directory so its name survives power loss.
-    pub fn create(dir: &Path, index: u64) -> Result<Self> {
-        let path = segment_path(dir, index);
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .with_context(|| format!("failed to create segment {}", path.display()))?;
-        sync_dir(dir)?;
+    pub fn create(window: &WindowConfig, index: u64) -> Result<Self> {
         Ok(Self {
             index,
             records: 0,
             first_ts: f64::NEG_INFINITY,
             newest_ts: f64::NEG_INFINITY,
             bytes: 0,
-            path,
-            file: BufWriter::new(file),
+            file: BufWriter::new(window.create_segment(index)?),
         })
     }
 
-    /// A second handle to the file, for syncing it off the writer thread.
-    pub fn sync_handle(&self) -> Result<File> {
+    /// A second handle to the file, for syncing or reading it off the writer thread.
+    pub fn handle(&self) -> Result<File> {
         self.file
             .get_ref()
             .try_clone()
@@ -151,7 +218,7 @@ impl SegmentWriter {
     pub fn flush(&mut self) -> Result<()> {
         self.file
             .flush()
-            .with_context(|| format!("failed to flush segment {}", self.path.display()))
+            .with_context(|| format!("failed to flush segment {}", self.index))
     }
 
     /// Flushes the segment and describes it for the store thread. Nothing more may be written.
@@ -159,7 +226,7 @@ impl SegmentWriter {
         self.flush()?;
         Ok(ClosedSegment {
             index: self.index,
-            path: self.path.clone(),
+            file: self.handle()?,
             newest_ts: self.newest_ts,
             records: self.records,
             bytes: self.bytes,
@@ -174,9 +241,9 @@ pub(crate) struct SegmentReader {
 }
 
 impl SegmentReader {
-    pub fn open(path: &Path) -> Result<Self> {
-        let file =
-            File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    /// Reads `file` from its start.
+    pub fn new(mut file: File) -> Result<Self> {
+        file.rewind().context("failed to rewind the segment")?;
         let remaining = file.metadata()?.len();
         Ok(Self {
             file: BufReader::new(file),
