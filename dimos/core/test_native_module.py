@@ -38,7 +38,6 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
 from dimos.core.module import Module
 from dimos.core.native_module import (
-    FRAME_PREFIX_FIELD,
     LogFormat,
     NativeModule,
     NativeModuleConfig,
@@ -378,10 +377,10 @@ def test_the_frame_prefix_rides_beside_the_config(monkeypatch) -> None:
     reads that as no prefix.
     """
     plain = _launch(monkeypatch, "lcm")
-    assert FRAME_PREFIX_FIELD not in plain
+    assert "frame_id_prefix" not in plain
     assert plain["config"] is None
     namespaced = _launch(monkeypatch, "lcm", frame_id_prefix="robot0")
-    assert namespaced[FRAME_PREFIX_FIELD] == "robot0"
+    assert namespaced["frame_id_prefix"] == "robot0"
     # Still not a config key, so no native config struct has to declare it.
     assert namespaced["config"] is None
 
@@ -414,7 +413,7 @@ def test_base_field_sent_when_opted_in() -> None:
 def test_framework_fields_never_sent() -> None:
     """Opting one base field in must not carry the subprocess plumbing with it."""
     config = StubFrameIdConfig(frame_id="odom", extra_args=["--x"])
-    plumbing = set(NativeModuleConfig.model_fields) - {"frame_id"} - {FRAME_PREFIX_FIELD}
+    plumbing = set(NativeModuleConfig.model_fields) - {"frame_id", "frame_id_prefix"}
     assert not plumbing & set(config.to_config_dict())
     assert not plumbing & set(parse_cli_args(config.to_cli_args()))
 
