@@ -768,9 +768,17 @@ and 81%. Where they part [U]:
   one offset between the captures fits every step.
 - SixAxisStand in rl_control's entry stand-in (the robot standing up) is off by ~1e-3 from its first inferred step;
   the runner switched to after it inherits that through the handover (e.g. basic_flat at 14:16 87942).
-- Wheel velocity commands match far less often than leg targets: 10 x a (20 x a) shows the network output's last
-  bits that the leg targets' 0.25 x a + default rounds away, so platform numerics (macOS vs Linux ONNX Runtime) and any
-  input bit show there first.
+- Wheel velocity commands match far less often than leg targets. rl_deploy's wheel command is exactly ours (fmul of
+  the clipped output by 10 or 20 in f32, then limit_goal_pos_vel's +-79.3 clamp; no filter: SixAxisStand's f64 output
+  low-pass is computed and then overwritten in every branch), and its leg target is fmadd(a, 0.25, default) (0.25
+  makes it the same as ours). So a wheel miss is the network output itself off by tens of ULPs, which the leg
+  target's rounding hides: an input a few ULPs off, or (closed loop) one that was: last action and history feed every
+  error back, so a session never becomes exact after a start it cannot know (rl_deploy's globals and the first runner's
+  history from before the recording). On rl_deploy's library (Linux) 22% / 8% of steps match on the wheels, against
+  10% / 6% on macOS's. The inference recording (ort_tap) gives each step's real inputs to settle this.
+- FinetuneStand on rl_deploy's library is 1-2e-6 (10-16 ULPs) off on most 14:16 steps. Not its feet: their
+  rotation's op order is the disassembly's (fmul, fmla, fmla with the zero z term, fmadd with 0.145 dx / 0.1 dy), and
+  dock::libm::sincosf is glibc 2.31's to the bit below |x| = 120 (tests/libm_glibc.rs).
 
 ## Building the controller for the robot
 
