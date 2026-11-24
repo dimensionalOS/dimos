@@ -14,9 +14,9 @@
 
 """Dual MakerMods Metal calibration: its connection with ``config_writes`` and the calibration module.
 
-    dimos arm calibrate dual-metal --arm left --floor-z-m Z --min-x-m X
+    dimos run dual-metal-calibrate --calibrationmodule.arm left --calibrationmodule.floor-z-m Z --calibrationmodule.min-x-m X
 
-See ``docs/capabilities/manipulation/arm_calibration.md``.
+Drive it from ``dimos shell``. See ``docs/capabilities/manipulation/arm_calibration.md``.
 """
 
 from dimos.control.calibration.blueprints import calibration_blueprint

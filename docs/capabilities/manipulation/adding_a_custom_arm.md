@@ -98,8 +98,9 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
 
     Your arm's calibration is one file, `blueprints/calibrate.py`:
     `<yourarm>_calibrate = calibration_blueprint(<YourConnection>).remappings([])`, which hands the calibration module
-    your connection's `robot`. `dimos arm calibrate <yourarm>` runs it, and the robot data's `name` (`<yourarm>`, `_`
-    for `-`) names its arms' calibration files. `DamiaoConnection` serves `get_config()` and `set_config(patch, save)`,
+    your connection's `robot`. `dimos run <yourarm>-calibrate` runs it and `dimos shell` drives the calibration module's
+    `run`, `status`, `answer` and `abort`; the robot data's `name` (`<yourarm>`, `_` for `-`) names its arms'
+    calibration files. `DamiaoConnection` serves `get_config()` and `set_config(patch, save)`,
     which the calibration drives; each arm id's entry is an `ArmConfigState` or `ArmConfigPatch` from
     `dimos/control/calibration/schema.py`.
 
