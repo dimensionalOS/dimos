@@ -246,7 +246,10 @@ enum FieldKind {
         handler: Ident,
     },
     Config,
-    Tf,
+    Tf {
+        /// `#[tf(handler = ...)]`: the method each incoming tf message goes to.
+        handler: Option<Ident>,
+    },
     State,
 }
 
@@ -314,6 +317,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let mut classified: Vec<ClassifiedField> = Vec::new();
     let mut config_seen: Option<&Ident> = None;
+    let mut tf_handler_seen: Option<&Ident> = None;
 
     for field in fields {
         let name = field.ident.as_ref().expect("named field has an identifier");
@@ -328,6 +332,18 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 ));
             }
             config_seen = Some(name);
+        }
+        // Tf ports share one receiver, so two handlers would split the messages.
+        if matches!(attr.kind, FieldKind::Tf { handler: Some(_) }) {
+            if let Some(prev) = tf_handler_seen {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "multiple #[tf(handler = ...)] fields (previous: `{prev}`); at most one is allowed"
+                    ),
+                ));
+            }
+            tf_handler_seen = Some(name);
         }
         classified.push(ClassifiedField {
             name,
@@ -385,7 +401,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 quote!(#name: builder.io(#name_str, #decode, #encode))
             }
             FieldKind::Config => quote!(#name: config),
-            FieldKind::Tf => quote!(#name: builder.tf()),
+            FieldKind::Tf { handler } => match handler {
+                Some(_) => quote!(#name: builder.tf_with_handler()),
+                None => quote!(#name: builder.tf()),
+            },
             FieldKind::State => quote!(#name: ::core::default::Default::default()),
         }
     });
@@ -397,6 +416,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => {
                 Some((f.name, handler))
             }
+            FieldKind::Tf { handler } => handler.as_ref().map(|h| (f.name, h)),
             _ => None,
         })
         .collect();
@@ -503,7 +523,7 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             // goes: bake has to put the topic in the host's map or the module
             // refuses to start. It lists under `inputs` because the graph has
             // no io kind and a host mostly consumes tf.
-            FieldKind::Tf => want_input,
+            FieldKind::Tf { .. } => want_input,
             _ => false,
         })
         .map(|f| PortDecl {
@@ -513,7 +533,7 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             // An explicit `msg` wins: a view type's wire payload and the dimos
             // message it stands for are allowed to differ.
             ty: match f.kind {
-                FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
+                FieldKind::Tf { .. } => TF_PAYLOAD_TYPE.to_string(),
                 _ => f
                     .msg
                     .clone()
@@ -701,7 +721,23 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
-            found = Some(FieldKind::Tf);
+            let mut handler: Option<Ident> = None;
+            // A bare `#[tf]` has no arguments to walk.
+            if !matches!(attr.meta, syn::Meta::Path(_)) {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("handler") {
+                        handler = Some(meta.value()?.parse()?);
+                    } else if meta.path.is_ident("msg") {
+                        msg = Some(meta.value()?.parse::<LitStr>()?.value());
+                    } else {
+                        return Err(
+                            meta.error("unrecognized #[tf] argument; expected `handler = ...`")
+                        );
+                    }
+                    Ok(())
+                })?;
+            }
+            found = Some(FieldKind::Tf { handler });
         }
     }
 
