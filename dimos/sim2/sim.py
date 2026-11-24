@@ -27,7 +27,7 @@ from typing import Any, Protocol
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
-from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint
 from dimos.core.hardware_module import HardwareSpec
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
@@ -62,7 +62,7 @@ class PhysicsBackend(SimulatedWorldSpec, Protocol):
     def describe(self) -> dict[str, Any]: ...
 
 
-def sim(backends: Mapping[str, Blueprint], default: str) -> ChoiceAtom:
+def sim(backends: Mapping[str, Blueprint | MetaBlueprint], default: str) -> ChoiceAtom:
     """The ``sim`` choice between physics backends: ``dimos run <blueprint> --choice sim=dimsim``."""
     return ChoiceAtom(name="sim", choices=dict(backends), default=default)
 
