@@ -38,28 +38,36 @@ RESERVED = ("succeeded", *OUTCOMES)
 class CheckedDefinition:
     """A definition, what is wrong with it, and its expressions compiled by source."""
 
-    definition: OrchestratorDefinition
     problems: tuple[str, ...]
     expressions: Mapping[str, Expression]
     tree: "Tree"
 
+    @property
+    def definition(self) -> OrchestratorDefinition:
+        return self.tree.definition
+
 
 def check(
-    definition: OrchestratorDefinition, shapes: Mapping[str, Shape] | None = None
+    definition: OrchestratorDefinition,
+    shapes: Mapping[str, Shape] | None = None,
+    parameters: Mapping[str, Mapping[str, Shape]] | None = None,
 ) -> CheckedDefinition:
-    """Run every static check. Name and nesting problems are returned alone."""
+    """Run every static check. Name and nesting problems are returned alone.
+
+    `shapes` are of stream values and results. `parameters` are of each activity's `start`, by name.
+    """
     problems = [*_name_problems(definition), *_nesting_problems(definition)]
     expressions: dict[str, Expression] = {}
     tree = Tree(definition)
     if not problems:
-        expressions, problems = _compile(definition, shapes or {})
+        expressions, problems = _compile(definition, shapes or {}, parameters or {})
         problems += [
             *_node_problems(tree),
             *_transition_problems(tree),
             *_fallback_problems(tree),
             *_resource_problems(tree),
         ]
-    return CheckedDefinition(definition, tuple(dict.fromkeys(problems)), expressions, tree)
+    return CheckedDefinition(tuple(dict.fromkeys(problems)), expressions, tree)
 
 
 def _listed(names: Iterable[str]) -> str:
@@ -88,6 +96,12 @@ class Tree:
 
     def activity(self, node: Node) -> Activity | None:
         return self.activities.get(node.activity) if node.activity is not None else None
+
+    @property
+    def cancel_rpcs(self) -> tuple[str, ...]:
+        """Every cancel RPC the definition names, once each."""
+        cancels = [activity.cancel for activity in self.activities.values()]
+        return tuple(dict.fromkeys(cancel for cancel in cancels if cancel is not None))
 
 
 def _name_problems(definition: OrchestratorDefinition) -> Iterator[str]:
@@ -300,15 +314,18 @@ def _resource_problems(tree: Tree) -> Iterator[str]:
             yield f"node `{node.name}`: its activity shares {_listed(shared)} with a node inside it"
 
 
-def _sources(definition: OrchestratorDefinition) -> Iterator[tuple[str, str, Wanted]]:
+def _sources(
+    definition: OrchestratorDefinition, parameters: Mapping[str, Mapping[str, Shape]]
+) -> Iterator[tuple[str, str, Wanted]]:
     """Every expression in a definition, with where it is and what it must give."""
     for node in definition.nodes:
         where = f"node `{node.name}`"
-        for check in (*node.requires, *node.ensures):
-            for source in check.expect:
+        for condition in (*node.requires, *node.ensures):
+            for source in condition.expect:
                 yield f"{where}: `expect`", source, True
+        wanted = parameters.get(node.activity, {}) if node.activity is not None else {}
         for parameter, source in node.args.items():
-            yield f"{where}: `args` entry `{parameter}`", source, UNKNOWN
+            yield f"{where}: `args` entry `{parameter}`", source, wanted.get(parameter, UNKNOWN)
         for transition in node.transitions:
             if transition.if_ is not None:
                 yield f"{where}: `if`", transition.if_, True
@@ -319,7 +336,9 @@ def _sources(definition: OrchestratorDefinition) -> Iterator[tuple[str, str, Wan
 
 
 def _compile(
-    definition: OrchestratorDefinition, shapes: Mapping[str, Shape]
+    definition: OrchestratorDefinition,
+    shapes: Mapping[str, Shape],
+    parameters: Mapping[str, Mapping[str, Shape]],
 ) -> tuple[dict[str, Expression], list[str]]:
     written = [value.name for value in definition.stream_values]
     written += [node.result for node in definition.nodes if node.result is not None]
@@ -332,7 +351,7 @@ def _compile(
     )
     expressions: dict[str, Expression] = {}
     problems: list[str] = []
-    for where, source, gives in _sources(definition):
+    for where, source, gives in _sources(definition, parameters):
         try:
             expressions[source] = compiler.compile(source, gives)
         except ExpressionError as error:
