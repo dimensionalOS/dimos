@@ -19,6 +19,8 @@ dimos data quota
 
 Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_streams` table) or `.mcap` is a `recording`, anything else a `blob`. Override it with `--kind`. `--robot` tags a robot id, `--chunk` sets the multipart part size in MB.
 
+`dimos data upload PATH` also accepts a directory and uploads it as a `.tar` archive, including hidden files. `dimos data pull` downloads the `.tar` without unpacking it; extract it yourself with `tar -xf ARCHIVE.tar`.
+
 - Files are compressed before transfer (lz4 by default, see below), sha256-verified server-side, and deduplicated by content: re-uploading the same bytes reports `already uploaded`.
 - Interrupted uploads resume: the server's part listing is the only resume state, so a killed upload re-sends only the missing parts.
 - Recordings carry a manifest: the stream list from `_streams` plus the blueprint name parsed from the `<stamp>-<blueprint>` run directory. `dimos data ls` shows both.
@@ -71,7 +73,7 @@ These fields belong to [`CloudConfig`](/dimos/cloud/config.py). Prefix the upper
 | `upload_retries` | `2` | Per-part retries for transfers |
 | `upload_quiet_s` | `30.0` | Discovery skips files modified this recently |
 | `http_timeout` | `60.0` | Seconds per API request |
-| `staging_dir` | `None` | Compression/decode staging dir; default is beside the file |
+| `staging_dir` | `None` | Archive, compression, and decode staging; defaults beside the source or destination. Directory uploads fall back to the source directory's parent if the configured location is inside the source tree. |
 
 Implementation: [`dimos/cloud/data.py`](/dimos/cloud/data.py); codec table in [`dimos/constants.py`](/dimos/constants.py).
 

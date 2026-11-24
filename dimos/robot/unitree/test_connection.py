@@ -18,18 +18,28 @@ Pure-Python test suite with no hardware or network. Covers connect() error propa
 and aes_128_key forwarding.
 """
 
+import asyncio
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 import pytest
-from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.webrtc_connect import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
+
+_STOP = {"lx": 0, "ly": 0, "rx": 0, "ry": 0}
+
+
+def _flush(conn: UnitreeWebRTCConnection) -> None:
+    asyncio.run_coroutine_threadsafe(asyncio.sleep(0), conn.loop).result(2)
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:
@@ -120,6 +130,7 @@ def test_move_api_toggle_sends_selected_wire_command(
     try:
         driver.datachannel.pub_sub.publish_without_callback.reset_mock()
         assert connection.move(twist)
+        _flush(connection)
         assert driver.datachannel.pub_sub.publish_without_callback.call_args == expected_call
     finally:
         connection.stop_movement()
@@ -158,3 +169,105 @@ def test_empty_string_key_forwarded_as_falsy(stub_legion: MagicMock) -> None:
     """Empty-string key stays falsy → the driver treats it as no key."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
     assert not _aes_kwarg(stub_legion)
+
+
+def test_odom_stream_preserves_source_timestamp(built_connection, monkeypatch):
+    from reactivex import just
+
+    from dimos.robot.unitree.type.odometry import raw_odometry_msg_sample
+
+    conn, _driver = built_connection
+    # Exercise production decoding synchronously, without process-wide Rx pool workers.
+    monkeypatch.setattr(conn_mod, "backpressure", lambda source: source)
+    monkeypatch.setattr(conn, "raw_odom_stream", lambda: just(raw_odometry_msg_sample))
+    measured = []
+    subscription = conn.odom_stream().subscribe(measured.append)
+    try:
+        assert len(measured) == 1
+        stamp = raw_odometry_msg_sample["data"]["header"]["stamp"]
+        assert measured[0].ts == stamp["sec"] + stamp["nanosec"] * 1e-9
+    finally:
+        subscription.dispose()
+
+
+@pytest.mark.parametrize("duration", [0.0, 0.15], ids=["watchdog", "timed-loop"])
+def test_expired_webrtc_move_cannot_overwrite_replacement(built_connection, monkeypatch, duration):
+    conn, driver = built_connection
+    deadlines = []
+    monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
+    sent = threading.Event()
+    publish = driver.datachannel.pub_sub.publish_without_callback
+    publish.side_effect = lambda *args, **kwargs: sent.set()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(conn.move, Twist(linear=[0.1, 0, 0]), duration)
+        assert sent.wait(2)
+        assert conn.move(Twist(linear=[0, 0.2, 0]))
+        assert first.result(timeout=2)
+
+    deadlines[0]()  # The old callback was dispatched before cancel.
+    _flush(conn)
+    commands = [item.kwargs["data"] for item in publish.call_args_list]
+    lateral = {"lx": -0.2, "ly": 0.0, "rx": 0.0, "ry": 0}
+    assert commands[commands.index(lateral) :] == [lateral]
+    deadlines[1]()
+    _flush(conn)
+    assert publish.call_args.kwargs["data"] == {"lx": 0, "ly": 0, "rx": 0, "ry": 0}
+
+
+def _returned(call: Callable[..., Any], *args: Any) -> Any:
+    """The call's result; a call that never returns fails the test instead of hanging it."""
+    results: list[Any] = []
+    thread = threading.Thread(target=lambda: results.append(call(*args)), daemon=True)
+    thread.start()
+    thread.join(2)
+    assert results, f"{call.__name__} did not return"
+    return results[0]
+
+
+def test_stalled_loop_runs_only_the_newest_command(built_connection, monkeypatch):
+    conn, driver = built_connection
+    deadlines = []
+    monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
+    publish = driver.datachannel.pub_sub.publish_without_callback
+    stalled, release = threading.Event(), threading.Event()
+
+    def stall() -> None:
+        stalled.set()
+        release.wait(10)
+
+    conn.loop.call_soon_threadsafe(stall)
+    assert stalled.wait(2)
+    try:
+        # Neither call waits on the stalled loop.
+        assert _returned(conn.move, Twist(linear=[0.1, 0, 0])) is True
+        assert deadlines
+        _returned(conn.stop_movement)
+    finally:
+        release.set()
+    _flush(conn)
+    assert [item.kwargs["data"] for item in publish.call_args_list] == [_STOP]
+
+    assert conn.move(Twist(linear=[0, 0.2, 0]))
+    _flush(conn)
+    assert publish.call_args.kwargs["data"] == {"lx": -0.2, "ly": 0.0, "rx": 0.0, "ry": 0}
+
+
+def test_move_fails_at_once_when_the_loop_has_stopped(built_connection):
+    conn, _driver = built_connection
+    conn.loop.call_soon_threadsafe(conn.loop.stop)
+    conn.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+    assert _returned(conn.move, Twist(linear=[0.1, 0, 0])) is False
+
+
+def test_driver_error_keeps_the_watchdog(built_connection, monkeypatch):
+    conn, driver = built_connection
+    deadlines = []
+    monkeypatch.setattr(threading.Timer, "start", lambda timer: deadlines.append(timer.function))
+    publish = driver.datachannel.pub_sub.publish_without_callback
+    publish.side_effect = TimeoutError("driver rejected the command")
+    assert conn.move(Twist(linear=[0.1, 0, 0]))
+    _flush(conn)
+    publish.side_effect = None
+    deadlines[0]()
+    _flush(conn)
+    assert publish.call_args.kwargs["data"] == _STOP

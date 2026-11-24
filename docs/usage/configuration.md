@@ -71,7 +71,7 @@ Use `--config robot.json` for structured settings:
 }
 ```
 
-Python module construction and `.blueprint(...)` accept the same fields as keyword arguments. Direct `.build()` uses blueprint values; use `BlueprintConfigParser` when resolving JSON, environment, and CLI overrides in Python.
+Python module construction and `.blueprint(...)` accept the same fields as keyword arguments. Direct `ModuleCoordinator.build(...)` uses blueprint values; use `BlueprintConfigParser` when resolving JSON, environment, and CLI overrides in Python.
 
 ## Global settings
 
@@ -88,13 +88,13 @@ for firewall guidance and how to disable the Rerun bridge.
 
 The former global names have been removed. Update CLI arguments, `.env`, JSON `g` sections, and Python `.global_config(...)` calls. Unknown fields in `g` are rejected. For environment variables and `.env` entries, `dimos run` and `dimos rerun-bridge` require migration of old credentials and hardware addresses, naming their replacements. Other former names produce a warning and are ignored. `MCP_TIMEOUT` is ignored without a migration warning; use `dimos mcp call --timeout` for each call.
 
-Scoped module environment variables are resolved by `BlueprintConfigParser`, including when invoked by the CLI. They do not configure direct Python module construction or `.build()` calls. Scripts and notebooks must pass module kwargs, such as `McpServer.blueprint(port=9992)` or `TypeSafeNavigationAgent.blueprint(api_key=key)`, or parse the blueprint with `BlueprintConfigParser` before building it.
+Scoped module environment variables are resolved by `BlueprintConfigParser`, including when invoked by the CLI. They do not configure direct Python module construction or `ModuleCoordinator.build(...)` calls. Scripts and notebooks must pass module kwargs, such as `McpServer.blueprint(port=9992)` or `TypeSafeNavigationAgent.blueprint(api_key=key)`, or parse the blueprint with `BlueprintConfigParser` before building it.
 
 | Former global setting | Owner / replacement |
 |---|---|
-| `unitree_aes_128_key` | `aes_128_key` on `GO2Connection`, `Go2FleetConnection`, `G1Connection`, or `G1HighLevelWebRtc`, as applicable |
+| `unitree_aes_128_key` | `aes_128_key` on `GO2Connection`, `Go2FleetConnection`, or `G1HighLevelWebRtc`, as applicable |
 | `obstacle_avoidance`, `replay_exit` | Go2 connection config (including fleet) |
-| `mujoco_camera_position`, `mujoco_room`, `mujoco_room_from_occupancy`, `mujoco_start_pos`, `mujoco_steps_per_frame`, `mujoco_shadows` | Nested `mujoco` config on `GO2Connection` or `G1SimConnection`; drop the `mujoco_` prefix. Positions are JSON arrays of six and two numbers respectively. |
+| `mujoco_camera_position`, `mujoco_room`, `mujoco_room_from_occupancy`, `mujoco_start_pos`, `mujoco_steps_per_frame`, `mujoco_shadows` | Nested `mujoco` config on `GO2Connection`; drop the `mujoco_` prefix. Positions are JSON arrays of six and two numbers respectively. |
 | `dimsim_scene`, `dimsim_port`, `dimsim_headless`, `dimsim_ready_timeout` | `go2connection.dimsim.scene`, `.port`, `.headless`, `.ready_timeout` |
 | `mujoco_global_costmap_from_occupancy`, `mujoco_global_map_from_pointcloud` | `map.global_costmap_from_occupancy`, `map.global_map_from_pointcloud` |
 | `nerf_speed` | `replanningastarplanner.nerf_speed` |
@@ -139,4 +139,4 @@ The coordinator settles each component when it starts, once the execution mode i
 - On hardware, a component takes its address from `addresses`. A component left without one runs the mock adapter when its blueprint allows that (`mock_without_address` in the robot's config helper), and otherwise fails to connect.
 - With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
-The robot config helpers (`xarm7_hardware`, `piper_hardware`, `a750_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, Metal, and the A1Z instead own CAN in their connection modules. Select YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
+The robot config helpers (`xarm7_hardware`, `piper_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, Metal, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.

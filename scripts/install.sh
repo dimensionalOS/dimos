@@ -21,8 +21,9 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config"
-MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config"
+# libturbojpeg0-dev depends on the runtime package under its Debian/Ubuntu release-specific name.
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg0-dev pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config graphviz"
+MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config graphviz"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
@@ -640,8 +641,8 @@ prompt_install_mode() {
     [[ -n "$INSTALL_MODE" ]] && return
     local choice
     prompt_select "How do you want to use DimOS?" \
-        "Library — pip install into your project (recommended)" \
-        "Developer — git clone + editable install (contributors)"
+        "Library — install the published package (recommended for most setups)" \
+        "Developer — install a source checkout for development or headless Unitree on Ubuntu 26.04"
     choice="$PROMPT_RESULT"
     case "$choice" in *Library*) INSTALL_MODE="library";; *) INSTALL_MODE="dev";; esac
 }

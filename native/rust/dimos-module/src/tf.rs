@@ -23,11 +23,12 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use tokio::sync::{mpsc, Notify};
+use tokio::time::Instant;
 use tracing::warn;
 
 use crate::module::Route;
@@ -47,6 +48,7 @@ pub fn prefix_frame(prefix: Option<&str>, frame: &str) -> String {
 }
 
 const WARN_INTERVAL: Duration = Duration::from_secs(1);
+const STARTUP_GRACE: Duration = Duration::from_secs(10);
 
 /// A rigid transform from `parent` to `child` at a point in time.
 ///
@@ -308,6 +310,7 @@ impl MultiTBuffer {
 struct Graph {
     buffer: RwLock<MultiTBuffer>,
     changed: Notify,
+    first_lookup: OnceLock<Instant>,
     // Keyed per pair: warn_throttled! throttles per call site, and one site
     // serves every lookup, so a missing pair would mute all the others.
     warned: Mutex<HashMap<(String, String), AtomicU64>>,
@@ -318,11 +321,17 @@ impl Graph {
         Self {
             buffer: RwLock::new(MultiTBuffer::new(window_secs)),
             changed: Notify::new(),
+            first_lookup: OnceLock::new(),
             warned: Mutex::new(HashMap::new()),
         }
     }
 
     fn should_warn(&self, parent: &str, child: &str) -> bool {
+        // Publishers may start after consumers. Count from the first lookup,
+        // not graph construction, which can precede module startup by a while.
+        if self.first_lookup.get_or_init(Instant::now).elapsed() < STARTUP_GRACE {
+            return false;
+        }
         let mut warned = self.warned.lock().expect("tf warn map lock poisoned");
         let last = warned
             .entry((parent.to_string(), child.to_string()))
@@ -374,6 +383,7 @@ impl Tf {
     /// let at_scan = tf.lookup("map", "base_link").at(scan_ts).tolerance(0.1).get();
     /// ```
     pub fn lookup<'a>(&'a self, parent: &'a str, child: &'a str) -> Lookup<'a> {
+        self.graph.first_lookup.get_or_init(Instant::now);
         Lookup {
             tf: self,
             parent,
@@ -503,7 +513,8 @@ impl Lookup<'_> {
     /// Resolve the lookup against the transforms buffered so far.
     ///
     /// `None` when no path connects the frames, or when the nearest sample is
-    /// outside the tolerance.
+    /// outside the tolerance. Misses warn at most once per second per frame
+    /// pair after a ten-second grace period from this client's first lookup.
     pub fn get(self) -> Option<Transform> {
         let found = self.resolve();
         if found.is_none() {
@@ -515,6 +526,7 @@ impl Lookup<'_> {
     /// Resolve the lookup, waiting up to `timeout` for a late transform.
     ///
     /// Returns as soon as the lookup succeeds, or `None` at the deadline.
+    /// Deadline misses use the same startup grace period as [`Lookup::get`].
     /// Awaiting this inside a `handle_*` method parks the module's whole
     /// dispatch loop, so prefer [`Lookup::get`] there and move a long wait onto
     /// a task of its own.
@@ -987,20 +999,32 @@ mod tests {
         assert!(t.rotation().coords.iter().all(|c| c.is_finite()));
     }
 
-    #[test]
+    #[tokio::test(start_paused = true)]
     #[tracing_test::traced_test]
-    fn a_lookup_that_finds_nothing_warns_with_the_frames() {
+    async fn a_lookup_that_finds_nothing_warns_with_the_frames_after_startup() {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("world", "robot", 1.0, (1.0, 0.0, 0.0), 0.0);
         assert!(tf.get_latest("world", "gripper").is_none());
+        assert!(!logs_contain("No transform found between frames"));
+
+        tokio::time::advance(STARTUP_GRACE - Duration::from_millis(1)).await;
+        assert!(tf.clone().get_latest("world", "gripper").is_none());
+        assert!(!logs_contain("No transform found between frames"));
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(tf.get_latest("world", "gripper").is_none());
         assert!(logs_contain("No transform found between frames"));
+        assert!(logs_contain("WARN"));
+        assert!(logs_contain("world"));
         assert!(logs_contain("gripper"));
     }
 
-    #[test]
+    #[tokio::test(start_paused = true)]
     #[tracing_test::traced_test]
-    fn repeated_misses_warn_once_per_frame_pair() {
+    async fn repeated_misses_warn_once_per_frame_pair() {
         let (tf, _h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        assert!(tf.get_latest("world", "gripper").is_none());
+        tokio::time::advance(STARTUP_GRACE).await;
         for _ in 0..5 {
             assert!(tf.get_latest("world", "gripper").is_none());
         }
@@ -1025,10 +1049,25 @@ mod tests {
         assert!(!logs_contain("No transform found between frames"));
     }
 
-    // A wait in progress is not a failure, so only the deadline warns.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test(start_paused = true)]
     #[tracing_test::traced_test]
-    async fn within_warns_only_once_it_gives_up() {
+    async fn startup_misses_stop_quietly_when_the_transform_arrives() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        // Time spent constructing modules must not consume the grace period.
+        tokio::time::advance(STARTUP_GRACE).await;
+        assert!(tf.get_latest("a", "d").is_none());
+        tokio::time::advance(Duration::from_secs(3)).await;
+        h.add("a", "d", 5.0, (1.5, 0.0, 0.0), 0.0);
+        assert_eq!(tf.get_latest("a", "d").unwrap().translation().x, 1.5);
+        tokio::time::advance(STARTUP_GRACE).await;
+        assert!(tf.get_latest("a", "d").is_some());
+        assert!(!logs_contain("No transform found between frames"));
+    }
+
+    // A wait in progress is not a failure; a deadline during startup isn't either.
+    #[tokio::test(start_paused = true)]
+    #[tracing_test::traced_test]
+    async fn within_warns_only_after_startup_and_once_it_gives_up() {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1048,6 +1087,15 @@ mod tests {
             .at(5.0)
             .tolerance(0.1)
             .within(Duration::from_millis(20))
+            .await
+            .is_none());
+        assert!(!logs_contain("No transform found between frames"));
+
+        assert!(tf
+            .lookup("a", "missing")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(STARTUP_GRACE)
             .await
             .is_none());
         assert!(logs_contain("No transform found between frames"));

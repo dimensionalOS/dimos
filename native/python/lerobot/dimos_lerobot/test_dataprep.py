@@ -30,10 +30,13 @@ import pytest_mock
 from dimos.imitation.dataprep.formats.lerobot.protocol import (
     BuildRequest,
     BuildResult,
+    ErrorResult,
     InspectRequest,
     InspectResult,
 )
 from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig, Sample
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.std_msgs.String import String
 
 
 def test_module_entry_point_executes_typed_build_request(
@@ -62,6 +65,66 @@ def test_module_entry_point_executes_typed_build_request(
 def test_module_entry_point_rejects_arguments(args: list[str]) -> None:
     with pytest.raises(SystemExit, match="usage: python -m dimos_lerobot.dataprep"):
         dataprep.main(args)
+
+
+@pytest.mark.parametrize(
+    ("operation", "payload"),
+    [
+        (
+            "run_dataprep",
+            BuildRequest(
+                config=DataPrepConfig(
+                    source="recording.db", output=OutputConfig(path=Path("dataset"))
+                )
+            ),
+        ),
+        ("inspect_dataset", InspectRequest(path=Path("dataset"))),
+    ],
+)
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("No successful episodes extracted"),
+        ValueError("Invalid feature shape\nExpected [8], got [6]"),
+        OSError("Cannot read recording"),
+    ],
+)
+def test_module_entry_point_returns_error_without_traceback(
+    operation, payload, error, mocker, monkeypatch, capsys
+):
+    mocker.patch.object(dataprep, operation, side_effect=error)
+    monkeypatch.setattr(sys, "stdin", StringIO(payload.model_dump_json()))
+
+    with pytest.raises(SystemExit) as caught:
+        dataprep.main([])
+
+    assert caught.value.code == 1
+    captured = capsys.readouterr()
+    assert ErrorResult.model_validate_json(captured.out).error == str(error)
+    assert captured.err == ""
+
+
+def test_module_entry_point_reports_recording_with_no_saved_episodes(tmp_path, monkeypatch, capsys):
+    source = tmp_path / "recording.db"
+    with SqliteStore(path=str(source)) as store:
+        store.stream("status", String, codec="json")
+    output = tmp_path / "dataset"
+    request = BuildRequest(
+        config=DataPrepConfig(source=str(source), output=OutputConfig(path=output))
+    )
+    monkeypatch.setattr(sys, "stdin", StringIO(request.model_dump_json()))
+
+    with pytest.raises(SystemExit) as caught:
+        dataprep.main([])
+
+    assert caught.value.code == 1
+    captured = capsys.readouterr()
+    assert ErrorResult.model_validate_json(captured.out).error == (
+        f"No saved episodes in '{source}'. 0 saved, 0 discarded, 0 incomplete. "
+        "Finish and save at least one episode before preparing the dataset."
+    )
+    assert "Traceback" not in captured.err
+    assert not output.exists()
 
 
 def numeric_output(path: Path) -> OutputConfig:

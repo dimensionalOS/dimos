@@ -336,6 +336,13 @@ class GlobalPlanner(Resource):
             logger.warning("Cannot handle goal request: missing odometry.")
             return
 
+        # The first map update fills these separately; both must be available
+        # before goal validation and near/far path planning can use them.
+        if not (self._navigation_map.has_costmap and self._navigation_map_near.has_costmap):
+            logger.warning("Cannot handle goal request: missing global costmap.")
+            self.cancel_goal()
+            return
+
         safe_goal = self._find_safe_goal(current_goal.position)
 
         if not safe_goal:

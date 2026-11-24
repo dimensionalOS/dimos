@@ -38,7 +38,7 @@ from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, store
 from experimental.gateway.errors import ApiError
 from experimental.gateway.events import Bus
-from experimental.gateway.responses import Account, Login, Upload, Uploaded
+from experimental.gateway.responses import Account, Login, Upload, Uploaded, UploadSettings
 
 logger = setup_logger()
 
@@ -169,7 +169,31 @@ def console_datasets_url() -> str | None:
     return urlunsplit((url.scheme, authority, "/console/data", "", ""))
 
 
-def new_upload(id: str, path: Path, size: int, robot_id: str | None, kind: str | None) -> Upload:
+# an upload's own transfer settings (POST /cloud/uploads) -> the CloudConfig field each overrides
+TRANSFER_SETTINGS = {
+    "httpTimeout": "http_timeout",
+    "uploadRetries": "upload_retries",
+    "uploadChunkMb": "upload_chunk_mb",
+}
+
+
+def merged_settings(
+    kept: UploadSettings | None, sent: dict[str, Any] | None
+) -> UploadSettings | None:
+    """An upload's settings after a request: what it sent over what was kept, a null dropping one."""
+    settings = {**(kept or {}), **(sent or {})}
+    kept_now = {name: value for name, value in settings.items() if value is not None}
+    return cast("UploadSettings", kept_now) if kept_now else None
+
+
+def new_upload(
+    id: str,
+    path: Path,
+    size: int,
+    robot_id: str | None,
+    kind: str | None,
+    settings: UploadSettings | None = None,
+) -> Upload:
     return {
         "id": id,
         "path": str(path),
@@ -192,6 +216,7 @@ def new_upload(id: str, path: Path, size: int, robot_id: str | None, kind: str |
         "startedAt": None,
         "finishedAt": None,
         "link": None,
+        "settings": settings or None,
     }
 
 
@@ -273,6 +298,7 @@ class Uploads:
             store.read_json(self.uploaded_file) if self.uploaded_file else None
         ) or {}
         for upload in self.items:
+            upload.setdefault("settings", None)  # queued before uploads had their own settings
             # only when uploaded.json lost it: the file as it is now is the best guess left
             done = uploaded_entry(upload, _size_and_mtime(upload["path"]))
             if done:
@@ -347,13 +373,28 @@ class Uploads:
         else:
             self.loop.call_soon_threadsafe(self.wake.set)
 
-    def enqueue(self, path: str, robot_id: str | None, kind: str | None) -> Upload:
+    def enqueue(
+        self, path: str, robot_id: str | None, kind: str | None, settings: dict[str, Any] | None
+    ) -> Upload:
+        """Queues a file, with its own transfer settings if given; one already queued takes the new
+        settings, and one already uploading can't change them mid-transfer."""
         checked_path, size = check_path(path)
         for upload in self.items:
             if upload["path"] == str(checked_path) and upload["state"] in ("queued", "uploading"):
+                if settings and upload["state"] == "uploading":
+                    raise ApiError(
+                        409,
+                        f"{upload['id']} is already uploading with its settings: cancel it, then queue it again",
+                    )
+                if settings:
+                    upload["settings"] = merged_settings(upload["settings"], settings)
+                    self.save()
+                    self.emit(upload.copy())
                 return upload.copy()
         self.next += 1
-        upload = new_upload(f"u{self.next}", checked_path, size, robot_id, kind)
+        upload = new_upload(
+            f"u{self.next}", checked_path, size, robot_id, kind, merged_settings(None, settings)
+        )
         self.items.append(upload)
         self.save()
         self.emit(upload.copy())
@@ -376,7 +417,8 @@ class Uploads:
             self.bus.send({"type": "upload-removed", "id": id})
         self.save()
 
-    def retry(self, id: str) -> Upload:
+    def retry(self, id: str, settings: dict[str, Any] | None) -> Upload:
+        """Queues a finished upload again with its transfer settings, the ones given over them."""
         upload = self.get(id)
         if upload is None:
             raise ApiError(404, f"no upload {id}")
@@ -385,7 +427,14 @@ class Uploads:
         self.items.remove(upload)
         upload_id = upload["uploadId"]
         upload.update(
-            new_upload(id, Path(upload["path"]), upload["size"], upload["robotId"], upload["kind"])
+            new_upload(
+                id,
+                Path(upload["path"]),
+                upload["size"],
+                upload["robotId"],
+                upload["kind"],
+                merged_settings(upload["settings"], settings),
+            )
         )
         upload["uploadId"] = upload_id
         self.items.append(upload)
@@ -611,7 +660,12 @@ class Uploads:
         )
 
     def _transfer(
-        self, path: str, robot_id: str | None, kind: str | None, tick: Callable[..., None]
+        self,
+        path: str,
+        robot_id: str | None,
+        kind: str | None,
+        tick: Callable[..., None],
+        settings: UploadSettings | None,
     ) -> dict[str, Any]:
         from dimos.cloud.data import CloudData
 
@@ -620,7 +674,12 @@ class Uploads:
         if not cloud.api_key():
             raise NotLoggedInError()
         tick("preparing", 0, 0)
-        return CloudData().upload(Path(path), robot_id=robot_id, kind=kind, progress=tick)
+        config = CloudConfig().model_copy(
+            update={TRANSFER_SETTINGS[name]: value for name, value in (settings or {}).items()}
+        )
+        return CloudData(config=config).upload(
+            Path(path), robot_id=robot_id, kind=kind, progress=tick
+        )
 
     async def upload(self, upload: Upload) -> None:
         id = upload["id"]
@@ -662,7 +721,12 @@ class Uploads:
 
         transfer = asyncio.ensure_future(
             asyncio.to_thread(
-                self._transfer, upload["path"], upload["robotId"], upload["kind"], tick
+                self._transfer,
+                upload["path"],
+                upload["robotId"],
+                upload["kind"],
+                tick,
+                upload["settings"],
             )
         )
         asked = asyncio.ensure_future(cancel.wait())

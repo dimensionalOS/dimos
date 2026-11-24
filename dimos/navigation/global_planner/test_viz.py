@@ -19,20 +19,22 @@ import numpy as np
 import rerun as rr
 
 from dimos.mapping.ray_tracing.viz import render_map_region
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.global_planner import viz
 from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
+from dimos.navigation.spec import NO_HEADING, cancel_goal
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.visualization.rerun.bridge import RerunEntry, is_keyed_by_seq
 
 
-def test_goal_placeholder_is_not_drawn() -> None:
-    assert viz.render_goal(PointStamped(x=float("nan"), y=0.0, z=0.0)) is None
-    goal = viz.render_goal(PointStamped(x=1.0, y=2.0, z=0.0))
+def test_a_cancel_goal_is_not_drawn() -> None:
+    assert viz.render_goal(cancel_goal(frame_id="map")) is None
+    goal = viz.render_goal(
+        PoseStamped(frame_id="map", position=[1.0, 2.0, 0.0], orientation=NO_HEADING)
+    )
     assert goal is not None
     assert goal.positions.as_arrow_array().to_pylist() == [[1.0, 2.0, 0.0]]
 
