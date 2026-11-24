@@ -1,0 +1,830 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The calibration run on a fake toy arm, stepped sample by sample by the run's own waits."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+import math
+from pathlib import Path
+import re
+import threading
+import time
+from typing import Any
+import xml.etree.ElementTree as ET
+
+import numpy as np
+import pinocchio as pin
+import pytest
+
+from dimos.control.calibration._fake_arm import FakeArm, FakeOperator
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.control.calibration._toy_arm import toy_arm
+from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.module import (
+    Calibration,
+    CalibrationModuleConfig,
+    CalibrationStatus,
+    Operator,
+    bake_calibration,
+)
+from dimos.control.calibration.motion import Motion, Sample
+from dimos.control.calibration.schema import (
+    ArmCalibration,
+    ArmCalibrationError,
+    GravityCalibration,
+    calibration_path,
+    gravity_links_from_inertial,
+    save_calibration,
+)
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.steps import plan
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
+
+TRUE_LINKS = {"fore": LinkInertial(mass_kg=0.7, com_m=(0.13, 0.0, 0.02))}
+WAIT_S = 10.0
+PARKED = "Parked at rest; you can stop the run."
+
+
+@pytest.fixture(scope="module")
+def arm() -> ArmModel:
+    return toy_arm()
+
+
+@pytest.fixture(scope="module")
+def bent() -> ArmModel:
+    """The toy arm with its home away from rest, where every joint is zero."""
+    return toy_arm(home_rad=(0.0, -0.3, 0.6))
+
+
+def calibration(arm: ArmModel, operator: Operator, fake: FakeArm, **settings: Any) -> Calibration:
+    config = CalibrationModuleConfig(
+        **{
+            "poses": 4,
+            "min_poses": 3,
+            "speed_deg_s": 50.0,
+            "grid_points": 400,
+            "confirm_poses": 2,
+            **settings,
+        }
+    )
+    operator.begin(plan(config.steps, can_float=True))
+    run = Calibration(
+        arm.spec,
+        config,
+        fake,
+        operator,
+        fake.command,
+        arm.max_torque,
+        fake.run_until,
+        lambda: fake.t,
+    )
+    fake.listener = run.feed
+    return run
+
+
+def assert_the_saved_fit_finds_the_truth(arm: ArmModel, fake: FakeArm, run: Calibration) -> None:
+    """The saved links give the true gravity at every pose and beat the URDF held out."""
+    assert set(fake.file["links"]) == set(arm.fitted_links)
+    fitted = arm.model.copy()
+    apply_inertial_overrides(
+        fitted,
+        {k: LinkInertial(v["mass_kg"], tuple(v["com_m"])) for k, v in fake.file["links"].items()},
+    )
+    for pose in run.poses or []:
+        q = np.asarray(pose.joints_rad)
+        expected = pin.computeGeneralizedGravity(fake.truth, fake.truth.createData(), q)
+        assert pin.computeGeneralizedGravity(fitted, fitted.createData(), q) == pytest.approx(
+            expected, abs=0.01
+        )
+    total = fake.file["fit"]["total_rms_nm"]
+    assert total["held_out"] < total["urdf"]
+
+
+def test_a_full_run_saves_the_fit_and_the_gains_and_parks_at_rest(bent: ArmModel) -> None:
+    fake = FakeArm(bent, true_links=TRUE_LINKS, friction_nm=dict.fromkeys(bent.joint_names, 0.02))
+    operator = FakeOperator()
+    run = calibration(bent, operator, fake)
+    run.run()
+
+    assert operator.done is not None
+    ok, text, rest = operator.done
+    assert ok and rest, text
+    assert operator.status().message == f"Calibration done:\n{text}\n{PARKED}"
+    assert_the_saved_fit_finds_the_truth(bent, fake, run)
+    assert set(fake.file["gains"]) == set(bent.joint_names)
+    # The fit made the floats pass, and the tracking compared both visits.
+    assert "2 of 2 floated joints ended within 2 mm" in text
+    assert all(row["passed"] for row in fake.file["checks"]["float"]["joints"].values())
+    assert "2 poses compared" in text
+    assert fake.live == {} and fake.floating == {}
+    np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
+
+
+def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel) -> None:
+    fake = FakeArm(arm, true_links=TRUE_LINKS)
+    operator = FakeOperator(lambda prompt, c: "skip" if "visits" in prompt else c[0])
+    calibration(arm, operator, fake, steps=["gravity_poses"]).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "gravity_poses: skipped by the operator" in operator.done[1]
+    assert [p for p in operator.asked if "Move to" in p] == ["Move to rest [0.0, 0.0, 0.0] deg?"]
+    moving = FakeOperator()
+    calibration(arm, moving, FakeArm(arm), steps=["confirm_tracking"]).run()
+    assert sum("Move to" in prompt for prompt in moving.asked) == 2 + 1 + 1
+
+
+def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(bent: ArmModel) -> None:
+    fake = FakeArm(bent)
+    aborted_at: list[float] = []
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "Go home?" in prompt:
+            # The operator thinks it over: the arm gets no command, and the deadman holds it.
+            for _ in range(30):
+                fake.tick()
+            return "home"
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    run = calibration(bent, operator, fake, steps=["gravity_poses"])
+
+    def abort_mid_move(arm_: FakeArm) -> None:
+        if not aborted_at and arm_.t > 1.0 and run._motion is not None:
+            aborted_at.append(arm_.t)
+            run.abort()
+
+    fake.on_tick = abort_mid_move
+    run.run()
+
+    assert operator.done is not None
+    ok, text, rest = operator.done
+    assert not ok and rest and "aborted by the operator" in text
+    assert operator.status().message.endswith(f"\n{PARKED}")
+    [t_abort] = aborted_at
+    held = [t for t in fake.halts if t > t_abort]
+    assert held and held[0] - t_abort <= fake.deadman_s + 2 * fake.period_s
+    resumed = [t for t in fake.commands if t > t_abort]
+    assert resumed[0] > held[0]
+    np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
+
+
+def started(run: Calibration) -> threading.Thread:
+    thread = threading.Thread(target=run.run, daemon=True, name="calibration")
+    thread.start()
+    return thread
+
+
+def asked(operator: Operator, words: str) -> CalibrationStatus:
+    """The status once the run asks a question with ``words`` in it, the earlier ones answered
+    with their first answer."""
+    deadline = time.monotonic() + WAIT_S
+    while time.monotonic() < deadline:
+        status = operator.status()
+        if status.question is not None and words in status.question:
+            return status
+        if status.question is not None:
+            operator.answer(status.answers[0])
+        time.sleep(0.001)
+    raise AssertionError(f"never asked {words!r}: {operator.status()}")
+
+
+def test_the_run_waits_on_its_question_until_it_is_answered(arm: ArmModel) -> None:
+    operator = Operator(arm.arm_id, [])
+    thread = started(calibration(arm, operator, FakeArm(arm), steps=["summary"]))
+
+    waiting = asked(operator, "Clear the workspace")
+    assert (waiting.state, waiting.step, waiting.answers) == ("waiting", "check", ["go"])
+    assert waiting.message == f"Calibrating {arm.arm_id}: check, summary"
+    view = str(waiting).splitlines()
+    assert re.fullmatch(rf"{arm.arm_id}: waiting at check · step 1/2 · \d\d:\d\d", view[0]), view[0]
+    assert view[1].startswith(f"  {'check':<17} {'running':<8} measure the noise")
+    assert view[2] == f"  {'gravity_poses':<17} {'skipped':<8} not selected"
+    assert view[-2].startswith("? The arm moves home") and view[-1] == "  answer: go"
+    assert operator.answer("skip") == "unknown answer 'skip'; answer go"
+    assert operator.answer(" Go ") == "ok"
+    parking = asked(operator, "Move to rest")
+    assert (parking.step, parking.question) == ("summary", "Move to rest [0.0, 0.0, 0.0] deg?")
+    assert operator.answer("go") == "ok"
+    thread.join(WAIT_S)
+    assert operator.answer("go") == "no question pending"
+
+    done = operator.status()
+    rows = {row.name: (row.state, row.result) for row in done.steps}
+    assert (done.state, done.question, done.answers) == ("done", None, [])
+    assert rows["check"][0] == "done" and rows["check"][1].endswith("at home")
+    assert rows["summary"] == ("done", "fake/calibration.json")
+    assert rows["gravity_fit"] == ("skipped", "not selected")
+    assert done.summary.endswith("  summary: fake/calibration.json")
+    assert done.message == f"Calibration done:\n{done.summary}\n{PARKED}"
+    assert done.log[1].startswith("? The arm moves home") and done.log[2] == "> go"
+
+
+def test_the_status_says_which_step_pose_dither_and_joint_the_run_is_at(arm: ArmModel) -> None:
+    operator = FakeOperator()
+    views: list[str] = []
+
+    def pick(prompt: str, answers: list[str]) -> str:
+        views.append(str(operator.status()))
+        return answers[0]
+
+    operator.pick = pick
+    run = calibration(arm, operator, FakeArm(arm), steps=["gravity_poses", "float_check"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    poses, dithered = len(run.poses or []), len(run.dithered)
+    for k in range(1, poses + 1):
+        assert f"pose {k}/{poses}" in operator.progressed
+        for j, joint in enumerate(run.dithered, 1):
+            assert f"pose {k}/{poses} · dither {j}/{dithered} {joint}" in operator.progressed
+    assert operator.progressed[-2:] == ["joint 1/2 shoulder", "joint 2/2 elbow"]
+    headers = [view.splitlines()[0] for view in views]
+    moving = next(h for h, v in zip(headers, views, strict=True) if "? Move to pose_02" in v)
+    assert re.fullmatch(
+        rf"fake: waiting at gravity_poses · step 2/3 · pose 2/{poses} · \d\d:\d\d", moving
+    )
+    floating = next(h for h, v in zip(headers, views, strict=True) if "? Float elbow" in v)
+    assert re.fullmatch(
+        r"fake: waiting at float_check · step 3/3 · joint 2/2 elbow · \d\d:\d\d", floating
+    )
+    done = operator.status()
+    assert re.fullmatch(r"\d\d:\d\d", done.progress), done.progress
+    assert done.logged == len(operator.shown) + 2 * len(operator.asked) + 1
+    assert str(done).splitlines()[0] == f"fake: done at summary · {done.progress}"
+
+
+def test_the_status_header_says_where_the_run_is() -> None:
+    status = CalibrationStatus(
+        state="waiting",
+        arm="dual_openyam/left",
+        step="gravity_poses",
+        steps=[],
+        progress="step 2/8 · pose 4/15 · 03:12",
+    )
+    assert (
+        str(status) == "dual_openyam/left: waiting at gravity_poses · step 2/8 · pose 4/15 · 03:12"
+    )
+
+
+def test_an_abort_while_the_run_waits_holds_the_arm_and_offers_home(arm: ArmModel) -> None:
+    fake, operator = FakeArm(arm), Operator(arm.arm_id, [])
+    run = calibration(arm, operator, fake, steps=["gravity_poses"])
+    thread = started(run)
+
+    asked(operator, "Move to pose_01")
+    commands = len(fake.commands)
+    run.abort()
+    offered = asked(operator, "Go home?")
+    assert offered.question == (
+        "gravity_poses: aborted by the operator\nThe arm holds where it is. Go home?"
+    )
+    assert offered.answers == ["home", "stay"]
+    [row] = [row for row in offered.steps if row.name == "gravity_poses"]
+    assert (row.state, row.result) == ("aborted", "aborted by the operator")
+    assert operator.answer("stay") == "ok"
+    thread.join(WAIT_S)
+
+    ended = operator.status()
+    assert ended.state == "aborted" and ended.summary == "gravity_poses: aborted by the operator"
+    assert len(fake.commands) == commands and run.measurements == []
+
+
+def test_a_run_whose_readings_stop_fails_within_the_timeout_and_going_home_cannot_hang(
+    arm: ArmModel,
+) -> None:
+    assert CalibrationModuleConfig().reading_timeout_s == 1.0
+    fake, operator = FakeArm(arm), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["gravity_poses"])
+    stopped: list[float] = []
+
+    def stop_publishing(arm_: FakeArm) -> None:
+        if not stopped and run.poses is not None and run._motion is not None:
+            stopped.append(arm_.t)
+            arm_.listener = None
+
+    fake.on_tick = stop_publishing
+    run.run()
+
+    assert operator.done is not None
+    ok, text, rest = operator.done
+    lost = "RuntimeError: no joint_state for 1.0 s; the connection stopped publishing"
+    assert not ok and not rest
+    assert text == f"gravity_poses failed: {lost}; parking failed: {lost}"
+    assert f"gravity_poses failed: {lost}\nThe arm holds where it is. Go home?" in operator.asked
+    [t_stop] = stopped
+    assert fake.t - t_stop == pytest.approx(1.0, abs=fake.period_s)
+
+
+def test_bake_writes_the_fitted_links_of_every_arm_with_a_file_and_names_the_rest(
+    dual_openyam_specs: list[ArmCalibrationSpec], tmp_path: Path
+) -> None:
+    left, right = dual_openyam_specs
+    with pytest.raises(ArmCalibrationError, match="no arm of dual_openyam has a calibration file"):
+        bake_calibration(DUAL_OPENYAM, "unread.urdf", root=tmp_path)
+    urdf, out = tmp_path / "in.urdf", tmp_path / "dual_openyam" / "calibrated.urdf"
+    urdf.write_text(left.model.load().xml)
+
+    def save(spec: ArmCalibrationSpec, link: str) -> None:
+        links = gravity_links_from_inertial(spec, {link: LinkInertial(0.9, (0.0, 0.01, 0.02))})
+        fitted = ArmCalibration.for_spec(spec, gravity=GravityCalibration(links=links))
+        save_calibration(calibration_path(spec.arm_id, tmp_path), fitted)
+
+    def mass(path: Path, link: str) -> float:
+        [element] = ET.fromstring(path.read_text()).findall(f"./link[@name='{link}']/inertial/mass")
+        return float(element.attrib["value"])
+
+    save(left, "left_link3")
+    baked = bake_calibration(DUAL_OPENYAM, str(urdf), root=tmp_path)
+
+    assert baked == f"wrote {out}: baked left; right has no calibration file"
+    assert mass(out, "left_link3") == pytest.approx(0.9)
+    assert mass(out, "right_link3") == mass(urdf, "right_link3")
+    save(right, "right_link3")
+    both = tmp_path / "both.urdf"
+    assert bake_calibration(DUAL_OPENYAM, str(urdf), str(both), root=tmp_path) == (
+        f"wrote {both}: baked left, right"
+    )
+    assert mass(both, "left_link3") == mass(both, "right_link3") == pytest.approx(0.9)
+
+
+def test_a_refused_set_config_fails_the_run_and_the_arm_holds(arm: ArmModel) -> None:
+    fake = FakeArm(arm)
+    fake.refuse = "refused by the test"
+    operator = FakeOperator(lambda prompt, c: "stay" if "Go home?" in prompt else c[0])
+    calibration(arm, operator, fake, steps=["step_sweep"]).run()
+
+    assert operator.done is not None
+    ok, text, rest = operator.done
+    assert not ok and not rest
+    assert operator.status().message.endswith(
+        "\nThe arm is not at rest: support it before stopping the run, which turns its motors off."
+    )
+    assert "step_sweep failed: ValueError: set_config changed nothing" in text
+    assert "refused by the test" in text
+    assert fake.live == {}
+
+
+def test_a_buzzing_candidate_stops_at_its_first_buzzing_step_and_the_sweep_goes_on(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm, buzz_above_kp=50.0)
+    operator = FakeOperator()
+    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains", "confirm_tracking"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert {(j, pair) for j, pairs in run.stopped.items() for pair in pairs} == {
+        (j, (60.0, kd)) for j in arm.joint_names for kd in (0.4, 1.0, 2.5, 5.0)
+    }
+    stiff = [m for m in run.step_metrics if m.kp == 60.0]
+    assert sorted({m.delta_deg for m in stiff}) == [-1.0, 1.0, 3.0]
+    assert {m.kp for m in run.step_metrics} == {24.0, 40.0, 60.0}
+    saved = {g["kp"] for g in fake.file["gains"].values()}
+    assert 60.0 not in saved
+    assert fake.live == {}
+
+
+def test_the_sweep_tries_kd_below_the_joints_own_and_each_pair_once(arm: ArmModel) -> None:
+    operator = FakeOperator()
+    run = calibration(arm, operator, FakeArm(arm, kd=2.0), steps=["step_sweep"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    [prompt] = [p for p in operator.asked if p.startswith("At ")]
+    assert (
+        "then at kp x 0.6, 1, 1.5 by kd x 0.4, 1, 2.5, 5 (kd at most 5 and kp x 0.25; "
+        "yaw 9, shoulder 9, elbow 9 candidates)"
+    ) in prompt
+    assert {(m.kp, m.kd) for m in run.step_metrics if m.joint == "elbow"} == {
+        (kp, kd) for kp in (24.0, 40.0, 60.0) for kd in (0.8, 2.0, 5.0)
+    }
+
+
+def test_a_candidate_streams_and_stalls_only_at_its_own_gains(arm: ArmModel) -> None:
+    fake, operator = FakeArm(arm), FakeOperator()
+    run = calibration(
+        arm, operator, fake, steps=["step_sweep"], kp_scales=[1.0, 1.5], kd_scales=[1.0]
+    )
+    held: dict[float, dict[str, tuple[float, float]]] = {}
+    streamed: list[tuple[Motion, dict[str, tuple[float, float]]]] = []
+    set_config, stream = fake.set_config, run.stream
+
+    def in_flight(patch: dict[str, Any], save: bool = False) -> dict[str, Any]:
+        fake.tick()
+        return set_config(patch, save)
+
+    def recorded(motion: Motion) -> Motion:
+        ended = stream(motion)
+        streamed.append((motion, fake.gains()))
+        return ended
+
+    fake.set_config, run.stream = in_flight, recorded
+    fake.on_tick = lambda arm_: held.__setitem__(arm_.t, arm_.gains())
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert {kp for _, gains in streamed for kp, _ in gains.values()} == {40.0, 60.0}
+    for motion, gains in streamed:
+        kp = np.asarray([gains[joint][0] for joint in arm.joint_names])
+        np.testing.assert_array_equal(motion.stall_rad, arm.max_torque / kp)
+        assert all(held[t] == gains for t in motion.t)
+
+
+def test_friction_sets_each_joints_rest_limit_and_a_stuck_largest_step_rejects_its_gains(
+    arm: ArmModel,
+) -> None:
+    fake, operator = FakeArm(arm, friction_nm={"elbow": 0.4}), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains", "confirm_tracking"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert run.friction["elbow"] == pytest.approx(0.4, rel=0.02) and run.friction["yaw"] < 0.01
+    for m in run.step_metrics:
+        friction = 0.4 if m.joint == "elbow" else 0.0
+        assert m.rest_limit_deg == pytest.approx(
+            max(0.1, math.degrees(1.5 * friction / m.kp)), rel=0.02
+        )
+    elbow = [m for m in run.step_metrics if m.joint == "elbow"]
+    assert all(m.stuck for m in elbow if abs(m.delta_deg) == 1.0)
+    assert all(m.stuck for m in elbow if m.kp == 24.0 and abs(m.delta_deg) == 3.0)
+    assert all(not m.stuck for m in elbow if m.kp > 24.0 and abs(m.delta_deg) == 3.0)
+    assert fake.file["gains"]["elbow"]["kp"] > 24.0
+
+
+@pytest.mark.parametrize(
+    "kp, dither_deg", [(40.0, math.degrees(0.3 * 10.0 / 40.0)), (200.0, 1.0), (10.0, 5.0)]
+)
+def test_each_joint_dithers_by_a_share_of_its_torque_over_kp_from_the_smallest_to_5_deg(
+    arm: ArmModel, kp: float, dither_deg: float
+) -> None:
+    run = calibration(arm, FakeOperator(), FakeArm(arm, kp=kp), steps=["gravity_poses"])
+    run.run()
+
+    assert {m.joint: m.dither_deg for m in run.measurements} == {
+        joint: pytest.approx(dither_deg) for joint in arm.measured_joints
+    }
+    assert not any(m.stuck for m in run.measurements)
+
+
+def test_a_pair_the_joint_did_not_follow_is_redone_at_twice_the_dither_and_kept_if_still_stuck(
+    arm: ArmModel,
+) -> None:
+    operator = FakeOperator()
+    run = calibration(
+        arm, operator, FakeArm(arm, friction_nm={"elbow": 1.6}), steps=["gravity_poses"]
+    )
+    run.run()
+    elbow = [m for m in run.measurements if m.joint == "elbow"]
+    assert len(elbow) == 4 and {m.dither_deg for m in elbow} == {5.0}
+    assert not any(m.stuck for m in run.measurements)
+    assert operator.done is not None and "4 redone at twice the dither, 0 stuck" in operator.done[1]
+
+    operator = FakeOperator()
+    run = calibration(
+        arm, operator, FakeArm(arm, friction_nm={"elbow": 3.0}), steps=["gravity_poses"]
+    )
+    run.run()
+    assert operator.done is not None and operator.done[0], operator.done
+    assert [m.pose for m in run.measurements if m.stuck] == [p.name for p in run.poses or []]
+    assert any("elbow: every pair stuck, friction not cancelled" in text for text in operator.shown)
+
+
+def shaken_at(fake: FakeArm, run: Calibration, k: int) -> None:
+    """The elbow oscillates in place while the arm holds the run's ``k``-th gravity pose."""
+
+    def shake(arm_: FakeArm) -> None:
+        if run.poses and np.array_equal(arm_.target, run.poses[k].joints_rad):
+            arm_.q[2] = run.poses[k].joints_rad[2] + 0.005 * math.cos(2.0 * math.pi * 15.0 * arm_.t)
+
+    fake.on_tick = shake
+
+
+def test_a_pose_that_oscillates_is_skipped_and_named_and_the_fit_uses_the_others(
+    arm: ArmModel,
+) -> None:
+    fake, operator = FakeArm(arm, true_links=TRUE_LINKS), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["gravity_poses", "gravity_fit"])
+    shaken_at(fake, run, 1)
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert any(text.startswith("pose_02 skipped: elbow oscillates ") for text in operator.shown)
+    assert "3 of 4 poses, 1 skipped: pose_02 (elbow oscillates " in operator.done[1]
+    assert {m.pose for m in run.measurements} == {"pose_01", "pose_03", "pose_04"}
+    assert len(fake.halts) == 1
+    assert fake.file["fit"]["poses"] == ["pose_01", "pose_03", "pose_04"]
+    assert_the_saved_fit_finds_the_truth(arm, fake, run)
+
+
+@pytest.mark.parametrize("skipped", [None, 1])
+def test_a_base_a_rounding_off_level_holds_no_joint_and_the_fit_finds_the_truth(
+    skipped: int | None,
+) -> None:
+    tilted = toy_arm(tilt_rad=3.7e-6)
+    fake, operator = FakeArm(tilted, true_links=TRUE_LINKS), FakeOperator()
+    run = calibration(tilted, operator, fake, steps=["gravity_poses", "gravity_fit"], poses=5)
+    if skipped is not None:
+        shaken_at(fake, run, skipped)
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    fit = fake.file["fit"]
+    assert len(fit["poses"]) == (5 if skipped is None else 4)
+    assert fit["held_joints"] == {}
+    assert fit["total_rms_nm"]["held_out"] < 0.2 * fit["total_rms_nm"]["urdf"]
+    assert_the_saved_fit_finds_the_truth(tilted, fake, run)
+
+
+def test_too_few_poses_measured_fails_gravity_poses(arm: ArmModel) -> None:
+    assert CalibrationModuleConfig().min_poses == 8
+    with pytest.raises(ValueError, match="min_poses must not exceed poses"):
+        CalibrationModuleConfig(poses=4, min_poses=5)
+    fake, operator = FakeArm(arm), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["gravity_poses", "gravity_fit"], min_poses=4)
+    shaken_at(fake, run, 1)
+    run.run()
+
+    assert operator.done is not None
+    ok, text, rest = operator.done
+    assert not ok and rest
+    assert (
+        "gravity_poses failed: RuntimeError: only 3 of 4 poses measured; need at least 4 "
+        "(min_poses), 1 skipped: pose_02 (elbow oscillates "
+    ) in text
+    assert "fit" not in fake.file
+
+
+def test_a_dither_that_stalls_is_dropped_for_its_joint_and_pose(arm: ArmModel) -> None:
+    operator = FakeOperator()
+    run = calibration(arm, operator, FakeArm(arm), steps=["gravity_poses"])
+    stream = run.stream
+
+    def stalling(motion: Motion) -> Motion:
+        pose = np.asarray(run.poses[1].joints_rad) if run.poses else None
+        if pose is not None and np.flatnonzero(motion.path[-1] != pose).tolist() == [2]:
+            motion.stall_rad = np.where(np.arange(3) == 2, 1e-3, motion.stall_rad)
+        return stream(motion)
+
+    run.stream = stalling
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert ("elbow", "pose_02") not in {(m.joint, m.pose) for m in run.measurements}
+    assert len(run.measurements) == 4 * 2 - 1
+    assert any(
+        text.startswith("elbow at pose_02 dropped: stalled, elbow ") for text in operator.shown
+    )
+    assert (
+        "4 of 4 poses, 7 dither pairs, 1 dropped: elbow at pose_02 (stalled, elbow "
+        in (operator.done[1])
+    )
+
+
+def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
+    elbow_only = ArmModel(replace(arm.spec, measured_joints=["elbow"]))
+    fake, operator = FakeArm(elbow_only, true_links=TRUE_LINKS), FakeOperator()
+    run = calibration(elbow_only, operator, fake, steps=["gravity_poses", "gravity_fit"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert run.dithered == ["shoulder", "elbow"]
+    assert {m.joint for m in run.measurements} == {"shoulder", "elbow"}
+    assert fake.file["fit"]["held_joints"] == {}
+
+
+@pytest.mark.parametrize("answer", ["keep", "save"])
+def test_a_fit_worse_over_all_than_the_running_model_is_saved_only_when_asked(
+    arm: ArmModel, answer: str
+) -> None:
+    fake = FakeArm(arm, true_links=TRUE_LINKS, friction_nm={"shoulder": 0.5, "elbow": 0.5})
+    fake.file = {
+        "links": {k: {"mass_kg": v.mass_kg, "com_m": list(v.com_m)} for k, v in TRUE_LINKS.items()}
+    }
+    for _ in range(100):
+        fake.tick()
+    operator = FakeOperator(lambda prompt, c: answer if "anyway" in prompt else c[0])
+    calibration(arm, operator, fake, steps=["gravity_poses", "gravity_fit"]).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert any("worse over all the dithered joints" in prompt for prompt in operator.asked)
+    assert ("fit" in fake.file) == (answer == "save")
+
+
+def test_a_joint_rests_then_floats_its_whole_window_and_a_falling_one_is_held_again(
+    arm: ArmModel,
+) -> None:
+    fake, operator = FakeArm(arm), FakeOperator()
+    limp: dict[str, list[float]] = {}
+    held: list[tuple[float, np.ndarray]] = []
+
+    def watch(arm_: FakeArm) -> None:
+        for joint in arm_.floating:
+            limp.setdefault(joint, []).append(arm_.t)
+        if not arm_.floating:
+            held.append((arm_.t, arm_.target.copy()))
+
+    fake.on_tick = watch
+    calibration(arm, operator, fake, steps=["float_check"]).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert set(limp) == {"shoulder", "elbow"}
+    for times in limp.values():
+        assert times[-1] - times[0] == pytest.approx(10.0, abs=0.05)
+        before = [(t, target) for t, target in held if t < times[0]]
+        moving = [t for t, target in before if not np.array_equal(target, before[-1][1])]
+        assert before[-1][0] - moving[-1] > 2.0
+    assert "2 of 2 floated joints ended within 2 mm" in operator.done[1]
+    float_check = fake.file["checks"]["float"]
+    assert float_check["window_s"] == 10.0 and float_check["limit_mm"] == 2.0
+
+    falling, operator = FakeArm(arm, true_links=TRUE_LINKS), FakeOperator()
+    calibration(arm, operator, falling, steps=["float_check"]).run()
+    assert operator.done is not None and operator.done[0], operator.done
+    rows = falling.file["checks"]["float"]["joints"]
+    assert {row["ended"] for row in rows.values()} == {"drifted"}
+    assert all(not row["passed"] and row["duration_s"] < 2.0 for row in rows.values())
+    assert all(5.0 < abs(row["joint_drift_deg"]) < 5.5 for row in rows.values())
+    assert falling.floating == {} and "0 of 2 floated joints" in operator.done[1]
+
+
+@pytest.mark.parametrize("hz", [15.0, 35.0])
+def test_a_hold_that_oscillates_in_place_ends_whatever_its_phase(arm: ArmModel, hz: float) -> None:
+    motion = Motion(arm, [arm.home], 1.0, "converge", 0.5, np.full(3, 1e-4), np.full(3, np.inf))
+    for k in range(500):
+        q = arm.home + np.array([0.0, 0.0, 0.01 * math.cos(2.0 * math.pi * hz * k / 100.0)])
+        motion.feed(Sample(k / 100.0, q, np.zeros(3)))
+    assert motion.done.is_set() and motion.ended == "not converging"
+    name = arm.joint_names[2]
+    assert motion.detail.startswith(f"{name} oscillates 1.") and " deg (band " in motion.detail
+    assert arm.joint_names[0] not in motion.detail
+
+
+TRY_GAINS = {
+    "steps": ["gravity_poses", "step_sweep", "pick_gains", "confirm_tracking"],
+    "kp_scales": [1.0, 1.5],
+    "kd_scales": [1.0],
+}
+
+
+def test_the_proposed_gains_stream_with_every_move_and_are_saved_once_they_track(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+    trying: list[dict[str, tuple[float, float]]] = []
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "Accept them?" in prompt:
+            fake.on_tick = lambda arm_: (
+                trying.append(arm_.gains()) if arm_.commands[-1] == arm_.t else None
+            )
+        if trying and "Move to" in prompt:
+            for _ in range(30):
+                fake.tick()
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    proposed = {j: (g["kp"], g["kd"]) for j, g in fake.file["gains"].items()}
+    assert proposed == dict.fromkeys(arm.joint_names, (60.0, 1.0))
+    assert trying and all(gains == proposed for gains in trying)
+    assert any(t > 0.0 for t in fake.halts)
+    assert set(fake.file["checks"]) == {"tracking"}
+    assert "saved gains for yaw, shoulder, elbow" in operator.done[1]
+
+
+def test_a_stall_with_the_proposed_gains_saves_nothing_and_gives_the_gains_back(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "The arm revisits" in prompt:
+            pinned = fake.q[2]
+
+            def pin_elbow(arm_: FakeArm) -> None:
+                arm_.q[2] = pinned
+
+            fake.on_tick = pin_elbow
+        return "stay" if "Go home?" in prompt else choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "confirm_tracking: gains not saved: stalled or blocked" in operator.done[1]
+    assert any("the proposed gains are undone. Go home?" in prompt for prompt in operator.asked)
+    assert "gains" not in fake.file and fake.gains() == fake.defaults
+
+
+def test_proposed_gains_that_rest_worse_than_the_first_visit_are_not_saved(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "The arm revisits" in prompt:
+            fake.friction[2] = 1.5
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "gains not saved: elbow rests" in operator.done[1]
+    assert "gains" not in fake.file and fake.gains() == fake.defaults
+
+
+def test_a_joint_without_proposed_gains_that_rests_worse_keeps_the_others_from_being_saved(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if prompt == "Sweep elbow?":
+            return "skip"
+        if "The arm revisits" in prompt:
+            fake.friction[2] = 1.5
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "pick_gains: accepted gains for yaw, shoulder;" in operator.done[1]
+    assert "gains not saved: elbow rests" in operator.done[1]
+    assert "gains" not in fake.file and fake.gains() == fake.defaults
+
+
+def test_moves_default_to_10_deg_s_up_to_60_and_each_dither_holds_a_second(
+    arm: ArmModel,
+) -> None:
+    config = CalibrationModuleConfig()
+    assert (config.speed_deg_s, config.dither_hold_s) == (10.0, 1.0)
+    CalibrationModuleConfig(speed_deg_s=60.0)
+    with pytest.raises(ValueError, match="less than or equal to 60"):
+        CalibrationModuleConfig(speed_deg_s=61.0)
+    with pytest.raises(ValueError, match="outlast rest_window_s"):
+        CalibrationModuleConfig(dither_hold_s=0.5)
+    run = calibration(arm, FakeOperator(), FakeArm(arm), steps=["gravity_poses"])
+    holds: list[float] = []
+    stream = run.stream
+
+    def timed(motion: Motion) -> Motion:
+        ended = stream(motion)
+        if motion.mode == "fixed":
+            holds.append(motion.t[-1] - motion.t[0])
+        return ended
+
+    run.stream = timed
+    run.run()
+    assert len(holds) == 4 * 2 * 2 + 1
+    assert all(hold == pytest.approx(1.0, abs=0.011) for hold in holds[1:])
+
+
+def test_a_hold_on_a_creeping_joint_ends_not_converging_at_its_bound(arm: ArmModel) -> None:
+    def creep(max_hold_s: float) -> Motion:
+        motion = Motion(
+            arm,
+            [arm.home],
+            1.0,
+            "converge",
+            0.5,
+            np.full(3, 1e-4),
+            np.full(3, np.inf),
+            max_hold_s=max_hold_s,
+        )
+        for k in range(1000):
+            motion.feed(
+                Sample(k / 100.0, arm.home + np.array([0.0, 0.0, 0.002 * k / 100.0]), np.zeros(3))
+            )
+        return motion
+
+    bounded = creep(CalibrationModuleConfig().max_hold_s)
+    assert bounded.ended == "not converging"
+    assert bounded.t[-1] - bounded.t[0] == pytest.approx(5.0, abs=0.011)
+    assert not creep(math.inf).done.is_set()
+    with pytest.raises(ValueError, match="two rest windows"):
+        CalibrationModuleConfig(max_hold_s=1.0)
+
+
+def test_the_plan_skips_what_cannot_run() -> None:
+    rows = dict(plan(["gravity_fit", "float_check"], can_float=False))
+    assert rows["check"] is None
+    assert rows["gravity_fit"] == "needs gravity_poses in the same run"
+    assert rows["float_check"] is not None and "compensate gravity" in rows["float_check"]
+    assert rows["summary"] == "not selected"

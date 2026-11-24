@@ -24,7 +24,7 @@ from dimos_lcm.std_msgs import Time
 import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.String import String
@@ -50,7 +50,7 @@ from dimos.orchestration.plain import field_to_plain, to_plain
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 
 PATROL = Path(__file__).parent / "m20_patrol.toml"
-MODULES = (MLSPlannerNative, M20Connection, LocalMapRelocalization, Orchestrator)
+MODULES = (MLSPlannerNative, M20Connection, PremapModule, Orchestrator)
 GOALS = [
     "hardware",
     "kitchenette",
@@ -154,7 +154,7 @@ def _walk(
         nonlocal level, docks, requested, released
         for effect in effects:
             match effect:
-                case SendStart(call) if call.rpc == "LocalMapRelocalization.location":
+                case SendStart(call) if call.rpc == "PremapModule.location":
                     calls.append(str(call.args["name"]))
                     pose = PoseStamped(frame_id="premap", position=[len(calls), 0.0, 0.0])
                     queue.append(ReturnItem(call, to_plain(pose)))

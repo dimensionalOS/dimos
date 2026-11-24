@@ -64,7 +64,7 @@ uses = ["base"]
 
 [[activity]]
 name = "locate"
-start = "LocalMapRelocalization.location"
+start = "PremapModule.location"
 
 [[activity]]
 name = "dock"
