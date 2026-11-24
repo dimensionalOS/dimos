@@ -12,21 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! rl_deploy's joint-data and tilt faults (the controller's JointWatch and tilt_fault) over every ECAN reply of a
-//! recorded session, with the state rl_deploy was in as the target and the gait it ran; every fault they would have
-//! raised is printed (rl_deploy raised none in these sessions).
+//! rl_deploy's faults (the controller's DriverWatch, JointWatch and tilt_fault) over every ECAN reply of a recorded
+//! session, with the state rl_deploy was in as the target and the gait it ran; every fault they would have raised is
+//! printed (rl_deploy raised none in these sessions).
 //!
-//!     cargo run --release --example fault_replay -- SESSION.bin ECAN_DUMP.bin
+//!     cargo run --release --example fault_replay -- SESSION.bin ECAN_CAPTURE.pcapng
 //!
-//! SESSION.bin: tools/policy_steps.py session; ECAN_DUMP.bin: examples/ecan_dump.rs of the same session.
+//! SESSION.bin: tools/policy_steps.py session; ECAN_CAPTURE: the session's ecan.pcapng.
 
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 
-use m20_controller::config::{Config, JOINTS};
-use m20_controller::state_machine::{tilt_fault, JointWatch};
-use m20_controller::types::{RobotState, Target};
+use m20_controller::config::Config;
+use m20_controller::frames::{decode_state, Mapping};
+use m20_controller::state_machine::{tilt_fault, DriverWatch, JointWatch};
+use m20_controller::types::Target;
+use m20_ecan::{tap, Direction};
 
 struct Reader(Vec<u8>, usize);
 
@@ -56,7 +58,7 @@ impl Reader {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [session, ecan] = &args[..] else {
-        bail!("usage: fault_replay SESSION.bin ECAN_DUMP.bin");
+        bail!("usage: fault_replay SESSION.bin ECAN_CAPTURE.pcapng");
     };
     let mut r = Reader(std::fs::read(session)?, 0);
     if r.take(6) != b"M20SS2" {
@@ -87,40 +89,27 @@ fn main() -> Result<()> {
         r.take(4 * (16 * 3 + 4));
         gaits.push((row, gait));
     }
-    // the ECAN states, in reply order (ecan_dump: kind 0 records)
+    let cfg = Config::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml"))?;
+    // the ECAN states, in reply order, with the drivers' status words and temperatures
+    let map = Mapping::new(&cfg.ecan)?;
     let bytes = std::fs::read(ecan)?;
     let mut states = Vec::new();
-    let mut o = 0;
-    while o < bytes.len() {
-        let kind = bytes[o + 8];
-        o += 9;
-        match kind {
-            0 => {
-                let v: Vec<f32> = bytes[o..o + 192]
-                    .chunks(4)
-                    .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-                    .collect();
-                states.push(v);
-                o += 192;
+    for (_, direction, frame) in tap::read_capture(&bytes)? {
+        if direction == Direction::FromBoard {
+            if let Ok(Some(s)) = decode_state(frame, cfg.ecan.ethertype, &map) {
+                states.push(s);
             }
-            1 => o += 258,
-            _ => {}
         }
     }
     if states.len() != rows.len() {
         bail!("{} ECAN states, {} rows", states.len(), rows.len());
     }
-    let cfg = Config::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml"))?;
     let mut watch = JointWatch::new(&cfg.robot);
+    let mut drivers = DriverWatch::default();
     let latest = |t: f64| imu.partition_point(|s| s.0 <= t).checked_sub(1);
     let (mut faults, mut checked) = (0, 0u64);
     let mut gait_at = 0usize;
-    for (row, v) in states.iter().enumerate() {
-        let mut s = RobotState::default();
-        for i in 0..JOINTS {
-            (s.q[i], s.dq[i], s.tau[i]) =
-                (v[3 * i] as f64, v[3 * i + 1] as f64, v[3 * i + 2] as f64);
-        }
+    for (row, s) in states.iter().enumerate() {
         let state = segments
             .iter()
             .find(|(_, a, b)| *a <= row && row < *b)
@@ -137,13 +126,14 @@ fn main() -> Result<()> {
             "lie_down" => Target::LieDown,
             _ => Target::JointDamping,
         };
-        let joint = watch.check(&s, &cfg.robot.joint_names);
+        let driver = drivers.check(s, &cfg.robot.joint_names);
+        let joint = watch.check(s, &cfg.robot.joint_names);
         let tilt = latest(rows[row]).and_then(|k| {
             let rad = |d: f32| ((d / 180.0) as f64 * std::f64::consts::PI) as f32;
             tilt_fault(target, gait, rad(imu[k].1[0]), rad(imu[k].1[1]))
         });
         checked += 1;
-        for f in [joint, tilt].into_iter().flatten() {
+        for f in [driver, joint, tilt].into_iter().flatten() {
             faults += 1;
             if faults <= 20 {
                 println!(

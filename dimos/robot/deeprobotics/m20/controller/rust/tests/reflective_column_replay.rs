@@ -51,10 +51,6 @@ struct Logged {
     position: Option<[f64; 3]>,
 }
 
-fn env_path(name: &str, default: PathBuf) -> PathBuf {
-    std::env::var_os(name).map(PathBuf::from).unwrap_or(default)
-}
-
 fn read_text(path: &PathBuf) -> String {
     use std::io::Read;
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

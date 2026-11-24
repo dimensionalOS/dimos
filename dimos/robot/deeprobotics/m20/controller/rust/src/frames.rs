@@ -218,6 +218,7 @@ pub fn decode_state(frame: &[u8], ethertype: u16, map: &Mapping) -> Result<Optio
         return Ok(None);
     };
     let mut s = RobotState::default();
+    let mut drivers = crate::types::Drivers::default();
     let mut seen = 0u32;
     for k in 0..JOINTS {
         let u = &payload[STATE_IMU_BYTES + k * JOINT_UNIT..][..JOINT_UNIT];
@@ -227,8 +228,14 @@ pub fn decode_state(frame: &[u8], ethertype: u16, map: &Mapping) -> Result<Optio
         s.q[i] = map.to_joint(i, f32_at(u, 4));
         s.dq[i] = map.direction[i] * f32_at(u, 8);
         s.tau[i] = map.direction[i] * f32_at(u, 12);
+        // the temperatures in hundredths of a degree, the status word after them (m20-ecan's JointUnit)
+        let temperature = |at: usize| i16::from_le_bytes([u[at], u[at + 1]]) as f32 / 100.0;
+        drivers.motor_temperature_c[i] = temperature(16);
+        drivers.driver_temperature_c[i] = temperature(18);
+        drivers.status_word[i] = u16::from_le_bytes([u[20], u[21]]);
         seen |= 1 << i;
     }
+    s.drivers = Some(drivers);
     if seen != 0xffff {
         bail!("joint-state frame is missing joints (mask {seen:#06x})");
     }

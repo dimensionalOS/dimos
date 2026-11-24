@@ -196,6 +196,55 @@ pub fn tilt_fault(target: Target, gait: u32, roll: f32, pitch: f32) -> Option<St
     })
 }
 
+/// rl_deploy's driver faults (SafeController::Run): every tick, any driver status word other than 1 (none when the
+/// source reports no status words); every 1000 ticks (after the first 1000), the temperatures, latched per joint:
+/// a motor at 120 deg C or more until it is below 100, a driver at 100 or more until it is below 80; the fault
+/// holds while any is latched.
+#[derive(Debug, Clone, Default)]
+pub struct DriverWatch {
+    ticks: u32,
+    motor_hot: u32,
+    driver_hot: u32,
+}
+
+impl DriverWatch {
+    pub fn check(&mut self, s: &RobotState, names: &[String]) -> Option<String> {
+        let d = s.drivers.as_ref()?;
+        self.ticks += 1;
+        if self.ticks > 999 {
+            self.ticks = 0;
+            for i in 0..JOINTS {
+                let (motor, driver) = (d.motor_temperature_c[i], d.driver_temperature_c[i]);
+                if motor >= 120.0 {
+                    self.motor_hot |= 1 << i;
+                } else if motor < 100.0 {
+                    self.motor_hot &= !(1 << i);
+                }
+                if driver >= 100.0 {
+                    self.driver_hot |= 1 << i;
+                } else if driver < 80.0 {
+                    self.driver_hot &= !(1 << i);
+                }
+            }
+        }
+        let first = |bits: u32| {
+            (0..JOINTS)
+                .find(|i| bits & (1 << i) != 0)
+                .map(|i| names[i].as_str())
+        };
+        if let Some(i) = (0..JOINTS).find(|&i| d.status_word[i] != 1) {
+            Some(format!(
+                "joint {} driver status word {:#06x}",
+                names[i], d.status_word[i]
+            ))
+        } else if let Some(n) = first(self.motor_hot) {
+            Some(format!("joint {n} motor overheated"))
+        } else {
+            first(self.driver_hot).map(|n| format!("joint {n} driver overheated"))
+        }
+    }
+}
+
 /// rl_deploy's joint-data checks (SafeController::IsJointDataNormal, 0x1773a8, on every 1 ms SafeController tick):
 /// per joint, a run of 31 readings with a NaN in its position, velocity or torque; a run of 51 readings identical to
 /// the one before (a frozen motor; all 16 joints); a run of 31 hip / knee positions more than 0.1 + 0.14 rad past
@@ -339,6 +388,7 @@ pub struct Controller {
     last_stamp: Option<f64>,
     stale_run: u64,
     joint_watch: JointWatch,
+    driver_watch: DriverWatch,
     enable_left: u64,
     fault_checks: bool,
     stand_ins_run: std::collections::BTreeSet<u32>,
@@ -388,6 +438,7 @@ impl Controller {
             last_stamp: None,
             stale_run: 0,
             joint_watch: JointWatch::new(&robot),
+            driver_watch: DriverWatch::default(),
             enable_left: 0,
             fault_checks: true,
             stand_ins_run: Default::default(),
@@ -449,13 +500,14 @@ impl Controller {
 
     /// Recomputed every tick like rl_deploy's SafeController (a fault clears when its cause does).
     fn check_faults(&mut self, s: &RobotState, cmd: &UserCommand) -> Option<String> {
-        // rl_deploy's SafeController faults on the joint data and the tilt only (IMU staleness and NaN, and its 20 ms
-        // reply gap, set status bits it publishes, not the fault byte), from its first tick
+        // rl_deploy's SafeController faults on the driver status words and temperatures, the joint data and the tilt
+        // only (IMU staleness and NaN set status bits it publishes, not the fault byte), from its first tick
+        let drivers = self.driver_watch.check(s, &self.cfg.robot.joint_names);
         let joints = self.joint_watch.check(s, &self.cfg.robot.joint_names);
         if !self.fault_checks {
             return None;
         }
-        joints.or_else(|| self.tilt_fault(s, cmd))
+        drivers.or(joints).or_else(|| self.tilt_fault(s, cmd))
     }
 
     /// rl_deploy's tilt fault (SafeController::Run, 0x183980, every 1 ms, no debounce): |roll| or |pitch| of the IMU's
@@ -511,14 +563,16 @@ impl Controller {
             State::StandUp | State::LieDown => self.spline_time(),
             _ => self.state_time,
         };
+        // a fault sends every state but Idle to JointDamping (rl_deploy's IdleState stays, its target set to 0)
         if self.state != State::JointDamping
-            && (target == Target::JointDamping || self.fault.is_some())
+            && (target == Target::JointDamping
+                || (self.fault.is_some() && self.state != State::Passive))
         {
             return State::JointDamping;
         }
         match self.state {
             State::Passive | State::StartDamping => {
-                let ready = self.time >= st.passive.min_s_before_stand;
+                let ready = self.time >= st.passive.min_s_before_stand && self.fault.is_none();
                 if ready && matches!(target, Target::Stand | Target::RlControl) {
                     State::StandUp
                 } else {
@@ -984,7 +1038,7 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::{InlinePolicy, PolicyResult, RunnerSet};
+    use crate::policy::{InlinePolicy, RunnerSet};
 
     fn config() -> Config {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
@@ -1000,28 +1054,6 @@ mod tests {
             s.q[i] = (cfg.robot.joint_lower[i] + cfg.robot.joint_upper[i]) / 2.0;
         }
         s
-    }
-
-    /// Answers every offer with these targets.
-    struct Fixed(Targets, Option<PolicyResult>);
-
-    impl PolicyService for Fixed {
-        fn offer(&mut self, request: PolicyRequest) -> bool {
-            self.1 = Some(PolicyResult {
-                runner: request.runner,
-                seq: request.seq,
-                targets: Ok(self.0.clone()),
-                gain_scale: 1.0,
-                inference_s: 0.0,
-            });
-            true
-        }
-        fn take_result(&mut self) -> Option<PolicyResult> {
-            self.1.take()
-        }
-        fn dropped(&self) -> u64 {
-            0
-        }
     }
 
     #[test]
@@ -1092,6 +1124,48 @@ mod tests {
             let f = w.check(&s, &names);
             assert_eq!(f.is_some(), k == 51, "frozen reading {k}: {f:?}");
         }
+    }
+
+    #[test]
+    fn driver_faults_are_rl_deploy_s() {
+        let cfg = config();
+        let names = cfg.robot.joint_names.clone();
+        let mut w = DriverWatch::default();
+        let mut s = standing_state(&cfg);
+        assert!(w.check(&s, &names).is_none(), "no driver data, no fault");
+        let mut d = crate::types::Drivers {
+            status_word: [1; JOINTS],
+            motor_temperature_c: [40.0; JOINTS],
+            driver_temperature_c: [40.0; JOINTS],
+        };
+        s.drivers = Some(d);
+        assert!(w.check(&s, &names).is_none());
+        d.status_word[5] = 0x21;
+        s.drivers = Some(d);
+        assert!(w
+            .check(&s, &names)
+            .is_some_and(|f| f.contains("status word")));
+        d.status_word[5] = 1;
+        // a motor at 120: the fault comes at the next 1000-tick check and holds until it is below 100
+        d.motor_temperature_c[2] = 120.0;
+        s.drivers = Some(d);
+        let first = (0..1000).position(|_| w.check(&s, &names).is_some());
+        assert!(first.is_some_and(|k| k < 1000));
+        d.motor_temperature_c[2] = 100.0;
+        s.drivers = Some(d);
+        assert!(
+            (0..2000).all(|_| w.check(&s, &names).is_some()),
+            "100..120 stays latched"
+        );
+        d.motor_temperature_c[2] = 99.9;
+        s.drivers = Some(d);
+        assert!((0..1000).any(|_| w.check(&s, &names).is_none()));
+        // drivers: 100 latches, below 80 clears
+        d.driver_temperature_c[7] = 100.0;
+        s.drivers = Some(d);
+        assert!((0..1000).any(|_| w
+            .check(&s, &names)
+            .is_some_and(|f| f.contains("driver overheated"))));
     }
 
     #[test]

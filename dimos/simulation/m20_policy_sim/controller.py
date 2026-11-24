@@ -235,10 +235,13 @@ class Controller:
     def next_state(self, target: str) -> str:
         st = self.cfg["states"]
         t = self.state_time
-        if self.state != "joint_damping" and (target == "joint_damping" or self.fault):
+        # a fault sends every state but idle to joint damping (rl_deploy's IdleState stays, its target set to 0)
+        if self.state != "joint_damping" and (
+            target == "joint_damping" or (self.fault and self.state != "passive")
+        ):
             return "joint_damping"
         if self.state in ("passive", "start_damping"):
-            ready = self.time >= st["passive"]["min_s_before_stand"]
+            ready = self.time >= st["passive"]["min_s_before_stand"] and not self.fault
             return "stand_up" if ready and target in ("stand", "rl_control") else self.state
         if self.state == "stand_up":
             if t > 2 * st["stand_up"]["phase_s"]:

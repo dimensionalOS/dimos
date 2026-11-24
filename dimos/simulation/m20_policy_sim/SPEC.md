@@ -79,14 +79,18 @@ StandUp, LieDown and RLControl to JointDamping and keeps Idle in Idle). Its faul
 - Joint data (IsJointDataNormal 0x1773a8), per joint: 31 readings in a row with a NaN in position, velocity or
   torque; 51 in a row identical to the one before (a frozen motor, all 16 joints); 31 in a row of a hip / knee
   position more than 0.1 + 0.14 rad past ControlParameters' front-leg range, mirrored per leg.
-- A driver status word other than 1, and the motor / driver temperature flags (not in the re-implementations).
+- Drivers: every tick, any status word other than 1; every 1000 ticks (after the first 1000), the temperatures,
+  latched per joint: a motor at 120 deg C or more until below 100, a driver at 100 or more until below 80.
 Not faults: the IMU's age (a new sample more than 20 ms after the last, or none for 20 ms) and a NaN in its readings
 set status bits SafeController publishes (0x158 bits 1 and 0; PubMotionStatus logs "IMU数据更新超时"), and leave the
 fault byte alone; so does a missing joint reply.
-The re-implementations raise exactly the tilt and joint faults (their target: the operator's, joint damping while in
-it, rl_control's own gait), nothing else; after a fault they ignore the operator's standing request until a different
-one arrives (rl_deploy resets the target to damping). examples/fault_replay.rs runs both over a session's every reply:
-none on 11-20 14:16 (218687 replies) and 16:36 (142448); 11-24's (118525) joint checks only (its IMU is not in the
+The re-implementations raise exactly these faults (the tilt's target: the operator's, joint damping while in it,
+rl_control's own gait; the drivers' status words and temperatures from the motor bus's replies) and, like rl_deploy,
+keep Idle in Idle under a fault. Their one extra: an inference error (a model that fails to run) is a fault into
+JointDamping, where rl_deploy's Ort::ThrowStatus would end the process. After a fault they ignore the operator's
+standing request until a different one arrives (rl_deploy resets the target to damping). The IMU sample each step
+uses is the latest that arrived, however old, as rl_deploy's. examples/fault_replay.rs runs them over a session's every reply:
+none on 11-20 14:16 (218687 replies) and 16:36 (142448), nor on 11-24 (118525; no tilt there: its IMU is not in the
 capture).
 
 ### RLControl entry and gait handling [C]

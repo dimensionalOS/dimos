@@ -73,9 +73,13 @@ pub fn motor_commands(
 /// The controller's view of a joint-state reply.
 pub fn robot_state(joints: &[m20_ecan::JointState], calibration: &Calibration) -> RobotState {
     let mut s = RobotState::default();
+    let mut drivers = crate::types::Drivers::default();
     for j in joints {
         let i = j.joint.index();
         if i < JOINTS {
+            drivers.status_word[i] = j.status_word;
+            drivers.motor_temperature_c[i] = j.motor_temperature_c;
+            drivers.driver_temperature_c[i] = j.driver_temperature_c;
             let q = crate::frames::vendor_joint_position(i, j.position);
             // single-turn hip / knee encoders into (-pi, pi] (only ever off when the encoder wraps)
             s.q[i] = if i % 4 == 3 || (-std::f32::consts::PI < q && q <= std::f32::consts::PI) {
@@ -87,6 +91,7 @@ pub fn robot_state(joints: &[m20_ecan::JointState], calibration: &Calibration) -
             s.tau[i] = calibration.urdf_rate(j.joint, j.torque) as f64;
         }
     }
+    s.drivers = Some(drivers);
     s
 }
 

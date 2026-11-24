@@ -39,6 +39,17 @@ pub struct RobotState {
     /// the IMU's own roll / pitch / yaw (degrees, f32) when the source has them (yesense's ImuData): the gravity
     /// observation is then rl_deploy's f32 rotation of them ([`vendor_projected_gravity`]), not `quat`'s
     pub imu_rpy_deg: Option<[f32; 3]>,
+    /// the drivers' status words and motor / driver temperatures (deg C) when the source has them (the motor bus):
+    /// rl_deploy's SafeController faults on them
+    pub drivers: Option<Drivers>,
+}
+
+/// Per joint (robot order) what the motor board reports besides the joint state.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Drivers {
+    pub status_word: [u16; JOINTS],
+    pub motor_temperature_c: [f32; JOINTS],
+    pub driver_temperature_c: [f32; JOINTS],
 }
 
 /// Per joint the drivers run tau = kp * (q - q_meas) + kd * (dq - dq_meas) + tau.

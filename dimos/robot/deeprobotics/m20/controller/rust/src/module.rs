@@ -73,12 +73,6 @@ pub struct Config {
     charge_enable: bool,
     /// frame_id of every header.
     frame_id: String,
-    /// owner: stop owning the bus on a reply with any joint torque (N m) or speed (rad/s) above these, or, once the
-    /// startup is through, any status word other than 1. With `allow_gains` these must cover what the policy does.
-    #[validate(range(exclusive_min = 0.0))]
-    guard_max_torque: f64,
-    #[validate(range(exclusive_min = 0.0))]
-    guard_max_velocity: f64,
     /// Seconds without a frame before warning.
     #[validate(range(exclusive_min = 0.0, max = 3600.0))]
     silence_warning_s: f64,
@@ -93,9 +87,6 @@ pub struct Config {
     controller_config: String,
     /// policy: the directory of the extracted rl_deploy ONNX policies; empty is ~/.cache/dimos/m20_policies.
     policy_dir: String,
-    /// policy: seconds an IMU sample stays usable; older, the state is stale and the state machine faults.
-    #[validate(range(exclusive_min = 0.0))]
-    imu_timeout_s: f64,
     /// policy: seconds without a new command before the velocity is zeroed, over the TOML's
     /// safety.command_timeout_s; 0 (unset) keeps the TOML's.
     #[validate(range(min = 0.0))]
@@ -179,19 +170,16 @@ pub struct Shared {
     vendor_read: AtomicBool,
 }
 
-/// The body IMU as the loop reads it: the newest sample, if it is fresh.
+/// The body IMU as the loop reads it: the newest sample that arrived, however old (rl_deploy's, which never ages one
+/// out).
 pub struct SharedImu {
     shared: Arc<Shared>,
-    timeout: Duration,
 }
 
 impl ImuSource for SharedImu {
     fn latest(&mut self) -> Option<ImuSample> {
         let guard = self.shared.imu.lock().unwrap_or_else(|p| p.into_inner());
-        guard
-            .as_ref()
-            .filter(|(_, at)| at.elapsed() <= self.timeout)
-            .map(|(sample, _)| *sample)
+        guard.as_ref().map(|(sample, _)| *sample)
     }
 }
 
@@ -225,40 +213,6 @@ pub fn imu_sample(msg: &Imu) -> ImuSample {
         accel: [a.x, a.y, a.z],
         stamp: msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 * 1e-9,
     }
-}
-
-/// The owner's guard: a reply showing a torque or speed above the limits (or not a number), or, once the startup is
-/// through, a status word other than 1 (or no joints). Returns the largest |torque| and |speed| seen, and whether to stop.
-pub fn guard(
-    joints: &[m20_ecan::JointState],
-    max_torque: f64,
-    max_velocity: f64,
-    in_startup: bool,
-) -> (f64, f64, bool) {
-    // f32::max drops NaN, so a non-finite reading counts as infinite
-    let largest = |values: &mut dyn Iterator<Item = f32>| {
-        values
-            .map(|v| {
-                if v.is_finite() {
-                    v.abs()
-                } else {
-                    f32::INFINITY
-                }
-            })
-            .fold(0.0f32, f32::max) as f64
-    };
-    let torque = largest(&mut joints.iter().map(|j| j.torque));
-    let velocity = largest(&mut joints.iter().map(|j| j.velocity));
-    // a reply with no joint records says nothing about the joints; a missing joint state is the stale-state fault's job
-    let status_bad = !in_startup
-        && joints
-            .iter()
-            .any(|j| j.status_word != m20_ecan::joint::STATUS_OK);
-    (
-        torque,
-        velocity,
-        torque > max_torque || velocity > max_velocity || status_bad,
-    )
 }
 
 /// The one-time setup that grants the controller CAP_NET_RAW (motor bus) and SCHED_FIFO (CAP_SYS_NICE, LimitRTPRIO).
@@ -628,38 +582,9 @@ fn run_policy(
             return;
         }
     };
-    // the guard on every reply; status words count once the startup is through (set from the loop)
-    let startup_done = Arc::new(AtomicBool::new(false));
-    let tripped = Arc::new(AtomicBool::new(false));
-    let (guard_shared, guard_startup, guard_tripped) =
-        (shared.clone(), startup_done.clone(), tripped.clone());
     let charge_feed = shared.dock.clone();
     let mut battery_reports = 0u64;
-    let (max_torque, max_velocity) = (config.guard_max_torque, config.guard_max_velocity);
     let sink: Sink = Box::new(move |t, direction, frame| {
-        if let Ok((_, m20_ecan::Message::JointStates { joints, .. })) =
-            m20_ecan::decode_ethernet(frame, direction)
-        {
-            let (torque, velocity, stop) = guard(
-                &joints,
-                max_torque,
-                max_velocity,
-                !guard_startup.load(Ordering::Relaxed),
-            );
-            if stop && !guard_tripped.swap(true, Ordering::Relaxed) {
-                let statuses: Vec<(String, u16)> = joints
-                    .iter()
-                    .map(|j| (format!("{:?}", j.joint), j.status_word))
-                    .collect();
-                tracing::error!(
-                    torque,
-                    velocity,
-                    ?statuses,
-                    "guard: stopping the controller"
-                );
-                guard_shared.stop.store(true, Ordering::Relaxed);
-            }
-        }
         if let Some(reading) = charge_reading(direction, frame, battery_reports + 1) {
             battery_reports += 1;
             if let Ok(mut slot) = charge_feed.charge.try_lock() {
@@ -670,7 +595,6 @@ fn run_policy(
     });
     let imu = SharedImu {
         shared: shared.clone(),
-        timeout: Duration::from_secs_f64(config.imu_timeout_s),
     };
     let owner = m20_ecan::owner::OwnerConfig {
         allow_gains: cfg.ecan.allow_gains,
@@ -735,7 +659,6 @@ fn run_policy(
         Pacing::Realtime,
         &shared.stop,
         |hw, tick| {
-            startup_done.store(!hw.in_startup(), Ordering::Relaxed);
             let p = &tick.user.params;
             if let (Some(&v), Some(&seq)) = (
                 p.get(crate::dock::docking::CHARGE_ENABLE_PARAM),
@@ -776,9 +699,6 @@ fn run_policy(
     match result {
         Ok(stats) => info!(?stats, "policy loop stopped"),
         Err(error) => warn!(error = format!("{error:#}"), "policy loop failed"),
-    }
-    if tripped.load(Ordering::Relaxed) {
-        std::process::exit(2);
     }
 }
 
@@ -936,12 +856,6 @@ fn run_owner(config: &Config, latest: &Latest) {
             {
                 let statuses: std::collections::BTreeSet<u16> =
                     joints.iter().map(|j| j.status_word).collect();
-                let (torque, velocity, stop) = guard(
-                    &joints,
-                    config.guard_max_torque,
-                    config.guard_max_velocity,
-                    bus.owner.in_startup(),
-                );
                 if last_statuses.as_ref() != Some(&statuses) {
                     info!(
                         ?statuses,
@@ -951,16 +865,6 @@ fn run_owner(config: &Config, latest: &Latest) {
                     last_statuses = Some(statuses.clone());
                 }
                 replies += 1;
-                if stop {
-                    tracing::error!(
-                        torque,
-                        velocity,
-                        ?statuses,
-                        replies,
-                        "guard: stopping the bus owner"
-                    );
-                    std::process::exit(2);
-                }
                 if replies.is_multiple_of(config.progress_log_replies) {
                     let (receive_errors, last_receive_error) = bus.receive_errors();
                     info!(
@@ -968,8 +872,6 @@ fn run_owner(config: &Config, latest: &Latest) {
                         refused = bus.owner.refused,
                         receive_errors,
                         last_receive_error = ?last_receive_error,
-                        max_torque = torque,
-                        max_velocity = velocity,
                         "polling"
                     );
                 }
@@ -1000,23 +902,6 @@ fn run_owner(_: &Config, _: &Latest) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use m20_ecan::{JointId, JointState};
-
-    fn joints(torque: f32, velocity: f32, status_word: u16) -> Vec<JointState> {
-        JointId::all()
-            .map(|joint| JointState {
-                board_id: 0x79,
-                joint,
-                position: 0.0,
-                velocity,
-                torque,
-                motor_temperature_c: 30.0,
-                driver_temperature_c: 30.0,
-                status_word,
-                data_id: 0,
-            })
-            .collect()
-    }
 
     #[test]
     fn the_built_in_config_loads_with_gains_off() {
@@ -1027,9 +912,9 @@ mod tests {
     fn module_config(command_timeout_s: f64) -> Config {
         let fields = serde_json::json!({
             "mode": "owner", "socket_path": "", "interface": "eth1", "charge_enable": false,
-            "frame_id": "base_link", "guard_max_torque": 1.0, "guard_max_velocity": 0.5,
+            "frame_id": "base_link",
             "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
-            "controller_config": "", "policy_dir": "", "imu_timeout_s": 0.05,
+            "controller_config": "", "policy_dir": "",
             "command_timeout_s": command_timeout_s, "gait": 0x3002, "charge_manager_toml": "",
         });
         serde_json::from_value(fields).unwrap()
@@ -1084,18 +969,5 @@ mod tests {
         assert_eq!(parse_target(" lie_down "), Some(Target::LieDown));
         assert_eq!(parse_target("rl_control"), Some(Target::RlControl));
         assert_eq!(parse_target("walk"), None);
-    }
-
-    #[test]
-    fn guard_trips_on_limits_status_and_nan() {
-        assert!(!guard(&joints(0.1, 0.1, 1), 1.0, 0.5, false).2);
-        assert!(guard(&joints(1.5, 0.1, 1), 1.0, 0.5, false).2);
-        assert!(guard(&joints(0.1, -0.6, 1), 1.0, 0.5, false).2);
-        assert!(guard(&joints(0.1, 0.1, 0x21), 1.0, 0.5, false).2);
-        assert!(!guard(&joints(0.1, 0.1, 0x21), 1.0, 0.5, true).2);
-        // a NaN reading used to fold away to 0 and pass
-        assert!(guard(&joints(f32::NAN, 0.1, 1), 1.0, 0.5, false).2);
-        assert!(guard(&joints(0.1, f32::INFINITY, 1), 1.0, 0.5, false).2);
-        assert!(!guard(&[], 1.0, 0.5, false).2);
     }
 }
