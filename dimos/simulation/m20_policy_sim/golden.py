@@ -40,7 +40,8 @@ def main() -> None:
         runner.policy_dt = cfg["timing"]["policy_decimation"] / cfg["timing"]["control_hz"]
         hm = next((b for b in spec["obs"] if b["kind"] == "height_map"), None)
         steps = []
-        for _ in range(STEPS):
+        # past a sequence runner's warm-up hold, so its network's output is compared too
+        for _ in range(spec.get("warmup_steps", 0) + STEPS):
             quat = np.array([1.0, *rng.normal(0, 0.05, 3)])
             quat /= np.linalg.norm(quat)
             s = RobotState(

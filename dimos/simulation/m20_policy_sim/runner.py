@@ -86,34 +86,48 @@ class Targets:
 
 
 class GaitClock:
-    """The stand / StepMove runners' gait clock (rl_deploy get_gait_phase / update_gait_freq): a counter per policy
-    step; the frequency is re-picked from the command when a full period wraps."""
+    """rl_deploy's gait clock (get_gait_phase / update_gait_freq) in its f32 arithmetic, as the Rust controller."""
 
     def __init__(self, spec: dict[str, Any]) -> None:
         self.spec = spec
-        self.frequency = spec["frequency"]
-        self.counter = 0.0
+        self.set_frequency(np.float32(spec["frequency"]))
+        self.counter = np.float32(0.0)
+
+    def set_frequency(self, f: np.float32) -> None:
+        self.frequency = f
+        self.half = np.float32(np.float32(1.0) / f) * np.float32(0.5)
+        self.omega = np.float32(float(f) * math.pi * 2.0)
 
     def fields(self, dt: float) -> dict[str, float]:
-        t = self.counter * dt
-        half = 0.5 / self.frequency
-        sign = -1.0 if math.sin(2 * math.pi * self.frequency * t) < 0 else 1.0
-        r = math.fmod(t, half)
-        return {"half_period": half, "sign": sign, "remaining": half - r if r > 1e-6 else 0.0}
+        t = self.counter * np.float32(dt)
+        sign = -1.0 if math.sin(float(t * self.omega)) < 0 else 1.0
+        r = np.fmod(t, self.half)
+        return {
+            "half_period": float(self.half),
+            "sign": sign,
+            "remaining": float(self.half - r) if float(r) > 1e-6 else 0.0,
+        }
 
     def advance(self, dt: float, command: np.ndarray) -> None:
-        period = 1.0 / self.frequency
-        nxt = math.fmod((self.counter + 1) * dt, period)
-        if nxt < math.fmod(self.counter * dt, period):
+        """update_gait_freq after the command is built, then the counter's step."""
+        f32 = np.float32
+        dt32 = f32(dt)
+        period = f32(1.0) / self.frequency
+        nxt = np.fmod((self.counter + f32(1.0)) * dt32, period)
+        if nxt < np.fmod(self.counter * dt32, period):
             g = self.spec
-            f = (1 + abs(command[2]) / g["wz_gain"]) * max(
-                1 + command[0] / g["vx_gain"], 1 + abs(command[1]) / g["vy_gain"]
+            vx, vy, wz = (f32(c) for c in command[:3])
+            f = max(vx / f32(g["vx_gain"]) + f32(1.0), abs(vy) / f32(g["vy_gain"]) + f32(1.0))
+            f = f32(
+                min(
+                    max((abs(wz) / f32(g["wz_gain"]) + f32(1.0)) * f, f32(g["min_frequency"])),
+                    f32(g["max_frequency"]),
+                )
             )
-            f = min(max(f, g["min_frequency"]), g["max_frequency"])
             if f != self.frequency:
-                self.counter = (1.0 / f) * (nxt / period) / dt
-                self.frequency = f
-        self.counter += 1
+                self.counter = f32(f32(f32(1.0) / f) * f32(nxt / period)) / dt32
+                self.set_frequency(f)
+        self.counter = self.counter + f32(1.0)
 
 
 class StandMode:
@@ -203,7 +217,7 @@ class Runner:
         self.command = np.zeros(3)
         self.command_state = np.zeros(3, np.float32)
         if self.clock is not None:
-            self.clock.counter = 0.0
+            self.clock.counter = np.float32(0.0)
         self.stand_mode.armed = False
         self.params = dict(self.spec.get("command_params", {}))
         self.steps = self.active_steps = self.collected = 0
