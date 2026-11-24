@@ -81,7 +81,8 @@ class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
     tf_edges: list[tuple[str, str]] = [("odom", "body")]
 
 
-class G1Sim(ConnectionModule, HardwareModule):
+# ConnectionModule.frame(name) and TfModule.frame (by role) share a name; G1Sim uses neither, only tf_frames.
+class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
     """A G1 in a simulated world; mount it on a frame of the scene, which is where it starts."""
 
     config: G1SimConfig
