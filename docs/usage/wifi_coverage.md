@@ -5,6 +5,78 @@ observations to timestamped robot odometry and publishes a coloured point cloud
 at the **receiver's locations**. It does not estimate access-point positions.
 The two modules are independent of any robot, SLAM implementation, or viewer.
 
+For a **performance survey**, add `NetworkSurvey` through the composition helper.
+This is the same coverage tool: one point-cloud output with selectable radio,
+network, host and optional viewer metrics, plus a local evidence file.
+
+```python
+from dimos.constants import STATE_DIR
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.mapping.wifi.blueprints import wifi_survey
+
+survey = autoconnect(
+    your_mapping_blueprint,
+    wifi_survey(
+        interface=wifi_interface,
+        targets={"router": router_ip, "viewer": viewer_ip},
+        record_path=STATE_DIR / "wifi-surveys" / "office-01.jsonl",
+        desktop_diagnostics_url=desktop_diagnostics_url,  # optional
+    ),
+)
+```
+
+Set the deployment's interface, literal probe IPs and optional full diagnostics
+URL (`/apps/dim-spatial-desktop/api/diagnostics`). Use a new evidence filename for
+each survey; existing files are never overwritten. The sampler runs on the robot;
+the optional Desktop endpoint and gateway must use that robot's clock domain.
+It reads existing viewer telemetry and never subscribes to camera pixels.
+
+`NetworkSurvey` measures interface TX/RX Mbps, host CPU percent and one ICMP
+probe per configured target per polling cycle. These are small probes, not a
+throughput benchmark. `probe_loss_pct` measures unanswered ICMP probes; execution
+errors are recorded separately. A target that blocks ICMP is not evidence of a
+broken Wi-Fi link. Linux `iputils` ping permissions are required for probing.
+
+In `WifiCoverage`'s module RPC panel (or any RPC client):
+
+1. `get_layers()` lists measured metric/source pairs. Each viewer, camera and probe
+   target stays separate. No viewer measurements means no invented video layer.
+2. `select_metric(metric="rtt_ms", source="ping/router", good=10, bad=200, statistic="p95")` changes
+   `wifi_coverage` to a latency overlay. The endpoints are your display scale,
+   not an asserted SLA. A source-FPS layer can use `good=30, bad=0`.
+3. `get_cells()` gives grid coordinates, sample counts, mean, p50/p95, range,
+   timestamps and observed BSSIDs. The cloud displays the selected statistic
+   (`mean`, `p50`, `p95`, `min` or `max`); RSSI uses mean.
+4. `get_samples(cell=[x, y, z])` returns the raw timeline for that grid cell;
+   omit `cell` to also see unlocated samples and their rejection reasons.
+5. `select_access_point(bssid)` filters the layer by observed association.
+   `select_metric(metric="rssi_dbm", source="", good=-40, bad=-90)` restores RSSI.
+
+`get_status()` identifies the active layer, scale, epoch and archive destination.
+
+The JSONL evidence contains pose records, Wi-Fi observations and located performance
+samples (including rejected/missing measurements), grouped by map epoch. It is
+written on the robot and survives a viewer disconnect; it contains no camera
+images. The live performance map retains the newest `max_samples` samples;
+cell statistics describe those retained samples, with counts exposed. The file
+preserves the full survey. Restart/reset or a frame-ID change begins a new epoch.
+
+Viewer metrics distinguish `application_rtt_ms` from `rtc_rtt_ms` and ICMP
+`rtt_ms`. Source/sent/received/decoded/displayed FPS are separate layers;
+`last_displayed_ago_ms` is time since a frame was shown, **not** capture-to-display
+latency. `report_arrival_age_ms` exposes missing viewer telemetry. Hidden tabs
+remain labelled hidden in the evidence; do not compare their display FPS to an
+active headset. Other applications can publish `SurveyMetrics` on `survey_metrics`
+without the Desktop adapter, using robot-clock timestamps and explicit units.
+
+Browser timestamps use the gateway's clock-offset estimate, with half its clock
+exchange RTT retained as timing uncertainty. Missing clock estimates, stale data,
+missing poses, or measurement windows spanning different grid cells stay in the
+evidence but are excluded from the overlay. This conservative join avoids painting
+a slow, old report at the robot's new location. Stop for 10–15 seconds per survey
+location and inspect sample counts before interpreting percentiles. Keep stream
+settings consistent and retain actual traffic measurements alongside latency.
+
 Compose them with a blueprint that publishes `odometry: Out[Odometry]`:
 
 ```python

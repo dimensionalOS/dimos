@@ -342,6 +342,7 @@ all_modules = {
     "mujoco-g1-connection": "dimos.simulation.engines.mujoco_g1_connection.MujocoG1Connection",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
+    "network-survey": "dimos.hardware.sensors.wifi.survey.NetworkSurvey",
     "object-db-module": "dimos.perception.experimental.moduleDB.ObjectDBModule",
     "object-tracker2-d": "dimos.perception.experimental.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
