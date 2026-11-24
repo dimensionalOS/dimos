@@ -76,7 +76,8 @@ def _pack(points: np.ndarray, voxel: float) -> np.ndarray:
 def moved(points: np.ndarray, tf: Transform) -> np.ndarray:
     """*points* in tf's child frame, expressed in its parent frame."""
     matrix = tf.to_matrix()
-    return (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+    placed: np.ndarray = (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+    return placed
 
 
 def blend(start: Transform, end: Transform, weight: float) -> Transform:
@@ -119,8 +120,8 @@ class LiveMap:
             all_keys = np.concatenate([keys, self._keys])
             all_points = np.concatenate([points, self._points])
             # First occurrence wins, so a voxel's newest point is kept.
-            self._keys, first = np.unique(all_keys, return_index=True)
-            self._points = all_points[first]
+            unique_keys, first = np.unique(all_keys, return_index=True)
+            self._keys, self._points = unique_keys, all_points[first]
 
     def cloud(
         self, frame_id: str, center: tuple[float, float] | None, radius: float
