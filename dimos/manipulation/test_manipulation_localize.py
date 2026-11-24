@@ -266,7 +266,6 @@ _SURFACE_SETTINGS = dict(margin=0.05, thickness=0.03, cut_above=0.01, cut_below=
 def test_table_box_is_the_measured_outline_a_margin_wider():
     (box_pose, box_size), (cut_pose, cut_size) = surface_boxes(_surface(), **_SURFACE_SETTINGS)
 
-    # On the measured table, not round the arm's base.
     assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.5, 0.0])
     assert box_size == pytest.approx([0.9, 0.6, 0.03])
     assert box_pose.position.z + box_size[2] / 2 == pytest.approx(0.08)

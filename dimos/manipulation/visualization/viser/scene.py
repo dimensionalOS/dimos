@@ -536,7 +536,6 @@ class ViserManipulationScene:
         on_one = ~np.isnan(above)
         colors = np.tile(np.asarray(BELOW_SURFACE_COLOR, dtype=np.uint8), (len(points), 1))
         if on_one.any():
-            # Tilted or not, a cell is coloured by how high it stands above its surface.
             colors[on_one] = self._height_colors(np.maximum(above[on_one], 0.0), 0.0)
         return colors
 

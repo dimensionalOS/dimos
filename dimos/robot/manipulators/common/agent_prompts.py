@@ -57,7 +57,7 @@ in the wrist camera's memory, in a window of seconds: start=-30, duration=30 rea
 more arm poses inside the window; call **state** until it reads ready.
 - **add_surface [start duration]**: Measure the surface you work on, such as the table, and \
 give it to the motion planner as one flat box, so grasps can reach down to it. \
-**clear_surface** removes it, e.g. before reaching below it.
+**clear_surface [height]** removes it, e.g. before reaching below it.
 
 ## Pick & Place
 - **pick_object <object_id>**: Generate ranked grasp proposals and automatically execute the \
