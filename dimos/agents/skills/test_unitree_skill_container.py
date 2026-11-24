@@ -46,6 +46,10 @@ class StubNavigation(Module):
         return False
 
     @rpc
+    def get_goal_cancel_reason(self) -> str | None:
+        return None
+
+    @rpc
     def cancel_goal(self) -> bool:
         return True
 

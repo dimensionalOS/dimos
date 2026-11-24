@@ -142,6 +142,10 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         return self._planner.is_goal_reached()
 
     @rpc
+    def get_goal_cancel_reason(self) -> str | None:
+        return self._planner.get_goal_cancel_reason()
+
+    @rpc
     def cancel_goal(self) -> bool:
         self._planner.cancel_goal()
         return True

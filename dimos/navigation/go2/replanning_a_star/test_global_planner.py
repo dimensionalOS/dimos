@@ -12,18 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from itertools import count
+import math
+
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star import global_planner
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
-from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner
+from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, PlannerState
 
 
 def test_find_wide_path_with_start_inside_inflation() -> None:
@@ -88,6 +92,93 @@ def planner():
     planner.stop()
 
 
+@pytest.fixture
+def mapped_planner(planner: GlobalPlanner, mocker: MockerFixture) -> GlobalPlanner:
+    planner.handle_global_costmap(
+        OccupancyGrid(
+            grid=np.zeros((50, 50), dtype=np.int8),
+            resolution=0.1,
+            origin=Pose(),
+            frame_id="world",
+        )
+    )
+    # Exercise path planning without starting the local controller thread.
+    mocker.patch.object(LocalPlanner, "start_planning")
+    return planner
+
+
+@pytest.mark.parametrize("distance", [0.0, 0.3], ids=["in_place", "near_goal"])
+@pytest.mark.parametrize(
+    "robot_degrees, goal_degrees, arrived",
+    [(-15, -179, False), (179, -179, True), (-179, 179, True)],
+)
+def test_replan_near_goal_checks_heading(
+    mapped_planner: GlobalPlanner,
+    distance: float,
+    robot_degrees: float,
+    goal_degrees: float,
+    arrived: bool,
+) -> None:
+    planner = mapped_planner
+    planner.handle_odom(
+        PoseStamped(
+            position=[1.0, 1.0, 0.3],
+            orientation=Quaternion.from_euler(Vector3(0, 0, math.radians(robot_degrees))),
+        )
+    )
+    planner.handle_goal_request(
+        PoseStamped(
+            position=[1.0 + distance, 1.0, 0.0],
+            orientation=Quaternion.from_euler(Vector3(0, 0, math.radians(goal_degrees))),
+        )
+    )
+    outcomes: list[bool] = []
+
+    with planner.goal_reached.subscribe(lambda msg: outcomes.append(msg.data)):
+        planner._replan_path()
+
+    assert planner.is_goal_reached() == arrived
+    assert outcomes == [True] * int(arrived)
+    assert planner._replan_limiter.get_attempt() == int(not arrived)
+
+
+@pytest.mark.parametrize("state", ["initial_rotation", "final_rotation", "path_following"])
+def test_positional_stuck_check_only_applies_to_path_following(
+    mapped_planner: GlobalPlanner, mocker: MockerFixture, state: PlannerState
+) -> None:
+    planner = mapped_planner
+    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
+    planner.handle_goal_request(
+        PoseStamped(
+            position=[1.0, 1.0, 0.3], orientation=Quaternion.from_euler(Vector3(0, 0, math.pi))
+        )
+    )
+    mocker.patch.object(planner._local_planner, "get_unique_state", return_value=(state, 1))
+    clock = mocker.patch.object(global_planner, "time")
+    clock.perf_counter.side_effect = count(0, 9)
+    polls = iter([False, False, True])
+
+    def monitor_tick(timeout: float) -> bool:
+        # Two checks in the same state, separated by more than the stuck window.
+        planner.handle_odom(
+            PoseStamped(
+                position=[1.0, 1.0, 0.3],
+                orientation=Quaternion.from_euler(Vector3(0, 0, math.radians(15))),
+            )
+        )
+        if next(polls):
+            planner._stop_planner.set()
+        return False
+
+    mocker.patch.object(planner._replan_event, "wait", side_effect=monitor_tick)
+    replan = mocker.spy(planner, "_replan_path")
+
+    planner._thread_entrypoint()
+
+    assert not planner.is_goal_reached()
+    assert replan.call_count == int(state == "path_following")
+
+
 def test_first_goal_does_not_log_cancellation_but_explicit_cancel_does(planner, mocker):
     log = mocker.patch.object(global_planner.logger, "info")
     goal = PoseStamped(position=[1.0, 2.0, 0.0])
@@ -98,7 +189,7 @@ def test_first_goal_does_not_log_cancellation_but_explicit_cancel_does(planner, 
 
     planner.cancel_goal()
 
-    log.assert_called_with("Cancelling goal.", but_will_try_again=False, arrived=False)
+    log.assert_called_with("Cancelling goal.", but_will_try_again=False, arrived=False, reason=None)
 
 
 @pytest.mark.parametrize("distance", [0.3, 2.0], ids=["near", "far"])

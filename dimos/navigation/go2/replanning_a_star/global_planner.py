@@ -49,6 +49,7 @@ class GlobalPlanner(Resource):
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
     _goal_reached: bool = False
+    _goal_cancel_reason: str | None = None
     _thread: Thread | None = None
 
     _navigation_map: NavigationMap
@@ -145,6 +146,7 @@ class GlobalPlanner(Resource):
         with self._lock:
             self._current_goal = goal
             self._goal_reached = False
+            self._goal_cancel_reason = None
         self._replan_limiter.reset()
         self._plan_path()
 
@@ -155,7 +157,9 @@ class GlobalPlanner(Resource):
     def reset_safe_goal_clearance(self) -> None:
         self._reset_safe_goal_clearance()
 
-    def cancel_goal(self, *, but_will_try_again: bool = False, arrived: bool = False) -> None:
+    def cancel_goal(
+        self, *, but_will_try_again: bool = False, arrived: bool = False, reason: str | None = None
+    ) -> None:
         # return silently so we don't flood the logs.
         with self._lock:
             no_goal = self._current_goal is None
@@ -163,7 +167,12 @@ class GlobalPlanner(Resource):
             return
 
         if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
-            logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
+            logger.info(
+                "Cancelling goal.",
+                but_will_try_again=but_will_try_again,
+                arrived=arrived,
+                reason=reason,
+            )
 
         with self._lock:
             self._position_tracker.reset_data()
@@ -171,6 +180,7 @@ class GlobalPlanner(Resource):
             if not but_will_try_again:
                 self._current_goal = None
                 self._goal_reached = arrived
+                self._goal_cancel_reason = None if arrived else reason
                 self._replan_limiter.reset()
 
         self.path.on_next(Path())
@@ -189,6 +199,10 @@ class GlobalPlanner(Resource):
     def is_goal_reached(self) -> bool:
         with self._lock:
             return self._goal_reached
+
+    def get_goal_cancel_reason(self) -> str | None:
+        with self._lock:
+            return self._goal_cancel_reason
 
     @property
     def cmd_vel(self) -> Subject[Twist]:
@@ -250,11 +264,11 @@ class GlobalPlanner(Resource):
                     deviation=round(deviation, 2),
                     threshold=self._max_path_deviation,
                 )
-                self._replan_path()
+                self._replan_path("Robot veered off track")
                 last_stuck_check = time.perf_counter()
                 continue
 
-            _, new_id = self._local_planner.get_unique_state()
+            state, new_id = self._local_planner.get_unique_state()
 
             if new_id != last_id:
                 last_id = new_id
@@ -262,11 +276,13 @@ class GlobalPlanner(Resource):
                 continue
 
             if (
-                time.perf_counter() - last_stuck_check > self._stuck_time_window
+                # Rotation intentionally makes no progress in x/y.
+                state == "path_following"
+                and time.perf_counter() - last_stuck_check > self._stuck_time_window
                 and self._position_tracker.is_stuck()
             ):
                 logger.info("Robot is stuck. Replanning.")
-                self._replan_path()
+                self._replan_path("Robot is stuck")
                 last_stuck_check = time.perf_counter()
 
     def _on_stopped_navigating(self, stop_message: StopMessage) -> None:
@@ -286,15 +302,15 @@ class GlobalPlanner(Resource):
             self.cancel_goal(arrived=True)
         elif stop_message == "obstacle_found":
             logger.info("Replanning path due to obstacle found.")
-            self._replan_path()
+            self._replan_path("Obstacle found")
         elif stop_message == "error":
             logger.info("Failure in navigation.")
-            self._replan_path()
+            self._replan_path("Local planner error")
         else:
             logger.error(f"No code to handle '{stop_message}'.")
             self.cancel_goal()
 
-    def _replan_path(self) -> None:
+    def _replan_path(self, reason: str = "Replanning requested") -> None:
         with self._lock:
             current_odom = self._current_odom
             current_goal = self._current_goal
@@ -307,16 +323,20 @@ class GlobalPlanner(Resource):
         if (
             _planar_distance(current_goal.position, current_odom.position)
             < self._replan_goal_tolerance
+            and abs(
+                angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+            )
+            < self._rotation_tolerance
         ):
             self.cancel_goal(arrived=True)
             return
 
         if not self._replanning_enabled:
-            self.cancel_goal()
+            self.cancel_goal(reason=f"{reason}: replanning is disabled")
             return
 
         if not self._replan_limiter.can_retry(current_odom.position):
-            self.cancel_goal()
+            self.cancel_goal(reason=f"{reason}: replan attempts exhausted")
             return
 
         self._replan_limiter.will_retry()
