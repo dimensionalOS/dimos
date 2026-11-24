@@ -1116,7 +1116,7 @@ def _deploy_all_modules(
     # Every base's own check (so mixins each keep theirs), and each distinct function once.
     checkers = list(
         dict.fromkeys(
-            vars(base)["blueprint_checks"]
+            base.blueprint_checks
             for atom in atoms
             for base in atom.module.__mro__
             if "blueprint_checks" in vars(base)
