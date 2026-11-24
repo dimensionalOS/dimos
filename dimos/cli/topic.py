@@ -225,6 +225,9 @@ def _build_eval_context() -> dict[str, object]:
 
 
 def topic_send(topic: str, message_expr: str) -> None:
+    if global_config.transport == "zenoh" and "*" in topic:
+        _fail(f"Cannot send to wildcard topic '{topic}': use an exact topic name")
+
     try:
         message = eval(message_expr, _build_eval_context())
     except Exception as e:

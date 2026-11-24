@@ -52,7 +52,6 @@ EXPECTED_NAMES = {
     },
     "drive_trains": {
         "mock_twist_base",
-        "unitree_go2",
     },
     "whole_body": {
         "mock_whole_body",

@@ -23,11 +23,14 @@ from pathlib import Path
 import threading
 import time
 
+from reactivex.disposable import Disposable
+
 from dimos.core.core import rpc
 from dimos.core.introspection.module.info import RpcInfo, StreamDescriptor
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out, Transport
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve, streams
@@ -116,7 +119,9 @@ class Orchestrator(Module):
 
     config: OrchestratorConfig
 
+    # The state after each step, and again whenever orchestrator_state_request is True.
     orchestrator_state: Out[String]
+    orchestrator_state_request: In[Bool]
     # Requests from an operator. The file names what each one does.
     orchestrator_request: In[String]
 
@@ -125,6 +130,8 @@ class Orchestrator(Module):
         self._definition: OrchestratorDefinition | None = None
         self._checked: CheckedDefinition | None = None
         self._rpcs: Mapping[str, RpcInfo] = {}
+        # The RPCs and streams the file uses, as the state message describes them to a viewer.
+        self._interface: dict[str, Plain] = {"rpcs": {}, "streams": {}}
         # Each deployed module's RPC address, by the name the file uses for it.
         self._addresses: dict[str, str] = {}
         self._queue: deque[QueueItem] = deque()
@@ -137,11 +144,18 @@ class Orchestrator(Module):
         self._unsubscribes: list[Callable[[], None]] = []
         self._unreadable: set[str] = set()
         self._published = 0
+        # The last state published, for orchestrator_state_request. Guarded by _publishing.
+        self._latest: tuple[CheckedDefinition, Runtime] | None = None
+        self._publishing = threading.Lock()
 
     @rpc
     def start(self) -> None:
         super().start()
         self._definition = load_and_check(self.config.file)
+        if self.orchestrator_state_request.transport is not None:
+            self.register_disposable(
+                Disposable(self.orchestrator_state_request.subscribe(self._on_state_request))
+            )
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
@@ -160,6 +174,19 @@ class Orchestrator(Module):
 
         self._checked = checked
         self._rpcs = deployed.rpcs
+        targets = {t for a in definition.activities for t in (a.start, a.cancel) if t}
+        self._interface = {
+            "rpcs": {
+                name: {"signature": info.signature, "doc": info.documentation}
+                for name, info in deployed.rpcs.items()
+                if name in targets
+            },
+            "streams": {
+                name: getattr(deployed.streams[name], "msg_name", deployed.streams[name].__name__)
+                for name in streams(definition)
+                if name in deployed.streams
+            },
+        }
         for activity in definition.activities:
             self.rpc.rpc_timeouts[self._address(activity.start)] = _START_TIMEOUT_S
         with self._wake:
@@ -234,7 +261,6 @@ class Orchestrator(Module):
         error: str | None = None,
     ) -> None:
         """Publish what one step did, the state after it and the definition, as JSON."""
-        self._published += 1
         transitions: list[Plain] = [
             {"node": effect.node, "cause": effect.cause, "goto": effect.goto}
             for effect in effects
@@ -247,15 +273,27 @@ class Orchestrator(Module):
         ]
         if error is not None:
             faults = [{"rule": error, "node": None}]
-        message: dict[str, Plain] = {
-            "seq": self._published,
-            "handled": handled,
-            "transitions": transitions,
-            "fault": faults[0] if faults else None,
-            **_state(checked, runtime, now),
-            "definition": checked.definition.model_dump(mode="json", by_alias=True),
-        }
-        self.orchestrator_state.publish(String(json.dumps(message)))
+        with self._publishing:
+            self._published += 1
+            self._latest = (checked, runtime)
+            message: dict[str, Plain] = {
+                "seq": self._published,
+                "handled": handled,
+                "transitions": transitions,
+                "fault": faults[0] if faults else None,
+                **_state(checked, runtime, now),
+                "definition": checked.definition.model_dump(mode="json", by_alias=True),
+                **self._interface,
+            }
+            # Under the lock, so the messages go out in seq order.
+            self.orchestrator_state.publish(String(json.dumps(message)))
+
+    def _on_state_request(self, message: Bool) -> None:
+        """Publish the state again, for a viewer that joined between steps."""
+        with self._publishing:
+            latest = self._latest
+        if message.data and latest is not None:
+            self._publish(*latest, time.monotonic(), "state request", [])
 
     def _next(self) -> QueueItem | None:
         """The next queue item, after adding the timers that are due. None once stopped."""

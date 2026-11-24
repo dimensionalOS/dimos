@@ -29,6 +29,7 @@ from dimos.core.core import rpc
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve
@@ -205,9 +206,10 @@ class FakeBase(Module):
 
 
 class Listener(Module):
-    """Keeps what the Orchestrator publishes."""
+    """Keeps what the Orchestrator publishes, and asks it for its state."""
 
     orchestrator_state: In[String]
+    orchestrator_state_request: Out[Bool]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -221,6 +223,10 @@ class Listener(Module):
     @rpc
     def states(self) -> list[str]:
         return list(self._states)
+
+    @rpc
+    def request_state(self) -> None:
+        self.orchestrator_state_request.publish(Bool(True))
 
 
 def _deployed() -> Deployed:
@@ -418,6 +424,48 @@ def test_the_orchestrator_publishes_its_state_with_its_definition(
     definition = arrived()[0]["definition"]
     assert definition["root"] == "Job"
     assert definition["nodes"][1]["transitions"][0]["if"] == ARRIVED["cause"].removeprefix("if ")
+    rpcs = arrived()[0]["rpcs"]
+    assert set(rpcs) == {"FakeBase.go_to", "FakeBase.halt", "FakeBase.mark"}
+    assert rpcs["FakeBase.go_to"]["signature"] == "(self, name: str) -> str"
+    assert arrived()[0]["streams"] == {"FakeBase.status": "actionlib_msgs.GoalStatus"}
+
+
+def test_a_state_request_is_answered_on_the_state_stream(tmp_path: Path, build: Build) -> None:
+    job = _written(tmp_path, JOB)
+    blueprint = autoconnect(
+        FakeBase.blueprint(), Listener.blueprint(), Orchestrator.blueprint(file=job)
+    )
+    listener = build(blueprint).get_instance(Listener)
+
+    def answers() -> list[dict[str, object]]:
+        states = [json.loads(state) for state in listener.states()]
+        return [state for state in states if state["handled"] == "state request"]
+
+    wait_until(lambda: bool(listener.states()), timeout=10.0, interval=0.05)
+    listener.request_state()
+    wait_until(lambda: bool(answers()), timeout=10.0, interval=0.05)
+    assert answers()[0]["transitions"] == []
+    assert answers()[0]["definition"]["root"] == "Job"
+
+
+def test_a_state_request_repeats_the_last_state_and_false_asks_nothing(
+    bound: tuple[Orchestrator, Mock], mocker: MockerFixture
+) -> None:
+    orchestrator, _ = bound
+    assert orchestrator._checked is not None
+    heard = _heard(orchestrator)
+    orchestrator._on_state_request(Bool(True))
+    assert heard == []
+    mocker.patch.object(orchestrator, "_next", return_value=None)
+    orchestrator._run(orchestrator._checked)
+    orchestrator._on_state_request(Bool(False))
+    orchestrator._on_state_request(Bool(True))
+    assert [(state["seq"], state["handled"]) for state in heard] == [
+        (1, "startup"),
+        (2, "state request"),
+    ]
+    assert heard[1]["active"] == heard[0]["active"]
+    assert heard[1]["calls"] == heard[0]["calls"]
 
 
 def _heard(orchestrator: Orchestrator) -> list[dict[str, object]]:
@@ -451,6 +499,8 @@ def test_the_state_stream_has_each_step_that_changed_more_than_a_stream_value(
         "message on FakeBase.status",
     ]
     assert heard[0].pop("definition")["root"] == "Job"
+    heard[0].pop("rpcs")
+    heard[0].pop("streams")
     assert heard[0] | {"timers": []} == {
         "seq": 1,
         "handled": "startup",
