@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 import json
 import os
 import signal
@@ -31,8 +31,7 @@ if TYPE_CHECKING:
 
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
     from dimos.core.coordination.blueprints import Blueprint
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.module import ModuleBase
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator, RemoteModuleRefs
 
 logger = setup_logger()
 
@@ -163,8 +162,7 @@ def run_coordinator(
     log_dir: str | os.PathLike[str],
     rpc_name: str | None = None,
     module_rpc_namespace: str | None = None,
-    remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]]
-    | None = None,
+    remote_module_refs: RemoteModuleRefs | None = None,
     sigint: bool = True,
     on_ready: Callable[[ModuleCoordinator], None] | None = None,
 ) -> None:
