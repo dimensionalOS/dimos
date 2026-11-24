@@ -40,7 +40,7 @@ from dimos.core.daemon import (
 )
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.utils.cache import cache_usage_guard
+from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
 
@@ -177,6 +177,7 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
     return None
 
 
+@cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] | None = typer.Argument(None, help="Blueprints or modules to run"),
@@ -201,11 +202,7 @@ def run(
         help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
         "http://localhost:7780)",
     ),
-    show_help: bool = typer.Option(
-        False,
-        "--help",
-        help="Show run options and, for a named blueprint, its configuration flags.",
-    ),
+    show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
 
@@ -214,8 +211,6 @@ def run(
             typer.echo(ctx.get_help())
             return
         ctx.fail("Missing blueprint name.")
-
-    ctx.with_resource(cache_usage_guard())
 
     # Log this at the start so that people get immediate feedback that the program has started.
     logger.info("Starting DimOS")

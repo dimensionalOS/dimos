@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import contextlib
 from dataclasses import dataclass, field
+import functools
 import os
 from pathlib import Path
 import shutil
+from typing import ParamSpec, TypeVar
 import uuid
 
 from filelock import FileLock, Timeout
@@ -31,6 +33,9 @@ from dimos.robot.assets.git_cache import git_checkout_protection_reason
 
 _CACHE_LOCK_DIR = STATE_DIR / "cache-users"
 _CACHE_GATE_PATH = STATE_DIR / "cache-clean.lock"
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 class CacheInUseError(RuntimeError):
@@ -151,6 +156,17 @@ def cache_usage_guard() -> Iterator[None]:
     finally:
         usage_lock.release()
         usage_path.unlink(missing_ok=True)
+
+
+def cache_usage_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run a callable while holding a cache usage marker."""
+
+    @functools.wraps(function)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with cache_usage_guard():
+            return function(*args, **kwargs)
+
+    return wrapped
 
 
 @contextlib.contextmanager

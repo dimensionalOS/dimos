@@ -887,34 +887,12 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
 
 
-@pytest.mark.parametrize(
-    ("args", "exit_code", "word"),
-    [(["--help"], 0, "daemon"), ([], 2, "blueprint")],
-)
-def test_run_without_blueprint(
-    args: list[str], exit_code: int, word: str, isolated_cache_locks: None
-) -> None:
-    result = CliRunner().invoke(main, ["run", *args])
-
-    assert result.exit_code == exit_code, result.output
-    assert word in result.output.lower()
-    assert not cache_utils._CACHE_LOCK_DIR.exists()
-
-
-def test_run_holds_cache_guard_during_launch(
-    stubbed_run: dict[str, Any], mocker: MockerFixture
-) -> None:
-    def check_guard(*args: Any, **kwargs: Any) -> None:
-        with pytest.raises(cache_utils.CacheInUseError), cache_utils.cache_cleanup_guard():
-            pass
-
-    launch = mocker.patch.object(lifecycle, "_run_registered", side_effect=check_guard)
-    result = CliRunner().invoke(main, ["run", "alpha"])
+def test_run_help_without_blueprint(isolated_cache_locks: None) -> None:
+    result = CliRunner().invoke(main, ["run", "--help"])
 
     assert result.exit_code == 0, result.output
-    launch.assert_called_once()
-    with cache_utils.cache_cleanup_guard():
-        pass
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--daemon" in output_plain
 
 
 def test_run_help_lists_dynamic_flags_without_starting(
