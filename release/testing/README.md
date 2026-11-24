@@ -34,6 +34,7 @@ git log -1 --format='%H %s'
 - [ ] [3.6 Imitation learning data collection](03_manipulation.md#36-imitation-learning-data-collection)
 - [ ] [3.7 R1 Pro planar-base planning](03_manipulation.md#37-r1-pro-planar-base-planning)
 - [ ] [3.8 Galaxea A1Z on hardware](03_manipulation.md#38-galaxea-a1z-on-hardware)
+- [ ] [3.9 xArm7 and xArm6 planning on hardware](/release/testing/03_manipulation.md#39-xarm7-and-xarm6-planning-on-hardware) (record each arm separately)
 - [ ] [4.1 Cockpit](04_web.md#41-cockpit)
 - [ ] [4.2 Agentic cockpit](04_web.md#42-agentic-cockpit)
 - [ ] [4.3 WebRTC video](04_web.md#43-webrtc-video)
