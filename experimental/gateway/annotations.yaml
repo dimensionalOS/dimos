@@ -735,10 +735,6 @@ robots:
           title: Dual xArm coordinator
           description: Two xArms behind one ControlCoordinator (a building block).
           recommended_config: [*robot_or_simulator]
-        coordinator-combined-xarm6:
-          title: xArm6 combined coordinator
-          description: xArm6 with trajectory and velocity tasks in one coordinator (a building block).
-          recommended_config: *xarm6_config
         coordinator-teleop-xarm6:
           title: xArm6 teleop coordinator
           description: The xArm6 teleop coordinator (a building block).
@@ -748,10 +744,6 @@ robots:
         coordinator-teleop-xarm7:
           title: xArm7 teleop coordinator
           description: The xArm7 teleop coordinator (a building block).
-        coordinator-trajectory-xarm6:
-          title: xArm6 trajectory coordinator
-          description: xArm6 with a trajectory task (a building block).
-          recommended_config: *xarm6_config
         coordinator-velocity-xarm6:
           title: xArm6 velocity coordinator
           description: xArm6 with a velocity task (a building block).
