@@ -66,7 +66,7 @@ def manipulation_mapping(
     Four modules in a row: a self filter drops the robot's own returns, a riding
     box filter drops what rides on it (the gripper, a held object) at each cloud's
     capture time, a voxel mapper collects the rest, and a box filter leaves out
-    what pick-and-place is picking, add_surface's surface and what lies outside the
+    what pick-and-place is picking, add_surface's surfaces and what lies outside the
     workspace. The box filter's output is named ``voxel_map``, so
     ManipulationModule's input of that name connects by itself. The camera's
     ``pointcloud`` output must be switched on.
