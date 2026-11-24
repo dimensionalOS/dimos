@@ -24,7 +24,7 @@ from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_legs_waist
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.hardware_module import Mounts
 from dimos.core.stream import In, Out
@@ -102,7 +102,7 @@ def _walker() -> Blueprint:
     )
 
 
-def _g1(spot: str) -> Blueprint:
+def _g1(spot: str) -> MetaBlueprint:
     return (
         autoconnect(
             G1Sim.blueprint(_mount=spot),
