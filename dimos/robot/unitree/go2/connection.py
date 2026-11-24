@@ -204,7 +204,7 @@ def _camera_info_static() -> CameraInfo:
 
 
 def _prefixed(prefix: str | None, name: str) -> str:
-    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
+    """Apply a TF namespace prefix (ModuleBase.frame_id_prefix) to a frame name."""
     if not prefix or not name:
         return name
     return f"{prefix}/{name}"
@@ -459,11 +459,11 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
-        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+        if self.frame_id_prefix and self.camera_info_static.frame_id:
             # Copy so the class-level default is not mutated.
             self.camera_info_static = copy.copy(self.camera_info_static)
             self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
+                self.frame_id_prefix, self.camera_info_static.frame_id
             )
 
     @rpc
@@ -474,7 +474,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
             return
 
         def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+            image.frame_id = _prefixed(self.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
 
         if self.config.lidar:
@@ -626,7 +626,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                 )
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
-            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            transforms = self._odom_to_tf(msg, prefix=self.frame_id_prefix)
             self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
