@@ -70,9 +70,11 @@ dimos imitation prepare recordings/session-001 --output datasets/session-001 --q
 
 `fill` reuses the latest earlier snapshot when no sample is within tolerance and
 marks the output frame as `complementary_info.is_filled`. It also relaxes camera
-rate and gap rejection, so inspect the resulting dataset's filled-frame counts
-before training. The override is recorded in dataset metadata and does not edit
-the recording's `schema.json`. Without `--quality-mode`, preparation uses the
+rate and gap rejection. Before training, open `datasets/session-001/dimos_meta.json`
+and check `filled_frames` in each `quality_reports` entry marked `valid: true`.
+Each entry identifies the source episode by `episode_id`. The override is
+recorded in dataset metadata and does not edit the recording's `schema.json`.
+Without `--quality-mode`, preparation uses the
 saved mode. Use `--quality-mode strict` to explicitly request strict validation.
 
 Use a new output path when the target directory already exists. For source
