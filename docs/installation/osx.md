@@ -1,5 +1,9 @@
 # macOS installation
 
+Use a Mac account with administrator (`sudo`) access for initial Homebrew setup and any Command Line Tools updates. The account running the installer should own its Homebrew installation and must be able to write to the prefix reported by `brew --prefix` (normally `/opt/homebrew` on Apple Silicon). Routine `brew install` commands use this account's write permissions and do not need `sudo`.
+
+On a shared Mac, Homebrew installed by another account may not be writable. Use the Homebrew owner's account or ask a Mac administrator to resolve ownership and permissions before continuing. The installer checks prefix write access before offering to install missing packages. Do not run the installer or `brew install` with `sudo`.
+
 Use the official installer on macOS 14 or newer:
 
 ```sh skip

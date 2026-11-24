@@ -26,6 +26,10 @@ Expected result: the installer prints "installation verified" and "smoke test pa
 
 Use an Apple Silicon Mac on macOS 14 or newer, see the [macOS guide](../../docs/installation/osx.md). Accept the installer defaults, including the replay smoke test.
 
+Use an account with administrator (`sudo`) access for Homebrew setup and Command Line Tools updates. If Homebrew is already installed, the account should own it and must have write access to `brew --prefix` (normally `/opt/homebrew`). On a shared Mac, use the owning account or have an administrator resolve permissions first. Run the installer as that user, without `sudo`.
+
+If testing an existing Homebrew prefix that this account cannot write to, leave at least one required package missing. Expect the installer to stop before the brew install prompt with a message naming the non-writable prefix and account, rather than failing at a brew lock file.
+
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/${RELEASE_COMMIT:?}/scripts/install.sh" \
   | bash -s -- --mode dev --branch "${RELEASE_BRANCH:?}" --project-dir ./dimos

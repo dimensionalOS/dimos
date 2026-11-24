@@ -12,12 +12,84 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 
 import pytest
+
+
+@pytest.fixture
+def brew_prefix(tmp_path: Path) -> Iterator[Path]:
+    prefix = tmp_path / "homebrew prefix"
+    prefix.mkdir()
+    yield prefix
+    prefix.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    ("writable", "missing", "dry_run", "exit_code", "expected_calls"),
+    [
+        (False, True, False, 1, ""),
+        (True, True, False, 0, "prompt\ninstall graphviz\n"),
+        (False, False, False, 0, ""),
+        (False, True, True, 0, "prompt\n"),
+    ],
+)
+def test_macos_checks_brew_permissions_before_installing(
+    tmp_path: Path,
+    brew_prefix: Path,
+    writable: bool,
+    missing: bool,
+    dry_run: bool,
+    exit_code: int,
+    expected_calls: str,
+) -> None:
+    brew_prefix.chmod(0o755 if writable else 0o555)
+    calls = tmp_path / "calls"
+    calls.touch()
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+source "$1"
+prefix="$2"
+calls="$3"
+missing="$4"
+DRY_RUN="$5"
+DETECTED_OS=macos
+MACOS_PACKAGES="git-lfs graphviz"
+brew() {
+    case "$1" in
+        --prefix) printf '%s\n' "$prefix" ;;
+        list) [[ "$3" == git-lfs || "$missing" == 0 ]] ;;
+        install) printf '%s\n' "$*" >> "$calls" ;;
+        *) return 2 ;;
+    esac
+}
+prompt_confirm() { echo prompt >> "$calls"; }
+install_system_deps
+""",
+            "brew-test",
+            str(Path(__file__).with_name("install.sh")),
+            str(brew_prefix),
+            str(calls),
+            str(int(missing)),
+            str(int(dry_run)),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert calls.read_text() == expected_calls
+    assert (f"Homebrew prefix '{brew_prefix}' is not writable" in result.stderr) == (exit_code == 1)
 
 
 @pytest.mark.parametrize("relative_root", [False, True])

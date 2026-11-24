@@ -600,6 +600,13 @@ install_system_deps() {
                 return
             fi
             info "need to install via brew: ${needed[*]}"
+            if [[ "$DRY_RUN" != 1 ]]; then
+                local brew_prefix
+                brew_prefix=$(brew --prefix) || die "could not determine the Homebrew prefix with 'brew --prefix'"
+                if [[ ! -w "$brew_prefix" ]]; then
+                    die "Homebrew prefix '$brew_prefix' is not writable by $(id -un). It may belong to another account. Use the Homebrew owner's account or ask a Mac administrator to resolve ownership and permissions, then re-run. Do not run brew with sudo."
+                fi
+            fi
             if ! prompt_confirm "Install these packages via brew?" "yes"; then
                 die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
