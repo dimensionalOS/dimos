@@ -434,8 +434,8 @@ impl DockScene {
 }
 
 /// How the sim's batteries answer: the charge MOS comes on lying with the legs passive (when m20-battery's rule has
-/// sent the request) and base_link within `contact` (m, x and y in the dock frame) of the docked point; never with
-/// `contact` None.
+/// sent the request) when base_link was within `contact` (m, x and y in the dock frame) of the docked point as the
+/// fine-tune ended (the sit began); never with `contact` None.
 struct DockRun {
     scene: DockScene,
     contact: Option<[f64; 2]>,
@@ -530,6 +530,7 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
     let mut biases: Vec<f64> = Vec::new();
     let lie_ticks = (2.0 * cfg.states.lie_down.phase_s * cfg.timing.control_hz) as u64;
     let (mut sweeps, mut reports, mut lying_ticks) = (0u64, 0u64, 0u64);
+    let mut lie_start: Option<[f64; 3]> = None;
     let (mut dock_asked, mut undock_asked) = (false, false);
     let mut statuses = Vec::new();
     let mut seen = 0usize;
@@ -607,12 +608,13 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
             } else {
                 0
             };
+
             if ticks % 1000 == 0 {
                 reports += 1;
-                let r = s.robot(&truth);
-                let on_contacts = run
-                    .contact
-                    .is_some_and(|w| (r[0] - docked_x).abs() <= w[0] && r[1].abs() <= w[1]);
+                let on_contacts = match (run.contact, lie_start) {
+                    (Some(w), Some(r)) => (r[0] - docked_x).abs() <= w[0] && r[1].abs() <= w[1],
+                    _ => false,
+                };
                 let charging = on_contacts && lying_ticks >= lie_ticks;
                 *feed.charge.lock().unwrap() = Some(ChargeReading {
                     seq: reports,
@@ -624,6 +626,10 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
             let changed: Vec<(u64, Status)> = changes.lock().unwrap()[seen..].to_vec();
             seen += changed.len();
             for (at, status) in changed {
+                // the pose charge_manager logs its last on-dock delta at: the fine-tune's end, as the sit begins
+                if status.phase == Phase::SitHold {
+                    lie_start = Some(s.robot(&truth));
+                }
                 statuses.push((at as f64 / 1000.0, status, s.robot(&truth)));
             }
             let phase = statuses.last().map(|(_, st, _)| st.phase);
@@ -702,12 +708,15 @@ fn entered(result: &DockResult, phase: Phase) -> Option<&(f64, Status, [f64; 3])
 fn dock_and_undock(scene: DockScene) {
     let cfg = common::config();
     let seq = &cfg.dock.sequence;
-    // the sim's contact pads: 4 cm along the dock's axis and 2 cm across it either way of the docked point (an
-    // assumption; the real pads are not measured). FinetuneStand and lying down settle base_link 1.4-3.2 cm back from
-    // the fine point (2.2 cm with the previous detector, 3.2 with reflective_column_node's noisier per-sweep pose).
+    // where charging succeeds, from the real docks: charge_manager's delta at the end of the on-dock fine-tune
+    // ("已到达桩上", just before the sit and lie-down) was within 3.4 mm along the dock and 2.3 mm across on
+    // 2026-11-24 05:51:24 (-0.0034, +0.0023) and 2026-11-21 13:28:07 (+0.0027, -0.0002), and both charged; neither
+    // recording has a failed dock or the pose after lying. So the sim charges when the fine-tune ends within 1 cm of
+    // the docked point either way (the real successes with margin; where real charging stops working is not
+    // measured), and the sim's slide while sitting and lying (2-5 cm back) is not counted: the real one's is unknown.
     let Some(result) = dock_run(DockRun {
         scene,
-        contact: Some([0.04, 0.02]),
+        contact: Some([0.01, 0.01]),
         seconds: 150.0,
     }) else {
         return;
