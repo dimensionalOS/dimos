@@ -180,6 +180,27 @@ impl BusHardware {
         }
         match decode_ethernet(frame, direction) {
             Ok((_, Message::JointStates { joints, .. })) => {
+                if joints.len() != JOINTS || joints.iter().any(|j| j.status_word != 1) {
+                    // diagnostic: the whole reply, for a status word other than 1 or a missing record
+                    let hex: String = frame.iter().map(|b| format!("{b:02x}")).collect();
+                    let statuses: Vec<_> = joints
+                        .iter()
+                        .map(|j| (j.joint.index(), j.status_word))
+                        .collect();
+                    #[cfg(feature = "module")]
+                    tracing::warn!(
+                        records = joints.len(),
+                        ?statuses,
+                        frame = %hex,
+                        "joint-state reply with a status word other than 1 or a missing record"
+                    );
+                    #[cfg(not(feature = "module"))]
+                    eprintln!(
+                        "joint-state reply with a status word other than 1 or a missing record: records {} \
+                         statuses {statuses:?} frame {hex}",
+                        joints.len()
+                    );
+                }
                 let s = robot_state(&joints, &self.calibration, self.last.as_ref())?;
                 self.last = Some(s.clone());
                 Some(s)
