@@ -168,6 +168,22 @@ def test_blind_to_lets_the_rays_through_further_frames(composed):
     assert through[0] < 0
 
 
+def test_blind_to_a_robot_lets_the_rays_through_all_of_its_links(composed):
+    view = _view(composed)
+    view.update(_World().at(0.0, 0.0, np.pi / 2))
+    head, _ = view.pose("dog/eye")
+    base, _ = view.pose("dog/base")
+    sideways = np.array([[0.0, 1.0, 0.0]])
+
+    seeing = view.raycaster((0,))
+    blind = view.raycaster((0,), blind_to_robots=["dog"])
+
+    for link in (head, base):
+        assert seeing.cast(link - sideways[0], sideways, 10.0)[0][0] > 0
+        assert blind.cast(link - sideways[0], sideways, 10.0)[0][0] < 0
+    view.close()
+
+
 def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed):
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
