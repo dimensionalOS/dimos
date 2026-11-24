@@ -25,7 +25,6 @@ from typing import Any
 from dotenv import dotenv_values
 from pydantic import ValidationError
 
-from dimos.core.config_aliases import resolve_global_values
 from dimos.core.coordination.blueprint_config.errors import (
     BlueprintConfigError,
     format_validation_error,
@@ -42,8 +41,12 @@ from dimos.core.coordination.blueprint_config.values import (
     normalize_mapping_keys,
     plain_mapping,
 )
-from dimos.core.global_config import ENV_FILE, GlobalConfig
-from dimos.core.global_config_fields import global_environment_aliases
+from dimos.core.global_config import (
+    ENV_FILE,
+    GlobalConfig,
+    global_environment_names as global_environment_names,
+    normalize_global_aliases,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -121,26 +124,15 @@ REQUIRED_ENVIRONMENT_MIGRATIONS = frozenset(
 def configuration_environment(
     environ: Mapping[str, str] | None,
 ) -> Mapping[str, str]:
-    aliases = global_environment_aliases()
-    names = {name.lower() for choices in aliases.values() for name in choices}
-
-    def canonical(source: Mapping[str, str]) -> dict[str, str]:
-        other = {
-            name: value
-            for name, value in source.items()
-            if name.lower().removeprefix("g__") not in names
-        }
-        return {**other, **resolve_global_values(source, aliases, allow_qualified=True)}
-
     if environ is None:
-        environ = canonical(os.environ)
+        environ = normalize_global_aliases(os.environ, qualified=True)
         if ENV_FILE is not None:
-            from_dotenv = {
+            dotenv = {
                 key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None
             }
-            environ = {**canonical(from_dotenv), **environ}
+            environ = {**normalize_global_aliases(dotenv, qualified=True), **environ}
     else:
-        environ = canonical(environ)
+        environ = normalize_global_aliases(environ, qualified=True)
     removed = sorted(name for name in environ if name.upper() in REMOVED_ENVIRONMENT_NAMES)
     required = [name for name in removed if name.upper() in REQUIRED_ENVIRONMENT_MIGRATIONS]
     if required:
@@ -163,14 +155,11 @@ def configuration_environment(
 
 def normalize_global_keys(values: Mapping[str, Any]) -> dict[str, Any]:
     """Merge global field names and their aliases under the same key at each source."""
-    normalized = normalize_mapping_keys(values)
-    names = global_environment_names()
-    other = {name: value for name, value in normalized.items() if name.lower() not in names}
-    return {**other, **resolve_global_values(normalized, global_environment_aliases())}
+    return normalize_global_aliases(normalize_mapping_keys(values))
 
 
 def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
-    known = global_environment_names()
+    known = global_environment_names(qualified=False)
     unknown = sorted(key for key in values if key.lower() not in known)
     if unknown:
         raise BlueprintConfigError(
@@ -295,11 +284,3 @@ def reserved_global_short_names() -> set[str]:
         if scalar_annotation_types(info.annotation) == {bool}:
             reserved.add(f"no_{name}")
     return reserved
-
-
-def global_environment_names() -> dict[str, str]:
-    return {
-        name.lower(): field
-        for field, choices in global_environment_aliases().items()
-        for name in choices
-    }

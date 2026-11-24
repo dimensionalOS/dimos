@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from dimos.core.global_config import GlobalConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.transport import (
     LCMTransport,
     ZenohTransport,
@@ -116,6 +117,8 @@ def test_make_transport_zenoh_untyped_carries_qos() -> None:
 def test_rpc_backend_resolves_per_transport() -> None:
     assert rpc_backend(LCM) is LCMRPC
     assert rpc_backend(ZENOH) is ZenohRPC
+    assert ModuleConfig(g=LCM).rpc_transport is LCMRPC
+    assert ModuleConfig(g=ZENOH).rpc_transport is ZenohRPC
 
 
 def test_session_config_resolves_per_transport() -> None:

@@ -214,6 +214,12 @@ def test_graph_child_uses_effective_global_options(
     assert "GO2Connection" in (tmp_path / "unitree-go2-multi.svg").read_text()
 
 
+def _python_output(cwd: Path, *args: str, env: dict[str, str] | None = None) -> list[str]:
+    return subprocess.check_output(
+        [sys.executable, *args], cwd=cwd, env=env, text=True, timeout=30
+    ).splitlines()
+
+
 @pytest.mark.parametrize(
     ("field", "shell_name", "shell_value", "dotenv_name", "dotenv_value"),
     [
@@ -244,14 +250,14 @@ def test_cli_and_its_child_keep_the_exported_global(
         "from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser; "
         f"print(global_config.{field}, BlueprintConfigParser.preparse_global_config()[{field!r}], flush=True)"
     )
+    if field == "transport":
+        # Native child processes select their backend directly from the environment.
+        read_global += f"; import os; assert os.environ['DIMOS_TRANSPORT'] == {shell_value!r}"
     code = (
         f"import subprocess, sys; import dimos.cli.dimos; {read_global}; "
         f"subprocess.run([sys.executable, '-c', {read_global!r}], check=True)"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=True
-    )
-    assert result.stdout.splitlines() == [f"{shell_value} {shell_value}"] * 2
+    assert _python_output(tmp_path, "-c", code) == [f"{shell_value} {shell_value}"] * 2
 
 
 @pytest.mark.parametrize("source", ["shell", "dotenv"])
@@ -285,25 +291,7 @@ for values in (global_config.model_dump(), parser.preparse_global_config(), pars
             env.update(order)
         else:
             (tmp_path / ".env").write_text("".join(f"{k}={v}\n" for k, v in order))
-        cli = subprocess.run(
-            [sys.executable, "-m", "dimos.cli.dimos", "show-config"],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
-        assert "transport: zenoh" in cli.stdout.splitlines()
-        assert "n_workers: 3" in cli.stdout.splitlines()
-
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
-        assert result.stdout.splitlines() == ["zenoh 3"] * 3
+        output = _python_output(tmp_path, "-m", "dimos.cli.dimos", "show-config", env=env)
+        assert "transport: zenoh" in output
+        assert "n_workers: 3" in output
+        assert _python_output(tmp_path, "-c", code, env=env) == ["zenoh 3"] * 3
