@@ -738,6 +738,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     let mut commands =
         crate::basic_server::BasicServer::new(docking_commands, shared.usage.clone());
     let usage = shared.usage.clone();
+    let imu_seen = shared.clone();
     let mut controller = Controller::new(cfg.clone());
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let ready_every = ((cfg.timing.control_hz / config.command_ready_hz).round() as u64).max(1);
@@ -784,7 +785,11 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             }
             let dock = dock_latest.lock().ok().and_then(|d| d.clone());
             let mode = usage.current.load(Ordering::Relaxed);
-            let full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref(), mode);
+            let mut full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref(), mode);
+            full.imu_age_ms = imu_seen.imu.try_lock().ok().and_then(|i| {
+                i.as_ref()
+                    .map(|(_, at)| (at.elapsed().as_secs_f64() * 1e4).round() / 10.0)
+            });
             let logged = status_log.changed(&full);
             if logged {
                 info!(
