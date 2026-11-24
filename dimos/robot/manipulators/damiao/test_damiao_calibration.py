@@ -23,6 +23,7 @@ import importlib
 import json
 import math
 from pathlib import Path
+import threading
 from typing import Any
 
 import numpy as np
@@ -347,9 +348,17 @@ def test_a_failed_write_undoes_the_live_changes(start, boundary):
     module = start(config_writes=True)
     module.set_config({"rig/right": {"gains": {"joint3": {"kp": 0.0, "kd": 0.4}}}})
     left = boundary[0].groups["left_arm"]
-    left.error = RuntimeError("bus off")
+    write, caller = left.mit_control, threading.get_ident()
+
+    # Only this command's write fails, not one from the connection's own loop.
+    def bus_off(rows: Any) -> None:
+        if threading.get_ident() == caller:
+            raise RuntimeError("bus off")
+        write(rows)
+
+    left.mit_control = bus_off
     module.command({"arm/joint1/position": 0.3})
-    left.error = None
+    left.mit_control = write
     assert "bus off" in (module.status().last_error or "")
     assert module.get_config()["rig/right"]["floating"] == []
 
