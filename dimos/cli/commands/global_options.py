@@ -16,12 +16,11 @@
 
 from __future__ import annotations
 
-from functools import wraps
+from collections.abc import Callable
 import inspect
 import types
 from typing import Any, get_args, get_origin
 
-import click
 from pydantic import ValidationError
 import typer
 from typer.core import TyperGroup
@@ -34,36 +33,34 @@ class GlobalOptionsGroup(TyperGroup):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        for name, command in self.commands.items():
-            # These two commands merge root flags with blueprint-specific options.
-            if name not in {"run", "rerun-bridge"}:
-                _configure_callback(command)
+        # These two commands merge root flags with blueprint-specific options.
+        commands = [
+            cmd for name, cmd in self.commands.items() if name not in {"run", "rerun-bridge"}
+        ]
+        while commands:
+            command = commands.pop()
+            command.context_class = _GlobalOptionsContext
+            if isinstance(command, TyperGroup):
+                commands.extend(command.commands.values())
 
 
-def _configure_callback(command: click.Command) -> None:
-    if isinstance(command, click.Group):
-        for child in command.commands.values():
-            _configure_callback(child)
-    callback = command.callback
-    if callback is None:
-        return
-
-    @wraps(callback)
-    def configured(*args: Any, **kwargs: Any) -> Any:
-        ctx = click.get_current_context()
+class _GlobalOptionsContext(typer.Context):
+    def invoke(self, callback: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
         # Click consumes the help flag it handles. One left among the forwarded
         # arguments belongs to the tool that receives them (e.g. lerobot-train).
-        delegated_help = any(arg in {"--help", "-h"} for arg in ctx.args)
-        if ctx.invoked_subcommand is None and not delegated_help:
+        delegated_help = any(arg in {"--help", "-h"} for arg in self.args)
+        if (
+            callback is self.command.callback
+            and self.invoked_subcommand is None
+            and not delegated_help
+        ):
             try:
-                get_global_config(**ctx.find_root().obj)
+                get_global_config(**self.find_root().obj)
             except ValidationError as error:
                 detail = error.errors()[0]
                 field = ".".join(map(str, detail["loc"]))
-                raise typer.BadParameter(detail["msg"], param_hint=field) from error
-        return callback(*args, **kwargs)
-
-    command.callback = configured
+                raise typer.BadParameter(detail["msg"], ctx=self, param_hint=field) from error
+        return super().invoke(callback, *args, **kwargs)
 
 
 def create_dynamic_callback():  # type: ignore[no-untyped-def]
