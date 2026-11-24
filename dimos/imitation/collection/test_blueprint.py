@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.control.contract.limits import movable_joints
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
@@ -73,7 +74,19 @@ def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     coordinator = next(
         atom for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
     )
-    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
+    joints = [
+        *(
+            joint
+            for hardware in coordinator.kwargs.get("hardware", [])
+            for joint in hardware.joints
+        ),
+        *(
+            joint.name
+            for connection in coordinator.kwargs.get("connections", [])
+            for joint in movable_joints(connection.model)
+        ),
+    ]
+    assert joints
     assert schema.observation["state"].names == joints
     assert schema.observation["state"].shape == (len(joints),)
 
@@ -138,7 +151,10 @@ def test_collection_rejects_camera_dimensions_that_disagree_with_saved_schema(
 ):
     parser = BlueprintConfigParser(blueprint)
     with pytest.raises(BlueprintConfigError, match=dimension):
-        parser.parse([f"--RealSenseCamera.{dimension}", value], environ={})
+        parser.parse(
+            [f"--RealSenseCamera.{dimension}", value],
+            environ={"XARMCONNECTION__IP": "192.0.2.1"},
+        )
 
 
 @pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])

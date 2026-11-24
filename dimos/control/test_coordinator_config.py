@@ -128,7 +128,7 @@ def test_simulation_keeps_the_simulated_adapter_and_takes_the_sim_modules_scene(
     make_coordinator: Callable[[str], ControlCoordinator],
 ) -> None:
     coordinator = make_coordinator("mujoco")
-    component = _arm("arm", adapter_type="sim_mujoco", mock_stand_in=True)
+    component = _arm("arm", adapter_type="sim_mujoco")
 
     with pytest.raises(RuntimeError, match="no MujocoSimModule"):
         coordinator._resolve_component(component)
