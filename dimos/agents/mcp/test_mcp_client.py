@@ -14,7 +14,8 @@
 
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
+import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
@@ -29,13 +30,17 @@ class Adder(Module):
         return str(x + y)
 
 
-def test_can_call_tool(agent_setup):
+@pytest.mark.parametrize("mcp_server_last", [False, True])
+def test_can_call_tool(agent_setup, mcp_server_last):
     history = agent_setup(
         blueprints=[Adder.blueprint()],
         messages=[HumanMessage("What is 33333 + 100? Use the tool.")],
+        fixture="test_can_call_tool.json",
+        mcp_server_last=mcp_server_last,
     )
 
     assert "33433" in history[-1].content
+    assert [message.content for message in history if isinstance(message, ToolMessage)] == ["33433"]
 
 
 class UserRegistration(Module):

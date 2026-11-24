@@ -3,7 +3,7 @@
 ## Requirements
 
 - Unitree G1 EDU (need SDK/SSH access)
-- Laptop/Desktop with Ubuntu 22.04/24.04 with CUDA GPU (recommended), or macOS (experimental)
+- Laptop/Desktop with Ubuntu 22.04/24.04/26.04 with CUDA GPU (recommended), or macOS (experimental)
 
 ## 1. Get SSH Access
 
@@ -110,7 +110,7 @@ self-signed certificate.
 
 | Input | Operation |
 |---|---|
-| Hold X + A | Engage both arms from a shared reference pose |
+| Hold both grips | Engage both arms from a shared reference pose |
 | B | Start or save a recording episode |
 | Y | Discard the current episode |
 

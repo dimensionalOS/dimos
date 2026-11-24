@@ -350,8 +350,10 @@ permanent; neither is a downgrade from the other.
 
 Both carry canonical `{hardware_id}/{joint}` names sampled once per tick, so
 they line up with the commands sent on that tick. That is the *control* view.
-Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
-*device* view instead: raw state at the device's own rate, units and ordering.
+Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish canonical
+named `joint_state` readings at the device's own rate. Vendor names, ordering,
+and body/world conversions belong inside those concrete connections. The
+coordinator does not republish their per-robot view.
 
 Choose by what the consumer is, not by how many robots the deployment has.
 
@@ -359,4 +361,40 @@ Consumers that capture or model whatever is present read the aggregate:
 `CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
-reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.
+reads `/g1/joints`, and the Go2 controller blueprints pin the connection's
+`joint_state` to `/coordinator/joint_state` for existing observers.
+
+### Unitree connection boundary
+
+The G1 and Go2 coordinator blueprints declare connection models and per-joint
+command interfaces, not shared transport adapters. G1 accepts named
+`position_command` messages and reports all 29 model joints plus `imu`. The
+concrete DDS connection owns motor order, configured PD gains, CRC,
+firmware-reported mode, and damping-first stiffness soft-start. GR00T supplies
+its trained gains to that connection; the task reads its explicitly selected
+`g1/imu` sensor from `CoordinatorState` (the simulator retains its keyed IMU
+state). No task polls a physical adapter or selects another robot's first IMU.
+
+G1 command silence requests damping, not torque disable. Module teardown also
+retains the firmware safe-stop packet before closing DDS. SDK stop sentinels
+are internal firmware values, never ordinary joint position targets. Feedback
+silence is not hidden by republishing cached DDS samples with fresh timestamps.
+
+Go2's velocity-only control resources are `go2/base_forward`,
+`go2/base_lateral`, and `go2/base_turn`. Commands map directly to the vendor's
+body Twist, without a cached yaw gate. The backend exposes measured
+`PoseStamped` odometry, not native base rates (lowstate carries IMU/motors/battery).
+The concrete connection estimates average body rates from successive valid
+source-timestamped poses. It publishes those rates without positions on
+`joint_state`, and pose plus estimated body twist on independent
+`odometry: Out[Odometry]`. The first pose and invalid/nonpositive/too-large
+intervals cannot produce a rate measurement. WebRTC pose stamps are preserved,
+not replaced by callback receipt time.
+
+The existing `odom: Out[PoseStamped]` port remains for navigation consumers.
+Holonomic and RPP follower cards consume `odometry` separately from the action
+resources. Their control laws already convert world path goals using measured
+pose and produce body velocities; no second output rotation is performed.
+The camera, lidar, replay/simulation backends, body-Twist RPC/stream, and sport
+skills remain available. The canonical command path retains the connection
+deadman and rejects commands after stop without replaying a target.
