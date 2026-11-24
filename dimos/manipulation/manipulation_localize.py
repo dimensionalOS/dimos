@@ -100,8 +100,8 @@ class ManipulationLocalize(PerceptionLocalize):
         self._objects: dict[str, tuple[str, Localization]] = {}
         # Forgotten objects: label, id, box low and high corners, newest frame time then.
         self._gone: list[tuple[str, str, np.ndarray, np.ndarray, float]] = []
-        # add_surface's surfaces in the planner: name to height.
-        self._surfaces: dict[str, float] = {}
+        # add_surface's surfaces in the planner: name to the surface, as surfaces() has it.
+        self._surfaces: dict[str, dict[str, Any]] = {}
         self._surface_count = 0
 
     @rpc
@@ -337,8 +337,8 @@ class ManipulationLocalize(PerceptionLocalize):
         # Without a voxel map there are no cells to cut.
         if self._box_filter is not None:
             self._box_filter.set_box(name, cut_pose, Vector3(*cut_size))
-        self._surfaces[name] = platform["height"]
-        planned = ", ".join(f"{h:.3f} m" for h in sorted(self._surfaces.values()))
+        self._surfaces[name] = platform
+        planned = ", ".join(f"{h:.3f} m" for h in sorted(self._surface_heights()))
         cut = "; its own voxel map cells are cut" if self._box_filter is not None else ""
         return (
             f"surface added: top at z={platform['height']:.3f} m in {self.rig.world_frame}, "
@@ -362,9 +362,12 @@ class ManipulationLocalize(PerceptionLocalize):
         """The names of the surfaces in the planner at ``height``."""
         return [
             name
-            for name, top in self._surfaces.items()
-            if abs(top - height) <= SURFACE_HEIGHT_TOLERANCE
+            for name, surface in self._surfaces.items()
+            if abs(surface["height"] - height) <= SURFACE_HEIGHT_TOLERANCE
         ]
+
+    def _surface_heights(self) -> list[float]:
+        return [float(surface["height"]) for surface in self._surfaces.values()]
 
     def _remove_surfaces(self, names: list[str]) -> None:
         assert self._obstacles is not None
@@ -412,8 +415,8 @@ class ManipulationLocalize(PerceptionLocalize):
         if len(tips) != 1:
             return f"hold_object needs exactly one arm with a gripper, not {len(tips)}"
         tip = tips[0]
-        _, head = self.index.get_time_range()
-        transform = self.rig.tf.get(self.rig.world_frame, tip, head, TF_TOLERANCE)
+        # The tip as it is now, closed on the object; the last image may predate the approach.
+        transform = self.rig.tf.get(self.rig.world_frame, tip)
         if transform is None:
             return f"hold_object: no transform from {self.rig.world_frame} to {tip}"
         center, size = self._object_box(hit, self.config.object_hold_margin_m)
@@ -452,8 +455,13 @@ class ManipulationLocalize(PerceptionLocalize):
             points = np.asarray([hit.position_world_xyz], dtype=np.float32)
         low = points.min(axis=0).astype(np.float64) - margin
         high = points.max(axis=0).astype(np.float64) + margin
-        # The surface it stands on: the highest one under its top.
-        under = [top for top in self._surfaces.values() if top <= high[2]]
+        # The surface it stands on: of those under it, the highest below its top.
+        middle = (low + high) / 2.0
+        under = [
+            float(surface["height"])
+            for surface in self._surfaces.values()
+            if surface["height"] <= high[2] and _over_outline(surface, middle)
+        ]
         if under:
             low[2] = min(low[2], max(under))
         return (low + high) / 2.0, [float(v) for v in high - low]
@@ -584,3 +592,10 @@ def surface_boxes(
     box = (placed(-thickness / 2), [*side, thickness])
     cut = (placed((cut_above - cut_below) / 2), [*side, cut_above + cut_below])
     return box, cut
+
+
+def _over_outline(surface: dict[str, Any], point: NDArray[np.float64]) -> bool:
+    """Whether a point lies over or under a surface's outline."""
+    normal = np.asarray(surface["coefficients"][:3], dtype=np.float64)
+    center = np.asarray(surface["center"], dtype=np.float64)
+    return bool(in_outline(center, normal, surface["yaw_deg"], tuple(surface["size"]), point)[0])

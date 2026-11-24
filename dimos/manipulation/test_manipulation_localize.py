@@ -335,7 +335,8 @@ def test_add_surface_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, moc
     # A second call at the same height replaces the table rather than stacking another.
     localizer.add_surface()
     localizer._obstacles.remove_obstacle.assert_called_once_with(f"{SURFACE}/1")
-    assert localizer._surfaces == {f"{SURFACE}/2": pytest.approx(0.08)}
+    assert localizer._surface_heights() == [pytest.approx(0.08)]
+    assert list(localizer._surfaces) == [f"{SURFACE}/2"]
 
 
 def test_a_refused_replacement_keeps_the_surface_already_in(localizer, mocker):
@@ -353,7 +354,8 @@ def test_a_refused_replacement_keeps_the_surface_already_in(localizer, mocker):
     assert answer.startswith("the planner refused")
     localizer._obstacles.remove_obstacle.assert_not_called()
     localizer._box_filter.clear_box.assert_not_called()
-    assert localizer._surfaces == {f"{SURFACE}/1": pytest.approx(0.08)}
+    assert localizer._surface_heights() == [pytest.approx(0.08)]
+    assert list(localizer._surfaces) == [f"{SURFACE}/1"]
 
 
 def test_two_surfaces_at_different_heights_stay_in_the_planner(localizer, mocker):
@@ -521,6 +523,8 @@ def test_hold_object_rides_the_object_on_the_tool_tip(localizer, mocker):
     answer = localizer.hold_object("b1")
 
     assert answer == "holding object b1: it rides on link_tcp, out of the map"
+    # The tip as it is now, not at the last image's time.
+    localizer.rig.tf.get.assert_called_once_with("world", "link_tcp")
     name, pose, size, frame = localizer._riding.ride_box.call_args.args
     assert (name, frame) == (HELD, "link_tcp")
     # 2 cm below the tip in the world is 2 cm along the tip's own z, which points down.
@@ -568,8 +572,17 @@ def test_the_cut_reaches_down_to_the_table_under_a_top_face(localizer, mocker):
     assert pose.position.z - size.z / 2 == pytest.approx(0.23)  # no table: 2 cm under its top
 
     # Two tables: the cut reaches down to the one under it, not the higher one.
-    localizer._surfaces = {f"{SURFACE}/1": 0.13, f"{SURFACE}/2": 0.40}
+    localizer._surfaces = {
+        f"{SURFACE}/1": _surface(center=(0.5, 0.1, 0.13)),
+        f"{SURFACE}/2": _surface(center=(0.5, 0.1, 0.40)),
+    }
     localizer.ignore_object("c1")
     _, pose, size = localizer._box_filter.set_box.call_args.args
     assert pose.position.z - size.z / 2 == pytest.approx(0.13)
     assert pose.position.z + size.z / 2 == pytest.approx(0.27)
+
+    # A table beside it, higher than the one it stands on, does not stop the cut.
+    localizer._surfaces[f"{SURFACE}/3"] = _surface(center=(1.5, 0.1, 0.20), size=(0.4, 0.4))
+    localizer.ignore_object("c1")
+    _, pose, size = localizer._box_filter.set_box.call_args.args
+    assert pose.position.z - size.z / 2 == pytest.approx(0.13)
