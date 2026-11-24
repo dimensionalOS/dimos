@@ -84,8 +84,8 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
     # The check leaves the target's box out of the scene, grown by this much
     # (metres) to the sides and above. The box starts grasp_exclude_floor above
-    # the lowest point in its column, so the surface the target stands on stays
-    # in the scene and the sides its cloud missed do not.
+    # what the target stands on, so that surface stays in the scene and the
+    # sides the target's cloud missed do not.
     grasp_exclude_margin: float = Field(default=0.01, ge=0.0)
     grasp_exclude_floor: float = Field(default=0.005, ge=0.0)
     # When no grasp passes the check where it is, slide the grasps up to this
@@ -94,12 +94,19 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_depth_search: float = Field(default=0.0, ge=0.0)
 
 
+# The sides a target's cloud missed are scene points at most this far apart in
+# height (metres), twice the scene cloud's cell. A larger drop leads to something
+# else, such as the floor past the edge of a table.
+_SIDE_GAP = 0.02
+
+
 def _without(scene: PointCloud2, target: PointCloud2, margin: float, floor: float) -> PointCloud2:
     """The scene without the target's box, grown by ``margin`` to the sides and above.
 
-    The box starts ``floor`` above the lowest point in its column, of the target
-    or of the scene under it. A camera above the target sees only its top face,
-    and the scene then holds its sides, down to what it stands on.
+    The box starts ``floor`` above what the target stands on. A camera above the
+    target sees only its top face, and the scene then holds its sides: a run of
+    points from the target's lowest point down to that surface. A drop of more
+    than ``_SIDE_GAP`` ends the run.
     """
     bounds = target.points_f32()
     if not len(bounds):
@@ -107,8 +114,12 @@ def _without(scene: PointCloud2, target: PointCloud2, margin: float, floor: floa
     low, high = bounds.min(axis=0) - margin, bounds.max(axis=0) + margin
     points = scene.points_f32()
     column = np.all((points[:, :2] >= low[:2]) & (points[:, :2] <= high[:2]), axis=1)
-    under = points[column & (points[:, 2] <= high[2]), 2]
-    low[2] = min(bounds[:, 2].min(), under.min(initial=np.inf)) + floor
+    bottom = bounds[:, 2].min()
+    # Heights in the column from the target's lowest point down.
+    under = np.sort(points[column & (points[:, 2] < bottom), 2])[::-1]
+    heights = np.concatenate([[bottom], under])
+    drops = np.flatnonzero(heights[:-1] - heights[1:] > _SIDE_GAP)
+    low[2] = heights[drops[0] if len(drops) else -1] + floor
     outside = ~(column & (points[:, 2] >= low[2]) & (points[:, 2] <= high[2]))
     return PointCloud2.from_numpy(points[outside], frame_id=scene.frame_id, timestamp=scene.ts)
 

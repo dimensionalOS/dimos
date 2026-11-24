@@ -104,8 +104,11 @@ def test_the_contact_check_leaves_out_the_cup_but_not_the_table_or_a_neighbour(
     assert [0.1, 0.0, 0.175] in obstacles
 
 
+@pytest.mark.parametrize(
+    "floor", [[], [[0.125, 0.0, 0.0]]], ids=["on-the-table", "at-the-table-edge"]
+)
 def test_the_contact_check_leaves_out_the_sides_of_a_cup_seen_from_above(
-    module: PickAndPlaceModule, gripper: MagicMock
+    module: PickAndPlaceModule, gripper: MagicMock, floor: list[list[float]]
 ) -> None:
     gripper.check.return_value = [True, True]
     scene: Any = module._scene
@@ -116,9 +119,10 @@ def test_the_contact_check_leaves_out_the_sides_of_a_cup_seen_from_above(
         frame_id="world",
         timestamp=1.0,
     )
-    side = [[0.12, 0.0, z] for z in (0.185, 0.19, 0.2)]
+    side = [[0.12, 0.0, z] for z in (0.185, 0.19, 0.205)]
+    # At the table's edge the camera also sees the floor next to the cup, far below.
     scene.scene_cloud.return_value = PointCloud2.from_numpy(
-        np.vstack([_table().points_f32(), side]).astype(np.float32), frame_id="world"
+        np.vstack([_table().points_f32(), side, *floor]).astype(np.float32), frame_id="world"
     )
 
     module.pick_object("cup-1")
