@@ -340,8 +340,13 @@ pub struct Docking {
     no_plug: bool,
     /// the charging loop checked the charge flag this pass
     charge_checked: bool,
+    /// the charging loop's last check found no charge (charge_manager's state 4 until the pass ends)
+    charge_lost: bool,
     /// Open12vPower(n) under way: its start, n and the writes so far (it writes 1 and sleeps 2 s, n times)
     open12v: Option<(u64, u32, u32)>,
+    /// StandUp2WideWalk's gait wait: its start (tick) and the gait rewrites so far
+    gait_wait_from: u64,
+    gait_rewrites: u32,
 }
 
 /// charge_manager's PowerOnSelfTest (0x181c40), as ticks.
@@ -403,7 +408,10 @@ impl Docking {
             charge_cmd: false,
             no_plug: false,
             charge_checked: false,
+            charge_lost: false,
             open12v: None,
+            gait_wait_from: 0,
+            gait_rewrites: 0,
             calls_then: None,
             status: Status {
                 phase: Phase::Idle,
@@ -473,6 +481,7 @@ impl Docking {
         self.status.charging = self.charge_flag();
         self.charge_sleep_until = self.tick;
         self.charge_checked = false;
+        self.charge_lost = false;
         self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
     }
 
@@ -651,6 +660,7 @@ impl Docking {
         self.set_phase(Phase::Charging);
         self.charge_cmd = true;
         self.charge_checked = true;
+        self.charge_lost = false;
         self.charge_sleep_until = self.tick + self.ticks(self.seq.charge_sleep_ms);
         self.charge_next_write = self.charge_sleep_until + self.ticks(self.seq.charge_wait_ms);
     }
@@ -753,6 +763,7 @@ impl Docking {
                 self.set_phase(Phase::Charging);
                 self.charge_cmd = true;
                 self.charge_checked = false;
+                self.charge_lost = false;
                 self.charge_sleep_until = self.tick;
                 self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
             }
@@ -790,6 +801,15 @@ impl Docking {
 
     /// Open the obstacle check (when charge_manager.toml has it on); true when it was closed (Open then sleeps).
     fn open_obstacle(&mut self) -> bool {
+        // SetObstacleDirection before Open: 进桩-Front in DoChargeTask (0x203810), 退桩-Back in DoOverChargeTask (0x203908)
+        let direction = if self.next == Next::Dock {
+            Direction::Front
+        } else {
+            Direction::Back
+        };
+        if let Some(c) = self.core.as_mut() {
+            c.direction = direction;
+        }
         let avoid = self.params().is_some_and(|p| p.obstacle_avoid);
         let opened = avoid && !self.obstacle_open;
         self.obstacle_open = avoid;
@@ -1004,6 +1024,8 @@ impl Docking {
     /// for NaviCharge; in rl_control already it changes nothing.
     fn stand_up(&mut self, next: Next, view: &View) {
         self.stand_at = None;
+        self.gait_rewrites = 0;
+        self.gait_wait_from = self.tick;
         if !view.is(State::RlControl) {
             self.write(Write::MotionState(MOTION_STAND));
             self.stand_at = Some(self.tick + self.ticks(self.seq.stand_rl_control_ms));
@@ -1126,8 +1148,10 @@ impl Docking {
             return None;
         };
         self.woke_at_us = self.now_us();
+        // goToPileAction accepts NaviCharge or FinetuneStand (0x180d10), exitPileAction NaviCharge only (0x180470)
+        let finetune_ok = self.phase != Phase::BackOff;
         let navigating = view.is(State::RlControl)
-            && (view.on(&self.approach_runner) || view.on(&self.finetune_runner));
+            && (view.on(&self.approach_runner) || finetune_ok && view.on(&self.finetune_runner));
         let obstacle = self.obstacle_reading();
         let out = self.core.as_mut()?.on_pose(now, p, navigating, obstacle);
         if out.stop {
@@ -1221,7 +1245,13 @@ impl Docking {
                         true,
                     );
                 }
-                if view.is(State::RlControl) && view.on(&self.approach_runner) {
+                if self.phase == Phase::StandForRetry {
+                    // the retry's sleep(2) from StandUp2WideWalk's return, whatever the robot did
+                    self.on_runner = true;
+                }
+                if self.phase == Phase::StandForRetry
+                    || view.is(State::RlControl) && view.on(&self.approach_runner)
+                {
                     if !self.on_runner {
                         self.on_runner = true;
                         self.ticks_in_phase = 0;
@@ -1366,10 +1396,12 @@ impl Docking {
                 if !self.charge_cmd {
                     return Some(self.output(None));
                 }
-                // each pass after Open12vPower(1)'s sleep: no charge -> [error] 0x1007; standing -> command 2, idle
+                // each pass (0x182630): no charge -> state 4 (0x1007), still waiting and writing this pass, the error's
+                // handling from the next; standing -> command 2, idle (from either state)
                 if self.tick >= self.charge_sleep_until && !self.charge_checked {
                     self.charge_checked = true;
-                    if !self.charge_flag() {
+                    if self.charge_lost {
+                        self.charge_lost = false;
                         let out = self.finish(
                             self.target,
                             "My status is [charging], begin transtion status to [error] error code:0x1007",
@@ -1378,9 +1410,15 @@ impl Docking {
                         self.no_plug = true;
                         return out;
                     }
+                    self.charge_lost = !self.charge_flag();
                 }
                 if !view.lying() {
-                    return self.finish(self.target, "stood up while on the dock", false);
+                    let result = if std::mem::take(&mut self.charge_lost) {
+                        "My status is [error], begin to transtion to [idle]"
+                    } else {
+                        "stood up while on the dock"
+                    };
+                    return self.finish(self.target, result, false);
                 }
                 // charge_manager's charging loop: wait charge_wait_ms, Open12vPower(1) (write, sleep charge_sleep_ms)
                 if self.tick >= self.charge_next_write {
@@ -1410,6 +1448,22 @@ impl Docking {
                         self.stand_at = None;
                         self.write(Write::MotionState(MOTION_RL_CONTROL));
                         self.write(Write::Gait(self.seq.approach_gait));
+                        self.gait_wait_from = self.tick;
+                    }
+                } else if self.next == Next::Retry {
+                    // goToPile's retry waits as StandUp2WideWalk does (for the gait) and ignores its result
+                    let waited = self.ms(self.tick - self.gait_wait_from);
+                    let s = &self.seq;
+                    let retries =
+                        waited.saturating_sub(s.stand_gait_wait_ms) / s.stand_gait_retry_ms.max(1);
+                    let total =
+                        s.stand_gait_wait_ms + s.stand_gait_retries as u64 * s.stand_gait_retry_ms;
+                    if view.gait == s.approach_gait || waited >= total {
+                        self.stood();
+                    } else if waited >= s.stand_gait_wait_ms && retries as u32 >= self.gait_rewrites
+                    {
+                        self.gait_rewrites += 1;
+                        self.write(Write::Gait(s.approach_gait));
                     }
                 } else if view.is(State::RlControl) && view.on(&self.approach_runner) {
                     self.stood();

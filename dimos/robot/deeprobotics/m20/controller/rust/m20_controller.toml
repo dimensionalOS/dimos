@@ -757,6 +757,10 @@ charge_wait_ms = 3000
 obstacle_open_ms = 10
 # bin StandUp2WideWalk: MotionState 1, sleep(2), MotionState 17 and Gait 0x3001, then the wait for 0x3001
 stand_rl_control_ms = 2000
+# bin StandUp2WideWalk: 6 s for gait 0x3001, then "Retrying StandUp..." rewrites Gait 0x3001 up to 3 times, 5 s each
+stand_gait_wait_ms = 6000
+stand_gait_retries = 3
+stand_gait_retry_ms = 5000
 # bin exitPileAction: the -0.8 back-off kick is written 5 times
 back_off_writes = 5
 # fitted (charge_manager's runtime cost, not a vendor constant); recording 2026-11-24: charge_manager's 18 missed pose waits in a row were logged 200.17-200.29 ms apart (mean

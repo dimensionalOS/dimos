@@ -157,6 +157,10 @@ pub struct SequenceConfig {
     pub obstacle_open_ms: u64,
     /// StandUp2WideWalk: stand, then this long (ms) before rl_control and NaviCharge
     pub stand_rl_control_ms: u64,
+    /// StandUp2WideWalk's wait for the NaviCharge gait (ms), then its gait rewrites: this many, this far apart (ms)
+    pub stand_gait_wait_ms: u64,
+    pub stand_gait_retries: u32,
+    pub stand_gait_retry_ms: u64,
     /// the back-off kick is written this many times
     pub back_off_writes: u32,
     /// a missed pose wait's next wait starts this long (us) after its end (charge_manager logging the miss and

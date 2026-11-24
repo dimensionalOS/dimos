@@ -466,13 +466,28 @@ fn charge_lost_while_charging_is_error_nochargeplug_until_it_returns() {
     // Detection charge success, the idle loop's wake: [charging] with command 1
     b.run(10_000, None, 0);
     assert_eq!(b.k.phase(), Phase::Charging);
-    // the charge drops at 20 s: the loop's next pass (after Open12vPower(1)'s sleep) is [error] 0x1007
+    // the charge drops at 20 s: the pass that sees it still waits and writes Open12vPower(1), the next is [error]
     let view = lying();
     b.run_as(&view, 20_000, None, 0, 20_000);
     assert_eq!(b.k.phase(), Phase::Charging);
     let lost = b.enables.len();
-    b.run_as(&view, 27_000, None, 0, 20_000);
-    assert_eq!(b.k.phase(), Phase::Idle);
+    let mut error_at = None;
+    while error_at.is_none() && b.tick < 40_000 {
+        b.run_as(&view, b.tick + 1, None, 0, 20_000);
+        if b.k.phase() == Phase::Idle {
+            error_at = Some(b.tick);
+        }
+    }
+    let error_at = error_at.expect("the error");
+    let seen_at = error_at - 5_000;
+    assert!((20_000..=25_001).contains(&seen_at), "seen at {seen_at}");
+    assert!(
+        b.enables[lost..]
+            .iter()
+            .any(|&t| t + 2_000 == error_at || t + 2_001 == error_at),
+        "{:?}",
+        &b.enables[lost..]
+    );
     assert!(b.k.status().error);
     assert_eq!(
         b.k.status().result,
@@ -648,4 +663,81 @@ fn the_nochargeplug_error_reports_charge_manager_s_error_state() {
     assert!(b.k.status().no_plug);
     assert_eq!(crate::basic_server::charger_state_of(b.k.status()), 4);
     assert!(b.k.request(Request::Undock, &lying()).is_ok());
+}
+
+#[test]
+fn a_retry_s_stand_up_that_never_comes_goes_on_as_charge_manager_does() {
+    // goToPile's retry (0x1814e0) ignores StandUp2WideWalk's result: MotionState 1, 2 s on 17 + 0x3001, the gait rewritten
+    // at 6, 11 and 16 s, then at 21 s sleep(2), the kicks and the approach (whose navigating check then ends it)
+    let cfg = cfg();
+    let v = vendor();
+    let mut k = Docking::new(&cfg, true, Some(&v));
+    let view = standing("navi_charge");
+    k.request(Request::Dock, &view).unwrap();
+    let mut seq = 0;
+    run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+    let mut lying = lying();
+    lying.gait = 0x1001;
+    k.record_writes();
+    k.no_charge(&lying);
+    assert_eq!(k.phase(), Phase::StandUp);
+    let start = k.tick;
+    let mut approach_at = None;
+    for _ in 0..30_000 {
+        k.step(&lying, None, None);
+        if k.phase() == Phase::Approach && approach_at.is_none() {
+            approach_at = Some(k.tick - start);
+        }
+        if k.phase() == Phase::Idle {
+            break;
+        }
+    }
+    let writes = k.take_writes();
+    let at = |f: &dyn Fn(&Write) -> bool| -> Vec<u64> {
+        writes
+            .iter()
+            .filter(|(_, w)| f(w))
+            .map(|(t, _)| t - start)
+            .collect()
+    };
+    assert_eq!(at(&|w| matches!(w, Write::MotionState(1))), vec![0]);
+    assert_eq!(at(&|w| matches!(w, Write::MotionState(17))), vec![2000]);
+    assert_eq!(
+        at(&|w| matches!(w, Write::Gait(0x3001))),
+        vec![2000, 8000, 13000, 18000]
+    );
+    let kicks = at(&|w| matches!(w, Write::Steer(s) if s.x == cfg.dock.sequence.back_off_x));
+    assert_eq!(kicks, vec![25_000; 5]);
+    assert_eq!(approach_at, Some(25_000));
+}
+
+#[test]
+fn an_undock_opens_the_obstacle_check_facing_back() {
+    // DoOverChargeTask sets 退桩-Back before ObstacleDetection::Open (0x203908): the stand-up looks behind, not at the posts
+    let mut b = Boot::new();
+    b.run(10_000, None, 0);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    b.k.request(Request::Undock, &lying()).unwrap();
+    let mut opened = None;
+    for _ in 0..5_000 {
+        b.run(b.tick + 1, Some(docked(0.0, 0.0)), 0);
+        if let Some(d) = b.k.status().obstacle {
+            opened = Some(d);
+            break;
+        }
+    }
+    assert_eq!(opened, Some(Direction::Back));
+}
+
+#[test]
+fn charge_lost_while_standing_goes_idle_not_error() {
+    // state 4 from the flag, then standing -> command 2 -> "My status is [error], begin to transtion to [idle]"
+    let mut b = Boot::new();
+    b.run(10_000, None, 0);
+    b.run_as(&lying(), 20_000, None, 0, 20_000);
+    let mut standing = lying();
+    standing.state = Some(State::RlControl);
+    b.run_as(&standing, 30_000, None, 0, 20_000);
+    assert_eq!(b.k.phase(), Phase::Idle);
+    assert!(!b.k.status().error && !b.k.status().no_plug);
 }
