@@ -55,12 +55,13 @@ def sim(monkeypatch):
 
 
 @pytest.fixture
-def rig(sim, mocker):
+def rig(sim, mocker, request):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = MujocoArmConnection(
         model=fake_arm_model(("joint1", "joint2", "drive_joint")),
         gripper_joint="drive_joint",
+        gripper_scale=getattr(request, "param", 1.0),
         deadman_timeout_s=10,
     )
     module._mujoco_sim = SimpleNamespace(scene_path=lambda: "/fake/scene.xml")
@@ -93,6 +94,20 @@ def test_a_position_command_reaches_the_sim_and_its_joints_come_back(sim, rig):
     assert reading.name == ["arm/joint1", "arm/joint2", "arm/drive_joint"]
     assert reading.position == pytest.approx([0.3, -0.2, 0.6])
     assert reading.velocity == pytest.approx([0.1, 0.2, 0.0])
+
+
+@pytest.mark.parametrize("rig", [2.0], indirect=True)
+def test_a_scaled_gripper_takes_and_reads_model_units(sim, rig):
+    module, commands, readings = rig
+    commands.publish(JointState(name=["arm/drive_joint"], position=[0.4]))
+    sent = []
+    wait_until(lambda: sent.append(sim.read_gripper_command()) or sent[-1] is not None, timeout=2)
+    # 0.4 in the model is 0.2 in the scene, which the sim's command reflects in 0 to 0.85.
+    assert sent[-1] == pytest.approx(0.65)
+
+    sim.write_gripper_state(0.3)
+    wait_until(lambda: bool(readings.sent) and readings.sent[-1].position[-1] > 0.5, timeout=2)
+    assert readings.sent[-1].position[-1] == pytest.approx(0.6)
 
 
 def test_a_scene_with_other_joint_counts_is_refused(sim, mocker):
