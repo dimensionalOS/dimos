@@ -56,6 +56,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_SPORT_MODE_HINT = (
+    "If SDK commands don't work, you may need to activate via controller: "
+    "L2+B then L2+Up then R2+A. The combination may vary based on the model. "
+    "See docs/platforms/humanoid/g1/index.md (Get the G1 in Sport Mode)."
+)
+
 _LOCO_API_IDS = {
     "GET_FSM_ID": ROBOT_API_ID_LOCO_GET_FSM_ID,
     "GET_FSM_MODE": ROBOT_API_ID_LOCO_GET_FSM_MODE,
@@ -107,6 +113,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._motion_timer = MotionTimer()
         self._running = False
         self._mode_selected = False
+        self._warned_missing_move_status = False
         self.motion_switcher: Any = None
         self.loco_client: Any = None
 
@@ -142,6 +149,11 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         # there is no public API for this yet (see dimos/core/stream.py).
         if self.cmd_vel._transport is not None:
             self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        else:
+            logger.warning(
+                "cmd_vel is not wired. Navigation velocity commands will not reach the G1. "
+                "Connect cmd_vel in the blueprint."
+            )
         logger.info("G1 DDS SDK connection started")
 
     @rpc
@@ -196,9 +208,21 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
                     # Send move command before starting the timeout timer to avoid
                     # a race where the timer fires before the move is sent.
-                    self.loco_client.Move(vx, vy, vyaw, continous_move=True)
+                    code = self.loco_client.Move(vx, vy, vyaw, continous_move=True)
+                    if code is None:
+                        # Some SDK versions discard SetVelocity's result in Move.
+                        if not self._warned_missing_move_status:
+                            logger.warning(
+                                "Move returned no status code. Command acceptance is unknown"
+                            )
+                            self._warned_missing_move_status = True
+                    elif code != 0:
+                        logger.warning("Move returned nonzero code", code=code)
 
+                    # An error can mean the reply timed out after the robot received
+                    # the command. Keep the stop timer even when acceptance is unknown.
                     timeout.arm(self.config.cmd_vel_timeout, auto_stop)
+                    return code in (0, None)
 
                 return True
         except Exception as e:
@@ -358,12 +382,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
                 current_mode = result.get("name", "none")
                 logger.info(f"Current motion mode: {current_mode}")
                 if current_mode and current_mode != "none":
-                    logger.warning(
-                        f"Robot is in '{current_mode}' mode. "
-                        "If SDK commands don't work, you may need to activate "
-                        "via controller: L1+A then L1+UP "
-                        "(for chinese L2+B then L2+up then R2+A)"
-                    )
+                    logger.warning(f"Robot is in '{current_mode}' mode. {_SPORT_MODE_HINT}")
         except Exception as e:
             logger.debug(f"Could not check current mode: {e}")
 
@@ -375,13 +394,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
             self._mode_selected = True
             time.sleep(self._standup_step_delay / 6)
         else:
-            logger.error(
-                f"Failed to select mode '{mode}': code={code}\n"
-                "  The robot may need to be activated via controller first:\n"
-                "  1. Press L1 + A on the controller\n"
-                "  2. Then press L1 + UP\n"
-                "  This enables the AI Sport client required for SDK control."
-            )
+            logger.error(f"Failed to select mode '{mode}': code={code}. {_SPORT_MODE_HINT}")
 
     def _get_fsm_id(self) -> int | None:
         try:
