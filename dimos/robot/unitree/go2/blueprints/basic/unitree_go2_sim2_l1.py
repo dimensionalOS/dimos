@@ -13,24 +13,48 @@
 # limitations under the License.
 
 
+"""A Go2 with an L1 and a camera in the logistics room; `--choice sim=dimsim` swaps MuJoCo for DimSim.
+
+MuJoCo walks the Go2 on its locomotion policy; DimSim moves it as a kinematic base on cmd_vel.
+"""
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.sim2 import Go2Sim
+from dimos.robot.unitree.go2.sim2 import GO2_USD, Go2Sim
 from dimos.sim2.assets.logistics import Logistics
 from dimos.sim2.camera import SimCamera
+from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
+from dimos.sim2.dimsim.sim import DimSimSim
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.sim import sim
 from dimos.visualization.vis_module import vis_module
 
+ROBOT = Logistics.mounts.go2
+SHARED = {"world_observations", "actions", "cmd_vel"}
+
 unitree_go2_sim2_l1 = autoconnect(
-    sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
+    # Each backend comes with the Go2 it can move: joint-driven in MuJoCo, a kinematic base in DimSim.
+    sim(
+        {
+            "mujoco": autoconnect(
+                MujocoSim.blueprint(),
+                Go2Sim.blueprint(_mount=ROBOT).namespace(ROBOT, shared=SHARED),
+            ),
+            "dimsim": autoconnect(
+                DimSimSim.blueprint(),
+                SimKinematicBase.blueprint(usd=GO2_USD, _mount=ROBOT).namespace(
+                    ROBOT, shared=SHARED
+                ),
+            ),
+        },
+        default="mujoco",
+    ),
     Logistics.blueprint(),
     autoconnect(
-        Go2Sim.blueprint(_mount=Logistics.mounts.go2),
         SimL1.mount(Go2Sim.mounts.l1),
         SimCamera.mount(Go2Sim.mounts.camera),
-    ).namespace("go2", shared={"world_observations", "actions", "cmd_vel"}),
+    ).namespace(ROBOT, shared=SHARED - {"actions", "cmd_vel"}),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")
