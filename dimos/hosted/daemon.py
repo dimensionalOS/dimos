@@ -47,6 +47,7 @@ from dimos.hosted.protocol import (
     DeploymentStatus,
     HostDescriptor,
     run_coordinator_rpc_name,
+    run_module_rpc_namespace,
 )
 from dimos.hosted.tags import as_tags, live_tags
 from dimos.protocol.service.zenohservice import ZenohSessionPool, split_csv
@@ -200,6 +201,8 @@ class HostDaemon:
                 connect=self.connect,
             )
             stop.wait()
+        # After the cleanup: a Host that died on the way down does not get here.
+        logger.info("Host down", name=self.config.name, host_id=self.host_id)
 
     def describe(self) -> HostDescriptor:
         live = live_tags()
@@ -425,6 +428,7 @@ def _run_fragment(
             run_id=fragment.run_id,
             log_dir=log_dir,
             rpc_name=run_coordinator_rpc_name(fragment.run_id, fragment.host_id),
+            module_rpc_namespace=run_module_rpc_namespace(fragment.run_id, fragment.host_id),
             remote_module_refs=remote_module_refs,
             on_ready=lambda _: ready.send((True, None)),
         )

@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.control.task import ControlTask
-    from dimos.robot.assets.model import RobotModel
 
 TaskFactory = Callable[..., "ControlTask"]
 
@@ -147,7 +146,6 @@ class ControlTaskRegistry:
         *,
         hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody] | None = None,
         connections: Mapping[str, ConnectionSource] | None = None,
-        model: RobotModel | None = None,
     ) -> ControlTask:
         """Instantiate a task by registered name.
 
@@ -162,17 +160,12 @@ class ControlTaskRegistry:
                 Passed only to a factory that takes a ``connections``
                 argument, so tasks can read deployment declarations such as
                 zero-stiffness joints.
-            model: The coordinator's model of the robots it drives through
-                connection modules, joints named ``<robot>/<joint>``. Passed
-                only to a factory that takes a ``model`` argument.
         """
         key = name.lower()
         factory = self._resolve_factory(key)
         kwargs: dict[str, Any] = {"cfg": cfg, "hardware": hardware or {}}
         if "connections" in inspect.signature(factory).parameters:
             kwargs["connections"] = connections or {}
-        if "model" in inspect.signature(factory).parameters:
-            kwargs["model"] = model
         task = factory(**kwargs)
         self._validate_bound_handlers(key, task)
         return task

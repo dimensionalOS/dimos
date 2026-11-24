@@ -37,7 +37,7 @@ Distance, interpolation, edge subdivision, simplification, and reported path len
 | Viser | Renders interval sliders, unbounded line number inputs, and wrapped circle sliders from coordinate topology. |
 | Trajectory | RoboPlan TOPP-RA expands continuous scalar inputs to cosine/sine coordinates, then collapses and lifts its output back into a continuous canonical path. Unbounded translations pass through unchanged. |
 
-Base execution remains disabled on the R1 Pro blueprint until a feedback-controlled base trajectory executor exists. That safety check is tied to the planar-base controller capability, not to circular topology; a continuous arm joint is not rejected merely because it is periodic.
+A base plan executes when the blueprint binds a `planar_base_trajectory` coordinator task to the base joints, as `r1pro-planar-preview` does on a mock twist base. Base joints with no task bound stay preview-only. That check is tied to the planar-base controller capability, not to circular topology. A continuous arm joint is not rejected merely because it is periodic.
 
 ## R1 Pro manual test
 
@@ -56,7 +56,7 @@ dimos run r1pro-planar-preview
 | Whole-body target | Select `left_arm`, `torso`, and `moving_base`; move the left TCP target; plan | Pink solves one selected goal; shared RRT produces a collision-checked joint path. |
 | Locked coordinates | Repeat with only `left_arm` selected | Torso, right arm, and base remain fixed. |
 | Cartesian guard | Choose Cartesian mode with `moving_base` selected | The request reports that Cartesian planning requires interval-only coordinates. |
-| Preview safety | Preview a base plan, then execute | Preview works; execution reports the missing feedback base-controller capability. |
+| Preview and execute | Preview a base plan, then execute | Preview works and the mock base drives to the target. |
 
 To set the wrapped-yaw start precisely, use `set_init_joints()` in `dimos shell`, preserve every configured joint name and non-base position, change only `base/yaw`, then choose the **Init** preset in Viser.
 

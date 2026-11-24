@@ -10,6 +10,7 @@
     "test": "deno run -A npm:vitest run",
     "check": "deno run -A npm:typescript/tsc --noEmit",
     "build": "deno run -A npm:vite build",
+    "build:package": "deno task build && deno run -A build_package.ts",
     "fixture": "deno run -A npm:vite --config fixture/vite.config.ts"
   }
 }

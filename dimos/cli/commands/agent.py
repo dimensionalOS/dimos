@@ -215,6 +215,7 @@ def _node_argv(args: list[str]) -> list[str]:
 def _build(package: Path, node: str) -> None:
     """`npm ci` when package.json or package-lock.json changed since the last install, and
     `npm run build` when a file the last build read changed. One launch builds at a time."""
+    _wait_for_build(package)
     if _installed(package) and _built(package):
         return
     try:
@@ -236,7 +237,7 @@ def _build(package: Path, node: str) -> None:
 
 
 def _wait_for_build(package: Path) -> None:
-    """Waits out a build in progress, so a gateway never starts on a half-installed node_modules."""
+    """Waits out a build in progress, so nothing starts on a half-written dist."""
     try:
         with (package / "dist" / ".build.lock").open() as lock:
             fcntl.flock(lock, fcntl.LOCK_SH)

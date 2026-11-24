@@ -17,9 +17,9 @@ FrameWindowAccumulator   ← fps, window_s, stride_s, max_frames_per_window
 WindowAnalyzer           ← VLM calls: caption + entities + relations
     │
     ├──▶ TemporalState   ← rolling summary, entity roster
-    ├──▶ EntityGraphDB   ← persistent SQLite graph (memory/temporal/)
+    ├──▶ EntityGraphDB   ← persistent SQLite graph (~/.local/state/dimos/temporal_memory/)
     └──▶ JSONL log       ← per-run raw VLM output (logs/<run>/temporal_memory/)
-    └──▶ JSONL dump      ← persistent raw dump (memory/temporal_memory/)
+    └──▶ JSONL dump      ← persistent raw dump (~/.local/state/dimos/temporal_memory/)
 ```
 
 Five components, each independently testable:
@@ -51,9 +51,10 @@ and can be composed with any camera source:
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.perception.experimental.temporal_memory import temporal_memory
+from dimos.hardware.sensors.camera.module import WebcamModule
+from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
 
-bp = autoconnect(your_camera_blueprint, temporal_memory())
+bp = autoconnect(WebcamModule.blueprint(), TemporalMemory.blueprint())
 ```
 
 ## Configuration
@@ -62,9 +63,9 @@ All VLM frequency knobs are exposed via `TemporalMemoryConfig` so you can
 tune cost / latency / accuracy without touching code:
 
 ```python
-from dimos.perception.experimental.temporal_memory import TemporalMemory, TemporalMemoryConfig
+from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
 
-config = TemporalMemoryConfig(
+bp = TemporalMemory.blueprint(
     # Frame processing
     fps=1.0,                    # Target frame sampling rate (Hz)
     window_s=5.0,               # Window duration (seconds)
@@ -76,7 +77,7 @@ config = TemporalMemoryConfig(
     summary_interval_s=30.0,    # Rolling summary update interval
     enable_distance_estimation=True,  # Background distance VLM calls
     max_distance_pairs=5,       # Max entity pairs per distance call
-    stale_scene_threshold=5.0,  # Seconds before scene considered stale
+    stale_scene_threshold=0.0,  # Disabled; CLIP filter handles duplicates
 
     # VLM parameters
     max_tokens=900,             # Max tokens per VLM response
@@ -97,8 +98,6 @@ config = TemporalMemoryConfig(
     max_relations_per_entity=10,  # Max relations returned per entity query
     nearby_distance_meters=5.0,   # Threshold for "nearby" in distance queries
 )
-
-bp = TemporalMemory.blueprint(config=config)
 ```
 
 If no VLM is passed, one is created automatically from `OPENAI_API_KEY`.
@@ -134,10 +133,6 @@ disabling distance estimation (`enable_distance_estimation=False`).
 ## Testing
 
 ```bash
-# Unit tests (29 tests, mocked VLMs, no API key needed)
+# Unit tests (mocked VLMs, no API key needed)
 DISPLAY=:99 python -m pytest dimos/perception/experimental/temporal_memory/test_temporal_memory_module.py -v -c /dev/null
-
-# Integration test with real VLM
-export OPENAI_API_KEY=...
-DISPLAY=:99 python -m pytest dimos/perception/experimental/temporal_memory/test_temporal_memory_module.py -v -c /dev/null -k "integration" --slow
 ```

@@ -270,7 +270,8 @@ class Agent(BaseAgent):
         self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream_message)
 
     @rpc
-    def on_system_modules(self, _modules: list[RPCClient]) -> None:
+    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
+        # McpServer must finish collecting skills before we fetch and bind its tools.
         if self._server_url() is None:
             logger.info("No MCP server; the agent runs without tools.")
             self._agent_tools = []
@@ -293,6 +294,12 @@ class Agent(BaseAgent):
                 model = MockModel(json_path=self.config.model_fixture)
             else:
                 model = init_model(self.config.model, trace_dir=self.config.trace_dir)
+            logger.info(
+                "Agent model ready.",
+                model=self.config.model_fixture or self.config.model,
+                backend=type(model).__name__,
+                trace_dir=str(self.config.trace_dir) if self.config.trace_dir else None,
+            )
             self._state_graph = create_agent(
                 model=model,
                 tools=self._agent_tools or [],

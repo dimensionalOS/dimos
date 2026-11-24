@@ -84,8 +84,8 @@ def test_two_types_on_one_port_stay_two_streams(tmp_path):
 def test_a_real_collision_is_refused_not_overwritten(tmp_path):
     path = tmp_path / "slash.mcap"
     _write(path, ["dimos/slash/name/nav_msgs.Path", "dimos/slash_name/nav_msgs.Path"])
-    with pytest.raises(ValueError, match="slash_name"):
-        McapStore(path=str(path))
+    with McapStore(path=str(path)) as store, pytest.raises(ValueError, match="slash_name"):
+        store.stream("slash_name")
     # and the way out is to name them yourself
     with McapStore(path=str(path), streams={"a": "dimos/slash/name/nav_msgs.Path"}) as store:
         assert "a" in store.list_streams()

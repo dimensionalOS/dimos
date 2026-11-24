@@ -9,7 +9,8 @@ Most checks run in MuJoCo or on replay data from LFS. Checks with a Livox Mid-36
 uv run dimos run go2-sim-nav
 ```
 
-* Rerun shows the office and a voxel map that grows from the simulated Mid-360.
+* Rerun shows the office and a voxel map that grows from the simulated Mid-360. The DimOS Viewer is the only window, no MuJoCo window opens.
+* Drag in the 3D view until you look down into the room, because from the default camera the near wall hides the floor.
 * Click a floor point a few meters away. A path appears and the robot walks there.
 
 Expected result: the legged robot reaches the clicked goal without crossing walls, and no module crashes.
@@ -19,14 +20,14 @@ Expected result: the legged robot reaches the clicked goal without crossing wall
 Needs the `mapping` extra. The first run pulls the `go2_hongkong_office` recording.
 
 ```bash
-uv run dimos map global go2_hongkong_office --pgo --export --export-pc2
+uv run dimos map global go2_hongkong_office --pgo --export --export-cloud
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2-map --map-file go2_hongkong_office
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2
 ```
 
-* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.rrd`, `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office.pc2.lcm` (the point-cloud export) to the current directory.
-* The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy.
-* The PGO replay grows `world/pgo_keyframes` and publishes loop edges to `world/pgo_loops` when the walk revisits an area.
+* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office_map.db`, whose point cloud is the named map `--map-name` gives (`v1` by default, on its `map_v1_cloud` stream), to the current directory.
+* The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy next to it as `go2_hongkong_office.map.<timestamp>.db`.
+* The PGO replay publishes a growing `pgo_keyframes` and adds loop edges to `pgo_loops` when the walk revisits an area, first after about 70 seconds, logging `Loop closure detected`. The viewer draws them under `world/pgo` as `keyframes`, `path` and red `loops`. That group is hidden by default, so click the eye icon on `pgo` under `3D` > `world` in the blueprint tree. The `world/pgo_keyframes` and `world/pgo_loops` entities hold only a transform.
 
 Expected result: the premap exports, relocalization finds a fix, and PGO closes loops, without tracebacks.
 
@@ -35,10 +36,12 @@ Expected result: the premap exports, relocalization finds a fix, and PGO closes 
 The first run pulls the `go2_mid360_sf_office_outdoors_2026-05-29` recording and premap. Allow about 7 GB of free disk during the download and extraction. If the Rerun viewer closes while the data is downloading, rerun the command after the data is cached to inspect the map.
 
 ```bash
-uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29
+uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29_map.db
 ```
 
-* In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands and lies on top of the live `world/local_map`. `world/global_map`, `world/lidar` and `world/region_bounds` are hidden by default; tick them in the Blueprint panel to compare.
+* In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands, about 15 seconds after `Replay started`, and lies on top of the live `world/local_map`. Both are colored by height, so hide `loaded_map` with its eye icon under `world` > `world` in the blueprint tree to tell them apart, and double-click `local_map` there to move the camera to it.
+* `world/global_map`, `world/lidar` and `world/region_bounds` are hidden by default. Click their eye icons in the same place to compare.
+* The recording is 13 minutes long. After `Replay finished` the stack stays up until Ctrl+C.
 
 Expected result: the blueprint logs `relocalize fix` followed by `placed, no further attempts`, without tracebacks.
 
@@ -52,7 +55,7 @@ DIMOS_MID360_PCAP=<pcap-path> uv run dimos run mid360-pointlio-replay
 uv run dimos run mid360-pointlio-voxels --lidar-ip <lidar-ip>
 ```
 
-* Replay: the capture lasts about two minutes and ends with the log line `packet source ended`.
+* Replay: Rerun draws only the current scan, no map accumulates. The capture walks down about 7 m of stairs, so the scan sinks below the ground grid. It lasts two minutes and ends with the log line `packet source ended`. The stack then stays up idle until Ctrl+C.
 * Live: carry the sensor around the room.
 
 Expected result: in replay the scan follows the moving sensor while walls and stairs stay in place. Live, the log shows `mid360 configured and streaming` and `world/global_map` grows without smearing or drifting.

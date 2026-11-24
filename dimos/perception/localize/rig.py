@@ -250,16 +250,17 @@ class Rig:
         """
         from dimos.msgs.sensor_msgs.Image import Image
 
-        if isinstance(obs.data, Image):
-            return obs.data
-        color = self.cameras[obs.data.frame_id].color
-        image: Image = color.at(obs.ts, FRAME_TOLERANCE).first().data
+        data = obs.load()
+        if isinstance(data, Image):
+            return data
+        color = self.cameras[data.frame_id].color
+        image: Image = color.at(obs.ts, FRAME_TOLERANCE).first().load()
         return image
 
     def depth_at(self, ts: float, frame: str) -> Image | None:
         """Temporal join: a camera's aligned depth frame for one of its colour timestamps."""
         try:
-            depth: Image = self.cameras[frame].depth.at(ts, DEPTH_TOLERANCE).first().data
+            depth: Image = self.cameras[frame].depth.at(ts, DEPTH_TOLERANCE).first().load()
         except LookupError:
             return None
         return depth
@@ -279,7 +280,7 @@ class Rig:
         parts: list[np.ndarray] = []
         newest = 0.0
         for obs in self.lidar:
-            cloud: PointCloud2 = obs.data
+            cloud: PointCloud2 = obs.load()
             if cloud.frame_id != self.world_frame:
                 transform = self.tf.get(self.world_frame, cloud.frame_id, obs.ts, TF_TOLERANCE)
                 if transform is None:
@@ -326,7 +327,7 @@ class Rig:
         if depth is None:
             return None
         try:
-            color = self.cameras[frame].color.at(ts, 0.1).first().data
+            color = self.cameras[frame].color.at(ts, 0.1).first().load()
         except LookupError:
             return None
         transform = self.world_to_optical(ts, frame)

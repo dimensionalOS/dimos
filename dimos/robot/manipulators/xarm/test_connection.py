@@ -31,6 +31,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import limits
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
@@ -299,17 +300,17 @@ def test_a_position_command_is_a_servo_target_in_radians(rig: Callable[..., Rig]
     assert len(r.sdk.sent("set_mode")) == 1
 
 
-def test_a_velocity_command_expires_on_the_arm_and_modes_change_only_when_needed(
+def test_a_velocity_arm_rejects_position_commands_without_switching_modes(
     rig: Callable[..., Rig],
 ) -> None:
-    r = rig()
+    r = rig(joint_commands={f"joint{i}": (Interface.VELOCITY,) for i in range(1, 8)})
     r.jog(joint1=0.5)
     r.jog(joint1=0.5)
     r.move(joint1=0.0)
     r.move(joint1=0.0)
     r.jog(joint2=-0.3)
 
-    assert [args for _, args, _ in r.sdk.sent("set_mode")] == [(1,), (4,), (1,), (4,)]
+    assert [args for _, args, _ in r.sdk.sent("set_mode")] == [(1,), (4,)]
     jogs = r.sdk.sent("vc_set_joint_velocity")
     assert [args[0] for _, args, _ in jogs] == [
         [0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -317,6 +318,20 @@ def test_a_velocity_command_expires_on_the_arm_and_modes_change_only_when_needed
         [0.0, -0.3, 0.0, 0.0, 0.0, 0.0, 0.0],
     ]
     assert jogs[0][2] == {"is_radian": True, "duration": 2 * DEADMAN_S}
+    # A single joint winner must not generate position holds for its peers.
+    from dimos.hardware.manipulators.spec import ControlMode
+
+    source = ConnectionSource(
+        r.module.config, ["position_command", "velocity_command"], ["joint_state"], 1.0
+    )
+    source.on_message("joint_state", JointState(name=source.joint_names, position=REST))
+    values = source.command({"arm/joint1": (0.2, ControlMode.VELOCITY)})
+    (message,) = source.command_messages(values, ts=1.0)
+    assert message.port == "velocity_command"
+    assert message.message.velocity == [0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    r.ports[message.port].publish(message.message)
+    assert [args for _, args, _ in r.sdk.sent("set_mode")] == [(1,), (4,)]
+    assert r.sdk.sent("set_servo_angle_j") == []
 
 
 def test_the_gripper_goes_out_in_sdk_pulses_only_when_its_target_changes(
@@ -357,7 +372,7 @@ def test_a_target_past_the_jump_guard_is_refused_and_nothing_reaches_the_sdk(
 
 
 def test_a_refused_sdk_call_halts_the_arm_and_shows_in_status(rig: Callable[..., Rig]) -> None:
-    r = rig()
+    r = rig(joint_commands={f"joint{i}": (Interface.VELOCITY,) for i in range(1, 8)})
     r.sdk.fail["vc_set_joint_velocity"] = 12
     r.jog(joint1=0.5)
     assert "vc_set_joint_velocity returned code 12" in str(r.module.status().last_error)
@@ -397,14 +412,17 @@ def test_joint_targets_are_refused_once_the_joint_reading_is_old(
     monkeypatch.setattr(time, "monotonic", lambda: real() + 1.0)
     with pytest.raises(XArmError, match="the joints were last read .* s ago"):
         r.module.write({"arm/joint1/position": 0.1})
-    # Speeds do not depend on where the joints are, so they still go out.
+    # This arm declares position only, so jogging cannot switch its mode.
     r.jog(joint1=0.5)
     assert r.sdk.sent("set_servo_angle_j") == []
-    assert len(r.sdk.sent("vc_set_joint_velocity")) == 1
+    assert r.sdk.sent("vc_set_joint_velocity") == []
 
 
 def test_the_deadman_halts_a_jog_with_zero_speeds(rig: Callable[..., Rig]) -> None:
-    r = rig(deadman_timeout_s=0.05)
+    r = rig(
+        deadman_timeout_s=0.05,
+        joint_commands={f"joint{i}": (Interface.VELOCITY,) for i in range(1, 8)},
+    )
     r.jog(joint1=0.5)
     wait_until(lambda: r.module.status().deadman_fired, timeout=2.0)
     assert r.sdk.sent("vc_set_joint_velocity")[-1][1] == (REST,)
@@ -431,13 +449,11 @@ def test_the_coordinator_takes_the_arm_and_gripper_messages_as_one_robot(
     rig: Callable[..., Rig], tmp_path: Path
 ) -> None:
     r = rig(gripper="xarm")
-    names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "drive_joint"]
     model = xarm_like_model(tmp_path, 7, gripper=True)
     seen = ConnectionSource(
-        "arm",
+        XArmConfig(arm="xarm7", ip=IP, gripper="xarm", model=model),
         ["position_command", "velocity_command"],
         ["joint_state"],
-        model.with_renamed_joints({joint: f"arm/{joint}" for joint in names}),
         reading_timeout_s=1.0,
     )
     wait_until(lambda: any(m.name == ["arm/drive_joint"] for m in r.readings()), timeout=2.0)
@@ -471,4 +487,17 @@ def test_the_xarm7_urdf_drives_seven_joints_and_the_gripper_but_not_its_follower
     joints = list(dict.fromkeys(key.rsplit("/", 1)[0] for key in table))
     assert joints == [*(f"arm/joint{i}" for i in range(1, 8)), "arm/drive_joint"]
     assert table["arm/drive_joint/position"].hi == pytest.approx(0.85)
-    assert table["arm/joint1/velocity"].hi == pytest.approx(3.14)
+    assert "arm/joint1/velocity" not in table
+
+
+def test_xarm_declares_one_shared_arm_interface(tmp_path: Path) -> None:
+    model = xarm_like_model(tmp_path, 7, gripper=True)
+    config = XArmConfig(arm="xarm7", ip=IP, gripper="xarm", model=model)
+    assert set(config.joint_commands.values()) == {(Interface.POSITION,)}
+    with pytest.raises(ValidationError, match="shared arm interface"):
+        XArmConfig(
+            arm="xarm7",
+            ip=IP,
+            model=model,
+            joint_commands={"joint1": (Interface.POSITION,), "joint2": (Interface.VELOCITY,)},
+        )

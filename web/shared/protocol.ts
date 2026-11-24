@@ -21,8 +21,11 @@
 
 import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 import {
+  MAX_MID_LEN,
+  MAX_SDP_LEN,
   type TopicCapabilities,
   topicCapabilitiesOk,
+  topicGenerationOk,
   type TopicMsg,
   topicMsgFromUnknown,
   topicSourceOk,
@@ -89,12 +92,8 @@ export const MAX_REQUEST_ID_LEN = 64;
 // Bound for hello.token (a robot key or viewer token, see relay/auth.ts).
 export const MAX_TOKEN_LEN = 256;
 
-// An SDP rides a control frame or an @control payload, so it stays well under
-// MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
-// MAX_RTC_TRACKS of them). SDP is ASCII, so this length and the Python
-// mirror's character count agree.
-export const MAX_SDP_LEN = 48 * 1024;
-export const MAX_MID_LEN = 16;
+// MAX_SDP_LEN and MAX_MID_LEN live in topics.ts, which the direct topic video
+// signaling shares with the SFU messages here.
 export const MAX_RTC_TRACKS = 8;
 
 // Reject absurd header lengths before allocating.
@@ -149,6 +148,7 @@ export interface PongMsg {
   t: "pong";
   n: number;
   ts: number;
+  aborted?: number;
 }
 
 export interface ErrorMsg {
@@ -428,6 +428,7 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
     (v.topicSource === undefined || topicSourceOk(v.topicSource)) &&
     (v.topicCapabilities === undefined || topicCapabilitiesOk(v.topicCapabilities)) &&
     (v.topicsVersion === undefined || v.topicsVersion === 1),
+  pong: (v) => v.aborted === undefined || topicGenerationOk(v.aborted),
   error: (v) => v.requestId === undefined || requestIdOk(v.requestId),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),

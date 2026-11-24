@@ -16,9 +16,13 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -27,6 +31,7 @@ from dimos.robot.manipulators.common.blueprints import coordinator, planner, tra
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
+    XARM7_SIM_BASE_POSE,
     XARM7_SIM_PATH,
     XARM_ARMS,
     XArmType,
@@ -40,6 +45,9 @@ from dimos.robot.manipulators.xarm.config import (
     xarm_model,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
+from dimos.simulation.engines.mujoco_arm_connection import MujocoArmConnection
+
+SIMULATED = bool(global_config.simulation)
 
 _dual_xarm6_model = make_dual_xarm6_model_config()
 _mock_left_xarm6_hw = make_xarm_hardware(
@@ -83,9 +91,27 @@ XARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
     (XArmConnection, "position_command", "arm_position_command"),
     (XArmCoordinator, "arm_joint_state", "joint_state"),
 ]
+# The same, onto the simulated xArm7 ``xarm_coordinator(..., simulated=True)`` drives.
+XARM_SIM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (MujocoArmConnection, "position_command", "arm_position_command"),
+    (XArmCoordinator, "arm_joint_state", "joint_state"),
+]
 
 
-def xarm_coordinator(arm: XArmType) -> Blueprint:
+def _xarm7_sim() -> MetaBlueprint:
+    """The xArm7 in MuJoCo, behind the same ports and joint names as ``XArmConnection``."""
+    # mujoco is optional; import it only when a blueprint runs the sim.
+    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+
+    return autoconnect(
+        MujocoArmConnection.blueprint(
+            model=xarm_model("xarm7", gripper="xarm"), gripper_joint="drive_joint"
+        ),
+        MujocoSimModule.blueprint(address=str(XARM7_SIM_PATH), headless=False, dof=7),
+    )
+
+
+def xarm_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint:
     """Run planned joint trajectories on an xArm and open and close its xArm
     Gripper, through ``XArmConnection``.
 
@@ -99,12 +125,25 @@ def xarm_coordinator(arm: XArmType) -> Blueprint:
 
     Args:
         arm: Which arm, e.g. "xarm7".
+        simulated: Drive the xArm7 in MuJoCo instead; wire it up with
+            ``.remappings(XARM_SIM_REMAPS)``.
     """
+    if simulated and arm != "xarm7":
+        raise ValueError(
+            f"only the xArm7 runs in MuJoCo through a connection module, not the {arm}"
+        )
     dof = XARM_ARMS[arm][0]
+    model = xarm_model(arm, gripper="xarm", robot="arm")
     return autoconnect(
         XArmCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=xarm_model(arm, gripper="xarm", robot="arm"),
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=model,
+                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
+                )
+            ],
             tasks=[
                 joint_trajectory_task(joint_names(dof, prefix="arm/joint")),
                 # drive_joint is open at 0 rad.
@@ -117,25 +156,33 @@ def xarm_coordinator(arm: XArmType) -> Blueprint:
                 ),
             ],
         ),
-        XArmConnection.blueprint(arm=arm, gripper="xarm"),
+        _xarm7_sim() if simulated else XArmConnection.blueprint(arm=arm, gripper="xarm"),
     )
 
 
-def _planner_coordinator(arm: XArmType) -> Blueprint:
+def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint:
     """Plan and run motions of an xArm with the xArm Gripper. Wire it up with
-    ``.remappings(XARM_REMAPS)``; see ``xarm_coordinator``."""
+    ``.remappings(XARM_REMAPS)``, or ``XARM_SIM_REMAPS`` when simulated; see
+    ``xarm_coordinator``."""
     dof, robot_type = XARM_ARMS[arm]
     return autoconnect(
         planner(
-            model=make_xarm_model_config(dof, robot_type=robot_type, robot="arm"),
+            model=make_xarm_model_config(
+                dof,
+                robot_type=robot_type,
+                robot="arm",
+                base_pose=XARM7_SIM_BASE_POSE if simulated else None,
+            ),
             gripper_tasks={"manipulator": "arm_gripper"},
         ),
-        xarm_coordinator(arm),
+        xarm_coordinator(arm, simulated=simulated),
     )
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_planner_coordinator = _planner_coordinator("xarm7").remappings(XARM_REMAPS)
+xarm7_planner_coordinator = _planner_coordinator("xarm7", simulated=SIMULATED).remappings(
+    XARM_SIM_REMAPS if SIMULATED else XARM_REMAPS
+)
 xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS)
 
 _coordinator_xarm7_hw = xarm7_hardware("arm")
@@ -155,7 +202,7 @@ coordinator_xarm6 = autoconnect(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 _coordinator_lite6_hw = lite6_hardware("arm", gripper=True)

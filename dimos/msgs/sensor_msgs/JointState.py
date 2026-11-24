@@ -122,7 +122,7 @@ class JointState(Timestamped):
         )
 
     def __str__(self) -> str:
-        return f"JointState({len(self.name)} joints, frame_id='{self.frame_id}')"
+        return repr(self)
 
     def __repr__(self) -> str:
         return (

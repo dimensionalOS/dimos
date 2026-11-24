@@ -31,7 +31,7 @@ workflows:
         - 'cachix/cachix-action@v17'
         - 'codecov/codecov-action@v7.1.1'
         - 'denoland/setup-deno@v2.0.5'
-        - 'dtolnay/rust-toolchain@stable'
+        - 'dtolnay/rust-toolchain@master'
         - 'pre-commit/action@v3.0.1'
         - 're-actors/alls-green@release/v1'
     '.github/workflows/dimsim-check.yml':
@@ -56,8 +56,10 @@ workflows:
         - 'denoland/setup-deno@v2.0.5'
     '.github/workflows/install.yml':
         - 'actions/checkout@v7.0.1'
+        - 'actions/download-artifact@v8.0.2'
         - 'actions/upload-artifact@v7.0.1'
         - 'astral-sh/setup-uv@v10.2.0'
+        - 'denoland/setup-deno@v2.0.5'
     '.github/workflows/message-codegen.yml':
         - 'actions/checkout@v7.0.1'
         - 'astral-sh/setup-uv@v10.0.1'
@@ -215,9 +217,9 @@ dependencies:
         commit: 'sha1-ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d'
         owner_id: 1588572
         repo_id: 265601040
-    'dtolnay/rust-toolchain@stable':
-        ref: 'stable'
-        commit: 'sha1-b725eda525362e7cf34af9a7243cac1e3f01a7ec'
+    'dtolnay/rust-toolchain@master':
+        ref: 'master'
+        commit: 'sha1-df2a88e9fe4098bad09cb42c3dec7187f15861fc'
         owner_id: 1940490
         repo_id: 260749683
     'korthout/backport-action@v4.7.0':

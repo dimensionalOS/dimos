@@ -199,6 +199,29 @@ def stacked_on(
     return grade
 
 
+def inside(
+    body: str, container: str, *, half_extents_m: tuple[float, float], rise_m: tuple[float, float]
+) -> Callable[[Outcome], float]:
+    """1.0 if ``body`` ended in ``container``: its centre over the floor, ``half_extents_m``
+    (x, y) in the container's frame, and ``rise_m`` above the container's origin; else 0.0."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                t = last_body_transform(store, body).translation
+                c = last_body_transform(store, container)
+            except LookupError:
+                return 0.0
+        rotation = c.rotation.to_rotation_matrix()
+        x, y, z = rotation.T @ np.array(
+            [t.x - c.translation.x, t.y - c.translation.y, t.z - c.translation.z]
+        )
+        on_floor = abs(x) <= half_extents_m[0] and abs(y) <= half_extents_m[1]
+        return float(on_floor and rise_m[0] <= z <= rise_m[1])
+
+    return grade
+
+
 def opened_door(outcome: Outcome) -> float:
     with recording(outcome) as store:
         try:

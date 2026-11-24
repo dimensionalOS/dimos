@@ -75,6 +75,9 @@ class ObjectTracker2D(Module):
         self._latest_rgb_frame: np.ndarray | None = None
         self._frame_arrival_time: float | None = None
 
+        # Serialize lifecycle calls, including the join and subsequent reset.
+        self._tracking_lock = threading.RLock()
+
         # Tracking thread control
         self.tracking_thread: threading.Thread | None = None
         self.stop_tracking_event = threading.Event()
@@ -101,10 +104,6 @@ class ObjectTracker2D(Module):
     @rpc
     def stop(self) -> None:
         self.stop_track()
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            self.stop_tracking_event.set()
-            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
         super().stop()
 
     @rpc
@@ -116,41 +115,50 @@ class ObjectTracker2D(Module):
             bbox: Bounding box in format [x1, y1, x2, y2]
 
         Returns:
-            Dict containing tracking status
+            Tracking status and bbox, or stop_timeout if the previous worker
+            cannot be joined safely.
         """
-        import cv2
+        # A worker callback cannot wait for its own thread to finish.
+        if threading.current_thread() is self.tracking_thread:
+            return {"status": "stop_timeout"}
 
-        if self._latest_rgb_frame is None:
-            logger.warning("No RGB frame available for tracking")
-            return {"status": "no_frame"}
+        with self._tracking_lock:
+            import cv2
 
-        # Initialize tracking
-        x1, y1, x2, y2 = map(int, bbox)
-        w, h = x2 - x1, y2 - y1
-        if w <= 0 or h <= 0:
-            logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
-            return {"status": "invalid_bbox"}
+            if self._latest_rgb_frame is None:
+                logger.warning("No RGB frame available for tracking")
+                return {"status": "no_frame"}
 
-        self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]
-        self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
-        self.tracking_initialized = False
-        logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
+            # Initialize tracking
+            x1, y1, x2, y2 = map(int, bbox)
+            w, h = x2 - x1, y2 - y1
+            if w <= 0 or h <= 0:
+                logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
+                return {"status": "invalid_bbox"}
 
-        # Convert RGB to BGR for CSRT (OpenCV expects BGR)
-        frame_bgr = cv2.cvtColor(self._latest_rgb_frame, cv2.COLOR_RGB2BGR)
-        init_success = self.tracker.init(frame_bgr, self.tracking_bbox)  # type: ignore[attr-defined]
-        if init_success:
-            self.tracking_initialized = True
-            logger.info("Tracker initialized successfully.")
-        else:
-            logger.error("Tracker initialization failed.")
-            self.stop_track()
-            return {"status": "init_failed"}
+            if self.tracking_thread is not None and not self.stop_track():
+                return {"status": "stop_timeout"}
 
-        # Start tracking thread
-        self._start_tracking_thread()
+            self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]
+            self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
+            self.tracking_initialized = False
+            logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
 
-        return {"status": "tracking_started", "bbox": self.tracking_bbox}
+            # Convert RGB to BGR for CSRT (OpenCV expects BGR)
+            frame_bgr = cv2.cvtColor(self._latest_rgb_frame, cv2.COLOR_RGB2BGR)
+            init_success = self.tracker.init(frame_bgr, self.tracking_bbox)  # type: ignore[attr-defined]
+            if init_success:
+                self.tracking_initialized = True
+                logger.info("Tracker initialized successfully.")
+            else:
+                logger.error("Tracker initialization failed.")
+                self.stop_track()
+                return {"status": "init_failed"}
+
+            # Start tracking thread
+            self._start_tracking_thread()
+
+            return {"status": "tracking_started", "bbox": self.tracking_bbox}
 
     def _start_tracking_thread(self) -> None:
         """Start the tracking thread."""
@@ -187,21 +195,29 @@ class ObjectTracker2D(Module):
         Stop tracking the current object.
 
         Returns:
-            bool: True if tracking was successfully stopped
+            bool: True if tracking stopped, False if the worker is still running.
         """
-        self._reset_tracking_state()
+        # Do not wait for the lifecycle lock from the worker: its owner may
+        # already be joining this thread.
+        if threading.current_thread() is self.tracking_thread:
+            self.stop_tracking_event.set()
+            return False
 
-        # Stop tracking thread if running
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            if threading.current_thread() != self.tracking_thread:
-                self.stop_tracking_event.set()
-                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                self.tracking_thread = None
-            else:
-                self.stop_tracking_event.set()
+        with self._tracking_lock:
+            self.stop_tracking_event.set()
+            thread = self.tracking_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                if thread.is_alive():
+                    logger.warning("Tracking worker did not stop. Retaining tracking state.")
+                    return False
 
-        logger.info("Tracking stopped")
-        return True
+            # The worker must finish using the tracker before its state is cleared.
+            self.tracking_thread = None
+            self._reset_tracking_state()
+
+            logger.info("Tracking stopped")
+            return True
 
     @rpc
     def is_tracking(self) -> bool:

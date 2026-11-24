@@ -132,7 +132,7 @@ def test_agent_without_an_mcp_server_runs_with_no_tools() -> None:
             patch("langchain.agents.create_agent") as create,
             patch("dimos.agents.agent.init_model"),
         ):
-            client.on_system_modules([])
+            client.on_system_modules_ready([])
         assert create.call_args.kwargs["tools"] == []
     finally:
         client.stop()
@@ -298,7 +298,7 @@ def configured_mcp_client(mcp_client: Agent, monkeypatch: pytest.MonkeyPatch) ->
     return mcp_client
 
 
-def test_on_system_modules_uses_responses_api_model(
+def test_on_system_modules_ready_uses_responses_api_model(
     configured_mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Production agents use the Responses API required for Luna tool calls."""
@@ -308,7 +308,7 @@ def test_on_system_modules_uses_responses_api_model(
     configured_mcp_client.config.model = "gpt-5.6-luna"
 
     with patch("langchain.agents.create_agent") as create_agent:
-        configured_mcp_client.on_system_modules([])
+        configured_mcp_client.on_system_modules_ready([])
 
     model = create_agent.call_args.kwargs["model"]
     assert isinstance(model, ChatOpenAI)
@@ -318,7 +318,7 @@ def test_on_system_modules_uses_responses_api_model(
 
 
 @pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
-def test_on_system_modules_resolves_non_reasoning_models(
+def test_on_system_modules_ready_resolves_non_reasoning_models(
     configured_mcp_client: Agent, model_name: str
 ) -> None:
     """Models without Responses reasoning support use provider resolution."""
@@ -329,9 +329,35 @@ def test_on_system_modules_resolves_non_reasoning_models(
         patch("langchain.agents.create_agent"),
         patch("langchain.chat_models.init_chat_model", return_value=resolved_model) as init,
     ):
-        configured_mcp_client.on_system_modules([])
+        configured_mcp_client.on_system_modules_ready([])
 
     init.assert_called_once_with(model=model_name)
+
+
+def test_the_run_log_names_the_model_backend_and_trace_dir(
+    configured_mcp_client: Agent,
+) -> None:
+    """Release tests switch models between runs, so the log must say which one answered."""
+
+    class ChatOllama:
+        pass
+
+    configured_mcp_client.config.model = "ollama:qwen3:8b"
+    configured_mcp_client.config.trace_dir = Path("/eval/case/raw")
+
+    with (
+        patch("langchain.agents.create_agent"),
+        patch("dimos.agents.agent.init_model", return_value=ChatOllama()),
+        patch("dimos.agents.agent.logger") as logger,
+    ):
+        configured_mcp_client.on_system_modules_ready([])
+
+    logger.info.assert_called_once_with(
+        "Agent model ready.",
+        model="ollama:qwen3:8b",
+        backend="ChatOllama",
+        trace_dir="/eval/case/raw",
+    )
 
 
 def test_set_trace_dir_rebuilds_the_model_with_capture(
@@ -350,7 +376,7 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
         configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
         assert init.call_count == 0
 
-        configured_mcp_client.on_system_modules([])
+        configured_mcp_client.on_system_modules_ready([])
         assert init.call_args.kwargs["trace_dir"] == Path("/eval/case/raw")
 
         configured_mcp_client.set_trace_dir(None)

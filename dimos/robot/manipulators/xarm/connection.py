@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
 import ipaddress
 import threading
 import time
@@ -86,8 +87,9 @@ class XArmConfig(ConnectionConfig):
         gripper: The gripper on its flange, if any: "xarm", the xArm Gripper.
         source: The robot's name, in front of each joint's name, e.g. "arm"
             gives "arm/joint1".
-        joint_commands: What the joints are told: positions (rad) and
-            speeds (rad/s).
+        joint_commands: Positions (rad) by default. To jog, declare every arm
+            joint with velocity only (rad/s); the SDK has one mode for the
+            whole arm. The gripper always takes position commands.
         jump_limit_s: How far a joint target may be from where the joint is,
             in seconds at the joint's top speed (its URDF velocity limit). A
             target further away is refused.
@@ -97,7 +99,7 @@ class XArmConfig(ConnectionConfig):
     ip: str
     gripper: XArmGripperType | None = None
     source: str = "arm"
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION, Interface.VELOCITY)
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
     jump_limit_s: float = 0.1
 
     @field_validator("ip")
@@ -112,6 +114,25 @@ class XArmConfig(ConnectionConfig):
             raise ValueError("the Lite 6 gripper has no joint, so XArmConnection cannot drive it")
         if self.model is None:
             self.model = xarm_model(self.arm, self.gripper)
+        if not self.joint_commands:
+            from dimos.control.contract.limits import movable_joints
+
+            self.joint_commands = {
+                joint.name: (Interface.POSITION,) for joint in movable_joints(self.model)
+            }
+        arm_interfaces = {
+            interfaces
+            for name, interfaces in self.joint_commands.items()
+            if name.rsplit("/", 1)[-1] != "drive_joint"
+        }
+        if len(arm_interfaces) != 1 or next(iter(arm_interfaces)) not in {
+            (Interface.POSITION,),
+            (Interface.VELOCITY,),
+        }:
+            raise ValueError("xArm requires one shared arm interface: position or velocity")
+        for name, interfaces in self.joint_commands.items():
+            if name.rsplit("/", 1)[-1] == "drive_joint" and interfaces != (Interface.POSITION,):
+                raise ValueError("the xArm gripper takes position commands only")
         return self
 
 
@@ -132,6 +153,16 @@ class XArmConnection(ConnectionModule):
     position_command: In[JointState]
     velocity_command: In[JointState]
     joint_state: Out[JointState]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        try:
+            import_module("xarm.wrapper")
+        except ImportError as exc:
+            raise ImportError(
+                f"xArm vendor SDK unavailable: {exc}. "
+                "Install xarm-python-sdk via the control extra: `uv sync --extra control`."
+            ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -198,9 +229,16 @@ class XArmConnection(ConnectionModule):
             self._fault = None
 
     def connect(self) -> None:
+        from dimos.control.contract.limits import model_limit, movable_joints
+
+        assert self.config.model is not None
+        joints = {
+            joint.name.rsplit("/", 1)[-1]: joint for joint in movable_joints(self.config.model)
+        }
         self._reach = [
-            self.config.jump_limit_s * (self.limits[f"{joint}/{Interface.VELOCITY}"].hi or 0.0)
-            for joint in self._joints
+            self.config.jump_limit_s
+            * (model_limit(joints[name.rsplit("/", 1)[-1]], Interface.VELOCITY).hi or 0.0)
+            for name in self._joints
         ]
         ip = self.config.ip
         try:

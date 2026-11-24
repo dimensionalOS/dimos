@@ -167,9 +167,8 @@ class KeyboardTeleop(Module):
 
         self._stop_event.set()
 
-        if self._thread is None:
-            raise RuntimeError("Cannot stop: thread was never started")
-        self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
+        if self._thread is not None:
+            self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

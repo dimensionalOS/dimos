@@ -18,12 +18,13 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
@@ -95,12 +96,12 @@ _openarm_webxr_task = TaskConfig(
 )
 
 
-def openarm_teleop_control() -> Blueprint:
+def openarm_teleop_control() -> MetaBlueprint:
     """The WebXR task set over the OpenArm connection."""
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(OpenArmConnection)],
             tasks=[
                 _openarm_webxr_task,
                 # The left jaw is open at its joint's upper end, the right at its lower end.

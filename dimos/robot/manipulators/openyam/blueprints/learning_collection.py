@@ -15,7 +15,7 @@
 """Gravity-compensated OpenYAM collection, configured through dimos run."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -25,8 +25,12 @@ from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
-from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection, arm_remaps
-from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    arm_connection,
+    arm_declaration,
+    arm_remaps,
+)
+from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 from dimos.robot.manipulators.openyam.joints import (
@@ -42,12 +46,12 @@ OPENYAM_TEACH_JOINTS = [
 ]
 
 
-def openyam_teach_control() -> Blueprint:
+def openyam_teach_control() -> MetaBlueprint:
     """Zero stiffness, teaching damping and passive jaws over the connection."""
     return autoconnect(
         OpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=make_openyam_model_config(robot="arm").model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=[
                 TaskConfig(
                     name="teach_openyam",

@@ -56,6 +56,10 @@ In the terminal, `/help` lists the commands, such as `/model` to change the conv
 
 The chat shows the conversation's inputs, answers and tool calls. A message sent while the agent is busy shows as `queued` under the chat, in order, until the agent takes it. With an empty editor, Up brings every queued message of yours back into the editor; Enter queues the edited text again. When the agent reaches the next boundary it takes all queued messages in one turn.
 
+Type `@` to search files in the conversation's working directory and live readable streams. Files appear first; stream rows show `Module.port` followed by the message type, or a dotted topic key and `[stream]` when module metadata is unavailable. Type `@stream://` to browse streams, or add a partial channel name to narrow the list. Tab inserts a file path or a reference such as `stream://color_image`. Paths with spaces are quoted. Stream references preserve the exact channel ID and use JSON quotes for spaces or special characters.
+
+References remain ordinary message text. Selecting or sending one does not attach file contents or sensor frames. The agent uses its tools to read files and streams when needed. An uncompleted `@` reference stays as typed.
+
 The stream sidebar is the column beside the chat. Ctrl+T shows or hides it, and Shift+Tab moves focus between chat and the sidebar. Up and Down select a stream, Left hides its body, Right shows it, and Esc returns to chat. The selected stream scrolls into view.
 
 The sidebar shows the conversation's agent modules and their streams, jobs, and queued notices. It also shows the system's image, point-cloud, and occupancy-grid streams. Expanded previews show the SDK's received rate and age. Pictures use terminal graphics, colored cells, or ASCII, depending on terminal support. The sidebar needs at least 100 terminal columns.
@@ -74,7 +78,9 @@ A long-running tool call that allows it, such as `bash`, shows `Ctrl+B or /backg
 
 While calls run in the background, one line under the editor shows the newest with its command, how long it has run and its newest output line, and how many more there are. With an empty editor, Down opens the list there and selects a call. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also start a call in the background itself, with the call's `run_in_background` argument, and list, read and stop these calls with its `background` tool.
 
-`/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
+`/menu` opens three sections: Conversations, Agent modules, and Jobs. Left and Right switch sections from a list. Up and Down select entries, and typing filters the list. Enter on a conversation resumes it immediately. Enter on a module or job opens its actions. Use Up and Down to choose an action and Enter to run it. Job actions include a scrolling history view. Escape returns one level and restores the list selection and search; from a list it returns to chat.
+
+Jobs shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time. Use its focused actions to inspect runs, run a job now, or delete it.
 
 | Key | What it does |
 |---|---|

@@ -104,10 +104,11 @@ class JointVelocityTask(BaseControlTask):
         self._num_joints = len(config.joint_names)
 
         # Current velocities (thread-safe)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._velocities: list[float] | None = None
         self._last_update_time: float = 0.0
         self._active = False
+        self._estopped = False
         self._timed_out = False  # Track timeout state for logging
 
         logger.info(f"JointVelocityTask {name} initialized for joints: {config.joint_names}")
@@ -139,7 +140,7 @@ class JointVelocityTask(BaseControlTask):
             JointCommandOutput with velocities, or None if inactive
         """
         with self._lock:
-            if not self._active:
+            if self._estopped or not self._active:
                 return None
 
             # Check timeout
@@ -209,6 +210,8 @@ class JointVelocityTask(BaseControlTask):
             return False
 
         with self._lock:
+            if self._estopped:
+                return False
             self._velocities = list(velocities)
             self._last_update_time = t_now
             self._active = True
@@ -246,10 +249,19 @@ class JointVelocityTask(BaseControlTask):
             return False
         return self.set_velocities_by_name(dict(zip(msg.name, msg.velocity, strict=True)), t_now)
 
+    def set_estop(self, estopped: bool) -> None:
+        """Invalidate cached commands; only fresh post-clear input may authorize motion."""
+        with self._lock:
+            if estopped or self._estopped:
+                self._velocities = None
+                self._active = False
+                self._timed_out = False
+            self._estopped = estopped
+
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""
         with self._lock:
-            self._active = True
+            self._active = not self._estopped
             self._timed_out = False
         logger.info(f"JointVelocityTask {self._name} started")
 

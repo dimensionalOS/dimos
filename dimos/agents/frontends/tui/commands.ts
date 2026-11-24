@@ -226,7 +226,7 @@ export function slashCommands(): readonly SlashCommand[] {
         const call = conversation.detachable.value.find((candidate) => candidate.call === target?.call.id);
         if (call === undefined) throw new Error("No running call can move to the background.");
         await app.ui.actions.observe(
-          `send call ${call.call} to the background`,
+          `send ${call.tool} to the background`,
           owner(conversation).background({ call: call.call }),
         );
       },

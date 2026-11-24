@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
 import math
 from pathlib import Path
 import subprocess
@@ -122,7 +123,7 @@ class PiperConfig(ConnectionConfig):
     setup_can: bool = True
     gripper: bool = False
     source: str = "arm"
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
     speed_percent: int = Field(default=50, ge=1, le=100)
     home: tuple[float, ...] | None = (0.0,) * PIPER_DOF
     jump_limit_s: float = 0.1
@@ -133,6 +134,12 @@ class PiperConfig(ConnectionConfig):
             raise ValueError(f"home gives {len(self.home)} joint angles; the Piper has {PIPER_DOF}")
         if self.model is None:
             self.model = piper_model(self.gripper)
+        if not self.joint_commands:
+            from dimos.control.contract.limits import movable_joints
+
+            self.joint_commands = {
+                joint.name: (Interface.POSITION,) for joint in movable_joints(self.model)
+            }
         return self
 
 
@@ -154,6 +161,16 @@ class PiperConnection(ConnectionModule):
 
     position_command: In[JointState]
     joint_state: Out[JointState]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        try:
+            import_module("piper_sdk")
+        except ImportError as exc:
+            raise ImportError(
+                f"Piper vendor SDK unavailable: {exc}. "
+                "Install piper-sdk via the control extra: `uv sync --extra control`."
+            ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

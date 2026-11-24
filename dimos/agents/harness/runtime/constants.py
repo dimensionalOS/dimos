@@ -44,9 +44,11 @@ INVENTORY_DOC_CHARS = 160
 LIFECYCLE_RPCS = frozenset(
     {
         "build",
+        "get_rpc_signatures",
         "get_skills",
         "get_stream_descriptors",
         "on_system_modules",
+        "on_system_modules_ready",
         "peek_stream",
         "set_module_ref",
         "set_transport",
