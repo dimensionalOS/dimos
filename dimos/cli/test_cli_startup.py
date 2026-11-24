@@ -157,7 +157,7 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
         ("N_WORKERS=[bad", "bake --help", 0, "--emit-config"),
         ("N_WORKERS=[bad", "top -- --help", 0, "dtop"),
         ("N_WORKERS=[bad", "--n-workers 3 show-config", 0, "n_workers: 3"),
-        ("N_WORKERS=[bad", "show-config", 2, "n_workers"),
+        ("N_WORKERS=[bad", "evals list", 2, "n_workers"),
         ("N_WORKERS=[bad", "rerun-bridge --n-workers 3 --help", 0, "Blueprint"),
         ("N_WORKERS=[bad", "run coordinator-basic --help", 0, "Blueprint"),
         ("G__N_WORKERS=oops", "run coordinator-basic --help", 0, "Blueprint"),
