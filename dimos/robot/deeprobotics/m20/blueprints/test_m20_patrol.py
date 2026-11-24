@@ -57,6 +57,8 @@ GOALS = [
     "lobby",
     "common_area",
     "side_entrance",
+    "hallway_1",
+    "hallway_2",
     "bathroom",
     "garage",
     "flag",
@@ -264,8 +266,8 @@ def test_a_flat_robot_sits_until_a_charged_battery_goes_in_then_docks() -> None:
     # After three failed docks the loop drains the battery to 9% at its ninth goal.
     # The swapped battery reads 25%, so the robot stands and heads straight for the dock.
     dock = ["dock_approach", "predock", "dock"]
-    flat = [*GOALS[3:], *GOALS[:2]]
-    after_swap = ["sit", "stand", GOALS[1], *dock, "undock"]
+    flat = [GOALS[(3 + i) % len(GOALS)] for i in range(9)]
+    after_swap = ["sit", "stand", flat[-1], *dock, "undock"]
     assert calls == ["undock", *GOALS[:4], *dock * 3, *flat, *after_swap]
     assert undocked_at == pytest.approx([0.85, 0.80])
 
