@@ -171,7 +171,7 @@ ros = nav.transports(
     {
         ("lidar", PointCloud2): ROSTransport("lidar", PointCloud2),
         ("global_map", PointCloud2): ROSTransport("global_map", PointCloud2),
-        ("odom", PoseStamped): ROSTransport("odom", PoseStamped),
+        ("odom", Odometry): ROSTransport("odom", Odometry),
         ("color_image", Image): ROSTransport("color_image", Image),
     }
 )

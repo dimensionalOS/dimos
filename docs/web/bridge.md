@@ -132,7 +132,7 @@ Two more need no registration:
 - `json.v1`: JSON scalars, lists, dicts and plain dataclasses on rx. On tx, scalars, lists and dicts only (a dataclass built from untrusted browser JSON needs an explicit decoder).
 - `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx only. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less. `voxels.zlib.v1`, the Map3D encoding, is one: it sends a cloud as voxel occupancy bits, about 0.3 bytes per voxel.
 
-When `encoding` is not given, an rx dimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", PoseStamped)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
+When `encoding` is not given, an rx dimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", Odometry)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
 
 ```python
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

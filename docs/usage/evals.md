@@ -239,17 +239,18 @@ from pathlib import Path
 os.environ["DIMOS_LOG_LEVEL"] = "WARNING"  # keep doc output stable
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 Path("/tmp/evals_intro.db").unlink(missing_ok=True)
 store = SqliteStore(path="/tmp/evals_intro.db")
-odom = store.stream("odom", PoseStamped)
+odom = store.stream("odom", Odometry)
 for i in range(20):
     odom.append(
-        PoseStamped(position=make_vector3(float(i), 2.5, 0.0),
-                    orientation=Quaternion(0, 0, 0, 1), frame_id="world"),
+        Odometry(frame_id="world",
+                 pose=Pose(make_vector3(float(i), 2.5, 0.0), Quaternion(0, 0, 0, 1))),
         ts=1000.0 + i,
     )
 store.stop()

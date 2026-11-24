@@ -273,7 +273,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.web.cockpit import Channel, cockpit
 
@@ -304,7 +304,7 @@ go2_web = autoconnect(
     HealthMonitor.blueprint(),
     cockpit(
         channels=[
-            Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+            Channel("odom", Odometry, encoding="pose.json.v1", max_hz=20.0),
             Channel("health", Health, max_hz=1.0),
         ]
     ),
@@ -323,7 +323,7 @@ To retain a built-in receive stream, its declaration must match the built-in mes
 
 | Stream | Message type | Encoding | Delivery |
 |---|---|---|---|
-| `odom` | `PoseStamped` | `pose.json.v1` | `reliable` (the `Channel` default) |
+| `odom` | `Odometry` | `pose.json.v1` | `reliable` (the `Channel` default) |
 | `color_image` | `Image` | `jpeg.v1` | `latest` |
 | `global_costmap` | `OccupancyGrid` | `costmap.zlib.v1` | `latest` |
 
@@ -380,7 +380,7 @@ Then replace the `cockpit(...)` argument inside `autoconnect(...)`, keeping the 
 
 ```python skip
 cockpit(channels=[
-    Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+    Channel("odom", Odometry, encoding="pose.json.v1", max_hz=20.0),
     Channel("health", Health, max_hz=1.0),
     Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
 ])
@@ -476,7 +476,7 @@ Append the input declaration to the existing channel list. Continuing the tutori
 
 ```python skip
 cockpit(channels=[
-    Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+    Channel("odom", Odometry, encoding="pose.json.v1", max_hz=20.0),
     Channel("health", Health, max_hz=1.0),
     Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
     Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),

@@ -167,7 +167,7 @@ DJI Drone → RosettaDrone → MAVLink UDP → connection_module → LCM Topics
 
 ### LCM Topics
 - `/video` — Camera frames (`sensor_msgs.Image`)
-- `/odom` — Position and orientation (`geometry_msgs.PoseStamped`)
+- `/odom` — Position, orientation and velocity (`nav_msgs.Odometry`)
 - `/movecmd_twist` — Velocity commands (`geometry_msgs.Twist`)
 - `/gps_location` — GPS coordinates (`LatLon`)
 - `/gps_goal` — GPS navigation target (`LatLon`)

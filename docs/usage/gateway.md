@@ -62,7 +62,7 @@ Decode dimos messages in a page with `msgs.js` (Deno and editors pick up its typ
 
 ```js
 const { decodeChannel, geometry_msgs } = await import(`${gateway}/msgs.js`)
-const odom = decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes) // bytes: one message off zenoh or LCM
+const odom = decodeChannel("dimos/odom/nav_msgs.Odometry", bytes) // bytes: one message off zenoh or LCM
 const twist = geometry_msgs.Twist.encode({ linear: { x: 0.3 }, angular: { z: 0.5 } }) // a Uint8Array to publish
 ```
 
