@@ -610,7 +610,7 @@ def pick_gains(run: Calibration) -> str:
         return f"proposed {listed}; not saved: confirm_tracking, which tries and saves them, is not selected"
     run.confirm(
         f"Proposed gains: {listed}. confirm_tracking tries them and saves them only if no joint "
-        "stalls and each rests about as well as before. Accept them?"
+        "stalls and every joint rests about as well as before. Accept them?"
     )
     run.proposed = chosen
     return f"accepted gains for {', '.join(chosen)}; confirm_tracking tries them before saving"
@@ -658,8 +658,8 @@ def confirm_tracking(run: Calibration) -> str:
     )
     trying = (
         f" and the proposed gains ({_gains_text(proposed)}), re-applied before each move; "
-        f"they are saved only if no joint stalls and each rests within {ratio:g} times its first "
-        "visit or what its friction allows at its new kp"
+        f"they are saved only if no joint stalls and every joint rests within {ratio:g} times its "
+        "first visit or what its friction allows at its kp"
         if proposed
         else ""
     )
@@ -703,9 +703,9 @@ def confirm_tracking(run: Calibration) -> str:
         )
     )
     worse = []
-    for joint, gains in proposed.items():
-        i = run.arm.joint_names.index(joint)
-        limit = max(ratio * before[i], _rest_limit(run, joint, gains["kp"]))
+    for i, joint in enumerate(run.arm.joint_names if proposed else []):
+        kp = proposed[joint]["kp"] if joint in proposed else run.gains(joint)[0]
+        limit = max(ratio * before[i], _rest_limit(run, joint, kp))
         if after[i] > limit:
             worse.append(f"{joint} rests {after[i]:.2f} deg RMS (limit {limit:.2f})")
     check = {

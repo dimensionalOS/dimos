@@ -129,8 +129,8 @@ class CalibrationModuleConfig(ModuleConfig):
             at the first limp sample.
         float_trip_deg: A floating joint that turns this far is held again, and fails.
         confirm_poses: How many gravity poses confirm_tracking revisits.
-        tracking_rest_ratio: The proposed gains are saved only if every joint rests within this
-            times its first visit, or within its rest limit at its new kp.
+        tracking_rest_ratio: The proposed gains are saved only if every joint, proposed or not,
+            rests within this times its first visit, or within its rest limit at its kp.
         grid_points: About how many candidate poses the pose search considers.
         steps: Which steps to run after check (``steps.STEPS``).
         confirm_each: Ask before every move, not only at the start of each step.
