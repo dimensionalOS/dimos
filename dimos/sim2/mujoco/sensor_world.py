@@ -53,6 +53,7 @@ class WorldView(Protocol):
         groups: Sequence[int],
         mounted_at: str | None = None,
         blind_to: Sequence[str] = (),
+        blind_to_robots: Sequence[str] = (),
     ) -> Raycaster:
         pass
 

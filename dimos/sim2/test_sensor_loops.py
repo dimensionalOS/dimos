@@ -66,7 +66,11 @@ class _View:
         return None
 
     def raycaster(
-        self, groups: Sequence[int], mounted_at: str | None = None, blind_to: Sequence[str] = ()
+        self,
+        groups: Sequence[int],
+        mounted_at: str | None = None,
+        blind_to: Sequence[str] = (),
+        blind_to_robots: Sequence[str] = (),
     ) -> _Raycaster:
         self.mounted_at.append(mounted_at)
         return _Raycaster(self.world)
@@ -175,6 +179,7 @@ def _toy_world(sensor: Any, mount: str) -> Any:
         {
             "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
             "l1": ("base", (0.0, 0.0, 0.0), (np.pi, 0.0, 0.0)),
+            "l1_up": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         }
     )
     world_usd = compose_world(
@@ -237,3 +242,22 @@ def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides() -> None:
     assert np.abs(floor[:, :2].mean(axis=0)).max() < 0.5, (
         "the floor is mapped around the odom origin"
     )
+
+
+def test_an_l1_maps_none_of_the_robot_it_rides() -> None:
+    from dimos.sim2.l1 import SimL1
+
+    l1 = SimL1(instance_name="dog/l1_up/l1", mount="dog/l1_up")
+    published: list[Any] = []
+    try:
+        _toy_world(l1, "dog/l1_up")
+        l1.lidar.publish = published.append
+        l1.publish_usd_tf = lambda ts=None: None
+        asyncio.run(l1._map())
+    finally:
+        l1.stop()
+    points, _ = published[-1].as_numpy()
+    # The head sits on the neck joint 0.3 m ahead of and 0.2 m above the base, which stands 0.3 m up in odom.
+    head = np.array([0.3, 0.0, 0.5])
+    near_the_head = np.linalg.norm(points - head, axis=1) < 2 * l1.config.cell
+    assert len(points) > 0 and not near_the_head.any(), "the L1 mapped the dog's own head"

@@ -32,6 +32,7 @@ from dimos.sim2.actions import JointCommand, read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, until_it_stops
 from dimos.sim2.spec import validate
+from dimos.sim2.world_files import WorldFiles
 from dimos.sim2.world_observations import merged
 from dimos.utils.logging_config import setup_logger
 
@@ -54,6 +55,7 @@ class MujocoSim(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._backend: MujocoBackend | None = None
+        self._files: WorldFiles | None = None
         self._publisher: _LatestPublisher | None = None
         self._built = Event()
         self._commanded: set[str] = set()
@@ -130,13 +132,15 @@ class MujocoSim(Module):
                 self._publisher.offer(backend.frame())
 
     async def handle_render_file_request(self, request: String) -> None:
-        if self._backend is None:
+        backend = self._backend
+        if backend is None:
             return
-        found = self._backend.assets().get(request.data)
-        if found is None:
+        if self._files is None:
+            self._files = WorldFiles(backend.usd, backend.assets())
+        data = await self._files.file(request.data)
+        if data is None:
             logger.debug(f"render_file_request for {request.data!r}, which the world does not name")
             return
-        data = found if isinstance(found, bytes) else await asyncio.to_thread(found.read_bytes)
         self.file_info.publish(File(request.data, data))
 
     @rpc

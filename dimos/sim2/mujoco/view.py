@@ -128,13 +128,24 @@ class MujocoView:
         groups: Sequence[int],
         mounted_at: str | None = None,
         blind_to: Sequence[str] = (),
+        blind_to_robots: Sequence[str] = (),
     ) -> RayScene:
         """A cast against the geoms in `groups` as this view poses them; build a new one when the world's geometry changes."""
         blind: set[int] = set()
         # The hardware a sensor is mounted in is as invisible to it as the robot link it rides.
         for frame in [*blind_to, *([] if mounted_at is None else [mounted_at])]:
             blind |= {self._mount(frame), *self._carried_by(frame)}
+        for robot in blind_to_robots:
+            blind |= set(self._under(self._root(robot)))
         return RayScene(self.model, self.data, groups, blind)
+
+    def _under(self, root: int) -> list[int]:
+        """A body and every body below it, jointed or not: a whole articulated robot from its root."""
+        under = {root}
+        for body in range(root + 1, self.model.nbody):
+            if int(self.model.body_parentid[body]) in under:
+                under.add(body)
+        return sorted(under)
 
     def _carried_by(self, frame: str) -> list[int]:
         """The bodies welded (no joint between) under a body frame, such as a sensor's housing."""
