@@ -117,7 +117,9 @@ For 0xf001 the axes become pose inputs (yaw, -x, -y, roll, pitch, height = max(-
 2. Build the frame (tables below), update the history, run the network.
 3. Clip the output (+-100, HeightGap +-50); the clipped output is next step's last action.
 4. Map to joints: leg target = default + 0.25 a (or the absolute output for the 36-frame runners), wheel velocity =
-   scale x a; clamp legs to the joint range with hipx narrowed to mid +- 0.75 half range, wheels to +-79.3 rad/s.
+   scale x a, in f32. rl_deploy does not clamp the leg targets (robot 2026-11-20: fl hipx at 0.628 rad, past its
+   0.611 range; `policy_target_clamp` keeps the old clamp to the range, hipx narrowed to mid +- 0.75 half range);
+   wheels to +-79.3 rad/s.
 5. `vel` (six-frame runners) is the body-frame base linear velocity estimate (vx, vy, vz).
 
 Joint limits (rad, also the MJCF ranges): hipx FL/HL [-0.436, 0.611], FR/HR [-0.611, 0.436]; hipy front
@@ -706,15 +708,39 @@ acknowledgements) beside rl_deploy is a reader without shared memory, so yesense
 record.sh starts it when `$dir/m20_imu_record` exists, writing session/imu.txt, and net.pcap has the same samples
 (what replay.py reads).
 
+### Policy numerics, step for step (`tests/policy_20261120.rs`) [C, robot]
+
+rl_deploy computes each step in f32 (RLControl / PolicyRunnerBase, aarch64 disassembly):
+- Command: PolicyRunnerBase::limit_cmd_vel moves the normalized axes toward the input by at most the runner's
+  per-step limits (BasicStair 0.04, 0.04, 0.08; BasicFlat 0.025, 0.025, 0.04), then multiplies by command_max;
+  NaviCharge calls it without the slew.
+- Phase: phase = f32(f64(phase) + 0.02 x f64(frequency)) - f32(trunc of that sum); observed as f32(sin / cos of
+  f64(phase) x 2 pi).
+- Joint terms: f32(q) - f32(default), dq x scale, gyro x 0.25, each in f32.
+- Gravity: from yesense's own roll / pitch / yaw (degrees, f32; rad = f32(f64(f32(deg / 180)) x pi)), Eigen's
+  AngleAxis(yaw, Z) AngleAxis(pitch, Y) AngleAxis(roll, X) (sincosf of the half angles, its NEON quaternion product
+  and toRotationMatrix with FMAs), gravity = -(R20, R21, R22) (types.rs `vendor_projected_gravity`).
+- Inference: ONNX Runtime 1.20.0 (lib/onnxruntime in the deb), 1 intra-op thread, all graph optimizations. Other
+  builds differ in the last bits: macOS's 1.20 by up to 4e-6, tract by up to 5e-5. The controller infers through it
+  when `[inference] onnxruntime` or $M20_ONNXRUNTIME names the library (src/ort.rs), otherwise with tract.
+
+With the joint state as the ECAN reply before each step carried it, the last IMU sample before that reply, and
+rl_deploy's previous action as the last action, the 11-20 14:16 session's basic_stair, navi_charge and basic_flat
+steps match rl_deploy's leg targets within 1e-6 on 95%, 97% and 87% of steps (median 1.2e-7, Linux ONNX Runtime).
+Still differing [U]: the first step after each rl_control entry and gait switch (up to 0.6 rad: some state the runner
+keeps or rebuilds there is not modelled), basic_flat's command ramp after the six_axis stand-in, the sequence runners
+(six_axis_stand, finetune_stand, 10-13% of steps), and the accelerometer's 20-sample moving average.
+
 ## Building the controller for the robot
 
     cd dimos/robot/deeprobotics/m20/controller/rust
     cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.31   # ~19 MB, glibc 2.31 (Ubuntu 20.04 boards)
     cargo test                                                         # golden + real-time sim tests (need policies)
 
-Policy inference is `tract` (pure Rust): no ONNX Runtime shared library to ship to the board, the same graph on
-macOS and aarch64, and every op these 15 models use is supported; the transformer runners skip tract's graph
-optimizer (it mis-shapes their command Tile) and run the typed graph, at about 0.2-2 ms per step on an M-series Mac.
+Policy inference is `tract` (pure Rust) unless `[inference] onnxruntime` names rl_deploy's ONNX Runtime (its
+numerics, above). tract needs no shared library on the board, runs the same graph on macOS and aarch64, and supports
+every op these 15 models use; the transformer runners skip tract's graph optimizer (it mis-shapes their command Tile)
+and run the typed graph, at about 0.2-2 ms per step on an M-series Mac.
 
 ## Still unknown [U]
 

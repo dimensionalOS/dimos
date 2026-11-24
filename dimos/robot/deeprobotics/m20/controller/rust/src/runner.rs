@@ -133,7 +133,11 @@ pub struct Pipeline {
     pub history: VecDeque<Vec<f32>>,
     pub phase: f64,
     pub command: [f64; 3],
+    /// rl_deploy's slew-limited command in normalized axes (limit_cmd_vel's state), before the command scale
+    pub command_state: [f32; 3],
     pub clock: Option<GaitClock>,
+    /// clamp the targets to the joint ranges (rl_deploy does not)
+    pub clamp_targets: bool,
     /// policy steps since the last reset
     pub steps: u64,
     /// policy steps since the last switch to this runner
@@ -163,7 +167,9 @@ impl Pipeline {
             history: VecDeque::new(),
             phase: 0.0,
             command: [0.0; 3],
+            command_state: [0.0; 3],
             clock: spec.gait_clock.as_ref().map(GaitClock::new),
+            clamp_targets: robot.policy_target_clamp,
             steps: 0,
             active_steps: 0,
             collected: 0,
@@ -188,6 +194,7 @@ impl Pipeline {
         self.history.clear();
         self.phase = 0.0;
         self.command = [0.0; 3];
+        self.command_state = [0.0; 3];
         self.params = self.spec.command_params.clone();
         self.clock = self.spec.gait_clock.as_ref().map(GaitClock::new);
         self.steps = 0;
@@ -195,7 +202,9 @@ impl Pipeline {
         self.collected = 0;
     }
 
-    /// Normalized axes [-1, 1] -> physical (vx, vy, wz), slew-limited per policy step where configured.
+    /// Normalized axes [-1, 1] -> physical (vx, vy, wz) as rl_deploy's PolicyRunnerBase::limit_cmd_vel does it, in f32:
+    /// the normalized command moves toward the axes by at most command_slew per policy step (state += clamp(axes -
+    /// state)), then is scaled by command_max.
     pub fn update_command(&mut self, axes: &[f64; 3]) {
         let deadband = self.spec.axis_deadband.unwrap_or([0.0; 3]);
         let mut axes = *axes;
@@ -205,47 +214,65 @@ impl Pipeline {
                 axes[i] = 0.0;
             }
         }
+        let slew = self.spec.command_slew;
+        for i in 0..3 {
+            let a = axes[i] as f32;
+            self.command_state[i] = match slew {
+                Some(limit) => {
+                    let limit = limit[i] as f32;
+                    let mut d = a - self.command_state[i];
+                    if limit < d.abs() {
+                        d = limit.copysign(d);
+                    }
+                    d + self.command_state[i]
+                }
+                None => a,
+            };
+        }
         let mut target = [0.0; 3];
         for i in 0..3 {
-            target[i] = axes[i] * self.spec.command_max[i];
+            target[i] = (self.command_state[i] * self.spec.command_max[i] as f32) as f64;
         }
         if let Some(w) = &self.spec.wz_speed_limit {
             let w_max = (w.a / (target[0] + w.b) - w.c).min(w.d / (1.0 + w.e * target[1].abs()));
-            target[2] = axes[2] * w_max.clamp(w.lo, w.hi);
+            target[2] = self.command_state[2] as f64 * w_max.clamp(w.lo, w.hi);
         }
         if let (Some(clamp), Some(above)) = (self.spec.wz_clamp, self.spec.wz_clamp_above_vx) {
             if target[0] > above {
                 target[2] = target[2].clamp(-clamp, clamp);
             }
         }
-        let slew = self.spec.command_slew.unwrap_or([0.0; 3]);
-        for i in 0..3 {
-            self.command[i] = if slew[i] > 0.0 {
-                self.command[i] + (target[i] - self.command[i]).clamp(-slew[i], slew[i])
-            } else {
-                target[i]
-            };
-        }
+        self.command = target;
     }
 
+    /// One observation frame, in rl_deploy's f32 arithmetic: each value as f32, then times its scale in f32 (joint
+    /// positions minus the f32 default pose first); gravity from the IMU's own angles when the state has them.
     pub fn frame(&self, s: &RobotState) -> Result<Vec<f32>> {
-        let mut f: Vec<f64> = Vec::with_capacity(self.spec.frame);
+        let f32s = |v: &[f64]| v.iter().map(|x| *x as f32).collect::<Vec<f32>>();
+        let mut f: Vec<f32> = Vec::with_capacity(self.spec.frame);
         for block in &self.spec.obs {
-            let (values, scale): (Vec<f64>, &[f64]) = match block {
-                ObsBlock::Gyro { scale } => (s.gyro.to_vec(), scale),
-                ObsBlock::Gravity { scale } => (projected_gravity(&s.quat).to_vec(), scale),
-                ObsBlock::Accel { scale } => (s.accel.to_vec(), scale),
-                ObsBlock::Command { scale } => (self.command.to_vec(), scale),
+            let (values, scale): (Vec<f32>, &[f64]) = match block {
+                ObsBlock::Gyro { scale } => (f32s(&s.gyro), scale),
+                ObsBlock::Gravity { scale } => (
+                    match s.imu_rpy_deg {
+                        Some(rpy) => crate::types::vendor_projected_gravity(rpy).to_vec(),
+                        None => f32s(&projected_gravity(&s.quat)),
+                    },
+                    scale,
+                ),
+                ObsBlock::Accel { scale } => (f32s(&s.accel), scale),
+                ObsBlock::Command { scale } => (f32s(&self.command), scale),
                 ObsBlock::Constant { values, name } => {
                     match name.as_ref().and_then(|n| self.params.get(n)) {
-                        Some(v) => (vec![*v], &[]),
-                        None => (values.clone(), &[]),
+                        Some(v) => (vec![*v as f32], &[]),
+                        None => (f32s(values), &[]),
                     }
                 }
-                ObsBlock::Phase { .. } => (
-                    vec![(2.0 * PI * self.phase).sin(), (2.0 * PI * self.phase).cos()],
-                    &[],
-                ),
+                ObsBlock::Phase { .. } => {
+                    // RLControl's phase is f32; its sin / cos in f64 (sin(phase x 2 pi)), stored as f32
+                    let x = self.phase as f32 as f64 * (2.0 * PI);
+                    (vec![x.sin() as f32, x.cos() as f32], &[])
+                }
                 ObsBlock::JointPos {
                     joints,
                     relative,
@@ -254,18 +281,26 @@ impl Pipeline {
                     joints
                         .indices()
                         .iter()
-                        .map(|&i| s.q[i] - if *relative { self.default[i] } else { 0.0 })
+                        .map(|&i| {
+                            let q = s.q[i] as f32;
+                            if *relative {
+                                q - self.default[i] as f32
+                            } else {
+                                q
+                            }
+                        })
                         .collect(),
                     scale,
                 ),
-                ObsBlock::JointVel { joints, scale } => {
-                    (joints.indices().iter().map(|&i| s.dq[i]).collect(), scale)
-                }
-                ObsBlock::LastAction { scale } => (self.last_action.to_vec(), scale),
+                ObsBlock::JointVel { joints, scale } => (
+                    joints.indices().iter().map(|&i| s.dq[i] as f32).collect(),
+                    scale,
+                ),
+                ObsBlock::LastAction { scale } => (f32s(&self.last_action), scale),
                 ObsBlock::HeightMap { rows, cols, scale } => {
                     let n = rows * cols;
                     let hm = match &s.height_map {
-                        Some(h) if h.len() == n => h.clone(),
+                        Some(h) if h.len() == n => f32s(h),
                         Some(h) => bail!(
                             "{}: height map has {} values, needs {n}",
                             self.name,
@@ -276,8 +311,12 @@ impl Pipeline {
                     (hm, scale)
                 }
             };
-            let sc = scale_or_one(scale, values.len())?;
-            f.extend(values.iter().zip(&sc).map(|(v, k)| v * k));
+            if scale.is_empty() {
+                f.extend(values);
+            } else {
+                let sc = scale_or_one(scale, values.len())?;
+                f.extend(values.iter().zip(&sc).map(|(v, k)| v * *k as f32));
+            }
         }
         if f.len() != self.spec.frame {
             bail!(
@@ -287,14 +326,16 @@ impl Pipeline {
                 self.spec.frame
             );
         }
-        Ok(f.into_iter().map(|v| v as f32).collect())
+        Ok(f)
     }
 
     /// The gait phase advances before it is observed (rl_deploy: the first frame after a reset sees one step).
     pub fn advance_phase(&mut self) {
         for block in &self.spec.obs {
             if let ObsBlock::Phase { frequency } = block {
-                self.phase = (self.phase + self.policy_dt * frequency).rem_euclid(1.0);
+                // rl_deploy: phase = f32(f64(phase) + dt x f64(f32 frequency)) - f32(trunc of that sum)
+                let sum = self.phase as f32 as f64 + self.policy_dt * (*frequency as f32) as f64;
+                self.phase = ((sum as f32) - (sum.trunc() as f32)) as f64;
             }
         }
     }
@@ -465,11 +506,18 @@ impl Pipeline {
             } else {
                 0.0
             };
-            q[ri] = (base + scale[k] * leg_a[k]).clamp(self.limits.0[ri], self.limits.1[ri]);
+            // rl_deploy: default + scale x action in f32
+            let t = (base as f32 + scale[k] as f32 * leg_a[k] as f32) as f64;
+            q[ri] = if self.clamp_targets {
+                t.clamp(self.limits.0[ri], self.limits.1[ri])
+            } else {
+                t
+            };
         }
         let mut wheel = [0.0; 4];
         for k in 0..4 {
-            wheel[k] = (act.wheel_scale * wheel_a[k]).clamp(-self.wheel_limit, self.wheel_limit);
+            wheel[k] = ((act.wheel_scale as f32 * wheel_a[k] as f32) as f64)
+                .clamp(-self.wheel_limit, self.wheel_limit);
         }
         let velocity_estimate = match vel {
             Some(v) if v.len() == 3 => Some([v[0] as f64, v[1] as f64, v[2] as f64]),
@@ -484,9 +532,23 @@ impl Pipeline {
     }
 }
 
+/// The network: tract (pure Rust), or ONNX Runtime loaded from a library (rl_deploy's own numerics).
+enum Backend {
+    Tract(Model),
+    Ort(crate::ort::Session),
+}
+
+/// The ONNX Runtime library to infer with: $M20_ONNXRUNTIME, else the config's [inference] onnxruntime; none = tract.
+pub fn onnxruntime_library(configured: &str) -> Option<String> {
+    std::env::var("M20_ONNXRUNTIME")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .or_else(|| (!configured.is_empty()).then(|| configured.to_string()))
+}
+
 pub struct Runner {
     pub pipeline: Pipeline,
-    model: Model,
+    model: Backend,
     /// the last network frame, for tests and logging
     pub last_frame: Vec<f32>,
 }
@@ -499,7 +561,23 @@ impl Runner {
         policy_dir: &Path,
         policy_dt: f64,
     ) -> Result<Runner> {
-        let model = load_model(&policy_dir.join(&spec.policy))?;
+        Self::with_inference(name, spec, robot, policy_dir, policy_dt, None)
+    }
+
+    /// [`Self::new`], inferring through ONNX Runtime loaded from `onnxruntime` when given.
+    pub fn with_inference(
+        name: &str,
+        spec: &RunnerSpec,
+        robot: &Robot,
+        policy_dir: &Path,
+        policy_dt: f64,
+        onnxruntime: Option<&str>,
+    ) -> Result<Runner> {
+        let path = policy_dir.join(&spec.policy);
+        let model = match onnxruntime {
+            Some(lib) => Backend::Ort(crate::ort::Session::new(lib, &path)?),
+            None => Backend::Tract(load_model(&path)?),
+        };
         Ok(Runner {
             pipeline: Pipeline::new(name, spec, robot, policy_dt)?,
             model,
@@ -512,9 +590,25 @@ impl Runner {
     }
 
     pub fn infer(&self, inputs: Vec<Tensor>) -> Result<(Vec<f32>, Option<Vec<f32>>)> {
-        let out = self
-            .model
-            .run(inputs.into_iter().map(|t| t.into()).collect())?;
+        let model = match &self.model {
+            Backend::Tract(m) => m,
+            Backend::Ort(session) => {
+                let mut ins = inputs
+                    .iter()
+                    .map(|t| {
+                        let shape = t.shape().iter().map(|d| *d as i64).collect();
+                        Ok((
+                            t.to_plain_array_view::<f32>()?.iter().copied().collect(),
+                            shape,
+                        ))
+                    })
+                    .collect::<Result<Vec<(Vec<f32>, Vec<i64>)>>>()?;
+                let mut out = session.run(&mut ins)?.into_iter();
+                let action = out.next().ok_or_else(|| anyhow!("no output"))?;
+                return Ok((action, out.next()));
+            }
+        };
+        let out = model.run(inputs.into_iter().map(|t| t.into()).collect())?;
         let first = out.first().ok_or_else(|| anyhow!("no output"))?;
         let action: Vec<f32> = first
             .to_plain_array_view::<f32>()?

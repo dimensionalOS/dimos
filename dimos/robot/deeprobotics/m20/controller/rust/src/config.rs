@@ -37,6 +37,17 @@ pub struct Config {
     pub command_input: CommandInput,
     /// docking: the reflector-post detector and charge_manager's dock / undock sequence
     pub dock: crate::dock::config::DockConfig,
+    #[serde(default)]
+    pub inference: Inference,
+}
+
+/// How the policies are evaluated.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Inference {
+    /// an ONNX Runtime library (libonnxruntime.so) to run them with, as rl_deploy does (its numerics to the bit);
+    /// empty: tract. $M20_ONNXRUNTIME overrides.
+    #[serde(default)]
+    pub onnxruntime: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,6 +56,9 @@ pub struct Robot {
     pub joint_lower: Vec<f64>,
     pub joint_upper: Vec<f64>,
     pub hipx_limit_fraction: f64,
+    /// clamp the policies' leg targets to the joint ranges (hipx narrowed by hipx_limit_fraction); rl_deploy does not
+    #[serde(default)]
+    pub policy_target_clamp: bool,
     pub wheel_velocity_limit: f64,
     /// the sim's actuator clip only: the motor drivers compute the PD torque, rl_deploy sends no torque limit
     pub torque_limit: Vec<f64>,

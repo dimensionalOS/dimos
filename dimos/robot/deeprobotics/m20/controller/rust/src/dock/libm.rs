@@ -244,6 +244,33 @@ pub fn sinf(y: f32) -> f32 {
     sinf_poly(x * s, x * x, p, n)
 }
 
+/// s_sincosf.c's sincosf for |y| < 120 (as sinf: reduce_fast, the cos polynomial on n ^ 1); beyond, the platform's.
+pub fn sincosf(y: f32) -> (f32, f32) {
+    let x = y as f64;
+    if abstop12(y) < abstop12(std::f32::consts::FRAC_PI_4) {
+        if abstop12(y) < abstop12(f32::from_bits(0x39800000)) {
+            return (y, 1.0);
+        }
+        let x2 = x * x;
+        return (
+            sinf_poly(x, x2, &SINCOS[0], 0),
+            sinf_poly(x, x2, &SINCOS[0], 1),
+        );
+    }
+    if abstop12(y) >= abstop12(120.0) {
+        return (y.sin(), y.cos());
+    }
+    let r = x * SINCOS[0].hpi_inv;
+    let n = r.round() as i64;
+    let x = (-SINCOS[0].hpi).mul_add(r.round(), x);
+    let s = SINCOS[0].sign[(n & 3) as usize];
+    let p = &SINCOS[if n & 2 != 0 { 1 } else { 0 }];
+    (
+        sinf_poly(x * s, x * x, p, n),
+        sinf_poly(x * s, x * x, p, n ^ 1),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

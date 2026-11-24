@@ -66,11 +66,12 @@ pub struct RunnerSet {
 impl RunnerSet {
     pub fn load(cfg: &Config, policy_dir: &Path) -> Result<RunnerSet> {
         let dt = cfg.timing.policy_decimation as f64 / cfg.timing.control_hz;
+        let ort = crate::runner::onnxruntime_library(&cfg.inference.onnxruntime);
         let mut runners = HashMap::new();
         for (name, spec) in &cfg.runners {
             runners.insert(
                 name.clone(),
-                Runner::new(name, spec, &cfg.robot, policy_dir, dt)?,
+                Runner::with_inference(name, spec, &cfg.robot, policy_dir, dt, ort.as_deref())?,
             );
         }
         Ok(RunnerSet { runners })

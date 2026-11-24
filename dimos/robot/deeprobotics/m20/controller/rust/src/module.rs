@@ -42,7 +42,7 @@ use m20_ecan::Direction;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-use crate::dock::docking::{DockFeed, Request, CHARGE_ENABLE_PARAM, CHARGE_ENABLE_SEQ_PARAM};
+use crate::dock::docking::{DockFeed, Request};
 use crate::dock::vendor::ChargeManagerToml;
 use crate::dock::{ChargeReading, DockPose};
 use crate::hardware::ecan::{ImuSample, ImuSource};
@@ -737,9 +737,10 @@ fn run_policy(
         |hw, tick| {
             startup_done.store(!hw.in_startup(), Ordering::Relaxed);
             let p = &tick.user.params;
-            if let (Some(&v), Some(&seq)) =
-                (p.get(CHARGE_ENABLE_PARAM), p.get(CHARGE_ENABLE_SEQ_PARAM))
-            {
+            if let (Some(&v), Some(&seq)) = (
+                p.get(crate::dock::docking::CHARGE_ENABLE_PARAM),
+                p.get(crate::dock::docking::CHARGE_ENABLE_SEQ_PARAM),
+            ) {
                 if seq != charge_enable_seq {
                     charge_enable_seq = seq;
                     if v == 1.0 {

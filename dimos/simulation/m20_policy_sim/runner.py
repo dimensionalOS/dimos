@@ -130,6 +130,8 @@ class Runner:
         self.command_max = np.array(spec["command_max"], np.float64)
         self.command_slew = np.array(spec.get("command_slew", [0.0, 0.0, 0.0]), np.float64)
         self.limits = joint_limits(robot)
+        # rl_deploy does not clamp the policies' leg targets (robot 2026-11-20); policy_target_clamp keeps the clamp
+        self.clamp_targets = bool(robot.get("policy_target_clamp", False))
         self.wheel_limit = robot["wheel_velocity_limit"]
         self.params: dict[str, float] = dict(spec.get("command_params", {}))
         self.policy_dt = 0.0
@@ -140,6 +142,7 @@ class Runner:
         self.history: np.ndarray | None = None
         self.phase = 0.0
         self.command = np.zeros(3)
+        self.command_state = np.zeros(3, np.float32)
         self.steps = 0
         self.active_steps = 0
         self.collected = 0
@@ -157,23 +160,31 @@ class Runner:
         return 1.0
 
     def update_command(self, axes: np.ndarray) -> np.ndarray:
-        """Normalized user axes [-1, 1] -> physical (vx, vy, wz), slew-limited per policy step where configured."""
+        """Normalized user axes [-1, 1] -> physical (vx, vy, wz) as rl_deploy's limit_cmd_vel does it, in f32: the
+        normalized command moves toward the axes by at most command_slew per policy step, then x command_max."""
         axes = np.clip(axes, -1, 1)
         deadband = np.array(self.spec.get("axis_deadband", [0.0, 0.0, 0.0]))
-        axes = np.where(np.abs(axes) < deadband, 0.0, axes)
-        target = axes * self.command_max
+        axes = np.where(np.abs(axes) < deadband, 0.0, axes).astype(np.float32)
+        f32 = np.float32
+        for i in range(3):
+            limit = f32(self.command_slew[i])
+            if limit > 0:
+                d = f32(axes[i] - self.command_state[i])
+                if limit < abs(d):
+                    d = f32(np.copysign(limit, d))
+                self.command_state[i] = f32(d + self.command_state[i])
+            else:
+                self.command_state[i] = axes[i]
+        target = (self.command_state * self.command_max.astype(f32)).astype(np.float64)
         if "wz_speed_limit" in self.spec:
             w = self.spec["wz_speed_limit"]
             w_max = min(
                 w["a"] / (target[0] + w["b"]) - w["c"], w["d"] / (1 + w["e"] * abs(target[1]))
             )
-            target[2] = axes[2] * min(max(w_max, w["lo"]), w["hi"])
+            target[2] = float(self.command_state[2]) * min(max(w_max, w["lo"]), w["hi"])
         if "wz_clamp" in self.spec and target[0] > self.spec["wz_clamp_above_vx"]:
             target[2] = np.clip(target[2], -self.spec["wz_clamp"], self.spec["wz_clamp"])
-        slew = self.command_slew
-        self.command = np.where(
-            slew > 0, self.command + np.clip(target - self.command, -slew, slew), target
-        )
+        self.command = target
         return self.command
 
     def frame(self, s: RobotState) -> np.ndarray:
@@ -302,7 +313,8 @@ class Runner:
         q = self.default.copy()
         scale = tile(act["leg_scale"], 12)
         q[leg_idx] = scale * leg_a + (self.default[leg_idx] if act["leg_mode"] == "offset" else 0.0)
-        q = np.clip(q, *self.limits)
+        if self.clamp_targets:
+            q = np.clip(q, *self.limits)
         wheel = np.clip(act["wheel_scale"] * wheel_a, -self.wheel_limit, self.wheel_limit)
         vel = outputs[1][0].astype(np.float64) if len(outputs) > 1 else None
         return Targets(q=q, wheel_velocity=wheel, action=a, velocity_estimate=vel)

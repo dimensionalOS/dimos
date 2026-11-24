@@ -23,8 +23,11 @@ joint_upper = [
     0.611, 2.286, 2.809, 1e9,
     0.436, 2.286, 2.809, 1e9,
 ]
-# policy hipx targets are clamped to mid +- this fraction of the half range
+# policy hipx targets are clamped to mid +- this fraction of the half range, when policy_target_clamp is on
 hipx_limit_fraction = 0.75
+# robot 2026-11-20 14:16: rl_deploy sent hipx targets past even the joint range (fl hipx 0.628 rad on basic_stair at
+# vy -0.9): it does not clamp the policies' targets, so neither do we (true clamps them as before)
+policy_target_clamp = false
 # wheel velocity target clamp (rad/s)
 wheel_velocity_limit = 79.3
 # motor torque limit (N m)
@@ -173,6 +176,7 @@ kd = [6.0, 6.0, 6.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
 # the decoded HandlerVel table says (2, 0.8, 1.5) for 0x1001, but /NAV_CMD replays against the robot match (2, 1, 2)
 real_steer_divisor = [2.0, 1.0, 2.0]
+# bin M20BasicFlatRunner ctor (0x54..0x5c): limit_cmd_vel's per-step slew in normalized axes, before command_max
 command_slew = [0.025, 0.025, 0.04]
 # |wz| clamped to this while vx > wz_clamp_above_vx
 wz_clamp = 0.8
@@ -222,6 +226,7 @@ kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
 real_steer_divisor = [2.0, 1.0, 2.0]
+# bin M20BasicStairRunner ctor (0x54..0x5c): limit_cmd_vel's per-step slew in normalized axes, before command_max
 command_slew = [0.04, 0.04, 0.08]
 obs = [
     { kind = "gyro", scale = [0.25] },
@@ -747,6 +752,11 @@ detector_service = false
 # ours (the vendor retries a command 3 more times, 5-6 s each, 0xe4): a stand-up, gait switch or lie-down not done
 # in this long fails the sequence
 transition_limit_s = 21.0
+
+[inference]
+# rl_deploy runs the policies on ONNX Runtime 1.20 (one intra-op thread, all graph optimizations): its library on AOS
+# gives its outputs to the bit (tract's differ by up to 5e-5). Empty: tract. $M20_ONNXRUNTIME overrides.
+onnxruntime = ""
 
 # The eth1 motor bus (backends "ecan" and "bus"); everything not set here takes the values seen on the robot.
 [ecan]

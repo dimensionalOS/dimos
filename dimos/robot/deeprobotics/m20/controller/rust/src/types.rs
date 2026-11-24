@@ -36,6 +36,9 @@ pub struct RobotState {
     pub height_map: Option<Vec<f64>>,
     /// seconds, monotonic, from the hardware
     pub stamp: f64,
+    /// the IMU's own roll / pitch / yaw (degrees, f32) when the source has them (yesense's ImuData): the gravity
+    /// observation is then rl_deploy's f32 rotation of them ([`vendor_projected_gravity`]), not `quat`'s
+    pub imu_rpy_deg: Option<[f32; 3]>,
 }
 
 /// Per joint the drivers run tau = kp * (q - q_meas) + kd * (dq - dq_meas) + tau.
@@ -109,6 +112,58 @@ pub fn rotation(q: &[f64; 4]) -> [[f64; 3]; 3] {
 pub fn projected_gravity(q: &[f64; 4]) -> [f64; 3] {
     let r = rotation(q);
     [-r[2][0], -r[2][1], -r[2][2]]
+}
+
+/// rl_deploy's gravity observation from yesense's roll / pitch / yaw (degrees), in its f32 arithmetic:
+/// EcanHardwareInterface::HandlerIMU's radians f32(f64(f32(deg / 180)) x pi); RLControlState::UpdateRobotObservation's
+/// Eigen AngleAxis(yaw, Z) x AngleAxis(pitch, Y) x AngleAxis(roll, X) (glibc sincosf of half angles, its NEON quaternion
+/// product with fused multiply-adds) and toRotationMatrix; the runners' R^T (0, 0, -1) = -(R20, R21, R22).
+pub fn vendor_projected_gravity(rpy_deg: [f32; 3]) -> [f32; 3] {
+    let rad = |d: f32| ((d / 180.0) as f64 * std::f64::consts::PI) as f32;
+    let [r, p, y] = rpy_deg.map(rad);
+    // (x, y, z, w) of AngleAxis(angle, axis)
+    let aa = |ang: f32, axis: usize| {
+        let (s, c) = crate::dock::libm::sincosf(ang * 0.5);
+        let mut q = [0.0 * s, 0.0 * s, 0.0 * s, c];
+        q[axis] = 1.0 * s;
+        q
+    };
+    // Eigen's quat product l * r as compiled: lanes by TBL masks, fmla / fmls, the w lane's sign flipped
+    let mul = |l: [f32; 4], rr: [f32; 4]| {
+        let t = |v: [f32; 4], m: [usize; 4]| m.map(|i| v[i]);
+        let (m70, m80, m90, ma0, mb0, mc0) = (
+            [0, 1, 2, 1],
+            [3, 3, 3, 1],
+            [2, 0, 1, 2],
+            [1, 2, 0, 2],
+            [1, 2, 0, 0],
+            [2, 0, 1, 0],
+        );
+        let (r70, l80, la0, r90, rb0, lc0) = (
+            t(rr, m70),
+            t(l, m80),
+            t(l, ma0),
+            t(rr, m90),
+            t(rr, mb0),
+            t(l, mc0),
+        );
+        let mut out = [0.0f32; 4];
+        for i in 0..4 {
+            let mut v4 = la0[i].mul_add(r90[i], r70[i] * l80[i]);
+            if i == 3 {
+                v4 = -v4;
+            }
+            let v1 = (-rb0[i]).mul_add(lc0[i], l[i] * rr[3]);
+            out[i] = v1 + v4;
+        }
+        out
+    };
+    let [x, yq, z, w] = mul(mul(aa(y, 2), aa(p, 1)), aa(r, 0));
+    let (ty, tx, tz) = (yq + yq, x + x, z + z);
+    let r20 = (-ty).mul_add(w, x * tz);
+    let r21 = tx.mul_add(w, yq * tz);
+    let r22 = 1.0 - x.mul_add(tx, yq * ty);
+    [-r20, -r21, -r22]
 }
 
 /// Roll and pitch (rad, ZYX Euler) of the body.
