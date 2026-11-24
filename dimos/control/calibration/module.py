@@ -15,11 +15,12 @@
 """Calibrates one arm of a Damiao robot, in the same ``dimos run`` as its connection.
 
 ``run`` starts the steps (``steps``) on one thread and returns. A motion streams one target per
-``joint_state`` sample on ``position_command`` and the thread waits for it to end; while it asks
-the operator or computes, nothing is sent, so the connection's deadman holds the arm and undoes
-live changes. The operator, in ``dimos shell`` or a program, reads ``status`` and replies with
-``answer``; unanswered, the thread waits and the arm stays held. ``abort`` stops streaming at once
-and offers to go home.
+``joint_state`` sample on ``position_command`` and the thread waits for it to end, failing the
+run once no ``joint_state`` has come for ``reading_timeout_s``; while it asks the operator or
+computes, nothing is sent, so the connection's deadman holds the arm and undoes live changes.
+The operator, in ``dimos shell`` or a program, reads ``status`` and replies with ``answer``;
+unanswered, the thread waits and the arm stays held. ``abort`` stops streaming at once and
+offers to go home.
 """
 
 from __future__ import annotations
@@ -97,6 +98,8 @@ class CalibrationModuleConfig(ModuleConfig):
             skipped, and with fewer measured gravity_poses fails.
         speed_deg_s: Peak joint speed of every move; at most 60 and the URDF velocity limits.
         max_hold_s: A hold that waits to settle and has not after this long ends not converging.
+        reading_timeout_s: A wait on the arm fails the run once no ``joint_state`` has come for
+            this long: the connection stopped publishing. Well above the sample period.
         rest_window_s: How long the arm sits still to measure its noise; a hold is settled
             once one window of samples stays inside that noise. Long enough to catch the
             noise's peaks: the buzz check compares a step against them.
@@ -141,6 +144,7 @@ class CalibrationModuleConfig(ModuleConfig):
     speed_deg_s: float = Field(default=10.0, gt=0.0, le=60.0)
     rest_window_s: float = Field(default=0.5, gt=0.0)
     max_hold_s: float = Field(default=5.0, gt=0.0)
+    reading_timeout_s: float = Field(default=1.0, gt=0.0)
     dither_deg: float = Field(default=1.0, gt=0.0)
     max_dither_deg: float = Field(default=5.0, gt=0.0)
     dither_torque_fraction: float = Field(default=0.3, gt=0.0)
@@ -414,8 +418,10 @@ class Calibration:
         publish: Sends one position command.
         torque_limit_nm: Each joint's motor torque limit, joint order: past it over kp off
             target, the motor cannot push through, and a motion stops.
-        block: How the run thread waits on the arm (tests step a fake arm instead); it waits
-            on the operator in real time.
+        block: How the run thread waits on the arm: for an event, at most a timeout in
+            ``clock`` seconds, True once it is set (tests step a fake arm instead); it waits on
+            the operator in real time.
+        clock: The time readings come by, s (tests read the fake arm's).
     """
 
     def __init__(
@@ -426,7 +432,8 @@ class Calibration:
         operator: Operator,
         publish: Callable[[JointState], None],
         torque_limit_nm: np.ndarray,
-        block: Callable[[threading.Event], Any] = threading.Event.wait,
+        block: Callable[[threading.Event, float], bool] = threading.Event.wait,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.spec, self.arm, self.config, self.connection = spec, ArmModel(spec), config, connection
         # The farthest a pose's dithers and steps turn a joint; a floating joint may drift on top.
@@ -439,7 +446,7 @@ class Calibration:
         self.arm.clearance_m = self.arm.reach_m * (
             self.excursion_rad + math.radians(config.float_trip_deg)
         )
-        self.operator, self._publish, self._block = operator, publish, block
+        self.operator, self._publish, self._block, self._clock = operator, publish, block, clock
         self._torque_limit = torque_limit_nm
         self._lock = threading.Lock()
         self._motion: Motion | None = None
@@ -449,6 +456,7 @@ class Calibration:
         self._names: list[str] = []
         self._index: list[int] = []
         self._latest: Sample | None = None
+        self._read_at = clock()
         self.first_sample = threading.Event()
         self.state: dict[str, Any] = {}
         self.noise: dict[str, RestNoise] = {}
@@ -476,7 +484,7 @@ class Calibration:
             msg.ts, np.asarray(msg.position)[self._index], np.asarray(msg.velocity)[self._index]
         )
         with self._lock:
-            self._latest = sample
+            self._latest, self._read_at = sample, self._clock()
             motion = self._motion
         self.first_sample.set()
         target = None if motion is None else motion.feed(sample)
@@ -502,19 +510,35 @@ class Calibration:
         self, event: threading.Event, block: Callable[[threading.Event], Any] | None = None
     ) -> None:
         """Wait for ``event``, as for the arm unless ``block`` says how; raises what interrupted
-        the run (``abort``, ``stop``, a bad feed)."""
+        the run (``abort``, ``stop``, a bad feed), or, waiting for the arm, that no
+        ``joint_state`` has come for ``reading_timeout_s``."""
         with self._lock:
             if self._interrupt is not None:
                 raise self._interrupt
             self._waiting = event
         try:
-            (block or self._block)(event)
+            if block is None:
+                self._await_arm(event)
+            else:
+                block(event)
         finally:
             with self._lock:
                 self._waiting = None
         with self._lock:
             if self._interrupt is not None:
                 raise self._interrupt
+
+    def _await_arm(self, event: threading.Event) -> None:
+        timeout = self.config.reading_timeout_s
+        while not self._block(event, timeout - self._since_reading()):
+            if self._since_reading() >= timeout:
+                raise RuntimeError(
+                    f"no joint_state for {timeout} s; the connection stopped publishing"
+                )
+
+    def _since_reading(self) -> float:
+        with self._lock:
+            return self._clock() - self._read_at
 
     def show(self, text: str) -> None:
         self.operator.show(text)
