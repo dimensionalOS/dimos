@@ -38,10 +38,11 @@ import { jobFacts } from "#dimos/agents/harness/jobs/registry.ts";
 import { backgroundTool } from "#dimos/agents/harness/tools/background.ts";
 import { jobTool } from "#dimos/agents/harness/tools/job.ts";
 import { jobsExtension } from "#dimos/agents/harness/jobs/extension.ts";
-import { loadSkills, skillsExtension } from "#dimos/agents/harness/skills/catalog.ts";
 import { mayChangeSystem, toolsExtension } from "#dimos/agents/harness/tools/extension.ts";
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { promptExtension } from "#dimos/agents/harness/prompt.ts";
+import { Profiles, profileExtension } from "#dimos/agents/harness/profiles.ts";
+import { profileTool } from "#dimos/agents/harness/tools/profile.ts";
 import { readTool } from "#dimos/agents/harness/tools/read.ts";
 import { runtimeTools } from "#dimos/agents/harness/tools/runtime.ts";
 import { writeTool } from "#dimos/agents/harness/tools/write.ts";
@@ -69,6 +70,7 @@ type AgentOptions = {
  * terminal. The gateway feeds a Chord cell from each status source.
  */
 export type Agent = {
+  readonly profiles: Profiles;
   /** pi-durable, for watching, aborting and configuring conversations. Inputs go through `inputs`, never `submit()`. */
   readonly harness: Harness;
   /** The store's scan of a conversation's submissions, settled ones included, which the harness does not offer. */
@@ -89,6 +91,7 @@ export type Agent = {
 };
 
 type ToolTableDeps = {
+  readonly profile: AgentTool<"profile">;
   readonly install: DimosInstall;
   readonly gatewayEnv: NodeJS.ProcessEnv;
   readonly images: ImageProcessor;
@@ -160,6 +163,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
   const firing: JobFiringDeps = { inputs, connection, skillTimeoutMs: 120_000 };
   const jobTask = createJobTask(firing);
   const jobs = new JobOps(harness, jobTask, firing);
+  const profiles = new Profiles({ harness, skillRoots: options.skillRoots, report, install, env: gatewayEnv });
   const catalog = await RuntimeToolCatalog.load(harness, context);
   const images = modelImages(await createNodePhotonImages());
   let table: AgentToolTable;
@@ -176,11 +180,12 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
       schemas: catalog.schemas.value,
       job: jobTool(jobs),
       background: backgroundTool(detacher),
+      profile: profileTool(profiles),
     });
     registry.install(toolsExtension(table, limiter, detacher));
   };
   registry.install(promptExtension(install));
-  registry.install(skillsExtension(await loadSkills(options.skillRoots, report)));
+  registry.install(await profileExtension(options.skillRoots, report));
   registry.install(contextExtension({ inputs, mayChangeSystem: (name) => mayChangeSystem(table)(name) }));
   catalog.schemas.subscribe(installTools);
   registry.install(budget.extension());
@@ -229,6 +234,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
   const kicker = new QueueKicker({ harness, inputs, backoffMs: (n) => Math.min(60_000 * 2 ** n, 1_800_000), report });
   kicker.start();
   const conversations = new Conversations({
+    profiles,
     harness,
     runtime,
     gatewayFacts: (c) => observer.gatewayFacts(c),
@@ -238,6 +244,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
   const history = new ConversationHistory(harness, inputs, options.models);
 
   return {
+    profiles,
     harness,
     storage,
     inputs,
@@ -281,5 +288,6 @@ function toolTable(deps: ToolTableDeps): AgentToolTable {
     }),
     job: deps.job,
     background: deps.background,
+    profile: deps.profile,
   };
 }

@@ -16,6 +16,8 @@ import { Type } from "typebox";
 import { action } from "#dimos/agents/shared/protocol/actions/lib/action.ts";
 import { carried, nullable } from "#dimos/agents/shared/protocol/schema.ts";
 import { rules } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { ProfileDraftSchema } from "#dimos/agents/shared/protocol/profiles.ts";
+import type { Profile, ProfileOptions } from "#dimos/agents/shared/protocol/profiles.ts";
 
 const JobActionSchema = Type.Union([
   Type.Object({ kind: Type.Literal("notify"), text: Type.String({ minLength: 1 }) }),
@@ -38,8 +40,44 @@ const JobDraftSchema = Type.Object({
 
 /** Operating the system: everything that is not one conversation's input or history. */
 export const GATEWAY_ACTIONS = {
+  saveProfile: action({
+    args: Type.Object({ profile: ProfileDraftSchema }),
+    value: carried<Profile>(),
+    executor: "pi-durable",
+    access: "owner",
+    retry: "unknown",
+    rule: rules.open,
+  }),
+  profileOptions: action({
+    args: Type.Object({}),
+    value: carried<ProfileOptions>(),
+    executor: "gateway",
+    access: "owner",
+    retry: "unknown",
+    rule: rules.open,
+  }),
+  deleteProfile: action({
+    args: Type.Object({ profile: Type.String({ minLength: 1 }) }),
+    value: carried<null>(),
+    executor: "pi-durable",
+    access: "owner",
+    retry: "unknown",
+    rule: rules.open,
+  }),
+  setDefaultProfile: action({
+    args: Type.Object({ profile: nullable(Type.String()) }),
+    value: carried<null>(),
+    executor: "pi-durable",
+    access: "owner",
+    retry: "unknown",
+    rule: rules.open,
+  }),
   createConversation: action({
-    args: Type.Object({ request: ActionRequestIdSchema, cwd: nullable(Type.String()) }),
+    args: Type.Object({
+      request: ActionRequestIdSchema,
+      cwd: nullable(Type.String()),
+      profile: Type.Optional(nullable(Type.String())),
+    }),
     value: carried<{ readonly conversation: ConversationId }>(),
     executor: "pi-durable",
     access: "owner",

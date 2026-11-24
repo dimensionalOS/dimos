@@ -1,8 +1,10 @@
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { ProfileIdentity } from "#dimos/agents/shared/protocol/profiles.ts";
 
 /** One switcher row, folded on the gateway from commit publications; never built from a conversation's whole view. */
 export type ConversationRow = {
+  readonly profile?: ProfileIdentity;
   readonly id: ConversationId;
   /** pi-durable's fork record: this conversation inherits `conversation` through entry `at`. An edit of a first message forks at it too. */
   readonly parent: { readonly conversation: ConversationId; readonly at: EntryId } | null;

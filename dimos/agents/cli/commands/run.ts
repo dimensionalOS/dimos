@@ -153,8 +153,10 @@ async function shownConversation(
 ): Promise<{ readonly conversation: Ref<typeof ConversationContract>; readonly id: ConversationId } | string> {
   let id = options.conversation;
   if (id === null) {
-    const created = await retryByRequestId(client, { request: newActionRequest(), cwd: options.cwd }, (sameArgs) =>
-      owner(gateway).createConversation(sameArgs),
+    const created = await retryByRequestId(
+      client,
+      { request: newActionRequest(), cwd: options.cwd, profile: options.profile },
+      (sameArgs) => owner(gateway).createConversation(sameArgs),
     );
     if (!created.ok) return refusalText(created.refusal);
     id = created.value.conversation;

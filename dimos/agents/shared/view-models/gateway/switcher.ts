@@ -7,7 +7,7 @@ import { clean } from "#dimos/agents/shared/view-models/text.ts";
 /** One switcher row as a line: `› #7  running bash 41s  walk to the kitchen door…  ⚡1`, forks indented. */
 export function switcherLine(row: SwitcherRow): string {
   const tail = row.unread > 0 ? `  ⚡${row.unread}` : "";
-  return `${row.current ? "›" : " "} ${"  ".repeat(row.depth)}#${row.id}  ${row.state}  ${clean(row.title)}${tail}`;
+  return `${row.current ? "›" : " "} ${"  ".repeat(row.depth)}#${row.id}  ${row.state}  ${clean(row.profile)}  ${clean(row.title)}${tail}`;
 }
 
 /** One line of the conversation switcher, in display order. */
@@ -16,6 +16,7 @@ export type SwitcherRow = {
   /** 0 for a root; a fork is one deeper than its source. */
   readonly depth: number;
   readonly title: string;
+  readonly profile: string;
   /** "running bash 12s", "answering", "compaction", "summary", "queue 2", "idle". */
   readonly state: string;
   readonly unread: number;
@@ -68,6 +69,7 @@ export function switcherRows(
         id: row.id,
         depth,
         title: row.title,
+        profile: row.profile?.name ?? "General agent",
         state: stateText(row.running, row.queued, now),
         unread: row.unread,
         current: row.id === current,

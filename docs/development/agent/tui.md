@@ -436,6 +436,7 @@ restores the list selection and filter. The footer shows connection status and t
 
 | Section | Actions |
 | --- | --- |
+| [Profiles](/docs/usage/agent.md#use-agent-profiles) | Create and edit profiles, set the default, or start and resume conversations. |
 | [Conversations](/dimos/agents/frontends/tui/menu/conversations.ts) | Resume the selected conversation. |
 | [Agent modules](/dimos/agents/frontends/tui/menu/modules.ts) | Restart, unload, or delete the selected module. |
 | [Jobs](/dimos/agents/frontends/tui/menu/jobs.ts) | View run history, run the selected job now, or delete it. |

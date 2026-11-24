@@ -1,4 +1,4 @@
-import type { CommitPublication, Harness } from "@earendil-works/pi-durable";
+import type { CommitPublication, CommonDocDefinition, Harness, JsonObject } from "@earendil-works/pi-durable";
 
 /** Keeps commits arriving during cell initialization until Chord starts the object's listener. */
 export function commitEvents(harness: Harness) {
@@ -24,4 +24,12 @@ export function commitEvents(harness: Harness) {
       pending.length = 0;
     },
   };
+}
+
+/** A committed document's value as its token types it. */
+export function valueOf<T extends JsonObject>(
+  value: JsonObject,
+  _token: { readonly definition: CommonDocDefinition<T> },
+): T {
+  return value as T;
 }

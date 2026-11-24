@@ -5,6 +5,7 @@ export type CommandContext = {
   readonly paths: AgentPaths;
   readonly env: NodeJS.ProcessEnv;
   readonly conversation: ConversationId | null;
+  readonly profile: string | null;
   readonly cwd: string | null;
   readonly view: boolean;
   readonly json: boolean;

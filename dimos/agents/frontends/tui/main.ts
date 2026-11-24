@@ -73,6 +73,7 @@ type TerminalOptions = {
   readonly socketPath: string;
   /** Show this conversation; null starts a new one in `cwd`. */
   readonly conversation: ConversationId | null;
+  readonly profile?: string | null;
   readonly role: Role;
   readonly cwd: string | null;
   /** `~/.cache/dimos/agent/render/`, shared with the gateway, for `/inspect` and `/image`. */
@@ -306,8 +307,11 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
 
   const conversationText = (): string => {
     if (showing === null) return "";
-    if (showing.conversation.variant === "owner") return `#${showing.id}`;
-    return `#${showing.id} VIEW`;
+    const profile = clean(
+      ui.gateway.conversations.value.find((row) => row.id === showing?.id)?.profile?.name ?? "General agent",
+    );
+    if (showing.conversation.variant === "owner") return `#${showing.id} · ${profile}`;
+    return `#${showing.id} · ${profile} VIEW`;
   };
   const linkText = (): string => {
     const gateway = ui.gateway;
@@ -517,7 +521,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
 
   /** Counts switchTo calls: one that a newer call overtook while it waited gives up, and releases what it got. */
   let switches = 0;
-  const switchTo = async (conversation: ConversationId | null, role: Role): Promise<void> => {
+  const switchTo = async (conversation: ConversationId | null, role: Role, profile?: string | null): Promise<void> => {
     const switching = ++switches;
     let id = conversation;
     if (id === null) {
@@ -528,6 +532,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
           {
             request: newActionRequest(),
             cwd: options.cwd,
+            profile,
           },
           (args) => owner(ui.gateway).createConversation(args),
         ),
@@ -736,8 +741,13 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       closeSwitcher();
       const view = new MenuView({
         ui,
-        memory: menuMemory,
+        tui,
         current: showing?.id ?? null,
+        memory: menuMemory,
+        create: (profile) => {
+          closeFullScreen?.();
+          void switchTo(null, "owner", profile).catch(note);
+        },
         attach: (conversation) => {
           closeFullScreen?.();
           void switchTo(conversation, "owner").catch(note);
@@ -959,7 +969,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       }),
     );
     configureFrames();
-    await switchTo(options.conversation, options.role);
+    await switchTo(options.conversation, options.role, options.profile);
     tui.setLayoutRoot(layout);
     syncLogin();
     tui.setFocus(focusOf(mode));
