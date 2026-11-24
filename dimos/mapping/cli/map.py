@@ -17,13 +17,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 import math
 from pathlib import Path
-import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
 from dimos.memory.utils.time_window import RecordingWindow
-from dimos.utils.executable import find_executable
+from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -707,7 +706,7 @@ def main(
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
+        spawn_detached([find_executable("rerun") or "rerun", str(out)])
 
     if export_cloud and pgo_map is not None:
         from dimos.mapping.relocalization.module import map_cloud_stream, named_map_frame
