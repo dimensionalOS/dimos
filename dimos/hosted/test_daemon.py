@@ -333,6 +333,10 @@ def test_run_fragment_runs_the_payload_through_run_coordinator(
     assert run.call_args.kwargs["run_id"] == fragment.run_id
     assert run.call_args.kwargs["log_dir"] == tmp_path
     assert run.call_args.kwargs["rpc_name"] == f"runs/{fragment.run_id}/hosts/host-1/coordinator"
+    assert (
+        run.call_args.kwargs["module_rpc_namespace"]
+        == f"runs/{fragment.run_id}/hosts/host-1/modules"
+    )
     assert run.call_args.kwargs["remote_module_refs"] == {}
     run.call_args.kwargs["on_ready"](None)
     ready.send.assert_called_once_with((True, None))

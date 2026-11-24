@@ -43,6 +43,9 @@ pub struct Config {
     /// V4L2 pixel format the device is asked for, e.g. UYVY or YUYV.
     #[validate(length(equal = 4))]
     fourcc: String,
+    /// Frames per second the device is asked for; 0 keeps the driver's default rate.
+    #[validate(range(min = 0.0, max = 1000.0))]
+    fps: f64,
     frame_id: String,
     #[validate(range(min = 1, max = 100))]
     jpeg_quality: i64,
@@ -87,6 +90,7 @@ fn run(config: &Config, output: &Output<CompressedImage>, runtime: &tokio::runti
             config.width as u32,
             config.height as u32,
             code,
+            config.fps,
             config.hardware,
             config.jpeg_quality as i32,
         ) {

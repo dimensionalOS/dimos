@@ -103,16 +103,21 @@ jobs:
         # The runner must have an Xorg server with NVIDIA GPU access running
         # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
         # heavier scenes (`apt`). Software X via xvfb is not enough.
+        #
+        # --error-for-skips fails the job when a self_hosted_large test or
+        # module skips. The summary still counts skipped modules: pytest imports
+        # every test module before it applies -m, and the modules of other jobs
+        # skip at import here (no Playwright, no PyO3 extensions).
         env:
           DISPLAY: ":0"
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large --error-for-skips
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
           DISPLAY: ":0"
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
+          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large --error-for-skips && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -165,8 +170,7 @@ jobs:
   # two WebTransport stacks differ.
   browser-tests-linux:
     timeout-minutes: 30
-    # Not ubuntu-latest: see the tests job in ci.yml.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       # See self-hosted-large-tests above.
       PYTHONFAULTHANDLER: "1"

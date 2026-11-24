@@ -25,7 +25,6 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openarm.config import OPENARM_DESCRIPTION_ROOT
 from dimos.utils.data import LfsPath
 
-DEFAULT_ADDRESS = "172.6.2.20:11323"
 ALFRED_DESCRIPTION = LfsPath("alfred_description")
 ALFRED_URDF = ALFRED_DESCRIPTION / "urdf" / "alfred_v1.urdf"
 # The Mid-360 sees the lower body box out to 0.61 m.
