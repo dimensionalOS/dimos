@@ -18,6 +18,7 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+from typing import Any
 
 from dimos.robot.assets.model import UsdModel
 from dimos.utils.logging_config import setup_logger
@@ -55,47 +56,40 @@ def _name_of(model: UsdModel) -> str:
 
 
 def scene_as_files(usd: str, fetch: Callable[[str], bytes]) -> Path:
-    from dimos.robot.assets.usd_utils.assets import asset_attributes
+    from dimos.robot.assets.usd_utils.assets import rename_assets
     from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a scene", None)
     _ASSETS.mkdir(parents=True, exist_ok=True)
     here: dict[str, str] = {}
-    stack, rewritten = [layer.pseudoRoot], 0
+    rewritten = 0
 
-    def on_disk(name: str, declared: str | None) -> str:
+    def on_disk(name: str, where: str, _required: bool) -> str | None:
+        nonlocal rewritten
+        if not name:
+            return None
         if name not in here:
-            here[name] = str(_cached(name, declared, fetch))
+            here[name] = str(_cached(name, _declared_hash(layer, where, name), fetch))
+        rewritten += 1
         return here[name]
 
-    while stack:
-        spec = stack.pop()
-        info = dict(spec.assetInfo) if spec.assetInfo else {}
-        declared = str(info["version"]) if "version" in info else None
-        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
-        if items:
-            spec.referenceList.explicitItems = [
-                pxr.Sdf.Reference(on_disk(ref.assetPath, declared), ref.primPath)
-                if ref.assetPath
-                else ref
-                for ref in items
-            ]
-            rewritten += len(items)
-        identifier = info.get("identifier")
-        if identifier is not None and str(identifier.path):
-            info["identifier"] = pxr.Sdf.AssetPath(on_disk(str(identifier.path), declared))
-            spec.assetInfo = info
-        for attribute, value in asset_attributes(spec):
-            attribute.default = pxr.Sdf.AssetPath(on_disk(str(value.path), None))
-            rewritten += 1
-        stack.extend(spec.nameChildren)
-
+    rename_assets(pxr, layer, on_disk)
     logger.info(
         f"sim2: {rewritten} asset reference(s) over {len(here)} file(s) of this scene are on "
         f"disk under {_ASSETS}"
     )
     return layer_file(layer.ExportToString(), called="scene")
+
+
+def _declared_hash(layer: Any, where: str, name: str) -> str | None:
+    """The hash the prim's assetInfo promises for `name`, when it names that file."""
+    spec = layer.GetPrimAtPath(where)
+    info = dict(spec.assetInfo) if spec is not None and spec.assetInfo else {}
+    identifier = info.get("identifier")
+    if identifier is None or str(identifier.path) != name or "version" not in info:
+        return None
+    return str(info["version"])
 
 
 def _cached(name: str, digest: str | None, fetch: Callable[[str], bytes]) -> Path:
