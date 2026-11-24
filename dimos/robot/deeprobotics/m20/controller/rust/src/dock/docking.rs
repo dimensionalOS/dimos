@@ -146,8 +146,13 @@ impl View {
         !self.stand_in && self.runner.as_deref() == Some(runner)
     }
 
+    /// charge_manager's charging loop keeps a charge while /MOTION_INFO's state is 0 or 2..4 (Idle, JointDamping,
+    /// StartDamping, LieDown; Start, 0x182160), else it stops it (command 2).
     fn lying(&self) -> bool {
-        self.is(State::LieDown) || self.is(State::Passive)
+        matches!(
+            self.state,
+            Some(State::Passive | State::JointDamping | State::StartDamping | State::LieDown)
+        )
     }
 }
 
@@ -330,6 +335,8 @@ pub struct Docking {
     /// charge_manager's error state with NOCHARGEPLUG (0x1007) from the self test: DoExcepHandlingProcess writes
     /// Open12vPower(3) every 3 s and takes a charge it sees
     no_plug: bool,
+    /// the charging loop checked the charge flag this pass
+    charge_checked: bool,
     /// Open12vPower(n) under way: its start, n and the writes so far (it writes 1 and sleeps 2 s, n times)
     open12v: Option<(u64, u32, u32)>,
 }
@@ -392,6 +399,7 @@ impl Docking {
             idle_check_at: 0,
             charge_cmd: false,
             no_plug: false,
+            charge_checked: false,
             open12v: None,
             calls_then: None,
             status: Status {
@@ -460,6 +468,7 @@ impl Docking {
         self.status.error = false;
         self.status.charging = self.charge_flag();
         self.charge_sleep_until = self.tick;
+        self.charge_checked = false;
         self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
     }
 
@@ -484,8 +493,9 @@ impl Docking {
     /// NOCHARGEPLUG error's Open12vPower(3) cycles (DoExcepHandlingProcess, 0x17fdb0).
     fn idle_step(&mut self, view: &View) {
         if self.phase != Phase::Idle {
-            // a sequence (or a charge resumed across a restart) ends the self test
+            // a sequence (or a charge resumed across a restart) ends the self test and the error's retries
             self.startup = None;
+            self.no_plug = false;
             self.open12v = None;
             return;
         }
@@ -638,6 +648,8 @@ impl Docking {
         self.target = Target::LieDown;
         self.status.charging = true;
         self.set_phase(Phase::Charging);
+        self.charge_cmd = true;
+        self.charge_checked = true;
         self.charge_sleep_until = self.tick + self.ticks(self.seq.charge_sleep_ms);
         self.charge_next_write = self.charge_sleep_until + self.ticks(self.seq.charge_wait_ms);
     }
@@ -739,6 +751,7 @@ impl Docking {
             AfterCalls::Charging => {
                 self.set_phase(Phase::Charging);
                 self.charge_cmd = true;
+                self.charge_checked = false;
                 self.charge_sleep_until = self.tick;
                 self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
             }
@@ -876,6 +889,13 @@ impl Docking {
                         "cancelled",
                         false,
                     );
+                } else if self.no_plug {
+                    // the error state with command 2
+                    self.no_plug = false;
+                    self.failed = false;
+                    self.status.error = false;
+                    self.status.result =
+                        "My status is [error], begin to transtion to [idle]".into();
                 }
                 Ok(())
             }
@@ -926,9 +946,6 @@ impl Docking {
                         "charge_manager undocks only while charging or after a failed sequence ({:?})",
                         self.phase
                     ));
-                }
-                if view.fault {
-                    return Err("undock needs no controller fault".into());
                 }
                 self.status.result.clear();
                 self.status.error = false;
@@ -1123,9 +1140,8 @@ impl Docking {
             return None;
         }
         self.ticks_in_phase += 1;
-        if view.fault {
-            return self.finish(Target::LieDown, "controller fault", true);
-        }
+        // charge_manager has no fault input (its topics: /MOTION_INFO, /BATTERY_DATA, ...): a controller fault reaches
+        // it only as the motion state rl_deploy reports (JointDamping 2)
         let limit = (self.seq.transition_limit_s * self.hz).round() as u64;
         match self.phase {
             Phase::Idle => None,
@@ -1291,12 +1307,31 @@ impl Docking {
                 Some(self.output(None))
             }
             Phase::Charging => {
+                // charge_manager's charging state acts only on command 1 (Start, 0x182160); with -1 (the self test's
+                // charging) it waits for a command
+                if !self.charge_cmd {
+                    return Some(self.output(None));
+                }
+                // each pass of its loop, once Open12vPower(1)'s sleep is over: no charge flag -> [error] 0x1007
+                // (NOCHARGEPLUG); standing (motion state not 0, 2..4) -> command 2 -> idle
+                if self.tick >= self.charge_sleep_until && !self.charge_checked {
+                    self.charge_checked = true;
+                    if !self.charge_flag() {
+                        let out = self.finish(
+                            self.target,
+                            "My status is [charging], begin transtion status to [error] error code:0x1007",
+                            true,
+                        );
+                        self.no_plug = true;
+                        return out;
+                    }
+                }
                 if !view.lying() {
-                    // the vendor cancels a charge the robot was stood up from
                     return self.finish(self.target, "stood up while on the dock", false);
                 }
                 // charge_manager's charging loop: wait charge_wait_ms, Open12vPower(1) (write, sleep charge_sleep_ms)
-                if self.charge_cmd && self.status.charging && self.tick >= self.charge_next_write {
+                if self.tick >= self.charge_next_write {
+                    self.charge_checked = false;
                     self.write(Write::ChargeEnable(1));
                     self.charge_sleep_until = self.tick + self.ticks(self.seq.charge_sleep_ms);
                     self.charge_next_write =

@@ -134,7 +134,7 @@ fn a_missing_pose_stops_the_robot_and_resumes() {
 }
 
 #[test]
-fn a_fault_or_leaving_rl_control_ends_it() {
+fn a_fault_alone_changes_nothing_but_leaving_rl_control_ends_it() {
     let cfg = cfg();
     let v = vendor();
     let mut k = Docking::new(&cfg, true, Some(&v));
@@ -142,11 +142,11 @@ fn a_fault_or_leaving_rl_control_ends_it() {
     k.request(Request::Dock, &view).unwrap();
     let mut seq = 0;
     run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+    // charge_manager has no fault input: a fault flag alone changes nothing
     let mut v2 = view.clone();
     v2.fault = true;
-    let out = k.step(&v2, Some((facing(2.0), seq)), None).unwrap();
-    assert_eq!((out.target, out.axes), (Target::LieDown, [0.0; 3]));
-    assert!(!k.active() && k.status().error);
+    k.step(&v2, Some((facing(2.0), seq)), None).unwrap();
+    assert_eq!(k.phase(), Phase::Approach);
     // a pose while not on NaviCharge in rl_control: charge_manager's 0x1008
     let mut k = Docking::new(&cfg, true, Some(&v));
     k.request(Request::Dock, &view).unwrap();
@@ -295,14 +295,29 @@ impl Boot {
 
     /// Run to `until_ms`; pose `pose`, charge MOS on at/after `charge_at_ms`.
     fn run(&mut self, until_ms: u64, pose: Option<DockPose>, charge_at_ms: u64) {
-        let view = lying();
+        self.run_as(&lying(), until_ms, pose, charge_at_ms, u64::MAX);
+    }
+
+    /// Run to `until_ms` as `view`; the charge MOS on from `charge_at_ms` until `charge_off_ms`.
+    fn run_as(
+        &mut self,
+        view: &View,
+        until_ms: u64,
+        pose: Option<DockPose>,
+        charge_at_ms: u64,
+        charge_off_ms: u64,
+    ) {
         while self.tick < until_ms {
             let mut feed_pose = None;
             let mut feed_charge = None;
             if self.tick % 100 == 0 {
                 self.seq += 1;
                 feed_pose = pose.map(|p| (p, self.seq));
-                let on = if self.tick >= charge_at_ms { 2 } else { 0 };
+                let on = if self.tick >= charge_at_ms && self.tick < charge_off_ms {
+                    2
+                } else {
+                    0
+                };
                 feed_charge = Some(ChargeReading {
                     seq: self.seq,
                     packs_present: 2,
@@ -310,7 +325,7 @@ impl Boot {
                     charger_connected: on > 0,
                 });
             }
-            self.k.step(&view, feed_pose, feed_charge);
+            self.k.step(view, feed_pose, feed_charge);
             if self.k.charge_enable_now == Some(1) {
                 self.enables.push(self.tick);
             }
@@ -435,4 +450,92 @@ fn start_up_a_bit_far_then_the_idle_loop_takes_a_later_charge() {
         // then the logged undock from charging (06:35:09) is allowed
         assert!(b.k.request(Request::Undock, &lying()).is_ok());
     }
+}
+
+#[test]
+fn charging_with_command_minus_1_waits_for_a_command_even_standing() {
+    let mut b = Boot::new();
+    b.run(16_000, Some(docked(0.001, 0.001)), 15_000);
+    assert_eq!(b.k.status().result, "Init charge status is [charging]");
+    // charge_manager's state 2 acts only on command 1: standing up or losing the charge changes nothing
+    b.run_as(&standing("navi_charge"), 20_000, None, 15_000, 18_000);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    assert!(b.k.request(Request::Undock, &lying()).is_ok());
+}
+
+#[test]
+fn charge_lost_while_charging_is_error_nochargeplug_until_it_returns() {
+    let mut b = Boot::new();
+    // Detection charge success, the idle loop's wake: [charging] with command 1
+    b.run(10_000, None, 0);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    // the charge drops at 20 s: the loop's next pass (after Open12vPower(1)'s sleep) is [error] 0x1007
+    let view = lying();
+    b.run_as(&view, 20_000, None, 0, 20_000);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    let lost = b.enables.len();
+    b.run_as(&view, 27_000, None, 0, 20_000);
+    assert_eq!(b.k.phase(), Phase::Idle);
+    assert!(b.k.status().error);
+    assert_eq!(
+        b.k.status().result,
+        "My status is [charging], begin transtion status to [error] error code:0x1007"
+    );
+    // DoExcepHandlingProcess: Open12vPower(3) back to back
+    b.run_as(&view, 39_000, None, 0, 20_000);
+    assert!(b.enables.len() - lost >= 6, "{:?}", &b.enables[lost..]);
+    // no charge: it stays in the error, and undock is allowed from it
+    b.run_as(&view, 60_000, None, 0, 20_000);
+    assert_eq!(b.k.phase(), Phase::Idle);
+    assert!(b.k.status().error);
+    let mut c = Boot::new();
+    c.run(10_000, None, 0);
+    c.run_as(&view, 30_000, None, 0, 20_000);
+    assert!(c.k.request(Request::Undock, &view).is_ok());
+}
+
+#[test]
+fn the_error_state_returns_charging_when_the_charge_comes_and_idles_on_cancel() {
+    let view = lying();
+    let mut b = Boot::new();
+    b.run(10_000, None, 0);
+    b.run_as(&view, 30_000, None, 0, 20_000);
+    assert!(b.k.status().error);
+    // the charge back from 31 s: [error] -> [charging] at the end of an Open12vPower(3)
+    b.run_as(&view, 45_000, None, 31_000, u64::MAX);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    assert_eq!(
+        b.k.status().result,
+        "My status is [error], begin to transtion to [charging]"
+    );
+    // command 2 in the error state: idle, and no undock from idle
+    let mut c = Boot::new();
+    c.run(10_000, None, 0);
+    c.run_as(&view, 30_000, None, 0, 20_000);
+    c.k.request(Request::Cancel, &view).unwrap();
+    assert!(!c.k.status().error);
+    assert_eq!(
+        c.k.status().result,
+        "My status is [error], begin to transtion to [idle]"
+    );
+    assert!(c.k.request(Request::Undock, &view).is_err());
+    let n = c.enables.len();
+    c.run_as(&view, 45_000, None, 0, 20_000);
+    assert_eq!(c.enables.len(), n);
+}
+
+#[test]
+fn a_controller_fault_while_charging_keeps_the_charge() {
+    // 2026-11-25 04:04:26: a fault (JointDamping, motion state 2) knocked ours from Charging; charge_manager keeps
+    // charging under motion states 0 and 2..4
+    let mut b = Boot::new();
+    b.run(10_000, None, 0);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    let mut damping = lying();
+    damping.state = Some(State::JointDamping);
+    damping.fault = true;
+    b.run_as(&damping, 30_000, None, 0, u64::MAX);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    assert!(b.k.status().charging && !b.k.status().error);
+    assert!(b.k.request(Request::Undock, &damping).is_ok());
 }
