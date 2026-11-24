@@ -27,10 +27,8 @@ from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
@@ -44,6 +42,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
@@ -93,7 +92,7 @@ def with_policy_drives(usd: UsdModel, policy: Go2Policy) -> UsdModel:
             drive.CreateTargetPositionAttr().Set(target)
     if drives:
         raise ValueError(f"the policy drives joints the USD does not have: {sorted(drives)}")
-    return UsdModel(usd.source_path, _text=str(layer.ExportToString()))
+    return UsdModel.from_layer(str(layer.ExportToString()), usd.source_path)
 
 
 class Go2SimConfig(HardwareModuleConfig):
@@ -126,7 +125,7 @@ class Go2Sim(HardwareModule):
         self._desired_expires = 0.0
         self._command = np.zeros(3)
         self._heading: float | None = None
-        self._start_pose: np.ndarray | None = None
+        self._odometry: MountOdometry | None = None
 
     @property
     def mounted_frame(self) -> str:
@@ -197,14 +196,13 @@ class Go2Sim(HardwareModule):
         )
         self._publish_pose(base.pose, stamp, {name: float(row[0]) for name, row in joints.items()})
 
-    def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
-        here = Transform(
-            translation=Vector3(*pose[:3]), rotation=Quaternion(*pose[3:7])
-        ).to_matrix()
-        if self._start_pose is None:
-            self._start_pose = here
-        relative = Transform.from_matrix(np.linalg.inv(self._start_pose) @ here)
-        odom = PoseStamped(
+    def _odom(self, pose: np.ndarray, stamp: float) -> PoseStamped:
+        if self._odometry is None:
+            usd = self.config.usd
+            assert usd is not None
+            self._odometry = MountOdometry.of(usd, usd.root_link)
+        relative = self._odometry(pose)
+        return PoseStamped(
             ts=stamp,
             frame_id=self.frame.odom,
             position=[relative.translation.x, relative.translation.y, relative.translation.z],
@@ -215,6 +213,9 @@ class Go2Sim(HardwareModule):
                 relative.rotation.w,
             ],
         )
+
+    def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
+        odom = self._odom(pose, stamp)
         self.odom.publish(odom)
         self.tfbuffer.publish(
             Transform.from_pose(self.frame.body, odom), *self.usd_transforms(positions, ts=stamp)

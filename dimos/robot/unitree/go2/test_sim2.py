@@ -72,3 +72,16 @@ def test_a_non_finite_cmd_vel_leaves_the_last_good_command(go2_sim: Go2Sim, bad:
     asyncio.run(go2_sim.handle_cmd_vel(Twist(Vector3(bad, 0.0, 0.0), Vector3(0.0, 0.0, bad))))
 
     assert np.array_equal(go2_sim._desired, [0.5, 0.0, 0.0])
+
+
+def test_odom_keeps_the_go2_standing_above_its_mount(go2_sim: Go2Sim) -> None:
+    from dimos.robot.assets.usd_utils.frames import usd_frame_pose
+
+    usd = go2_sim.config.usd
+    assert usd is not None
+    standing = usd_frame_pose(usd.usd, usd.root_link, usd.source_path.parent)[2, 3]
+
+    odom = go2_sim._odom(np.array([2.0, -1.0, standing, 0.0, 0.0, 0.0, 1.0]), 1.0)
+
+    assert standing > 0
+    assert np.allclose([odom.position.x, odom.position.y, odom.position.z], [0.0, 0.0, standing])
