@@ -313,7 +313,8 @@ fn check(mode: Mode, run: &Run, walk: (f64, f64), speed: f64, runner: &str) {
 fn navi_flat(mode: Mode) {
     let script = vec![
         step(0.0, Target::Passive, 0x3001, [0.0; 3]),
-        step(2.0, Target::RlControl, 0x3001, [0.0; 3]),
+        step(2.0, Target::Stand, 0x3001, [0.0; 3]),
+        step(2.1, Target::RlControl, 0x3001, [0.0; 3]),
         step(8.5, Target::RlControl, 0x3002, [0.0; 3]),
         step(10.0, Target::RlControl, 0x3002, [0.25, 0.0, 0.0]),
         step(15.0, Target::RlControl, 0x3002, [0.0; 3]),
@@ -328,7 +329,8 @@ fn navi_flat(mode: Mode) {
 fn basic_flat(mode: Mode) {
     let script = vec![
         step(0.0, Target::Passive, 0x1001, [0.0; 3]),
-        step(2.0, Target::RlControl, 0x1001, [0.0; 3]),
+        step(2.0, Target::Stand, 0x1001, [0.0; 3]),
+        step(2.1, Target::RlControl, 0x1001, [0.0; 3]),
         step(12.5, Target::RlControl, 0x1001, [0.25, 0.0, 0.0]),
         step(17.5, Target::RlControl, 0x1001, [0.0; 3]),
         step(19.5, Target::LieDown, 0x1001, [0.0; 3]),
@@ -350,7 +352,8 @@ fn standup_rpc(mode: Mode, gait: u32, runner: &str) {
     };
     let script = vec![
         step(0.0, Target::Passive, 0x1001, [0.0; 3]),
-        step(2.0, Target::RlControl, 0x1001, [0.0; 3]),
+        step(2.0, Target::Stand, 0x1001, [0.0; 3]),
+        step(2.1, Target::RlControl, 0x1001, [0.0; 3]),
         step(5.2, Target::RlControl, gait, [0.0; 3]),
         resend(10.2, [0.0; 3]),
         resend(14.0, [0.25, 0.0, 0.0]),
@@ -511,14 +514,17 @@ fn dock_run(run: DockRun) -> Option<DockResult> {
     };
     let mut lie = step(0.0, Target::Passive, 0x3001, [0.0; 3]);
     lie.command.motion_seq = 1;
-    let mut stand = step(2.0, Target::RlControl, 0x3001, [0.0; 3]);
+    let mut stand = step(2.0, Target::Stand, 0x3001, [0.0; 3]);
     stand.command.motion_seq = 2;
+    // basic_server's stand: RL control once the stand-up is reported
+    let mut rl = step(2.1, Target::RlControl, 0x3001, [0.0; 3]);
+    rl.command.motion_seq = 3;
     let feed = Arc::new(DockFeed::default());
     let now = Arc::new(AtomicU64::new(0));
     let changes: Arc<Mutex<Vec<(u64, Status)>>> = Arc::default();
     let (now_cb, changes_cb) = (now.clone(), changes.clone());
     let mut commands = DockingCommands::new(
-        ScriptedCommands::new(vec![lie, stand]),
+        ScriptedCommands::new(vec![lie, stand, rl]),
         Docking::new(&cfg, true, Some(&vendor())),
         feed.clone(),
         Box::new(move |status| {

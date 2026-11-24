@@ -39,6 +39,24 @@ pub struct Config {
     pub dock: crate::dock::config::DockConfig,
     #[serde(default)]
     pub inference: Inference,
+    /// basic_server's numbers the controller's basic_server layer uses
+    pub basic_server: BasicServerConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BasicServerConfig {
+    /// SetMotionState(1)'s wait for the stand (s)
+    pub stand_wait_s: f64,
+    pub align: AlignConfig,
+}
+
+/// aligningBodyPosture's fall-recovery checks.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlignConfig {
+    pub checks: u32,
+    pub check_period_s: f64,
+    pub accel_z: f64,
+    pub height_m: f64,
 }
 
 /// How the policies are evaluated.
@@ -144,6 +162,16 @@ pub struct StandIn {
     pub settle_params: BTreeMap<String, f64>,
 }
 
+/// RLControlState's rest on a hot standstill (basic_flat).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Overheat {
+    pub rest_c: f64,
+    pub abort_motor_c: f64,
+    pub abort_driver_c: f64,
+    pub still_ticks: u32,
+    pub still_body_speed: f64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RlControl {
     pub entry_gaits: Vec<u32>,
@@ -151,6 +179,7 @@ pub struct RlControl {
     pub fallback_runner: String,
     /// a gait switch waits until |vx| + |vy| + |wz| (normalized) is below this
     pub switch_below_speed: f64,
+    pub overheat: Overheat,
     #[serde(default)]
     pub stand_in: Vec<StandIn>,
 }

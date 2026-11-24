@@ -388,8 +388,14 @@ class M20ControllerApi:
         return self.liedown()
 
     @rpc
+    def align_body_posture(self) -> bool:
+        """basic_server's fall recovery (aligningBodyPosture): from Idle, SixAxisStand on 0xf003 gets it up, then 0x1001."""
+        self._send("motion_cmd", String("align_body_posture"))
+        return True
+
+    @rpc
     def passive(self) -> bool:
-        """Go limp (no gains), from any state."""
+        """Motion state 0, as rl_deploy takes it: only joint damping and a lie-down end in Idle; standing ignores it."""
         self.stop_movement()
         self._send("motion_cmd", String("passive"))
         return True

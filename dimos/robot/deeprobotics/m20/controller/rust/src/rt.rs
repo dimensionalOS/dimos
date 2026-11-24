@@ -370,9 +370,9 @@ mod shutdown_tests {
         }
     }
 
-    /// Stands for `stand_s`, then asks the loop to stop.
+    /// Stands (rl_deploy's stand, then RL control as basic_server sends them) for `stand_s`, then asks the loop to stop.
     struct StandThenStop<'a> {
-        sent: bool,
+        sent: u64,
         stand_s: f64,
         stop: &'a AtomicBool,
     }
@@ -382,14 +382,17 @@ mod shutdown_tests {
             if now > self.stand_s {
                 self.stop.store(true, Ordering::Relaxed);
             }
-            if self.sent {
-                return None;
-            }
-            self.sent = true;
+            // the stand now, RL control right after (the stand-up holds it until both phases are over)
+            let target = match self.sent {
+                0 => Target::Stand,
+                1 => Target::RlControl,
+                _ => return None,
+            };
+            self.sent += 1;
             Some(UserCommand {
-                target: Target::RlControl,
+                target,
                 gait: 0x1001,
-                motion_seq: 1,
+                motion_seq: self.sent,
                 ..Default::default()
             })
         }
@@ -408,7 +411,7 @@ mod shutdown_tests {
         c.set_time(10.0);
         let stop = AtomicBool::new(false);
         let mut commands = StandThenStop {
-            sent: false,
+            sent: 0,
             stand_s: 10.0 + stand_s,
             stop: &stop,
         };

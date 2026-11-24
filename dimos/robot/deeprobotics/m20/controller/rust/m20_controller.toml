@@ -133,6 +133,8 @@ entry_fallback_gait = 0x1001
 fallback_runner = "basic_flat"
 # update_policy_ptr (0x179960): a gait switch waits until normalized |vx| + |vy| + |wz| is below DAT_001e1ba8
 switch_below_speed = 0.01
+# RLControlState::Run on basic_flat: a hot standstill (still_ticks, above rest_c) runs the 0xf001 stand-in once
+overheat = { rest_c = 70.0, abort_motor_c = 100.0, abort_driver_c = 90.0, still_ticks = 1000, still_body_speed = 0.08 }
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner
@@ -473,7 +475,7 @@ action = { layout = "per_leg", clip = 1e9, leg_mode = "absolute", leg_scale = [1
 
 [runners.six_axis_stand]
 # SixAxisStand: m20_finetune_stand_15kg; also the stand-in policy at rl_control entry
-gaits = [0xf001]
+gaits = [0xf001, 0xf003]
 policy = "m20_finetune_stand_15kg.onnx"
 kind = "sequence"
 history = 36
@@ -776,3 +778,15 @@ onnxruntime = "/opt/robot/share/rl_deploy/lib/onnxruntime/libonnxruntime.so.1.20
 allow_gains = false
 # the BMS charge-enable request from m20-battery's rule (docked, lying)
 charge_enable = false
+
+# basic_server (AOS /opt/robot/share/basic_server, md5 538e34f2): numbers its VelControl uses
+[basic_server]
+# SetMotionState 0x2622d0: waitForMotionStateChange(1, 5000)
+stand_wait_s = 5.0
+
+# aligningBodyPosture 0x262550: 7 checks, sleep(1) each; acc_z > 9.0; MotionInfo height > DAT_00286420 (0.4)
+[basic_server.align]
+checks = 7
+check_period_s = 1.0
+accel_z = 9.0
+height_m = 0.4

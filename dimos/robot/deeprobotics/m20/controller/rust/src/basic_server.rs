@@ -30,9 +30,6 @@ pub const MODE_NAVIGATION: i32 = 1;
 pub const MODE_ASSIST: i32 = 2;
 pub const GAIT_BASIC: u32 = 0x1001;
 
-/// SetMotionState(1)'s wait for rl_deploy to report the stand (waitForMotionStateChange(1, 5000)).
-const STAND_WAIT_S: f64 = 5.0;
-
 /// The gait codes SwitchGait (0x261640) sends; it logs and drops any other.
 pub fn known_gait(gait: u32) -> bool {
     matches!(
@@ -80,18 +77,12 @@ pub struct UsageMode {
     pub align: std::sync::atomic::AtomicBool,
 }
 
-/// aligningBodyPosture (0x262550): from Idle, RL control on 0xf003; every second up to 7 checks, accel z above 9 m/s^2
-/// and MotionInfo's height above 0.4 m switch to 0x1001; else soft e-stop (joint damping).
+/// aligningBodyPosture (0x262550): RL control on 0xf003 from Idle until up ([basic_server.align]), else soft e-stop.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Align {
     pub next_check: f64,
     pub checks_left: u32,
 }
-
-pub const ALIGN_CHECKS: u32 = 7;
-pub const ALIGN_CHECK_PERIOD_S: f64 = 1.0;
-pub const ALIGN_ACCEL_Z: f64 = 9.0;
-pub const ALIGN_HEIGHT_M: f64 = 0.4;
 
 pub struct BasicServer<C> {
     inner: C,
@@ -112,13 +103,15 @@ pub struct BasicServer<C> {
     pub extre_authorized: bool,
     /// MotionInfo's height from the joints (base_link above the wheels' contact)
     height_of: Box<dyn Fn(&[f64; crate::config::JOINTS]) -> f64 + Send>,
+    cfg: crate::config::BasicServerConfig,
 }
 
 impl<C: CommandSource + ChargerState> BasicServer<C> {
-    pub fn new(inner: C, usage: Arc<UsageMode>) -> Self {
+    pub fn new(inner: C, usage: Arc<UsageMode>, cfg: crate::config::BasicServerConfig) -> Self {
         BasicServer {
             inner,
             usage,
+            cfg,
             mode: MODE_REGULAR,
             charger: 0,
             last: UserCommand::default(),
@@ -201,7 +194,7 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
                 c.gait = self.last.gait;
             }
             if motion && c.target == Target::Stand {
-                self.stand_until = Some(now + STAND_WAIT_S);
+                self.stand_until = Some(now + self.cfg.stand_wait_s);
             }
             if self
                 .gait_override
@@ -250,8 +243,8 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
                 self.last.target = Target::RlControl;
                 self.switch_gait(crate::state_machine::ALIGN_GAIT);
                 self.align = Some(Align {
-                    next_check: now + ALIGN_CHECK_PERIOD_S,
-                    checks_left: ALIGN_CHECKS,
+                    next_check: now + self.cfg.align.check_period_s,
+                    checks_left: self.cfg.align.checks,
                 });
             } else {
                 warn!(state = ?controller.state, "aligning body posture needs Idle");
@@ -259,10 +252,10 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
         }
         if let Some(mut a) = self.align {
             if now >= a.next_check {
-                let up = controller.last_accel[2] > ALIGN_ACCEL_Z
-                    && (self.height_of)(&controller.last_q) > ALIGN_HEIGHT_M;
+                let up = controller.last_accel[2] > self.cfg.align.accel_z
+                    && (self.height_of)(&controller.last_q) > self.cfg.align.height_m;
                 a.checks_left -= 1;
-                a.next_check = now + ALIGN_CHECK_PERIOD_S;
+                a.next_check = now + self.cfg.align.check_period_s;
                 if up {
                     self.align = None;
                     self.switch_gait(GAIT_BASIC);
@@ -314,6 +307,11 @@ mod tests {
         }
     }
 
+    fn basic_server_config() -> crate::config::BasicServerConfig {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        crate::config::Config::load(&path).unwrap().basic_server
+    }
+
     fn server() -> (BasicServer<Script>, Arc<UsageMode>) {
         let usage = Arc::new(UsageMode::default());
         let s = BasicServer::new(
@@ -322,6 +320,7 @@ mod tests {
                 charger: 0,
             },
             usage.clone(),
+            basic_server_config(),
         );
         (s, usage)
     }

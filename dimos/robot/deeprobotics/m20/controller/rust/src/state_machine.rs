@@ -48,6 +48,12 @@ pub enum State {
     StartDamping,
 }
 
+/// rl_deploy's basic flat gait (its entry fallback and the overheat rest's).
+pub const GAIT_BASIC_FLAT: u32 = 0x1001;
+
+/// The gait that enters RL control straight from Idle (basic_server's aligningBodyPosture, SixAxisStand).
+pub const ALIGN_GAIT: u32 = 0xf003;
+
 /// Hermite cubic from (p0, v0) at 0 to (p1, v1) at T (rl_deploy's GetCubicSplinePos/Vel); holds p1 past T.
 pub fn cubic(p0: f64, v0: f64, p1: f64, v1: f64, t: f64, total: f64) -> (f64, f64) {
     if t >= total {
@@ -408,6 +414,14 @@ pub struct Controller {
     seq: u64,
     pub transitions: Vec<(f64, State, State)>,
     pub counters: Counters,
+    /// RLControlState's rest on a hot standstill (0x144): 0 none, 1 resting (the stand-in), 3 rested until moving
+    rest: u8,
+    rest_ticks: u32,
+    /// a joint got too hot during a rest (0x15d): no rest until moving
+    rest_hot: bool,
+    /// the last tick's accelerometer and joint positions (basic_server's fall-recovery check reads them)
+    pub last_accel: [f64; 3],
+    pub last_q: [f64; JOINTS],
 }
 
 impl Controller {
@@ -455,6 +469,11 @@ impl Controller {
             seq: 0,
             transitions: Vec::new(),
             counters: Counters::default(),
+            rest: 0,
+            rest_ticks: 0,
+            rest_hot: false,
+            last_accel: [0.0; 3],
+            last_q: [0.0; JOINTS],
         }
     }
 
@@ -553,7 +572,8 @@ impl Controller {
         cmd.target
     }
 
-    fn next_state(&self, target: Target) -> State {
+    /// rl_deploy's GetNextStateName per state (fsm.c 0x164898..0x165600).
+    fn next_state(&self, target: Target, gait: u32) -> State {
         let st = &self.cfg.states;
         let t = match self.state {
             State::StandUp | State::LieDown => self.spline_time(),
@@ -567,29 +587,31 @@ impl Controller {
             return State::JointDamping;
         }
         match self.state {
+            // IdleState: RL control at once on 0xf003 (aligning the body posture), a stand 2 s after start-up
             State::Passive | State::StartDamping => {
                 let ready = self.time >= st.passive.min_s_before_stand && self.fault.is_none();
-                if ready && matches!(target, Target::Stand | Target::RlControl) {
+                if self.fault.is_none() && target == Target::RlControl && gait == ALIGN_GAIT {
+                    State::RlControl
+                } else if ready && target == Target::Stand {
                     State::StandUp
                 } else {
                     self.state
                 }
             }
+            // StandUpState: after both phases, RL control or a lie-down; any other target keeps standing
             State::StandUp => match target {
                 Target::RlControl if t > 2.0 * st.stand_up.phase_s => State::RlControl,
-                Target::LieDown | Target::Passive if t > 2.0 * st.stand_up.phase_s => {
-                    State::LieDown
-                }
+                Target::LieDown if t > 2.0 * st.stand_up.phase_s => State::LieDown,
                 _ => State::StandUp,
             },
+            // RLControlState: only a lie-down leaves it (not during a stand-in)
             State::RlControl => match target {
-                Target::LieDown | Target::Passive if self.stand_in.is_none() => State::LieDown,
+                Target::LieDown if self.stand_in.is_none() => State::LieDown,
                 _ => State::RlControl,
             },
+            // LieDownState: a stand after both phases
             State::LieDown => match target {
-                Target::Stand | Target::RlControl if t > 2.0 * st.lie_down.phase_s => {
-                    State::StandUp
-                }
+                Target::Stand if t > 2.0 * st.lie_down.phase_s => State::StandUp,
                 _ => State::LieDown,
             },
             State::JointDamping => {
@@ -677,8 +699,10 @@ impl Controller {
         }
         self.last_stamp = Some(s.stamp);
         self.stamp = s.stamp;
+        self.last_accel = s.accel;
+        self.last_q = s.q;
         let target = self.effective_target(cmd);
-        let next = self.next_state(target);
+        let next = self.next_state(target, cmd.gait);
         if next != self.state {
             self.enter(next, s, cmd);
         }
@@ -909,6 +933,67 @@ impl Controller {
         }
     }
 
+    /// RLControlState::Run on basic_flat (0x179d30..): a hot standstill rests on the 0xf001 stand-in once per stop.
+    fn overheat_rest(&mut self, s: &RobotState, cmd: &UserCommand) {
+        let o = self.cfg.states.rl_control.overheat.clone();
+        let Some(d) = s.drivers.as_ref() else {
+            return;
+        };
+        let resting = self.rest == 1 && self.stand_in.is_some();
+        if self.rest == 1 && self.stand_in.is_none() {
+            self.rest = 3;
+        }
+        if self.gait != GAIT_BASIC_FLAT && !resting {
+            return;
+        }
+        let runner = self.runner.clone().unwrap_or_default();
+        let speed: f64 = self.axes_for(&runner, cmd).iter().map(|a| a.abs()).sum();
+        let motor = d
+            .motor_temperature_c
+            .iter()
+            .fold(f32::MIN, |m, t| m.max(*t)) as f64;
+        let driver = d
+            .driver_temperature_c
+            .iter()
+            .fold(f32::MIN, |m, t| m.max(*t)) as f64;
+        if speed >= self.cfg.states.rl_control.switch_below_speed {
+            self.rest = 0;
+            self.rest_ticks = 0;
+            self.rest_hot = false;
+        } else if resting
+            && !self.rest_hot
+            && (motor >= o.abort_motor_c || driver >= o.abort_driver_c)
+        {
+            self.rest = 0;
+            self.rest_ticks = 0;
+            self.rest_hot = true;
+            self.stand_in = None;
+            self.gait = 0xf001;
+            self.target_gait = 0xf001;
+            return;
+        }
+        let body = self
+            .targets
+            .as_ref()
+            .and_then(|t| t.velocity_estimate)
+            .map_or(0.0, |v| v[0].abs());
+        if speed < self.cfg.states.rl_control.switch_below_speed
+            && body < o.still_body_speed
+            && self.rest == 0
+        {
+            self.rest_ticks += 1;
+            if self.rest_ticks >= o.still_ticks && (motor > o.rest_c || driver > o.rest_c) {
+                self.rest = 1;
+                self.rest_ticks = 0;
+                self.start_stand_in(GAIT_BASIC_FLAT, true);
+            }
+            // its counter wraps back to half past 9999
+            if self.rest_ticks > 10 * o.still_ticks - 1 {
+                self.rest_ticks = 5 * o.still_ticks;
+            }
+        }
+    }
+
     fn rl_control(
         &mut self,
         s: &RobotState,
@@ -917,6 +1002,7 @@ impl Controller {
     ) -> JointCommand {
         let write = (cmd.gait, cmd.gait_seq) != self.seen_gait;
         self.seen_gait = (cmd.gait, cmd.gait_seq);
+        self.overheat_rest(s, cmd);
         let (wanted, params) = match &mut self.stand_in {
             Some(si) => {
                 // runs as gait 0xf001, written over the gait slot: a gait sent meanwhile is lost (update_policy_ptr)
@@ -1186,6 +1272,104 @@ mod tests {
         cmd.axes = [0.005, 0.0, -0.004];
         run(&mut c, &mut s, &cmd, 1, &mut p);
         assert_eq!(c.gait(), 0x3002);
+    }
+
+    #[test]
+    fn a_hot_standstill_on_basic_flat_rests_once_until_moving() {
+        let cfg = config();
+        let mut s = standing_state(&cfg);
+        let mut d = crate::types::Drivers {
+            status_word: [1; JOINTS],
+            motor_temperature_c: [40.0; JOINTS],
+            driver_temperature_c: [40.0; JOINTS],
+        };
+        s.drivers = Some(d);
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let mut p = HoldPolicy(None);
+        let still = UserCommand {
+            target: Target::RlControl,
+            gait: GAIT_BASIC_FLAT,
+            ..Default::default()
+        };
+        c.force(State::RlControl, &s, &still, false);
+        c.stand_ins_run.insert(GAIT_BASIC_FLAT);
+        run(&mut c, &mut s, &still, 2000, &mut p);
+        assert!(!c.in_stand_in(), "cool: no rest");
+        d.motor_temperature_c[5] = 75.0;
+        s.drivers = Some(d);
+        // the still count already passed 1000 while cool: the first hot tick rests
+        run(&mut c, &mut s, &still, 1, &mut p);
+        assert!(c.in_stand_in());
+        // 1.5 s + 0.5 s, then basic_flat, and no second rest while still
+        run(&mut c, &mut s, &still, 2100, &mut p);
+        assert!(!c.in_stand_in());
+        assert_eq!(c.current_runner(), Some("basic_flat"));
+        run(&mut c, &mut s, &still, 3000, &mut p);
+        assert!(!c.in_stand_in(), "rested once per stop");
+        // moving re-arms it
+        let mut walk = still.clone();
+        walk.axes = [0.3, 0.0, 0.0];
+        run(&mut c, &mut s, &walk, 10, &mut p);
+        run(&mut c, &mut s, &still, 1001, &mut p);
+        assert!(c.in_stand_in());
+        // a motor at 100 during the rest ends it on 0xf001
+        d.motor_temperature_c[5] = 100.0;
+        s.drivers = Some(d);
+        run(&mut c, &mut s, &still, 1, &mut p);
+        assert!(!c.in_stand_in());
+        assert_eq!(c.gait(), 0xf001);
+    }
+
+    /// rl_deploy's GetNextStateName (fsm.c): which targets each state takes.
+    #[test]
+    fn transitions_are_rl_deploy_s() {
+        let cfg = config();
+        let mut s = standing_state(&cfg);
+        let mut p = HoldPolicy(None);
+        let cmd = |target, gait| UserCommand {
+            target,
+            gait,
+            ..Default::default()
+        };
+        // Idle: RL control does not stand the robot; with 0xf003 it enters RL control at once
+        let mut c = Controller::new(cfg.clone());
+        c.set_time(10.0);
+        run(&mut c, &mut s, &cmd(Target::RlControl, 0x1001), 10, &mut p);
+        assert_eq!(c.state, State::Passive);
+        run(
+            &mut c,
+            &mut s,
+            &cmd(Target::RlControl, ALIGN_GAIT),
+            1,
+            &mut p,
+        );
+        assert_eq!(c.state, State::RlControl);
+        // RL control: a passive target changes nothing, a lie-down lies down
+        run(
+            &mut c,
+            &mut s,
+            &cmd(Target::Passive, ALIGN_GAIT),
+            100,
+            &mut p,
+        );
+        assert_eq!(c.state, State::RlControl);
+        run(&mut c, &mut s, &cmd(Target::LieDown, ALIGN_GAIT), 1, &mut p);
+        assert_eq!(c.state, State::LieDown);
+        // lying: only a stand stands it up (after 4 s)
+        run(
+            &mut c,
+            &mut s,
+            &cmd(Target::RlControl, 0x1001),
+            5000,
+            &mut p,
+        );
+        assert_eq!(c.state, State::LieDown);
+        run(&mut c, &mut s, &cmd(Target::Stand, 0x1001), 1, &mut p);
+        assert_eq!(c.state, State::StandUp);
+        // standing up: passive keeps standing
+        run(&mut c, &mut s, &cmd(Target::Passive, 0x1001), 4000, &mut p);
+        assert_eq!(c.state, State::StandUp);
     }
 
     #[test]

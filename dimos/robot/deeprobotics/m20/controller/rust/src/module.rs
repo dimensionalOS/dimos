@@ -451,6 +451,11 @@ impl M20Controller {
     }
 
     async fn on_motion_cmd(&mut self, msg: std_msgs::String) {
+        if msg.data.trim() == "align_body_posture" {
+            info!("align body posture command");
+            self.shared.usage.align.store(true, Ordering::Relaxed);
+            return;
+        }
         match parse_target(&msg.data) {
             Some(target) => {
                 info!(motion = %msg.data, "motion command");
@@ -735,8 +740,13 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             dock_status.send_replace(Some(std_msgs::String { data }));
         }),
     );
-    let mut commands =
-        crate::basic_server::BasicServer::new(docking_commands, shared.usage.clone());
+    let (robot, wheel) = (cfg.robot.clone(), cfg.dock.obstacle.wheel_radius_m);
+    let mut commands = crate::basic_server::BasicServer::new(
+        docking_commands,
+        shared.usage.clone(),
+        cfg.basic_server.clone(),
+    )
+    .with_height(Box::new(move |q| obstacle::body_height(&robot, q, wheel)));
     let usage = shared.usage.clone();
     let imu_seen = shared.clone();
     let mut controller = Controller::new(cfg.clone());
