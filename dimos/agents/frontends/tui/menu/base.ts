@@ -1,5 +1,3 @@
-import type { Ref } from "@earendil-works/chord";
-import { InventoryContract } from "#dimos/agents/shared/protocol/inventory/contract.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
@@ -9,17 +7,18 @@ import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
 export type MenuDetail = {
   readonly title: string;
   lines(): readonly string[];
-  close(): Promise<void>;
 };
 
-/** One key a row answers to, besides Enter. */
-export type MenuKey = { readonly key: string; readonly label: string; run(): Promise<void> };
+/** An action offered when a row is selected. */
+export type MenuAction = { readonly label: string; run(): Promise<void> };
 
-/** One row of a /menu tab: its text, its level, its keys, and what Enter does. */
+/** One row of a /menu tab: its text, its level, its actions, and what Enter does. */
 export type MenuRow = {
   readonly text: string;
+  /** Searchable metadata omitted from the display label. */
+  readonly searchText?: string;
   readonly level: Level;
-  readonly keys: readonly MenuKey[];
+  readonly actions: readonly MenuAction[];
   /** Enter: a detail pane, or an action that leaves /menu (null after it ran); none when the row has nothing more. */
   readonly open: (() => MenuDetail | null) | null;
 };
@@ -28,8 +27,6 @@ export type MenuRow = {
 export type TabContext = {
   readonly ui: Ui;
   readonly now: EpochMs;
-  /** The inventory object held by the terminal. */
-  readonly inventory: Ref<typeof InventoryContract> | null;
   /** The conversation the chat shows, to mark it. */
   readonly current: ConversationId | null;
   /** Shows a conversation in the chat and closes /menu. */

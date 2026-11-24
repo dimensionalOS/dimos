@@ -19,7 +19,10 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.manipulation_localize import ManipulationLocalize
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.localize.rig import Rig
 
 
 @pytest.fixture
@@ -48,6 +51,7 @@ def _ready(module, mocker, views):
     module.index.time_range.return_value = [SimpleNamespace(ts=float(i)) for i in range(len(views))]
     module.rig = mocker.Mock(cameras={"camera_color_optical_frame": None}, world_frame="world")
     module.rig.backdrop.side_effect = lambda ts, frame, trunc: views[int(ts)]
+    module.rig.lidar = None
 
 
 def _hit(instance_id, points, position=(0.0, 0.0, 0.0)):
@@ -187,3 +191,44 @@ def test_a_forgotten_object_does_not_come_back_from_its_old_sightings(localizer,
     found = localizer.scan(["cup"], window_s=30.0)
 
     assert [o["id"] for o in found] == ["cup-3", "cup-4", "cup-5"]
+
+
+def test_find_surface_reports_the_table_in_the_base_frame(localizer, mocker):
+    rng = np.random.default_rng(0)
+    x, y = np.meshgrid(np.arange(0.1, 0.9, 0.01), np.arange(-0.25, 0.25, 0.01))
+    table = np.stack([x.ravel(), y.ravel(), np.zeros(x.size)], axis=1)
+    table += rng.normal(0.0, 0.002, table.shape)
+    _ready(localizer, mocker, [None] * 5)
+    localizer.rig.backdrop.side_effect = None
+    localizer.rig.backdrop.return_value = PointCloud2.from_numpy(
+        table.astype(np.float32), frame_id="world", timestamp=1.0
+    )
+    # The base stands 0.3 m above the world origin: world to base lowers every point.
+    localizer.rig.tf.get.return_value = Transform(
+        translation=Vector3(0.0, 0.0, -0.3), frame_id="link_base", child_frame_id="world"
+    )
+
+    answer = localizer.find_surface(frame="link_base")
+
+    localizer.rig.tf.get.assert_called_once_with("link_base", "world", 10.0, mocker.ANY)
+    assert answer.startswith("surface 1: height -0.30")
+    assert "under the origin of link_base" in answer
+    assert "long side at 0 deg, level" in answer
+    (surface,) = localizer.surfaces()
+    assert surface["height"] == pytest.approx(0.0, abs=0.004)
+    assert surface["size"] == pytest.approx([0.8, 0.5], abs=0.03)
+
+
+def test_surfaces_on_lidar_read_only_the_window_scans(localizer, mocker):
+    _ready(localizer, mocker, [None] * 3)
+    lidar = mocker.Mock()
+    localizer.rig = Rig(cameras={"camera": mocker.Mock()}, tf=mocker.Mock(), lidar=lidar)
+    window_points = mocker.patch(
+        "dimos.manipulation.manipulation_localize.window_points", return_value=None
+    )
+
+    localizer.surfaces(start=-4.0, duration=3.0)
+
+    lidar.time_range.assert_called_once_with(6.0, 9.0)
+    rig = window_points.call_args.args[0]
+    assert rig.lidar is lidar.time_range.return_value

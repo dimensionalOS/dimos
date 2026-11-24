@@ -1524,8 +1524,11 @@ class ManipulationModule(Module):
         with self._command_lock:
             with self._lock:
                 self._started = False
+                executing = self._state is OperationStatus.EXECUTING
             execution_manager = getattr(self, "_execution_manager", None)
-            if execution_manager is not None:
+            # The coordinator may already have closed its RPC service. Only
+            # contact it when this module still owns active or uncertain motion.
+            if execution_manager is not None and executing:
                 cancellation = self.cancel()
                 if cancellation.status in {
                     ExecutionStatus.UNCERTAIN,
@@ -1537,10 +1540,12 @@ class ManipulationModule(Module):
                         "Shutdown could not confirm coordinator trajectory safety: %s",
                         cancellation.message,
                     )
-                execution_manager.close()
             else:
                 epoch, _ = self._invalidate()
+                self._dismiss_preview()
                 self._finish(epoch, self.get_error(), expected=None)
+            if execution_manager is not None:
+                execution_manager.close()
 
         # Stop TF thread
         if self._tf_thread is not None:

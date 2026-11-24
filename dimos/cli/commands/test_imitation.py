@@ -31,7 +31,7 @@ from dimos.utils.data import get_project_root
 
 OPENYAM_TEACH_COLLECTION = next(
     atom.kwargs["recording_schema"]
-    for atom in openyam_teach_collection.active_blueprints
+    for atom in openyam_teach_collection.solidify().active_blueprints
     if atom.name == "recorder"
 )
 
@@ -100,14 +100,14 @@ def test_prepare_uses_saved_schema_not_robot_lookup(recording, tmp_path, mocker)
     assert config.output.path == output
 
 
-def test_prepare_reports_failure_without_install_log_or_traceback(recording, tmp_path, mocker):
+def test_prepare_failure_summary_omits_install_log_and_traceback(recording, tmp_path, mocker):
     output = tmp_path / "dataset"
     reason = (
         f"No successful episodes extracted from '{recording / 'recording.mcap'}' "
         "using extractor='episode_status'. Available streams: ['status']."
     )
     mocker.patch(
-        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter._run_with_progress",
         return_value=subprocess.CompletedProcess(
             [],
             1,
@@ -127,25 +127,37 @@ def test_prepare_reports_failure_without_install_log_or_traceback(recording, tmp
     failure_lines = [line for line in result.stderr.splitlines() if "Preparation failed:" in line]
     assert len(failure_lines) == 1
     assert reason in failure_lines[0]
-    assert "Downloading" not in result.output
-    assert "Traceback" not in result.output
+    assert "Downloading" not in failure_lines[0]
+    assert "Traceback" not in failure_lines[0]
     assert "Wrote dataset" not in result.output
     assert not output.exists()
 
 
-def test_prepare_announces_environment_before_launch(recording, tmp_path, mocker):
+@pytest.mark.parametrize("cached", [False, True])
+def test_prepare_announces_environment_only_when_missing(recording, tmp_path, mocker, cached):
     output = tmp_path / "dataset"
+
+    environment = tmp_path / "environment"
+    environment.mkdir()
+    if cached:
+        (environment / "pyvenv.cfg").touch()
+    mocker.patch(
+        "dimos.imitation.dataprep.formats.lerobot.adapter.isolated_python_environment",
+        return_value={"UV_PROJECT_ENVIRONMENT": str(environment)},
+    )
 
     def run(*args, **kwargs):
         progress = sys.stderr.buffer.getvalue().decode()
-        assert "Preparing LeRobot environment" in progress
-        assert "several GB" in progress
-        assert "minutes" in progress
+        assert "Preparing LeRobot dataset" in progress
+        assert ("Creating LeRobot environment" in progress) is (not cached)
+        assert ("several GB" in progress) is (not cached)
         return subprocess.CompletedProcess(
             [], 0, stdout=json.dumps({"command": "build", "path": str(output)}), stderr=""
         )
 
-    mocker.patch("dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run", side_effect=run)
+    mocker.patch(
+        "dimos.imitation.dataprep.formats.lerobot.adapter._run_with_progress", side_effect=run
+    )
 
     result = CliRunner().invoke(imitation_app, ["prepare", str(recording), "--output", str(output)])
 
@@ -247,7 +259,7 @@ def test_inspect_dataset_json_keeps_environment_progress_on_stderr(tmp_path, moc
     (tmp_path / "meta").mkdir()
     (tmp_path / "meta" / "info.json").write_text("{}")
     mocker.patch(
-        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter._run_with_progress",
         return_value=subprocess.CompletedProcess(
             [], 0, stdout='{"command":"inspect","info":{"format":"lerobot"}}', stderr=""
         ),
@@ -257,14 +269,15 @@ def test_inspect_dataset_json_keeps_environment_progress_on_stderr(tmp_path, moc
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"format": "lerobot"}
-    assert "Preparing LeRobot environment" in result.stderr
+    assert "Inspecting LeRobot dataset" in result.stderr
+    assert "Preparing LeRobot" not in result.stderr
 
 
 def test_inspect_dataset_reports_error_separately_from_install_log(tmp_path, mocker):
     (tmp_path / "meta").mkdir()
     (tmp_path / "meta" / "info.json").write_text("{}")
     mocker.patch(
-        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter._run_with_progress",
         return_value=subprocess.CompletedProcess(
             [],
             1,

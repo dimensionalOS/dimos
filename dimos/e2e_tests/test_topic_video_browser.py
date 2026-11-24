@@ -17,8 +17,8 @@
 A local relay without Cloudflare, the standalone topic provider with video
 enabled as a subprocess, a synthetic 320x240 camera on a loopback Zenoh
 session, and a page that plays the camera through `session.topics.video`.
-Chromium and Firefox must each see `requestVideoFrameCallback` fire at least
-25 times in two seconds with `mode()` reporting `rtc`.
+Chromium and Firefox must each keep presenting frames with `mode()` reporting
+`rtc`, including when the source publishes below the requested maximum rate.
 
 Playwright's Firefox ships without the OpenH264 plugin; the prefs below let it
 decode H.264 through its platform decoder, and the test skips when that is
@@ -49,7 +49,7 @@ from dimos.web.relay_bridge.topic_test_support import camera_frame
 
 pytest.importorskip("playwright")
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 pytestmark = pytest.mark.web_browser
 
@@ -118,17 +118,22 @@ class Stack:
     frames_published: list[int]
 
 
-@pytest.fixture(scope="module")
-def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
+@pytest.fixture
+def publisher_hz() -> int:
+    return 30
+
+
+@pytest.fixture
+def stack(tmp_path_factory: pytest.TempPathFactory, publisher_hz: int) -> Iterator[Stack]:
     root = tmp_path_factory.mktemp("topic-video")
     (root / "index.html").write_text(PAGE % {"key": CAMERA_KEY})
     # Each resource registers its cleanup as it comes up, so a failure in the
     # middle of the setup still tears down what was started before it.
     with ExitStack() as cleanup:
-        yield from _stack(root, cleanup)
+        yield from _stack(root, cleanup, publisher_hz)
 
 
-def _stack(root: Path, cleanup: ExitStack) -> Iterator[Stack]:
+def _stack(root: Path, cleanup: ExitStack, publisher_hz: int) -> Iterator[Stack]:
     relay = RelayProcess(serve_dir=root)
     info = relay.start()
     cleanup.callback(relay.stop)
@@ -185,7 +190,7 @@ def _stack(root: Path, cleanup: ExitStack) -> Iterator[Stack]:
         while not stop.is_set():
             publisher.put(CAMERA_KEY, camera_frame(seq))
             published[0] = seq = seq + 1
-            stop.wait(1 / 30)
+            stop.wait(1 / publisher_hz)
 
     def stop_publishing() -> None:
         stop.set()
@@ -219,6 +224,7 @@ def page(request: pytest.FixtureRequest, playwright_browsers: None) -> Iterator[
             browser.close()
 
 
+@pytest.mark.parametrize("publisher_hz", [30, 10])
 def test_camera_plays_as_a_direct_track(stack: Stack, page: Page) -> None:
     console: list[str] = []
     page.on("console", lambda message: console.append(message.text))
@@ -233,12 +239,18 @@ def test_camera_plays_as_a_direct_track(stack: Stack, page: Page) -> None:
         assert time.monotonic() < deadline, f"no track; statuses {statuses}; console {console}"
         assert not any(s.startswith("rejected") for s in statuses), statuses
         time.sleep(0.2)
-    # Let the first frames land, then count two seconds of presented frames.
-    time.sleep(1)
+    # maxHz is a ceiling, not a promised presentation rate. Frame generation
+    # and browser rendering can be slower on CI, especially on macOS.
+    page.wait_for_function("() => window.frames_seen > 0", timeout=START_TIMEOUT_S * 1000)
     before = page.evaluate("() => window.frames_seen")
-    time.sleep(2)
-    after = page.evaluate("() => window.frames_seen")
-    assert after - before >= 25, (before, after, page.evaluate("() => window.statuses"))
+    try:
+        page.wait_for_function("n => window.frames_seen >= n + 25", arg=before, timeout=10_000)
+    except PlaywrightTimeoutError:
+        pytest.fail(
+            f"video did not present 25 more frames: before={before}, "
+            f"after={page.evaluate('() => window.frames_seen')}, "
+            f"statuses={page.evaluate('() => window.statuses')}, console={console}"
+        )
     assert page.evaluate("() => window.mode()") == "rtc"
     stats = page.evaluate("() => window.stats()")
     inbound = stats["inbound"]

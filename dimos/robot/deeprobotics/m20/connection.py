@@ -30,7 +30,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -38,6 +37,7 @@ from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.navigation.spec import cancel_goal
 from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_CHARGING,
     CHARGE_COMMAND_START,
@@ -90,6 +90,7 @@ _CHARGE_POLL_S = 0.25
 # Reports arrive at 2 Hz, so a status read this soon after a command can predate it.
 _CHARGE_COMMAND_GRACE_S = 1.0
 _BUSY_GOAL_CANCEL_PERIOD_S = 1.0
+_LIGHT_CONFIRM_S = 2.0
 
 ChargeTask = Literal["dock", "undock"]
 
@@ -123,7 +124,7 @@ class M20ConnectionConfig(ModuleConfig):
     auto_stand: bool = False
     dock_settle_s: float = Field(default=1.0, ge=0.0)
     dock_start_timeout_s: float = Field(default=5.0, gt=0.0)
-    dock_timeout_s: float = Field(default=150.0, gt=0.0)
+    dock_timeout_s: float = Field(default=60.0, gt=0.0)
     undock_timeout_s: float = Field(default=45.0, gt=0.0)
 
 
@@ -205,7 +206,7 @@ class M20Connection(Module):
     motion_state_cmd: Out[Int32]
     gait_cmd: Out[UInt32]
     odom: Out[PoseStamped]
-    goal: Out[PointStamped]
+    goal: Out[PoseStamped]
     battery: Out[BatteryState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -461,6 +462,29 @@ class M20Connection(Module):
             parts.append(f"error {_charge_error_text(error)}")
         return ", ".join(parts)
 
+    @rpc
+    def set_lights(self, front: bool, back: bool) -> bool:
+        """Switch the front and back flashlights. Returns True once the robot reports the new state."""
+        requested_at = time.monotonic()
+        if not self._basic_server.set_lights(front, back):
+            return False
+
+        def switched() -> bool:
+            report = self._basic_server.lights
+            return (
+                report is not None
+                and report.received_at > requested_at
+                and (report.front, report.back) == (front, back)
+            )
+
+        try:
+            confirmed = self._wait_unless_stopping(switched, _LIGHT_CONFIRM_S)
+        except _StoppingError:
+            return False
+        if not confirmed:
+            logger.error("M20 did not report the flashlights switched")
+        return confirmed
+
     @staticmethod
     def _finish(job: _ChargeJob) -> None:
         job.done.wait()
@@ -688,7 +712,7 @@ class M20Connection(Module):
             return self._fresh_charge_status() is not None
 
     def _cancel_nav_goal(self) -> None:
-        self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
+        self.goal.publish(cancel_goal(frame_id=WORLD_FRAME))
 
     def _on_basic_server_report(self) -> None:
         with self._state_condition:

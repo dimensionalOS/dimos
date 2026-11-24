@@ -178,7 +178,10 @@ class MyModule(Module):
 
 ### Blueprints
 
-Compose modules with `autoconnect()`. Streams auto-connect by `(name, type)` matching.
+Compose modules with `autoconnect()`, which returns a `MetaBlueprint`. Call
+`.solidify()` to resolve any `ChoiceAtom`s into a concrete `Blueprint`, or
+`.build(choices=...)` to resolve and build directly. Streams auto-connect by
+`(name, type)` matching. The CLI resolves choices using repeatable `--choice NAME=OPTION` flags.
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
@@ -299,9 +302,7 @@ my_skill_container = MySkillContainer.blueprint()
 | Robot | File | Variable |
 |-------|------|----------|
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
-| G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `Agent.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
 
 ### RPC Wiring
 

@@ -19,8 +19,11 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
+from contextlib import closing
 import json
+import math
 from pathlib import Path
+import sqlite3
 import threading
 import time
 from unittest.mock import MagicMock
@@ -34,14 +37,18 @@ from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
@@ -61,6 +68,7 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
         "192.168.123.161",
         aes_128_key="cafe" * 8,
         velocity_api=False,
+        timed_move_resend_period_s=cfg.timed_move_resend_period_s,
     )
 
 
@@ -79,7 +87,12 @@ def test_config_rejects_missing_and_blank_hardware_ips(ip: str | None) -> None:
 
 @pytest.mark.parametrize(
     "defaults",
-    [{"replay": True}, {"simulation": "mujoco"}, {"simulation": "dimsim"}, {"simulation": "true"}],
+    [
+        {"replay": True},
+        {"simulation": "mujoco"},
+        {"simulation": "dimsim", "transport": "lcm"},
+        {"simulation": "true"},
+    ],
 )
 def test_blueprint_offline_defaults_allow_no_ip(defaults, monkeypatch) -> None:
     monkeypatch.setattr(global_config, "robot_ip", None)
@@ -98,8 +111,11 @@ def test_blueprint_offline_defaults_allow_no_ip(defaults, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("ip", ["replay", "mock", "fake", "mujoco"])
-def test_config_preserves_offline_ip_aliases(ip: str) -> None:
-    cfg = ConnectionConfig(ip=ip, g=GlobalConfig(replay=False, simulation=""))
+@pytest.mark.parametrize("simulation", ["", "dimsim"])
+def test_config_preserves_offline_ip_aliases(ip: str, simulation: str) -> None:
+    cfg = ConnectionConfig(
+        ip=ip, g=GlobalConfig(replay=False, simulation=simulation, transport="zenoh")
+    )
     assert cfg.ip == ip
 
 
@@ -169,6 +185,34 @@ def test_python_build_rejects_missing_ip_before_starting_resources(monkeypatch, 
     start.assert_not_called()
 
 
+@pytest.mark.parametrize("headless", [True, False])
+def test_dimsim_rejects_zenoh_before_starting_resources(headless, monkeypatch, mocker) -> None:
+    for field, value in {"simulation": "dimsim", "replay": False, "transport": "zenoh"}.items():
+        monkeypatch.setattr(global_config, field, value)
+    materialize = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+    start = mocker.patch.object(ModuleCoordinator, "start")
+
+    with pytest.raises(
+        BlueprintConfigError, match="DimSim publishes over LCM only.*--transport lcm"
+    ):
+        ModuleCoordinator.build(GO2Connection.blueprint(dimsim={"headless": headless}))
+
+    materialize.assert_not_called()
+    start.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"transport": "lcm"}, {"transport": "zenoh", "replay": True}],
+)
+def test_dimsim_allows_lcm_or_replay(overrides) -> None:
+    parsed = BlueprintConfigParser(GO2Connection.blueprint()).parse(
+        environ={}, global_overrides={"simulation": "dimsim", **overrides}
+    )
+
+    assert parsed.global_config_values()["transport"] == overrides["transport"]
+
+
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
     path = tmp_path / "robot.json"
     path.write_text(
@@ -214,6 +258,19 @@ def test_make_connection_replay_forwards_exit_on_complete() -> None:
     conn = go2_conn.make_connection("replay", ConnectionConfig(g=GlobalConfig(replay=True)))
     assert isinstance(conn, go2_conn.ReplayConnection)
     assert conn._exit_on_complete is False
+
+
+def test_replay_shutdown_identifies_its_deployed_module(mocker: MockerFixture) -> None:
+    rpc_name = "runs/primary/modules/GO2Connection"
+    replay = go2_conn.make_connection(
+        "replay", ConnectionConfig(g=GlobalConfig(replay=True), replay_exit=True, rpc_name=rpc_name)
+    )
+    assert isinstance(replay, go2_conn.ReplayConnection)
+    coordinator = mocker.patch.object(CoordinatorRPC, "connect").return_value
+
+    replay._request_shutdown()
+
+    coordinator.call.assert_called_once_with("shutdown", requesting_module=rpc_name)
 
 
 def test_replay_exit_fires_after_the_last_stream_completes(
@@ -275,10 +332,19 @@ def test_replay_exit_fires_at_the_seal_when_already_complete(
     assert fired.wait(2)
 
 
-def test_replay_exit_off_leaves_streams_untouched() -> None:
-    source: Subject[int] = Subject()
-    conn = go2_conn.ReplayConnection()
-    assert conn._tracked(source) is source
+def test_replay_logs_completion_without_requesting_shutdown(mocker) -> None:
+    conn = go2_conn.ReplayConnection(dataset="test-recording.db")
+    shutdown = mocker.patch.object(conn, "_request_shutdown")
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    with Subject() as first, Subject() as second:
+        with conn._tracked(first).subscribe(), conn._tracked(second).subscribe():
+            conn.seal_subscriptions()
+            first.on_completed()
+            log.info.assert_not_called()
+            second.on_completed()
+            conn.seal_subscriptions()
+            log.info.assert_called_once_with("Replay finished", source="test-recording.db")
+    shutdown.assert_not_called()
 
 
 def test_odom_to_tf_unprefixed_by_default() -> None:
@@ -328,6 +394,72 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 1
     assert conn.odom.publish.call_count == 1
+
+
+def test_body_command_and_pose_derived_feedback(connection):
+    conn = connection(publish_tf=False)
+    conn.joint_state = MagicMock()
+    conn.odometry = MagicMock()
+    values = {
+        f"{name}/velocity": v
+        for name, v in zip(go2_conn.GO2_BASE_JOINTS, (0.4, 0.1, 0.2), strict=True)
+    }
+    conn.write(values)  # No pose prerequisite.
+    q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    conn._publish_tf(PoseStamped(ts=10.0, position=[2.0, 3.0, 0.0], orientation=q))
+    conn.joint_state.publish.assert_not_called()  # No invented first rate.
+    conn.odometry.publish.assert_not_called()
+    conn._publish_tf(PoseStamped(ts=10.1, position=[1.99, 3.04, 0.0], orientation=q))
+    state = conn.joint_state.publish.call_args.args[0]
+    odom = conn.odometry.publish.call_args.args[0]
+    assert state.name == list(go2_conn.GO2_BASE_JOINTS)
+    assert list(state.position) == []
+    assert state.frame_id == odom.child_frame_id == "base_link"
+    assert state.ts == odom.ts == 10.1
+    assert state.velocity == pytest.approx([0.4, 0.1, 0.0])
+    assert [odom.twist.linear.x, odom.twist.linear.y] == pytest.approx([0.4, 0.1])
+    assert odom.pose.position.y == 3.04
+    conn.write(values)  # Measured nonzero yaw cannot change body commands.
+    twist = conn.connection.move.call_args.args[0]
+    assert [twist.linear.x, twist.linear.y, twist.angular.z] == pytest.approx([0.4, 0.1, 0.2])
+    conn._publish_tf(PoseStamped(ts=10.1, orientation=q))  # duplicate time: no rate
+    conn._publish_tf(PoseStamped(ts=12.0, orientation=q))  # missing interval
+    assert conn.joint_state.publish.call_count == 1
+    half_yaw = math.pi / 4 + 0.01
+    turning = Quaternion(0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+    conn._publish_tf(PoseStamped(ts=12.1, orientation=turning))
+    assert conn.joint_state.publish.call_args.args[0].velocity[2] == pytest.approx(0.2)
+    assert conn.odometry.publish.call_args.args[0].twist.angular.z == pytest.approx(0.2)
+    conn.halt()
+    conn.connection.stop_movement.assert_called_once()
+
+
+def test_canonical_lifecycle_deadman_and_post_stop_no_replay(monkeypatch):
+    from dimos.control.test_coordinator_connections import LocalTransport
+
+    backend = MagicMock()
+    backend.odom_stream.return_value = Subject()
+    backend.lowstate_stream.return_value = Subject()
+    backend.move.return_value = True
+    monkeypatch.setattr(go2_conn, "make_connection", lambda *args, **kwargs: backend)
+    conn = GO2Connection(ip="replay", camera=False, lidar=False, deadman_timeout_s=0.03)
+    commands = LocalTransport()
+    conn.set_transport("velocity_command", commands)
+    conn.set_transport("cmd_vel", LocalTransport())
+    try:
+        conn.start()
+        backend.odom_stream.return_value.on_next(PoseStamped())
+        command = JointState(name=list(go2_conn.GO2_BASE_JOINTS), velocity=[0.2, 0.0, 0.0])
+        commands.publish(command)
+        assert backend.move.call_count == 1
+        wait_until(lambda: conn.status().deadman_fired, timeout=2.0)
+        assert backend.stop_movement.call_count == 1
+        conn.stop()
+        commands.publish(command)
+        assert backend.move.call_count == 1
+        assert not conn.status().connected
+    finally:
+        conn.stop()
 
 
 def test_stop_disposes_stream_readers_before_closing_connection(connection, mocker) -> None:
@@ -391,7 +523,7 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
 
 
 def test_odom_to_tf_prefixed() -> None:
-    """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
+    """A namespaced instance name gives frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
     odom = PoseStamped(ts=1.0, frame_id="world")
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
@@ -407,7 +539,10 @@ def test_odom_to_tf_prefixed() -> None:
 
 
 @pytest.mark.parametrize("dataset_kind", ["sqlite", "named-sqlite", "mcap"])
-def test_replay_opens_recording_and_emits_typed_odometry(tmp_path, monkeypatch, dataset_kind):
+def test_replay_opens_recording_and_emits_typed_odometry(
+    tmp_path, monkeypatch, mocker, dataset_kind
+):
+    log = mocker.patch("dimos.memory.replay_progress.logger")
     values = [
         PoseStamped(ts=12.5, frame_id="world"),
         PoseStamped(ts=13.5, frame_id="world"),
@@ -457,10 +592,17 @@ def test_replay_opens_recording_and_emits_typed_odometry(tmp_path, monkeypatch, 
             lambda: completed.append(True),
             scheduler=scheduler,
         ):
+            conn.seal_subscriptions()
             scheduler.advance_by(1.0)
         assert errors == []
         assert completed == [True]
         assert [value.lcm_encode() for value in received] == [values[1].lcm_encode()]
+    assert log.info.call_args_list == [
+        mocker.call(
+            "Replay started", source=dataset, path=str(path), duration_s=0.0, speed=1.0, loop=False
+        ),
+        mocker.call("Replay finished", source=dataset),
+    ]
 
 
 def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
@@ -478,3 +620,74 @@ def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
     with go2_conn.ReplayConnection(dataset=str(path)) as conn:
         with pytest.raises(TypeError, match="PoseStamped odometry.*'odom'.*Odometry"):
             conn.odom_stream()
+
+
+@pytest.mark.parametrize("payload_module", ["builtins.dict", "unavailable_sensor_package.Frame"])
+def test_replay_metadata_only_opens_selected_streams(tmp_path, mocker, payload_module):
+    path = tmp_path / "poses.db"
+    with SqliteStore(path=str(path)) as store:
+        for ts in (10.0, 11.0):
+            store.stream("odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+        for ts in (0.0, 1000.0):
+            store.stream("color_image", dict).append({"frame": 1}, ts=ts)
+    # An unused stream may require an optional package absent on the replay host.
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "UPDATE _streams SET config = json_set(config, '$.payload_module', ?) "
+            "WHERE name = 'color_image'",
+            (payload_module,),
+        )
+    scheduler = TestScheduler()
+    received = []
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    with go2_conn.ReplayConnection(dataset=str(path)) as conn:
+        with conn.odom_stream().subscribe(received.append, scheduler=scheduler):
+            conn.seal_subscriptions()
+            scheduler.advance_by(5)
+            conn.seal_subscriptions()
+    assert [message.ts for message in received] == [10.0, 11.0]
+    assert log.info.call_args_list == [
+        mocker.call(
+            "Replay started",
+            source=str(path),
+            path=str(path),
+            duration_s=1.0,
+            speed=1.0,
+            loop=False,
+        ),
+        mocker.call("Replay finished", source=str(path)),
+    ]
+
+
+@pytest.mark.parametrize("loop", [False, True])
+def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
+    path = tmp_path / "poses.db"
+    with SqliteStore(path=str(path)) as store:
+        odom = store.stream("odom", PoseStamped)
+        for ts in (1.0, 2.0):
+            odom.append(PoseStamped(ts=ts), ts=ts)
+    parsed = BlueprintConfigParser(GO2Connection.blueprint()).parse(
+        ["--replay", "true", "--replay-db", str(path), "--go2connection.replay-loop", str(loop)],
+        environ={},
+    )
+    cfg = ConnectionConfig(
+        g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
+    )
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
+    mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
+    module.set_transport("odom", mocker.Mock())
+    received = []
+    try:
+        with Disposable(module.odom.subscribe(lambda msg: received.append(msg.ts))):
+            module.start()
+            scheduler.advance_by(10)
+    finally:
+        module.stop()
+    assert received[:2] == [1.0, 2.0]
+    assert (len(received) > 2) is loop
+    finished = [call for call in log.info.call_args_list if call.args == ("Replay finished",)]
+    assert len(finished) == (0 if loop else 1)

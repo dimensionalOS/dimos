@@ -87,7 +87,7 @@ def test_stereo_audio_is_mixed_and_resampled_for_go2() -> None:
 
 
 def test_hosted_blueprint_accepts_speaker_override() -> None:
-    parser = BlueprintConfigParser(teleop_hosted_go2_transport)
+    parser = BlueprintConfigParser(teleop_hosted_go2_transport.solidify())
 
     parsed = parser.parse(
         environ={"ROBOT_IP": "192.0.2.1"},
