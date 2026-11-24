@@ -612,13 +612,9 @@ robots:
       manufacturer: UFactory
       dirs: [dimos/robot/manipulators/xarm]
       defaults:
-        recommended_config:
+        recommended_config: &xarm7_connection_config
         - *robot_or_simulator
-        - module: controlcoordinator
-          field: addresses.arm
-          label: xArm7 IP
-          placeholder: 192.168.1.185
-          required: false
+        - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
           when: {simulation: ''}
       blueprints:
         xarm-perception-sim:
@@ -630,10 +626,7 @@ robots:
           title: xArm pick and place
           description: Perception, grasping and pick-and-place on a real xArm with a RealSense.
           starter: 18
-          recommended_config: &xarm7_connection_config
-          - *robot_or_simulator
-          - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
-            when: {simulation: ''}
+          recommended_config: *xarm7_connection_config
         keyboard-teleop-xarm7:
           title: xArm7 keyboard driving
           description: Move an xArm7 with this computer's keyboard.
@@ -644,19 +637,14 @@ robots:
           recommended_config: &xarm6_config
           - *robot_or_simulator
           - &xarm6_ip
-            <<: &xarm6_ip_anywhere {module: controlcoordinator, field: addresses.arm, label: xArm6 IP, placeholder: 192.168.1.185, required: false}
+            <<: &xarm6_ip_anywhere {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
             when: {simulation: ''}
         keyboard-teleop-lite6:
           title: Lite6 keyboard driving
           description: Move a UFactory Lite6 with this computer's keyboard.
+          # The Lite 6 has no MuJoCo scene, so it always needs its address.
           recommended_config: &lite6_config
-          - *robot_or_simulator
-          - module: controlcoordinator
-            field: addresses.arm
-            label: Lite6 IP
-            placeholder: 192.168.1.185
-            required: false
-            when: {simulation: ''}
+          - {module: xarmconnection, field: ip, label: Lite6 IP, placeholder: 192.168.1.185, required: true}
         xarm7-teleop:
           title: xArm7 teleop
           description: Move a real xArm7's end and its gripper from the Desktop Manipulation app, through XArmConnection.
@@ -734,27 +722,27 @@ robots:
         coordinator-dual-xarm:
           title: Dual xArm coordinator
           description: Two xArms behind one ControlCoordinator (a building block).
-          recommended_config: [*robot_or_simulator]
+          recommended_config:
+          - {module: left_arm, field: ip, label: Left xArm7 IP, placeholder: 192.168.1.185, required: true}
+          - {module: right_arm, field: ip, label: Right xArm6 IP, placeholder: 192.168.1.186, required: true}
         coordinator-teleop-xarm6:
           title: xArm6 teleop coordinator
           description: The xArm6 teleop coordinator (a building block).
-          recommended_config: &teleop_xarm6_config
-          - *robot_or_simulator
-          - {<<: *xarm6_ip, module: teleopcontrolcoordinator}
+          recommended_config: *xarm6_config
         coordinator-teleop-xarm7:
           title: xArm7 teleop coordinator
           description: The xArm7 teleop coordinator (a building block).
         coordinator-velocity-xarm6:
           title: xArm6 velocity coordinator
           description: xArm6 with a velocity task (a building block).
-          recommended_config: *xarm6_config
+          recommended_config: [*xarm6_ip_anywhere]
         teleop-webxr-xarm7:
           title: xArm7 VR teleop
           description: Move an xArm7 with a VR headset's right controller (simulated with the simulator).
         teleop-webxr-xarm6:
           title: xArm6 VR teleop
           description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
-          recommended_config: *teleop_xarm6_config
+          recommended_config: *xarm6_config
         teleop-webxr-hand-xarm7:
           title: xArm7 VR hand teleop
           description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'
@@ -764,15 +752,15 @@ robots:
         teleop-hosted-xarm6:
           title: xArm6 remote teleop
           description: Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.
-          recommended_config: [{<<: *xarm6_ip_anywhere, module: teleopcontrolcoordinator}]
+          recommended_config: [*xarm6_ip_anywhere]
         teleop-hosted-xarm7:
           title: xArm7 remote teleop
           description: Move an xArm7 from anywhere through the hosted (Cloudflare) teleop broker.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+          recommended_config: [*xarm7_connection_ip]
         learning-collect-webxr-xarm7:
           title: xArm7 demonstration recording
           description: Teleoperate an xArm7 in VR and record episodes for imitation learning.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+          recommended_config: [*xarm7_connection_ip]
         xarm-feed:
           title: xArm camera feed (recording)
           description: A depth-camera recording published at wall-clock pace, as if live.
@@ -788,6 +776,7 @@ robots:
         xarm-sim:
           title: 'xArm7 in simulation (robot only)'
           description: 'A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo.'
+          recommended_config: []
     piper:
       name: AgileX Piper
       description: AgileX's 6-axis arm, over CAN.
@@ -1064,9 +1053,8 @@ robots:
           title: Piper + xArm6 coordinator
           description: A Piper and an xArm6 behind one coordinator.
           recommended_config: &piper_xarm6_config
-          - *robot_or_simulator
-          - {<<: *xarm6_ip, field: addresses.xarm_arm}
-          - {<<: *can_port, field: addresses.piper_arm}
+          - {<<: *xarm6_ip_anywhere, module: xarm_arm}
+          - {module: piper_arm, field: can_port, label: CAN port, placeholder: can0}
         coordinator-teleop-dual:
           title: Dual-arm teleop coordinator
           description: Teleop coordinator for a Piper and an xArm6 together (a building block).

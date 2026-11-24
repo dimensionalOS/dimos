@@ -108,7 +108,8 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 | `mcp_port` | `mcpserver.port`; an `Agent` in the same blueprint takes the endpoint from that server. `agent.mcp_server_url` is only for a server elsewhere |
 | `mcp_timeout` | `McpAdapter(timeout=...)` or `dimos mcp call --timeout ...`; the `Agent`'s own MCP calls use a fixed 120 s |
 | `robot_id`, `relay_ca`, `relay_key` | `relaybridgemodule` config, with the same field names |
-| `xarm7_ip`, `xarm6_ip`, `lite6_ip`, `can_port`, `device_path` | `controlcoordinator.addresses`, keyed by hardware id (see below) |
+| `xarm7_ip`, `xarm6_ip`, `lite6_ip` | `xarmconnection.ip`, or the connection's own name in a two-arm blueprint (see below) |
+| `can_port`, `device_path` | `controlcoordinator.addresses`, keyed by hardware id (see below) |
 | `mujoco_scene` | `mujocosimmodule.address`; the coordinator's simulated arm attaches to that scene |
 | `dimos_cloud_url`, `dimos_api_key`, `dimos_http_timeout`, `dimos_upload_*`, `dimos_staging_dir` | [`CloudConfig`](/dimos/cloud/config.py): `url`, `api_key`, `http_timeout`, `upload_*`, `staging_dir`; environment prefix `DIMOS_CLOUD_` |
 
@@ -125,12 +126,12 @@ dimos run unitree-go2-agentic --mcpserver.port 9992
 A coordinator's `hardware` list names each device's adapter. Device addresses (an IP, a CAN interface, a serial port) live in a separate map keyed by hardware id, so one saved robot configuration serves every blueprint for that robot in both execution modes:
 
 ```json
-{"controlcoordinator": {"addresses": {"arm": "192.0.2.10"}}}
+{"controlcoordinator": {"addresses": {"arm": "can0"}}}
 ```
 
 ```bash skip
-dimos run coordinator-xarm6 --config robot.json
-CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.0.2.10"}' dimos run coordinator-xarm7
+dimos run coordinator-piper --config robot.json
+CONTROLCOORDINATOR__ADDRESSES='{"arm": "can0"}' dimos run coordinator-piper
 dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
 
@@ -139,4 +140,4 @@ The coordinator settles each component when it starts, once the execution mode i
 - On hardware, a component takes its address from `addresses`. A component left without one runs the mock adapter when its blueprint allows that (`mock_without_address` in the robot's config helper), and otherwise fails to connect.
 - With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
-The robot config helpers (`xarm7_hardware`, `piper_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, Metal, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
+The robot config helpers (`piper_hardware`, ...) also take an explicit `address=` for a blueprint of your own. The xArm, YAM, OpenArm, Metal, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select an xArm with `--xarmconnection.ip 192.168.1.185` (the dual xArm blueprint takes `--left_arm.ip` and `--right_arm.ip`, the Piper + xArm6 ones `--xarm_arm.ip`), YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
