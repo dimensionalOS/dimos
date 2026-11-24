@@ -48,6 +48,8 @@ class V4L2CameraConfig(NativeModuleConfig):
     height: int = Field(default=480, ge=1, le=16384)
     # V4L2 pixel format to request; the CPU encoder takes packed 4:2:2 (UYVY, YUYV, VYUY, YVYU).
     fourcc: str = Field(default="YUYV", min_length=4, max_length=4)
+    # Frames per second to ask the device for; 0 keeps the driver's default rate.
+    fps: float = Field(default=0.0, ge=0.0, le=1000.0)
     frame_id: str = "camera_optical"
     jpeg_quality: int = Field(default=90, ge=1, le=100)
     # Use the Jetson's hardware encoder when present; the CPU path covers everything else.

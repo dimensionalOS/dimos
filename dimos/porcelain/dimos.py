@@ -200,7 +200,7 @@ class Dimos:
             matches: list[str] = []
             unavailable: list[str] = []
             for descriptor in source.list_module_descriptors():
-                deployed_name = descriptor.rpc_name or descriptor.class_name
+                deployed_name = descriptor.display_name
                 if instance_name is not None and deployed_name != instance_name:
                     continue
                 if not required.issubset(descriptor.rpc_names):
@@ -269,7 +269,7 @@ class Dimos:
         if isinstance(target, (ModuleInfo, RpcInfo)):
             return target
         if isinstance(target, RpcCall):
-            return self._find_rpc(target.remote_name, target.rpc_name)
+            return self._find_rpc(target.instance_name, target.rpc_name)
         if not isinstance(target, str):
             return self._find_module(self._module_instance_name(target))
 
@@ -310,7 +310,7 @@ class Dimos:
 
     def _module_instance_name(self, module: str | ModuleHandle) -> str:
         proxy = self.get_module(module) if isinstance(module, str) else module
-        return proxy.remote_name
+        return proxy.instance_name
 
     def _require_source(self) -> ModuleSource:
         if self._source is None:
@@ -467,7 +467,7 @@ def _load_module_class(descriptor: ModuleDescriptor) -> type[ModuleBase] | None:
 
 
 def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
-    instance_name = descriptor.rpc_name or descriptor.class_name
+    instance_name = descriptor.display_name
     module_class = _load_module_class(descriptor)
 
     rpc_infos: list[RpcInfo] = []

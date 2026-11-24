@@ -51,6 +51,8 @@ class G1HighLevelWebRtcConfig(ModuleConfig):
     connection_mode: str = "ai"
     # Per-device AES-128 key (G1 fw >=1.5.1).
     aes_128_key: str | None = Field(default=None, repr=False)
+    # Seconds between resends of the command during a timed move.
+    timed_move_resend_period_s: float = Field(default=0.01, gt=0.0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_connection(self) -> Self:
@@ -77,6 +79,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
             require_robot_ip(self.config.ip, _ROBOT_IP_GUIDANCE),
             self.config.connection_mode,
             aes_128_key=self.config.aes_128_key,
+            timed_move_resend_period_s=self.config.timed_move_resend_period_s,
         )
         self.connection.start()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))

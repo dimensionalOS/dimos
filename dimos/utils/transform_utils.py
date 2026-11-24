@@ -13,11 +13,14 @@
 # limitations under the License.
 
 
+import math
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -404,3 +407,20 @@ def offset_distance(
     )
 
     return Pose(position=offset_position, orientation=target_pose.orientation)
+
+
+def pose_to_values(pose: PoseStamped, joints: tuple[str, str, str]) -> dict[str, float]:
+    """World-frame planar coordinates from odometry, bound to model joint names."""
+    q = pose.orientation
+    if not all(
+        math.isfinite(value) for value in (pose.position.x, pose.position.y, q.x, q.y, q.z, q.w)
+    ):
+        raise ValueError("odometry pose must be finite")
+    norm = math.hypot(q.x, q.y, q.z, q.w)
+    if not math.isclose(norm, 1.0, abs_tol=1e-3):
+        raise ValueError("odometry quaternion must be unit length")
+    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+    return {
+        f"{joint}/position": value
+        for joint, value in zip(joints, (pose.position.x, pose.position.y, yaw), strict=True)
+    }
