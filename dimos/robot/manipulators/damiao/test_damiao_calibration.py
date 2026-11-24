@@ -212,6 +212,27 @@ def test_an_explicit_file_applies_to_the_arm_it_names(start, boundary, tmp_path)
     assert module.get_config()["rig/left"]["file"] is None
 
 
+def test_get_config_while_teaching_reports_every_joint_floating_as_sent(
+    start, boundary, calibration_root, rig_class
+):
+    class TeachingRig(rig_class):
+        robot = replace(RIG, teach_kd=[2.0, 1.0, 0.5])
+
+    save_calibration(calibration_root / "rig/left", _calibration(gains={"joint1": (60.0, 3.0)}))
+    module = start(TeachingRig, teach=True)
+    module.command({"arm/joint1/position": 0.2})
+    np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[0, 2], [0, 1]])
+    np.testing.assert_equal(_rows(boundary, "right_arm")[:, :2], [[0, 0.5]])
+    states = module.get_config()
+    assert {arm_id: (state["gains"], state["floating"]) for arm_id, state in states.items()} == {
+        "rig/left": (
+            {"joint1": {"kp": 0.0, "kd": 2.0}, "joint2": {"kp": 0.0, "kd": 1.0}},
+            ["joint1", "joint2"],
+        ),
+        "rig/right": ({"joint3": {"kp": 0.0, "kd": 0.5}}, ["joint3"]),
+    }
+
+
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
@@ -298,7 +319,7 @@ def test_a_patch_with_one_bad_entry_changes_nothing_and_names_every_bad_entry(
 
 
 def test_a_floated_joint_gets_its_gains_back_when_the_deadman_fires(start, boundary):
-    module = start(config_writes=True, deadman_timeout_s=0.05)
+    module = start(config_writes=True)
     state = module.set_config(
         {
             "rig/left": {"gains": {"joint2": {"kp": 40.0, "kd": 2.0}}},
@@ -311,6 +332,8 @@ def test_a_floated_joint_gets_its_gains_back_when_the_deadman_fires(start, bound
     np.testing.assert_equal(_rows(boundary, "left_arm")[1, :2], [40, 2])
     # No command follows: the deadman halts, which undoes both and holds where the arm is.
     boundary[0].groups["right_arm"].q[:] = [0.5]
+    wait_until(lambda: module._deadman is not None, timeout=2)
+    module._on_loop(lambda: module._deadman_expired(module._command_seq))
     wait_until(lambda: module.status().deadman_fired, timeout=2)
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :3], [20, 0.6, 0.5])
     np.testing.assert_equal(_rows(boundary, "left_arm")[1, :2], [10, 1.5])
@@ -329,6 +352,22 @@ def test_a_failed_write_undoes_the_live_changes(start, boundary):
     left.error = None
     assert "bus off" in (module.status().last_error or "")
     assert module.get_config()["rig/right"]["floating"] == []
+
+
+def test_a_live_change_that_fails_undoes_every_live_change_and_raises(start, boundary, mocker):
+    module = start(config_writes=True)
+    before = module.get_config()
+    mocker.patch.object(module._arm, "set_gains", side_effect=RuntimeError("bus off"))
+    with pytest.raises(RuntimeError, match="bus off"):
+        module.set_config(
+            {
+                "rig/left": {"gains": {"joint1": {"kp": 0.0, "kd": 0.4}}},
+                "rig/right": {"gains": {"joint3": {"kp": 30.0, "kd": 1.0}}},
+            }
+        )
+    assert module.status().last_error == "set_config failed: RuntimeError: bus off"
+    assert module.get_config() == before
+    np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[80, 5], [10, 1.5]])
 
 
 def test_a_save_merges_into_the_file_keeps_history_and_applies_it(
@@ -419,6 +458,35 @@ def test_a_save_over_a_file_that_does_not_fit_raises_and_writes_nothing(
     with pytest.raises(ValueError, match=reason):
         module.set_config({"rig/left": {"gains": {"joint1": {"kp": 60.0, "kd": 3.0}}}}, save=True)
     assert path.read_text() == stored and not (path.parent / "history").exists()
+
+
+@pytest.mark.parametrize("had_file", [True, False])
+def test_a_save_that_fails_for_one_arm_puts_back_the_files_already_written(
+    start, calibration_root, mocker, had_file
+):
+    path = calibration_root / "rig/left/calibration.json"
+    if had_file:
+        save_calibration(path, _calibration(gains={"joint1": (60.0, 3.0)}))
+    stored = path.read_bytes() if had_file else None
+    module = start(config_writes=True)
+    before = module.get_config()
+
+    def save(target: Path, calibration: ArmCalibration) -> Path:
+        if calibration.arm_id == "rig/right":
+            raise OSError("disk full")
+        return save_calibration(target, calibration)
+
+    mocker.patch("dimos.robot.manipulators.damiao.connection.save_calibration", side_effect=save)
+    with pytest.raises(OSError, match="disk full"):
+        module.set_config(
+            {
+                "rig/left": {"gains": {"joint2": {"kp": 30.0, "kd": 1.0}}},
+                "rig/right": {"gains": {"joint3": {"kp": 30.0, "kd": 1.0}}},
+            },
+            save=True,
+        )
+    assert (path.read_bytes() if path.exists() else None) == stored
+    assert module.get_config() == before
 
 
 def test_save_calibration_refuses_to_replace_another_models_file(tmp_path):
