@@ -178,7 +178,11 @@ Expected result: `scan` prints `Scan complete: <n> object(s) present` with a con
 
 ## 7.11 Depth2DepthCloud
 
-Needs a Go2 whose Jetson has a dimos checkout and nix, and the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)). Without it the run stops with `no Host router on this machine`. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
+Needs a Go2 whose Jetson has a dimos checkout and nix, and the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)). Without it the run stops with `no Host router on this machine`. The first start builds the native modules with nix.
+
+TensorRT engine loading is separate from the native build. The pinned `depth2depth` 0.4.1 crate first tries its bundled engine (built for a Jetson AGX Orin with TensorRT 10.7 at the default 448x560 input size), then a cached engine. Only if neither loads for the requested size does it build and cache an engine on the device, which can take minutes. A bundled engine can load on another device model with a TensorRT warning and skip the local build. `Depth model loaded.` does not establish that the engine was built on this Jetson.
+
+Record any TensorRT device-model warning with the Jetson model, input size and timing lines. Successful cloud output does not establish that the engine is appropriate for that device, and the warning's effect on performance has not been verified.
 
 ```bash
 # On the Jetson:

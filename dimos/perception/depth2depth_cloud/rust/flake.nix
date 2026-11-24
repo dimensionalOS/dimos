@@ -20,7 +20,8 @@
         pkgs = import nixpkgs {
           inherit system;
           # TensorRT from nixpkgs (the build sandbox can't see the host's). Its CVE flag is about
-          # malicious engine files; this one only loads engines it built itself or the crate pins.
+          # malicious engine files. depth2depth tries the crate-pinned prebuilt engine, then its
+          # local cache, then builds an engine. A pinned engine need not match the host's device model.
           config = nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
             allowUnfree = true;
             allowInsecurePredicate = pkg: nixpkgs.lib.hasInfix "tensorrt" (pkg.name or "");

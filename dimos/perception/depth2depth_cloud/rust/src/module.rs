@@ -54,7 +54,8 @@ const HISTORY_MARGIN_S: f64 = 1.0;
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
-    /// Model input size; both multiples of 14, smaller is faster. TensorRT builds an engine per size (minutes, once).
+    /// Model input size, both multiples of 14, smaller is faster. TensorRT tries a prebuilt engine,
+    /// then a cached engine for this size. If neither loads, it builds and caches one locally (can take minutes).
     #[validate(range(min = 56, max = 1036))]
     model_height: i64,
     #[validate(range(min = 56, max = 1036))]
@@ -762,11 +763,11 @@ fn probe_pose(
     Some(isometry(&transform))
 }
 
-/// The model built into the depth2depth crate: TensorRT on a Jetson (candle's CUDA path is bound by kernel
-/// launches there, 190 ms a frame against TensorRT's 17; the engine is built once, minutes, and cached),
-/// Metal on a Mac, else CPU.
+/// The model built into the depth2depth crate: TensorRT with the `tensorrt` feature,
+/// Metal on a Mac, else CPU. TensorRT tries the prebuilt engine, then the cache, then builds locally.
+/// A prebuilt engine can load with a device-model warning, without triggering a local build.
 fn load_model(cfg: &Config) -> Result<Depth2Depth, String> {
-    info!("Loading the depth model (on a Jetson, building the TensorRT engine first if it is not cached).");
+    info!("Loading the depth model. TensorRT tries a prebuilt engine, then a cached engine, otherwise builds and caches one (can take minutes).");
     let model = Depth2Depth::load(ModelConfig {
         model_h: cfg.model_height as usize,
         model_w: cfg.model_width as usize,

@@ -43,7 +43,8 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
     base_fields: frozenset[str] = frozenset({"frame_id"})
 
-    # Model input; multiples of 14, smaller is faster. TensorRT builds an engine per size (minutes, once).
+    # Model input, multiples of 14, smaller is faster. TensorRT tries a prebuilt engine, then a cached
+    # engine for this size. If neither loads, it builds and caches one locally (can take minutes).
     model_height: int = 448
     model_width: int = 560
     # JPEG decoded at 1/decode_scale of full size, then resampled to this pinhole image for the model;
