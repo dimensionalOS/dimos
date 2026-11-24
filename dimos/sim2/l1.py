@@ -106,13 +106,13 @@ class SimL1(SimSensor):
     def _rider_odometry(self, rider: str | None) -> tuple[str, NDArray[np.float64]]:
         """The rider's odometry frame, and world -> odom: odometry starts at the rider's scene mount."""
         announced = self._world.entity(rider) if rider is not None else None
-        if announced is None or ODOM_FRAME not in announced.cbor:
+        if rider is None or announced is None or ODOM_FRAME not in announced.cbor:
             raise ValueError(
                 f"an L1 maps in the odometry of the robot it rides, and {self.frame_id} rides "
                 f"{rider!r}, which the world announces with no {ODOM_FRAME}"
             )
         mount = usd_frame_pose(self.world_layer().read_text(), rider)
-        return str(announced.cbor[ODOM_FRAME]), np.linalg.inv(mount)
+        return str(announced.cbor[ODOM_FRAME]), np.asarray(np.linalg.inv(mount), dtype=np.float64)
 
     def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
         entity = self._world.entity(rider) if rider is not None else None
