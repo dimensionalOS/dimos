@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -240,6 +241,7 @@ class OrbbecCamera(Module, perception.DepthCamera):
                     frames = aligned.as_frame_set()
             except Exception:
                 logger.exception("Orbbec frame wait failed")
+                time.sleep(0.1)
                 continue
             color = frames.get_color_frame()
             if color is None:
