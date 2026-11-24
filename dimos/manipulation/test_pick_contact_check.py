@@ -104,6 +104,31 @@ def test_the_contact_check_leaves_out_the_cup_but_not_the_table_or_a_neighbour(
     assert [0.1, 0.0, 0.175] in obstacles
 
 
+def test_the_contact_check_leaves_out_the_sides_of_a_cup_seen_from_above(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    gripper.check.return_value = [True, True]
+    scene: Any = module._scene
+    # Localize has the cup's top face only. Its side, down to the table, is scene.
+    scene.get_pointcloud.side_effect = None
+    scene.get_pointcloud.return_value = PointCloud2.from_numpy(
+        np.asarray([[0.08, -0.02, 0.22], [0.12, 0.02, 0.22]], dtype=np.float32),
+        frame_id="world",
+        timestamp=1.0,
+    )
+    side = [[0.12, 0.0, z] for z in (0.185, 0.19, 0.2)]
+    scene.scene_cloud.return_value = PointCloud2.from_numpy(
+        np.vstack([_table().points_f32(), side]).astype(np.float32), frame_id="world"
+    )
+
+    module.pick_object("cup-1")
+
+    obstacles = [[round(v, 3) for v in p] for p in gripper.check.call_args.args[2].tolist()]
+    assert not [point for point in side if point in obstacles]
+    # The table right under the cup stays.
+    assert [0.1, 0.0, 0.175] in obstacles
+
+
 def test_pick_says_when_the_contact_check_rejects_every_grasp(
     module: PickAndPlaceModule, gripper: MagicMock
 ) -> None:

@@ -59,8 +59,10 @@ import time
 from dimos.manipulation.sdk import Arm
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 print(app.ManipulationLocalize.state())   # repeat until it reads ready
-Arm.from_app(app).move_linear(dy=0.08)   # localize confirms an object from two camera poses
-time.sleep(2.0)   # let the second view reach memory
+arm = Arm.from_app(app)
+for dy in (0.08, -0.16, 0.08):   # one sideways view often leaves the can under the acceptance score
+    arm.move_linear(dy=dy)
+    time.sleep(2.0)   # let the view reach memory
 objects = app.ManipulationLocalize.scan(XARM_GRASP_PROMPTS, window_s=30.0)
 for o in objects:
     print(o["id"], o["label"], o["position"], "score", o["score"], "views", o["views"])
@@ -77,7 +79,7 @@ can_candidates = [
     o for o in objects
     if abs(o["position"][0] - 0.57) < 0.05 and abs(o["position"][1]) < 0.05
 ]
-assert len(can_candidates) == 1, "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+assert can_candidates, "No verified can near (0.57, 0.00); inspect the scan before picking"   # two labels can match the can
 app.PickAndPlaceModule.pick_object(can_candidates[0]["id"])
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```

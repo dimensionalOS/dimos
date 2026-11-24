@@ -141,8 +141,9 @@ dimos shell
 
 `ManipulationLocalize` is `PerceptionLocalize` that keeps the objects it found, for
 picks. It embeds the wrist camera's feed into memory and finds objects in it. It
-verifies an object from two or more camera positions, so look at the table from a
-second arm pose before asking. Wait until `state()` reads ready:
+verifies an object from two or more camera positions, so look at the table from
+both sides before asking. One sideways move often leaves the can under the
+acceptance score. Wait until `state()` reads ready:
 
 ```python skip
 import time
@@ -152,8 +153,10 @@ from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 
 localize = app.ManipulationLocalize
 print(localize.state())
-Arm.from_app(app).move_linear(dy=0.08)  # a second camera pose, 8 cm to the side
-time.sleep(2.0)  # let the second view reach memory
+arm = Arm.from_app(app)
+for dy in (0.08, -0.16, 0.08):  # 8 cm to each side, then back
+    arm.move_linear(dy=dy)
+    time.sleep(2.0)  # let the view reach memory
 print(localize.localize(",".join(XARM_GRASP_PROMPTS), -30.0, 30.0))
 ```
 
@@ -179,12 +182,13 @@ Do not proceed with the pick until the can is verified. A missing target is a
 perception failure even though fewer than six results is valid.
 
 ```python skip
-# The can sits at roughly (0.57, 0.00). Require a unique verified target there.
+# The can sits at roughly (0.57, 0.00). It can come back under two labels, each
+# with its own id. Either id picks it.
 can_candidates = [
     obj for obj in objects
     if abs(obj["position"][0] - 0.57) < 0.05 and abs(obj["position"][1]) < 0.05
 ]
-assert len(can_candidates) == 1, "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+assert can_candidates, "No verified can near (0.57, 0.00); inspect the scan before picking"
 pick = app.PickAndPlaceModule.pick_object(can_candidates[0]["id"])
 print(pick)
 

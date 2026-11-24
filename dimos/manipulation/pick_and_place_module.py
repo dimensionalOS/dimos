@@ -84,7 +84,8 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
     # The check leaves the target's box out of the scene, grown by this much
     # (metres) to the sides and above. The box starts grasp_exclude_floor above
-    # the target's lowest point, so the surface it stands on stays in the scene.
+    # the lowest point in its column, so the surface the target stands on stays
+    # in the scene and the sides its cloud missed do not.
     grasp_exclude_margin: float = Field(default=0.01, ge=0.0)
     grasp_exclude_floor: float = Field(default=0.005, ge=0.0)
     # When no grasp passes the check where it is, slide the grasps up to this
@@ -94,15 +95,21 @@ class PickAndPlaceModuleConfig(ModuleConfig):
 
 
 def _without(scene: PointCloud2, target: PointCloud2, margin: float, floor: float) -> PointCloud2:
-    """The scene without the target's box, grown by ``margin`` to the sides and
-    above and starting ``floor`` above the target's lowest point."""
+    """The scene without the target's box, grown by ``margin`` to the sides and above.
+
+    The box starts ``floor`` above the lowest point in its column, of the target
+    or of the scene under it. A camera above the target sees only its top face,
+    and the scene then holds its sides, down to what it stands on.
+    """
     bounds = target.points_f32()
     if not len(bounds):
         return scene
     low, high = bounds.min(axis=0) - margin, bounds.max(axis=0) + margin
-    low[2] = bounds[:, 2].min() + floor
     points = scene.points_f32()
-    outside = ~np.all((points >= low) & (points <= high), axis=1)
+    column = np.all((points[:, :2] >= low[:2]) & (points[:, :2] <= high[:2]), axis=1)
+    under = points[column & (points[:, 2] <= high[2]), 2]
+    low[2] = min(bounds[:, 2].min(), under.min(initial=np.inf)) + floor
+    outside = ~(column & (points[:, 2] >= low[2]) & (points[:, 2] <= high[2]))
     return PointCloud2.from_numpy(points[outside], frame_id=scene.frame_id, timestamp=scene.ts)
 
 

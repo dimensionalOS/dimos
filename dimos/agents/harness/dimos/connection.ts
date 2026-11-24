@@ -159,7 +159,8 @@ export class DimosConnection {
 
   /**
    * Every `dimos/harness_status` notification, which HarnessRuntime sends after a module op, a subscription change and
-   * the coordinator's `on_system_modules`. It carries no payload the gateway trusts; the gateway re-reads inventory.
+   * the coordinator's `on_system_modules_ready`. It carries no payload the gateway trusts; the gateway re-reads
+   * inventory.
    */
   onHarnessStatus(listener: () => void): () => void {
     this.harnessStatusListeners.add(listener);

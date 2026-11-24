@@ -253,7 +253,8 @@ class HarnessRuntime(Module):
         return SkillResult(outcome.text(), metadata=outcome.to_json())
 
     @rpc
-    def on_system_modules(self, _modules: list[RPCClient]) -> None:
+    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
+        # The gateway answers this status with tools/list, so McpServer must have its skills.
         self._status("system_modules")
 
     def _change_module(
