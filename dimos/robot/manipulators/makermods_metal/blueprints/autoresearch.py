@@ -1,0 +1,111 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The autoresearch blueprint on one Metal in MuJoCo: an agent's programs run on the
+bench, judged from the simulator's true object poses, and the successful
+episodes are recorded as a Quest-profile dataset."""
+
+from datetime import datetime
+import math
+
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.autoresearch.module import AutoresearchModule
+from dimos.autoresearch.truth_scene import TruthObject, TruthSceneModule
+from dimos.autoresearch.world import PlacementBounds
+from dimos.constants import RECORDINGS_DIR
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.profile import CollectionProfile
+from dimos.imitation.collection.recorder import collect
+from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.makermods_metal.blueprints.sim import metal_sim
+from dimos.robot.manipulators.makermods_metal.config import metal_sim_joints
+
+_STATE = FeatureSpec(
+    stream="coordinator_joint_state",
+    message_type=JointState,
+    field="position",
+    dtype="float32",
+    shape=(len(metal_sim_joints()),),
+    names=metal_sim_joints(),
+)
+#: What each recorded episode holds: the wrist image, the measured joints and
+#: the commanded joints, the six arm joints then the jaw, in the same features
+#: as a Metal Quest collection dataset.
+METAL_QUEST_PROFILE = CollectionProfile(
+    observations={
+        "observation.images.wrist": FeatureSpec(
+            stream="wrist_image",
+            message_type=Image,
+            field="data",
+            dtype="video",
+            shape=(480, 640, 3),
+            names=["height", "width", "channels"],
+        ),
+        "observation.state": _STATE,
+    },
+    actions={
+        "action": _STATE.model_copy(
+            update={
+                "stream": "coordinator_joint_command",
+                "source_kind": "joint_position_updates",
+            },
+            deep=True,
+        )
+    },
+    metadata={"name": "metal-quest", "robot_type": "makermods_metal"},
+)
+
+#: The bench objects' boxes (bench.xml): the cube and cylinder bodies sit at
+#: their centres, the bowl body at the middle of its base.
+METAL_BENCH_TRUTH = {
+    "cube": TruthObject(size=(0.04, 0.04, 0.04)),
+    "cylinder": TruthObject(size=(0.05, 0.05, 0.08)),
+    "bowl": TruthObject(size=(0.10, 0.10, 0.04), centre=(0.0, 0.0, 0.02)),
+}
+
+#: Where each trial's reset puts the cube: in the wrist camera's view and clear
+#: of the cylinder and the bowl.
+METAL_BENCH_PLACEMENT = PlacementBounds(
+    x=(0.18, 0.30), y=(0.08, 0.20), z=0.02, yaw=(-math.pi / 4, math.pi / 4)
+)
+
+#: A plain launch gets a timestamped session under the recordings folder and this
+#: task; a launcher passes its own session folder, task and budget.
+DEFAULT_TASK = "lift the cube"
+_DEFAULT_SESSION = RECORDINGS_DIR / f"autoresearch_metal_{datetime.now():%Y%m%d_%H%M%S}"
+
+# The recorder comes first so it stops after the producers it records, and the
+# autoresearch module after the arm so its stop can still cancel motion. No ManipulationSkills
+# and no PickAndPlaceModule: McpServer lists every @skill, and the coding agent must
+# have no movement tool of its own. The recorder's wrist image is the sim camera,
+# and it writes into the session folder itself.
+autoresearch_metal_sim = autoconnect(
+    collect(profile=METAL_QUEST_PROFILE, recording=_DEFAULT_SESSION),
+    EpisodeMonitorModule.blueprint(instance_name="episodes", task=DEFAULT_TASK),
+    metal_sim,
+    TruthSceneModule.blueprint(objects=METAL_BENCH_TRUTH),
+    AutoresearchModule.blueprint(
+        session_dir=_DEFAULT_SESSION,
+        task=DEFAULT_TASK,
+        judge_body="cube",
+        place_body="bowl",
+        placement_bounds=METAL_BENCH_PLACEMENT,
+        blueprint="autoresearch-metal-sim",
+        scene_objects=list(METAL_BENCH_TRUTH),
+    ),
+    McpServer.blueprint(),
+).remappings([("recorder", "wrist_image", "color_image")])

@@ -20,6 +20,7 @@ from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
+from dimos.robot.manipulators.makermods_metal.blueprints.autoresearch import autoresearch_metal_sim
 from dimos.robot.manipulators.makermods_metal.blueprints.sim import metal_sim
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.robot.urdf_manager_point_clearing import (
@@ -40,7 +41,7 @@ def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
     }
 
 
-@pytest.mark.parametrize("stack", [metal_sim])
+@pytest.mark.parametrize("stack", [metal_sim, autoresearch_metal_sim])
 def test_the_sim_cloud_becomes_the_planner_map_through_the_self_and_box_filters(
     stack: MetaBlueprint,
 ) -> None:
