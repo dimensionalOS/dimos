@@ -57,7 +57,7 @@ POLICY_HZ = 50.0
 
 
 class Office555Config(SimSceneConfig):
-    usd: UsdModel | None = UsdModel.from_file(SCENE).with_frames(
+    usd: UsdModel = UsdModel.from_file(SCENE).with_frames(
         {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
         | {"overview": ("office_555", *OVERVIEW)}
     )
@@ -105,7 +105,7 @@ def _walker() -> Blueprint:
 def _g1(spot: str) -> MetaBlueprint:
     return (
         autoconnect(
-            G1Sim.blueprint(_mount=spot),
+            G1Sim.blueprint(mount=spot),
             LivoxSim.mount(G1Sim.mounts.lidar),
             _walker(),
         )

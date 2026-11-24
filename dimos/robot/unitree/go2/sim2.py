@@ -96,7 +96,7 @@ def with_policy_drives(usd: UsdModel, policy: Go2Policy) -> UsdModel:
 
 
 class Go2SimConfig(HardwareModuleConfig):
-    usd: UsdModel | None = GO2_USD
+    usd: UsdModel = GO2_USD
     policy: Path | None = None
     # Proportional yaw hold while no turn is commanded, rad/s per rad of drift.
     heading_gain: float = 2.0
@@ -119,8 +119,7 @@ class Go2Sim(HardwareModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._policy = load_policy(self.config.policy)
-        if self.config.usd is not None:
-            self.config.usd = with_policy_drives(self.config.usd, self._policy)
+        self.config.usd = with_policy_drives(self.config.usd, self._policy)
         self._desired = np.zeros(3)
         self._desired_expires = 0.0
         self._command = np.zeros(3)
@@ -133,7 +132,6 @@ class Go2Sim(HardwareModule):
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        assert self.config.usd is not None
         return SimulatedRobot(self.namespace, self.config.usd, held_until_commanded=True)
 
     async def main(self) -> AsyncIterator[None]:
@@ -199,7 +197,6 @@ class Go2Sim(HardwareModule):
     def _odom(self, pose: np.ndarray, stamp: float) -> PoseStamped:
         if self._odometry is None:
             usd = self.config.usd
-            assert usd is not None
             self._odometry = MountOdometry.of(usd, usd.root_link)
         relative = self._odometry(pose)
         return PoseStamped(

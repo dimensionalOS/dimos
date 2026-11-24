@@ -30,7 +30,7 @@ from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import JointCommand, read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.sim import SimulatedRobotSpec, compose_world, until_it_stops
+from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, until_it_stops
 from dimos.sim2.spec import validate
 from dimos.sim2.world_observations import merged
 from dimos.utils.logging_config import setup_logger
@@ -50,8 +50,6 @@ class MujocoSim(Module):
     world_observations: Out[WorldObservations]
     render_file_request: In[String]
     file_info: Out[File]
-    hardware: list[HardwareSpec]
-    robots: list[SimulatedRobotSpec]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -70,12 +68,12 @@ class MujocoSim(Module):
         running.cancel()
 
     @rpc
-    def on_system_modules(self, _modules: list[Any]) -> None:
-        simulated = [robot.simulated_robot() for robot in self.robots]
+    def on_system_modules(self, modules: list[Any]) -> None:
+        simulated = [robot.simulated_robot() for robot in meeting(SimulatedRobotSpec, modules)]
         validate(simulated)
         self._held = {robot.robot_id for robot in simulated if robot.held_until_commanded}
         self._backend = MujocoBackend(
-            compose_world(self.hardware),
+            compose_world(meeting(HardwareSpec, modules)),
             simulated,
             speed=self.config.speed,
             max_burst_seconds=self.config.max_burst_seconds,

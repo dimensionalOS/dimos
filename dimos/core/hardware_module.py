@@ -21,7 +21,7 @@ mounted onto one of the robot's mount frames::
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
 the mount frame it sits on to its own frames. Whatever needs the whole assembly (a simulator)
-asks every HardwareModule for ``get_usd()`` and ``mounted_on()`` and grafts them together.
+asks every module meeting ``HardwareSpec`` for ``get_usd()`` and ``mounted_on()`` and grafts them.
 """
 
 from collections import defaultdict
@@ -30,7 +30,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 import numpy as np
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict
 
 from dimos.core.core import rpc
 from dimos.core.tf_module import TfModule, TfModuleConfig
@@ -64,16 +64,17 @@ class Mounts:
 
 
 class HardwareModuleConfig(TfModuleConfig):
-    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
-    usd: UsdModel | None = None
+    # Required: hardware without a USD is not a HardwareModule.
+    usd: UsdModel
     # The mount frame of the hardware this sits on (set by HardwareModule.mount); None for the hardware everything mounts to.
-    mount: str | None = Field(default=None, alias="_mount")
+    mount: str | None = None
 
 
 class HardwareSpec(Spec, Protocol):
-    def get_usd(self) -> str | None: ...
+    def get_usd(self) -> str: ...
     def mounted_on(self) -> str | None: ...
 
 
@@ -89,7 +90,7 @@ class HardwareModule(TfModule):
     @classmethod
     def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same name."""
-        return cls.blueprint(_mount=mount_frame, **kwargs).namespace(
+        return cls.blueprint(mount=mount_frame, **kwargs).namespace(
             mount_frame, shared=cls.mount_shared
         )
 
@@ -98,7 +99,7 @@ class HardwareModule(TfModule):
         """Refuse a namespace with more than one unmounted HardwareModule."""
         unmounted: dict[str, list[str]] = defaultdict(list)
         for atom in atoms:
-            if issubclass(atom.module, HardwareModule) and atom.kwargs.get("_mount") is None:
+            if issubclass(atom.module, HardwareModule) and atom.kwargs.get("mount") is None:
                 unmounted[atom.name.rpartition("/")[0]].append(atom.name)
         errors = [
             f"    - {namespace or 'the top level'}: {', '.join(sorted(names))}"
@@ -117,11 +118,9 @@ class HardwareModule(TfModule):
             )
 
     @rpc
-    def get_usd(self) -> str | None:
+    def get_usd(self) -> str:
         """This hardware's USD layer, its frames named as they are on tf and its assets as absolute paths."""
         usd = self.config.usd
-        if usd is None:
-            return None
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 
@@ -140,7 +139,6 @@ class HardwareModule(TfModule):
     @property
     def mounted_frame(self) -> str:
         """The frame the mount holds this hardware by; a mobile robot holds by its odometry frame instead."""
-        assert self.config.usd is not None
         return self.usd_frame(self.config.usd.root_link)
 
     def usd_transforms(
@@ -174,8 +172,7 @@ class HardwareModule(TfModule):
     @cached_property
     def _posable_joints(self) -> tuple[JointDescription, ...]:
         # A floating joint has no single position: the robot owning it publishes its pose from odometry.
-        usd = self.config.usd
-        return () if usd is None else tuple(j for j in usd.joints if j.type != "floating")
+        return tuple(j for j in self.config.usd.joints if j.type != "floating")
 
     def _create_tfbuffer(self, port: Any) -> TF:
         if self.config.skip_tf_checks:

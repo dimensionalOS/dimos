@@ -90,8 +90,6 @@ class ModuleRef:
     name: str
     spec: type[Spec] | type[ModuleBase]
     optional: bool = False
-    # `list[SomeSpec]`: every other module in the blueprint that meets the spec, possibly none.
-    many: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,13 +167,6 @@ class BlueprintAtom:
             # linking to specific/known module directly
             elif is_module_type(annotation):
                 module_refs.append(ModuleRef(name=name, spec=annotation))
-            # Every module meeting a Spec: list[SomeSpec]
-            elif (
-                origin is list
-                and len(get_args(annotation)) == 1
-                and (is_spec(get_args(annotation)[0]) or is_module_type(get_args(annotation)[0]))
-            ):
-                module_refs.append(ModuleRef(name=name, spec=get_args(annotation)[0], many=True))
             # Optional Spec or Module: SomeSpec | None
             elif origin in (Union, types_mod.UnionType):
                 args = [a for a in get_args(annotation) if a is not type(None)]

@@ -24,7 +24,7 @@ GO2_SPOT = (0.0, 0.0, 0.35)
 
 
 class LogisticsConfig(SimSceneConfig):
-    usd: UsdModel | None = UsdModel.from_file(LOGISTICS).with_frames(
+    usd: UsdModel = UsdModel.from_file(LOGISTICS).with_frames(
         {"go2": ("logistics", GO2_SPOT, (0.0, 0.0, 0.0))}
     )
 

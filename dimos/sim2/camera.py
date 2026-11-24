@@ -14,6 +14,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 from pydantic import model_validator
 
@@ -34,13 +35,16 @@ class SimCameraConfig(HardwareModuleConfig):
     fovy: float = 60.0
     rate_hz: float = 10.0
 
-    @model_validator(mode="after")
-    def _camera_with_this_fovy(self) -> "SimCameraConfig":
-        if self.usd is None:
-            self.usd = camera_usd(
-                "camera_link", name="sim_camera", fovy=self.fovy, aspect=self.width / self.height
-            )
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _camera_with_this_fovy(cls, data: Any) -> Any:
+        # Unless one is given, the camera's USD is as wide as the images it renders.
+        if not isinstance(data, dict) or data.get("usd") is not None:
+            return data
+        fields = cls.model_fields
+        fovy, width, height = (data.get(n, fields[n].default) for n in ("fovy", "width", "height"))
+        usd = camera_usd("camera_link", name="sim_camera", fovy=fovy, aspect=width / height)
+        return {**data, "usd": usd}
 
 
 class SimCamera(SimSensor):

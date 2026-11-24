@@ -161,7 +161,7 @@ def test_two_robots_with_one_id_are_refused_by_name(world, robot_model):
 
 
 class _RoomConfig(HardwareModuleConfig):
-    usd: UsdModel | None = _scene(dog=_spot(0.0, 0.0, 1.0))
+    usd: UsdModel = _scene(dog=_spot(0.0, 0.0, 1.0))
 
 
 class _Room(HardwareModule):
@@ -170,7 +170,7 @@ class _Room(HardwareModule):
 
 
 class _DogConfig(HardwareModuleConfig):
-    usd: UsdModel | None = toy_robot()
+    usd: UsdModel = toy_robot()
 
 
 class _Dog(HardwareModule):
@@ -178,7 +178,6 @@ class _Dog(HardwareModule):
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        assert self.config.usd is not None
         return SimulatedRobot(self.namespace, self.config.usd)
 
 
@@ -186,7 +185,7 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
     blueprint = autoconnect(
         sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
         _Room.blueprint(),
-        _Dog.blueprint(_mount="dog").namespace("dog"),
+        _Dog.blueprint(mount="dog").namespace("dog"),
     ).solidify()
     # Its own zenoh domain, so no other sim running on this machine answers its RPCs.
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}

@@ -29,7 +29,7 @@ from dimos.sim2.sim import until_it_stops
 
 
 class SimImuConfig(HardwareModuleConfig):
-    usd: UsdModel | None = frame_usd("imu_link", name="sim_imu")
+    usd: UsdModel = frame_usd("imu_link", name="sim_imu")
     rate_hz: float = 200.0
 
 
