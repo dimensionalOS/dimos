@@ -16,13 +16,13 @@
 """A simulated world is a physics backend, picked by the ``sim`` choice.
 
 There is no simulation module: a backend (MuJoCo, DimSim) is a module that meets ``PhysicsBackend``.
-It asks every HardwareModule in the blueprint for its USD and what it is mounted on, grafts them
-into one world, steps it, and publishes it as ``world_observations``. Robots and sensors are
-HardwareModules that read those observations and send ``actions`` back.
+It asks every running HardwareModule (from ``on_system_modules``) for its USD and what it is
+mounted on, grafts them into one world, steps it, and publishes it as ``world_observations``.
+Robots and sensors are HardwareModules that read those observations and send ``actions`` back.
 """
 
 import asyncio
-from collections.abc import Coroutine, Mapping, Sequence
+from collections.abc import Coroutine, Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -32,7 +32,7 @@ from dimos.core.hardware_module import HardwareSpec
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.spec import SimulatedRobot
-from dimos.spec.utils import Spec
+from dimos.spec.utils import Spec, get_protocol_method_signatures
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -56,8 +56,6 @@ class PhysicsBackend(SimulatedWorldSpec, Protocol):
 
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
-    hardware: list[HardwareSpec]
-    robots: list[SimulatedRobotSpec]
 
     def describe(self) -> dict[str, Any]: ...
 
@@ -65,6 +63,12 @@ class PhysicsBackend(SimulatedWorldSpec, Protocol):
 def sim(backends: Mapping[str, Blueprint | MetaBlueprint], default: str) -> ChoiceAtom:
     """The ``sim`` choice between physics backends: ``dimos run <blueprint> --choice sim=dimsim``."""
     return ChoiceAtom(name="sim", choices=dict(backends), default=default)
+
+
+def meeting(spec: type[Spec], modules: Iterable[Any]) -> list[Any]:
+    """The running modules (as ``on_system_modules`` hands them over) that answer every rpc of ``spec``."""
+    rpcs = set(get_protocol_method_signatures(spec))
+    return [module for module in modules if rpcs <= set(module.rpcs)]
 
 
 def compose_world(hardware: Sequence[HardwareSpec]) -> UsdModel:

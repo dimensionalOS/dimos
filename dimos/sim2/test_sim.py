@@ -18,12 +18,13 @@ import sys
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.hardware_module import HardwareSpec
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_frame_names
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sim import MujocoSim
-from dimos.sim2.sim import compose_world, sim
+from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, sim
 from dimos.sim2.spec import SimulatedRobot, validate
 
 pytest.importorskip("pxr")
@@ -32,10 +33,10 @@ pytest.importorskip("pxr")
 class _Part:
     """What compose_world asks of a HardwareModule: its USD and the frame it is mounted on."""
 
-    def __init__(self, usd: str | None, mounted_on: str | None) -> None:
+    def __init__(self, usd: str, mounted_on: str | None) -> None:
         self._usd, self._mounted_on = usd, mounted_on
 
-    def get_usd(self) -> str | None:
+    def get_usd(self) -> str:
         return self._usd
 
     def mounted_on(self) -> str | None:
@@ -53,7 +54,7 @@ def _dog() -> str:
 
 
 def test_each_hardware_is_grafted_onto_the_frame_it_is_mounted_on() -> None:
-    world = compose_world([_Part(_room(), None), _Part(_dog(), "dog"), _Part(None, None)])
+    world = compose_world([_Part(_room(), None), _Part(_dog(), "dog")])
     frames = usd_frame_names(world.usd)
     assert "dog" in frames
     assert any(frame.startswith("dog/") for frame in frames)
@@ -69,6 +70,21 @@ def test_a_world_needs_exactly_one_unmounted_usd() -> None:
 def test_a_mount_frame_nothing_has_is_refused() -> None:
     with pytest.raises(ValueError, match="mount frames \\['cat'\\]"):
         compose_world([_Part(_room(), None), _Part(_dog(), "cat")])
+
+
+class _Running:
+    """A running module as ``on_system_modules`` hands it over: what it answers is its ``rpcs``."""
+
+    def __init__(self, *rpcs: str) -> None:
+        self.rpcs = frozenset(rpcs)
+
+
+def test_the_world_finds_its_hardware_and_robots_by_what_they_answer() -> None:
+    room = _Running("get_usd", "mounted_on", "start")
+    dog = _Running("get_usd", "mounted_on", "simulated_robot")
+    other = _Running("get_usd", "describe")
+    assert meeting(HardwareSpec, [room, dog, other]) == [room, dog]
+    assert meeting(SimulatedRobotSpec, [room, dog, other]) == [dog]
 
 
 def test_the_sim_choice_picks_a_backend_by_name() -> None:
