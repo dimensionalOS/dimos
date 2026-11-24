@@ -64,7 +64,7 @@ def _usd_joint(name: str) -> str:
 
 
 class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
-    usd: UsdModel | None = G1_USD
+    usd: UsdModel = G1_USD
     source: str = "g1"
     model: RobotModel | None = G1_JOINT_MODEL
     joint_commands: dict[str, tuple[Interface, ...]] = {
@@ -110,7 +110,6 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        assert self.config.usd is not None
         return SimulatedRobot(self.namespace, self.config.usd, held_until_commanded=True)
 
     @rpc
@@ -184,7 +183,6 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
             return None
         if self._odometry is None:
             usd = self.config.usd
-            assert usd is not None
             self._odometry = MountOdometry.of(usd, usd.root_link)
         relative = self._odometry(base.pose)
         return PoseStamped(

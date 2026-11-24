@@ -39,7 +39,7 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it() -> None:
     scene = UsdModel.from_file(SCENE).with_frames(
         {"g1": ("scene", MOUNT_XYZ, (0.0, 0.0, MOUNT_YAW))}
     )
-    sim = G1Sim(_mount="g1", instance_name="g1/G1Sim")
+    sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
     try:
         g1 = sim.get_usd()
         assert g1 is not None
