@@ -80,7 +80,7 @@ class _Dog(HardwareModule):
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        return SimulatedRobot(self.namespace, self.config.usd)
+        return SimulatedRobot(self.namespace, self.config.usd, odom_frame=self.mounted_frame)
 
 
 class _Readings(Module):
