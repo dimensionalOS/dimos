@@ -9,7 +9,7 @@ license = "Apache-2.0"
 anyhow = "1"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "96172971123bd72980164e7bfd0de06be023be77" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "526859e096ea6deebd329cb9fb573dc6c1f5aa56" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 lz4_flex = "0.14.0"
 mcap = { version = "0.25.0", default-features = false, features = ["zstd"] }
