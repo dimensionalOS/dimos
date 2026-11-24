@@ -47,7 +47,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.evals.agents.base import EvalSubject
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.nav_msgs.Odometry import Odometry
 
 logger = setup_logger()
 
@@ -126,11 +126,11 @@ class LiveEnvironment(Environment):
         """Wait for first observations and return extra artifacts, if needed."""
         return {}
 
-    def latest_pose(self, recording: Store) -> PoseStamped:
-        """Return achieved pose for settling; raise LookupError before the first sample."""
+    def latest_odom(self, recording: Store) -> Odometry:
+        """The latest recorded odometry, for settling. Raises LookupError before the first sample."""
         if "odom" not in recording.streams:
             raise LookupError("No odometry recorded")
-        return cast("PoseStamped", recording.streams.odom.last().data)
+        return cast("Odometry", recording.streams.odom.last().data)
 
     def preflight(self, agent: EvalSubject) -> None:
         if self.config.attach:
@@ -248,10 +248,10 @@ class LiveEnvironment(Environment):
         deadline = time.monotonic() + budget_s
         while time.monotonic() < deadline:
             try:
-                pose = self.latest_pose(self._recording)
+                odom = self.latest_odom(self._recording)
             except LookupError:
                 return
-            position = pose.position
+            position = odom.position
             if (
                 anchor is None
                 or math.hypot(position.x - anchor.x, position.y - anchor.y) > self.config.at_rest_m

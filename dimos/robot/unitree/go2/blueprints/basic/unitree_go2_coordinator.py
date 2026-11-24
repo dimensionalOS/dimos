@@ -26,8 +26,8 @@ from dimos.control.components import HardwareComponent, HardwareType, make_twist
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.go2.connection import GO2Connection
 
 _go2_joints = make_twist_base_joints("go2")
@@ -66,7 +66,7 @@ unitree_go2_coordinator = (
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
             ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-            ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            ("go2_odom", Odometry): LCMTransport("/go2/odom", Odometry),
         }
     )
 )

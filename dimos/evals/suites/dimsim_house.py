@@ -70,12 +70,12 @@ def _explore_house(sim: DimSimClient) -> None:
     import time
 
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
     # dimsim spawns the robot well after dimos is up — wait for odom before driving
-    seen: list[PoseStamped] = []
-    probe: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
+    seen: list[Odometry] = []
+    probe: LCMTransport[Odometry] = LCMTransport("/odom", Odometry)
     probe.subscribe(lambda msg, *args: seen.append(msg))
     deadline = time.time() + 180.0
     while not seen and time.time() < deadline:

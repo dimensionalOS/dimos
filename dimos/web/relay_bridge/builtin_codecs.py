@@ -32,8 +32,8 @@ import numpy as np
 
 from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -73,7 +73,7 @@ def decode_text(msg: str) -> str:
 
 
 @web_encoder("pose.json.v1")
-def encode_pose(msg: PoseStamped) -> bytes:
+def encode_pose(msg: Odometry) -> bytes:
     pose = {
         "x": msg.position.x,
         "y": msg.position.y,

@@ -32,13 +32,14 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
+from dimos.memory.odometry import as_odometry
 from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -120,7 +121,7 @@ class Go2ConnectionProtocol(Protocol):
     def start(self) -> None: ...
     def stop(self) -> None: ...
     def lidar_stream(self) -> Observable[PointCloud2]: ...
-    def odom_stream(self) -> Observable[PoseStamped]: ...
+    def odom_stream(self) -> Observable[Odometry]: ...
     def video_stream(self) -> Observable[Image]: ...
     def lowstate_stream(self) -> Observable[LowStateMsg]: ...
     def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
@@ -321,17 +322,8 @@ class ReplayConnection(CompositeResource):
         return self._replay_observable(stream)
 
     @simple_mcache
-    def odom_stream(self) -> Observable[PoseStamped]:
-        name = self._stream_name("go2_odom", "odom")
-        kind = self.replay.store.stream(name).data_type
-        if kind is None or not issubclass(kind, PoseStamped):
-            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
-            # it kills the odom subscriber and leaves lidar and video without TF.
-            raise TypeError(
-                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
-                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
-            )
-        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
+    def odom_stream(self) -> Observable[Odometry]:
+        stream = self.replay.stream(self._stream_name("go2_odom", "odom"), autocast=as_odometry)
         return self._replay_observable(stream)
 
     @simple_mcache
@@ -360,7 +352,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     config: ConnectionConfig
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
@@ -472,7 +464,7 @@ class GO2Connection(Module, Camera, Pointcloud):
                     logger.warning("connection stop failed", exc_info=True)
 
     @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
+    def _odom_to_tf(cls, odom: Odometry, prefix: str = "") -> list[Transform]:
         # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
         # robots still hang off one shared tree root.
         camera_link = Transform(
@@ -492,13 +484,14 @@ class GO2Connection(Module, Camera, Pointcloud):
         )
 
         return [
-            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
+            Transform.from_pose(_prefixed(prefix, "base_link"), odom.to_pose_stamped()),
             camera_link,
             camera_optical,
         ]
 
-    def _publish_tf(self, msg: PoseStamped) -> None:
+    def _publish_tf(self, msg: Odometry) -> None:
         msg.frame_id = self.config.odom_frame_id
+        msg.child_frame_id = _prefixed(self.config.frame_id_prefix, "base_link")
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
             self.tf.publish(TFMessage(*transforms))

@@ -27,6 +27,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
@@ -43,14 +44,14 @@ class PatrollingConfig(ModuleConfig):
 
 class PatrollingModule(Module):
     config: PatrollingConfig
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     goal_request: Out[PoseStamped]
 
     _router: PatrolRouter
     _planner_spec: ReplanningAStarPlannerSpec
-    _latest_pose: PoseStamped | None = None
+    _latest_odom: Odometry | None = None
     _patrol_task: asyncio.Task[None] | None = None
     # True from the first planner override in start_patrol until stop_patrol
     # undoes it, so a start that fails halfway is still cleaned up.
@@ -68,8 +69,8 @@ class PatrollingModule(Module):
         yield
         await self._stop_patrolling()
 
-    async def handle_odom(self, msg: PoseStamped) -> None:
-        self._latest_pose = msg
+    async def handle_odom(self, msg: Odometry) -> None:
+        self._latest_odom = msg
         self._router.handle_odom(msg)
 
     async def handle_global_costmap(self, msg: OccupancyGrid) -> None:
@@ -125,8 +126,8 @@ class PatrollingModule(Module):
         # Closes the tool-stream and releases the `movement` capability via
         # the dimos/tool_stopped frame consumed by McpServer.
         self.stop_tool("start_patrol")
-        if self._latest_pose is not None:
-            self.goal_request.publish(self._latest_pose)
+        if self._latest_odom is not None:
+            self.goal_request.publish(self._latest_odom.to_pose_stamped())
 
     async def _patrol_loop(self) -> None:
         while True:

@@ -55,9 +55,9 @@ from dimos.evals.constants import (
     RAW_MAX_LINEAR_MPS,
     RAW_TOPIC_PREFIX,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -135,10 +135,10 @@ def xyz_f32(cloud: PointCloud2) -> bytes:
     return np.ascontiguousarray(points, dtype="<f4").tobytes()
 
 
-def odom_json(pose: PoseStamped) -> str:
-    p, q = pose.position, pose.orientation
+def odom_json(odom: Odometry) -> str:
+    p, q = odom.position, odom.orientation
     return json.dumps(
-        {"t": pose.ts, "x": p.x, "y": p.y, "z": p.z, "qx": q.x, "qy": q.y, "qz": q.z, "qw": q.w}
+        {"t": odom.ts, "x": p.x, "y": p.y, "z": p.z, "qx": q.x, "qy": q.y, "qz": q.z, "qw": q.w}
     )
 
 
@@ -217,7 +217,7 @@ class RawRobotBridge(Module):
     depth_image: In[Image]
     camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     coordinator_joint_state: In[JointState]
     tf: In[TFMessage]
     cmd_vel: Out[Twist]
@@ -255,7 +255,7 @@ class RawRobotBridge(Module):
         self.color_image.subscribe(lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), img.ts))
         self.depth_image.subscribe(self._on_depth)
         self.lidar.subscribe(lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), cloud.ts))
-        self.odom.subscribe(lambda pose: self._put("odom/json", odom_json(pose)))
+        self.odom.subscribe(lambda odom: self._put("odom/json", odom_json(odom)))
         self.camera_info.subscribe(
             lambda info: self._put(
                 "camera_info/json",

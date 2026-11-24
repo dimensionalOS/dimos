@@ -133,7 +133,7 @@ unitree_g1_primitive_no_nav = (
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             # State estimation from ROS
             ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
-            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+            ("odom", Odometry): LCMTransport("/odom", Odometry),
             # Navigation module topics from nav_bot
             ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
             ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),

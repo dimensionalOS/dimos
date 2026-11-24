@@ -19,8 +19,10 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.experimental.patrolling.routers.visitation_history import VisitationHistory
 
 
@@ -28,7 +30,7 @@ class BasePatrolRouter(ABC):
     _occupancy_grid_min_update_interval_s = 60.0
     _occupancy_grid: OccupancyGrid | None
     _occupancy_grid_updated_at: float
-    _pose: PoseStamped | None
+    _pose: Pose | None
     _lock: RLock
     _clearance_radius_m: float
 
@@ -57,9 +59,9 @@ class BasePatrolRouter(ABC):
             self._occupancy_grid_updated_at = now
             self._visitation.update_grid(msg)
 
-    def handle_odom(self, msg: PoseStamped) -> None:
+    def handle_odom(self, msg: Odometry) -> None:
         with self._lock:
-            self._pose = msg
+            self._pose = msg.pose.pose
             if self._occupancy_grid is None:
                 return
             self._visitation.handle_odom(msg.position.x, msg.position.y)

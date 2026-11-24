@@ -21,7 +21,7 @@ from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -64,22 +64,22 @@ class Go2Memory(Recorder):
     color_image: In[Image]
     camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     config: Go2MemoryConfig
 
-    _last_odom_pose: Pose | None = None
+    _last_pose: Pose | None = None
 
     @pose_setter_for("odom")
-    async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
-        self._last_odom_pose = msg
-        return self._last_odom_pose
+    async def _odom_pose(self, msg: Odometry) -> Pose | None:
+        self._last_pose = msg.pose.pose
+        return self._last_pose
 
     @pose_setter_for("lidar")
     async def _lidar_pose(self, msg: PointCloud2) -> Pose | None:
         # Yes, it doesn't make sense to register lidar at the odom pose because the
         # go2 lidar is in the world frame, but map.py (for now) needs this.
         # TODO: fix map.py to use a transform frame
-        return getattr(self, "_last_odom_pose", None)
+        return getattr(self, "_last_pose", None)
 
 
 unitree_go2_markers = (

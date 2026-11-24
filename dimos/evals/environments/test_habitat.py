@@ -224,17 +224,17 @@ def test_readiness_and_pose_normalization():
     env = environment()
     with MemoryStore() as store:
         with pytest.raises(LookupError):
-            env.latest_pose(store)
+            env.latest_odom(store)
         with pytest.raises(TimeoutError):
             env.wait_ready(store, deadline=time.monotonic())
         odom = Odometry(frame_id="world", pose=Pose(position=Vector3(1, 2, 3)))
         store.stream("odometry", Odometry).append(odom)
         store.stream("color_image", Image).append(Image(np.zeros((2, 2, 3), dtype=np.uint8)))
         env.wait_ready(store, deadline=time.monotonic() + 1)
-        pose = env.latest_pose(store)
-        assert pose.ts == odom.ts
-        assert pose.frame_id == "world"
-        assert tuple(pose.position) == (1, 2, 3)
+        latest = env.latest_odom(store)
+        assert latest.ts == odom.ts
+        assert latest.frame_id == "world"
+        assert tuple(latest.position) == (1, 2, 3)
         assert env.episode_metadata()["initial_observed_position_ros"] == [1, 2, 3]
 
 

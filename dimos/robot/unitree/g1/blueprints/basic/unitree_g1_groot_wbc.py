@@ -275,7 +275,7 @@ if global_config.simulation == "mujoco":
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for
     # base pose (read_odom was dropped from the Protocol). autoconnect
-    # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
+    # maps ``(odom, Odometry)`` to ``/odom`` by default; no override.
     _adapter_type = "sim_mujoco_g1"
     _tick_rate = 50.0
     _auto_arm = True

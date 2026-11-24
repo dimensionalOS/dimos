@@ -38,7 +38,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.vl.base import VlModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.perception.experimental.temporal_memory.clip_filter import (
@@ -122,7 +122,7 @@ class TemporalMemory(Module):
     config: TemporalMemoryConfig
 
     color_image: In[Image]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     entity_markers: Out[EntityMarkers]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -306,7 +306,7 @@ class TemporalMemory(Module):
 
         # Odometry tracking for entity world positioning (optional —
         # module works without it, entities just won't have world positions)
-        def _on_odom(msg: PoseStamped) -> None:
+        def _on_odom(msg: Odometry) -> None:
             self._robot_x = msg.position.x
             self._robot_y = msg.position.y
             self._robot_z = msg.position.z

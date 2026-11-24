@@ -19,7 +19,7 @@ import pytest
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
 def test_dimsim_launch_setup_and_pose(mocker):
@@ -39,10 +39,10 @@ def test_dimsim_launch_setup_and_pose(mocker):
         setup.assert_called_once_with(client)
         with MemoryStore() as store:
             with pytest.raises(LookupError):
-                env.latest_pose(store)
-            pose = PoseStamped(ts=123, frame_id="world")
-            store.stream("odom", PoseStamped).append(pose)
-            assert env.latest_pose(store).ts == 123
+                env.latest_odom(store)
+            odom = Odometry(ts=123, frame_id="world")
+            store.stream("odom", Odometry).append(odom)
+            assert env.latest_odom(store).ts == 123
     finally:
         env.stop()
     client.stop.assert_called_once()

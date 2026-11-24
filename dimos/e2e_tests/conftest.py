@@ -29,7 +29,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.simulation.dimsim.config import DIMSIM_PORT
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
@@ -233,7 +233,7 @@ def dim_sim(dimsim_port: int):
 @pytest.fixture
 def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
     """Spawn a dim_sim wall when the robot's /odom comes within `threshold` metres of `point`."""
-    odom_topic = "/odom#geometry_msgs.PoseStamped"
+    odom_topic = "/odom#nav_msgs.Odometry"
     stop_event = threading.Event()
     workers: list[threading.Thread] = []
     errors: list[BaseException] = []
@@ -246,9 +246,9 @@ def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
         def on_odom(data):
             if triggered.is_set():
                 return
-            pose = PoseStamped.lcm_decode(data)
-            dx = pose.x - px
-            dy = pose.y - py
+            odom = Odometry.lcm_decode(data)
+            dx = odom.x - px
+            dy = odom.y - py
             if dx * dx + dy * dy < threshold_sq:
                 triggered.set()
 

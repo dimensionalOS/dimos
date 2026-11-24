@@ -43,10 +43,12 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -66,6 +68,7 @@ from dimos.simulation.engines.mujoco_shm import (
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
+from dimos.simulation.mujoco.freejoint import body_twist
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
@@ -333,7 +336,7 @@ class MujocoSimModule(
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     tf: Out[TFMessage]
     body_poses: Out[TFMessage]
 
@@ -362,6 +365,7 @@ class MujocoSimModule(
         # has a free joint at the robot root; None otherwise.
         self._imu_base_qpos_slice: slice | None = None
         self._root_base_qpos_adr: int | None = None
+        self._root_base_qvel_adr: int | None = None
         self._root_spawn_clearance_z: float | None = None
 
     @property
@@ -544,6 +548,7 @@ class MujocoSimModule(
             self._imu_gyro_slice = binding.imu_gyro_slice
             self._imu_accel_slice = binding.imu_accel_slice
             self._root_base_qpos_adr = binding.root_qpos_adr
+            self._root_base_qvel_adr = binding.root_qvel_adr
         else:
             self._imu_quat_slice = None
             self._imu_gyro_slice = _find_sensor_slice(
@@ -553,6 +558,7 @@ class MujocoSimModule(
                 self._engine.model, *self.config.imu_accel_sensor_names, dim=3
             )
             self._root_base_qpos_adr = self._engine.root_qpos_adr
+            self._root_base_qvel_adr = self._engine.root_qvel_adr
 
         if self._root_base_qpos_adr is not None:
             self._imu_base_qpos_slice = slice(
@@ -798,22 +804,29 @@ class MujocoSimModule(
         # nav stack) only see joint articulation, not base translation
         # through the world.
         data = engine.data  # in-process: same MjData the sim thread mutates
-        if self._root_base_qpos_adr is not None:
+        if self._root_base_qpos_adr is not None and self._root_base_qvel_adr is not None:
             base_pos = data.qpos[self._root_base_qpos_adr : self._root_base_qpos_adr + 3]
             base_quat = data.qpos[
                 self._root_base_qpos_adr + 3 : self._root_base_qpos_adr + 7
             ]  # (w, x, y, z) per MuJoCo convention
+            linear, angular = body_twist(
+                base_quat, data.qvel[self._root_base_qvel_adr : self._root_base_qvel_adr + 6]
+            )
             self.odom.publish(
-                PoseStamped(
+                Odometry(
                     ts=time.time(),
                     frame_id="world",
-                    position=Vector3(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
-                    orientation=Quaternion(
-                        float(base_quat[1]),
-                        float(base_quat[2]),
-                        float(base_quat[3]),
-                        float(base_quat[0]),
-                    ),  # PoseStamped uses x,y,z,w
+                    child_frame_id="base_link",
+                    pose=Pose(
+                        Vector3(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
+                        Quaternion(
+                            float(base_quat[1]),
+                            float(base_quat[2]),
+                            float(base_quat[3]),
+                            float(base_quat[0]),
+                        ),  # Quaternion uses x,y,z,w
+                    ),
+                    twist=Twist(Vector3(*linear), Vector3(*angular)),
                 )
             )
 

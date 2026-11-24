@@ -185,7 +185,6 @@ def main(
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import throttle
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
@@ -228,7 +227,7 @@ def main(
 
         window = RecordingWindow.from_store(store, seek, duration)
 
-        def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
+        def clipped(name: str, ptype: type[Any] | None = None) -> Stream[Any]:
             return window.apply(store.stream(name, ptype))
 
         lidar = clipped("lidar", PointCloud2)
@@ -308,7 +307,7 @@ def main(
 
         # Go2 native odom pose axis + path.
         if "odom" in store.streams:
-            odom = clipped("odom", PoseStamped)
+            odom = clipped("odom")
             with progress(odom.count(), "        odom") as bar:
                 for odom_obs in odom:
                     bar(odom_obs)
@@ -325,7 +324,7 @@ def main(
                     )
             _log_path(
                 "     odom_path",
-                clipped("odom", PoseStamped),
+                clipped("odom"),
                 "world/odom_path",
                 color=(0, 200, 100),  # green
             )

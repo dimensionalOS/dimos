@@ -14,7 +14,6 @@
 
 import asyncio
 from dataclasses import dataclass
-import functools
 import json
 import threading
 import time
@@ -29,8 +28,10 @@ from reactivex.subject import Subject
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
@@ -39,7 +40,7 @@ from dimos.robot.unitree.type.lidar import (
     pointcloud2_from_webrtc_lidar,
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import RawOdometryMessage
 from dimos.robot.unitree.webrtc_connect import (
     DATA_CHANNEL_TYPE,
     RTC_TOPIC,
@@ -48,7 +49,7 @@ from dimos.robot.unitree.webrtc_connect import (
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )
-from dimos.types.timestamped import Timestamped
+from dimos.types.timestamped import Timestamped, to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
@@ -65,6 +66,22 @@ _T = TypeVar("_T", bound=Timestamped)
 def time_is_now(x: _T) -> _T:
     x.ts = time.time()
     return x
+
+
+def odometry_from_msg(msg: RawOdometryMessage) -> Odometry:
+    """The robot's base odometry, with a zero twist since the robot reports no velocity."""
+    pose = msg["data"]["pose"]
+    position = pose["position"]
+    orientation = pose["orientation"]
+    return Odometry(
+        ts=to_timestamp(msg["data"]["header"]["stamp"]),
+        frame_id="world",
+        child_frame_id="base_link",
+        pose=Pose(
+            Vector3(position["x"], position["y"], position["z"]),
+            Quaternion(orientation["x"], orientation["y"], orientation["z"], orientation["w"]),
+        ),
+    )
 
 
 @dataclass
@@ -296,17 +313,10 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     @simple_mcache
-    def tf_stream(self) -> Observable[Transform]:
-        base_link = functools.partial(Transform.from_pose, "base_link")
-        return backpressure(self.odom_stream().pipe(ops.map(base_link)))
-
-    @simple_mcache
-    def odom_stream(self) -> Observable[Pose]:
+    def odom_stream(self) -> Observable[Odometry]:
         return backpressure(
             self.raw_odom_stream().pipe(
-                ops.map(
-                    Odometry.from_msg,
-                ),
+                ops.map(odometry_from_msg),
                 ops.map(time_is_now),
             )
         )

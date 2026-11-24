@@ -34,10 +34,10 @@ if TYPE_CHECKING:
     from rerun.blueprint import Blueprint
 
     from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.Twist import Twist
     from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
     from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+    from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.msgs.std_msgs.Float32 import Float32
@@ -88,7 +88,7 @@ def _plot_telemetry(name: str, msg: Float32) -> RerunMulti:
     return [(f"plots/telemetry/{name}", rr.Scalars(msg.data))]
 
 
-def _plot_odom(odom: PoseStamped) -> RerunMulti:
+def _plot_odom(odom: Odometry) -> RerunMulti:
     import rerun as rr
 
     return [

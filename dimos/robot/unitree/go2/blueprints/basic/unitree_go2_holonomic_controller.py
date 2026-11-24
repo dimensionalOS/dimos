@@ -29,7 +29,7 @@ Interface (pure LCM pub/sub, identical to the RPP controller):
 
     IN   path   (nav_msgs/Path)        -> coordinator.path  -> holonomic_follower.on_path
     IN   speed  (std_msgs/Float32, m/s)-> coordinator.speed -> holonomic_follower.on_speed
-    OUT  odom   (geometry_msgs/PoseStamped, /go2/odom)  -- the Go2 leg odom
+    OUT  odom   (nav_msgs/Odometry, /go2/odom)  -- the Go2 leg odom
     OUT  cmd_vel(geometry_msgs/Twist,        /cmd_vel)  -- aggregated command echo
 
 The priority-20 ``vel_go2`` teleop task preempts the priority-10 follower while
@@ -55,8 +55,8 @@ from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -141,7 +141,7 @@ unitree_go2_holonomic_controller = (
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
             # Base adapter <-> GO2Connection link (drives the robot, reads odom).
             ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-            ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            ("go2_odom", Odometry): LCMTransport("/go2/odom", Odometry),
             # Controller IN: planned full-pose path + target speed (any source).
             ("path", Path): LCMTransport("/path", Path),
             ("speed", Float32): LCMTransport("/speed", Float32),

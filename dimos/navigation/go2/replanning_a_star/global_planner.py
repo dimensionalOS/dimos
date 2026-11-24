@@ -24,10 +24,12 @@ from reactivex.disposable import CompositeDisposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
@@ -46,7 +48,7 @@ class GlobalPlanner(Resource):
     path: Subject[Path]
     goal_reached: Subject[Bool]
 
-    _current_odom: PoseStamped | None = None
+    _current_pose: Pose | None = None
     _current_goal: PoseStamped | None = None
     _goal_reached: bool = False
     _thread: Thread | None = None
@@ -129,12 +131,13 @@ class GlobalPlanner(Resource):
                 logger.error("GlobalPlanner thread did not stop in time.")
             self._thread = None
 
-    def handle_odom(self, msg: PoseStamped) -> None:
+    def handle_odom(self, msg: Odometry) -> None:
+        pose = msg.pose.pose
         with self._lock:
-            self._current_odom = msg
+            self._current_pose = pose
 
         self._local_planner.handle_odom(msg)
-        self._position_tracker.add_position(msg)
+        self._position_tracker.add_position(pose)
 
     def handle_global_costmap(self, msg: OccupancyGrid) -> None:
         self._navigation_map.update(msg)
@@ -225,16 +228,16 @@ class GlobalPlanner(Resource):
 
             with self._lock:
                 current_goal = self._current_goal
-                current_odom = self._current_odom
+                current_pose = self._current_pose
 
-            if not current_goal or not current_odom:
+            if not current_goal or not current_pose:
                 continue
 
             if (
-                _planar_distance(current_goal.position, current_odom.position)
+                _planar_distance(current_goal.position, current_pose.position)
                 < self._goal_tolerance
                 and abs(
-                    angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+                    angle_diff(current_goal.orientation.euler[2], current_pose.orientation.euler[2])
                 )
                 < self._rotation_tolerance
             ):
@@ -296,16 +299,16 @@ class GlobalPlanner(Resource):
 
     def _replan_path(self) -> None:
         with self._lock:
-            current_odom = self._current_odom
+            current_pose = self._current_pose
             current_goal = self._current_goal
 
         logger.info("Replanning.", attempt=self._replan_limiter.get_attempt())
 
-        assert current_odom is not None
+        assert current_pose is not None
         assert current_goal is not None
 
         if (
-            _planar_distance(current_goal.position, current_odom.position)
+            _planar_distance(current_goal.position, current_pose.position)
             < self._replan_goal_tolerance
         ):
             self.cancel_goal(arrived=True)
@@ -315,7 +318,7 @@ class GlobalPlanner(Resource):
             self.cancel_goal()
             return
 
-        if not self._replan_limiter.can_retry(current_odom.position):
+        if not self._replan_limiter.can_retry(current_pose.position):
             self.cancel_goal()
             return
 
@@ -327,12 +330,12 @@ class GlobalPlanner(Resource):
         self.cancel_goal(but_will_try_again=True)
 
         with self._lock:
-            current_odom = self._current_odom
+            current_pose = self._current_pose
             current_goal = self._current_goal
 
         assert current_goal is not None
 
-        if current_odom is None:
+        if current_pose is None:
             logger.warning("Cannot handle goal request: missing odometry.")
             return
 
@@ -352,7 +355,7 @@ class GlobalPlanner(Resource):
             self.cancel_goal()
             return
 
-        path = self._find_wide_path(safe_goal, current_odom.position)
+        path = self._find_wide_path(safe_goal, current_pose.position)
 
         if not path:
             logger.warning(

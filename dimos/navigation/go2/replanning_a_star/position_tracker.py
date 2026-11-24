@@ -19,7 +19,7 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 
 _max_points_per_second = 1000
 
@@ -48,7 +48,7 @@ class PositionTracker:
             self._index = 0
             self._size = 0
 
-    def add_position(self, pose: PoseStamped) -> None:
+    def add_position(self, pose: Pose) -> None:
         with self._lock:
             self._timestamps[self._index] = time.time()
             self._positions[self._index] = (pose.position.x, pose.position.y)

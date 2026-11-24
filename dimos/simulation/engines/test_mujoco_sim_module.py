@@ -37,6 +37,7 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSi
 
 class _FakeData:
     qpos = np.array([0.0, 0.0, 0.75, 1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+    qvel = np.zeros(6, dtype=np.float64)
     sensordata = np.array([0.1, 0.2, 0.3, 1.0, 2.0, 3.0], dtype=np.float64)
 
 
@@ -94,6 +95,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
     module.config = MujocoSimModuleConfig(dof=2)
     module._shm_ready_signaled = False
     module._root_base_qpos_adr = 0
+    module._root_base_qvel_adr = 0
     module._imu_quat_slice = None
     module._imu_base_qpos_slice = slice(3, 7)
     module._imu_gyro_slice = slice(0, 3)
@@ -123,6 +125,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
 
     try:
         module._root_base_qpos_adr = 0
+        module._root_base_qvel_adr = 0
         module._imu_base_qpos_slice = slice(3, 7)
         module._imu_gyro_slice = slice(0, 3)
         module._imu_accel_slice = slice(3, 6)

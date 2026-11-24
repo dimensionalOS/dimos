@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import threading
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,12 +30,21 @@ logger = setup_logger()
 
 T = TypeVar("T")
 
+
+class ShmOdom(NamedTuple):
+    position: NDArray[Any]
+    quat_wxyz: NDArray[Any]
+    linear: NDArray[Any]
+    angular: NDArray[Any]
+    ts: float
+
+
 # Video buffer: VIDEO_WIDTH x VIDEO_HEIGHT x 3 RGB
 _video_size = VIDEO_WIDTH * VIDEO_HEIGHT * 3
 # Depth buffers: 3 cameras x VIDEO_WIDTH x VIDEO_HEIGHT float32
 _depth_size = VIDEO_WIDTH * VIDEO_HEIGHT * 4  # float32 = 4 bytes
-# Odometry buffer: position(3) + quaternion(4) + timestamp(1) = 8 floats
-_odom_size = 8 * 8  # 8 float64 values
+# Odometry buffer: position(3) + quaternion(4) + linear(3) + angular(3) + timestamp(1) = 14 floats
+_odom_size = 14 * 8  # 14 float64 values
 # Command buffer: linear(3) + angular(3) = 6 floats
 _cmd_size = 6 * 4  # 6 float32 values
 # Lidar message buffer: for serialized lidar data
@@ -177,12 +186,21 @@ class ShmReader(_ShmEnd):
                 )
                 depth_array[:] = depth
 
-    def write_odom(self, pos: NDArray[Any], quat: NDArray[Any], timestamp: float) -> None:
-        odom_array: NDArray[Any] = np.ndarray((8,), dtype=np.float64, buffer=self.shm.odom.buf)
+    def write_odom(
+        self,
+        pos: NDArray[Any],
+        quat: NDArray[Any],
+        linear: NDArray[Any],
+        angular: NDArray[Any],
+        timestamp: float,
+    ) -> None:
+        odom_array: NDArray[Any] = np.ndarray((14,), dtype=np.float64, buffer=self.shm.odom.buf)
         with self._writing(2):
             odom_array[0:3] = pos
             odom_array[3:7] = quat
-            odom_array[7] = timestamp
+            odom_array[7:10] = linear
+            odom_array[10:13] = angular
+            odom_array[13] = timestamp
 
     def write_lidar(self, points: NDArray[Any], ts: float) -> None:
         n_points = len(points)
@@ -251,12 +269,18 @@ class ShmWriter(_ShmEnd):
         )
         return video_array.copy()
 
-    def read_odom(self) -> tuple[tuple[NDArray[Any], NDArray[Any], float] | None, int]:
+    def read_odom(self) -> tuple[ShmOdom | None, int]:
         return self._read_frame(2, self._copy_odom)
 
-    def _copy_odom(self) -> tuple[NDArray[Any], NDArray[Any], float]:
-        odom_array: NDArray[Any] = np.ndarray((8,), dtype=np.float64, buffer=self.shm.odom.buf)
-        return odom_array[0:3].copy(), odom_array[3:7].copy(), float(odom_array[7])
+    def _copy_odom(self) -> ShmOdom:
+        odom_array: NDArray[Any] = np.ndarray((14,), dtype=np.float64, buffer=self.shm.odom.buf)
+        return ShmOdom(
+            odom_array[0:3].copy(),
+            odom_array[3:7].copy(),
+            odom_array[7:10].copy(),
+            odom_array[10:13].copy(),
+            float(odom_array[13]),
+        )
 
     def write_command(self, linear: NDArray[Any], angular: NDArray[Any]) -> None:
         cmd_array: NDArray[Any] = np.ndarray((6,), dtype=np.float32, buffer=self.shm.cmd.buf)

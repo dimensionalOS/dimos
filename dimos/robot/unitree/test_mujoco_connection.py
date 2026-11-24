@@ -32,6 +32,7 @@ from structlog.testing import LogCapture
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.simulation.mujoco.shared_memory import ShmOdom
 from dimos.utils import logging_config
 
 
@@ -62,8 +63,10 @@ class _FakeShmWriter:
     def read_video(self) -> tuple[NDArray[Any], int]:
         return np.zeros((1, 1, 3), dtype=np.uint8), self.seq
 
-    def read_odom(self) -> tuple[tuple[NDArray[Any], NDArray[Any], float], int]:
-        return (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]), 0.0), self.seq
+    def read_odom(self) -> tuple[ShmOdom, int]:
+        return ShmOdom(
+            np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]), np.zeros(3), np.zeros(3), 0.0
+        ), self.seq
 
     def read_lidar(self) -> tuple[tuple[NDArray[Any], float], int]:
         return (np.zeros((1, 3), dtype=np.float32), 0.0), self.seq

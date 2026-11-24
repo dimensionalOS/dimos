@@ -29,6 +29,7 @@ from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
@@ -42,7 +43,7 @@ logger = setup_logger()
 
 class NavigationSkillContainer(Module):
     _latest_image: Image | None = None
-    _latest_odom: PoseStamped | None = None
+    _latest_odom: Odometry | None = None
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
     # The navigate_with_text goal under way, as (query, goal), until the planner's
@@ -57,7 +58,7 @@ class NavigationSkillContainer(Module):
     _object_tracking: ObjectTrackingSpec | None = None
 
     color_image: In[Image]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     goal_reached: In[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -85,7 +86,7 @@ class NavigationSkillContainer(Module):
     def _on_color_image(self, image: Image) -> None:
         self._latest_image = image
 
-    def _on_odom(self, odom: PoseStamped) -> None:
+    def _on_odom(self, odom: Odometry) -> None:
         self._latest_odom = odom
 
     @skill

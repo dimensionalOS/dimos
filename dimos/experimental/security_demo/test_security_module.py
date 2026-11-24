@@ -19,8 +19,10 @@ from unittest.mock import call
 
 import pytest
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
@@ -88,7 +90,7 @@ def test_patrol_step_transitions_to_following_on_detection(
     module._state = "PATROLLING"
     module._has_active_goal = True
     module._latest_image = person_image
-    module._latest_pose = PoseStamped(position=[1, 2, 0], orientation=[0, 0, 0, 1])
+    module._latest_odom = Odometry(pose=Pose(position=[1, 2, 0], orientation=[0, 0, 0, 1]))
 
     det = make_detection()
     module._detector.process_image.return_value = ImageDetections2D(

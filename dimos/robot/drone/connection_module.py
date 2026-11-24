@@ -30,11 +30,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
@@ -64,7 +64,7 @@ class DroneConnectionModule(Module):
     tracking_status: In[Any]
 
     # Outputs
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     gps_location: Out[LatLon]
     status: Out[Any]  # JSON status
     telemetry: Out[Any]  # Full telemetry JSON
@@ -73,7 +73,7 @@ class DroneConnectionModule(Module):
     tf: Out[TFMessage]
 
     # Internal state
-    _odom: PoseStamped | None = None
+    _odom: Odometry | None = None
     _status: dict[str, Any] = {}
     _latest_telemetry: dict[str, Any] | None = None
     _latest_status: dict[str, Any] | None = None
@@ -165,7 +165,7 @@ class DroneConnectionModule(Module):
         logger.info("Drone connection module started")
         return
 
-    def _publish_tf(self, msg: PoseStamped) -> None:
+    def _publish_tf(self, msg: Odometry) -> None:
         """Publish odometry and TF transforms."""
         self._odom = msg
 
@@ -220,14 +220,11 @@ class DroneConnectionModule(Module):
                 # Publish default odometry if we don't have real data yet
                 if frame_count % 10 == 0:  # Every ~3Hz
                     if self._odom is None:
-                        # Publish default pose
-                        default_pose = PoseStamped(
-                            position=Vector3(0, 0, 0),
-                            orientation=Quaternion(0, 0, 0, 1),
-                            frame_id="world",
-                            ts=time.time(),
+                        # Publish default odometry
+                        default_odom = Odometry(
+                            ts=time.time(), frame_id="world", child_frame_id="base_link"
                         )
-                        self._publish_tf(default_pose)
+                        self._publish_tf(default_odom)
                         logger.debug("Publishing default odometry")
 
                 frame_count += 1
@@ -237,7 +234,7 @@ class DroneConnectionModule(Module):
                 time.sleep(0.1)
 
     @rpc
-    def get_odom(self) -> PoseStamped | None:
+    def get_odom(self) -> Odometry | None:
         """Get current odometry.
 
         Returns:

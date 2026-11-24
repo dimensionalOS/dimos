@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
@@ -167,7 +168,7 @@ _NAV_PATH_PAYLOAD = struct.pack("<ff", 1.5, -2.5)
 def test_config_accepts_runtime_specs_by_identity_and_crosses_the_pipe() -> None:
     spec = RuntimeChannelSpec(
         ch="odom",
-        message_type=PoseStamped,
+        message_type=Odometry,
         dir="rx",
         encoding="pose.json.v1",
         delivery="reliable",
@@ -308,10 +309,10 @@ def test_encoder_failure_is_isolated_and_rate_limited(monkeypatch) -> None:
     blueprint = cockpit(
         channels=[
             Channel("bad_path", NavPath, encoding="boom.rbm.v1", max_hz=1000.0),
-            Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=1000.0),
+            Channel("tracked_odom", Odometry, encoding="pose.json.v1", max_hz=1000.0),
         ]
     )
-    module, clients = start_authored(monkeypatch, blueprint, wire=("bad_path", "target_pose"))
+    module, clients = start_authored(monkeypatch, blueprint, wire=("bad_path", "tracked_odom"))
     try:
         exceptions: list[str] = []
         monkeypatch.setattr(
@@ -319,18 +320,20 @@ def test_encoder_failure_is_isolated_and_rate_limited(monkeypatch) -> None:
             "exception",
             lambda msg, *args, **kwargs: exceptions.append(msg),
         )
-        push(module, clients[0], Subs(chs=["bad_path", "target_pose"], n=1))
-        bad, pose = transport_of(module, "bad_path"), transport_of(module, "target_pose")
-        assert wait_until(lambda: bad.subscribers and pose.subscribers)
+        push(module, clients[0], Subs(chs=["bad_path", "tracked_odom"], n=1))
+        bad, odom = transport_of(module, "bad_path"), transport_of(module, "tracked_odom")
+        assert wait_until(lambda: bad.subscribers and odom.subscribers)
         # Drop the input rate gates so every publish reaches the encoder.
-        module._min_interval = {"bad_path": 0.0, "target_pose": 0.0}
+        module._min_interval = {"bad_path": 0.0, "tracked_odom": 0.0}
         for _ in range(3):
             bad.publish(_NAV_PATH)
-        pose.publish(PoseStamped(ts=2.0, position=[1.0, 2.0, 0.0], orientation=[0, 0, 0, 1]))
+        odom.publish(
+            Odometry(ts=2.0, pose=Pose(position=[1.0, 2.0, 0.0], orientation=[0, 0, 0, 1]))
+        )
         assert wait_until(lambda: clients[0].frames)
         # The healthy channel flows; the broken one drops every sample.
-        assert all(frame[0] == "target_pose" for frame in clients[0].frames)
-        assert module.encoded == {"bad_path": 0, "target_pose": 1}
+        assert all(frame[0] == "tracked_odom" for frame in clients[0].frames)
+        assert module.encoded == {"bad_path": 0, "tracked_odom": 1}
         # Three failures inside the log window produce one exception log.
         assert len(exceptions) == 1
         assert "bad_path" in exceptions[0]
@@ -345,7 +348,7 @@ def test_channels_without_manifest_fails(monkeypatch) -> None:
     patch_relay(monkeypatch, fake_connect)
     spec = RuntimeChannelSpec(
         ch="odom",
-        message_type=PoseStamped,
+        message_type=Odometry,
         dir="rx",
         encoding="pose.json.v1",
         delivery="reliable",
@@ -391,7 +394,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
 
     good = RuntimeChannelSpec(
         ch="odom",
-        message_type=PoseStamped,
+        message_type=Odometry,
         dir="rx",
         encoding="pose.json.v1",
         delivery="reliable",
@@ -399,7 +402,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
         params={},
         encoder=builtin_codecs.encode_pose,
     )
-    start_with(replace(good, ch="target_pose"), "do not match the compiled runtime specs")
+    start_with(replace(good, ch="tracked_odom"), "do not match the compiled runtime specs")
     # Every advertised field that drives behavior is cross-checked: a spec
     # gating at 500 Hz while the manifest promises 5 Hz (or drifted params,
     # encoding, delivery, direction) must fail start.
@@ -410,12 +413,12 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     start_with(replace(good, dir="tx"), "does not match its compiled runtime spec")
     start_with(
         replace(good, message_type=Twist),
-        "message type Twist does not match the RelayBridgeModule port type PoseStamped",
+        "message type Twist does not match the RelayBridgeModule port type Odometry",
     )
 
 
 def test_composition_preserves_generated_bridge() -> None:
-    blueprint = cockpit(channels=[Channel("target_pose", PoseStamped, encoding="pose.json.v1")])
+    blueprint = cockpit(channels=[Channel("tracked_odom", Odometry, encoding="pose.json.v1")])
     assert with_relay_bridge(blueprint) is blueprint
 
 
@@ -464,11 +467,11 @@ def _start_pub_bridge(monkeypatch, *channels: Channel):
     blueprint = cockpit(
         channels=[
             Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
-            Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=1000.0),
+            Channel("tracked_odom", Odometry, encoding="pose.json.v1", max_hz=1000.0),
             *channels,
         ]
     )
-    return start_authored(monkeypatch, blueprint, wire=("target_pose",))
+    return start_authored(monkeypatch, blueprint, wire=("tracked_odom",))
 
 
 def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
@@ -734,8 +737,8 @@ def test_publish_failures_nack_without_recycling_the_session(monkeypatch) -> Non
         # still work after every failure above.
         push(module, clients[0], _pub_frame(json.dumps("încă merge").encode(), _pub_meta(id="f")))
         assert wait_until(lambda: seen == ["încă merge"])
-        push(module, clients[0], Subs(chs=["target_pose"], n=1))
-        assert wait_until(lambda: transport_of(module, "target_pose").subscribers)
+        push(module, clients[0], Subs(chs=["tracked_odom"], n=1))
+        assert wait_until(lambda: transport_of(module, "tracked_odom").subscribers)
     finally:
         stop_module(module)
 
@@ -795,11 +798,13 @@ def test_map2d_rejects_an_incompatible_path_encoder() -> None:
 
 def test_builtin_channel_replays_when_explicitly_requested(monkeypatch) -> None:
     blueprint = cockpit(
-        channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", resend_on_subscribe=True)]
+        channels=[Channel("odom", Odometry, encoding="pose.json.v1", resend_on_subscribe=True)]
     )
     module, clients = start_authored(monkeypatch, blueprint, wire=("odom",))
     try:
-        transport_of(module, "odom").publish(_NAV_PATH.poses[0])
+        transport_of(module, "odom").publish(
+            Odometry(ts=1.0, pose=Pose(position=[1.5, -2.5, 0.0], orientation=[0, 0, 0, 1]))
+        )
         push(module, clients[0], Subs(chs=["odom"], n=1))
         assert wait_until(lambda: clients[0].frames)
         ch, payload, delivery, meta = clients[0].frames[0]

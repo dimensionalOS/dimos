@@ -46,6 +46,7 @@ from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.experimental.dannav.geometry.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
@@ -96,7 +97,7 @@ class _ReplanGate:
         self._committed: PathDistancer | None = None
         self._anchor_progress_m: float = 0.0
 
-    def on_odom(self, odom: PoseStamped) -> None:
+    def on_odom(self, odom: Odometry) -> None:
         self._robot_xy = np.array([odom.position.x, odom.position.y], dtype=float)
 
     def on_goal(self, goal: PoseStamped) -> None:
@@ -213,7 +214,7 @@ class DanLocalPlanner(Module):
     config: DanLocalPlannerConfig
 
     planner_path: In[Path]  # from MLSPlannerNative.path (remapped)
-    odom: In[PoseStamped]  # from GO2Connection.odom
+    odom: In[Odometry]  # from GO2Connection.odom
     goal: In[PoseStamped]  # from MovementManager.goal, the click or cancel signal
 
     path: Out[Path]  # to DanHolonomicTC.path
@@ -231,7 +232,7 @@ class DanLocalPlanner(Module):
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.planner_path.subscribe(self._on_planner_path)))
 
-    def _on_odom(self, msg: PoseStamped) -> None:
+    def _on_odom(self, msg: Odometry) -> None:
         self._gate.on_odom(msg)
 
     def _on_goal(self, msg: PoseStamped) -> None:

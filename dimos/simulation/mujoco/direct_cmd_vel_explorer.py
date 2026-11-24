@@ -18,9 +18,10 @@ from typing import TYPE_CHECKING
 
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,14 +38,14 @@ class DirectCmdVelExplorer:
         self.rotation_speed = rotation_speed
         self._dt = 1.0 / publish_rate
         self._cmd_vel: PubSubTransport[Twist] | None = None
-        self._odom: PubSubTransport[PoseStamped] | None = None
-        self._pose: PoseStamped | None = None
+        self._odom: PubSubTransport[Odometry] | None = None
+        self._pose: Pose | None = None
         self._new_pose = threading.Event()
         self._unsub: Callable[[], None] | None = None
 
     def start(self) -> None:
         self._cmd_vel = make_transport("/cmd_vel", Twist)
-        self._odom = make_transport("/odom", PoseStamped)
+        self._odom = make_transport("/odom", Odometry)
         self._pose = None
         self._unsub = self._odom.subscribe(self._on_odom)
 
@@ -56,11 +57,11 @@ class DirectCmdVelExplorer:
         if self._odom:
             self._odom.stop()
 
-    def _on_odom(self, msg: PoseStamped) -> None:
-        self._pose = msg
+    def _on_odom(self, msg: Odometry) -> None:
+        self._pose = msg.pose.pose
         self._new_pose.set()
 
-    def _wait_for_pose(self) -> PoseStamped:
+    def _wait_for_pose(self) -> Pose:
         self._new_pose.clear()
         self._new_pose.wait(timeout=5.0)
         assert self._pose is not None, "No odom received"

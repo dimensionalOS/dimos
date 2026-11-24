@@ -43,6 +43,7 @@ COMPLEX_TYPES: set[str] = {
     "sensor_msgs.CompressedImage",
     "sensor_msgs.CameraInfo",
     "geometry_msgs.PoseStamped",
+    "nav_msgs.Odometry",
 }
 
 # Cache for dynamic imports of dimos types

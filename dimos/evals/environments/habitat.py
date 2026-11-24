@@ -20,13 +20,13 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import model_validator
 
 from dimos.core.global_config import global_config
 from dimos.evals.environments.sim import Sim, SimConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.simulation.habitat.server import HabitatProp
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ class HabitatEnvironment(Sim):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._spawn: PoseStamped | None = None
+        self._spawn: Odometry | None = None
 
     def preflight(self, agent: EvalSubject) -> None:
         """Check scene inputs and the existing native build/install prerequisites.
@@ -166,24 +166,21 @@ class HabitatEnvironment(Sim):
         # freshness and monotonic time only for the elapsed launch deadline.
         while time.monotonic() < deadline:
             try:
-                pose = self.latest_pose(recording)
+                odom = self.latest_odom(recording)
                 image = recording.streams.color_image.last().data
-                if time.time() - min(pose.ts, image.ts) < 10.0:
-                    self._spawn = pose
+                if time.time() - min(odom.ts, image.ts) < 10.0:
+                    self._spawn = odom
                     return
             except (LookupError, AttributeError):
                 pass
             time.sleep(0.1)
         raise TimeoutError("Habitat did not publish fresh RGB and odometry")
 
-    def latest_pose(self, recording: Store) -> PoseStamped:
-        """Convert recorded odometry to a pose, preserving its frame and timestamp."""
+    def latest_odom(self, recording: Store) -> Odometry:
+        """The latest recorded odometry."""
         if "odometry" not in recording.streams:
             raise LookupError("No Habitat odometry recorded")
-        odom = recording.streams.odometry.last().data
-        return PoseStamped(
-            ts=odom.ts, frame_id=odom.frame_id, position=odom.position, orientation=odom.orientation
-        )
+        return cast("Odometry", recording.streams.odometry.last().data)
 
     def episode_metadata(self) -> dict[str, object]:
         """Record the launch overrides and initial observed pose.

@@ -132,6 +132,18 @@ class Odometry(Timestamped):
     def yaw(self) -> float:
         return self.pose.yaw
 
+    @classmethod
+    def from_pose_stamped(
+        cls, pose: PoseStamped, child_frame_id: str = "", twist: Twist | None = None
+    ) -> Odometry:
+        return cls(
+            ts=pose.ts,
+            frame_id=pose.frame_id,
+            child_frame_id=child_frame_id,
+            pose=Pose(pose.position, pose.orientation),
+            twist=twist,
+        )
+
     def to_pose_stamped(self) -> PoseStamped:
         return PoseStamped(
             ts=self.ts,

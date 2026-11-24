@@ -41,6 +41,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
@@ -343,7 +344,7 @@ def test_replay_logs_completion_without_requesting_shutdown(mocker) -> None:
 
 
 def test_odom_to_tf_unprefixed_by_default() -> None:
-    odom = PoseStamped(ts=1.0, frame_id="world")
+    odom = Odometry(ts=1.0, frame_id="world")
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
     assert (base.frame_id, base.child_frame_id) == ("world", "base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
@@ -379,14 +380,14 @@ def test_publish_tf_off_keeps_odometry_on_its_port(
 ) -> None:
     """Turning tf off hands the base_link edge to another publisher, not the odom port."""
     conn = connection(publish_tf=False)
-    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    conn._publish_tf(Odometry(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 0
     assert conn.odom.publish.call_count == 1
 
 
 def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
     conn = connection(publish_tf=True)
-    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    conn._publish_tf(Odometry(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 1
     assert conn.odom.publish.call_count == 1
 
@@ -454,7 +455,7 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
 def test_odom_to_tf_prefixed() -> None:
     """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
-    odom = PoseStamped(ts=1.0, frame_id="world")
+    odom = Odometry(ts=1.0, frame_id="world")
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
     assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == (
@@ -525,30 +526,15 @@ def test_replay_opens_recording_and_emits_typed_odometry(
             scheduler.advance_by(1.0)
         assert errors == []
         assert completed == [True]
-        assert [value.lcm_encode() for value in received] == [values[1].lcm_encode()]
+        assert [value.to_pose_stamped().lcm_encode() for value in received] == [
+            values[1].lcm_encode()
+        ]
     assert log.info.call_args_list == [
         mocker.call(
             "Replay started", source=dataset, path=str(path), duration_s=0.0, speed=1.0, loop=False
         ),
         mocker.call("Replay finished", source=dataset),
     ]
-
-
-def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
-    """A legacy Go2 DDS recording holds nav_msgs.Odometry, which GO2Connection cannot publish."""
-    path = tmp_path / "legacy.mcap"
-    with path.open("wb") as output:
-        writer = Writer(output)
-        writer.start()
-        channel = writer.register_channel(
-            topic="rt/utlidar/robot_odom", message_encoding="cdr", schema_id=0
-        )
-        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=b"")
-        writer.finish()
-
-    with go2_conn.ReplayConnection(dataset=str(path)) as conn:
-        with pytest.raises(TypeError, match="PoseStamped odometry.*'odom'.*Odometry"):
-            conn.odom_stream()
 
 
 @pytest.mark.parametrize("payload_module", ["builtins.dict", "unavailable_sensor_package.Frame"])

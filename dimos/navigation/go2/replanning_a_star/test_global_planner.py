@@ -20,6 +20,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star import global_planner
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
@@ -73,7 +74,7 @@ def test_replan_near_the_goal_ignores_the_height_of_the_robot() -> None:
     its body is above a goal on the ground."""
 
     planner = GlobalPlanner(robot_width=0.3, robot_rotation_diameter=0.6)
-    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.52]))
+    planner.handle_odom(Odometry(pose=Pose(position=[1.0, 1.0, 0.52])))
     planner._current_goal = PoseStamped(position=[1.3, 1.0, 0.0])
 
     planner._replan_path()
@@ -106,7 +107,7 @@ def test_goal_before_first_costmap_fails_and_can_be_retried(
     planner: GlobalPlanner, mocker: MockerFixture, distance: float
 ) -> None:
     start_planning = mocker.patch.object(LocalPlanner, "start_planning")
-    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
+    planner.handle_odom(Odometry(pose=Pose(position=[1.0, 1.0, 0.3])))
     goal = PoseStamped(position=[1.0 + distance, 1.0, 0.3], frame_id="world")
     outcomes: list[bool] = []
 

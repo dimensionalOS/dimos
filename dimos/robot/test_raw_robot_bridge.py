@@ -23,10 +23,11 @@ from PIL import Image as PILImage
 import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -73,8 +74,8 @@ def test_client_receives_sensor_topics_and_robot_receives_commands(
     robot.subscribe("cmd_vel/json", lambda b, _ts: commands.append(b))
     time.sleep(0.5)  # subscriptions propagate over the link
 
-    pose = PoseStamped(position=(1.0, 2.0, 0.5), orientation=(0.0, 0.0, 0.0, 1.0), ts=3.5)
-    robot.put("odom/json", odom_json(pose))
+    odom = Odometry(ts=3.5, pose=Pose(position=(1.0, 2.0, 0.5), orientation=(0.0, 0.0, 0.0, 1.0)))
+    robot.put("odom/json", odom_json(odom))
     robot.put("camera/jpeg", b"\xff\xd8jpeg", ts=4.25)
     client.put("cmd_vel/json", json.dumps({"vx": 0.3, "vy": 0.0, "wz": 0.1, "t": 1.0}))
     wait_for(lambda: len(got) == 2 and len(commands) == 1)
@@ -96,7 +97,7 @@ def test_encoders_are_plain_formats() -> None:
     assert np.frombuffer(raw, dtype="<f4").reshape(-1, 3).tolist() == points.tolist()
 
     fields = json.loads(
-        odom_json(PoseStamped(position=(0, 0, 0), orientation=(0, 0, 0, 1), ts=9.0))
+        odom_json(Odometry(ts=9.0, pose=Pose(position=(0, 0, 0), orientation=(0, 0, 0, 1))))
     )
     assert list(fields) == ["t", "x", "y", "z", "qx", "qy", "qz", "qw"]
 

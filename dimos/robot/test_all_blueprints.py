@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.coordination.module_coordinator import verify_no_name_conflicts
 from dimos.core.global_config import global_config
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
@@ -74,6 +75,9 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
 
 UBUNTU_BLUEPRINTS = sorted(set(all_blueprints) - SELF_HOSTED_BLUEPRINTS)
 
+# Demonstrates the build-time error for one stream name carrying two types.
+CONFLICTING_BLUEPRINTS = frozenset({"demo-error-on-name-conflicts"})
+
 
 def _check_blueprint(blueprint_name: str) -> None:
     try:
@@ -84,7 +88,9 @@ def _check_blueprint(blueprint_name: str) -> None:
         f"Blueprint '{blueprint_name}' is not a Blueprint or MetaBlueprint, got {type(blueprint)}"
     )
     # Deferred operations and default choices are only validated on solidification.
-    autoconnect(blueprint).solidify()
+    solid = autoconnect(blueprint).solidify()
+    if blueprint_name not in CONFLICTING_BLUEPRINTS:
+        verify_no_name_conflicts(solid)
 
 
 def test_old_self_hosted_blueprints() -> None:

@@ -20,6 +20,7 @@ from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree import unitree_skill_container
 from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
@@ -46,7 +47,7 @@ def test_move_to_before_first_costmap_returns_failure(
     skill: UnitreeSkillContainer, navigation: ReplanningAStarPlanner, mocker: MockerFixture
 ) -> None:
     pose = Transform(translation=Vector3(1.0, 1.0, 0.3), child_frame_id="base_link")
-    navigation._planner.handle_odom(pose.to_pose())
+    navigation._planner.handle_odom(Odometry(pose=pose.to_pose()))
     tfbuffer = mocker.patch.object(
         UnitreeSkillContainer, "tfbuffer", new_callable=mocker.PropertyMock
     )

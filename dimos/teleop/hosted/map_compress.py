@@ -32,8 +32,8 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -53,7 +53,7 @@ class MapCompressModule(Module):
     _MAX_MAP_BYTES = 32 * 1024  # ~50% of CF's observed ~64 KB drop threshold
 
     global_costmap: In[OccupancyGrid]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     map_out: Out[bytes]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -124,7 +124,7 @@ class MapCompressModule(Module):
             return
         self._last_map_pub = now
 
-    def _on_odom(self, pose: PoseStamped) -> None:
+    def _on_odom(self, odom: Odometry) -> None:
         """Compact 2D pose at odom rate so the marker moves between map frames."""
         now = time.monotonic()
         if now - self._last_odom_pub < 1.0 / self.config.odom_hz:
@@ -132,10 +132,10 @@ class MapCompressModule(Module):
         try:
             payload = {
                 "type": "odom",
-                "x": float(pose.position.x),
-                "y": float(pose.position.y),
-                "yaw": float(pose.orientation.to_euler().yaw),
-                "ts": float(pose.ts),
+                "x": float(odom.position.x),
+                "y": float(odom.position.y),
+                "yaw": float(odom.orientation.to_euler().yaw),
+                "ts": float(odom.ts),
             }
             self.map_out.publish(json.dumps(payload).encode())
         except Exception:

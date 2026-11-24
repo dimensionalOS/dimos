@@ -30,8 +30,10 @@ from pytest_mock import MockerFixture
 
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
@@ -699,6 +701,21 @@ def test_stop_does_not_sit_the_robot_on_the_dock(
 
     mocks.motion_state_cmd.publish.assert_not_called()
     mocks.cmd_vel.publish.assert_not_called()
+
+
+def test_odometry_reaches_odom_with_its_twist(started: Callable[..., M20Connection]) -> None:
+    conn = started()
+    odometry = Odometry(
+        ts=1.0,
+        frame_id="odom",
+        child_frame_id="base_link",
+        pose=Pose(1.0, 2.0, 0.0),
+        twist=Twist(linear=Vector3(0.4, 0.1, 0.0), angular=Vector3(0.0, 0.0, 0.2)),
+    )
+
+    _transport(conn.odometry).publish(odometry)
+
+    assert _transport(conn.odom).sent == [odometry]
 
 
 def test_requested_velocity_reaches_the_robot_off_the_dock(

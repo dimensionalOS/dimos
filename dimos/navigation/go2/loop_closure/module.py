@@ -28,9 +28,9 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Header import Header
@@ -88,7 +88,7 @@ class PGOVoxelMapper(Module):
     dedicated_worker = True
 
     lidar: In[PointCloud2]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     global_map: Out[PointCloud2]
     # On every new keyframe: graph poses (premap included once attached) and non-odometry edges
     pgo_keyframes: Out[PoseArray]
@@ -101,7 +101,7 @@ class PGOVoxelMapper(Module):
     pgo_rebuild_ms: Out[Float32]
 
     _map: PGOMap | None = None
-    _pose: PoseStamped | None = None
+    _pose: Pose | None = None
     _frames: int = 0
     _graph_keyframes: int = 0
     _matcher: PremapMatcher | None = None
@@ -225,8 +225,8 @@ class PGOVoxelMapper(Module):
             if found is not None:
                 self._fixes.put(found)
 
-    def _on_odom(self, pose: PoseStamped) -> None:
-        self._pose = pose
+    def _on_odom(self, msg: Odometry) -> None:
+        self._pose = msg.pose.pose
 
     def _on_lidar(self, cloud: PointCloud2) -> None:
         with self._frame_lock:

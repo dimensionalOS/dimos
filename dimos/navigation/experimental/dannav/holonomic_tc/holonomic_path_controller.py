@@ -25,7 +25,7 @@ import math
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.experimental.dannav.geometry.path_distancer import project_to_polyline
@@ -91,12 +91,12 @@ class HolonomicPathController:
         self._xy, self._s, self._heading = xy, s, heading
         self._path = path
 
-    def step(self, odom: PoseStamped) -> Twist | None:
+    def step(self, pose: Pose) -> Twist | None:
         """The next command; a zero twist on arrival, which also drops the path."""
         if self._path is None:
             return None
-        x, y = float(odom.position.x), float(odom.position.y)
-        yaw = float(odom.orientation.euler[2])
+        x, y = float(pose.position.x), float(pose.position.y)
+        yaw = float(pose.orientation.euler[2])
         foot = project_to_polyline(x, y, self._xy)
         s = foot.s_along_path_m
         end = self._xy[-1]

@@ -23,8 +23,10 @@ from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
@@ -38,7 +40,7 @@ class FakeCamera(Module):
 
 
 class FakeOdom(Module):
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
 
 
 class StubSpatialMemory(Module):
@@ -184,7 +186,7 @@ def container(mocker):
         module._spatial_memory.query_tagged_location.return_value = RobotLocation(
             name="bed", position=(1.0, 2.0, 0.0), rotation=(0.0, 0.0, 0.0)
         )
-        module._latest_odom = PoseStamped(position=make_vector3(0.0, 2.0, 0.0))
+        module._latest_odom = Odometry(pose=Pose(position=make_vector3(0.0, 2.0, 0.0)))
         for name in ("start_tool", "tool_update", "stop_tool"):
             mocker.patch.object(module, name)
         yield module
@@ -217,7 +219,7 @@ def test_goal_reached_reports_where_the_robot_stopped_and_closes_the_tool(contai
 def test_arrival_is_reported(container) -> None:
     container.navigate_with_text("bed")
     # Odometry is at body height. The distance to the goal is measured in the plane.
-    container._latest_odom = PoseStamped(position=make_vector3(1.0, 2.0, 0.3))
+    container._latest_odom = Odometry(pose=Pose(position=make_vector3(1.0, 2.0, 0.3)))
 
     container._on_goal_reached(Bool(True))
 

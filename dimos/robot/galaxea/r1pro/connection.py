@@ -52,7 +52,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -125,7 +124,7 @@ class R1ProConnectionConfig(ModuleConfig):
     cmd_vel_timeout_s: float = Field(default=0.2, gt=0, le=1.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
-    # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` pose.
+    # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` stream.
     publish_odom_tf: bool = Field(default=True)
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
@@ -152,9 +151,9 @@ class R1ProConnection(Module):
     imu_torso: Out[Imu]
 
     # Base feedback. `odom` feeds the twist-base transport adapter;
-    # `odometry` carries the same wheel odometry as pose + twist for
-    # navigation consumers (voxel map, planner).
-    odom: Out[PoseStamped]
+    # `odometry` carries the same wheel odometry for navigation
+    # consumers (voxel map, planner).
+    odom: Out[Odometry]
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
@@ -664,19 +663,17 @@ class R1ProConnection(Module):
         orientation = Quaternion(0.0, 0.0, math.sin(half), math.cos(half))
         frame_id = self.config.odom_frame_id
         base = self.config.frame_id
-        pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
-        self.odometry.publish(
-            Odometry(
-                ts=now,
-                frame_id=frame_id,
-                child_frame_id=base,
-                pose=Pose(position, orientation),
-                twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
-            )
+        odometry = Odometry(
+            ts=now,
+            frame_id=frame_id,
+            child_frame_id=base,
+            pose=Pose(position, orientation),
+            twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
         )
+        self.odometry.publish(odometry)
         if self.config.publish_odom_tf:
-            self.odom.publish(pose)
-            self.tf.publish(TFMessage(Transform.from_pose(base, pose)))
+            self.odom.publish(odometry)
+            self.tf.publish(TFMessage(Transform.from_pose(base, odometry.to_pose_stamped())))
 
     # Aggregated motor_states publish loop
 

@@ -22,7 +22,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -66,7 +66,7 @@ def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
     return [-base_to_lidar, base_to_chassis_lidar]
 
 
-def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
+def base_odometry(odometry: Odometry, lidar_to_base: Transform) -> Odometry:
     """Point-LIO's lidar pose carried through the mount to base_link."""
     odom_to_lidar = Transform(
         translation=odometry.pose.position,
@@ -75,21 +75,21 @@ def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
         ts=odometry.ts,
     )
     odom_to_base = odom_to_lidar + lidar_to_base
-    return PoseStamped(
+    return Odometry(
         ts=odometry.ts,
         frame_id=odometry.frame_id,
-        position=odom_to_base.translation,
-        orientation=odom_to_base.rotation,
+        child_frame_id=lidar_to_base.child_frame_id,
+        pose=Pose(odom_to_base.translation, odom_to_base.rotation),
     )
 
 
 class R1ProLio(StaticTfPublisher):
-    """Hangs base_link under Point-LIO's lidar frame, and publishes base_link's pose from Point-LIO's odometry."""
+    """Hangs base_link under Point-LIO's lidar frame, and publishes base_link's odometry from Point-LIO's."""
 
     config: R1ProLioConfig
 
     odometry: In[Odometry]
-    pose: Out[PoseStamped]
+    odom: Out[Odometry]
 
     def transforms(self) -> list[Transform]:
         return mount_transforms(self.config)
@@ -101,4 +101,4 @@ class R1ProLio(StaticTfPublisher):
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
 
     def _on_odometry(self, msg: Odometry) -> None:
-        self.pose.publish(base_pose(msg, self._lidar_to_base))
+        self.odom.publish(base_odometry(msg, self._lidar_to_base))

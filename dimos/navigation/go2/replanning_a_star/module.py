@@ -44,7 +44,7 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
 class ReplanningAStarPlanner(Module, NavigationInterface):
     config: ReplanningAStarPlannerConfig
 
-    odom: In[PoseStamped]  # TODO: Use TF.
+    odom: In[Odometry]  # TODO: Use TF.
     odometry: In[Odometry]
     global_costmap: In[OccupancyGrid]
     goal_request: In[PoseStamped]
@@ -74,13 +74,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         super().start()
 
         self.register_disposable(Disposable(self.odom.subscribe(self._planner.handle_odom)))
-        self.register_disposable(
-            Disposable(
-                self.odometry.subscribe(
-                    lambda msg: self._planner.handle_odom(msg.to_pose_stamped())
-                )
-            )
-        )
+        self.register_disposable(Disposable(self.odometry.subscribe(self._planner.handle_odom)))
         self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap))
         )

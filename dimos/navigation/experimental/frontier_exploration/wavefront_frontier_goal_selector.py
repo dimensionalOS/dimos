@@ -39,6 +39,7 @@ from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
@@ -112,7 +113,7 @@ class WavefrontFrontierExplorer(Module):
 
     # LCM inputs
     global_costmap: In[OccupancyGrid]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     goal_reached: In[Bool]
     explore_cmd: In[Bool]
     stop_explore_cmd: In[Bool]
@@ -141,7 +142,7 @@ class WavefrontFrontierExplorer(Module):
 
         # Latest data
         self.latest_costmap: OccupancyGrid | None = None
-        self.latest_odometry: PoseStamped | None = None
+        self.latest_odometry: Odometry | None = None
 
         # Goal reached event
         self.goal_reached_event = threading.Event()
@@ -186,7 +187,7 @@ class WavefrontFrontierExplorer(Module):
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
-    def _on_odometry(self, msg: PoseStamped) -> None:
+    def _on_odometry(self, msg: Odometry) -> None:
         """Handle incoming odometry messages."""
         self.latest_odometry = msg
 

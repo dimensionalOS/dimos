@@ -19,7 +19,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.experimental.dannav.local_planner.module import (
     DanLocalPlannerConfig,
@@ -38,12 +40,11 @@ def _path_from_points(points: list[tuple[float, float]]) -> Path:
     return Path(frame_id="world", poses=poses)
 
 
-def _odom(x: float, y: float, *, ts: float = 1.0) -> PoseStamped:
-    return PoseStamped(
+def _odom(x: float, y: float, *, ts: float = 1.0) -> Odometry:
+    return Odometry(
         ts=ts,
         frame_id="world",
-        position=[x, y, 0.0],
-        orientation=[0.0, 0.0, 0.0, 1.0],
+        pose=Pose(position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]),
     )
 
 

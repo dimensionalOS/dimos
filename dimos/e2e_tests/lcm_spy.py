@@ -21,7 +21,7 @@ from typing import Any
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
@@ -31,7 +31,7 @@ from dimos.utils.testing.waiting import wait_until
 class LcmSpy:
     """Sniffs every message on the active transport's bus.
 
-    Topics are named the LCM way (`/odom#geometry_msgs.PoseStamped`);
+    Topics are named the LCM way (`/odom#nav_msgs.Odometry`);
     `transport_topic` maps them to the running backend's wire name.
     """
 
@@ -135,14 +135,14 @@ class LcmSpy:
     def wait_until_odom_position(
         self, x: float, y: float, threshold: float = 1, timeout: float = 60
     ) -> None:
-        def predicate(msg: PoseStamped) -> bool:
+        def predicate(msg: Odometry) -> bool:
             pos = msg.position
             distance = math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
             return distance < threshold
 
         self.wait_for_message_result(
-            "/odom#geometry_msgs.PoseStamped",
-            PoseStamped,
+            "/odom#nav_msgs.Odometry",
+            Odometry,
             predicate,
             f"Failed to get to position x={x}, y={y}",
             timeout,

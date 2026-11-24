@@ -44,10 +44,12 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     DEFAULT_ARTIFACT_PATH,
     create_task,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -55,6 +57,14 @@ _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 def _pose(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
     return PoseStamped(
         position=Vector3(x, y, 0.0), orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+    )
+
+
+def _odom(x=0.0, y=0.0, yaw=0.0) -> Odometry:
+    return Odometry(
+        pose=Pose(
+            position=Vector3(x, y, 0.0), orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+        )
     )
 
 
@@ -196,8 +206,8 @@ def test_anchor_shifts_path_to_pose():
 
 def test_odom_recorder_differentiates_forward_velocity():
     rec = OdomRecorder(alpha=1.0)  # no smoothing -> exact diff
-    rec.on_odom(_pose(0.0, 0.0, 0.0), now=0.0)
-    rec.on_odom(_pose(0.1, 0.0, 0.0), now=0.1)  # 1 m/s forward
+    rec.on_odom(_odom(0.0, 0.0, 0.0), now=0.0)
+    rec.on_odom(_odom(0.1, 0.0, 0.0), now=0.1)  # 1 m/s forward
     lin, ang = rec.body_speed()
     assert lin == pytest.approx(1.0, abs=1e-6)
     assert ang == pytest.approx(0.0, abs=1e-6)
@@ -206,8 +216,8 @@ def test_odom_recorder_differentiates_forward_velocity():
 
 def test_odom_recorder_reset_clears_ticks():
     rec = OdomRecorder()
-    rec.on_odom(_pose(0.0), now=0.0)
-    rec.on_odom(_pose(0.1), now=0.1)
+    rec.on_odom(_odom(0.0), now=0.0)
+    rec.on_odom(_odom(0.1), now=0.1)
     assert rec.snapshot()
     rec.reset()
     assert rec.snapshot() == []
@@ -317,7 +327,7 @@ def test_end_to_end_controller_benchmark_scoring(tmp_path):
         cvx, cvy, cwz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         # Benchmark records what it sees over the transport: cmd_vel + odom.
         recorder.on_cmd_vel(Twist(linear=Vector3(cvx, cvy, 0.0), angular=Vector3(0.0, 0.0, cwz)))
-        recorder.on_odom(_pose(plant.x, plant.y, plant.yaw), now=k * 0.1)
+        recorder.on_odom(_odom(plant.x, plant.y, plant.yaw), now=k * 0.1)
         lin, ang = recorder.body_speed()
         if monitor.update(plant.x, plant.y, lin, ang, k * 0.1):
             done = True
@@ -387,7 +397,7 @@ def test_end_to_end_fullpose_benchmark_scoring(tmp_path):
         out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * 0.1))
         cvx, cvy, cwz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         recorder.on_cmd_vel(Twist(linear=Vector3(cvx, cvy, 0.0), angular=Vector3(0.0, 0.0, cwz)))
-        recorder.on_odom(_pose(plant.x, plant.y, plant.yaw), now=k * 0.1)
+        recorder.on_odom(_odom(plant.x, plant.y, plant.yaw), now=k * 0.1)
         lin, ang = recorder.body_speed()
         if monitor.update(plant.x, plant.y, lin, ang, k * 0.1):
             done = True

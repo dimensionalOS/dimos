@@ -25,7 +25,7 @@ import threading
 import pytest
 
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -33,7 +33,7 @@ REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
 RUN_TIMEOUT = 420.0  # spawn -> exit deadline, inside the test timeout
 # GO2Connection source streams. camera_info is deliberately absent: it is
 # published by a 1 Hz forever-loop thread, so it never quiesces.
-WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image))
+WATCHED = (("odom", Odometry), ("lidar", PointCloud2), ("color_image", Image))
 # Validity floors double as the realtime keep-up check. odom is small and
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.

@@ -27,9 +27,11 @@ from dimos_lcm.std_msgs import Bool
 import pytest
 
 from dimos.core.stream import Stream, Transport
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
@@ -74,12 +76,11 @@ def _yaw_quaternion(yaw_rad: float) -> Quaternion:
     return Quaternion(0.0, 0.0, math.sin(yaw_rad / 2.0), math.cos(yaw_rad / 2.0))
 
 
-def _odom(x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> PoseStamped:
-    return PoseStamped(
+def _odom(x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> Odometry:
+    return Odometry(
         ts=ts,
         frame_id="map",
-        position=[x, y, 0.0],
-        orientation=_yaw_quaternion(yaw_rad),
+        pose=Pose(position=[x, y, 0.0], orientation=_yaw_quaternion(yaw_rad)),
     )
 
 

@@ -17,7 +17,7 @@ from unittest.mock import call
 
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
 from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 
@@ -31,7 +31,7 @@ async def patrol(mocker):
         )
         mocker.patch.object(module.goal_request, "publish")
         mocker.patch.object(module, "stop_tool")
-        module._latest_pose = PoseStamped()
+        module._latest_odom = Odometry()
         yield module
     finally:
         module.stop()
@@ -61,7 +61,7 @@ async def test_stopping_active_patrol_cancels_once(patrol, mocker) -> None:
             call(True),
         ]
         patrol._planner_spec.reset_safe_goal_clearance.assert_called_once_with()
-        patrol.goal_request.publish.assert_called_once_with(patrol._latest_pose)
+        patrol.goal_request.publish.assert_called_once_with(patrol._latest_odom.to_pose_stamped())
     finally:
         await patrol.stop_patrol()
 

@@ -18,9 +18,11 @@ from dimos_lcm.geometry_msgs import PointStamped
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 
@@ -175,6 +177,34 @@ def test_posestamped_pubsub(publisher, subscriber):
     assert converted.z == original.z
     np.testing.assert_allclose(converted.orientation.z, original.orientation.z, rtol=1e-5)
     np.testing.assert_allclose(converted.orientation.w, original.orientation.w, rtol=1e-5)
+
+
+@pytest.mark.skipif_no_ros
+def test_odometry_pubsub(publisher, subscriber):
+    """Odometry keeps its pose, twist and both frames through ROS."""
+    original = Odometry(
+        ts=1234567890.123456,
+        frame_id="odom",
+        child_frame_id="base_link",
+        pose=Pose([1.0, 2.0, 3.0], [0.0, 0.0, 0.7071068, 0.7071068]),
+        twist=Twist([0.5, 0.1, 0.0], [0.0, 0.0, 0.3]),
+    )
+
+    topic = ROSTopic("/test_odometry", Odometry)
+    collector = CallbackCollector(1)
+
+    subscriber.subscribe(topic, collector)
+    publisher.publish(topic, original)
+
+    collector.wait()
+    assert len(collector.results) == 1
+
+    converted = collector.results[0][0]
+    assert (converted.frame_id, converted.child_frame_id) == ("odom", "base_link")
+    assert abs(converted.ts - original.ts) < 0.001
+    assert (converted.x, converted.y, converted.z) == (1.0, 2.0, 3.0)
+    np.testing.assert_allclose(converted.orientation.z, original.orientation.z, rtol=1e-5)
+    assert (converted.vx, converted.vy, converted.wz) == (0.5, 0.1, 0.3)
 
 
 @pytest.mark.skipif_no_ros

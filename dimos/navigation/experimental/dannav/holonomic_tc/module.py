@@ -32,8 +32,9 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_path_controller import (
@@ -61,7 +62,7 @@ class DanHolonomicTCConfig(ModuleConfig):
 class DanHolonomicTC(Module):
     """Follow a planned ``Path`` with the holonomic tracking law.
 
-    Consumes the robot's ``PoseStamped`` odom directly. An empty path stops the
+    Consumes the robot's ``Odometry`` odom directly. An empty path stops the
     follow, a non-empty path replaces the active one. Publishes ``nav_cmd_vel``
     until the goal is within tolerance, then ``goal_reached``. ``stop_movement``
     cancels the current path.
@@ -70,7 +71,7 @@ class DanHolonomicTC(Module):
     config: DanHolonomicTCConfig
 
     path: In[Path]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     stop_movement: In[Bool]
 
     nav_cmd_vel: Out[Twist]
@@ -79,7 +80,7 @@ class DanHolonomicTC(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._odom: PoseStamped | None = None
+        self._pose: Pose | None = None
         profile = get_run_profile(self.config.run_profile)
         self._controller = HolonomicPathController(
             profile,
@@ -110,9 +111,9 @@ class DanHolonomicTC(Module):
         self.nav_cmd_vel.publish(Twist())
         super().stop()
 
-    def _on_odom(self, msg: PoseStamped) -> None:
+    def _on_odom(self, msg: Odometry) -> None:
         with self._lock:
-            self._odom = msg
+            self._pose = msg.pose.pose
 
     def _on_path(self, path: Path) -> None:
         self._follow(path if path.poses else None)
@@ -131,10 +132,10 @@ class DanHolonomicTC(Module):
         period = 1.0 / self.config.control_frequency
         while not self._stop_event.wait(period):
             with self._lock:
-                if self._odom is None or not self._controller.active:
+                if self._pose is None or not self._controller.active:
                     continue
                 try:
-                    cmd = self._controller.step(self._odom)
+                    cmd = self._controller.step(self._pose)
                 except Exception:
                     logger.exception("Path following failed, stopping.")
                     self._follow(None)

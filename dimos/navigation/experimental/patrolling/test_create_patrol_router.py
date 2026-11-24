@@ -25,6 +25,7 @@ from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
@@ -50,7 +51,7 @@ def test_patrolling_coverage(router_name, saturation, big_office) -> None:
     big_office_gradient = gradient(big_office, max_distance=1.5)
     router = create_patrol_router(router_name, robot_width * multiplier)
     router.handle_occupancy_grid(big_office)
-    router.handle_odom(point_to_pose_stamped(start))
+    router.handle_odom(Odometry(pose=point_to_pose_stamped(start)))
 
     all_poses: list = []
     for _ in range(15):
@@ -64,7 +65,7 @@ def test_patrolling_coverage(router_name, saturation, big_office) -> None:
             continue
         path = smooth_resample_path(path, goal, 0.1)
         for pose in path.poses:
-            router.handle_odom(pose)
+            router.handle_odom(Odometry(pose=pose))
             all_poses.append(pose)
         start = (path.poses[-1].position.x, path.poses[-1].position.y)
 

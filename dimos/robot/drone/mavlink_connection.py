@@ -23,10 +23,11 @@ from typing import Any
 from pymavlink import mavutil  # type: ignore[import-untyped]
 from reactivex import Subject
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
@@ -55,7 +56,7 @@ class MavlinkConnection:
         self.connected = False
         self.telemetry: dict[str, Any] = {}
 
-        self._odom_subject: Subject[PoseStamped] = Subject()
+        self._odom_subject: Subject[Odometry] = Subject()
         self._status_subject: Subject[dict[str, Any]] = Subject()
         self._telemetry_subject: Subject[dict[str, Any]] = Subject()
         self._raw_mavlink_subject: Subject[dict[str, Any]] = Subject()
@@ -228,14 +229,29 @@ class MavlinkConnection:
             f"[{mode}] Position: x={self._position['x']:.2f}m, y={self._position['y']:.2f}m, z={self._position['z']:.2f}m"
         )
 
-        pose = PoseStamped(
-            position=Vector3(self._position["x"], self._position["y"], self._position["z"]),
-            orientation=quaternion,
-            frame_id="world",
+        # NED world velocity and FRD body rates --> ROS world velocity and FLU body rates
+        world_velocity = Vector3(
+            pos_data.get("vx", 0), -pos_data.get("vy", 0), -pos_data.get("vz", 0)
+        )
+        twist = Twist(
+            quaternion.inverse().rotate_vector(world_velocity),
+            Vector3(
+                attitude.get("rollspeed", 0),
+                -attitude.get("pitchspeed", 0),
+                -attitude.get("yawspeed", 0),
+            ),
+        )
+        odom = Odometry(
             ts=current_time,
+            frame_id="world",
+            child_frame_id="base_link",
+            pose=Pose(
+                Vector3(self._position["x"], self._position["y"], self._position["z"]), quaternion
+            ),
+            twist=twist,
         )
 
-        self._odom_subject.on_next(pose)
+        self._odom_subject.on_next(odom)
 
     def _publish_status(self) -> None:
         """Publish drone status with key telemetry."""
@@ -981,7 +997,7 @@ class MavlinkConnection:
         return False
 
     @functools.cache
-    def odom_stream(self) -> Subject[PoseStamped]:
+    def odom_stream(self) -> Subject[Odometry]:
         """Get odometry stream."""
         return self._odom_subject
 

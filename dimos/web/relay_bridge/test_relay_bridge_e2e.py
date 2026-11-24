@@ -53,9 +53,9 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.transport import pLCMTransport
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.rpc_utils import deserialize_exception
@@ -80,7 +80,7 @@ from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fe
 pytestmark = pytest.mark.self_hosted
 
 ROBOT_ID = "bridge-e2e"
-POSE = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
+ODOM = Odometry(ts=42.5, pose=Pose(position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0]))
 COSTMAP_GRID = OccupancyGrid(
     grid=np.array([[-1, 0, 50], [100, 0, -1]], dtype=np.int8),
     resolution=0.05,
@@ -121,7 +121,7 @@ class _Publisher:
 
     def _run(self) -> None:
         while not self.stop.is_set():
-            self.odom.publish(POSE)
+            self.odom.publish(ODOM)
             self.image.publish(self._image)
             time.sleep(0.05)
 

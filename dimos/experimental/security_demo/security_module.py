@@ -36,6 +36,7 @@ from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
@@ -138,7 +139,7 @@ class SecurityModule(Module):
 
     config: SecurityModuleConfig
 
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     color_image: In[Image]
@@ -169,7 +170,7 @@ class SecurityModule(Module):
         self._goal_reached_event = threading.Event()
         self._main_thread: threading.Thread | None = None
         self._state: State = "IDLE"
-        self._latest_pose: PoseStamped | None = None
+        self._latest_odom: Odometry | None = None
         self._latest_image: Image | None = None
         self._has_active_goal = False
         self._depth_started = False
@@ -235,9 +236,9 @@ class SecurityModule(Module):
         self._stop_security_patrol_internal()
         return "Security patrol stopped."
 
-    def _on_odom(self, msg: PoseStamped) -> None:
+    def _on_odom(self, msg: Odometry) -> None:
         with self._lock:
-            self._latest_pose = msg
+            self._latest_odom = msg
         self._router.handle_odom(msg)
 
     def _on_goal_reached(self, _msg: Bool) -> None:
@@ -379,9 +380,9 @@ class SecurityModule(Module):
     def _cancel_current_goal(self) -> None:
         """Publish current pose as goal to cancel in-progress navigation."""
         with self._lock:
-            pose = self._latest_pose
-        if pose is not None:
-            self.goal_request.publish(pose)
+            odom = self._latest_odom
+        if odom is not None:
+            self.goal_request.publish(odom.to_pose_stamped())
 
     def _transition_to(self, new_state: State) -> None:
         with self._lock:

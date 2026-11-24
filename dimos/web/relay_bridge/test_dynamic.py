@@ -32,10 +32,10 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, PeekNotFound
 from dimos.core.stream import In, Out, RemoteIn
 from dimos.core.transport import pLCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import Channel, cockpit
@@ -247,7 +247,7 @@ def test_blueprint_atom_discovers_exact_stream_refs():
     assert atom.module_refs == ()
     assert atom.streams == (
         StreamRef(name="color_image", type=Image, direction="in"),
-        StreamRef(name="odom", type=PoseStamped, direction="in"),
+        StreamRef(name="odom", type=Odometry, direction="in"),
         StreamRef(name="global_costmap", type=OccupancyGrid, direction="in"),
         StreamRef(name="tele_cmd_vel", type=Twist, direction="out"),
         StreamRef(name="operator_note", type=str, direction="out"),
@@ -400,7 +400,7 @@ def test_cockpit_channels_blueprint_deploys_through_forkserver(worker_manager, d
 
     blueprint = cockpit(
         channels=[
-            Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
+            Channel("tracked_odom", Odometry, encoding="pose.json.v1", max_hz=5.0),
             Channel("ops_note", _OpsNote),
         ]
     )
@@ -411,11 +411,11 @@ def test_cockpit_channels_blueprint_deploys_through_forkserver(worker_manager, d
 
     assert isinstance(proxy.peek_stream("no_such_stream", 0.1), PeekNotFound)
     # Both generated ports exist in the worker (unwired: None, not NotFound).
-    assert proxy.peek_stream("target_pose", 0.1) is None
+    assert proxy.peek_stream("tracked_odom", 0.1) is None
     assert proxy.peek_stream("ops_note", 0.1) is None
-    remote = proxy.target_pose
+    remote = proxy.tracked_odom
     assert isinstance(remote, RemoteIn)
-    assert remote.type is PoseStamped
+    assert remote.type is Odometry
 
 
 def test_stop_terminates_worker_processes_and_is_idempotent():

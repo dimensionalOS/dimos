@@ -27,9 +27,9 @@ from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -113,13 +113,13 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
     assert mounted.model.base_pose.orientation == default.model.base_pose.orientation
 
 
-def test_latest_pose_needs_odom():
+def test_latest_odom_needs_odom():
     env = environment()
     with MemoryStore() as store:
         with pytest.raises(LookupError):
-            env.latest_pose(store)
-        store.stream("odom", PoseStamped).append(PoseStamped(ts=5, frame_id="world"))
-        assert env.latest_pose(store).ts == 5
+            env.latest_odom(store)
+        store.stream("odom", Odometry).append(Odometry(ts=5, frame_id="world"))
+        assert env.latest_odom(store).ts == 5
 
 
 def test_raw_arm_blueprint_configures_its_bridge():

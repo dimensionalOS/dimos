@@ -29,10 +29,11 @@ import numpy as np
 import pytest
 
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.teleop.hosted.map_compress import MapCompressModule
 
 
@@ -115,8 +116,10 @@ def test_block_max_preserves_obstacle_when_coarsening(module: MapCompressModule)
 
 def test_odom_publishes_planar_pose(module: MapCompressModule) -> None:
     q = Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2))  # yaw = 90°
-    pose = PoseStamped(ts=123.0, position=[1.5, -2.0, 0.3], orientation=[q.x, q.y, q.z, q.w])
-    module._on_odom(pose)
+    odom = Odometry(
+        ts=123.0, pose=Pose(position=[1.5, -2.0, 0.3], orientation=[q.x, q.y, q.z, q.w])
+    )
+    module._on_odom(odom)
 
     msg = _published_json(module.map_out, "odom")
     assert msg is not None
@@ -133,8 +136,8 @@ def test_empty_costmap_publishes_nothing(module: MapCompressModule) -> None:
 def test_odom_degenerate_quaternion_does_not_raise(module: MapCompressModule) -> None:
     # A zero quaternion makes to_euler() (scipy) raise; _on_odom runs inside an
     # RxPY subscriber, so it must drop the frame, not kill the odom stream.
-    pose = PoseStamped(ts=1.0, position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0])
-    module._on_odom(pose)  # must not raise
+    odom = Odometry(ts=1.0, pose=Pose(position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0]))
+    module._on_odom(odom)  # must not raise
     assert _published_json(module.map_out, "odom") is None
 
 

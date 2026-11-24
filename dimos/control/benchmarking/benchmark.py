@@ -19,7 +19,7 @@ follows paths purely over the transport:
 
     OUT  path   (nav_msgs/Path)         -- the reference path for one run
     OUT  speed  (std_msgs/Float32, m/s) -- the target/cruise speed for one run
-    IN   odom   (geometry_msgs/PoseStamped) -- the robot's executed pose
+    IN   odom   (nav_msgs/Odometry)     -- the robot's executed pose
     IN   cmd_vel(geometry_msgs/Twist)       -- the command sent to the robot
     IN   operator_command (std_msgs/Int8)      -- operator advance/skip/quit (hw)
 
@@ -68,10 +68,12 @@ from dimos.control.benchmarking.paths import (
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
@@ -114,7 +116,7 @@ BATTERIES: dict[str, Any] = {
 }
 
 
-def shift_path_to_start_at_pose(path: NavPath, start_pose: PoseStamped) -> NavPath:
+def shift_path_to_start_at_pose(path: NavPath, start_pose: Pose) -> NavPath:
     """Rigid-transform a robot-centric reference path into the odom frame anchored
     at the robot's current pose, so the operator only has to roughly aim the
     robot. Scoring is then in the executed frame regardless of where the plant
@@ -222,11 +224,11 @@ class OdomRecorder:
         self._lock = threading.Lock()
         self._ticks: list[list[float]] = []
         self._t0: float | None = None
-        self._prev_pose: PoseStamped | None = None
+        self._prev_pose: Pose | None = None
         self._prev_t: float | None = None
         self._vx = self._vy = self._wz = 0.0
         self._cmd_vx = self._cmd_vy = self._cmd_wz = 0.0
-        self._latest_pose: PoseStamped | None = None
+        self._latest_pose: Pose | None = None
 
     def on_cmd_vel(self, msg: Twist) -> None:
         with self._lock:
@@ -234,8 +236,9 @@ class OdomRecorder:
             self._cmd_vy = float(msg.linear.y)
             self._cmd_wz = float(msg.angular.z)
 
-    def on_odom(self, pose: PoseStamped, now: float | None = None) -> None:
+    def on_odom(self, odom: Odometry, now: float | None = None) -> None:
         now = time.perf_counter() if now is None else now
+        pose = odom.pose.pose
         with self._lock:
             self._latest_pose = pose
             if self._t0 is None:
@@ -277,7 +280,7 @@ class OdomRecorder:
         with self._lock:
             return math.hypot(self._vx, self._vy), abs(self._wz)
 
-    def latest_pose(self) -> PoseStamped | None:
+    def latest_pose(self) -> Pose | None:
         with self._lock:
             return self._latest_pose
 
@@ -292,7 +295,7 @@ class OdomRecorder:
             self._prev_pose = self._prev_t = None
             self._vx = self._vy = self._wz = 0.0
 
-    def wait_first_pose(self, timeout_s: float, poll_s: float = 0.02) -> PoseStamped:
+    def wait_first_pose(self, timeout_s: float, poll_s: float = 0.02) -> Pose:
         deadline = time.perf_counter() + timeout_s
         while time.perf_counter() < deadline:
             pose = self.latest_pose()
@@ -392,7 +395,7 @@ class Benchmarker(Module):
 
     path: Out[NavPath]
     speed: Out[Float32]
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     cmd_vel: In[Twist]
     operator_command: In[Int8]
 

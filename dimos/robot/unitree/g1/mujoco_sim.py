@@ -24,18 +24,17 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
-from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -51,7 +50,7 @@ class G1SimConnection(G1ConnectionBase):
     config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
@@ -72,7 +71,7 @@ class G1SimConnection(G1ConnectionBase):
         self.connection.start()
 
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
-        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_sim_odom))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.video_stream().subscribe(self.color_image.publish))
 
@@ -98,10 +97,10 @@ class G1SimConnection(G1ConnectionBase):
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)
 
-    def _publish_tf(self, msg: PoseStamped) -> None:
+    def _publish_tf(self, msg: Odometry) -> None:
         self.odom.publish(msg)
 
-        base_link = Transform.from_pose("base_link", msg)
+        base_link = Transform.from_pose("base_link", msg.to_pose_stamped())
 
         # Publish camera_link and camera_optical transforms
         camera_link = Transform(
@@ -129,16 +128,6 @@ class G1SimConnection(G1ConnectionBase):
         )
 
         self.tf.publish(TFMessage(base_link, camera_link, camera_optical, map_to_world))
-
-    def _publish_sim_odom(self, msg: SimOdometry) -> None:
-        self._publish_tf(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.position,
-                orientation=msg.orientation,
-            )
-        )
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:

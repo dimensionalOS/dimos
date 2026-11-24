@@ -27,7 +27,7 @@ import pytest
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
 )
@@ -47,7 +47,7 @@ BLUEPRINTS = [
 
 def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
     """Child frames each tf publisher the blueprint actually enables will write."""
-    odom = PoseStamped(ts=1.0, frame_id="go2_odom")
+    odom = Odometry(ts=1.0, frame_id="go2_odom")
     children: dict[str, set[str]] = {}
     for atom in blueprint.active_blueprints:
         if atom.module is GO2Connection and atom.kwargs.get("publish_tf", True):

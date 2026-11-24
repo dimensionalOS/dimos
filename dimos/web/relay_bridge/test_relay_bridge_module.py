@@ -43,10 +43,10 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
@@ -200,8 +200,10 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
         lambda: image_transport(module).subscribers and odom_transport(module).subscribers
     )
 
-    pose = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
-    odom_transport(module).publish(pose)
+    odom = Odometry(
+        ts=42.5, pose=Pose(position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
+    )
+    odom_transport(module).publish(odom)
     assert module.encoded["odom"] == 1
     assert wait_until(lambda: len(client.frames) == 1)
     ch, payload, delivery, _ = client.frames[0]
@@ -222,13 +224,13 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     # interval - exactly one of the two encodes.
     time.sleep(0.06)
     count = module.encoded["odom"]
-    odom_transport(module).publish(pose)
-    odom_transport(module).publish(pose)
+    odom_transport(module).publish(odom)
+    odom_transport(module).publish(odom)
     assert module.encoded["odom"] == count + 1
 
     # After the interval passes, encoding resumes.
     time.sleep(0.06)
-    odom_transport(module).publish(pose)
+    odom_transport(module).publish(odom)
     assert wait_until(lambda: module.encoded["odom"] == count + 2)
 
 
@@ -550,7 +552,7 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
     encode_started = threading.Event()
     release_encode = threading.Event()
 
-    def blocking_encode(msg: PoseStamped) -> bytes:
+    def blocking_encode(msg: Odometry) -> bytes:
         encode_started.set()
         assert release_encode.wait(timeout=5.0)
         return b"old-session-frame"
@@ -567,10 +569,9 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
     publisher = threading.Thread(
         target=odom_transport(module).publish,
         args=(
-            PoseStamped(
+            Odometry(
                 ts=42.5,
-                position=[1.5, -2.5, 0.25],
-                orientation=[0.0, 0.0, 0.0, 1.0],
+                pose=Pose(position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0]),
             ),
         ),
     )

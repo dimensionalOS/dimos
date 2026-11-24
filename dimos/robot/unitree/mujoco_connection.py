@@ -40,13 +40,14 @@ from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -370,16 +371,17 @@ class MujocoConnection:
         odom_data, seq = self.shm_data.read_odom()
         if seq > self._last_odom_seq and odom_data is not None:
             self._last_odom_seq = seq
-            pos, quat_wxyz, timestamp = odom_data
+            pos, quat_wxyz, linear, angular, timestamp = odom_data
 
             # Convert quaternion from (w,x,y,z) to (x,y,z,w) for ROS/Dimos
             orientation = Quaternion(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0])
 
             return Odometry(
-                position=Vector3(pos[0], pos[1], pos[2]),
-                orientation=orientation,
                 ts=timestamp,
                 frame_id="world",
+                child_frame_id="base_link",
+                pose=Pose(Vector3(pos[0], pos[1], pos[2]), orientation),
+                twist=Twist(Vector3(*linear), Vector3(*angular)),
             )
 
         return None

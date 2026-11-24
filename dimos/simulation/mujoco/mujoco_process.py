@@ -38,6 +38,7 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_WIDTH,
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
+from dimos.simulation.mujoco.freejoint import body_twist
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
@@ -205,7 +206,8 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
             # Always update odometry
             pos = data.qpos[0:3].copy()
             quat = data.qpos[3:7].copy()  # (w, x, y, z)
-            shm.write_odom(pos, quat, time.time())
+            linear, angular = body_twist(quat, data.qvel[0:6])
+            shm.write_odom(pos, quat, linear, angular, time.time())
 
             current_time = time.time()
 

@@ -26,8 +26,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
@@ -80,12 +80,12 @@ class TestMavlinkProcessing(unittest.TestCase):
 
         # Check odom was published with correct coordinate conversion
         self.assertEqual(len(published_odom), 1)
-        pose = published_odom[0]
+        odom = published_odom[0]
 
         # Verify NED to ROS conversion happened
         # ROS uses different conventions: positive pitch = nose down, positive yaw = counter-clockwise
         # So we expect sign flips in the quaternion conversion
-        self.assertIsNotNone(pose.orientation)
+        self.assertIsNotNone(odom.orientation)
 
     def test_position_integration(self) -> None:
         """Test velocity integration for indoor flight positioning."""
@@ -607,7 +607,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 
         # Check odometry message
         odom = published_odom[0]
-        self.assertIsInstance(odom, PoseStamped)
+        self.assertIsInstance(odom, Odometry)
         self.assertIsNotNone(odom.orientation)
         self.assertEqual(odom.frame_id, "world")
 

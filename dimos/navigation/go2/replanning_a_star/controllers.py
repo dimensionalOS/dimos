@@ -18,14 +18,14 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.trigonometry import angle_diff
 
 
 class Controller(Protocol):
-    def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist: ...
+    def advance(self, lookahead_point: NDArray[np.float64], current_pose: Pose) -> Twist: ...
 
     def rotate(self, yaw_error: float) -> Twist: ...
 
@@ -50,8 +50,8 @@ class PController:
         self._speed = speed
         self._control_frequency = control_frequency
 
-    def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
-        current_pos = np.array([current_odom.position.x, current_odom.position.y])
+    def advance(self, lookahead_point: NDArray[np.float64], current_pose: Pose) -> Twist:
+        current_pos = np.array([current_pose.position.x, current_pose.position.y])
         direction = lookahead_point - current_pos
         distance = np.linalg.norm(direction)
 
@@ -59,7 +59,7 @@ class PController:
             # Robot is coincidentally at the lookahead point; skip this cycle.
             return Twist()
 
-        robot_yaw = current_odom.orientation.euler[2]
+        robot_yaw = current_pose.orientation.euler[2]
         desired_yaw = np.arctan2(direction[1], direction[0])
         yaw_error = angle_diff(desired_yaw, robot_yaw)
 

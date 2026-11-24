@@ -38,7 +38,6 @@ from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -281,7 +280,7 @@ def r1pro_control(
                 ),
                 # Twist bridge (hw_id="chassis").
                 ("chassis_cmd_vel", Twist): _zenoh_transport("/chassis/cmd_vel", Twist),
-                ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
+                ("chassis_odom", Odometry): _zenoh_transport("/chassis/odom", Odometry),
                 # Wheel odometry (pose + twist) for navigation consumers.
                 ("odometry", Odometry): _zenoh_transport("/odometry", Odometry),
                 # Public Twist bus: any module's cmd_vel Out drives the
@@ -332,7 +331,7 @@ def r1pro_lidar_odometry() -> MetaBlueprint:
         [
             (R1ProLio, "odometry", "pointlio_odometry"),
             # The name the planners already read.
-            (R1ProLio, "pose", "chassis_odom"),
+            (R1ProLio, "odom", "chassis_odom"),
         ]
     )
 

@@ -887,14 +887,14 @@ def test_explicit_channel_conflicts_with_panel_raise(channel: Channel) -> None:
 
 
 def test_builtin_stream_type_and_table_mismatches() -> None:
-    with pytest.raises(ValueError, match="does not match the bridge port type PoseStamped"):
+    with pytest.raises(ValueError, match="does not match the bridge port type Odometry"):
         cockpit(channels=[Channel("odom", Twist, encoding="pose.json.v1")])
     with pytest.raises(
-        ValueError, match="'odom' encodes pose.json.v1, not geometry_msgs.PoseStamped.lcm.v1"
+        ValueError, match="'odom' encodes pose.json.v1, not nav_msgs.Odometry.lcm.v1"
     ):
-        cockpit(channels=[Channel("odom", PoseStamped)])
+        cockpit(channels=[Channel("odom", Odometry)])
     with pytest.raises(ValueError, match="'odom' delivers reliable, not latest"):
-        cockpit(channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", delivery="latest")])
+        cockpit(channels=[Channel("odom", Odometry, encoding="pose.json.v1", delivery="latest")])
 
 
 def test_json_v1_requires_explicit_codec_for_large_types() -> None:
@@ -921,7 +921,7 @@ def test_channel_default_encoding_by_type() -> None:
     assert Channel("note", dict).encoding == "json.v1"
     assert Channel("ops_note", _OpsNote).encoding == "json.v1"
     assert Channel("pose_in", PoseStamped, dir="tx", publish="shared").encoding == "json.v1"
-    assert Channel("odom", PoseStamped, encoding="pose.json.v1").encoding == "pose.json.v1"
+    assert Channel("odom", Odometry, encoding="pose.json.v1").encoding == "pose.json.v1"
 
 
 def test_lcm_channel_blueprint() -> None:
@@ -1068,7 +1068,7 @@ def test_channel_ordering_builtins_then_customs_then_publish() -> None:
         layout=GO2_LAYOUT,
         channels=[
             Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
-            Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
+            Channel("tracked_odom", Odometry, encoding="pose.json.v1", max_hz=5.0),
             Channel("ops_note", _OpsNote),
         ],
     )
@@ -1077,7 +1077,7 @@ def test_channel_ordering_builtins_then_customs_then_publish() -> None:
         "color_image",
         "odom",
         "global_costmap",
-        "target_pose",
+        "tracked_odom",
         "ops_note",
         "tele_cmd_vel",
         "human_input",

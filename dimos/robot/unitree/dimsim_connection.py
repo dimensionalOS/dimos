@@ -23,14 +23,11 @@ from dimos.core.global_config import TransportBackend
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
@@ -42,7 +39,7 @@ _HEIGHT = 288
 _FOV_DEG = 46
 # The bridge publishes odom at 50 Hz from the moment it reports ready, so the
 # first message is a quick end-to-end check that the sim's bus reaches us.
-_FIRST_ODOM_TIMEOUT = 30.0
+_FIRST_SIM_POSE_TIMEOUT = 30.0
 
 
 class DimSimConnection:
@@ -58,21 +55,22 @@ class DimSimConnection:
         self.config = config
         self._transport_backend = transport
         self._dimsim_process: DimSimProcess = DimSimProcess(config)
-        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
-        self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
-        self._unsubscribe_odom: Callable[[], None] | None = None
-        self._first_odom = threading.Event()
+        self._sim_pose_transport: PubSubTransport[PoseStamped] = make_transport(
+            "/odom", PoseStamped
+        )
+        self._unsubscribe_sim_pose: Callable[[], None] | None = None
+        self._first_sim_pose = threading.Event()
 
     def start(self) -> None:
         # Subscribe before the sim comes up so its first odom can't be missed.
-        self._first_odom.clear()
-        self._odom_transport.start()
-        self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
+        self._first_sim_pose.clear()
+        self._sim_pose_transport.start()
+        self._unsubscribe_sim_pose = self._sim_pose_transport.subscribe(self._handle_sim_pose)
         try:
             self._dimsim_process.start()
-            if self.config.headless and not self._first_odom.wait(_FIRST_ODOM_TIMEOUT):
+            if self.config.headless and not self._first_sim_pose.wait(_FIRST_SIM_POSE_TIMEOUT):
                 raise TimeoutError(
-                    f"DimSim reported ready but no /odom arrived within {_FIRST_ODOM_TIMEOUT:.0f} s. "
+                    f"DimSim reported ready but no /odom arrived within {_FIRST_SIM_POSE_TIMEOUT:.0f} s. "
                     "DimSim publishes over LCM only; the transport is "
                     f"{self._transport_backend!r}."
                 )
@@ -81,10 +79,10 @@ class DimSimConnection:
             raise
 
     def stop(self) -> None:
-        if self._unsubscribe_odom is not None:
-            self._unsubscribe_odom()
-            self._unsubscribe_odom = None
-            self._odom_transport.stop()
+        if self._unsubscribe_sim_pose is not None:
+            self._unsubscribe_sim_pose()
+            self._unsubscribe_sim_pose = None
+            self._sim_pose_transport.stop()
         self._dimsim_process.stop()
 
     @functools.cache
@@ -92,7 +90,7 @@ class DimSimConnection:
         return Subject()
 
     @functools.cache
-    def odom_stream(self) -> Observable[PoseStamped]:
+    def odom_stream(self) -> Subject[Odometry]:
         return Subject()
 
     @functools.cache
@@ -137,43 +135,6 @@ class DimSimConnection:
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
 
-    def _handle_odom(self, msg: PoseStamped) -> None:
-        self._first_odom.set()
-        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg)))
-
-
-def _odom_to_tf(odom: PoseStamped) -> list[Transform]:
-    """Build transform chain from odometry pose.
-
-    Transform tree: world -> base_link -> {camera_link -> camera_optical, lidar_link}
-    """
-    camera_link = Transform(
-        translation=Vector3(0.3, 0.0, 0.0),  # camera 30cm forward
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="camera_link",
-        ts=odom.ts,
-    )
-
-    camera_optical = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-        frame_id="camera_link",
-        child_frame_id="camera_optical",
-        ts=odom.ts,
-    )
-
-    lidar_link = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="lidar_link",
-        ts=odom.ts,
-    )
-
-    return [
-        Transform.from_pose("base_link", odom),
-        camera_link,
-        camera_optical,
-        lidar_link,
-    ]
+    def _handle_sim_pose(self, msg: PoseStamped) -> None:
+        self._first_sim_pose.set()
+        self.odom_stream().on_next(Odometry.from_pose_stamped(msg, child_frame_id="base_link"))

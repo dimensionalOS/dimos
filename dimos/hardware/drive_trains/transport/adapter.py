@@ -24,9 +24,9 @@ import threading
 from typing import Any
 
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -64,7 +64,7 @@ class TransportTwistAdapter:
         odom_topic = f"/{self._prefix}/odom"
 
         self._cmd_vel_transport = self._transport_cls(cmd_vel_topic, Twist)
-        self._odom_transport = self._transport_cls(odom_topic, PoseStamped)
+        self._odom_transport = self._transport_cls(odom_topic, Odometry)
         self._odom_unsub = self._odom_transport.subscribe(self._on_odom)
 
         self._connected = True
@@ -139,7 +139,7 @@ class TransportTwistAdapter:
     def read_enabled(self) -> bool:
         return self._enabled
 
-    def _on_odom(self, msg: PoseStamped) -> None:
+    def _on_odom(self, msg: Odometry) -> None:
         with self._lock:
             self._latest_odom = [msg.x, msg.y, msg.yaw]
 

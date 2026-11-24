@@ -54,7 +54,7 @@ from dimos.control.benchmarking.benchmark import Benchmarker
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller import (
     unitree_go2_rpp_controller,
 )
@@ -63,7 +63,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller import 
 # odom on (/go2/odom). path/speed/cmd_vel/operator_command already share names+topics with
 # the controller blueprint, so they wire up by the controller's transports.
 _BENCHMARK_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
-    ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+    ("odom", Odometry): LCMTransport("/go2/odom", Odometry),
 }
 
 

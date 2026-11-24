@@ -49,6 +49,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.spec import RerunBridgeSpec
@@ -99,7 +100,7 @@ class WebsocketVisModule(Module):
     _rerun_bridge: RerunBridgeSpec | None = None
 
     # LCM inputs
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     gps_location: In[LatLon]
     path: In[Path]
     global_costmap: In[OccupancyGrid]
@@ -178,7 +179,7 @@ class WebsocketVisModule(Module):
                         logger.debug(f"Failed to open browser: {e}")
 
         try:
-            unsub = self.odom.subscribe(self._on_robot_pose)
+            unsub = self.odom.subscribe(self._on_odom)
             self.register_disposable(Disposable(unsub))
         except Exception:
             ...
@@ -361,7 +362,7 @@ class WebsocketVisModule(Module):
                 )
                 self.movecmd_stamped.publish(twist_stamped)
 
-    def _on_robot_pose(self, msg: PoseStamped) -> None:
+    def _on_odom(self, msg: Odometry) -> None:
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}
         self.vis_state["robot_pose"] = pose_data
         self._emit("robot_pose", pose_data)

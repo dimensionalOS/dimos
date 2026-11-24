@@ -28,6 +28,7 @@ from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
 @pytest.fixture
@@ -46,9 +47,9 @@ def recording(tmp_path: Path) -> str:
 
 def test_ports_come_from_the_recording(recording: str) -> None:
     cls = replay_module(recording)
-    assert cls.__annotations__ == {"goal": Out[PoseStamped], "odom": Out[PoseStamped]}
-    assert replay_module(recording, topics="odom").__annotations__ == {"odom": Out[PoseStamped]}
-    assert cls.stream_types == {"goal": PoseStamped, "odom": PoseStamped}
+    assert cls.__annotations__ == {"goal": Out[PoseStamped], "odom": Out[Odometry]}
+    assert replay_module(recording, topics="odom").__annotations__ == {"odom": Out[Odometry]}
+    assert cls.stream_types == {"goal": PoseStamped, "odom": Odometry}
     assert replay_module("").__annotations__ == {}
     with pytest.raises(ValueError, match="matched none of: goal, odom"):
         replay_module(recording, topics="nope")
@@ -58,7 +59,8 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     cls = replay_module(recording)
     module = cls(dataset=recording)
     got: dict[str, list[float]] = {"odom": [], "goal": []}
-    module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
+    odom_types: set[type] = set()
+    module.outputs["odom"].subscribe(lambda m: (odom_types.add(type(m)), got["odom"].append(m.ts)))
     module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
     module.start()
     deadline = time.time() + 5
@@ -66,6 +68,7 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
         time.sleep(0.01)
     module.stop()
     assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
+    assert odom_types == {Odometry}
     assert [round(t, 3) for t in got["goal"]] == [1.05]
 
 
@@ -160,19 +163,6 @@ def test_stream_named_like_a_module_attribute_is_skipped(
     assert sorted(module.outputs) == ["odom"]
     module.stop()
     assert [c.args[1] for c in log.warning.call_args_list] == ["start", "start"]
-
-
-def test_subclass_payload_gets_the_base_port_type(tmp_path: Path) -> None:
-    """A recorded unitree Odometry is a PoseStamped on the wire; the port must say so or a
-    PoseStamped consumer of the same name lands on a different topic."""
-    from dimos.robot.unitree.type.odometry import Odometry
-
-    path = tmp_path / "memory.db"
-    store = SqliteStore(path=str(path))
-    store.start()
-    store.stream("odom", Odometry).append(Odometry(ts=1.0), ts=1.0)
-    store.stop()
-    assert replay_module(str(path)).__annotations__ == {"odom": Out[PoseStamped]}
 
 
 def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Path) -> None:

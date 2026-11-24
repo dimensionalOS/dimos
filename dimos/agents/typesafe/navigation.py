@@ -88,7 +88,7 @@ class TypeSafeNavigationConfig(TypeSafeAgentConfig):
 class TypeSafeNavigationAgent(TypeSafeAgent):
     config: TypeSafeNavigationConfig
 
-    odom: In[PoseStamped]
+    odom: In[Odometry]
     odometry: In[Odometry]  # same pose, nav_msgs flavour (habitat)
     detections_3d: In[Detection3DArray]
     detections_2d: In[Detection2DArray]
@@ -115,16 +115,10 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
         self._latest: dict[str, LatestReader[Any]] = {}
 
     def trigger(self) -> Observable[object]:
-        pose: Observable[object] = self.odom.observable().pipe(
-            ops.merge(self.odometry.observable().pipe(ops.map(self._pose_of)))
+        odom: Observable[object] = self.odom.observable().pipe(
+            ops.merge(self.odometry.observable())
         )
-        return pose
-
-    @staticmethod
-    def _pose_of(o: Odometry) -> PoseStamped:
-        return PoseStamped(
-            ts=o.ts, frame_id=o.frame_id, position=o.position, orientation=o.orientation
-        )
+        return odom
 
     def _fresh(self, name: str) -> Any:
         """Latest message on `name`, or None when absent or older than `stale_s`."""
@@ -139,8 +133,8 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             goal, gen = self._goal, self._goal_gen
         if goal is None:
             return None
-        assert isinstance(trigger, PoseStamped)
-        pose, det3d, det2d = trigger, self._fresh("detections_3d"), self._fresh("detections_2d")
+        assert isinstance(trigger, Odometry)
+        odom, det3d, det2d = trigger, self._fresh("detections_3d"), self._fresh("detections_2d")
         if det3d is None and det2d is None and self._goal_xy is None:
             self._set_target(ZERO)
             self._say("holding: no detections")
@@ -149,7 +143,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             return None
         state = build_world_state(
             goal,
-            pose,
+            odom.to_pose_stamped(),
             self._motion,
             detections_3d=det3d,
             detections_2d=det2d,
@@ -160,7 +154,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
         )
         self._state_gen = gen
         # The detections are read against this pose, so the goal they resolve to is in its frame.
-        self._state_frame = pose.frame_id
+        self._state_frame = odom.frame_id
         return state
 
     def questions(self, state: object) -> dict[str, Question]:

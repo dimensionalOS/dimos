@@ -204,7 +204,7 @@ class M20Connection(Module):
     odometry: In[Odometry]
     motion_state_cmd: Out[Int32]
     gait_cmd: Out[UInt32]
-    odom: Out[PoseStamped]
+    odom: Out[Odometry]
     goal: Out[PoseStamped]
     battery: Out[BatteryState]
 
@@ -728,7 +728,7 @@ class M20Connection(Module):
             self._state_condition.notify_all()
 
     def _on_odometry(self, odometry: Odometry) -> None:
-        self.odom.publish(odometry.to_pose_stamped())
+        self.odom.publish(odometry)
 
     def _ensure_rl_control(self) -> bool:
         with self._lock:

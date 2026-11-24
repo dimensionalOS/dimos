@@ -34,9 +34,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
+from dimos.memory.odometry import ODOM_STREAMS, as_odometry
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
@@ -74,21 +76,14 @@ def dataset_path(name: str, *, explicit: bool = True) -> str:
         return ""
 
 
-def _wire_type(t: type) -> type:
-    """The class that owns *t*'s ``msg_name``: the type a port must declare so a consumer
-    of the base message shares its topic (unitree ``Odometry`` -> ``PoseStamped``)."""
-    for cls in t.__mro__:
-        if "msg_name" in vars(cls):
-            return cls
-    return t
-
-
 def stream_types_of(dataset: str) -> dict[str, type]:
-    """Stream name -> port type for every stream in *dataset*."""
+    """Stream name -> port type for every stream in *dataset*, with odom streams always ``Odometry``."""
     store = open_dataset(dataset)
     store.start()
     try:
-        return {n: _wire_type(t) for n, t in stream_payload_types(store).items()}
+        return {
+            n: Odometry if n in ODOM_STREAMS else t for n, t in stream_payload_types(store).items()
+        }
     finally:
         store.stop()
 
@@ -141,7 +136,8 @@ class ReplayModule(Module):
         # Open every stream before pinning the anchor, so setup time does not
         # put the playback behind the wall clock from the start.
         streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs
+            name: replay.stream(name, autocast=as_odometry if name in ODOM_STREAMS else None)
+            for name in self.outputs
         }
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
