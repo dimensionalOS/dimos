@@ -61,6 +61,7 @@ unitree_go2_coordinator = (
             (GO2Connection, "velocity_command", "go2_velocity_command"),
             (Go2Coordinator, "go2_joint_state", "joint_state"),
             (GO2Connection, "odometry", "go2_odometry"),
+            (Go2Coordinator, "odometry", "go2_odometry"),
         ]
     )
     .transports(

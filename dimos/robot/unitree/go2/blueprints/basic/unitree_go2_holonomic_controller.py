@@ -128,6 +128,7 @@ unitree_go2_holonomic_controller = (
             (GO2Connection, "velocity_command", "go2_velocity_command"),
             (_Go2HolonomicCoordinator, "go2_joint_state", "joint_state"),
             (GO2Connection, "odometry", "go2_odometry"),
+            (_Go2HolonomicCoordinator, "odometry", "go2_odometry"),
         ]
     )
     .transports(
