@@ -131,7 +131,6 @@ A coordinator's `hardware` list names each device's adapter. Device addresses (a
 ```bash skip
 dimos run coordinator-xarm6 --config robot.json
 CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.0.2.10"}' dimos run coordinator-xarm7
-dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
 
 The coordinator settles each component when it starts, once the execution mode is known:
@@ -139,4 +138,4 @@ The coordinator settles each component when it starts, once the execution mode i
 - On hardware, a component takes its address from `addresses`. A component left without one runs the mock adapter when its blueprint allows that (`mock_without_address` in the robot's config helper), and otherwise fails to connect.
 - With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
-The robot config helpers (`xarm7_hardware`, `piper_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, Metal, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
+The robot config helpers (`xarm7_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, Metal, the Piper, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select YAM with `--openyamconnection.can-port can1`, the Piper with `--piperconnection.can-port can0`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.

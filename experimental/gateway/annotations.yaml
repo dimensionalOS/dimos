@@ -803,14 +803,9 @@ robots:
       manufacturer: AgileX
       dirs: [dimos/robot/manipulators/piper]
       defaults:
-        recommended_config: &can_arm_config
+        recommended_config:
         - *robot_or_simulator
-        - &can_port
-          module: controlcoordinator
-          field: addresses.arm
-          label: CAN port
-          placeholder: can0
-          when: {simulation: ''}
+        - &piper_can_port {module: piperconnection, field: can_port, label: CAN port, placeholder: can0, required: true, when: {simulation: ''}}
       blueprints:
         keyboard-teleop-piper:
           title: Piper keyboard driving
@@ -824,6 +819,7 @@ robots:
         coordinator-cartesian-ik-piper:
           title: Piper Cartesian IK
           description: Cartesian pose control of a Piper through IK.
+          recommended_config: [{<<: *piper_can_port, required: false}]
         coordinator-cartesian-ik-mock:
           title: Cartesian IK (mock arm)
           description: 'Cartesian IK on a mock Piper: no robot needed.'
@@ -834,7 +830,7 @@ robots:
         learning-collect-webxr-piper:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+          recommended_config: [*piper_can_port]
         piper-teleop:
           title: Piper teleop
           description: Move a real Piper's end and its gripper from the Desktop Manipulation app, through PiperConnection.
@@ -1022,7 +1018,14 @@ robots:
       manufacturer: Galaxea
       dirs: [dimos/robot/manipulators/a1z]
       defaults:
-        recommended_config: *can_arm_config
+        recommended_config:
+        - *robot_or_simulator
+        - &can_port
+          module: controlcoordinator
+          field: addresses.arm
+          label: CAN port
+          placeholder: can0
+          when: {simulation: ''}
       blueprints:
         a1z-planner-coordinator:
           title: A1Z motion planning

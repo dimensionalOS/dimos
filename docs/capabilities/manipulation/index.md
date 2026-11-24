@@ -19,7 +19,7 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos --simulation run keyboard-teleop-piper # Piper 6-DOF + gripper, in MuJoCo
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
