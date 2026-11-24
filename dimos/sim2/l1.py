@@ -24,11 +24,13 @@ from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.sim import until_it_stops
+from dimos.sim2.spec import ODOM_FRAME
 from dimos.simulation.sensors.lidar import Raycaster
 
 _KEY_BITS = 21
@@ -37,7 +39,6 @@ _KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 class SimL1Config(HardwareModuleConfig):
     usd: UsdModel = frame_usd("l1_link", name="sim_l1")
-    map_frame_id: str = "world"
     period: float = 0.13
     points_per_second: float = 21_600.0
     max_range: float = 30.0
@@ -70,6 +71,7 @@ class SimL1(SimSensor):
         view: WorldView | None = None
         raycaster: Raycaster | None = None
         rider: str | None = None
+        odom_frame, from_world = "", np.eye(4)
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
         cells = np.zeros(0, dtype=np.int64)
@@ -78,6 +80,7 @@ class SimL1(SimSensor):
                 view = await asyncio.to_thread(self._open)
                 raycaster = view.raycaster(config.geom_groups, mounted_at=site)
                 rider = view.owner(site)
+                odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
             assert raycaster is not None
             view.update(self._world)
             stamp = view.time
@@ -85,16 +88,26 @@ class SimL1(SimSensor):
             directions = _hemisphere(rng, rays) @ rotation_matrix(orientation).T
             distance, _ = raycaster.cast(origin, directions, config.max_range)
             hit = distance > 0
-            cells = np.union1d(cells, self._keys(origin + directions[hit] * distance[hit, None]))
-            cells = self._crop(cells, self._center(rider, origin))
+            hits = _moved(from_world, origin + directions[hit] * distance[hit, None])
+            cells = np.union1d(cells, self._keys(hits))
+            cells = self._crop(cells, _moved(from_world, self._center(rider, origin)))
             self.lidar.publish(
                 PointCloud2.from_numpy(
-                    (self._indices(cells) + 0.5) * config.cell,
-                    config.map_frame_id,
-                    stamp,
+                    (self._indices(cells) + 0.5) * config.cell, odom_frame, stamp
                 )
             )
             self.publish_usd_tf(ts=stamp)
+
+    def _rider_odometry(self, rider: str | None) -> tuple[str, NDArray[np.float64]]:
+        """The rider's odometry frame, and world -> odom: odometry starts at the rider's scene mount."""
+        announced = self._world.entity(rider) if rider is not None else None
+        if announced is None or ODOM_FRAME not in announced.cbor:
+            raise ValueError(
+                f"an L1 maps in the odometry of the robot it rides, and {self.frame_id} rides "
+                f"{rider!r}, which the world announces with no {ODOM_FRAME}"
+            )
+        mount = usd_frame_pose(self.world_layer().read_text(), rider)
+        return str(announced.cbor[ODOM_FRAME]), np.linalg.inv(mount)
 
     def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
         entity = self._world.entity(rider) if rider is not None else None
@@ -121,6 +134,10 @@ class SimL1(SimSensor):
         z = (index[:, 2] + 0.5) * config.cell
         inside &= (z >= config.z_range[0]) & (z <= config.z_range[1])
         return keys[inside]
+
+
+def _moved(transform: NDArray[np.float64], points: NDArray[np.float64]) -> NDArray[np.float64]:
+    return points @ transform[:3, :3].T + transform[:3, 3]
 
 
 def _hemisphere(rng: np.random.Generator, count: int) -> NDArray[np.float64]:
