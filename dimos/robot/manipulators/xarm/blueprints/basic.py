@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
@@ -98,20 +100,30 @@ XARM_SIM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _xarm7_sim() -> MetaBlueprint:
-    """The xArm7 in MuJoCo, behind the same ports and joint names as ``XArmConnection``."""
+def _xarm7_sim(sim_module_kwargs: dict[str, Any] | None = None) -> MetaBlueprint:
+    """The xArm7 in MuJoCo, behind the same ports and joint names as ``XArmConnection``.
+
+    ``sim_module_kwargs`` are the ``MujocoSimModule`` settings; the plain xArm7 scene if None.
+    """
     # mujoco is optional; import it only when a blueprint runs the sim.
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
+    if sim_module_kwargs is None:
+        sim_module_kwargs = {"address": str(XARM7_SIM_PATH), "headless": False, "dof": 7}
     return autoconnect(
         MujocoArmConnection.blueprint(
             model=xarm_model("xarm7", gripper="xarm"), gripper_joint="drive_joint"
         ),
-        MujocoSimModule.blueprint(address=str(XARM7_SIM_PATH), headless=False, dof=7),
+        MujocoSimModule.blueprint(**sim_module_kwargs),
     )
 
 
-def xarm_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint:
+def xarm_coordinator(
+    arm: XArmType,
+    *,
+    simulated: bool = False,
+    sim_module_kwargs: dict[str, Any] | None = None,
+) -> MetaBlueprint:
     """Run planned joint trajectories on an xArm and open and close its xArm
     Gripper, through ``XArmConnection``.
 
@@ -127,6 +139,8 @@ def xarm_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint
         arm: Which arm, e.g. "xarm7".
         simulated: Drive the xArm7 in MuJoCo instead; wire it up with
             ``.remappings(XARM_SIM_REMAPS)``.
+        sim_module_kwargs: When simulated, the ``MujocoSimModule`` settings
+            (scene, camera, start pose); the plain xArm7 scene if None.
     """
     if simulated and arm != "xarm7":
         raise ValueError(
@@ -156,7 +170,9 @@ def xarm_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint
                 ),
             ],
         ),
-        _xarm7_sim() if simulated else XArmConnection.blueprint(arm=arm, gripper="xarm"),
+        _xarm7_sim(sim_module_kwargs)
+        if simulated
+        else XArmConnection.blueprint(arm=arm, gripper="xarm"),
     )
 
 
@@ -187,13 +203,15 @@ xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS
 
 _coordinator_xarm7_hw = xarm7_hardware("arm")
 
-coordinator_xarm7 = autoconnect(
-    coordinator(
+# In MuJoCo the scene's xArm Gripper comes with the arm, so the sim adds its gripper task.
+coordinator_xarm7 = (
+    xarm_coordinator("xarm7", simulated=True)
+    if SIMULATED
+    else coordinator(
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
-    ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
-)
+    )
+).remappings(XARM_SIM_REMAPS if SIMULATED else [])
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
 
