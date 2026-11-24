@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
-from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.native_module import NativeInputPath, NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -66,7 +66,7 @@ class Mid360Config(NativeModuleConfig):
     frequency: float = 10.0
     enable_imu: bool = True
     # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
-    pcap: str | None = None
+    pcap: NativeInputPath | None = None
     # Replay speed relative to capture time. None runs flat-out.
     replay_rate: float | None = Field(default=1.0, gt=0)
     # Seconds a replay holds its first packet, so consumers can subscribe first.
@@ -94,7 +94,7 @@ class Mid360Config(NativeModuleConfig):
     host_point_data_port: int = SDK_HOST_POINT_DATA_PORT
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
 
-    @field_validator("pcap")
+    @field_validator("pcap", mode="before")
     @classmethod
     def _pcap_path_present(cls, value: str | None) -> str | None:
         if value == "":

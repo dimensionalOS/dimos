@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.native_module import NativeInputPath, NativeModule, NativeModuleConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -63,7 +63,7 @@ class VirtualMid360Config(NativeModuleConfig):
     cli_exclude: frozenset[str] = frozenset({"setup_network", "alias_iface"})
 
     # Required: empty makes the binary error.
-    pcap: str = Field(min_length=1)
+    pcap: NativeInputPath
     # Replay speed; 1.0 = original timing.
     rate: float = 1.0
     # Seconds to wait before streaming begins.

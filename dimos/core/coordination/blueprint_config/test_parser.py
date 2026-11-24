@@ -588,6 +588,20 @@ def test_format_help_marks_a_required_nested_parent_with_default_children() -> N
         parser.parse(environ={})
 
 
+def test_format_help_names_the_types_behind_annotated_union_members() -> None:
+    class ReplayConfig(ModuleConfig):
+        capture: Annotated[str, Field(min_length=1)] | None = None
+        rate: Annotated[int | float, Field(gt=0)] | None = None
+
+    class ReplayModule(Module):
+        config: ReplayConfig
+
+    output = BlueprintConfigParser(ReplayModule.blueprint()).format_help()
+
+    assert "--capture, --replaymodule.capture <str | None> (default: None)" in output
+    assert "--rate, --replaymodule.rate <int | float | None> (default: None)" in output
+
+
 def test_split_run_arguments_requires_leading_blueprint_names() -> None:
     assert split_run_arguments(("first-blueprint", "second-blueprint", "--map-file", "map")) == (
         ("first-blueprint", "second-blueprint"),
