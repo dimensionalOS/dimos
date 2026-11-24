@@ -22,8 +22,8 @@ or nested ``<vendor>/<robot>/``.
 Usage:
     from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
-    adapter = whole_body_adapter_registry.create("mock_whole_body")
-    print(whole_body_adapter_registry.available())  # ["mock_whole_body", ...]
+    print(whole_body_adapter_registry.available())
+    adapter = whole_body_adapter_registry.create(name)
 """
 
 from __future__ import annotations

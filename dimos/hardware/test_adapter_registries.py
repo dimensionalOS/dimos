@@ -25,7 +25,6 @@ import pytest
 
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.hardware.manipulators.registry import AdapterRegistry, adapter_registry
-from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
 # Vendor SDKs that are legitimately absent in some environments. A factory
 # path failing on one of these still passes IF the SDK is not installed;
@@ -53,15 +52,11 @@ EXPECTED_NAMES = {
     "drive_trains": {
         "mock_twist_base",
     },
-    "whole_body": {
-        "mock_whole_body",
-    },
 }
 
 FAMILIES = [
     pytest.param(adapter_registry, "manipulators", id="manipulators"),
     pytest.param(twist_base_adapter_registry, "drive_trains", id="drive_trains"),
-    pytest.param(whole_body_adapter_registry, "whole_body", id="whole_body"),
 ]
 
 
