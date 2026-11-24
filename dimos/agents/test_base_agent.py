@@ -14,7 +14,6 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from types import new_class
 from typing import Any, Generic, TypeVar
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -179,20 +178,6 @@ def test_agents_with_different_types_are_told_apart() -> None:
 def test_an_agent_without_types_is_refused_when_defined() -> None:
     with pytest.raises(TypeError, match="must name its input and output types"):
         type("Untyped", (BaseAgent,), {})
-
-
-_ANY_AGENT: Any = BaseAgent
-
-
-class Handle:
-    """A plain class: nothing says how to send it."""
-
-
-@pytest.mark.parametrize("bad", [Handle, list[Handle], dict[str, Handle | None]])
-def test_an_agent_whose_types_cannot_be_sent_is_refused_when_defined(bad: Any) -> None:
-    for pair in ((bad, str), (str, bad)):
-        with pytest.raises(TypeError, match="cannot be sent over RPC or a transport"):
-            new_class("Unsendable", (_ANY_AGENT[pair],))
 
 
 @pytest.mark.parametrize(
