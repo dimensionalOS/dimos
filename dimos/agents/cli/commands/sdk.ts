@@ -1,5 +1,7 @@
 import type { Command } from "#dimos/agents/cli/commands/base.ts";
 import type { ConversationId, EntryId, LiveState } from "@earendil-works/pi-durable";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import type { Ctx } from "@earendil-works/chord";
 import { isChordError } from "@earendil-works/chord";
 import type { Static } from "typebox";
@@ -50,13 +52,14 @@ function publishRowChanges<K extends "id" | "name">(type: string, key: K) {
   };
 }
 
+function assistantText(message: Pick<AssistantMessage, "content">): string {
+  return message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+}
+
 function turn(live: LiveState) {
   if (!live.run) return null;
-  return {
-    run: live.run,
-    text:
-      live.generation?.message?.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("") ?? "",
-  };
+  const message = live.generation?.message;
+  return { run: live.run, messageTimestamp: message?.timestamp ?? null, text: message ? assistantText(message) : "" };
 }
 
 async function watch(client: Client): Promise<never> {
@@ -65,19 +68,53 @@ async function watch(client: Client): Promise<never> {
   const follow = async (conversation: ConversationId) => {
     const room = await client.host.get(ConversationContract, { conversation, role: "viewer", markSeen: false });
     const chat = (update: object) => write({ type: "agent/chat", conversation, ...update });
+    const partials = new Map<number, string>();
+    const publishText = (message: Pick<AssistantMessage, "timestamp" | "content">) => {
+      const text = assistantText(message);
+      const before = partials.get(message.timestamp) ?? "";
+      if (before === text) return;
+      if (text.startsWith(before)) {
+        chat({ messageTimestamp: message.timestamp, offset: before.length, delta: text.slice(before.length) });
+      } else {
+        chat({ messageTimestamp: message.timestamp, reset: true, offset: 0, delta: text });
+      }
+      partials.set(message.timestamp, text);
+    };
+    let lastAssistant: EntryId | undefined;
+    const publishEntries = (entries: readonly TranscriptItem[], flushText: boolean) => {
+      // The harness throttles live text. Its last few characters may first arrive in the saved entry.
+      for (const item of entries) {
+        if (item.kind !== "assistant" || (lastAssistant !== undefined && item.entry <= lastAssistant)) continue;
+        if (flushText) publishText(item.message);
+        partials.delete(item.message.timestamp);
+        lastAssistant = item.entry;
+      }
+      chat({ entries });
+    };
     let last: EntryId | undefined;
+    let initial = true;
     const history = room.transcript.subscribe(({ items }) => {
       // The HTTP snapshot supplies earlier history. Forward commits after the last item we sent.
       const index = last === undefined ? items.length - 1 : items.findIndex((item) => item.entry === last) + 1;
       const entries = items.slice(Math.max(0, index));
       last = items.at(-1)?.entry;
-      if (entries.length) chat({ entries });
+      if (entries.length) publishEntries(entries, !initial);
+      initial = false;
     });
     let input = room.live.value.run?.inputs[0];
+    let previousRun: LiveState["run"];
+    let previousMessage: number | null = null;
     const live = room.live.subscribe((state) => {
       if (state.run) {
         input = state.run.inputs[0];
-        chat({ turn: turn(state) });
+        const message = state.generation?.message;
+        const messageTimestamp = message?.timestamp ?? null;
+        if (messageTimestamp !== previousMessage || !isDeepStrictEqual(previousRun, state.run)) {
+          chat({ turn: { run: state.run, messageTimestamp } });
+          previousRun = state.run;
+          previousMessage = messageTimestamp;
+        }
+        if (message) publishText(message);
       }
     });
     try {
@@ -89,7 +126,7 @@ async function watch(client: Client): Promise<never> {
       if (input !== undefined) {
         const outcome = await room.submission({ id: input });
         if (outcome.ok && outcome.value.answer && outcome.value.answer.entry !== last)
-          chat({ entries: [outcome.value.answer] });
+          publishEntries([outcome.value.answer], true);
       }
       if (!gateway.conversations.value.find((row) => row.id === conversation)?.running) chat({ turn: null });
     } finally {
