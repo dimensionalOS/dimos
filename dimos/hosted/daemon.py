@@ -410,14 +410,13 @@ def _run_fragment(
         if log_key is not None and router is not None:
             _publish_output(log_key, router)
         payload = fragment.load_payload()
-        remote_module_refs: dict[tuple[str, str], Any] = {}
-        for reference in payload.remote_module_references:
-            key = (reference.consumer_name, reference.reference_name)
-            target = (reference.rpcs, reference.rpc_name)
-            if reference.list_index is None:
-                remote_module_refs[key] = target
-            else:
-                remote_module_refs.setdefault(key, {})[reference.list_index] = target
+        remote_module_refs = {
+            (reference.consumer_name, reference.reference_name): (
+                reference.rpcs,
+                reference.rpc_name,
+            )
+            for reference in payload.remote_module_references
+        }
         # This Host's own environment, the blueprint root's explicit values on top, the run's pins last.
         config = BlueprintConfigParser(payload.blueprint).parse(
             overrides=payload.overrides,

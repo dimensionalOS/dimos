@@ -21,9 +21,7 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, HardwareSpec, Mounts
-from dimos.core.module import Module
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.assets.model import RobotModel, UsdModel
@@ -87,7 +85,7 @@ def test_mounts_are_named_on_the_class() -> None:
 def test_mount_namespaces_under_the_mount_name() -> None:
     (atom,) = WristCamera.mount(Arm.mounts.wrist).active_blueprints
     assert atom.name == "wrist/wristcamera"
-    assert atom.kwargs["_mount"] == "wrist"
+    assert atom.kwargs["mount"] == "wrist"
 
 
 def test_one_unmounted_with_mounted_hardware_passes() -> None:
@@ -138,7 +136,7 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
 
 
 def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
-    camera = WristCamera(_mount="wrist", instance_name="left/wrist/wristcamera")
+    camera = WristCamera(mount="wrist", instance_name="left/wrist/wristcamera")
     arm = Arm(instance_name="left/arm")
     try:
         edges = {
@@ -159,30 +157,6 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
         camera.stop()
 
 
-class Assembler(Module):
-    hardware: list[HardwareSpec]
-
-    @rpc
-    def mounted(self) -> list[str]:
-        return sorted(str(part.mounted_on()) for part in self.hardware)
-
-
-def test_a_list_ref_gets_every_hardware_module() -> None:
-    robot = autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist))
-    coordinator = _build(
-        autoconnect(robot.namespace("left"), robot.namespace("right"), Assembler.blueprint())
-    )
-    try:
-        assert coordinator.get_instance("assembler").mounted() == [
-            "None",
-            "None",
-            "left/wrist",
-            "right/wrist",
-        ]
-    finally:
-        coordinator.stop()
-
-
 class SharedCamera(WristCamera):
     mount_shared = frozenset({"color_image"})
     color_image: Out[Image]
@@ -196,90 +170,6 @@ def test_a_mount_keeps_its_shared_streams_outside_its_namespace() -> None:
     )
     (camera,) = [atom for atom in blueprint.active_blueprints if atom.module is SharedCamera]
     assert blueprint.remapping_map.get((camera.name, "color_image"), "color_image") == "color_image"
-
-
-class MountOrder(Module):
-    hardware: list[HardwareSpec]
-
-    @rpc
-    def mounts(self) -> list[str | None]:
-        return [part.mounted_on() for part in self.hardware]
-
-
-def _two_arms_and_an_assembler() -> MetaBlueprint:
-    robot = autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist))
-    return autoconnect(robot.namespace("left"), robot.namespace("right"), Assembler.blueprint())
-
-
-def test_a_restarted_list_consumer_keeps_its_list() -> None:
-    coordinator = _build(_two_arms_and_an_assembler())
-    try:
-        coordinator.restart_module("assembler", reload_source=False)
-        assert coordinator.get_instance("assembler").mounted() == [
-            "None",
-            "None",
-            "left/wrist",
-            "right/wrist",
-        ]
-    finally:
-        coordinator.stop()
-
-
-def test_a_restarted_provider_stays_in_the_list() -> None:
-    coordinator = _build(_two_arms_and_an_assembler())
-    try:
-        new_arm = coordinator.restart_module("left/arm", reload_source=False)
-        assembler = coordinator.get_instance("assembler")
-        assert new_arm in assembler.hardware
-        assert assembler.mounted() == ["None", "None", "left/wrist", "right/wrist"]
-    finally:
-        coordinator.stop()
-
-
-def test_a_list_consumer_loaded_later_sees_the_running_hardware() -> None:
-    robot = autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist))
-    coordinator = _build(robot.namespace("left"))
-    try:
-        coordinator.load_blueprint(Assembler.blueprint())
-        assert coordinator.get_instance("assembler").mounted() == ["None", "left/wrist"]
-    finally:
-        coordinator.stop()
-
-
-def test_a_list_ref_remapped_to_one_class_gets_only_that_class() -> None:
-    coordinator = _build(_two_arms_and_an_assembler().remappings([(Assembler, "hardware", Arm)]))
-    try:
-        assert coordinator.get_instance("assembler").mounted() == ["None", "None"]
-    finally:
-        coordinator.stop()
-
-
-def test_a_list_ref_keeps_a_remote_provider_in_its_place() -> None:
-    zenoh = {"g": {"n_workers": 1, "transport": "zenoh", "viewer": "none"}}
-    rpc_name = "runs/run-1/hosts/host-a/modules/arm"
-    provider_blueprint = Arm.blueprint(rpc_name=rpc_name)
-    provider = ModuleCoordinator.build(
-        provider_blueprint,
-        BlueprintConfigParser(provider_blueprint).parse(environ={}, overrides=zenoh),
-        module_rpc_namespace="runs/run-1/hosts/host-a/modules",
-    )
-    try:
-        consumer_blueprint = autoconnect(
-            WristCamera.mount(Arm.mounts.wrist), MountOrder.blueprint()
-        ).solidify()
-        consumer = ModuleCoordinator.build(
-            consumer_blueprint,
-            BlueprintConfigParser(consumer_blueprint).parse(environ={}, overrides=zenoh),
-            remote_module_refs={("mountorder", "hardware"): {0: (Arm, rpc_name)}},
-        )
-        try:
-            assert consumer.get_instance("mountorder").mounts() == [None, "wrist"]
-            consumer.restart_module("mountorder", reload_source=False)
-            assert consumer.get_instance("mountorder").mounts() == [None, "wrist"]
-        finally:
-            consumer.stop()
-    finally:
-        provider.stop()
 
 
 def test_hardware_without_a_usd_is_refused() -> None:
