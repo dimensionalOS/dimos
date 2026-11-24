@@ -77,6 +77,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
+    G1WholeBodyConnection,
+    G1WholeBodyConnectionConfig,
+)
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
     g1_costmap,
@@ -85,10 +89,6 @@ from dimos.robot.unitree.g1.g1_rerun import (
 )
 from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.robot.unitree.g1.wholebody_connection import (
-    G1WholeBodyConnection,
-    G1WholeBodyConnectionConfig,
-)
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities

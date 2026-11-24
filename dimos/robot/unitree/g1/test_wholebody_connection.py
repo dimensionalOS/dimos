@@ -27,7 +27,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.hardware.whole_body.spec import POS_STOP
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
-from dimos.robot.unitree.g1.wholebody_connection import (
+from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
     G1WholeBodyConnection,

@@ -131,6 +131,8 @@ class ConnectionConfig(JointConnectionConfig):
     lidar: bool = True
     camera: bool = True
     velocity_api: bool = False
+    # Seconds between resends of the command during a timed move.
+    timed_move_resend_period_s: float = Field(default=0.01, gt=0.0, allow_inf_nan=False)
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
     # Per-device AES-128 key (Go2 fw >=1.1.15).
@@ -252,6 +254,7 @@ def make_connection(
             ip,
             aes_128_key=aes_128_key,
             velocity_api=velocity_api,
+            timed_move_resend_period_s=cfg.timed_move_resend_period_s,
         )
     else:
         raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
