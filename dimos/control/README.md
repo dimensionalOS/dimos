@@ -91,7 +91,9 @@ The command gets every covered joint or none; other axes keep ordinary per-joint
 arbitration and holds. A coordinator cancel discards pending native results and
 stops new publications from the cancelled task; it cannot recall messages already
 published. Every covered joint must have reported recently to the coordinator;
-this measures receipt time, not device acquisition time. The concrete connection
+missing feedback on other joints does not block the group. Group-only joint
+readings neither gate nor keep the scalar path alive. Freshness measures receipt
+time, not device acquisition time. The concrete connection
 owns native validation, mode transitions, physical writes and watchdog behavior.
 Receive on the connection's `In`; do not attach synchronous `Out` callbacks that
 call back into coordinator control methods while publication owns its stop guard.

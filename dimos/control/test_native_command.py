@@ -28,9 +28,11 @@ from reactivex.disposable import Disposable
 from dimos.control._control_test_helpers import FakeArm, FakeArmConfig, fake_arm_model
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.group_command import GroupCommandOutput
 from dimos.control.task import BaseControlTask, CoordinatorState, JointCommandOutput, ResourceClaim
+from dimos.control.test_coordinator_connections import LocalTransport
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -317,5 +319,143 @@ def test_group_outputs_cannot_alias() -> None:
     try:
         with pytest.raises(ValueError, match="already bound"):
             cc._connect_robots()
+    finally:
+        cc.stop()
+
+
+@pytest.mark.parametrize(
+    ("groups", "active", "feedback", "expected"),
+    [
+        ({}, (), [J3], ([], [], [{J3: 0.6}])),
+        ({"pose": {"joint1", "joint2"}}, (), [J1, J3], ([], [], [{J3: 0.6}])),
+        ({"pose": {"joint1", "joint2"}}, ("pose",), [J1, J3], ([], [], [{J3: 0.6}])),
+        (
+            {"pose": {"joint1"}, "other_pose": {"joint2"}},
+            ("pose", "other_pose"),
+            [J1, J3],
+            ([POSE], [], [{J3: 0.6}]),
+        ),
+        ({"pose": {"joint1"}}, ("pose",), [J1], ([POSE], [], [])),
+    ],
+)
+def test_group_readiness_is_independent(
+    groups: dict[str, set[str]],
+    active: tuple[str, ...],
+    feedback: list[str],
+    expected: tuple[list[PoseStamped], list[PoseStamped], list[dict[str, float]]],
+) -> None:
+    tasks = [Reference("jaw", 0, JointCommandOutput([J3], positions=[0.6]))]
+    tasks.extend(Reference(name, 20, GroupCommandOutput(f"mock/{name}", POSE)) for name in active)
+    assert _run_tick(groups, ("joint3",), feedback, tasks) == expected
+
+
+def test_invalid_scalar_cannot_shadow_valid_scalar_that_beats_group() -> None:
+    tasks = [
+        Reference("bad", 30, JointCommandOutput([J1], positions=[float("nan")])),
+        Reference("winner", 25, JointCommandOutput([J1], positions=[0.8])),
+        Reference("pose", 20, GroupCommandOutput("mock/pose", POSE)),
+        Reference("jaw", 0, JointCommandOutput([J3], positions=[0.6])),
+    ]
+    assert _run_tick(
+        {"pose": {"joint1", "joint2"}}, ("joint1", "joint2", "joint3"), [J1, J2, J3], tasks
+    ) == ([], [], [{J1: 0.8, J2: 0.0, J3: 0.6}])
+
+
+def test_scalar_on_idle_group_only_axis_cannot_drop_legal_scalar_batch() -> None:
+    task = Reference("mixed", 30, JointCommandOutput([J1, J3], positions=[0.8, 0.6]))
+    assert _run_tick({"pose": {"joint1"}}, ("joint3",), [J1, J3], [task]) == ([], [], [{J3: 0.6}])
+
+
+def test_unready_scalar_path_cannot_reserve_group_axis() -> None:
+    tasks = [
+        Reference("scalar", 30, JointCommandOutput([J1], positions=[0.8])),
+        Reference("pose", 20, GroupCommandOutput("mock/pose", POSE)),
+    ]
+    assert _run_tick({"pose": {"joint1"}}, ("joint1", "joint3"), [J1], tasks) == ([POSE], [], [])
+
+
+def test_legacy_only_batch_still_rejects_invalid_winner() -> None:
+    task = Reference("mixed", 30, JointCommandOutput([J1, J3], positions=[float("nan"), 0.6]))
+    assert _run_tick({}, ("joint1", "joint3"), [J1, J3], [task]) == ([], [], [])
+
+
+def test_group_only_feedback_cannot_refresh_scalar_readiness(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    clock = 10.0
+    monkeypatch.setattr("dimos.control.connection_source.time.monotonic", lambda: clock)
+    cc = NativeCoordinator()
+    request.addfinalizer(cc.stop)
+    source = ConnectionSource(
+        ConnectionConfig(
+            source="mock",
+            model=fake_arm_model(("joint1", "joint3")),
+            joint_commands={"joint3": (Interface.POSITION,)},
+            group_commands={"pose": frozenset({"joint1"})},
+        ),
+        ["position_command"],
+        ["joint_state"],
+        1.0,
+        group_ports={"mock/pose": cc.mock_pose},
+    )
+    source.on_message("joint_state", JointState(name=[J1, J3], position=[0.0, 0.0]))
+    assert source.ready_for_control()
+    for reading_time in (10.75, 11.5):
+        clock = reading_time
+        source.on_message("joint_state", JointState(name=[J1], position=[0.0]))
+    assert not source.ready_for_control()
+    assert source.publish_group("mock/pose", POSE)
+    source.on_message("joint_state", JointState(name=[J3], position=[0.0]))
+    assert source.ready_for_control()
+    assert source.publish_group("mock/pose", POSE)
+    source.drop_holds()
+    source.on_message("joint_state", JointState(name=[J3], position=[0.0]))
+    assert source.ready_for_control()
+    assert not source.publish_group("mock/pose", POSE)
+
+
+def _run_tick(
+    groups: dict[str, set[str]],
+    scalar_joints: tuple[str, ...],
+    feedback: list[str],
+    tasks: list[Reference],
+) -> tuple[list[PoseStamped], list[PoseStamped], list[dict[str, float]]]:
+    cc = NativeCoordinator(
+        connections=[
+            ConnectionConfig(
+                source="mock",
+                model=fake_arm_model(("joint1", "joint2", "joint3")),
+                joint_commands={name: (Interface.POSITION,) for name in scalar_joints},
+                group_commands={name: frozenset(joints) for name, joints in groups.items()},
+            )
+        ],
+        reading_timeout_s=30.0,
+    )
+    try:
+        cc.set_transport("mock_joint_state", LocalTransport())  # type: ignore[arg-type]
+        cc._connect_robots()
+        pose: list[PoseStamped] = []
+        other: list[PoseStamped] = []
+        scalar: list[JointState] = []
+        cc.mock_pose.subscribe(pose.append)
+        cc.mock_other_pose.subscribe(other.append)
+        cc.mock_position_command.subscribe(scalar.append)
+        cc._connections["mock"].on_message(
+            "joint_state", JointState(name=feedback, position=[0.0] * len(feedback))
+        )
+        cc._tasks.update({task.name: task for task in tasks})
+        loop = TickLoop(
+            100,
+            {},
+            cc._hardware_lock,
+            cc._tasks,
+            cc._task_lock,
+            cc._joint_to_hardware,
+            connections=cc._connections,
+            connection_command_callback=cc._publish_command,
+        )
+        loop._stop_event.clear()
+        loop._tick()
+        return pose, other, [dict(zip(msg.name, msg.position, strict=True)) for msg in scalar]
     finally:
         cc.stop()

@@ -254,20 +254,34 @@ class ConnectionSource:
         self._readers: dict[str, Callable[[Any], Values]] = {}
         self._needed: dict[str, list[tuple[str, ...]]] = {}
         self._port_keys: dict[str, frozenset[str]] = {}
+        self._group_only_keys: frozenset[str] = frozenset()
         for port in readings:
             if port == JOINT_STATE:
                 self._readers[port] = _read_joint_state
-                groups = [tuple(joint.state_keys.values()) for joint in self._joints]
+                groups = [
+                    tuple(joint.state_keys.values()) for joint in self._joints if joint.command_keys
+                ]
+                if groups:
+                    self._group_only_keys = frozenset(
+                        key
+                        for joint in self._joints
+                        if not joint.command_keys
+                        for key in joint.state_keys.values()
+                    )
+                state_keys = frozenset(
+                    key for joint in self._joints for key in joint.state_keys.values()
+                )
             elif port == IMU:
                 self._readers[port] = _reader(imu_to_values, imu, robot)
                 groups = [(sensor.key,) for sensor in self._sensors]
+                state_keys = frozenset(sensor.key for sensor in self._sensors)
             else:
                 raise ValueError(
                     f"{robot!r}: {port!r} is not a kind of reading port; "
                     f"one of {', '.join(READING_PORTS)}"
                 )
             self._needed[port] = groups
-            self._port_keys[port] = frozenset(key for group in groups for key in group)
+            self._port_keys[port] = state_keys
 
         # Guards the readings and flags below, which readings change and the
         # tick loop reads.
@@ -362,28 +376,47 @@ class ConnectionSource:
         mine = {key: value for key, value in values.items() if key in self._port_keys[port]}
         if not mine:
             return
+        # Group-exclusive packets still update the snapshot but must not extend
+        # the legacy command deadline for scalar axes on the same port.
+        legacy = not self._group_only_keys.issuperset(mine)
         now = time.monotonic()
         with self._lock:
             latest, reported = self._latest, self._reported
-            if self._restart or any(
-                now - receipt > self._timeout for receipt in self._port_receipts.values()
+            if self._restart or (
+                legacy
+                and any(now - receipt > self._timeout for receipt in self._port_receipts.values())
             ):
                 # Back after a silence, or holds dropped: wait for a whole new
                 # reading, and take the holds again from it.
-                latest, reported = {}, frozenset()
+                reported = frozenset()
                 self._port_receipts.clear()
-                self._group_receipts.clear()
+                latest = (
+                    {}
+                    if self._restart
+                    else {
+                        key: value for key, value in latest.items() if key in self._group_only_keys
+                    }
+                )
+                kept_joints = {key.rpartition(SEPARATOR)[0] for key in latest}
+                self._group_receipts = {
+                    joint: receipt
+                    for joint, receipt in self._group_receipts.items()
+                    if joint in kept_joints
+                }
                 self._resumed = True
                 self._restart = False
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
-            if port not in reported and all(
-                any(key in latest for key in group) for group in self._needed[port]
+            if (
+                legacy
+                and port not in reported
+                and all(any(key in latest for key in group) for group in self._needed[port])
             ):
                 reported = reported | {port}
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
-            self._port_receipts[port] = now
+            if legacy:
+                self._port_receipts[port] = now
             if port == JOINT_STATE and self._group_axes:
                 for key in mine:
                     joint, _, _ = key.rpartition(SEPARATOR)
@@ -402,35 +435,45 @@ class ConnectionSource:
         """Publish a whole winning command to the ordinary typed stream."""
         port = self._group_ports[interface]
         joints = self.group_joints[interface]
-        if type(payload) is not port.type or not self.ready_for_control(group_joints=joints):
+        if type(payload) is not port.type:
             return False
+        with self._lock:
+            now = time.monotonic()
+            if (
+                self._restart
+                or any(
+                    now - self._group_receipts.get(joint, -math.inf) > self._timeout
+                    for joint in joints
+                )
+                or any(
+                    reading != JOINT_STATE
+                    and (
+                        reading not in self._reported
+                        or now - self._port_receipts[reading] > self._timeout
+                    )
+                    for reading in self._needed
+                )
+            ):
+                return False
         for joint in joints:
             self._holds.pop(joint, None)
         port.publish(payload)
         return True
 
-    def ready_for_control(
-        self, now: float | None = None, *, group_joints: Collection[str] = ()
-    ) -> bool:
-        """Whether every required reading port has reported and is fresh.
+    def ready_for_control(self, now: float | None = None) -> bool:
+        """Whether the legacy command path's required readings have reported and are fresh.
 
-        Joint ports need a reading for each declared joint; traffic on one
-        port cannot refresh another port's cached state.
+        Joint ports need a reading for each scalar joint; feedback for only
+        group-exclusive axes does not refresh a mixed source's scalar path.
 
         Args:
             now: The current ``time.monotonic()``, in seconds. Defaults to now.
-            group_joints: Native command axes that each need recent feedback.
         """
         if now is None:
             now = time.monotonic()
         with self._lock:
-            return (
-                len(self._reported) == len(self._needed)
-                and all(now - self._port_receipts[port] <= self._timeout for port in self._needed)
-                and all(
-                    now - self._group_receipts.get(joint, -math.inf) <= self._timeout
-                    for joint in group_joints
-                )
+            return len(self._reported) == len(self._needed) and all(
+                now - self._port_receipts[port] <= self._timeout for port in self._needed
             )
 
     def unreported(self) -> list[str]:

@@ -423,8 +423,12 @@ class TickLoop:
                     for joint, value in zip(output.joint_names, values, strict=True):
                         robot = self._joint_to_hardware.get(joint)
                         scalar_source = self._connections.get(robot) if robot is not None else None
-                        if scalar_source is not None and scalar_source.accepts_joint_command(
-                            joint, output.mode, value
+                        if (
+                            self._connection_command_callback is not None
+                            and scalar_source is not None
+                            and scalar_source.group_joints
+                            and scalar_source.accepts_joint_command(joint, output.mode, value)
+                            and scalar_source.ready_for_control()
                         ):
                             reserved.setdefault(joint, task.name)
         return covered
@@ -448,6 +452,17 @@ class TickLoop:
                 continue
 
             for i, joint_name in enumerate(output.joint_names):
+                # Use the same scalar eligibility as group arbitration on mixed
+                # sources; leave legacy-only batch rejection unchanged.
+                if self._group_interfaces:
+                    robot = self._joint_to_hardware.get(joint_name)
+                    source = self._connections.get(robot) if robot is not None else None
+                    if (
+                        source is not None
+                        and source.group_joints
+                        and not source.accepts_joint_command(joint_name, output.mode, values[i])
+                    ):
+                        continue
                 if joint_name in covered:
                     preemptions.setdefault(task.name, {})[joint_name] = covered[joint_name]
                     continue
