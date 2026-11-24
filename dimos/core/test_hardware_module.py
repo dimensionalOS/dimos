@@ -61,12 +61,12 @@ class Arm(HardwareModule):
     mounts = Mounts("wrist")
 
 
-class CameraConfig(HardwareModuleConfig):
+class WristCameraConfig(HardwareModuleConfig):
     usd: UsdModel | None = UsdModel.from_robot_model(RobotModel.from_urdf_string(_CAMERA_URDF))
 
 
-class Camera(HardwareModule):
-    config: CameraConfig
+class WristCamera(HardwareModule):
+    config: WristCameraConfig
 
 
 def _verify(blueprint: MetaBlueprint) -> None:
@@ -85,25 +85,25 @@ def test_mounts_are_named_on_the_class() -> None:
 
 
 def test_mount_namespaces_under_the_mount_name() -> None:
-    (atom,) = Camera.mount(Arm.mounts.wrist).active_blueprints
-    assert atom.name == "wrist/camera"
+    (atom,) = WristCamera.mount(Arm.mounts.wrist).active_blueprints
+    assert atom.name == "wrist/wristcamera"
     assert atom.kwargs["_mount"] == "wrist"
 
 
 def test_one_unmounted_with_mounted_hardware_passes() -> None:
-    _verify(autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist)))
+    _verify(autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist)))
 
 
 def test_two_unmounted_in_one_namespace_is_refused() -> None:
-    with pytest.raises(ValueError, match=r"the top level: arm, camera"):
-        _verify(autoconnect(Arm.blueprint(), Camera.blueprint()))
+    with pytest.raises(ValueError, match=r"the top level: arm, wristcamera"):
+        _verify(autoconnect(Arm.blueprint(), WristCamera.blueprint()))
 
 
 def test_each_namespace_gets_its_own_unmounted_hardware() -> None:
-    robot = autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist))
+    robot = autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist))
     _verify(autoconnect(robot.namespace("left"), robot.namespace("right")))
-    with pytest.raises(ValueError, match=r"left: left/arm, left/camera"):
-        _verify(autoconnect(Arm.blueprint(), Camera.blueprint()).namespace("left"))
+    with pytest.raises(ValueError, match=r"left: left/arm, left/wristcamera"):
+        _verify(autoconnect(Arm.blueprint(), WristCamera.blueprint()).namespace("left"))
 
 
 def _build(blueprint: MetaBlueprint) -> ModuleCoordinator:
@@ -114,18 +114,18 @@ def _build(blueprint: MetaBlueprint) -> ModuleCoordinator:
 
 def test_build_refuses_two_unmounted() -> None:
     with pytest.raises(ValueError, match="more than one unmounted HardwareModule"):
-        _build(autoconnect(Arm.blueprint(), Camera.blueprint()))
+        _build(autoconnect(Arm.blueprint(), WristCamera.blueprint()))
 
 
 def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
     coordinator = _build(
-        autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist)).namespace("left")
+        autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist)).namespace("left")
     )
     try:
         arm = coordinator.get_instance("left/arm")
-        camera = coordinator.get_instance("left/wrist/camera")
+        camera = coordinator.get_instance("left/wrist/wristcamera")
         assert arm.mounted_on() is None
         assert camera.mounted_on() == "left/wrist"
         arm_frames = usd_frame_names(arm.get_usd())
@@ -137,7 +137,7 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
 
 
 def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
-    camera = Camera(_mount="wrist", instance_name="left/wrist/camera")
+    camera = WristCamera(_mount="wrist", instance_name="left/wrist/wristcamera")
     arm = Arm(instance_name="left/arm")
     try:
         edges = {
@@ -167,7 +167,7 @@ class Assembler(Module):
 
 
 def test_a_list_ref_gets_every_hardware_module() -> None:
-    robot = autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist))
+    robot = autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist))
     coordinator = _build(
         autoconnect(robot.namespace("left"), robot.namespace("right"), Assembler.blueprint())
     )
@@ -182,7 +182,7 @@ def test_a_list_ref_gets_every_hardware_module() -> None:
         coordinator.stop()
 
 
-class SharedCamera(Camera):
+class SharedCamera(WristCamera):
     mount_shared = frozenset({"color_image"})
     color_image: Out[Image]
 
