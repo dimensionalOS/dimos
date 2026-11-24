@@ -65,6 +65,7 @@ function turn(live: LiveState) {
 async function watch(client: Client): Promise<never> {
   const gateway = await client.host.get(GatewayContract, {});
   const active = new Set<ConversationId>();
+  const lastEntry = new Map<ConversationId, EntryId>();
   const follow = async (conversation: ConversationId) => {
     const room = await client.host.get(ConversationContract, { conversation, role: "viewer", markSeen: false });
     const chat = (update: object) => write({ type: "agent/chat", conversation, ...update });
@@ -91,14 +92,16 @@ async function watch(client: Client): Promise<never> {
       }
       chat({ entries });
     };
-    let last: EntryId | undefined;
     let initial = true;
     const history = room.transcript.subscribe(({ items }) => {
-      // The HTTP snapshot supplies earlier history. Forward commits after the last item we sent.
-      const index = last === undefined ? items.length - 1 : items.findIndex((item) => item.entry === last) + 1;
-      const entries = items.slice(Math.max(0, index));
-      last = items.at(-1)?.entry;
-      if (entries.length) publishEntries(entries, !initial);
+      // Replay the available window on first attach or when its bounded history no longer contains our cursor.
+      const last = lastEntry.get(conversation);
+      const entries = last === undefined ? items : items.slice(items.findIndex((item) => item.entry === last) + 1);
+      const newest = entries.at(-1);
+      if (newest) {
+        publishEntries(entries, !initial);
+        lastEntry.set(conversation, newest.entry);
+      }
       initial = false;
     });
     let input = room.live.value.run?.inputs[0];
@@ -125,7 +128,7 @@ async function watch(client: Client): Promise<never> {
       );
       if (input !== undefined) {
         const outcome = await room.submission({ id: input });
-        if (outcome.ok && outcome.value.answer && outcome.value.answer.entry !== last)
+        if (outcome.ok && outcome.value.answer && outcome.value.answer.entry !== lastEntry.get(conversation))
           publishEntries([outcome.value.answer], true);
       }
       if (!gateway.conversations.value.find((row) => row.id === conversation)?.running) chat({ turn: null });
