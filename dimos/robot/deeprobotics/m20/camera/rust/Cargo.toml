@@ -27,7 +27,7 @@ front_camera_info = "sensor_msgs.CameraInfo"
 rear_camera_info = "sensor_msgs.CameraInfo"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "153f55c9f191a45dd13cd67759457bef0e9a9b58" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "process", "io-util"] }
 serde = { version = "1", features = ["derive"] }
