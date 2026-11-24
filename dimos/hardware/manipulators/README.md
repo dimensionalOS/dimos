@@ -17,7 +17,7 @@ This module provides manipulator arm adapters: Protocol-only, run by the `Contro
 │              Adapter (implements Protocol)                   │
 │  - Handles SDK communication                                 │
 │  - Unit conversions (radians ↔ vendor units)                │
-│  - Swappable: XArmAdapter, PiperAdapter, MockAdapter        │
+│  - Swappable: MockAdapter                                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -34,15 +34,9 @@ This module provides manipulator arm adapters: Protocol-only, run by the `Contro
 manipulators/
 ├── spec.py              # ManipulatorAdapter Protocol + shared types
 ├── registry.py          # Adapter registry (lazy _registry.py manifests)
-├── mock/
-│   ├── _registry.py  # Declares "mock" → adapter import path
-│   └── adapter.py       # MockAdapter for testing
-├── piper/
-│   ├── _registry.py
-│   └── adapter.py       # PiperAdapter (SDK wrapper)
-└── sim/
-    ├── _registry.py
-    └── adapter.py       # ShmMujocoAdapter (sim_mujoco)
+└── mock/
+    ├── _registry.py  # Declares "mock" → adapter import path
+    └── adapter.py       # MockAdapter for testing
 ```
 
 ## Quick Start

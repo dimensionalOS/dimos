@@ -20,8 +20,8 @@ Adapter subpackages declare factories in ``_registry.py`` manifests
 Usage:
     from dimos.hardware.manipulators.registry import adapter_registry
 
-    adapter = adapter_registry.create("piper", address="can0", dof=6)
-    print(adapter_registry.available())  # ["mock", "piper", "sim_mujoco"]
+    adapter = adapter_registry.create("mock", dof=6)
+    print(adapter_registry.available())  # ["mock"]
 """
 
 from __future__ import annotations

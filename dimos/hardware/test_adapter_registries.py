@@ -19,7 +19,6 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -34,7 +33,6 @@ OPTIONAL_VENDOR_MODULES = {
     "can",
     "cyclonedds",
     "mujoco",
-    "piper_sdk",
     "rclpy",
     "unitree_sdk2py",
 }
@@ -44,8 +42,6 @@ OPTIONAL_VENDOR_MODULES = {
 EXPECTED_NAMES = {
     "manipulators": {
         "mock",
-        "piper",
-        "sim_mujoco",
     },
     "drive_trains": {
         "mock_twist_base",
@@ -116,18 +112,6 @@ def test_declared_factory_paths_resolve(registry, family) -> None:
         factory = getattr(module, attr, None)
         assert factory is not None, f"{name}: {module_name!r} has no attribute {attr!r}"
         assert callable(factory), f"{name}: {factory_path!r} is not callable"
-
-
-def test_missing_vendor_sdk_fails_loud_at_create(monkeypatch) -> None:
-    registry = AdapterRegistry()
-    assert "piper" in registry.available()
-    for mod_name in [m for m in sys.modules if m == "piper_sdk" or m.startswith("piper_sdk.")]:
-        monkeypatch.delitem(sys.modules, mod_name)
-    monkeypatch.delitem(sys.modules, "dimos.hardware.manipulators.piper.adapter", raising=False)
-    monkeypatch.setitem(sys.modules, "piper_sdk", None)
-    with pytest.raises(ImportError, match="piper_sdk"):
-        registry.create("piper")
-    assert "piper" in registry.available()
 
 
 def test_unknown_adapter_raises_keyerror() -> None:
