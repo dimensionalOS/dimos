@@ -359,6 +359,9 @@ pub struct RunnerSpec {
     pub start_gain_steps: u64,
     #[serde(default)]
     pub warmup_steps: u64,
+    /// rl_deploy's runner OnEnter clears it and re-arms warmup_steps every time it becomes the active runner
+    #[serde(default)]
+    pub fresh_on_enter: bool,
     #[serde(default)]
     pub command_vector: Vec<CommandEntry>,
     #[serde(default)]

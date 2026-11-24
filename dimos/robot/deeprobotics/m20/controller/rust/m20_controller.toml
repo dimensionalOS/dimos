@@ -386,6 +386,8 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
+# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
+fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -414,6 +416,8 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
+# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
+fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -0.65, 1.3, 0.0, 0.0, -0.65, 1.3, 0.0, 0.0, 0.65, -1.3, 0.0, 0.0, 0.65, -1.3, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -465,6 +469,8 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
+# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
+fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -0.7, 1.4, 0.0, 0.0, -0.7, 1.4, 0.0, 0.0, 0.7, -1.4, 0.0, 0.0, 0.7, -1.4, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -515,6 +521,8 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
+# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
+fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -1.0, 1.6, 0.0, 0.0, -1.0, 1.6, 0.0, 0.0, 1.0, -1.6, 0.0, 0.0, 1.0, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -730,6 +738,12 @@ obstacle_open_ms = 10
 stand_rl_control_ms = 2000
 # bin exitPileAction: the -0.8 back-off kick is written 5 times
 back_off_writes = 5
+# recording 2026-11-24: charge_manager's 18 missed pose waits in a row were logged 200.17-200.29 ms apart (mean
+# 200.216): each next 200 ms wait starts 216 us after the last one ended (its warning and stopMove)
+pose_wait_overhead_us = 216
+# charge_manager closes / opens its detector process over a DDS service (OpenMarkerProcess, CloseMarkProcess) and waits
+# 53-83 ms for each reply (2026-11-24); ours runs in the module, so nothing to wait for (true: wait for replies fed in)
+detector_service = false
 # ours (the vendor retries a command 3 more times, 5-6 s each, 0xe4): a stand-up, gait switch or lie-down not done
 # in this long fails the sequence
 transition_limit_s = 21.0

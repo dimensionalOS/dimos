@@ -585,7 +585,10 @@ policies match to float precision once their state lines up. Rules this settled 
   coefficients, the IK, the 1 ms difference of phase 2, the joint / motor angle conversions
   (tests/ecan_dock_rec_20261124.rs).
 - Runners keep their history, last action and phase across gait switches and rl_control entries; start-up gains
-  (NaviCharge x1.3, 29 steps, legs only) restart on every switch to the runner.
+  (NaviCharge x1.3, 29 steps, legs only) restart on every switch to the runner. The four 36-frame runners (extre,
+  finetune_stand, six_axis_stand, step_move) start fresh on every gait switch to them: their classes' OnEnter, which
+  update_policy_ptr calls on a gait switch, clears the history and re-arms the warm-up (0x154 = 1, 0x1d8 = 0); a
+  stand-in runs its runner without that (robot 2026-11-24: FinetuneStand held the default pose 0.74 s on 0x3004).
 - The gait phase advances before it is observed. 36-frame runners, when fresh, hold the default pose for 37 steps
   (0.74 s) while their history fills, with that pose as the last action.
 - Entering rl_control on 0x3001 runs no stand-in; switching to 0x3001 does (1.5 s). The 0x1001 stand-in ran 6.14 s:
@@ -675,11 +678,14 @@ detector's pose) is shared memory and in no capture, and so is the body IMU on A
   published each) writes what charge_manager wrote to rl_deploy, decoded from the RTPS in the capture (dr_msgs
   Steer / MotionState / Gait / StdMsgInt32): all 197 the same and in the same order (4 MotionState: 1, 17, 17 restored, 4; 4 Gait: 0x3001,
   0x3003 restored, 0x3001, 0x3004; 179 Steer, every float bit for bit; 10 charge-enables: 1 every 5 s charging, 0 at
-  the undock's start and end, 1 x 3 at the power-on). 175 on charge_manager's 1 ms tick (within 0.65 ms of the wire);
-  the 18 stops of the undock's pose waits drift up to 3.9 ms later (its 200 ms wait restarts after its own log line
-  and write, ~0.2 ms a wait; ours is 200 ticks); the charge-enable 0 ending the undock is 124 ms later and the
-  charging loop's after the dock 57 ms later (charge_manager closing its detector process over service calls first;
-  ours has none to call). The charge is confirmed on charge_manager's tick. The undock's goal comes from the dock
+  the undock's start and end, 1 x 3 at the power-on), every one within 0.79 ms of the wire (charge_manager's 1 ms
+  tick). Two vendor waits are modelled: a missed pose wait's next 200 ms wait starts 216 us after the last ended (its
+  warning and stopMove; 18 in a row logged 200.17-200.29 ms apart), and charge_manager waits for its detector
+  process's replies to the close / open service calls (53-83 ms each, all in the request's delivery: the detector
+  logs each call's handling in 0.05-4 ms, the reply reaches charge_manager 0.35 ms later). The replay feeds those
+  replies from reflective_column_node's log; ours has no such process, so on the robot ([dock.sequence]
+  detector_service = false) the undock's last charge-enable 0, the charging loop and FindTarget come 55-130 ms
+  earlier than the vendor's. The charge is confirmed, and charging begins, on charge_manager's tick. The undock's goal comes from the dock
   before the recording and is in the log to 6 decimals only: its x is taken as the f32 one ULP off the printed value
   that the undock's steers imply.
 - New from this recording (charge_manager's binary, now in [`Docking`]): StandUp2WideWalk stands (1), waits 2 s, then
@@ -689,6 +695,16 @@ detector's pose) is shared memory and in no capture, and so is the body IMU on A
   at its start and end and restores the motion state, then 2 s later the gait. rl_deploy turns each charge-enable 1
   into 3 board frames on its next ticks and has no charge rule of its own, so the controller sends the dock
   sequence's and m20-battery's own rule is off in the policy loop.
+
+## The body IMU in recordings
+
+rl_deploy reads the body IMU from yesense_node on AOS (DDS participant "yesense"): rt/IMU_DATA, drdds
+ImuData_ (header, roll / pitch / yaw deg, gyro rad/s, accelerometer m/s^2), 200 Hz. Fast-DDS hands it over shared
+memory when every reader is on AOS and speaks it (2026-11-24: in no capture); on 2026-11-20 it went over UDP (7441)
+and the replay read it from net.pcap. `m20_imu_record` (cmd_vel/rust, a best-effort reader: no writes, no
+acknowledgements) beside rl_deploy is a reader without shared memory, so yesense also sends it every sample over UDP:
+record.sh starts it when `$dir/m20_imu_record` exists, writing session/imu.txt, and net.pcap has the same samples
+(what replay.py reads).
 
 ## Building the controller for the robot
 

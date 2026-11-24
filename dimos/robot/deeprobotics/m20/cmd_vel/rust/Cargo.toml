@@ -17,6 +17,10 @@ path = "src/bin/m20_cmd_vel.rs"
 name = "m20_steer_check"
 path = "src/bin/m20_steer_check.rs"
 
+[[bin]]
+name = "m20_imu_record"
+path = "src/bin/m20_imu_record.rs"
+
 [package.metadata.dimos.module.m20_cmd_vel]
 path = "dimos_m20_cmd_vel::module::M20CmdVel"
 python = "dimos.robot.deeprobotics.m20.cmd_vel.module:M20CmdVel"

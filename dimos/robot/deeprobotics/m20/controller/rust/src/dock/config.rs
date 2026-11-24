@@ -159,6 +159,12 @@ pub struct SequenceConfig {
     pub stand_rl_control_ms: u64,
     /// the back-off kick is written this many times
     pub back_off_writes: u32,
+    /// a missed pose wait's next wait starts this long (us) after its end (charge_manager logging the miss and
+    /// stopping the robot)
+    pub pose_wait_overhead_us: u64,
+    /// wait for the detector's service replies (Docking::detector_replied) where charge_manager calls its detector
+    /// process; ours is no process, so off on the robot, on in replays that have the vendor detector's replies
+    pub detector_service: bool,
     /// ours: a stand-up / gait switch / lie-down not done in this long (s) fails the sequence
     pub transition_limit_s: f64,
 }

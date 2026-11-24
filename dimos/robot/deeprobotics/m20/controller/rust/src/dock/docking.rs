@@ -81,6 +81,8 @@ pub enum Phase {
     FindTarget,
     /// ObstacleDetection::Open's obstacle_open_ms sleep before what FindTarget leads to
     OpenObstacle,
+    /// charge_manager waiting on its detector process's service (detector_service): the replies still to come
+    DetectorCall,
     /// switching to NaviCharge, then held gait_settle_ms (WideWalk)
     EnterGait,
     /// goToPileAction's loop: the start point, the staging point, the fine point
@@ -235,6 +237,17 @@ pub struct Status {
     pub vendor_config: bool,
 }
 
+/// What charge_manager does once its detector process's service calls return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterCalls {
+    /// OpenMarkerProcess (close, open): FindTarget
+    FindTarget(Next),
+    /// the undock's end (close, CloseMarkProcess's close): Close24vPower, idle
+    Undocked,
+    /// charging confirmed (CloseMarkProcess): the charging loop
+    Charging,
+}
+
 /// What a FindTarget / stand-up leads to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Next {
@@ -274,8 +287,9 @@ pub struct Docking {
     pose_seq: Option<u64>,
     /// the pose the detector's output stage published this tick
     published: Option<TargetPose>,
-    /// tick of the last loop wake (a pose or a missed wait)
-    woke_at: u64,
+    /// when the loop's 200 ms pose wait started (us of control time): a pose, or the last missed wait's end plus
+    /// charge_manager's own time logging and stopping
+    woke_at_us: u64,
     /// the last steer and the tick it went out
     steer: Option<(Steer, u64)>,
     target: Target,
@@ -303,6 +317,9 @@ pub struct Docking {
     charge_sleep_until: u64,
     /// StandUp2WideWalk: the tick it writes rl_control and the gait (2 s after stand), once
     stand_at: Option<u64>,
+    /// detector service replies still to come, and what follows them
+    calls_pending: u32,
+    calls_then: Option<AfterCalls>,
 }
 
 impl Docking {
@@ -329,7 +346,7 @@ impl Docking {
             on_runner: false,
             pose_seq: None,
             published: None,
-            woke_at: 0,
+            woke_at_us: 0,
             steer: None,
             target: Target::Passive,
             gait: seq.approach_gait,
@@ -347,6 +364,8 @@ impl Docking {
             charge_next_write: 0,
             charge_sleep_until: 0,
             stand_at: None,
+            calls_pending: 0,
+            calls_then: None,
             status: Status {
                 phase: Phase::Idle,
                 active: false,
@@ -472,6 +491,54 @@ impl Docking {
 
     fn now_ms(&self) -> u64 {
         self.ms(self.tick)
+    }
+
+    fn now_us(&self) -> u64 {
+        (self.tick as f64 * 1e6 / self.hz).round() as u64
+    }
+
+    /// A reply from the detector's service (detector_service: what charge_manager waits on before going on).
+    pub fn detector_replied(&mut self) {
+        if self.phase == Phase::DetectorCall && self.calls_pending > 0 {
+            self.calls_pending -= 1;
+        }
+    }
+
+    /// charge_manager calls its detector process `n` times (DDS service, waiting for each reply), then `then`; without
+    /// detector_service (ours is no process to call) it goes on at once.
+    fn call_detector(&mut self, n: u32, then: AfterCalls) -> Option<Output> {
+        if !self.seq.detector_service {
+            return self.after_calls(then);
+        }
+        self.calls_pending = n;
+        self.calls_then = Some(then);
+        self.set_phase(Phase::DetectorCall);
+        Some(self.output(None))
+    }
+
+    fn after_calls(&mut self, then: AfterCalls) -> Option<Output> {
+        match then {
+            AfterCalls::FindTarget(next) => self.find_target(next),
+            AfterCalls::Undocked => {
+                self.write(Write::ChargeEnable(0));
+                let tries = self.status.retries + 1;
+                return if self.giving_up {
+                    self.finish(
+                        Target::RlControl,
+                        format!("no charge after {tries} tries; backed off"),
+                        true,
+                    )
+                } else {
+                    self.finish(Target::RlControl, "undocked", false)
+                };
+            }
+            AfterCalls::Charging => {
+                self.set_phase(Phase::Charging);
+                self.charge_sleep_until = self.tick;
+                self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
+            }
+        }
+        Some(self.output(None))
     }
 
     fn ticks(&self, ms: u64) -> u64 {
@@ -636,7 +703,8 @@ impl Docking {
                 self.charge_seq_at_start = self.charge.map_or(0, |r| r.seq);
                 self.target = Target::RlControl;
                 self.gait = view.gait;
-                self.find_target(Next::Dock);
+                // OpenMarkerProcess: close and open the detector, then FindTarget
+                self.call_detector(2, AfterCalls::FindTarget(Next::Dock));
                 Ok(())
             }
             Request::Undock => {
@@ -726,7 +794,8 @@ impl Docking {
         self.undock_pending = false;
         self.status.charging = false;
         self.write(Write::ChargeEnable(0));
-        self.find_target(Next::Undock);
+        // OpenMarkerProcess: close and open the detector, then FindTarget
+        self.call_detector(2, AfterCalls::FindTarget(Next::Undock));
     }
 
     /// One control tick: the newest dock pose (with its sweep count) and battery reading, the controller as last seen.
@@ -777,8 +846,10 @@ impl Docking {
     fn loop_tick(&mut self, view: &View) -> Option<Outcome> {
         let now = self.now_ms();
         let Some(p) = self.published else {
-            if self.tick - self.woke_at >= self.ticks(self.seq.pose_wait_ms) {
-                self.woke_at = self.tick;
+            let deadline = self.woke_at_us + self.seq.pose_wait_ms * 1000;
+            if self.now_us() >= deadline {
+                // the next wait starts once charge_manager has logged the miss and stopped the robot
+                self.woke_at_us = deadline + self.seq.pose_wait_overhead_us;
                 let core = self.core.as_mut()?;
                 let w = core.wait_timed_out();
                 if w.stop {
@@ -792,7 +863,7 @@ impl Docking {
             }
             return None;
         };
-        self.woke_at = self.tick;
+        self.woke_at_us = self.now_us();
         let navigating = view.is(State::RlControl)
             && (view.on(&self.approach_runner) || view.on(&self.finetune_runner));
         let obstacle = self.obstacle_reading();
@@ -864,6 +935,14 @@ impl Docking {
                 }
                 Some(self.output(None))
             }
+            Phase::DetectorCall => {
+                if self.calls_pending == 0 {
+                    if let Some(then) = self.calls_then.take() {
+                        return self.after_calls(then);
+                    }
+                }
+                Some(self.output(None))
+            }
             Phase::OpenObstacle => {
                 if self.phase_ms() >= self.seq.obstacle_open_ms {
                     self.found_target(view);
@@ -896,7 +975,7 @@ impl Docking {
                                     ..Default::default()
                                 });
                             }
-                            self.woke_at = self.tick;
+                            self.woke_at_us = self.now_us();
                             self.set_phase(Phase::Approach);
                         }
                     }
@@ -933,7 +1012,7 @@ impl Docking {
                 if up || self.phase_ms() >= self.seq.finetune_gait_wait_ms {
                     let now = self.now_ms();
                     self.core.as_mut()?.finetune_started(now);
-                    self.woke_at = self.tick;
+                    self.woke_at_us = self.now_us();
                     self.set_phase(Phase::Finetune);
                 }
                 Some(self.output(Some([0.0; 4])))
@@ -995,9 +1074,8 @@ impl Docking {
                         self.status.charging = true;
                         self.status.result = "docked, charging".into();
                         self.status.error = false;
-                        self.set_phase(Phase::Charging);
-                        self.charge_sleep_until = self.tick;
-                        self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
+                        // CloseMarkProcess, then the charging loop
+                        return self.call_detector(1, AfterCalls::Charging);
                     } else if elapsed - self.seq.power_on_ms > p.charge_confirm_ms {
                         return self.no_charge(view);
                     }
@@ -1021,7 +1099,7 @@ impl Docking {
             Phase::Restart => {
                 if self.published.is_some() {
                     self.core.as_mut()?.restarted();
-                    self.woke_at = self.tick;
+                    self.woke_at_us = self.now_us();
                     let resume = self.resume;
                     self.set_phase(resume);
                     self.on_runner = true;
@@ -1068,19 +1146,10 @@ impl Docking {
             }
             Phase::Restore => {
                 if self.phase_ms() >= self.seq.restore_ms {
-                    // restoreInitRobotGaitStatus; back in its main loop, Close24vPower
+                    // restoreInitRobotGaitStatus; the detector closed (exitPileAction's end, then CloseMarkProcess in
+                    // its main loop), Close24vPower
                     self.write(Write::Gait(self.restore_gait));
-                    self.write(Write::ChargeEnable(0));
-                    let tries = self.status.retries + 1;
-                    return if self.giving_up {
-                        self.finish(
-                            Target::RlControl,
-                            format!("no charge after {tries} tries; backed off"),
-                            true,
-                        )
-                    } else {
-                        self.finish(Target::RlControl, "undocked", false)
-                    };
+                    return self.call_detector(2, AfterCalls::Undocked);
                 }
                 Some(self.output(None))
             }
@@ -1095,7 +1164,7 @@ impl Docking {
                 self.send(kick);
             }
         }
-        self.woke_at = self.tick;
+        self.woke_at_us = self.now_us();
         self.set_phase(Phase::BackOff);
     }
 

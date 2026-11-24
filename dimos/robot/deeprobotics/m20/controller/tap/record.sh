@@ -113,7 +113,7 @@ record() {
     local seconds=$1 stamp session start_ns end_ns tcpdump_pid rl_offset bs_offset bs_since
     shim_loaded || { echo "shim not loaded; run: $0 install" >&2; exit 1; }
     # since 2026-11-21 yesense_node hands /IMU_DATA to rl_deploy over shared memory, which no capture sees
-    echo "note: the body IMU may be missing from net.pcap (vendor shared memory)" >&2
+    [ -x "$dir/m20_imu_record" ] || echo "note: no $dir/m20_imu_record: the body IMU may be missing (vendor shared memory)" >&2
     stamp=$(date +%Y%m%d_%H%M%S)
     session="$dir/session_$stamp"
     mkdir -p "$session"
@@ -128,6 +128,14 @@ record() {
         "udp port $basic_udp or tcp port $basic_tcp or udp port $note_port or (udp portrange $dds_ports)" \
         2> "$session/tcpdump.log" &
     tcpdump_pid=$!
+    # the body IMU rl_deploy reads (/IMU_DATA, shared memory since 2026-11-21): a passive DDS reader beside it, when
+    # its binary is here (cmd_vel/rust m20_imu_record, cross-built; it writes nothing to DDS)
+    local imu_pid=""
+    if [ -x "$dir/m20_imu_record" ]; then
+        taskset -c 1-3 nice -n 10 "$dir/m20_imu_record" --out "$session/imu.txt" --seconds "$((seconds + 5))" \
+            2> "$session/imu_record.log" &
+        imu_pid=$!
+    fi
     sleep 1  # tcpdump gives no readiness signal; let it open its capture before the session starts
     rm -f "$dir/last_stats"
     start_ns=$(date +%s%N)
@@ -148,6 +156,7 @@ record() {
     # the shim's writer writes last_stats when it closes the capture (it checks the enable file every 50 ms)
     for _ in $(seq 1 50); do [ -f "$dir/last_stats" ] && break; sleep 0.1; done
     sleep 0.5  # tcpdump has no flush signal; let its last packets land before stopping it
+    if [ -n "$imu_pid" ]; then kill -TERM "$imu_pid" 2>/dev/null || true; wait "$imu_pid" 2>/dev/null || true; fi
     kill -INT "$tcpdump_pid" 2>/dev/null || true
     wait "$tcpdump_pid" 2>/dev/null || true
     tx1=$(cat /sys/class/net/eth1/statistics/tx_packets); rx1=$(cat /sys/class/net/eth1/statistics/rx_packets)

@@ -63,6 +63,22 @@ pub struct MotionInfo {
     pub remain_mile: f32,
 }
 
+/// `dr_msgs::msg::ImuData` (`drdds::msg::dds_::ImuData_`): the body IMU on IMU_DATA (yesense, 200 Hz), roll / pitch /
+/// yaw in degrees, gyro rad/s, accelerometer m/s^2, the stamp the driver's.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct ImuData {
+    pub header: Header,
+    pub roll: f32,
+    pub pitch: f32,
+    pub yaw: f32,
+    pub omega_x: f32,
+    pub omega_y: f32,
+    pub omega_z: f32,
+    pub acc_x: f32,
+    pub acc_y: f32,
+    pub acc_z: f32,
+}
+
 /// `dr_msgs::msg::StdMsgInt32` (`drdds::msg::dds_::StdMsgInt32_`): HES_STATUS, 0 when the e-stop chain is clear.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct StdMsgInt32 {
@@ -72,6 +88,23 @@ pub struct StdMsgInt32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A yesense sample as it went over the wire (2026-11-20 AOS capture, UDP 7441, encapsulation header included).
+    #[test]
+    fn decodes_a_recorded_imu_sample() {
+        let hex = "000100000000000000000000a3e5ff6ab787e019c05cd9bf27a213bf114a0fc11d73043b1e6aa53940d1973b753cc63dfa7a96be9e5a1d41";
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let (imu, _) =
+            rustdds::cdr_encoding::from_bytes::<ImuData, byteorder::LittleEndian>(&bytes[4..])
+                .unwrap();
+        assert_eq!((imu.header.sec, imu.header.nsec), (1795155363, 434145207));
+        assert_eq!(imu.roll, -1.6981430053710938);
+        assert_eq!(imu.acc_z, 9.834623336791992);
+        assert_eq!(cdr(&imu), bytes[4..]);
+    }
 
     fn cdr<T: Serialize>(value: &T) -> Vec<u8> {
         rustdds::cdr_encoding::to_vec::<T, byteorder::LittleEndian>(value).unwrap()

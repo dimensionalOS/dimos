@@ -409,6 +409,8 @@ struct Window {
     from: u64,
     to: u64,
     start: State,
+    /// starting in rl_control: the gait in force before the window (its runner's gains bridge a switch at the start)
+    before: Option<u32>,
 }
 
 impl Replay {
@@ -472,7 +474,18 @@ impl Replay {
             }
             State::RlControl => {
                 assert!(have_policies);
-                c.force(State::RlControl, &s0, &cmd0, false);
+                let mut cmd0 = cmd0.clone();
+                if let Some(g) = w.before {
+                    cmd0.gait = g;
+                }
+                // rl_control is entered on an entry gait (else rl_deploy protects to BasicFlat): on another, entered
+                // on NaviCharge as on the robot, then switched to it (the warm-up's 2 s are past its stand-in)
+                let entry = &self.cfg.states.rl_control.entry_gaits;
+                let mut enter = cmd0.clone();
+                if !entry.contains(&cmd0.gait) {
+                    enter.gait = 0x3001;
+                }
+                c.force(State::RlControl, &s0, &enter, false);
                 // the runner in force well past its start-up gains (as rl_deploy's was), its 50 Hz steps on
                 // rl_deploy's: an offer on warm-up tick j lands on tick j + 1, so the first target change in the
                 // window (i0) fixes the warm-up's length
@@ -734,6 +747,7 @@ fn stand_up_and_lie_down_match_rl_deploy_tick_for_tick() {
         from: at(f, "05:50:24.837"),
         to: at(f, "05:50:28.450"),
         start: State::LieDown,
+        before: None,
     };
     let runners = policies(&rp.cfg);
     let r = rp.run(&ticks, &stand, runners);
@@ -752,6 +766,7 @@ fn stand_up_and_lie_down_match_rl_deploy_tick_for_tick() {
         from: at(f, "05:51:25.8315"),
         to: at(f, "05:51:29.900"),
         start: State::RlControl,
+        before: None,
     };
     let r2 = match policies(&rp.cfg) {
         Some(p) => {
@@ -775,9 +790,8 @@ fn stand_up_and_lie_down_match_rl_deploy_tick_for_tick() {
 
 /// rl_control through the undock, the operator's gait switches and the dock (gains, control words, the ticks the
 /// targets change, stand-ins and start-up gains): one replay of the whole session from the capture, else a window per
-/// switch, each starting on rl_control with the gait in force.
+/// switch, each starting on rl_control with the gait in force before it (whose runner's gains bridge the switch).
 #[test]
-#[ignore = "not yet identical: whole session (M20_DOCK_REC_ECAN) bytes 61031/61031 equal, but 36 of 57977 target-change ticks differ (0x3004 FinetuneStand from 05:51:21.27: ours steps every 20 ms, rl_deploy holds; its FinetuneStand runner start is unresolved); committed windows: 0x1001 and 0xf001 switches 35 / 25 ticks with kd 6.0 vs rl_deploy 3.0 (the window starts mid-session: the previous runner's gains bridging the switch are not known)"]
 fn rl_control_gains_and_switches_match_rl_deploy() {
     let (rp, ticks, whole) = setup();
     let Some(_) = policies(&rp.cfg) else {
@@ -792,24 +806,26 @@ fn rl_control_gains_and_switches_match_rl_deploy() {
                 from: at(f, "05:50:24.800"),
                 to: at(f, "05:51:25.8315"),
                 start: State::LieDown,
+                before: None,
             },
         )]
     } else {
         [
-            ("0x3003", "05:50:37.507", "05:50:37.600"),
-            ("0x1001", "05:50:38.397", "05:50:38.470"),
-            ("0x3003 again", "05:50:39.422", "05:50:39.480"),
-            ("0xf001 -> 0x3001", "05:51:08.727", "05:51:10.900"),
-            ("0x3004", "05:51:21.217", "05:51:21.300"),
+            ("0x3003", "05:50:37.507", "05:50:37.600", 0x3001),
+            ("0x1001", "05:50:38.397", "05:50:38.470", 0x3003),
+            ("0x3003 again", "05:50:39.422", "05:50:39.480", 0x1001),
+            ("0xf001 -> 0x3001", "05:51:08.727", "05:51:10.900", 0x3003),
+            ("0x3004", "05:51:21.217", "05:51:22.050", 0x3001),
         ]
         .into_iter()
-        .map(|(n, a, b)| {
+        .map(|(n, a, b, before)| {
             (
                 n,
                 Window {
                     from: at(f, a),
                     to: at(f, b),
                     start: State::RlControl,
+                    before: Some(before),
                 },
             )
         })
@@ -851,6 +867,7 @@ fn charge_enable_frames_match_rl_deploy() {
                 from: t - 3_000_000,
                 to: t + 7_000_000,
                 start: State::LieDown,
+                before: None,
             },
             None,
         );

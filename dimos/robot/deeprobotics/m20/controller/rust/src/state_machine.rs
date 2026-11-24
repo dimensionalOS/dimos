@@ -752,6 +752,8 @@ impl Controller {
         cmd: &UserCommand,
         policy: &mut dyn PolicyService,
     ) -> JointCommand {
+        // the stand-in runs its runner without rl_deploy's gait switch (update_policy_ptr: no OnEnter)
+        let via_stand_in = self.stand_in.is_some();
         let (wanted, params) = match &mut self.stand_in {
             Some(si) => {
                 let out = (si.spec.runner.clone(), si.params().clone());
@@ -790,9 +792,15 @@ impl Controller {
                 self.since_offer = self.cfg.timing.policy_decimation;
                 self.gain_scale = 1.0;
             }
+            // rl_deploy keeps one object per runner: its history and last action carry over to the next use, except
+            // for the runners whose OnEnter starts them fresh on a gait switch
+            self.reset_pending = !via_stand_in
+                && self
+                    .cfg
+                    .runners
+                    .get(&wanted)
+                    .is_some_and(|r| r.fresh_on_enter);
             self.runner = Some(wanted.clone());
-            // rl_deploy keeps one object per runner: its history and last action carry over to the next use
-            self.reset_pending = false;
             self.activate_pending = true;
         }
         if let Some(result) = policy.take_result() {

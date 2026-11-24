@@ -298,6 +298,16 @@ fn rc_log() -> Vec<RcSweep> {
     out
 }
 
+/// When reflective_column_node answered each of charge_manager's service calls (its log's "ServiceCallback 处理完成";
+/// charge_manager has the reply ~0.35 ms later).
+fn service_replies() -> Vec<f64> {
+    read_gz(&fixture("reflective_column_node_20261124.log.gz"))
+        .lines()
+        .filter(|l| l.contains("ServiceCallback 处理完成"))
+        .filter_map(log_time)
+        .collect()
+}
+
 // ------------------------------------------------------------------------------------------------ the dock poses
 
 /// Our detector on one sweep reflective_column_node logged: (its log's step 1 time, capture time, reflective_column_
@@ -540,7 +550,10 @@ fn replay(start_point: [f32; 3]) -> Vec<(f64, Write)> {
 
 /// [`replay`], and when the sequence entered each phase.
 fn replay_traced(start_point: [f32; 3]) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>) {
-    let cfg = common::config();
+    let mut cfg = common::config();
+    // charge_manager waits on its detector process's service: the replies are reflective_column_node's, logged
+    cfg.dock.sequence.detector_service = true;
+    let replies = service_replies();
     let all = samples();
     let infos = motion_info(&all);
     let batteries = battery(&all);
@@ -592,7 +605,7 @@ fn replay_traced(start_point: [f32; 3]) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>
             s.found.as_ref().map(|(_, p)| (tick_of(taken), *p))
         })
         .collect();
-    let (mut ii, mut bi, mut pi, mut oi, mut ri) = (0, 0, 0, 0, 0);
+    let (mut ii, mut bi, mut pi, mut oi, mut ri, mut si) = (0, 0, 0, 0, 0, 0);
     let (mut pose, mut charge, mut obstacle): (
         Option<(DockPose, u64)>,
         Option<ChargeReading>,
@@ -627,6 +640,10 @@ fn replay_traced(start_point: [f32; 3]) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>
             oi += 1;
         }
         docking.ingest(pose, charge, obstacle);
+        while si < replies.len() && replies[si] <= now {
+            docking.detector_replied();
+            si += 1;
+        }
         while ri < log.requests.len() && log.requests[ri].0 <= now {
             let request = match log.requests[ri].1 {
                 0 => m20_controller::dock::docking::Request::Undock,
@@ -691,8 +708,8 @@ fn start_point(theirs: &[(f64, Write)]) -> [f32; 3] {
     best.1
 }
 
-/// The dock ends charging on the tick charge_manager confirmed the charge ("获取电流成功，上桩成功"), and the undock
-/// ends undocked.
+/// The dock confirms the charge on the tick charge_manager did ("获取电流成功，上桩成功") and is charging on its tick
+/// ("state:1 -> 2", after its detector's close).
 #[test]
 fn the_charge_is_confirmed_on_charge_managers_tick() {
     let theirs = vendor_writes(&samples());
@@ -703,21 +720,33 @@ fn the_charge_is_confirmed_on_charge_managers_tick() {
         .find(|l| l.contains("获取电流成功"))
         .and_then(log_time)
         .unwrap();
-    // after the charging the replay starts in
-    let charging: Vec<f64> = phases
-        .iter()
-        .skip(1)
-        .filter(|(_, p)| *p == Phase::Charging)
-        .map(|(t, _)| *t)
+    // the charge check ends (ConfirmCharge left, for the detector's close) on charge_manager's tick; charging (its
+    // charging loop) once the detector replied, as charge_manager's state 1 -> 2
+    let left: Vec<f64> = phases
+        .windows(2)
+        .filter(|w| w[0].1 == Phase::ConfirmCharge)
+        .map(|w| w[1].0)
         .collect();
     println!("phases: {phases:?}");
-    assert_eq!(charging.len(), 1, "one charge confirmed: {phases:?}");
+    assert_eq!(left.len(), 1, "one charge check: {phases:?}");
     println!(
-        "charging from {:.6}, charge_manager confirmed at {confirmed:.6}: {:+.3} ms",
-        charging[0],
-        (charging[0] - confirmed) * 1e3
+        "charge confirmed at {:.6}, charge_manager at {confirmed:.6}: {:+.3} ms",
+        left[0],
+        (left[0] - confirmed) * 1e3
     );
-    assert!((charging[0] - confirmed).abs() < 1e-3);
+    assert!((left[0] - confirmed).abs() < 1e-3);
+    let charging_state = log
+        .lines()
+        .find(|l| l.contains("state:1 -> 2"))
+        .and_then(log_time)
+        .unwrap();
+    let charging = phases.last().unwrap();
+    println!(
+        "charging from {:.6}, charge_manager's state 1 -> 2 at {charging_state:.6}: {:+.3} ms",
+        charging.0,
+        (charging.0 - charging_state) * 1e3
+    );
+    assert!((charging.0 - charging_state).abs() < 1e-3);
     assert_eq!(phases.last().unwrap().1, Phase::Charging);
 }
 
@@ -762,14 +791,9 @@ fn the_dock_and_undock_write_what_charge_manager_wrote() {
         }
         panic!("write {i} differs");
     }
-    // every write the same, in the same order (steers within 4 f32 ULPs); now the times. A write is on the vendor's
-    // tick when within 1 ms of it, except where charge_manager waited on its detector process (service calls, in its
-    // log) or on a 200 ms pose wait that restarts after its own logging (each ~0.2 ms late): see `Late`.
-    let late = late_writes(&log_text());
+    // every write the same, in the same order (steers within 4 f32 ULPs); now the times: each within 1 ms of the
+    // vendor's (its 1 ms cycle)
     let mut table: std::collections::BTreeMap<Kind, (usize, f64, u32, f64)> = Default::default();
-    let mut off_tick = Vec::new();
-    // pose-wait stops in a row so far
-    let mut waits = 0;
     for (i, ((ta, a), (tb, b))) in ours.iter().zip(&theirs).enumerate() {
         let e = table.entry(kind(a)).or_default();
         e.0 += 1;
@@ -780,112 +804,21 @@ fn the_dock_and_undock_write_what_charge_manager_wrote() {
             }
         }
         let dt = ta - tb;
-        match late.iter().find(|l| l.covers(*tb)) {
-            Some(l) => {
-                off_tick.push((i, *b, dt, l.why));
-                if l.shift == 0.0 {
-                    // ours every pose_wait_ms exactly; the vendor's later by up to 0.5 ms a wait
-                    waits += 1;
-                    assert!(
-                        dt < 1e-3 && dt > -5e-4 * waits as f64,
-                        "pose-wait stop {waits} (write {i}): {:.3} ms",
-                        dt * 1e3
-                    );
-                    continue;
-                }
-                waits = 0;
-                // on the vendor's tick once its own delay is taken out
-                assert!(
-                    (dt + l.shift).abs() < 1e-3,
-                    "write {i} {b:?}: {:.3} ms from the vendor's after its {:.3} ms {}",
-                    (dt + l.shift) * 1e3,
-                    l.shift * 1e3,
-                    l.why
-                );
-            }
-            None => {
-                waits = 0;
-                e.3 = e.3.max(dt.abs());
-                assert!(
-                    dt.abs() < 1e-3,
-                    "write {i} {b:?} at {tb:.6}: ours {:.3} ms off",
-                    dt * 1e3
-                );
-            }
-        }
-    }
-    for (k, (count, diff, ulp, dt)) in &table {
-        println!(
-            "{k:?}: {count} writes, max |diff| {diff:.2e} ({ulp} ulp), max |dt| {:.3} ms (on the vendor's tick)",
+        e.3 = e.3.max(dt.abs());
+        assert!(
+            dt.abs() < 1e-3,
+            "write {i} {b:?} at {tb:.6}: ours {:+.3} ms off",
             dt * 1e3
         );
     }
-    for (i, w, dt, why) in &off_tick {
-        println!("  write {i} {w:?}: {:+.3} ms ({why})", dt * 1e3);
+    for (k, (count, diff, ulp, dt)) in &table {
+        println!(
+            "{k:?}: {count} writes, max |diff| {diff:.2e} ({ulp} ulp), max |dt| {:.3} ms",
+            dt * 1e3
+        );
     }
 }
 
 fn log_text() -> String {
     read_gz(&fixture("charge_manager_20261124_dock_rec.log.gz"))
-}
-
-/// Vendor writes that come later than the sequence decides them, from what charge_manager's log shows it waiting on.
-struct Late {
-    from: f64,
-    to: f64,
-    /// how much later (s), 0 when it grows write by write
-    shift: f64,
-    why: &'static str,
-}
-
-impl Late {
-    fn covers(&self, t: f64) -> bool {
-        (self.from..self.to).contains(&t)
-    }
-}
-
-fn late_writes(log: &str) -> Vec<Late> {
-    let lines: Vec<(f64, &str)> = log
-        .lines()
-        .filter_map(|l| log_time(l).map(|t| (t, l)))
-        .collect();
-    let find = |after: f64, what: &str| {
-        lines
-            .iter()
-            .find(|(t, l)| *t >= after && l.contains(what))
-            .map(|(t, _)| *t)
-            .unwrap_or_else(|| panic!("no {what:?} after {after}"))
-    };
-    let close = "Close location service call success";
-    let mut out = Vec::new();
-    // the undock's end: restoreInitRobotGaitStatus, then two detector service calls before Close24vPower
-    let restored = find(0.0, "mInitRobotGaitStatus_");
-    let closed = find(find(restored, close) + 1e-6, close);
-    out.push(Late {
-        from: closed,
-        to: closed + 0.01,
-        shift: closed - restored,
-        why: "charge_manager closed its detector process (2 service calls) before Close24vPower",
-    });
-    // charging: the loop starts once the detector process is closed after the charge is confirmed
-    let charged = find(0.0, "获取电流成功");
-    let loop_start = find(charged, close);
-    out.push(Late {
-        from: loop_start,
-        to: f64::INFINITY,
-        shift: loop_start - charged,
-        why: "charge_manager's charging loop starts after a detector service call",
-    });
-    // a pose wait's stop: its 200 ms restart after the last one's logging and write
-    for (t, l) in &lines {
-        if l.contains("超时，停止运动") {
-            out.push(Late {
-                from: *t,
-                to: t + 0.002,
-                shift: 0.0,
-                why: "charge_manager's 200 ms pose wait restarts after its log line and write (~0.2 ms each)",
-            });
-        }
-    }
-    out
 }
