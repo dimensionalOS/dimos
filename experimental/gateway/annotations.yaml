@@ -1212,6 +1212,9 @@ robots:
         demo-osm:
           title: OpenStreetMap skill demo
           description: An agent on a pretend robot with an OpenStreetMap skill.
+        demo-orchestrator:
+          title: Orchestrator demo
+          description: 'A toy robot run by an orchestration workflow (TOML): no robot needed.'
         teleop-phone:
           title: Phone driving
           description: 'Drive from a phone''s touch controls: publishes cmd_vel for any robot.'
