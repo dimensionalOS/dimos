@@ -62,6 +62,7 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport import PubSubTransport
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
@@ -451,7 +452,21 @@ class ControlCoordinator(Module):
             reserved.add("tf")
         if self.config.publish_robot_joint_states:
             reserved.update(f"{hw_id}_joints" for hw_id in self._hardware)
+
+        def stream_key(port: Out[Any]) -> tuple[type, str] | int | None:
+            transport = port.transport
+            if isinstance(transport, PubSubTransport):
+                # Blueprint wiring deserializes transports per port. Compare the
+                # resolved channel, not the logical port name or transport object.
+                return type(transport), transport.channel
+            return id(transport) if transport is not None else None
+
         bound = {id(outputs[name]) for name in reserved if name in outputs}
+        streams = {
+            key: name
+            for name in sorted(reserved)
+            if name in outputs and (key := stream_key(outputs[name])) is not None
+        }
         group_ports: dict[str, dict[str, Out[Any]]] = {}
         for robot in robots:
             groups = group_ports[robot] = {}
@@ -462,6 +477,13 @@ class ControlCoordinator(Module):
                     raise ValueError(f"{interface}: expected an additional typed Out")
                 if id(output_port) in bound:
                     raise ValueError(f"{interface}: {output_name} is already bound")
+                key = stream_key(output_port)
+                if key is not None:
+                    if key in streams:
+                        raise ValueError(
+                            f"{interface}: {output_name} shares a command stream with {streams[key]}"
+                        )
+                    streams[key] = output_name
                 bound.add(id(output_port))
                 groups[interface] = output_port
         with self._hardware_lock:

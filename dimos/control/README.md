@@ -84,8 +84,9 @@ def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
 Declare a `pose: In[PoseStamped]` on the connection and map `"pose"` to its
 physical model joints in `ConnectionConfig.group_commands`. Declare
 `arm_pose: Out[PoseStamped]` on the coordinator and use the ordinary blueprint
-remap to connect the ports. Use a dedicated Out, not a coordinator status/TF or
-legacy command Out. Subscribe to the input as usual.
+remap to connect the ports. Use a dedicated Out and transport channel: startup
+rejects a group output that shares a channel with this coordinator's status/TF,
+legacy command, or another group output. Subscribe to the input as usual.
 
 A task returns `GroupCommandOutput("arm/pose", pose)` and sets its claim priority.
 The command gets every covered joint or none; other axes keep ordinary per-joint

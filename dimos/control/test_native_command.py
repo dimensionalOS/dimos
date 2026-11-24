@@ -182,14 +182,40 @@ def assembly() -> Blueprint:
     )
 
 
-def test_native_command_over_ordinary_worker_remap() -> None:
-    blueprint = assembly()
+def build_worker_system(blueprint: Blueprint) -> ModuleCoordinator:
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},
         overrides={"g": {"viewer": "none"}},
         global_overrides={"zenoh_scout_addr": os.environ["ZENOH_SCOUT_ADDR"]},
     )
-    system = ModuleCoordinator.build(blueprint, parsed)
+    return ModuleCoordinator.build(blueprint, parsed)
+
+
+@pytest.mark.parametrize(
+    ("publisher", "destination"),
+    [
+        ("coordinator_joint_state", "mock_joint_ref"),
+        ("coordinator_joint_command", "mock_joint_ref"),
+        ("mock_position_command", "mock_joint_ref"),
+        ("mock_other_pose", "mock_pose"),
+    ],
+)
+def test_native_command_rejects_shared_worker_stream(publisher: str, destination: str) -> None:
+    # No tasks are registered. In the first case, an ordinary aggregate state
+    # update would otherwise reach the joint-reference In in the other worker.
+    blueprint = assembly().remappings([(NativeCoordinator, publisher, destination)])
+    with pytest.raises(ExceptionGroup) as failure:
+        system = build_worker_system(blueprint)
+        system.stop()
+    (error,) = failure.value.exceptions
+    assert isinstance(error, ValueError)
+    assert "shares a command stream" in str(error)
+    assert publisher in str(error)
+    assert destination in str(error)
+
+
+def test_native_command_over_ordinary_worker_remap() -> None:
+    system = build_worker_system(assembly())
     try:
         cc = system.get_instance(NativeCoordinator)
         receiver = system.get_instance(RecordingConnection)
