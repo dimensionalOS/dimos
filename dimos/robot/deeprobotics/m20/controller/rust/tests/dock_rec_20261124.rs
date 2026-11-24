@@ -549,7 +549,10 @@ fn replay(start_point: [f32; 3]) -> Vec<(f64, Write)> {
 }
 
 /// [`replay`], and when the sequence entered each phase.
-fn replay_traced(start_point: [f32; 3]) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>) {
+#[allow(clippy::type_complexity)]
+fn replay_traced(
+    start_point: [f32; 3],
+) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>, Option<[f32; 3]>) {
     let mut cfg = common::config();
     // charge_manager waits on its detector process's service: the replies are reflective_column_node's, logged
     cfg.dock.sequence.detector_service = true;
@@ -568,6 +571,8 @@ fn replay_traced(start_point: [f32; 3]) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>
     docking.record_writes();
     // charging since the dock before the recording: its start point as the undock logs it, restoring rl_control on
     // basic_stair (0x3003, "mInitRobotGaitStatus_ :0x3003")
+    // replay-only input: charge_manager's state from a dock before the recording (that run's mInit and
+    // mInitRobotGaitStatus_ 0x3003, from its log); the recording's own dock derives ours (its test below)
     docking.resume_charging(start_point, (17, 0x3003));
     let tick_of = |t: f64| ((t - T0) * 1000.0).ceil().max(0.0) as u64;
     let mut view = View::default();
@@ -666,7 +671,7 @@ fn replay_traced(start_point: [f32; 3]) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>
         .into_iter()
         .map(|(tick, w)| (T0 + tick as f64 / 1000.0, w))
         .collect();
-    (writes, phases)
+    (writes, phases, docking.status().start_point)
 }
 
 /// Steers of `ours` more than 4 f32 ULPs from the vendor's, pairing writes in order.
@@ -713,7 +718,7 @@ fn start_point(theirs: &[(f64, Write)]) -> [f32; 3] {
 #[test]
 fn the_charge_is_confirmed_on_charge_managers_tick() {
     let theirs = vendor_writes(&samples());
-    let (_, phases) = replay_traced(start_point(&theirs));
+    let (_, phases, _) = replay_traced(start_point(&theirs));
     let log = log_text();
     let confirmed = log
         .lines()
@@ -821,4 +826,27 @@ fn the_dock_and_undock_write_what_charge_manager_wrote() {
 
 fn log_text() -> String {
     read_gz(&fixture("charge_manager_20261124_dock_rec.log.gz"))
+}
+
+/// The recording's own dock derives the start point charge_manager logged ("mInitX:0.906093,mInitY:-0.001405,
+/// mInitYaw:-0.058511"), from the poses alone.
+#[test]
+fn the_dock_derives_charge_managers_start_point() {
+    let theirs = vendor_writes(&samples());
+    let (_, _, derived) = replay_traced(start_point(&theirs));
+    let derived = derived.expect("a start point");
+    let text = log_text();
+    let line = text
+        .lines()
+        .filter(|l| l.contains("mInitX:"))
+        .last()
+        .expect("the dock's mInit line");
+    let printed = format!(
+        "mInitX:{:.6},mInitY:{:.6},mInitYaw:{:.6}",
+        derived[0], derived[1], derived[2]
+    );
+    assert!(
+        line.contains(&printed),
+        "ours {printed}, charge_manager's {line}"
+    );
 }
