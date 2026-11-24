@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -39,6 +40,28 @@ def go2_sim() -> Iterator[Go2Sim]:
     module._world = WorldMirror()
     try:
         yield module
+    finally:
+        module.stop()
+
+
+def test_the_world_holds_and_drives_a_selected_policy_with_its_own_gains_and_pose(
+    tmp_path: Path,
+) -> None:
+    from dimos.robot.unitree.go2.sim2 import Go2Sim
+    from dimos.sim2.mujoco.drives import usd_drives
+    from dimos.simulation.go2_legged.test_policy import _blob
+
+    path = tmp_path / "policy.bin"
+    path.write_bytes(_blob())
+    module = Go2Sim(policy=path)
+    try:
+        policy = module._policy
+        gains = zip(policy.joint_names, policy.kp, policy.kd, policy.default_pose, strict=True)
+        expected = {joint: pytest.approx((kp, kd, q)) for joint, kp, kd, q in gains}
+        assert usd_drives(module.simulated_robot().model.usd) == expected
+        world_usd = module.get_usd()
+        assert world_usd is not None
+        assert usd_drives(world_usd) == expected
     finally:
         module.stop()
 

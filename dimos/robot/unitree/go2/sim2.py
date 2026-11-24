@@ -33,6 +33,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -47,7 +48,7 @@ from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
-from dimos.simulation.go2_legged.policy import Proprioception, load_policy
+from dimos.simulation.go2_legged.policy import Go2Policy, Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import (
     COMMAND_SLEW,
     CONTROL_DT,
@@ -70,6 +71,29 @@ GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with
         "camera": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
     }
 )
+
+
+def with_policy_drives(usd: UsdModel, policy: Go2Policy) -> UsdModel:
+    """The USD with the policy's gains and default pose on its joint drives, which the world holds it at."""
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd.usd, "a robot", usd.source_path.parent if usd.source_path else None)
+    stage = pxr.Usd.Stage.Open(layer)
+    drives = {
+        name: (float(kp), float(kd), float(q))
+        for name, kp, kd, q in zip(
+            policy.joint_names, policy.kp, policy.kd, policy.default_pose, strict=True
+        )
+    }
+    for prim in stage.Traverse():
+        if prim.IsA(pxr.UsdPhysics.RevoluteJoint) and frame_name(prim) in drives:
+            kp, kd, target = drives.pop(frame_name(prim))
+            drive = pxr.UsdPhysics.DriveAPI.Apply(prim, "angular")
+            drive.CreateStiffnessAttr().Set(kp)
+            drive.CreateDampingAttr().Set(kd)
+            drive.CreateTargetPositionAttr().Set(target)
+    if drives:
+        raise ValueError(f"the policy drives joints the USD does not have: {sorted(drives)}")
+    return UsdModel(usd.source_path, _text=str(layer.ExportToString()))
 
 
 class Go2SimConfig(HardwareModuleConfig):
@@ -96,6 +120,8 @@ class Go2Sim(HardwareModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._policy = load_policy(self.config.policy)
+        if self.config.usd is not None:
+            self.config.usd = with_policy_drives(self.config.usd, self._policy)
         self._desired = np.zeros(3)
         self._desired_expires = 0.0
         self._command = np.zeros(3)
