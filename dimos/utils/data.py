@@ -60,7 +60,7 @@ def _get_user_data_dir() -> Path:
 
 @cache
 def get_project_root(file: Path | None = None) -> Path:
-    """Project root for a file. Defaults to the DimOS root if no file specified."""
+    """Project root for a file. Defaults to the dimos root if no file specified."""
     if file is not None:
         file = file.resolve()
         if file.is_relative_to((DIMOS_PROJECT_ROOT / "dimos").resolve()):

@@ -340,10 +340,10 @@ building a missing executable. Calling `build()` again checks these rules again.
 
 ### Modules in your own repo
 
-A native module outside the DimOS repo declares its source build the same way,
+A native module outside the dimOS repo declares its source build the same way,
 on its own config class. Its `source_dir` is relative to the root of its own
 project: the nearest directory above the config class's file that has a
-`pyproject.toml`. DimOS builds and runs the module there and does not fetch the
+`pyproject.toml`. dimOS builds and runs the module there and does not fetch the
 shared checkout for it.
 
 ```python skip
