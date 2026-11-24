@@ -274,8 +274,7 @@ fn docked(tx: f64, ty: f64) -> DockPose {
     }
 }
 
-/// charge_manager's start-up on the dock: a sweep and a battery report every 100 ms, the charge MOS on from
-/// `charge_at_ms`; the ms each result first showed.
+/// charge_manager's start-up on the dock: a sweep and a battery report every 100 ms
 struct Boot {
     k: Docking,
     tick: u64,
@@ -417,12 +416,10 @@ fn start_up_away_from_the_dock_is_idle() {
     assert_eq!(b.k.phase(), Phase::Idle);
 }
 
-/// The vendor logs' two silent idle -> charging episodes: the self test ends "a bit far" at the logged target
-/// pose, the charge comes later, and the idle loop takes it at its next 3 s wake after "Start charge manager".
+/// The vendor logs' silent idle -> charging episodes: "a bit far", then the idle loop's 3 s wake takes a later charge
 #[test]
 fn start_up_a_bit_far_then_the_idle_loop_takes_a_later_charge() {
-    // 2026-11-20 22:40:50.736 (x 0.004372, y -0.003019) -> state:0 -> 2 at 22:41:32.801 (42.0 s on);
-    // 2026-11-21 06:31:23.825 (x 0.000889, y 0.006985) -> 06:35:02.887 (219.0 s on)
+    // 11-20 22:40:50.736 -> state:0 -> 2 42.0 s on; 11-21 06:31:23.825 -> 219.0 s on
     for (x, y, wake_s) in [(0.004372, -0.003019, 42u64), (0.000889, 0.006985, 219)] {
         let mut b = Boot::new();
         let pose = Some(docked(x, y));
@@ -526,8 +523,7 @@ fn the_error_state_returns_charging_when_the_charge_comes_and_idles_on_cancel() 
 
 #[test]
 fn a_controller_fault_while_charging_keeps_the_charge() {
-    // 2026-11-25 04:04:26: a fault (JointDamping, motion state 2) knocked ours from Charging; charge_manager keeps
-    // charging under motion states 0 and 2..4
+    // 2026-11-25 04:04:26: a fault (JointDamping, state 2) knocked ours off Charging; charge_manager keeps it
     let mut b = Boot::new();
     b.run(10_000, None, 0);
     assert_eq!(b.k.phase(), Phase::Charging);
@@ -563,8 +559,7 @@ fn an_undock_in_soft_e_stop_writes_nothing_and_idles() {
 
 #[test]
 fn an_undock_no_dock_this_run_set_restores_robot_commander_s_initial_gait() {
-    // mInitRobotGaitStatus_ is RobotCommander's 0x1001 (0x1f5990) until a goToPileAction (0x180bc0) records the
-    // gait it starts on; restoreInitRobotGaitStatus (0x1f4218) writes it after the undock
+    // mInitRobotGaitStatus_: 0x1001 (ctor 0x1f5990) until goToPileAction (0x180bc0) sets it; written after the undock
     let mut b = Boot::new();
     b.run(10_000, None, 0);
     assert_eq!(b.k.phase(), Phase::Charging);

@@ -70,9 +70,7 @@ pub fn motor_commands(
         .collect()
 }
 
-/// The controller's view of a joint-state reply on top of the one before: a reply carries a record per joint it has,
-/// and a joint missing from it keeps its last position, rates, temperatures and status word (rl_deploy's joint data
-/// are persistent arrays, overwritten per joint, 0x167720); none before it and not every joint: no state yet.
+/// A joint-state reply over the last state: a missing joint keeps its last record (rl_deploy 0x167720), else None.
 pub fn robot_state(
     joints: &[m20_ecan::JointState],
     calibration: &Calibration,

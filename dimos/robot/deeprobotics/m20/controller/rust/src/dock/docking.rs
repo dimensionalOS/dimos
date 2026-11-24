@@ -146,8 +146,7 @@ impl View {
         !self.stand_in && self.runner.as_deref() == Some(runner)
     }
 
-    /// charge_manager's charging loop keeps a charge while /MOTION_INFO's state is 0 or 2..4 (Idle, JointDamping,
-    /// StartDamping, LieDown; Start, 0x182160), else it stops it (command 2).
+    /// charge_manager's charging loop (0x182160) keeps a charge in motion states 0 and 2..4, else command 2
     fn lying(&self) -> bool {
         matches!(
             self.state,
@@ -329,11 +328,9 @@ pub struct Docking {
     startup: Option<Startup>,
     /// charge_manager's idle loop: its next 3 s wake (it then takes a charge it sees: state 0 -> 2)
     idle_check_at: u64,
-    /// the charging loop writes Open12vPower(1) (its command is 1: a dock, or idle taking a charge; not the start-up
-    /// self test's charging, whose command is still -1)
+    /// charge_manager's command is 1 (a dock, or idle taking a charge): the charging loop writes Open12vPower(1)
     charge_cmd: bool,
-    /// charge_manager's error state with NOCHARGEPLUG (0x1007) from the self test: DoExcepHandlingProcess writes
-    /// Open12vPower(3) every 3 s and takes a charge it sees
+    /// charge_manager's NOCHARGEPLUG (0x1007) error: DoExcepHandlingProcess retries Open12vPower(3), takes a charge
     no_plug: bool,
     /// the charging loop checked the charge flag this pass
     charge_checked: bool,
@@ -446,8 +443,7 @@ impl Docking {
         true
     }
 
-    /// charge_manager's charge flag (BatteryStatusCallback, 0x17e9f8) from the newest reading: with
-    /// all_battery_charge, every pack with a level has its charge MOS on (none: true); else any has.
+    /// charge_manager's charge flag (BatteryStatusCallback, 0x17e9f8) from the newest battery reading
     fn charge_flag(&self) -> bool {
         self.charge.is_some_and(|r| self.charged(&r))
     }
@@ -489,8 +485,7 @@ impl Docking {
         false
     }
 
-    /// While no sequence runs: the self test (PowerOnSelfTest, 0x181c40), then the idle loop's 3 s wakes or the
-    /// NOCHARGEPLUG error's Open12vPower(3) cycles (DoExcepHandlingProcess, 0x17fdb0).
+    /// Idle: PowerOnSelfTest (0x181c40), then the idle loop's 3 s wakes or DoExcepHandlingProcess (0x17fdb0)
     fn idle_step(&mut self, view: &View) {
         if self.phase != Phase::Idle {
             // a sequence (or a charge resumed across a restart) ends the self test and the error's retries
@@ -582,8 +577,7 @@ impl Docking {
             None => {}
         }
         if self.no_plug {
-            // error 0x1007: Open12vPower(3) whenever 3 s passed since the last one began (it takes 6 s), then the
-            // charge if it came
+            // error 0x1007: Open12vPower(3) back to back (each takes 6 s > its 3 s gap), then the charge if it came
             if self.open12v.is_none() {
                 if powered && self.tick > self.idle_check_at && self.charge_flag() && view.lying() {
                     self.take_charge(
@@ -604,8 +598,7 @@ impl Docking {
         }
         self.idle_check_at = self.tick + self.ticks(3000);
         if self.charge_flag() && !self.failed && view.lying() {
-            // the idle loop's wake (0x182390): a charge it sees takes it to [charging] with command 1 (standing, its
-            // charging loop's command 2 returns it to idle at once, so ours stays idle)
+            // the idle loop's wake (0x182390) takes a charge with command 1 (standing, its command 2 idles at once)
             self.take_charge(view, "空闲状态直接进入充电状态", true);
         }
     }
@@ -777,8 +770,7 @@ impl Docking {
         self.core.as_ref().map(|c| &c.params)
     }
 
-    /// BatteryStatusCallback's flag (mos_detection; current_detection off): over the packs reporting a level, all
-    /// with their charge MOS on (all_battery_charge; vacuously true for none), else any.
+    /// BatteryStatusCallback's flag: packs with a level all (all_battery_charge; none: true) or any with charge MOS on
     fn charged(&self, r: &ChargeReading) -> bool {
         let all = self.params().map_or(true, |p| p.all_battery_charge);
         if all {
@@ -1017,8 +1009,7 @@ impl Docking {
     fn start_undock(&mut self, view: &View) {
         self.undock_pending = false;
         if view.is(State::JointDamping) {
-            // DoOverChargeTask (0x203908): in soft e-stop (motion state 2) it writes nothing and returns 0x1008, which
-            // DoExcepHandlingProcess takes to idle (the charge stays: the idle loop takes it again)
+            // DoOverChargeTask (0x203908): soft e-stop (state 2) writes nothing, 0x1008, idle (the charge stays)
             let target = self.target;
             self.finish(target, "软急停，退出退桩操作 (0x1008)", false);
             return;
@@ -1147,8 +1138,7 @@ impl Docking {
             return None;
         }
         self.ticks_in_phase += 1;
-        // charge_manager has no fault input (its topics: /MOTION_INFO, /BATTERY_DATA, ...): a controller fault reaches
-        // it only as the motion state rl_deploy reports (JointDamping 2)
+        // charge_manager has no fault input: a fault reaches it only as /MOTION_INFO's state (JointDamping 2)
         let limit = (self.seq.transition_limit_s * self.hz).round() as u64;
         match self.phase {
             Phase::Idle => None,
@@ -1314,13 +1304,11 @@ impl Docking {
                 Some(self.output(None))
             }
             Phase::Charging => {
-                // charge_manager's charging state acts only on command 1 (Start, 0x182160); with -1 (the self test's
-                // charging) it waits for a command
+                // charge_manager's charging state (0x182160) acts only on command 1; -1 (the self test's) waits
                 if !self.charge_cmd {
                     return Some(self.output(None));
                 }
-                // each pass of its loop, once Open12vPower(1)'s sleep is over: no charge flag -> [error] 0x1007
-                // (NOCHARGEPLUG); standing (motion state not 0, 2..4) -> command 2 -> idle
+                // each pass after Open12vPower(1)'s sleep: no charge -> [error] 0x1007; standing -> command 2, idle
                 if self.tick >= self.charge_sleep_until && !self.charge_checked {
                     self.charge_checked = true;
                     if !self.charge_flag() {

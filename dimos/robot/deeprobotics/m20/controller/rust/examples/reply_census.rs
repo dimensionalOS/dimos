@@ -12,11 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The board's joint-state replies in an ECAN capture: how many carry each count of joint records, and every status
-//! word other than 1 a record carries; then the controller's driver fault (DriverWatch) over the replies merged as the
-//! bus does (a joint missing from a reply keeps its last record).
-//!
-//!     cargo run --release --example reply_census -- ECAN_CAPTURE.pcapng
+//! Joint-state replies in an ECAN capture by record count and odd status words, then DriverWatch on them merged.
 
 use std::collections::BTreeMap;
 
