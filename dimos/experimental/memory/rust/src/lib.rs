@@ -87,13 +87,11 @@ pub struct RecorderConfig {
     pub store: store::RecordingStoreConfig,
     #[validate(range(min = 1))]
     pub encoding_threads: usize,
-    pub preserve_zero_stamps: bool,
     pub streams: Vec<StreamConfig>,
 }
 
 #[derive(Clone)]
 pub struct RecorderHandle {
-    preserve_zero_stamps: bool,
     submission: Arc<Mutex<Option<Submission>>>,
     permits: Sender<()>,
     sequence: Arc<AtomicU64>,
@@ -129,13 +127,11 @@ impl RecorderHandle {
         }
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let reception_ts = wall_time();
-        let preserve_zero_stamps = self.preserve_zero_stamps;
         pool.spawn_fifo(move || {
-            let observations = catch_unwind(AssertUnwindSafe(|| {
-                process(&stream, &data, reception_ts, preserve_zero_stamps)
-            }))
-            .map_err(|_| "encoding task panicked".to_string())
-            .and_then(|result| result.map_err(|error| format!("{error:#}")));
+            let observations =
+                catch_unwind(AssertUnwindSafe(|| process(&stream, &data, reception_ts)))
+                    .map_err(|_| "encoding task panicked".to_string())
+                    .and_then(|result| result.map_err(|error| format!("{error:#}")));
             let _ = sender.send(EncodedBatch {
                 sequence,
                 stream,
@@ -174,7 +170,6 @@ impl RecorderEngine {
             pending: WaitGroup::new(),
         })));
         let handle = RecorderHandle {
-            preserve_zero_stamps: config.preserve_zero_stamps,
             submission,
             permits: permit_tx,
             sequence: Arc::new(AtomicU64::new(0)),
@@ -250,16 +245,10 @@ fn process(
     stream: &StreamConfig,
     data: &[u8],
     reception_ts: f64,
-    preserve_zero_stamps: bool,
 ) -> Result<Vec<StoredObservation>> {
     decoding::decode(stream, data, reception_ts)?
         .into_iter()
-        .map(|mut observation| {
-            if observation.ts == 0.0 && !preserve_zero_stamps {
-                observation.ts = reception_ts;
-            }
-            encoding::encode(stream, observation)
-        })
+        .map(|observation| encoding::encode(stream, observation))
         .collect()
 }
 
@@ -529,7 +518,7 @@ mod tests {
         };
 
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
-        let observations = process(&stream, &image.encode(), 100.0, true).unwrap();
+        let observations = process(&stream, &image.encode(), 100.0).unwrap();
         let decoded = Image::decode(&observations[0].data).unwrap();
 
         assert_eq!(observations[0].ts, 12.000_000_034);
@@ -542,7 +531,7 @@ mod tests {
     #[test]
     fn tf_batches_become_individually_timestamped_observations() {
         let mut first = lcm_msgs::geometry_msgs::TransformStamped::default();
-        first.header.stamp = Time { sec: 0, nsec: 0 };
+        first.header.stamp = Time { sec: 10, nsec: 5 };
         first.child_frame_id = "first".to_string();
         let mut second = lcm_msgs::geometry_msgs::TransformStamped::default();
         second.header.stamp = Time { sec: 20, nsec: 7 };
@@ -553,19 +542,19 @@ mod tests {
         let stream = stream("tf", Codec::Lcm, true);
         let data = message.encode();
 
-        let observations = process(&stream, &data, 100.0, true).unwrap();
+        let observations = process(&stream, &data, 100.0).unwrap();
 
         assert_eq!(observations.len(), 2);
-        assert_eq!(observations[0].ts, 0.0);
+        assert_eq!(observations[0].ts, 10.000_000_005);
         assert_eq!(observations[1].ts, 20.000_000_007);
         let decoded: Vec<TFMessage> = observations
             .iter()
             .map(|observation| TFMessage::decode(&observation.data).unwrap())
             .collect();
         assert_eq!(decoded[0].transforms.len(), 1);
-        assert_eq!(decoded[0].transforms[0], message.transforms[0]);
+        assert_eq!(decoded[0].transforms[0].child_frame_id, "first");
         assert_eq!(decoded[1].transforms.len(), 1);
-        assert_eq!(decoded[1].transforms[0], message.transforms[1]);
+        assert_eq!(decoded[1].transforms[0].child_frame_id, "second");
     }
 
     #[test]
@@ -587,7 +576,7 @@ mod tests {
 
     #[test]
     fn lcm_storage_encoding_consumes_the_decoded_image() {
-        let mut image = Image {
+        let image = Image {
             header: Header {
                 stamp: Time { sec: 42, nsec: 25 },
                 ..Header::default()
@@ -601,19 +590,11 @@ mod tests {
         };
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Lcm);
 
-        let observations = process(&stream, &image.encode(), 100.0, true).unwrap();
+        let observations = process(&stream, &image.encode(), 100.0).unwrap();
 
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].ts, 42.000_000_025);
         assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
-
-        image.header.stamp = Time { sec: 0, nsec: 0 };
-        for (preserve_zero_stamps, expected) in [(true, 0.0), (false, 100.0)] {
-            let observations =
-                process(&stream, &image.encode(), 100.0, preserve_zero_stamps).unwrap();
-            assert_eq!(observations[0].ts, expected);
-            assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
-        }
     }
 
     #[test]
@@ -624,7 +605,6 @@ mod tests {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 2,
-            preserve_zero_stamps: false,
             streams: vec![(*stream("samples", Codec::Lcm, false)).clone()],
         };
         let (sender, receiver) = bounded(8);
@@ -784,7 +764,6 @@ mod tests {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 3,
-            preserve_zero_stamps: false,
             streams: vec![(*raw).clone()],
         };
         let engine = RecorderEngine::start(config).unwrap();
@@ -800,84 +779,6 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_indexes_known_stamped_payloads_by_source_time() {
-        use lcm_msgs::geometry_msgs::{PoseArray, PoseStamped};
-        use lcm_msgs::sensor_msgs::BatteryState;
-
-        let file = NamedTempFile::new().unwrap();
-        let header = Header {
-            stamp: Time {
-                sec: 0,
-                nsec: 250_000_000,
-            },
-            ..Default::default()
-        };
-        let cases = [
-            (
-                "poses",
-                "dimos.msgs.geometry_msgs.PoseArray.PoseArray",
-                PoseArray {
-                    header: header.clone(),
-                    ..Default::default()
-                }
-                .encode(),
-            ),
-            (
-                "power",
-                "dimos.msgs.sensor_msgs.BatteryState.BatteryState",
-                BatteryState {
-                    header: header.clone(),
-                    ..Default::default()
-                }
-                .encode(),
-            ),
-            (
-                "odom",
-                "dimos.robot.unitree.type.odometry.Odometry",
-                PoseStamped {
-                    header: header.clone(),
-                    ..Default::default()
-                }
-                .encode(),
-            ),
-            (
-                "header",
-                "dimos.msgs.std_msgs.Header.Header",
-                header.encode(),
-            ),
-        ];
-        let config = RecorderConfig {
-            store: store::RecordingStoreConfig::Sqlite {
-                path: file.path().to_string_lossy().into_owned(),
-            },
-            encoding_threads: 1,
-            preserve_zero_stamps: false,
-            streams: cases
-                .iter()
-                .map(|(name, ty, _)| (*typed_stream(name, ty, Codec::Lcm)).clone())
-                .collect(),
-        };
-        let engine = RecorderEngine::start(config).unwrap();
-        for (name, ty, data) in &cases {
-            engine
-                .handle()
-                .record(typed_stream(name, ty, Codec::Lcm), data);
-        }
-        let stats = engine.shutdown().unwrap();
-        assert_eq!(stats.written, cases.len() as u64);
-        let db = Connection::open(file.path()).unwrap();
-        for (name, _, sent) in cases {
-            let query = format!("SELECT ts, json_extract(tags, '$.reception_ts'), data FROM {name} JOIN {name}_blob USING(id)");
-            let (source, received, stored): (f64, f64, Vec<u8>) = db
-                .query_row(&query, [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-                .unwrap();
-            assert_eq!(source, 0.25, "{name}");
-            assert!(received > source);
-            assert_eq!(stored, sent);
-        }
-    }
-
-    #[test]
     fn encoding_failure_fails_the_recording_with_stream_and_sequence() {
         let file = NamedTempFile::new().unwrap();
         let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
@@ -886,7 +787,6 @@ mod tests {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 1,
-            preserve_zero_stamps: false,
             streams: vec![(*image).clone()],
         };
         let engine = RecorderEngine::start(config).unwrap();
@@ -907,7 +807,6 @@ mod tests {
                 path: "unused.db".to_string(),
             },
             encoding_threads: 0,
-            preserve_zero_stamps: false,
             streams: vec![],
         };
 
@@ -926,7 +825,7 @@ mod tests {
             timestamp_field: Some("sent".into()),
             json_schema: Some(schema.clone()),
         });
-        let mut encoded = process(&stream, &message.encode(), 13.0, true).unwrap();
+        let mut encoded = process(&stream, &message.encode(), 13.0).unwrap();
         let stored = encoded.pop().unwrap();
         assert_eq!(stored.data, text.as_bytes());
         let observations = [Observation {

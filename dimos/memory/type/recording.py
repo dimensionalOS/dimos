@@ -12,15 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared recorder policies for source timestamps and existing artifacts."""
+"""Policy for recording to an existing artifact."""
 
-from collections.abc import Iterator
 import enum
-import time
-from typing import Any
-
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.types.timestamped import to_timestamp
 
 
 class OnExisting(str, enum.Enum):
@@ -28,34 +22,3 @@ class OnExisting(str, enum.Enum):
     ERROR = "error"
     BACKUP = "backup"
     APPEND = "append"
-
-
-def message_timestamp(msg: Any, reception_ts: float | None = None) -> float:
-    """Return the message's source time, falling back to the receiving clock."""
-    ts = getattr(msg, "ts", None)
-    if ts is not None:
-        return float(ts)
-    for field in ("source_ts", "timestamp"):
-        value = getattr(msg, field, None)
-        if isinstance(value, (int, float)):
-            return float(value)
-    stamp = getattr(getattr(msg, "header", msg), "stamp", None)
-    if stamp is not None:
-        try:
-            return to_timestamp(stamp)
-        except TypeError:
-            pass  # An opaque payload may use "stamp" for a non-clock value.
-    return time.time() if reception_ts is None else reception_ts
-
-
-def recording_rows(
-    msg: Any, ts: float | None = None, *, reception_ts: float, preserve_zero_stamps: bool
-) -> Iterator[tuple[Any, float]]:
-    """Index each transform at its source time. Other packets retain a single row."""
-    # Unset headers and a simulation's first tick have the same wire representation.
-    zero_stamp = 0.0 if preserve_zero_stamps else reception_ts
-    if isinstance(msg, TFMessage) and msg.transforms:
-        for transform in msg.transforms:
-            yield TFMessage(transform), transform.ts or zero_stamp
-    elif ts is not None:
-        yield msg, ts or zero_stamp

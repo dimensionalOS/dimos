@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 stack with keyboard teleop."""
+"""Go2 deployment ports for the canonical connection contract."""
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.control.path_following_coordinator import PathFollowingCoordinator
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
 
-unitree_g1_joystick = autoconnect(
-    unitree_g1_basic,
-    KeyboardTeleop.blueprint(),  # Pygame-based joystick control
-)
+
+class Go2Coordinator(PathFollowingCoordinator):
+    go2_velocity_command: Out[JointState]
+    go2_joint_state: In[JointState]

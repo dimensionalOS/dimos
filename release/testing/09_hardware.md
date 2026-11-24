@@ -52,13 +52,13 @@ Expected result: the robot moves forward, both commands appear in `humancli` whe
 uv run dimos run unitree-go2-agentic
 ```
 
-* Open http://localhost:5555/, click the microphone and say "please rotate 180 degrees".
+* Open http://localhost:5555/, click the microphone, say "please rotate 180 degrees", then click the microphone again to stop the recording and send it.
 
 Expected result: the robot turns about 180 degrees, and the command shows in `humancli` when it is running.
 
 ## 9.6 Follow person
 
-Needs a person in the camera view and `ALIBABA_API_KEY` with access to the `qwen-vl-max` model used by `follow_person` for its initial detection.
+Needs a person in the camera view and `ALIBABA_API_KEY` with access to the `qwen-vl-max` model used by `follow_person` for its initial detection. The agent often starts `look_out_for` first, which detects with the local Moondream model on the GPU and passes its detection to `follow_person`. In that case Qwen is not called.
 
 ```bash
 uv run dimos run unitree-go2-agentic
@@ -86,7 +86,7 @@ Expected result: the robot performs the requested gesture.
 uv run dimos run demo-camera
 ```
 
-Expected result: the webcam feed appears in Rerun.
+Expected result: the webcam feed appears in Rerun, drawn on the camera frustum in the 3D view. If the view only shows the lines of the frustum, scroll to zoom out until the picture comes into view.
 
 ## 9.9 Go2 discovery and connection
 
@@ -99,6 +99,9 @@ uv run dimos go2tool discover
 uv run unitree-fetch-aes-key --email <email> --device-type Go2 --sn <serial>
 GO2CONNECTION__AES_128_KEY=<key> uv run dimos --robot-ip <ip> run unitree-go2
 ```
+
+* `connect-wifi` scans for 5 seconds, lists the robots it found and asks `Select device`. Press Enter to take the only one.
+* `unitree-fetch-aes-key` asks for the password of the Unitree account.
 
 Expected result: the first `discover` lists the robot as a BLE row with its serial. `connect-wifi` prints "Provisioned." with the serial. The second `discover` also lists a LAN row with the robot's IP. The key tool prints a box with the `Key` line. `unitree-go2` connects with that key.
 
@@ -131,4 +134,4 @@ Needs an Intel RealSense D4xx on USB 3. The first start builds the capture binar
 uv run dimos run real-sense-camera-vis --enable-pointcloud true
 ```
 
-Expected result: Rerun shows live Color, Depth, ir_left and ir_right panes, and the 3D view shows the colored point cloud in front of the camera.
+Expected result: Rerun shows live Color, Depth, ir_left and ir_right panes, and the 3D view shows the colored point cloud in front of the camera. If no camera is found, the log shows "RealSense start: Config cannot be resolved by any active devices / stream combinations." and the blueprint keeps running with an empty viewer.
