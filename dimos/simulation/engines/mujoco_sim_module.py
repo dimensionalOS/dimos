@@ -72,6 +72,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_CAMERA_RATE_WINDOW_SECONDS = 5.0
+_CAMERA_MIN_RATE_RATIO = 0.95
+
 
 def _find_sensor_slice(model: mujoco.MjModel, *names: str, dim: int = 3) -> slice | None:
     """Return the first matching MJCF sensor's slice into sensordata, or None."""
@@ -891,6 +894,9 @@ class MujocoSimModule(
         interval = 1.0 / self.config.fps
         last_timestamp = 0.0
         published_count = 0
+        rate_window_start: float | None = None
+        rate_window_count = 0
+        rate_warning_active = False
 
         # Wait for engine to actually be connected (sim thread may take a tick).
         deadline = time.monotonic() + 30.0
@@ -905,6 +911,28 @@ class MujocoSimModule(
 
         next_read = time.monotonic()
         while not self._stop_event.is_set():
+            now = time.monotonic()
+            # Count unique publications, including time spent polling stale frames.
+            # Start after the first frame so renderer startup does not lower the rate.
+            if rate_window_start is not None:
+                elapsed = now - rate_window_start
+                if elapsed >= _CAMERA_RATE_WINDOW_SECONDS:
+                    measured_fps = (published_count - rate_window_count) / elapsed
+                    low_rate = measured_fps < self.config.fps * _CAMERA_MIN_RATE_RATIO
+                    if low_rate and not rate_warning_active:
+                        logger.warning(
+                            "MuJoCo camera rate is below requested fps. Recordings may fail "
+                            "imitation prepare. Check rendering performance. On Linux/NVIDIA "
+                            "hybrid-GPU laptops using GLX, try restarting with "
+                            "__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia.",
+                            camera_name=self.config.camera_name,
+                            measured_fps=round(measured_fps, 2),
+                            requested_fps=self.config.fps,
+                        )
+                    rate_warning_active = low_rate
+                    rate_window_start = now
+                    rate_window_count = published_count
+
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -956,6 +984,11 @@ class MujocoSimModule(
             # delay the ones after it. Past the next read's time, read again at
             # once and count the schedule from now.
             now = time.monotonic()
+            if rate_window_start is None:
+                rate_window_start = now
+                # The check runs before reading the frame at the window's end,
+                # so include the first frame at its start.
+                rate_window_count = published_count - 1
             next_read += interval
             if next_read > now:
                 time.sleep(next_read - now)

@@ -120,6 +120,16 @@ Expected result: the end effector follows the controller while the grip is held,
 
 Needs the `learning` extra and a WebXR headset on the same network. The arm and its camera run in MuJoCo. `--recording` must name a new directory. The first `prepare` builds the isolated LeRobot environment, about 3 GB of downloads.
 
+On Linux laptops with integrated graphics and an NVIDIA GPU, MuJoCo may render on
+the integrated GPU and miss the requested camera rate. For PRIME offload with
+GLX, prefix the collection command below with
+`__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia`.
+Before recording, allow at least five seconds after the first camera frame and
+check for a "MuJoCo camera rate is below requested fps" warning. It reports the
+measured and requested fps when the rate is below 95% of the request. Resolve
+the rendering slowdown before collecting demonstrations, since `prepare` can
+reject low-rate recordings.
+
 ```bash
 uv run dimos --simulation run learning-collect-webxr-xarm7 --recording recordings/collect --mujocosimmodule.fps 30
 uv run dimos imitation inspect recordings/collect

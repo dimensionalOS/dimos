@@ -60,6 +60,29 @@ The collection Blueprint constructs dual teleop with
 local-only default. Open `http://ROBOT_HOST:8095` on a trusted network, or restrict
 access with `--manipulationmodule.visualization.host 127.0.0.1`.
 
+## Collect with the simulated xArm7
+
+`learning-collect-webxr-xarm7` runs the arm and camera in MuJoCo. On Linux
+laptops with integrated graphics and an NVIDIA GPU, rendering on the integrated
+GPU can miss the requested camera rate. With GLX, try PRIME offload:
+
+```bash skip
+__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  uv run dimos --simulation run learning-collect-webxr-xarm7 \
+  --recording recordings/collect --mujocosimmodule.fps 30
+```
+
+Use a new recording directory. Allow at least five seconds after the first
+camera frame and check the logs before recording. A "MuJoCo camera rate is below
+requested fps" warning reports the measured and requested fps when the rate
+stays below 95% of the request. Resolve the rendering slowdown before collecting
+demonstrations, since `prepare` can reject low-rate recordings. The PRIME
+settings apply to Linux/NVIDIA GLX setups and do not guarantee the target rate.
+
+Open `https://<host-ip>:8443/teleop` in the headset, accept the certificate, and
+tap Connect. Hold the right grip to move the arm. Press B to start an episode
+and B again to save it, then stop the stack with Ctrl+C.
+
 ## Finish and prepare the recording
 
 Save or discard the final take. Select **Stop stack…**, support the arms, and

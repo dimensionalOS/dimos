@@ -18,6 +18,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -26,6 +27,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.simulation.engines import mujoco_sim_module
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -464,6 +466,82 @@ def test_publish_loop_reads_again_at_once_after_a_publish_slower_than_a_frame(
         assert sleeps == []
     finally:
         module.stop()
+
+
+@pytest.fixture
+def camera_rate_module(mocker):
+    module = MujocoSimModule(fps=30)
+    mocker.patch.object(module, "_engine", MagicMock(spec=MujocoEngine, connected=True))
+    yield module
+    module.stop()
+
+
+@pytest.mark.parametrize(
+    "requested_fps,render_hz,duration,startup_delay,warning_count",
+    [
+        (30, 9.6, 16.0, 0.0, 1),
+        (30, 28.0, 16.0, 0.0, 1),
+        (30, 29.9, 16.0, 0.0, 0),
+        (30, 30.0, 16.0, 0.0, 0),
+        (30, 9.6, 3.0, 0.0, 0),
+        (30, 30.0, 40.0, 20.0, 0),
+        (30, 0.0, 16.0, 0.0, 1),
+        (1, 1.0, 16.0, 0.0, 0),
+        (2, 2.0, 16.0, 0.0, 0),
+    ],
+)
+def test_publish_loop_warns_about_sustained_low_camera_rate(
+    camera_rate_module, mocker, requested_fps, render_hz, duration, startup_delay, warning_count
+):
+    module = camera_rate_module
+    module.config.fps = requested_fps
+    elapsed = 0.0
+
+    def advance(timeout):
+        nonlocal elapsed
+        elapsed += timeout
+        if elapsed >= duration:
+            module._stop_event.set()
+
+    # Advance a virtual clock on both pacing and waiting for a fresh frame.
+    mocker.patch.object(
+        mujoco_sim_module, "time", SimpleNamespace(monotonic=lambda: elapsed, sleep=advance)
+    )
+    mocker.patch.object(module._stop_event, "wait", side_effect=advance)
+    warning = mocker.patch.object(mujoco_sim_module.logger, "warning")
+    frame = CameraFrame(
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.ones((1, 1), dtype=np.float32),
+        cam_pos=np.zeros(3),
+        cam_mat=np.eye(3),
+        fovy=60.0,
+        timestamp=1.0,
+    )
+
+    def read_camera(camera_name):
+        if elapsed < startup_delay:
+            return None
+        # Repeated reads of the same render must not inflate the measured rate.
+        # Timestamp magnitude and increments differ from the monotonic clock.
+        frame.timestamp = 1000.0 + int((elapsed - startup_delay) * render_hz) / 30
+        return frame
+
+    module._engine.read_camera.side_effect = read_camera
+
+    module._publish_loop()
+
+    assert warning.call_count == warning_count
+    assert [call.kwargs for call in warning.call_args_list] == [
+        {
+            "camera_name": "wrist_camera",
+            "measured_fps": pytest.approx(render_hz, abs=0.3),
+            "requested_fps": requested_fps,
+        }
+    ] * warning_count
+    assert [
+        "__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia" in call.args[0]
+        for call in warning.call_args_list
+    ] == [True] * warning_count
 
 
 def test_camera_renders_at_its_fps_when_sim_steps_do_not_divide_the_interval(
