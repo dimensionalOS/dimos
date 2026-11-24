@@ -122,7 +122,9 @@ class HardwareModule(TfModule):
         from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 
         root = str(usd.source_path.parent) if usd.source_path is not None else ""
-        return prefix_usd_frames(resolve_usd_assets(usd.usd, root), self.namespace, root or None)
+        return prefix_usd_frames(
+            resolve_usd_assets(usd.usd, root), self.frame_id_prefix, root or None
+        )
 
     @rpc
     def mounted_on(self) -> str | None:
@@ -131,7 +133,7 @@ class HardwareModule(TfModule):
 
     def usd_frame(self, name: str) -> str:
         """The tf frame id of the frame ``name`` in this hardware's USD."""
-        return f"{self.namespace}/{name}" if self.namespace else name
+        return f"{self.frame_id_prefix}/{name}" if self.frame_id_prefix else name
 
     @property
     def mounted_frame(self) -> str:
