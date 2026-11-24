@@ -67,13 +67,14 @@ class HardwareModuleConfig(TfModuleConfig):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
 
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
-    usd: UsdModel | None = None
+    # Required: hardware without a USD is not a HardwareModule.
+    usd: UsdModel
     # The mount frame of the hardware this sits on (set by HardwareModule.mount); None for the hardware everything mounts to.
     mount: str | None = Field(default=None, alias="_mount")
 
 
 class HardwareSpec(Spec, Protocol):
-    def get_usd(self) -> str | None: ...
+    def get_usd(self) -> str: ...
     def mounted_on(self) -> str | None: ...
 
 
@@ -117,11 +118,9 @@ class HardwareModule(TfModule):
             )
 
     @rpc
-    def get_usd(self) -> str | None:
+    def get_usd(self) -> str:
         """This hardware's USD layer, its frames named as they are on tf and its assets as absolute paths."""
         usd = self.config.usd
-        if usd is None:
-            return None
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 
@@ -140,7 +139,6 @@ class HardwareModule(TfModule):
     @property
     def mounted_frame(self) -> str:
         """The frame the mount holds this hardware by; a mobile robot holds by its odometry frame instead."""
-        assert self.config.usd is not None
         return self.usd_frame(self.config.usd.root_link)
 
     def usd_transforms(
@@ -174,8 +172,7 @@ class HardwareModule(TfModule):
     @cached_property
     def _posable_joints(self) -> tuple[JointDescription, ...]:
         # A floating joint has no single position: the robot owning it publishes its pose from odometry.
-        usd = self.config.usd
-        return () if usd is None else tuple(j for j in usd.joints if j.type != "floating")
+        return tuple(j for j in self.config.usd.joints if j.type != "floating")
 
     def _create_tfbuffer(self, port: Any) -> TF:
         if self.config.skip_tf_checks:
