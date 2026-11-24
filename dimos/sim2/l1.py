@@ -84,8 +84,13 @@ class SimL1(SimSensor):
             if view is None:
                 built = geometry(self._world)
                 view = await asyncio.to_thread(self._open)
-                raycaster = view.raycaster(config.geom_groups, mounted_at=site)
                 rider = view.owner(site)
+                # The real L1's voxel map has no returns off the robot it rides (none within 0.3 m of a Go2's base, two recordings).
+                raycaster = view.raycaster(
+                    config.geom_groups,
+                    mounted_at=site,
+                    blind_to_robots=() if rider is None else (rider,),
+                )
                 if not odom_frame:
                     odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
             assert raycaster is not None
@@ -108,13 +113,13 @@ class SimL1(SimSensor):
     def _rider_odometry(self, rider: str | None) -> tuple[str, NDArray[np.float64]]:
         """The rider's odometry frame, and world -> odom: odometry starts at the rider's scene mount."""
         announced = self._world.entity(rider) if rider is not None else None
-        if announced is None or ODOM_FRAME not in announced.cbor:
+        if rider is None or announced is None or ODOM_FRAME not in announced.cbor:
             raise ValueError(
                 f"an L1 maps in the odometry of the robot it rides, and {self.frame_id} rides "
                 f"{rider!r}, which the world announces with no {ODOM_FRAME}"
             )
         mount = usd_frame_pose(self.world_layer().read_text(), rider)
-        return str(announced.cbor[ODOM_FRAME]), np.linalg.inv(mount)
+        return str(announced.cbor[ODOM_FRAME]), np.asarray(np.linalg.inv(mount), dtype=np.float64)
 
     def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
         entity = self._world.entity(rider) if rider is not None else None

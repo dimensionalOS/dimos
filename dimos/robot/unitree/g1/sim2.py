@@ -34,6 +34,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD,
 from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.stream import In, Out
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -42,7 +43,11 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.unitree.g1.config import G1_JOINT_MODEL, G1_JOINT_NAMES
-from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
+from dimos.robot.unitree.g1.g1_tf_publisher import (
+    _TORSO_MID360_XYZ,
+    MID360_PITCH,
+    G1TfPublisherConfig,
+)
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
@@ -56,6 +61,14 @@ G1_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_f
     {"lidar": ("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))}
 )
 IMU_FRAME = "imu_in_pelvis"
+
+# What a real G1 publishes: odom is Point-LIO's frame, namespaced as Point-LIO composes it; the body its root link.
+G1_TF_FRAMES: dict[str, dict[str, str]] = {
+    "tf_frames_local": {
+        "odom": PointLioConfig.model_fields["frame_id"].default,
+        "body": G1_USD.root_link,
+    },
+}
 
 
 def _usd_joint(name: str) -> str:
@@ -77,7 +90,9 @@ class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
     # Stiffness ramp-in, as on the real G1 (G1WholeBodyConnectionConfig); off by default since a sim G1 starts standing, not hanging.
     soft_start_seconds: float = Field(default=0.0, ge=0.0)
     publish_rate_hz: float = 500.0
-    tf_frames_local: dict[str, str] = {"odom": "odom", "body": "pelvis"}
+    # The real G1's tf goes out at its mount publisher's rate, not at lowstate's 500 Hz.
+    tf_rate_hz: float = G1TfPublisherConfig.model_fields["publish_hz"].default
+    tf_frames_local: dict[str, str] = G1_TF_FRAMES["tf_frames_local"]
     tf_edges: list[tuple[str, str]] = [("odom", "body")]
 
 
@@ -127,8 +142,10 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations, self.world.snapshot)
         publishing = asyncio.create_task(until_it_stops("g1 sim", self._publish()))
+        posing = asyncio.create_task(until_it_stops("g1 sim tf", self._publish_tf()))
         yield
         publishing.cancel()
+        posing.cancel()
 
     def connect(self) -> None:
         self._soft_start = None
@@ -243,11 +260,21 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
                 ts=stamp,
             )
         )
+
+    async def _publish_tf(self) -> None:
+        async for _ in self._world.ticks(self.config.tf_rate_hz):
+            await asyncio.to_thread(self._publish_tf_tick)
+
+    def _publish_tf_tick(self) -> None:
+        world = self._world
+        with world.lock:
+            names, rows = world.joints(self.namespace)
+            stamp = world.stamp()
         odom = self._odom(stamp)
         if odom is None:
             return
         self.odom.publish(odom)
-        positions = {joint: float(row[0]) for joint, row in by_name.items()}
+        positions = {joint: float(row[0]) for joint, row in zip(names, rows, strict=True)}
         self.tfbuffer.publish(
             Transform.from_pose(self.tf_frames["body"], odom),
             *self.usd_transforms(positions, ts=stamp),
