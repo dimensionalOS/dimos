@@ -14,7 +14,7 @@
 
 //! rl_deploy's state machine (decoded from v1.5.8; SPEC.md): passive (idle) -> stand_up -> rl_control (runner by gait
 //! code, after a stand-in policy on some gaits) -> lie_down, and joint_damping on request or on a fault (stale state,
-//! tilt, joint beyond its range, a policy error). Mirrors dimos/simulation/m20_policy_sim/controller.py. One `tick`
+//! joint beyond its range, a policy error). Mirrors dimos/simulation/m20_policy_sim/controller.py. One `tick`
 //! per 1 ms control step.
 
 use std::collections::BTreeMap;
@@ -23,7 +23,7 @@ use std::f64::consts::PI;
 use crate::config::{tile, Config, Robot, StandIn, JOINTS};
 use crate::policy::{PolicyRequest, PolicyService};
 use crate::runner::Targets;
-use crate::types::{roll_pitch, JointCommand, RobotState, Target, UserCommand};
+use crate::types::{JointCommand, RobotState, Target, UserCommand};
 
 /// The config's name of a state (states.enable.on_enter).
 pub fn state_name(state: State) -> &'static str {
@@ -367,22 +367,7 @@ impl Controller {
                 ));
             }
         }
-        let (roll, pitch) = roll_pitch(&s.quat);
-        let (roll, pitch) = (roll.abs().to_degrees(), pitch.abs().to_degrees());
-        let st = &self.cfg.states;
-        let tilted = match self.state {
-            State::Passive | State::StartDamping => roll.max(pitch) > st.passive.max_tilt_deg,
-            State::StandUp => roll.max(pitch) > st.stand_up.max_tilt_deg,
-            State::RlControl => match self.runner.as_ref().and_then(|n| self.cfg.runners.get(n)) {
-                Some(spec) if spec.tilt_check => {
-                    roll > st.rl_control.max_roll_deg
-                        || pitch > spec.max_pitch_deg.unwrap_or(st.rl_control.max_pitch_deg)
-                }
-                _ => false,
-            },
-            _ => false,
-        };
-        tilted.then(|| format!("tilt roll {roll:.1} pitch {pitch:.1} deg"))
+        None
     }
 
     /// After a fault the operator's standing request is ignored until they send a different one.

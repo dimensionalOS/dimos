@@ -15,7 +15,7 @@
 """Reference re-implementation of rl_deploy's state machine (the Rust controller mirrors it).
 
 States (rl_deploy names): passive (idle_state) -> stand_up -> rl_control (runner by gait code, after a stand-in policy
-on some gaits) -> lie_down; joint_damping on a request or a fault (stale state, tilt, joint beyond its range).
+on some gaits) -> lie_down; joint_damping on a request or a fault (stale state, joint beyond its range).
 One call to `tick` per 1 ms control step returns the 16 joint commands. See SPEC.md for the decoded rules.
 """
 
@@ -160,22 +160,6 @@ class Controller:
         margin = safety["joint_limit_margin_rad"]
         if np.any(s.q < lo - margin) or np.any(s.q > hi + margin):
             return "joint beyond its range"
-        roll, pitch = (abs(math.degrees(a)) for a in roll_pitch(s.quat))
-        st = self.cfg["states"]
-        if (
-            self.state in ("passive", "start_damping")
-            and max(roll, pitch) > st["passive"]["max_tilt_deg"]
-        ):
-            return "tilt"
-        if self.state == "stand_up" and max(roll, pitch) > st["stand_up"]["max_tilt_deg"]:
-            return "tilt"
-        if self.state == "rl_control" and self.runner is not None:
-            spec = self.runner.spec
-            max_pitch = spec.get("max_pitch_deg", st["rl_control"]["max_pitch_deg"])
-            if spec.get("tilt_check", True) and (
-                roll > st["rl_control"]["max_roll_deg"] or pitch > max_pitch
-            ):
-                return "tilt"
         return ""
 
     def effective_target(self, cmd: UserCommand) -> str:

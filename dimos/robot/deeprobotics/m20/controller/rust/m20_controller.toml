@@ -83,7 +83,6 @@ kp = [0.0]
 kd = [0.0]
 # stand-up is accepted only this long after start
 min_s_before_stand = 2.0
-max_tilt_deg = 20.0
 
 [states.start_damping]
 # rl_deploy's state after a (re)start until stand-up (it leaves it like passive does). Captured on the robot
@@ -107,7 +106,6 @@ crouch_height = 0.12
 stand_height = 0.38
 phase_s = 1.5
 hipx = 0.0
-max_tilt_deg = 45.0
 
 [states.lie_down]
 kp = [300.0, 300.0, 300.0, 0.0]
@@ -123,8 +121,6 @@ entry_gaits = [0x1001, 0x3001, 0x3004, 0xf003]
 entry_fallback_gait = 0x1001
 # runner for gait codes no runner lists (rl_deploy's default branch)
 fallback_runner = "basic_flat"
-max_roll_deg = 45.0
-max_pitch_deg = 65.0
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner
@@ -195,7 +191,6 @@ action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset
 [runners.basic_plat]
 gaits = [0x1002]
 policy = "policy_ca9bplatform.onnx"
-max_pitch_deg = 90.0
 kind = "frames"
 history = 5
 frame = 53
@@ -399,7 +394,6 @@ kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [3.0, 1.0, 2.0]
 real_steer_divisor = [3.0, 1.0, 2.0]
-tilt_check = false
 command_params = { mode = 0.0 }
 command_vector = [{ src = "vx" }, { src = "vy" }, { src = "wz" }, 0.0, { src = "param", name = "mode" }]
 obs = [

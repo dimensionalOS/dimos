@@ -100,7 +100,6 @@ pub struct Passive {
     pub kp: Vec<f64>,
     pub kd: Vec<f64>,
     pub min_s_before_stand: f64,
-    pub max_tilt_deg: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -118,7 +117,6 @@ pub struct StandUp {
     pub stand_height: f64,
     pub phase_s: f64,
     pub hipx: f64,
-    pub max_tilt_deg: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -148,8 +146,6 @@ pub struct RlControl {
     pub entry_gaits: Vec<u32>,
     pub entry_fallback_gait: u32,
     pub fallback_runner: String,
-    pub max_roll_deg: f64,
-    pub max_pitch_deg: f64,
     #[serde(default)]
     pub stand_in: Vec<StandIn>,
 }
@@ -363,10 +359,6 @@ pub struct RunnerSpec {
     pub gait_clock: Option<GaitClockSpec>,
     #[serde(default)]
     pub feet: Option<Feet>,
-    #[serde(default)]
-    pub max_pitch_deg: Option<f64>,
-    #[serde(default = "yes")]
-    pub tilt_check: bool,
     #[serde(default)]
     pub start_gain_scale: Option<f64>,
     #[serde(default)]
