@@ -70,7 +70,7 @@ class WifiMonitor(Module):
                 next_scan = started + self.config.scan_interval_s
                 try:
                     await run_iw(self.config.interface, "scan", "trigger")
-                except (OSError, subprocess.SubprocessError) as exc:
+                except (OSError, subprocess.SubprocessError, asyncio.TimeoutError) as exc:
                     logger.warning(
                         "Wi-Fi scan trigger failed (survey mode needs CAP_NET_ADMIN)",
                         error=str(exc),
@@ -78,7 +78,7 @@ class WifiMonitor(Module):
             try:
                 sample = await read_scan(self.config.interface, self.config.max_scan_age_s)
                 self.wifi_scan.publish(sample)
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (OSError, subprocess.SubprocessError, asyncio.TimeoutError) as exc:
                 logger.warning(
                     "Wi-Fi observation failed", interface=self.config.interface, error=str(exc)
                 )

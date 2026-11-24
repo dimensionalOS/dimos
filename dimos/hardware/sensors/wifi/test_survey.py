@@ -159,3 +159,39 @@ async def test_sampler_publishes_one_batch_and_stops_its_owned_task(mocker):
         probe_mock.assert_awaited_once_with("wifi", "router", "192.0.2.1")
     finally:
         module.stop()
+
+
+@pytest.mark.asyncio
+async def test_sampler_keeps_publishing_host_and_probes_after_ping_timeout(mocker):
+    module = NetworkSurvey(interface="wifi", targets={"router": "192.0.2.1"}, poll_interval_s=0.2)
+    mocker.patch.object(module, "check_dependencies")
+    mocker.patch(
+        "dimos.hardware.sensors.wifi.survey.HostCounters.read",
+        side_effect=[HostCounters(i, i, i, i * 2, i * 1000, 0) for i in (10, 11, 12)],
+    )
+    mocker.patch(
+        "dimos.hardware.sensors.wifi.survey.probe",
+        side_effect=[asyncio.TimeoutError(), SurveySample(12, "ping/router", {"rtt_ms": 5})],
+    )
+    received = asyncio.Event()
+    batches = []
+
+    def collect(batch):
+        batches.append(batch)
+        if len(batches) == 2:
+            received.set()
+
+    mocker.patch.object(module.survey_metrics, "publish", side_effect=collect)
+    try:
+        async with aclosing(module.main()) as lifecycle:
+            await anext(lifecycle)
+            await asyncio.wait_for(received.wait(), timeout=2)
+            assert module.get_status()["state"] == "running"
+        first, recovered = batches
+        assert first.samples[0].values == {}
+        assert first.samples[0].labels["error"].startswith("TimeoutError:")
+        assert [sample.source for sample in first.samples] == ["ping/router", "host"]
+        assert recovered.samples[0].values == {"rtt_ms": 5}
+        assert module.get_status()["state"] == "stopped"
+    finally:
+        module.stop()

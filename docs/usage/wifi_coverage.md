@@ -53,6 +53,14 @@ In `WifiCoverage`'s module RPC panel (or any RPC client):
    `select_metric(metric="rssi_dbm", source="", good=-40, bad=-90)` restores RSSI.
 
 `get_status()` identifies the active layer, scale, epoch and archive destination.
+`NetworkSurvey.get_status()` separately reports sampler health and the age of its
+last published batch; an open archive does not prove the probes are still running.
+Probe timeouts remain explicit errors and do not stop subsequent polling cycles.
+
+Wire the survey to the same pose estimator used by the map. A wheel-odometry stream
+and lidar odometry can both be labelled `odom` while describing different coordinate
+systems; matching frame names alone does not align them. Use an explicit remapping
+when a blueprint exposes multiple odometry sources.
 
 The JSONL evidence contains pose records, Wi-Fi observations and located performance
 samples (including rejected/missing measurements), grouped by map epoch. It is
