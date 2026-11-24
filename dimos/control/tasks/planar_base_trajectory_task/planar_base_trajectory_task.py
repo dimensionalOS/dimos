@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import threading
@@ -128,9 +129,17 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             self._pose = pose
             self._pose_t = t_now
 
-    def execute(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+    def execute(
+        self,
+        trajectory: JointTrajectory,
+        current_positions: Mapping[str, float] | None = None,
+    ) -> TrajectoryExecutionResult:
         """Accept a trajectory. Its start is checked against the latest odometry now
-        when there is one, and again on the first tick."""
+        when there is one, and again on the first tick.
+
+        ``current_positions`` is ignored; it is accepted so every trajectory task
+        takes the same call. The base pose comes from odometry.
+        """
         problem = _trajectory_problem(trajectory, self._config)
         with self._lock:
             pose = self._pose

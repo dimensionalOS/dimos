@@ -25,13 +25,15 @@ from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConf
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTaskConfig,
 )
-from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.manipulation.execution_manager import PlanExecutionManager
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.manipulation.manipulation_spec import ExecutionStatus
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview import (
     r1pro_planar_preview,
@@ -49,10 +51,18 @@ def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
     return ControlCoordinatorConfig.model_validate(parsed.module_kwargs(atom.name))
 
 
+def _manipulation_config(blueprint) -> ManipulationModuleConfig:
+    parsed = BlueprintConfigParser(blueprint).parse(environ={})
+    atom = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ManipulationModule)
+    )
+    return ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
+
+
 def _forward(distance: float, duration: float) -> JointTrajectory:
     velocity = [distance / duration, 0.0, 0.0]
     return JointTrajectory(
-        joint_names=["x", "y", "yaw"],
+        joint_names=list(R1PRO_PLANAR_BASE.joint_names),
         points=[
             TrajectoryPoint(time_from_start=0.0, positions=[0.0, 0.0, 0.0], velocities=velocity),
             TrajectoryPoint(
@@ -63,13 +73,7 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
 
 
 def test_planar_preview_plans_on_the_planar_base_limits() -> None:
-    parsed = BlueprintConfigParser(r1pro_planar_preview.solidify()).parse(environ={})
-    atom = next(
-        atom
-        for atom in r1pro_planar_preview.solidify().active_blueprints
-        if issubclass(atom.module, ManipulationModule)
-    )
-    manipulation = ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
+    manipulation = _manipulation_config(r1pro_planar_preview.solidify())
 
     assert manipulation.visualization.backend == "viser"
     assert manipulation.trajectory_parametrization is None
@@ -82,8 +86,8 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     platform.system() == "Darwin" and bool(os.environ.get("CI")),
     reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
 )
-def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(mocker, wait_until) -> None:
-    """The base half of a whole-body plan has to move this blueprint's mock chassis."""
+def test_planar_preview_drives_its_mock_base_from_a_base_plan(mocker) -> None:
+    """A base plan sent the way ManipulationModule sends it moves this blueprint's mock chassis."""
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     blueprint = r1pro_planar_preview.solidify()
@@ -99,6 +103,13 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(mocker, wait
         tasks=config.tasks,
     )
     mock = MockBaseConnection(**mock_kwargs)
+    manipulation = _manipulation_config(blueprint)
+    manager = PlanExecutionManager(
+        joint_names=manipulation.model.joint_names,
+        coordinator=coordinator,
+        default_timeout=5.0,
+        bindings=manipulation.trajectory_tasks,
+    )
     wires = {
         "r1pro_position_command": "position_command",
         "r1pro_velocity_command": "velocity_command",
@@ -112,20 +123,18 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(mocker, wait
     mock.start()
     coordinator.start()
     try:
-        accepted = coordinator.task_invoke(
-            "base_trajectory", "execute", {"trajectory": _forward(0.2, duration=0.5)}
+        plan = GeneratedPlan(
+            group_ids=("base",),
+            trajectory=_forward(0.2, duration=0.5),
+            status=PlanningStatus.SUCCESS,
         )
-        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
-        wait_until(
-            lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
-            is TrajectoryState.COMPLETED,
-            timeout=5.0,
-            message="the base trajectory never completed",
-        )
+        result = manager.execute(plan)
+        assert result.status is ExecutionStatus.COMPLETED, result.message
         assert transports["odometry"].sent[-1].x == pytest.approx(
             0.2, abs=PlanarBaseTrajectoryTaskConfig.position_goal_tolerance
         )
     finally:
+        manager.close()
         coordinator.stop()
         mock.stop()
 
