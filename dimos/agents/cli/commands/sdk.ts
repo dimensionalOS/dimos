@@ -37,7 +37,7 @@ async function watch(client: Client): Promise<never> {
   const active = new Set<ConversationId>();
   const follow = async (conversation: ConversationId) => {
     const room = await client.host.get(ConversationContract, { conversation, role: "viewer", markSeen: false });
-    const chat = (update: object) => write({ type: "agent-chat", conversation, ...update });
+    const chat = (update: object) => write({ type: "agent/chat", conversation, ...update });
     let last: EntryId | undefined;
     const history = room.transcript.subscribe(({ items }) => {
       // The HTTP snapshot supplies earlier history. Forward commits after the last item we sent.
@@ -84,9 +84,9 @@ async function watch(client: Client): Promise<never> {
       },
     );
   };
-  const jobs = gateway.jobs.subscribe(() => write({ type: "agent-jobs" }));
+  const jobs = gateway.jobs.subscribe(() => write({ type: "agent/jobs" }));
   const conversations = gateway.conversations.subscribe((rows) => {
-    write({ type: "agent-conversations" });
+    write({ type: "agent/conversations" });
     for (const row of rows) {
       if (row.running && !active.has(row.id)) start(row.id);
     }
