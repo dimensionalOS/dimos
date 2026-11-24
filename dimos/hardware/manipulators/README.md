@@ -37,9 +37,6 @@ manipulators/
 ├── mock/
 │   ├── _registry.py  # Declares "mock" → adapter import path
 │   └── adapter.py       # MockAdapter for testing
-├── xarm/
-│   ├── _registry.py
-│   ├── adapter.py       # XArmAdapter (SDK wrapper)
 ├── piper/
 │   ├── _registry.py
 │   └── adapter.py       # PiperAdapter (SDK wrapper)
@@ -54,7 +51,7 @@ manipulators/
 
 ```bash
 dimos run coordinator-mock    # A mock arm, no hardware needed
-dimos run coordinator-xarm7 --controlcoordinator.addresses '{"arm": "192.168.1.185"}'
+dimos run coordinator-xarm7 --xarmconnection.ip 192.168.1.185
 ```
 
 ### Using an Adapter Directly

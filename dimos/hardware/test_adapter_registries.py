@@ -38,7 +38,6 @@ OPTIONAL_VENDOR_MODULES = {
     "piper_sdk",
     "rclpy",
     "unitree_sdk2py",
-    "xarm",
 }
 
 # Every name each registry must declare. Removing a name from a manifest is a
@@ -48,7 +47,6 @@ EXPECTED_NAMES = {
         "mock",
         "piper",
         "sim_mujoco",
-        "xarm",
     },
     "drive_trains": {
         "mock_twist_base",
@@ -147,14 +145,14 @@ def test_declared_factory_paths_resolve(registry, family) -> None:
 
 def test_missing_vendor_sdk_fails_loud_at_create(monkeypatch) -> None:
     registry = AdapterRegistry()
-    assert "xarm" in registry.available()
-    for mod_name in [m for m in sys.modules if m == "xarm" or m.startswith("xarm.")]:
+    assert "piper" in registry.available()
+    for mod_name in [m for m in sys.modules if m == "piper_sdk" or m.startswith("piper_sdk.")]:
         monkeypatch.delitem(sys.modules, mod_name)
-    monkeypatch.delitem(sys.modules, "dimos.hardware.manipulators.xarm.adapter", raising=False)
-    monkeypatch.setitem(sys.modules, "xarm", None)
-    with pytest.raises(ImportError, match="xarm"):
-        registry.create("xarm")
-    assert "xarm" in registry.available()
+    monkeypatch.delitem(sys.modules, "dimos.hardware.manipulators.piper.adapter", raising=False)
+    monkeypatch.setitem(sys.modules, "piper_sdk", None)
+    with pytest.raises(ImportError, match="piper_sdk"):
+        registry.create("piper")
+    assert "piper" in registry.available()
 
 
 def test_unknown_adapter_raises_keyerror() -> None:
@@ -177,4 +175,4 @@ def test_direct_register_still_works() -> None:
 def test_conflicting_manifest_paths_raise() -> None:
     registry = AdapterRegistry()
     with pytest.raises(ValueError, match="Duplicate"):
-        registry.register_path("xarm", "somewhere.else:Thing")
+        registry.register_path("mock", "somewhere.else:Thing")
