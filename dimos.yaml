@@ -319,7 +319,7 @@ provides:
         summary: Start a conversation with a request UUID and optional cwd
     /agent/conversations/{id}:
       get:
-        summary: Read the transcript and the current reply. Follow the reply on <namespace>/dimos/events/agent-chat/{id}.
+        summary: Read the transcript and the current reply. Subscribe to <namespace>/dimos/events/agent/chat and filter by conversation ID.
         parameters:
           - &conversationId {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
     /agent/conversations/{id}/submissions:

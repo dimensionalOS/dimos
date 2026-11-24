@@ -77,7 +77,7 @@ async def agent_events():
             frame = str(sample.key_expr), json.loads(sample.payload.to_bytes())
             loop.call_soon_threadsafe(events.put_nowait, frame)
 
-        with session.declare_subscriber("test/dimos/events/**", receive):
+        with session.declare_subscriber("test/dimos/events/agent/*", receive):
             yield Bus("test", session.put), events
 
 
@@ -165,9 +165,10 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
         while True:
             key, frame = await asyncio.wait_for(events.get(), 15)
             if key == f"test/dimos/events/{kind}" and predicate(frame):
+                assert frame["type"] == kind
                 return frame
 
-    await event("agent-conversations")
+    await event("agent/conversations")
     created = (await http.post("/agent/conversations", json=request_id())).raise_for_status().json()
     cid = created["conversation"]
     room = f"/agent/conversations/{cid}"
@@ -180,6 +181,7 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
         "action": {"kind": "notify", "text": "scheduled input"},
     }
     assert (await http.post("/agent/jobs", json=draft)).raise_for_status().json()["runs"] == []
+    await event("agent/jobs")
     assert len((await http.get("/agent/jobs")).json()[0]["upcoming"]) == 3
     assert (await http.put("/agent/jobs/demo", json={**draft, "cron": "5 0 * * *"})).json()[
         "cron"
@@ -192,9 +194,10 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     msg = {**request_id(), "text": "describe", "images": [image], "whenBusy": "followUp"}
     sent = (await http.post(f"{room}/submissions", json=msg)).raise_for_status().json()
     assert (await http.post(f"{room}/submissions", json=msg)).json() == sent
-    await event(
-        f"agent-chat/{cid}", lambda e: 0 < len((e.get("turn") or {}).get("text", "")) < len(ANSWER)
+    partial = await event(
+        "agent/chat", lambda e: 0 < len((e.get("turn") or {}).get("text", "")) < len(ANSWER)
     )
+    assert partial["conversation"] == cid
     detail = (await http.get(room)).raise_for_status().json()
     assert detail["turn"]["run"]["inputs"] == [sent["submission"]]
     assert ANSWER.startswith(detail["turn"]["text"])
@@ -209,10 +212,12 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
         await http.get(f"{room}/images/{at['entry']}/{at['message']}/{at['block']}")
     ).json() == image
     committed = await event(
-        f"agent-chat/{cid}",
+        "agent/chat",
         lambda e: any(item["kind"] == "assistant" for item in e.get("entries", [])),
     )
-    await event(f"agent-chat/{cid}", lambda e: "turn" in e and e["turn"] is None)
+    assert committed["conversation"] == cid
+    finished = await event("agent/chat", lambda e: "turn" in e and e["turn"] is None)
+    assert finished["conversation"] == cid
     record = (await http.get(receipt)).raise_for_status().json()
     assert record["record"]["status"] == "done"
     assert record["answer"]["message"]["content"][0]["text"] == ANSWER

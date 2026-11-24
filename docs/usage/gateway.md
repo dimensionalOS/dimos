@@ -89,11 +89,15 @@ the agent's private Unix socket. An offline agent returns 503.
 Generate a request UUID per action and reuse it for retries. A schedule action is either
 `{kind: "notify", text}` or `{kind: "skill", skill, arguments}`. A null `timeZone` uses the agent's zone.
 
-For live chat, subscribe to `<namespace>/dimos/events/agent-chat/{id}` and read the conversation
-on open and reconnect. A `turn` event carries the text so far. Replace the displayed partial on
-each update. Merge `entries` events by their stable entry IDs. A null `turn` marks the end of a
-run and is the time to refresh the snapshot. The gateway also emits `agent-conversations` and
-`agent-jobs` under the usual events prefix when those lists change.
+Subscribe to `<namespace>/dimos/events/agent/*` to receive all agent events, or select one topic.
+
+| Topic under `<namespace>/dimos/events/` | Client action |
+| --- | --- |
+| `agent/chat` | Filter on the payload’s `conversation` ID. Replace the displayed partial reply with `turn.text`, merge committed `entries` by entry ID, and refresh the conversation when `turn` is null. |
+| `agent/conversations` | Refresh `GET /agent/conversations`. |
+| `agent/jobs` | Refresh `GET /agent/jobs`. |
+
+On open or reconnect, subscribe first, then read `GET /agent/conversations/{id}` for the current transcript and turn.
 
 ## Running it yourself
 

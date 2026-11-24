@@ -136,9 +136,7 @@ async def watch(checkout: Path, bus: Bus) -> None:
             async with sdk_process(checkout, "watch") as proc:
                 assert proc.stdout is not None
                 async for line in proc.stdout:
-                    event = json.loads(line)
-                    suffix = f"/{event['conversation']}" if event["type"] == "agent-chat" else ""
-                    bus.send(event, suffix=suffix)
+                    bus.send(json.loads(line))
         except (ApiError, ValueError) as exc:
             logger.debug("DimOS Agent watcher unavailable", error=str(exc))
         await asyncio.sleep(constants.AGENT_RECONNECT_S)
