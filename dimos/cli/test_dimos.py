@@ -891,7 +891,8 @@ def test_run_help_without_blueprint(isolated_cache_locks: None) -> None:
     result = CliRunner().invoke(main, ["run", "--help"])
 
     assert result.exit_code == 0, result.output
-    assert "--daemon" in result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--daemon" in output_plain
 
 
 def test_run_help_lists_dynamic_flags_without_starting(
