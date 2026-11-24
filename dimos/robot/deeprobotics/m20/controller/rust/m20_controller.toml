@@ -77,8 +77,7 @@ policy_fifo_priority = 70
 command_timeout_s = 0.155
 # joint-damping ticks sent on shutdown before the controller exits
 shutdown_damping_ticks = 500
-# ours: rl_deploy keeps a robot standing when its client goes; ours exits, so a standing robot lies down first:
-# stand-up 3 s + the 0x1001 stand-in 3.5 s (lie-down is refused in both) + lie-down 4 s, rounded up
+# ours, on exit: stand-up 3 s + the 0x1001 stand-in 3.5 s (no lie-down in either) + lie-down 4 s, rounded up
 shutdown_lie_down_max_s = 11.0
 
 # rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
@@ -132,8 +131,7 @@ entry_gaits = [0x1001, 0x3001, 0x3004, 0xf003]
 entry_fallback_gait = 0x1001
 # runner for gait codes no runner lists (rl_deploy's default branch)
 fallback_runner = "basic_flat"
-# update_policy_ptr (0x179960): the gait switches only while |vx| + |vy| + |wz| of the normalized command is below
-# DAT_001e1ba8; until then the new gait waits in the UserCommand
+# update_policy_ptr (0x179960): a gait switch waits until normalized |vx| + |vy| + |wz| is below DAT_001e1ba8
 switch_below_speed = 0.01
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to

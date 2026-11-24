@@ -271,8 +271,7 @@ pub fn run<H: Hardware + ?Sized>(
     };
     // the shutdown ticks keep the loop's absolute deadlines (no drift)
     deadline = deadline.max(Instant::now());
-    // nothing holds the robot once this process exits, so a standing robot lies down first (rl_deploy, which stays
-    // up, would keep it standing)
+    // nothing holds the robot once this process exits (rl_deploy stays up and holds it): lie a standing robot down
     let lie_down = UserCommand {
         target: crate::types::Target::LieDown,
         gait: user.gait,

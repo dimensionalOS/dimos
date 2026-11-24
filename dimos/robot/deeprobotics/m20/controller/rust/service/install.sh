@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# install.sh [--allow-gains] (AOS, as root): the m20-controller unit and its launch.json; starts nothing.
-# The binary is the dimos_host checkout's (deployed like every native); launch.json comes from that checkout's venv.
+# install.sh [--allow-gains] (AOS, root): the m20-controller unit and launch.json from the dimos_host checkout; starts nothing.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 checkout=/var/opt/robot/data/dimos_host

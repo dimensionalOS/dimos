@@ -1,5 +1,4 @@
-# vendor_on.sh (GOS, as user, from m20_rust_revert/): pure-Rust m20 -> vendor stack. Stopping the m20-controller service
-# lies a standing robot down first (its SIGTERM path); this logs the state before and after and stops if it fails.
+# vendor_on.sh (GOS, m20_rust_revert/): m20-controller service (its stop lies the robot down; logged) -> vendor stack.
 source /var/opt/robot/data/user_home/m20_rust_revert/common.sh
 cd ~/dimos
 log "=== VENDOR ON"

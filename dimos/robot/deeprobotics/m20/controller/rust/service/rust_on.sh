@@ -1,6 +1,4 @@
-# rust_on.sh [dimos run config tokens...] (GOS, as user, from m20_rust_revert/ beside common.sh and units.sh): vendor
-# stack -> pure-Rust m20 with the controller as the m20-controller service on AOS (install.sh first). Dog sitting/lying.
-# --m20controller.allow-gains=true goes to the service's launch.json; the other tokens to `dimos run m20`.
+# rust_on.sh [tokens] (GOS, m20_rust_revert/): vendor -> the m20-controller service + `dimos run m20`; dog down; allow-gains -> launch.json.
 source /var/opt/robot/data/user_home/m20_rust_revert/common.sh
 cd ~/dimos
 log "=== RUST ON (service) $*"

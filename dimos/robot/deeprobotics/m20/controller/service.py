@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20 controller as a board service (like the vendor's rl_deploy.service), and the run's client of it.
-
-The service is the controller's native process under systemd on AOS (``rust/service/m20-controller.service``). It reads
-its launch line from ``launch.json``, which ``python -m dimos.robot.deeprobotics.m20.controller.service`` writes; its
-streams live under ``dimos/m20_controller/`` whatever run is up, so the robot stays held (and standing) when a run
-stops. ``M20ControllerClient`` is the run's side: the same ports and RPCs as ``M20Controller``, forwarded to the
-service; its stop() zeroes the velocity only, as M20Connection's does.
-"""
+"""The controller as an AOS service that outlives runs (rust/service), its launch.json writer, and a run's client."""
 
 from __future__ import annotations
 

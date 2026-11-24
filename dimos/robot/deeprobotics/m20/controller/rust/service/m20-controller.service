@@ -1,6 +1,4 @@
-# The M20 controller as a board service on AOS, like the vendor's rl_deploy.service: it owns the motor bus and keeps
-# holding the robot whether or not a dimos run is up (runs reach it as M20ControllerClient, under dimos/m20_controller/).
-# install.sh puts it in /etc/systemd/system; launch.json is the native module's stdin line (service.py writes it).
+# The M20 controller on AOS like rl_deploy.service: holds the robot whether or not a run is up (install.sh installs it).
 [Unit]
 Description=M20 controller (dimos pure-Rust rl_deploy replacement)
 After=network-online.target dimos-host-router.service
