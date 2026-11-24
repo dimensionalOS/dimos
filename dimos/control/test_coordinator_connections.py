@@ -562,6 +562,23 @@ def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., 
     assert task.last_state.joints.get_position("mock/joint2") == 0.0
 
 
+def test_commanded_positions_are_published_for_recording(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    recorded: list[tuple[str, Any]] = []
+    r.coordinator.set_transport("coordinator_joint_command", Recorder("command", recorded))
+    r.coordinator.add_task(SendsPositions({"mock/joint2": 0.4, "mock/joint1": 0.3}))
+    r.coordinator.add_task(velocity_task(GO2_BASE_AXES))
+
+    r.report_arm(*AT_REST)
+    r.report_base()
+    r.tick()
+
+    ((_, msg),) = recorded
+    assert list(msg.name) == ["mock/joint1", "mock/joint2"]
+    assert list(msg.position) == [0.3, 0.4]
+    assert msg.frame_id == "coordinator"
+
+
 def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_its_model(
     rig: Callable[..., Rig], tmp_path: Path
 ) -> None:

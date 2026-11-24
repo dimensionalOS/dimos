@@ -59,6 +59,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+_POSITION_MODES = (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+
 
 class JointWinner(NamedTuple):
     """Tracks the winning task for a joint during arbitration."""
@@ -519,20 +521,30 @@ class TickLoop:
                             )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
-        if joint_commands and self._publish_command_callback is not None:
-            try:
-                self._publish_command_callback(
-                    JointState(
-                        ts=time.time(),
-                        frame_id=self._frame_id,
-                        name=list(joint_commands),
-                        position=list(joint_commands.values()),
-                        velocity=[],
-                        effort=[],
-                    )
+        self._publish_joint_commands(joint_commands)
+
+    def _publish_joint_commands(self, positions: dict[str, float]) -> None:
+        """Publish the joint positions tasks commanded this tick, for recording.
+
+        Args:
+            positions: Each commanded joint's target position, in radians or
+                metres, e.g. ``{"arm/joint1": 0.3}``. Nothing is sent when empty.
+        """
+        if not positions or self._publish_command_callback is None:
+            return
+        try:
+            self._publish_command_callback(
+                JointState(
+                    ts=time.time(),
+                    frame_id=self._frame_id,
+                    name=list(positions),
+                    position=list(positions.values()),
+                    velocity=[],
+                    effort=[],
                 )
-            except Exception:
-                logger.exception("Failed to publish joint commands")
+            )
+        except Exception:
+            logger.exception("Failed to publish joint commands")
 
     def _write_all_connections(
         self,
@@ -548,6 +560,7 @@ class TickLoop:
         if publish is None:
             return
         now = time.monotonic()
+        positions: dict[str, float] = {}
         with self._hardware_lock:
             for name, source in self._connections.items():
                 if not source.ready_for_control(now):
@@ -558,10 +571,16 @@ class TickLoop:
                     for joint, (value, mode, _) in joint_commands.items()
                     if self._joint_to_hardware.get(joint) == name
                 }
+                positions.update(
+                    (joint, winners[joint][0])
+                    for joint in source.joint_names
+                    if joint in winners and winners[joint][1] in _POSITION_MODES
+                )
                 try:
                     publish(name, source.command(winners))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
+        self._publish_joint_commands(positions)
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:
         """Log once that a robot has never reported, naming its silent ports and the likely cause.
