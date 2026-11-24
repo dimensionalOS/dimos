@@ -22,6 +22,7 @@ import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.lights import apply_lights
 from dimos.sim2.mujoco.names import resolved, shorten
 from dimos.sim2.spec import Simulated, SimulatedRobot, validate
 
@@ -36,11 +37,11 @@ class SensorMount:
     fovy: float = 60.0
 
 
-_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
+USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
 
 
 def _register_usd_reader(scene: Path) -> None:
-    if scene.suffix.lower() not in _USD_SUFFIXES:
+    if scene.suffix.lower() not in USD_SUFFIXES:
         return
     try:
         import mujoco._usd  # noqa: F401
@@ -63,7 +64,7 @@ def _sliding_friction(layer: Path) -> dict[str, float]:
     this reads it off the layer and puts it back. Bindings inherit, as USD binds them: a prim
     with no binding of its own takes its nearest ancestor's.
     """
-    if layer.suffix.lower() not in _USD_SUFFIXES:
+    if layer.suffix.lower() not in USD_SUFFIXES:
         return {}
     from dimos.robot.assets.usd_utils.pxr import load_pxr
 
@@ -113,6 +114,8 @@ def compile_world(
 
     world = mujoco.MjSpec.from_file(str(scene))
     _apply_sliding_friction(world, Path(scene))
+    if Path(scene).suffix.lower() in USD_SUFFIXES:
+        apply_lights(world, Path(scene))
     shorten(world, ids=owners)
     for robot in robots:
         standing = resolved(
