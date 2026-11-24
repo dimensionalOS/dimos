@@ -133,6 +133,11 @@ UNBOUND: list[tuple[str, str, str]] = [
         'field = "goal_id.idd"',
         "stream value `reached`: `field` names `goal_id.idd`, which is not a field of `GoalStatus`",
     ),
+    (
+        'field = "goal_id.id"',
+        'field = "goal_id.id.typo"',
+        "stream value `reached`: `field` names `goal_id.id.typo`, which is not a field of `GoalStatus`",
+    ),
     ("reached == job.goal", "reached == 5", "node `Going`: `if`"),
     (
         "after = 60.0",
