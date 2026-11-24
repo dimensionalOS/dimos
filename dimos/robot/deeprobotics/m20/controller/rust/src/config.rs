@@ -86,6 +86,10 @@ pub struct Robot {
     pub torque_limit: Vec<f64>,
     pub thigh_length: f64,
     pub shank_length: f64,
+    /// the hip's lateral offset (ControlParameters +8), for MotionInfo's height
+    pub hip_offset: f64,
+    /// what GetBodyHeight adds to the shank (the wheel radius)
+    pub motion_height_wheel: f64,
     /// front-leg (hipx, hipy, knee) range the stand-up / lie-down IK clamps to before mirroring
     pub ik_lower: [f64; 3],
     pub ik_upper: [f64; 3],

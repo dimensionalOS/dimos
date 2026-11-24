@@ -52,6 +52,10 @@ ik_upper = [0.6109, 2.583, 2.793]
 # thigh and shank length (m), for the stand-up / lie-down height IK
 thigh_length = 0.25
 shank_length = 0.25
+# ControlParameters::GenerateM20Parameters 0x974b8: +8, the hip's lateral offset; GetBodyHeight's MotionInfo height
+hip_offset = 0.10075
+# GetBodyHeight 0x170cc0: DAT_001e1b90, added to the shank (the wheel radius)
+motion_height_wheel = 0.09
 
 [timing]
 # motor command loop rate

@@ -52,6 +52,8 @@ pub struct ControllerStatus {
     pub dock_phase: Option<String>,
     /// charge_manager's state for it (0 idle, 1 docking, 2 charging, 3 undocking, 5 on the dock without a charge)
     pub charger_state: Option<i32>,
+    /// rl_deploy's MotionInfo height (GetBodyHeight: hip above the wheel contact, tilt-compensated)
+    pub motion_info_height_m: f64,
     /// the newest IMU sample's age at this tick (ms; none before the first): what the policy step reads
     pub imu_age_ms: Option<f64>,
     /// the 1 kHz loop's overruns so far and its slowest tick (ms)
@@ -105,6 +107,7 @@ impl ControllerStatus {
             usage_mode,
             dock_phase: dock.map(|d| format!("{:?}", d.phase)),
             charger_state: dock.map(crate::basic_server::charger_state_of),
+            motion_info_height_m: round(c.motion_info_height() as f64),
             imu_age_ms: None,
             overruns: tick.stats.overruns,
             max_tick_ms: round(tick.stats.max_tick_s * 1e3),
@@ -261,6 +264,7 @@ mod tests {
             usage_mode: 0,
             dock_phase: None,
             charger_state: None,
+            motion_info_height_m: Default::default(),
             imu_age_ms: None,
             overruns: 0,
             max_tick_ms: Default::default(),

@@ -51,6 +51,60 @@ pub enum State {
 /// rl_deploy's basic flat gait (its entry fallback and the overheat rest's).
 pub const GAIT_BASIC_FLAT: u32 = 0x1001;
 
+/// rl_deploy's MotionInfo height (GetBodyHeight 0x170cc0, f32 like it): each leg's wheel contact (FK with the hip
+/// offset, the shank extended by the wheel radius) below its hip, rotated by the IMU roll and pitch (yaw zeroed), its z
+/// accumulated in f64 with weight 0.25.
+pub fn motion_info_height(robot: &Robot, q: &[f64; JOINTS], roll: f32, pitch: f32) -> f32 {
+    let (f8, l1, l2) = (
+        robot.hip_offset as f32,
+        robot.thigh_length as f32,
+        robot.shank_length as f32,
+    );
+    let shank = l2 as f64 + robot.motion_height_wheel;
+    // quaternion z(0) * y(pitch) * x(roll), as its three sincosf halves compose
+    let (sy, cy) = (pitch * 0.5).sin_cos();
+    let (sx, cx) = (roll * 0.5).sin_cos();
+    let (w, x, y, z) = (cy * cx, cy * sx, sy * cx, -(sy * sx));
+    // the rotation matrix's third row
+    let r = [
+        2.0 * (x * z - w * y),
+        2.0 * (y * z + w * x),
+        1.0 - 2.0 * (x * x + y * y),
+    ];
+    let mut h = 0.0f64;
+    for leg in 0..4 {
+        let (hx, hy, kn) = (
+            q[4 * leg] as f32,
+            q[4 * leg + 1] as f32,
+            q[4 * leg + 2] as f32,
+        );
+        let (s1, c1) = ((hy as f64).sin(), (hy as f64).cos());
+        let (s12, c12) = ((kn as f64 + hy as f64).sin(), (kn as f64 + hy as f64).cos());
+        let (sh, ch) = ((hx as f64).sin(), (hx as f64).cos());
+        let c = c12 * shank + c1 * l1 as f64;
+        let px = -((s12 * shank + s1 * l1 as f64) as f32);
+        let py = (c * sh + f8 as f64 * ch) as f32;
+        let pz = -((f8 as f64 * sh - ch * c) as f32);
+        h += (r[0] * px + r[1] * py + r[2] * pz) as f64 * 0.25;
+        h = h as f32 as f64;
+    }
+    h as f32
+}
+
+/// The IMU's roll and pitch as rl_deploy has them (f32 rad from yesense_node's degrees, else from the orientation).
+pub fn imu_roll_pitch(s: &RobotState) -> (f32, f32) {
+    match s.imu_rpy_deg {
+        Some(rpy) => {
+            let rad = |d: f32| ((d / 180.0) as f64 * std::f64::consts::PI) as f32;
+            (rad(rpy[0]), rad(rpy[1]))
+        }
+        None => {
+            let (r, p) = roll_pitch(&s.quat);
+            (r as f32, p as f32)
+        }
+    }
+}
+
 /// The gait that enters RL control straight from Idle (basic_server's aligningBodyPosture, SixAxisStand).
 pub const ALIGN_GAIT: u32 = 0xf003;
 
@@ -422,6 +476,8 @@ pub struct Controller {
     /// the last tick's accelerometer and joint positions (basic_server's fall-recovery check reads them)
     pub last_accel: [f64; 3],
     pub last_q: [f64; JOINTS],
+    /// the last tick's IMU roll and pitch (rad, f32 as rl_deploy's GetImuRpy)
+    pub last_roll_pitch: [f32; 2],
 }
 
 impl Controller {
@@ -474,6 +530,7 @@ impl Controller {
             rest_hot: false,
             last_accel: [0.0; 3],
             last_q: [0.0; JOINTS],
+            last_roll_pitch: [0.0; 2],
         }
     }
 
@@ -532,16 +589,7 @@ impl Controller {
     /// (joint damping, lie-down). Its target is the operator's, except that joint damping replaces it (rl_deploy's
     /// states write 2 on a fault) and rl_control's gait is the one rl_control runs (stand-ins 0xf001).
     fn tilt_fault(&self, s: &RobotState, cmd: &UserCommand) -> Option<String> {
-        let (roll, pitch) = match s.imu_rpy_deg {
-            Some(rpy) => {
-                let rad = |d: f32| ((d / 180.0) as f64 * std::f64::consts::PI) as f32;
-                (rad(rpy[0]), rad(rpy[1]))
-            }
-            None => {
-                let (r, p) = roll_pitch(&s.quat);
-                (r as f32, p as f32)
-            }
-        };
+        let (roll, pitch) = imu_roll_pitch(s);
         let target = if self.state == State::JointDamping {
             Target::JointDamping
         } else {
@@ -701,6 +749,7 @@ impl Controller {
         self.stamp = s.stamp;
         self.last_accel = s.accel;
         self.last_q = s.q;
+        self.last_roll_pitch = imu_roll_pitch(s).into();
         let target = self.effective_target(cmd);
         let next = self.next_state(target, cmd.gait);
         if next != self.state {
@@ -728,6 +777,12 @@ impl Controller {
         self.time += self.dt;
         self.counters.ticks += 1;
         out
+    }
+
+    /// MotionInfo's height for the last tick (rl_deploy's GetBodyHeight).
+    pub fn motion_info_height(&self) -> f32 {
+        let [roll, pitch] = self.last_roll_pitch;
+        motion_info_height(&self.cfg.robot, &self.last_q, roll, pitch)
     }
 
     /// Lying down is over (the lie-down's spline and damping are done), or the robot is not held at all.
@@ -1319,6 +1374,24 @@ mod tests {
         run(&mut c, &mut s, &still, 1, &mut p);
         assert!(!c.in_stand_in());
         assert_eq!(c.gait(), 0xf001);
+    }
+
+    /// The vendor's MotionInfo height on the robot (m20tool status, 11-24): 0.46 m walking on 0x3003, 0.10 m lying
+    /// docked; ours from basic_stair's measured stance and the lie-down pose.
+    #[test]
+    fn motion_info_height_is_get_body_height_s() {
+        let cfg = config();
+        // basic_stair's stance on the 11-20 capture: hip 0.40-0.41 m above the axle (mean leg FK of the measured joints)
+        let stair = leg_pose_for_height(&cfg.robot, 0.405, -0.1);
+        let standing = motion_info_height(&cfg.robot, &stair, 0.0, 0.0);
+        // the robot read 0.46 walking at 0.69 m/s; standing on the 11-20 capture's basic_stair joints this formula is 0.48
+        assert!((standing - 0.47).abs() < 0.015, "standing {standing}");
+        let lying = leg_pose_for_height(&cfg.robot, cfg.states.lie_down.lie_height, 0.0);
+        let lying = motion_info_height(&cfg.robot, &lying, 0.0, 0.0);
+        assert!((lying - 0.10).abs() < 0.02, "lying {lying}");
+        // a body pitched 20 deg forward: the contacts' height changes, ours from the joints alone would not
+        let pitched = motion_info_height(&cfg.robot, &stair, 0.0, 20f32.to_radians());
+        assert!((pitched - standing).abs() > 0.01);
     }
 
     /// rl_deploy's GetNextStateName (fsm.c): which targets each state takes.

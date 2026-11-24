@@ -102,7 +102,6 @@ pub struct BasicServer<C> {
     /// basic_server's MatchAuthorizationCode (its authority_code.toml matched)
     pub extre_authorized: bool,
     /// MotionInfo's height from the joints (base_link above the wheels' contact)
-    height_of: Box<dyn Fn(&[f64; crate::config::JOINTS]) -> f64 + Send>,
     cfg: crate::config::BasicServerConfig,
 }
 
@@ -120,17 +119,7 @@ impl<C: CommandSource + ChargerState> BasicServer<C> {
             dirty: false,
             align: None,
             extre_authorized: false,
-            height_of: Box::new(|_| 0.0),
         }
-    }
-
-    /// How MotionInfo's height is computed from the joints (the fall recovery's check).
-    pub fn with_height(
-        mut self,
-        height_of: Box<dyn Fn(&[f64; crate::config::JOINTS]) -> f64 + Send>,
-    ) -> Self {
-        self.height_of = height_of;
-        self
     }
 
     pub fn inner(&self) -> &C {
@@ -253,7 +242,7 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
         if let Some(mut a) = self.align {
             if now >= a.next_check {
                 let up = controller.last_accel[2] > self.cfg.align.accel_z
-                    && (self.height_of)(&controller.last_q) > self.cfg.align.height_m;
+                    && controller.motion_info_height() as f64 > self.cfg.align.height_m;
                 a.checks_left -= 1;
                 a.next_check = now + self.cfg.align.check_period_s;
                 if up {
@@ -494,10 +483,10 @@ mod tests {
     ) -> (BasicServer<Script>, Controller, UserCommand) {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
         let cfg = crate::config::Config::load(&path).unwrap();
+        let robot = cfg.robot.clone();
         let mut c = Controller::new(cfg);
         c.set_time(10.0);
-        let (s0, usage) = server();
-        let mut s = s0.with_height(Box::new(|q| q[1].abs()));
+        let (mut s, usage) = server();
         let mut cmd = UserCommand::default();
         let mut policy = crate::policy::InlinePolicy::new(crate::policy::RunnerSet::empty());
         usage.align.store(true, Ordering::Relaxed);
@@ -510,8 +499,9 @@ mod tests {
                 accel: [0.0, 0.0, if up { 9.8 } else { 3.0 }],
                 ..Default::default()
             };
-            // the test's height: |q[1]|
-            state.q[1] = if up { 0.5 } else { 0.1 };
+            // standing (hip 0.38 m above the axle) or lying
+            let h = if up { 0.38 } else { 0.03 };
+            state.q = crate::state_machine::leg_pose_for_height(&robot, h, 0.0);
             state.stamp = t;
             state.tau = [t; crate::config::JOINTS];
             c.tick(&state, &cmd, &mut policy);

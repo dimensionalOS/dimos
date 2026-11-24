@@ -740,13 +740,11 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             dock_status.send_replace(Some(std_msgs::String { data }));
         }),
     );
-    let (robot, wheel) = (cfg.robot.clone(), cfg.dock.obstacle.wheel_radius_m);
     let mut commands = crate::basic_server::BasicServer::new(
         docking_commands,
         shared.usage.clone(),
         cfg.basic_server.clone(),
-    )
-    .with_height(Box::new(move |q| obstacle::body_height(&robot, q, wheel)));
+    );
     let usage = shared.usage.clone();
     let imu_seen = shared.clone();
     let mut controller = Controller::new(cfg.clone());
