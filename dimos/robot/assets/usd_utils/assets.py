@@ -124,7 +124,13 @@ def _prim_specs(layer: Layer) -> Iterator[Spec]:
 def _rename_spec_assets(pxr: Pxr, spec: Spec, rename: AssetRename) -> bool:
     where = str(spec.path.StripAllVariantSelections())
     changed = False
-    for arcs in (spec.referenceList, spec.payloadList):
+    for has_arcs, list_name in (
+        (spec.hasReferences, "referenceList"),
+        (spec.hasPayloads, "payloadList"),
+    ):
+        if not has_arcs:
+            continue
+        arcs = getattr(spec, list_name)
         for field in _LISTED_ARC_FIELDS + _MATCHING_ARC_FIELDS:
             items = list(getattr(arcs, field))
             moved = []
@@ -145,7 +151,11 @@ def _rename_spec_assets(pxr: Pxr, spec: Spec, rename: AssetRename) -> bool:
     if renamed_identifier is not None:
         spec.assetInfo["identifier"] = renamed_identifier
         changed = True
+    asset_types = (pxr.Sdf.ValueTypeNames.Asset, pxr.Sdf.ValueTypeNames.AssetArray)
     for attribute in spec.attributes:
+        # Only an asset-typed attribute holds paths; reading any other's value copies its data (a mesh's points) for nothing.
+        if attribute.typeName not in asset_types:
+            continue
         value = _renamed_value(pxr, attribute.default, where, rename)
         if value is not None:
             attribute.default = value
