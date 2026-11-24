@@ -16,15 +16,18 @@ import asyncio
 import math
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.mapping.relocalization.module import PremapModule, map_names, resolve_map
 from dimos.mapping.relocalization.named_locations import load_locations
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
@@ -194,11 +197,6 @@ def test_a_new_map_is_the_world_frame(make):
 
 
 def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
-    import numpy as np
-
-    from dimos.memory.store.sqlite import SqliteStore
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
     run1 = str(tmp_path / "run1.db")
     first, published_by_first = make()
     begin(first)
@@ -253,10 +251,6 @@ def write_mcap(path, channels):
 
 
 def test_a_named_map_is_found_and_names_the_frame(make, tmp_path):
-    import numpy as np
-
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
     path = tmp_path / "walk.mcap"
     cloud = PointCloud2.from_numpy(np.ones((7, 3), dtype=np.float32), timestamp=2.0)
     write_mcap(
@@ -332,6 +326,23 @@ def test_a_missing_file_loads_nothing(tmp_path):
     assert load_locations(str(tmp_path / "absent.db"), "named_locations") == {}
 
 
+def test_a_premap_without_named_locations_starts_without_warning(make, tmp_path, mocker):
+    path = tmp_path / "map.db"
+    with SqliteStore(path=str(path)) as store:
+        store.stream("map_v1_cloud", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=0.0), ts=0.0
+        )
+    warning = mocker.patch("dimos.mapping.relocalization.named_locations.logger.warning")
+    info = mocker.patch("dimos.mapping.relocalization.module.logger.info")
+    module, published = make(map_file=str(path))
+
+    begin(module)
+
+    assert names(published[0]) == []
+    warning.assert_not_called()
+    info.assert_any_call(f"Loaded 0 named locations from {path}: []")
+
+
 def test_locations_are_loaded_from_an_mcap(tmp_path):
     mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
     path = tmp_path / "walk.mcap"
@@ -383,11 +394,6 @@ def test_locations_are_kept_in_the_map_frame_and_follow_every_fix(make):
 
 
 def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
-    import numpy as np
-
-    from dimos.memory.store.sqlite import SqliteStore
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
     recording = str(tmp_path / "walk.db")
     with SqliteStore(path=recording) as store:
         clouds = store.stream("map_v1_cloud", PointCloud2)

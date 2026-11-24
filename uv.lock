@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-11-17T05:05:52.119643Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -46,8 +46,8 @@ eclipse-zenoh = false
 can-motor-control = false
 md-babel-py = false
 dim-odom = false
-mjcf-to-urdf = false
 cel-expr-python = false
+mjcf-to-urdf = false
 
 [manifest]
 constraints = [
@@ -1886,7 +1886,7 @@ dependencies = [
     { name = "attrs" },
     { name = "bleak" },
     { name = "cbor2" },
-    { name = "cel-expr-python" },
+    { name = "cel-expr-python", marker = "python_full_version >= '3.11'" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
     { name = "dimos-lcm" },
@@ -2579,7 +2579,7 @@ requires-dist = [
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "can-motor-control", marker = "extra == 'control'", specifier = "==0.0.12" },
     { name = "cbor2", specifier = ">=6.1.5,<7" },
-    { name = "cel-expr-python", specifier = "==0.1.4" },
+    { name = "cel-expr-python", marker = "python_full_version >= '3.11'", specifier = "==0.1.4" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
