@@ -40,7 +40,7 @@ from dimos.core.daemon import (
 )
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.utils.cache import cache_usage_guard, cache_usage_locked
+from dimos.utils.cache import cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
 
@@ -413,7 +413,7 @@ def run(
             typer.echo("  Status:    dimos status")
             return
 
-        # The re-executed CLI owns its cache guard through this command's context.
+        # The re-executed daemon holds its own cache guard through @cache_usage_locked.
         started = False
 
         def ready(coordinator: ModuleCoordinator) -> None:
