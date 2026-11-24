@@ -1,0 +1,60 @@
+<mujoco model="metal bench">
+  <!-- The bench top is z = 0 and the Metal's base_link stands on it at the origin,
+       so world coordinates are the arm's base coordinates. The three free bodies
+       are the objects MujocoSimModule reports on body_poses. -->
+  <option integrator="implicitfast" timestep="0.002"/>
+
+  <statistic center="0.25 0 0.1" extent="0.8"/>
+
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.4 0.4 0.4" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="150" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.85 0.85 0.85" rgb2="0.75 0.75 0.75"
+      markrgb="0.9 0.9 0.9" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+    <material name="bench_top" rgba="0.55 0.45 0.35 1"/>
+    <material name="bench_leg" rgba="0.4 0.35 0.3 1"/>
+    <material name="cube_red" rgba="0.85 0.1 0.1 1"/>
+    <material name="cylinder_blue" rgba="0.15 0.35 0.85 1"/>
+    <material name="bowl_beige" rgba="0.9 0.85 0.75 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" pos="0 0 -0.74" type="plane" material="groundplane"/>
+
+    <!-- Bench: 0.74 m tall, top face at z = 0, reaching from 0.10 m behind the arm to 0.60 m in front. -->
+    <geom name="bench_top" type="box" size="0.35 0.30 0.01" pos="0.25 0 -0.01" material="bench_top"/>
+    <geom name="bench_leg1" type="cylinder" size="0.02 0.36" pos="-0.07 -0.27 -0.38" material="bench_leg"/>
+    <geom name="bench_leg2" type="cylinder" size="0.02 0.36" pos="0.57 -0.27 -0.38" material="bench_leg"/>
+    <geom name="bench_leg3" type="cylinder" size="0.02 0.36" pos="-0.07  0.27 -0.38" material="bench_leg"/>
+    <geom name="bench_leg4" type="cylinder" size="0.02 0.36" pos="0.57  0.27 -0.38" material="bench_leg"/>
+
+    <!-- 4 cm cube -->
+    <body name="cube" pos="0.26 0.11 0.02">
+      <freejoint/>
+      <geom type="box" size="0.02 0.02 0.02" material="cube_red" mass="0.1"/>
+    </body>
+
+    <!-- 5 cm wide, 8 cm tall cylinder -->
+    <body name="cylinder" pos="0.26 -0.11 0.04">
+      <freejoint/>
+      <geom type="cylinder" size="0.025 0.04" material="cylinder_blue" mass="0.12"/>
+    </body>
+
+    <!-- 10 cm square bowl, 3 cm deep, open at the top -->
+    <body name="bowl" pos="0.36 0 0">
+      <freejoint/>
+      <geom type="box" size="0.05 0.05 0.005" pos="0 0 0.005" material="bowl_beige" mass="0.08"/>
+      <geom type="box" size="0.05 0.005 0.015" pos="0 0.045 0.025" material="bowl_beige" mass="0.03"/>
+      <geom type="box" size="0.05 0.005 0.015" pos="0 -0.045 0.025" material="bowl_beige" mass="0.03"/>
+      <geom type="box" size="0.005 0.04 0.015" pos="0.045 0 0.025" material="bowl_beige" mass="0.03"/>
+      <geom type="box" size="0.005 0.04 0.015" pos="-0.045 0 0.025" material="bowl_beige" mass="0.03"/>
+    </body>
+  </worldbody>
+</mujoco>

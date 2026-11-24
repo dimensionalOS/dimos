@@ -32,11 +32,14 @@ class GripperConfig(BaseConfig):
             joints that mimic one of these in the URDF follow it.
         closing_steps: How many poses between open and closed to check. 0 checks
             the open pose only (a suction cup, say).
+        grasp_frame: The model frame midway between the finger pads, fixed to the
+            planning tip: the point a grasp aims at. None if the model has none.
     """
 
     pad_links: tuple[str, ...] = Field(min_length=1)
     finger_joints: dict[str, tuple[float, float]] = Field(default_factory=dict)
     closing_steps: int = Field(default=4, ge=0)
+    grasp_frame: str | None = None
 
     def joint_positions(self) -> list[dict[str, float]]:
         """Finger joint positions at the open pose, then at each closing step, last fully closed."""

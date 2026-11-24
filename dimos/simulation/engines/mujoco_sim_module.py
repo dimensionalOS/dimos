@@ -26,6 +26,7 @@ the camera in different worker processes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 from pathlib import Path
 import threading
@@ -58,6 +59,7 @@ from dimos.simulation.engines.mujoco_engine import (
     CameraFrame,
     MujocoEngine,
     RaycastLidarConfig,
+    RaycastLidarFrame,
 )
 from dimos.simulation.engines.mujoco_shm import (
     CMD_MODE_PD_TAU,
@@ -65,6 +67,7 @@ from dimos.simulation.engines.mujoco_shm import (
     shm_key_from_path,
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
+from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.spec import perception
@@ -215,7 +218,9 @@ class _WholeBodySimHooks:
         if self._gripper_idx is not None:
             positions = engine.joint_positions
             if self._gripper_idx < len(positions):
-                shm.write_gripper_state(positions[self._gripper_idx])
+                shm.write_gripper_state(
+                    self._gripper_joint_to_command(positions[self._gripper_idx])
+                )
 
     def clear_latched_commands(self) -> None:
         self._latest_pd_pos_target = None
@@ -223,14 +228,29 @@ class _WholeBodySimHooks:
         self._latest_pd_kd = None
         self._latest_pd_tau = None
 
-    def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
+    # A position actuator whose control range is the joint's range takes the
+    # joint target itself and reports the joint as is. A transmission with its
+    # own control units (the xArm's tendon, 0..255 against a 0..0.85 rad joint)
+    # runs the other way: commands and readings are reflected about the joint
+    # range.
+    def _gripper_joint_to_ctrl(self, command: float) -> float:
+        """The actuator control for a gripper command."""
         jlo, jhi = self._gripper_joint_range
         clo, chi = self._gripper_ctrl_range
-        clamped = max(jlo, min(jhi, joint_position))
+        clamped = max(jlo, min(jhi, command))
+        if self._gripper_ctrl_range == self._gripper_joint_range:
+            return clamped
         if jhi == jlo:
             return clo
         t = (clamped - jlo) / (jhi - jlo)
         return chi - t * (chi - clo)
+
+    def _gripper_joint_to_command(self, joint_position: float) -> float:
+        """The gripper's MJCF joint value in the coordinate commands use."""
+        if self._gripper_ctrl_range == self._gripper_joint_range:
+            return joint_position
+        jlo, jhi = self._gripper_joint_range
+        return jlo + jhi - joint_position
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
@@ -281,6 +301,10 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     mujoco_lidar_max_range: float = MAX_RANGE
     mujoco_lidar_max_height: float = MAX_HEIGHT
     mujoco_lidar_robot_exclusion_radius: float = 0.0
+    # Publish each lidar camera's cloud in its own "<camera>_lidar_frame", with
+    # the camera's world pose at the cast on tf, as a depth camera's cloud is.
+    # A mapper then casts its rays from the camera instead of the world origin.
+    mujoco_lidar_in_camera_frame: bool = False
     # Inject menagerie/dimos-bundled mesh bytes (via
     # dimos.simulation.mujoco.model.get_assets) into MjModel.from_xml_string.
     # MJCFs that reference meshes by bare filename (G1 GR00T, Go2) need this;
@@ -713,15 +737,18 @@ class MujocoSimModule(
             raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {err}") from err
 
     @rpc
-    def reset(self) -> bool:
-        """Reset the running simulation to its current configured spawn pose."""
+    def reset(self, placements: Mapping[str, BodyPlacement] | None = None) -> bool:
+        """Reset the running simulation to its spawn pose and joint positions.
+        ``placements`` puts named free bodies at (x, y, z, yaw), metres and
+        radians in the world frame, for this reset only; an unknown or fixed
+        body raises ValueError. Returns False when the engine is not running."""
         engine = self._engine
         if engine is None:
             return False
         if self._sim_hooks is not None:
             self._sim_hooks.clear_latched_commands()
-        applied = engine.request_reset(wait=True)
-        logger.info("MujocoSimModule: reset requested", applied=applied)
+        applied = engine.request_reset(wait=True, body_poses=placements)
+        logger.info("MujocoSimModule: reset requested", applied=applied, placements=placements)
         return applied
 
     @rpc
@@ -1094,6 +1121,12 @@ class MujocoSimModule(
         engine = self._engine
         if engine is None:
             return
+        if self.config.mujoco_lidar_in_camera_frame:
+            for camera_name in self._mujoco_lidar_camera_names():
+                frame = engine.read_raycast_lidar(camera_name)
+                if frame is not None and frame.points.size > 0:
+                    self._publish_camera_lidar(camera_name, frame)
+            return
 
         all_points: list[NDArray[Any]] = []
         latest_ts = 0.0
@@ -1116,5 +1149,30 @@ class MujocoSimModule(
             )
             pcd = pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size)
             self.pointcloud.publish(pcd)
+        except Exception as exc:
+            logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))
+
+    def _publish_camera_lidar(self, camera_name: str, frame: RaycastLidarFrame) -> None:
+        """Publish one cast in the camera's frame, and the camera's world pose at the cast on tf."""
+        if frame.origin is None or frame.rotation is None:
+            return
+        frame_id = f"{camera_name}_lidar_frame"
+        # Row-vector form of p_camera = R^T (p_world - origin).
+        points = (frame.points.astype(np.float64) - frame.origin) @ frame.rotation
+        try:
+            self.tf.publish(
+                TFMessage(
+                    _transform_from_matrix(
+                        _pose_matrix(frame.origin, frame.rotation),
+                        frame_id="world",
+                        child_frame_id=frame_id,
+                        ts=frame.timestamp,
+                    )
+                )
+            )
+            pcd = PointCloud2.from_numpy(
+                points.astype(np.float32), frame_id=frame_id, timestamp=frame.timestamp
+            )
+            self.pointcloud.publish(pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size))
         except Exception as exc:
             logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))
