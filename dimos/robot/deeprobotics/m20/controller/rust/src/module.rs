@@ -112,6 +112,9 @@ pub struct M20Controller {
     motion_cmd: Input<std_msgs::String>,
     #[input(decode = UInt32::decode, handler = on_gait_cmd)]
     gait_cmd: Input<UInt32>,
+    /// basic_server's control usage mode request: 0 regular, 1 navigation, 2 assist
+    #[input(decode = UInt32::decode, handler = on_usage_mode)]
+    usage_mode: Input<UInt32>,
     /// the dock in base_link, from m20_dock_detector_module (one per sweep that sees it)
     #[input(decode = PoseStamped::decode, handler = on_dock_pose)]
     dock_pose: Input<PoseStamped>,
@@ -174,6 +177,8 @@ pub struct Shared {
     dock_obstacles: std::sync::atomic::AtomicU64,
     /// charge_manager.toml was taken (this board's or the detector module's copy)
     vendor_read: AtomicBool,
+    /// basic_server's usage mode (requests in, the current mode out)
+    usage: Arc<crate::basic_server::UsageMode>,
 }
 
 /// The body IMU as the loop reads it: the newest sample that arrived, however old (rl_deploy's, which never ages one
@@ -415,7 +420,13 @@ impl M20Controller {
     }
 
     async fn on_cmd_vel(&mut self, msg: Twist) {
-        self.current.velocity = Some([msg.linear.x, msg.linear.y, msg.angular.z]);
+        let v = [msg.linear.x, msg.linear.y, msg.angular.z];
+        // the vendor bridge's NaN guard: a non-finite twist is a zero one
+        self.current.velocity = Some(if v.iter().all(|x| x.is_finite()) {
+            v
+        } else {
+            [0.0; 3]
+        });
         self.send_command();
     }
 
@@ -439,8 +450,19 @@ impl M20Controller {
         info!(gait = format!("{:#x}", msg.data as u32), "gait command");
         self.current.gait = msg.data as u32;
         self.current.motion_seq += 1;
+        self.current.gait_seq += 1;
         self.current.velocity = None;
         self.send_command();
+    }
+
+    async fn on_usage_mode(&mut self, msg: UInt32) {
+        info!(mode = msg.data, "usage mode command");
+        *self
+            .shared
+            .usage
+            .request
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(msg.data as i32);
     }
 
     async fn on_dock_pose(&mut self, msg: PoseStamped) {
@@ -666,7 +688,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     let dock_latest = Arc::new(Mutex::new(None::<crate::dock::docking::Status>));
     let dock_seen = dock_latest.clone();
     let mut status_log = crate::status::StatusLog::new(config.status_log_height_step_m);
-    let mut commands = DockingCommands::new(
+    let docking_commands = DockingCommands::new(
         SharedCommands {
             shared: shared.clone(),
         },
@@ -681,6 +703,9 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             dock_status.send_replace(Some(std_msgs::String { data }));
         }),
     );
+    let mut commands =
+        crate::basic_server::BasicServer::new(docking_commands, shared.usage.clone());
+    let usage = shared.usage.clone();
     let mut controller = Controller::new(cfg.clone());
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let mut last: Option<Status> = None;
@@ -725,7 +750,8 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
                 }));
             }
             let dock = dock_latest.lock().ok().and_then(|d| d.clone());
-            let full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref());
+            let mode = usage.current.load(Ordering::Relaxed);
+            let full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref(), mode);
             let logged = status_log.changed(&full);
             if logged {
                 info!(
@@ -736,8 +762,9 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
                     gait = %full.gait,
                     runner = ?full.runner,
                     stand_in = full.stand_in,
-                    commanded_body_height_m = ?full.commanded_body_height_m,
-                    body_height_m = full.body_height_m,
+                    commanded_height_incl_wheel_m = ?full.commanded_height_incl_wheel_m,
+                    height_incl_wheel_m = full.height_incl_wheel_m,
+                    usage_mode = full.usage_mode,
                     dock_phase = ?full.dock_phase,
                     "controller status"
                 );

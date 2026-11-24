@@ -22,6 +22,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod basic_server;
 pub mod commands;
 pub mod config;
 pub mod dock;

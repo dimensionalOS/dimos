@@ -1524,6 +1524,7 @@ impl<C: CommandSource> DockingCommands<C> {
             params,
             runner: None,
             motion_seq: self.operator.motion_seq,
+            gait_seq: self.operator.gait_seq,
         }
     }
 }

@@ -149,6 +149,8 @@ pub struct RlControl {
     pub entry_gaits: Vec<u32>,
     pub entry_fallback_gait: u32,
     pub fallback_runner: String,
+    /// a gait switch waits until |vx| + |vy| + |wz| (normalized) is below this
+    pub switch_below_speed: f64,
     #[serde(default)]
     pub stand_in: Vec<StandIn>,
 }

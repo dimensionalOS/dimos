@@ -810,6 +810,30 @@ numerics, above). tract needs no shared library on the board, runs the same grap
 every op these 15 models use; the transformer runners skip tract's graph optimizer (it mis-shapes their command Tile)
 and run the typed graph, at about 0.2-2 ms per step on an M-series Mac.
 
+## The controller as a board service (`rust/service`, `controller/service.py`)
+
+rl_deploy is a system service and basic_server / the blueprint are its clients, so a run that stops leaves the robot
+as it is. Ours does the same as `m20-controller.service` on AOS (the module binary, its stdin line from launch.json,
+streams under `dimos/m20_controller/`); a run reaches it through `M20ControllerClient` (`--choice M20Walker=service`,
+`M20Joints=service`), whose stop only zeroes the velocity. Stopping the unit lies a standing robot down first (its
+SIGTERM path, at most `safety.shutdown_lie_down_max_s`), as does stopping the in-run module (`M20Walker=controller`).
+Hazard, as with rl_deploy: a run restart no longer resets the controller, so a fault's blocked standing request, a
+usage mode and a gait persist into the next run until a different motion command or mode arrives.
+
+## basic_server in front of the controller (`src/basic_server.rs`)
+
+basic_server (md5 538e34f2) sits between the app / navigation and rl_deploy; ours is the same layer in the controller:
+- usage mode (setControlUsageMode 0x261ba8, on a change only): 0 regular, 1 navigation, 2 assist; 0 and 2 also
+  SwitchGait(0x1001). /NAV_CMD, /REAL_STEER and charge_manager's steer reach rl_deploy only in modes 1 and 2.
+- charge_manager's status (ChannelChargerStatusCallback 0x220c60): docking or undocking (1, 3) -> mode 1, idle (0) ->
+  mode 0 (so an undock ends on 0x1001 in regular mode), charging (2) changes nothing.
+- a stand (SetMotionState(1) 0x2622d0): stand, wait up to 5 s for it, then RL control, SendGait(0x1001), mode 0.
+- SwitchGait (0x261640): a code outside 0x1001-5, 0x2001-4, 0x3001-5, 0x5001-3, 0xf001-3 is dropped. Not ours: its
+  3 x 3 s wait for /MOTION_INFO (the layer applies the gait at once), Extre's authorization code, sensor power.
+rl_deploy's own gait handling (RLControlState::Run / update_policy_ptr 0x179960): Run copies the UserCommand in and
+back every tick; the 0x1001 stand-in writes 0xf001 over its gait slot, then 0x1001 at its end, so a gait sent during
+the stand-in is lost (M20Connection resends it); a gait switch waits until |vx| + |vy| + |wz| < 0.01.
+
 ## Still unknown [U]
 
 - UserCommand +0x14 / +0x18 semantics beyond the gait-change marker, and which DDS input sets the stand mode bytes.

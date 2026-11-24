@@ -35,6 +35,7 @@ calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import threading
 from typing import TYPE_CHECKING, Any, Literal
@@ -54,6 +55,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.robot.deeprobotics.m20.basic_server import USAGE_MODE_NAVIGATION
 from dimos.utils.logging_config import setup_logger
 
 # rl_deploy's basic flat gait, the entry gait rl_control is started on (as rl_deploy accepts it)
@@ -62,6 +64,12 @@ BASIC_FLAT_GAIT = 0x1001
 NavigationTerrain = Literal["flat", "stairs"]
 # rl_deploy's agile navigation gaits, the ones vendor-mode M20Connection walks on (flat 0x3002 NaviFlat, stairs 0x3003)
 NAVIGATION_GAITS: dict[str, int] = {"flat": 0x3002, "stairs": 0x3003}
+
+
+def _gait(status: dict[str, Any]) -> int | None:
+    gait = status.get("gait")
+    return int(gait, 16) if isinstance(gait, str) else None
+
 
 logger = setup_logger()
 
@@ -74,6 +82,8 @@ _PYTHON_ONLY = frozenset(
         "gait_timeout_s",
         "navigation_mode_attempts",
         "control_ready_timeout_s",
+        "vendor_gait_wait_s",
+        "gait_command_attempts",
     }
 )
 
@@ -119,22 +129,38 @@ class M20ControllerConfig(NativeModuleConfig):
     # M20DockDetector publishes from NOS
     charge_manager_toml: str = "/opt/robot/share/charge_manager/config/charge_manager.toml"
     # policy: log the status when the commanded body height moves this far (m); other changes always log
-    status_log_height_step_m: float = Field(default=0.01, gt=0.0)
+    status_log_height_step_m: float = Field(default=0.05, gt=0.0)
+    # standup(): M20Connection's timeouts and tries
+    stand_timeout_s: float = Field(default=12.0, gt=0.0)
+    rl_control_timeout_s: float = Field(default=5.0, gt=0.0)
+    gait_timeout_s: float = Field(default=5.0, gt=0.0)
+    navigation_mode_attempts: int = Field(default=3, ge=1)
+    control_ready_timeout_s: float = Field(default=15.0, gt=0.0)
+    vendor_gait_wait_s: float = Field(default=3.0, gt=0.0)
+    gait_command_attempts: int = Field(default=2, ge=1)
 
     def to_config_dict(self) -> dict[str, Any]:
-        # navigation_terrain is the Python RPCs' alone; the native struct rejects unknown fields
-        return {k: v for k, v in super().to_config_dict().items() if k != "navigation_terrain"}
+        # the Python RPCs' fields; the native struct rejects unknown fields
+        return {k: v for k, v in super().to_config_dict().items() if k not in _PYTHON_ONLY}
 
 
-class M20Controller(NativeModule):
-    """Joint state (1 kHz, URDF names), joint commands, both battery packs and, with the policy on, walking on cmd_vel."""
+class M20ControllerApi:
+    """The ports and RPCs of the controller, over `_send` / `_watch` (the native process's topics, or the service's)."""
 
-    config: M20ControllerConfig
+    config: Any
+
+    def _send(self, port: str, msg: Any) -> None:
+        raise NotImplementedError
+
+    def _watch(self, port: str, callback: Callable[[Any], None]) -> Callable[[], None]:
+        raise NotImplementedError
 
     cmd_vel: In[Twist]
     imu: In[Imu]
     motion_cmd: In[String]
     gait_cmd: In[UInt32]
+    # basic_server's usage mode: 0 regular, 1 navigation (cmd_vel is obeyed in 1 and 2), 2 assist
+    usage_mode: In[UInt32]
     dock_pose: In[PoseStamped]
     dock_cmd: In[String]
     dock_obstacle: In[Float32]
@@ -156,28 +182,21 @@ class M20Controller(NativeModule):
         self._dock_state: dict[str, Any] = {}
         self._status: dict[str, Any] = {}
         self._battery: dict[str, dict[str, Any]] = {}
-        self._navigate_once_walking: int | None = None
         self._state_lock = threading.Lock()
+        self._status_changed = threading.Condition(self._state_lock)
         # before the native process starts: it publishes the state only when it changes, so its first one would be missed
         self.register_disposable(
             Disposable(self._watch("controller_state", self._on_controller_state))
         )
         self.register_disposable(Disposable(self._watch("dock_state", self._on_dock_state)))
         self.register_disposable(
-            Disposable(self._watch("controller_report", self._on_controller_status))
+            Disposable(self._watch("controller_report", self._on_controller_report))
         )
         for name in ("battery", "battery_left", "battery_right"):
             self.register_disposable(
                 Disposable(self._watch(name, lambda msg, name=name: self._on_battery(name, msg)))
             )
-        super().start()
-
-    def _watch(self, port: str, callback: Any) -> Any:
-        # an Out's own subscribe() sees only this process's publishes; the native publishes on the transport
-        transport = getattr(getattr(self, port), "_transport", None)
-        if transport is None:
-            return lambda: None
-        return transport.subscribe(callback)
+        super().start()  # type: ignore[misc]
 
     def _on_dock_state(self, msg: String) -> None:
         try:
@@ -188,14 +207,15 @@ class M20Controller(NativeModule):
         with self._state_lock:
             self._dock_state = state
 
-    def _on_controller_status(self, msg: String) -> None:
+    def _on_controller_report(self, msg: String) -> None:
         try:
             status = json.loads(msg.data)
         except json.JSONDecodeError:
-            logger.warning(f"M20 controller_status is not JSON: {msg.data!r}")
+            logger.warning(f"M20 controller_report is not JSON: {msg.data!r}")
             return
         with self._state_lock:
             self._status = status
+            self._status_changed.notify_all()
 
     def _on_battery(self, name: str, msg: BatteryState) -> None:
         reading = {
@@ -211,29 +231,107 @@ class M20Controller(NativeModule):
     def _on_controller_state(self, msg: String) -> None:
         with self._state_lock:
             self._state = msg.data
-            gait, walking = self._navigate_once_walking, msg.data == "RlControl"
-            if walking:
-                self._navigate_once_walking = None
-        # the state machine holds a gait change until rl_control's stand-in is over, as rl_deploy does
-        if walking and gait is not None:
-            self.gait_cmd.transport.publish(UInt32(gait))
+
+    def _wait_status(self, ready: Callable[[dict[str, Any]], bool], timeout_s: float) -> bool:
+        with self._status_changed:
+            return self._status_changed.wait_for(lambda: ready(self._status), timeout=timeout_s)
+
+    def _holds(self, condition: Callable[[dict[str, Any]], bool], duration_s: float) -> bool:
+        with self._status_changed:
+            self._status_changed.wait_for(lambda: not condition(self._status), timeout=duration_s)
+            return condition(self._status)
+
+    def _ensure_rl_control(self) -> bool:
+        with self._state_lock:
+            state = self._status.get("state")
+        if state == "RlControl":
+            return True
+        if state != "StandUp":
+            self._send("motion_cmd", String("stand"))
+            if not self._wait_status(
+                lambda s: s.get("state") == "StandUp", self.config.stand_timeout_s
+            ):
+                logger.error("M20 did not confirm Stand before the transition timeout")
+                return False
+        self._send("motion_cmd", String("rl_control"))
+        if not self._wait_status(
+            lambda s: s.get("state") == "RlControl", self.config.rl_control_timeout_s
+        ):
+            logger.error("M20 did not confirm RL Control after standing")
+            return False
+        return True
+
+    def _set_gait_and_wait(self, gait: int) -> bool:
+        for _ in range(self.config.gait_command_attempts):
+            self._send("gait_cmd", UInt32(gait))
+            if self._wait_status(lambda s: _gait(s) == gait, self.config.gait_timeout_s):
+                return True
+        return False
 
     @rpc
     def standup(self) -> bool:
-        """Stand up, enter rl_control on the entry gait, then switch to the navigation terrain's agile gait (as vendor-mode M20Connection does)."""
+        """M20Connection.standup() on this controller: stand, RL control, usage mode navigation, confirm 0x1001, then the navigation terrain's agile gait."""
+        if self._refuse_while_charging("standup"):
+            return False
         with self._state_lock:
-            self._navigate_once_walking = NAVIGATION_GAITS[self.config.navigation_terrain]
-        self.gait_cmd.transport.publish(UInt32(self.config.gait))
-        self.motion_cmd.transport.publish(String("rl_control"))
+            was_walking = self._status.get("state") == "RlControl"
+        if not self._ensure_rl_control():
+            return False
+        gait = NAVIGATION_GAITS[self.config.navigation_terrain]
+        attempts = self.config.navigation_mode_attempts
+
+        def navigating(s: dict[str, Any]) -> bool:
+            return s.get("usage_mode") == USAGE_MODE_NAVIGATION
+
+        if not was_walking:
+            # the stand resets the mode and gait (basic_server's SetMotionState)
+            self._wait_status(
+                lambda s: _gait(s) == BASIC_FLAT_GAIT, self.config.vendor_gait_wait_s * attempts
+            )
+        for attempt in range(1, attempts + 1):
+            self._send("usage_mode", UInt32(USAGE_MODE_NAVIGATION))
+            self._wait_status(navigating, self.config.vendor_gait_wait_s)
+            if not self._set_gait_and_wait(BASIC_FLAT_GAIT):
+                logger.error("M20 did not confirm the Basic gait")
+                return False
+            if not self._set_gait_and_wait(gait):
+                logger.error(
+                    f"M20 did not confirm the agile {self.config.navigation_terrain} navigation gait"
+                )
+                return False
+            if self._holds(
+                lambda s: _gait(s) == gait and navigating(s), self.config.vendor_gait_wait_s
+            ):
+                break
+            if attempt == attempts:
+                logger.error(
+                    f"M20 dropped navigation mode {attempts} times right after accepting it"
+                )
+                return False
+            logger.warning("M20 dropped navigation mode, sending it again")
+        if not self._wait_status(
+            lambda s: bool(s.get("ready")), self.config.control_ready_timeout_s
+        ):
+            logger.error("M20 robot control path did not become ready")
+            return False
+        return True
+
+    @rpc
+    def set_usage_mode(self, mode: int) -> bool:
+        """basic_server's control usage mode: 0 regular (cmd_vel ignored, gait 0x1001), 1 navigation, 2 assist (gait 0x1001)."""
+        if mode not in (0, 1, 2):
+            logger.error(f"unsupported M20 usage mode: {mode}")
+            return False
+        self._send("usage_mode", UInt32(mode))
         return True
 
     @rpc
     def liedown(self) -> bool:
         """Zero the velocity and lie down."""
-        with self._state_lock:
-            self._navigate_once_walking = None
+        if self._refuse_while_charging("liedown"):
+            return False
         self.stop_movement()
-        self.motion_cmd.transport.publish(String("lie_down"))
+        self._send("motion_cmd", String("lie_down"))
         return True
 
     @rpc
@@ -250,14 +348,14 @@ class M20Controller(NativeModule):
     def passive(self) -> bool:
         """Go limp (no gains), from any state."""
         self.stop_movement()
-        self.motion_cmd.transport.publish(String("passive"))
+        self._send("motion_cmd", String("passive"))
         return True
 
     @rpc
     def damp(self) -> bool:
         """Joint damping: the legs sink slowly instead of holding (rl_deploy's fault response)."""
         self.stop_movement()
-        self.motion_cmd.transport.publish(String("joint_damping"))
+        self._send("motion_cmd", String("joint_damping"))
         return True
 
     @rpc
@@ -267,18 +365,34 @@ class M20Controller(NativeModule):
         if gait is None:
             logger.error(f"unsupported M20 navigation terrain: {terrain}")
             return False
+        if self._refuse_while_charging("set_navigation_terrain"):
+            return False
         self.config.navigation_terrain = terrain
         with self._state_lock:
-            walking = self._state == "RlControl"
-        if walking:
-            self.stop_movement()
-            self.gait_cmd.transport.publish(UInt32(gait))
+            walking = self._status.get("state") == "RlControl"
+        if not walking:
+            return True
+        self.stop_movement()
+        return self._set_gait_and_wait(gait)
+
+    def _charge_busy(self) -> bool:
+        with self._state_lock:
+            dock = dict(self._dock_state)
+        return bool(dock.get("active") or dock.get("charging")) or dock.get("phase") not in (
+            None,
+            "Idle",
+        )
+
+    def _refuse_while_charging(self, action: str) -> bool:
+        if not self._charge_busy():
+            return False
+        logger.warning(f"M20 refused {action} while docking or on the dock")
         return True
 
     @rpc
     def stop_movement(self) -> None:
         """Publish a zero velocity now (later commands still move it)."""
-        self.cmd_vel.transport.publish(Twist.zero())
+        self._send("cmd_vel", Twist.zero())
 
     @rpc
     def controller_status(self) -> str:
@@ -288,7 +402,7 @@ class M20Controller(NativeModule):
 
     @rpc
     def status(self) -> dict[str, Any]:
-        """controller_status (state, fault, gait, runner, heights) plus dock_state and the batteries; {} fields before the first."""
+        """controller_report (state, fault, gait, runner, heights) plus dock_state and the batteries; {} fields before the first."""
         with self._state_lock:
             out = dict(self._status)
             out["dock"] = dict(self._dock_state)
@@ -314,13 +428,13 @@ class M20Controller(NativeModule):
         if not self._can_sequence("dock"):
             return False
         with self._state_lock:
-            state, self._navigate_once_walking = self._state, None
+            state = self._state
         if state != "RlControl":
             logger.error(
                 f"M20 dock: needs the robot standing in rl_control (controller state {state!r})"
             )
             return False
-        self.dock_cmd.transport.publish(String("dock"))
+        self._send("dock_cmd", String("dock"))
         return True
 
     @rpc
@@ -330,15 +444,13 @@ class M20Controller(NativeModule):
         was sent."""
         if not self._can_sequence("undock"):
             return False
-        with self._state_lock:
-            self._navigate_once_walking = None
-        self.dock_cmd.transport.publish(String("undock"))
+        self._send("dock_cmd", String("undock"))
         return True
 
     @rpc
     def cancel_dock(self) -> bool:
         """Stop a dock / undock where it is (zero velocity; lying stays lying)."""
-        self.dock_cmd.transport.publish(String("cancel"))
+        self._send("dock_cmd", String("cancel"))
         return True
 
     @rpc
@@ -347,6 +459,22 @@ class M20Controller(NativeModule):
         packs_charge_mos_on, retries, fine_point ({} before the controller has published one)."""
         with self._state_lock:
             return dict(self._dock_state)
+
+
+class M20Controller(M20ControllerApi, NativeModule):
+    """Joint state (1 kHz, URDF names), joint commands, both battery packs and, with the policy on, walking on cmd_vel."""
+
+    config: M20ControllerConfig
+
+    def _send(self, port: str, msg: Any) -> None:
+        getattr(self, port).transport.publish(msg)
+
+    def _watch(self, port: str, callback: Callable[[Any], None]) -> Callable[[], None]:
+        # an Out's own subscribe() sees only this process's publishes; the native publishes on the transport
+        transport = getattr(getattr(self, port), "_transport", None)
+        if transport is None:
+            return lambda: None
+        return transport.subscribe(callback)  # type: ignore[no-any-return]
 
 
 if TYPE_CHECKING:

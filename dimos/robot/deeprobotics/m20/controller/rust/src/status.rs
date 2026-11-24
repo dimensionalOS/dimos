@@ -42,11 +42,13 @@ pub struct ControllerStatus {
     /// the commanded velocity (m/s, m/s, rad/s) after the command timeout, or the normalized axes when none
     pub velocity: [f64; 3],
     /// base_link above the wheels' contact from the measured joints (m; leg FK, mean of the legs)
-    pub body_height_m: f64,
+    pub height_incl_wheel_m: f64,
     /// each leg's hip above its wheel axle from the measured joints (m; FL, FR, HL, HR)
-    pub leg_heights_m: [f64; 4],
+    pub leg_hip_to_axle_m: [f64; 4],
     /// the same from the commanded joint targets (m); none while no leg holds a position (kp 0)
-    pub commanded_body_height_m: Option<f64>,
+    pub commanded_height_incl_wheel_m: Option<f64>,
+    /// basic_server's usage mode (0 regular, 1 navigation, 2 assist)
+    pub usage_mode: i32,
     pub dock_phase: Option<String>,
     pub dock_active: bool,
     pub charging: bool,
@@ -62,7 +64,12 @@ pub fn leg_heights(cfg: &Config, q: &[f64; JOINTS]) -> [f64; 4] {
 }
 
 impl ControllerStatus {
-    pub fn of(cfg: &Config, tick: &Tick, dock: Option<&DockStatus>) -> ControllerStatus {
+    pub fn of(
+        cfg: &Config,
+        tick: &Tick,
+        dock: Option<&DockStatus>,
+        usage_mode: i32,
+    ) -> ControllerStatus {
         let c = tick.controller;
         let wheel = cfg.dock.obstacle.wheel_radius_m;
         let holds = (0..JOINTS).any(|i| i % 4 != 3 && tick.command.kp[i] > 0.0);
@@ -84,10 +91,11 @@ impl ControllerStatus {
                 .flatten(),
             stand_in: c.in_stand_in(),
             velocity: tick.user.velocity.unwrap_or(tick.user.axes),
-            body_height_m: round(obstacle::body_height(&cfg.robot, &tick.state.q, wheel)),
-            leg_heights_m: leg_heights(cfg, &tick.state.q).map(round),
-            commanded_body_height_m: holds
+            height_incl_wheel_m: round(obstacle::body_height(&cfg.robot, &tick.state.q, wheel)),
+            leg_hip_to_axle_m: leg_heights(cfg, &tick.state.q).map(round),
+            commanded_height_incl_wheel_m: holds
                 .then(|| round(obstacle::body_height(&cfg.robot, &tick.command.q, wheel))),
+            usage_mode,
             dock_phase: dock.map(|d| format!("{:?}", d.phase)),
             dock_active: dock.is_some_and(|d| d.active),
             charging: dock.is_some_and(|d| d.charging),
@@ -104,7 +112,12 @@ impl ControllerStatus {
             &self.gait,
             &self.runner,
             self.stand_in,
-            (&self.dock_phase, self.dock_active, self.charging),
+            (
+                &self.dock_phase,
+                self.dock_active,
+                self.charging,
+                self.usage_mode,
+            ),
         )
     }
 }
@@ -128,8 +141,10 @@ impl StatusLog {
         let log = match &self.last {
             None => true,
             Some(last) => {
-                let height_moved = match (last.commanded_body_height_m, now.commanded_body_height_m)
-                {
+                let height_moved = match (
+                    last.commanded_height_incl_wheel_m,
+                    now.commanded_height_incl_wheel_m,
+                ) {
                     (Some(a), Some(b)) => (a - b).abs() >= self.height_step_m,
                     (a, b) => a.is_some() != b.is_some(),
                 };
@@ -192,7 +207,7 @@ mod tests {
                 controller: &c,
                 stats: &stats,
             };
-            let now = ControllerStatus::of(&cfg, &tick, None);
+            let now = ControllerStatus::of(&cfg, &tick, None, 0);
             if log.changed(&now) {
                 logged.push(now);
             }
@@ -202,7 +217,7 @@ mod tests {
         assert_eq!(logged[0].target, "Stand");
         let heights: Vec<f64> = logged
             .iter()
-            .filter_map(|l| l.commanded_body_height_m)
+            .filter_map(|l| l.commanded_height_incl_wheel_m)
             .collect();
         // the IK height 0.38 plus the wheel radius, reached at the end
         let last = *heights.last().unwrap();
@@ -229,9 +244,10 @@ mod tests {
             runner: Some("basic_flat".into()),
             stand_in: false,
             velocity: [0.0; 3],
-            body_height_m: 0.45,
-            leg_heights_m: [0.38; 4],
-            commanded_body_height_m: Some(0.45),
+            height_incl_wheel_m: 0.45,
+            leg_hip_to_axle_m: [0.38; 4],
+            commanded_height_incl_wheel_m: Some(0.45),
+            usage_mode: 0,
             dock_phase: None,
             dock_active: false,
             charging: false,
@@ -240,7 +256,7 @@ mod tests {
         assert!(log.changed(&base));
         let mut moving = base.clone();
         moving.velocity = [0.5, 0.0, 0.0];
-        moving.commanded_body_height_m = Some(0.455);
+        moving.commanded_height_incl_wheel_m = Some(0.455);
         assert!(
             !log.changed(&moving),
             "velocity and a small height change are not"
@@ -252,7 +268,7 @@ mod tests {
         runner.runner = Some("navi_flat".into());
         assert!(log.changed(&runner));
         let mut lower = runner.clone();
-        lower.commanded_body_height_m = Some(0.43);
+        lower.commanded_height_incl_wheel_m = Some(0.43);
         assert!(log.changed(&lower));
     }
 }

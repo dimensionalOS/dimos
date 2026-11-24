@@ -96,6 +96,9 @@ pub struct UserCommand {
     /// (velocity-only commands keep it), which is what cancels a docking sequence
     #[serde(default)]
     pub motion_seq: u64,
+    /// counts gait commands: a gait sent again (same code) is a new write into rl_deploy's gait slot
+    #[serde(default)]
+    pub gait_seq: u64,
 }
 
 pub fn rotation(q: &[f64; 4]) -> [[f64; 3]; 3] {

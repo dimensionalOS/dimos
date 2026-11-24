@@ -132,6 +132,9 @@ entry_gaits = [0x1001, 0x3001, 0x3004, 0xf003]
 entry_fallback_gait = 0x1001
 # runner for gait codes no runner lists (rl_deploy's default branch)
 fallback_runner = "basic_flat"
+# update_policy_ptr (0x179960): the gait switches only while |vx| + |vy| + |wz| of the normalized command is below
+# DAT_001e1ba8; until then the new gait waits in the UserCommand
+switch_below_speed = 0.01
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner

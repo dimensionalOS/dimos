@@ -389,7 +389,10 @@ pub struct Controller {
     /// rl_deploy's accelerometer mean over the last 20 rl_control ticks (kept across rl_control entries)
     accel_average: crate::types::AccelAverage,
     gait: u32,
-    entry_raw_gait: u32,
+    /// rl_deploy's UserCommand gait slot (UC+0x10): a gait write lands in it, a stand-in overwrites it
+    target_gait: u32,
+    /// the last gait write seen (value, gait_seq): a change of either is a new write
+    seen_gait: (u32, u64),
     runner: Option<String>,
     runner_gains: BTreeMap<String, ([f64; JOINTS], [f64; JOINTS])>,
     targets: Option<Targets>,
@@ -437,7 +440,8 @@ impl Controller {
             rl_entries: 0,
             stand_in: None,
             gait: 0,
-            entry_raw_gait: 0,
+            target_gait: 0,
+            seen_gait: (0, 0),
             accel_average: Default::default(),
             runner: None,
             runner_gains,
@@ -618,7 +622,7 @@ impl Controller {
         };
         if next == State::RlControl {
             let rl = &self.cfg.states.rl_control;
-            self.entry_raw_gait = cmd.gait;
+            self.seen_gait = (cmd.gait, cmd.gait_seq);
             self.gait = if rl.entry_gaits.contains(&cmd.gait) {
                 cmd.gait
             } else {
@@ -628,6 +632,7 @@ impl Controller {
             self.entry_pending = true;
             self.targets = None;
             self.targets_runner = None;
+            self.target_gait = self.gait;
             self.start_stand_in(self.gait, true);
             self.rl_entries += 1;
         }
@@ -910,9 +915,11 @@ impl Controller {
         cmd: &UserCommand,
         policy: &mut dyn PolicyService,
     ) -> JointCommand {
+        let write = (cmd.gait, cmd.gait_seq) != self.seen_gait;
+        self.seen_gait = (cmd.gait, cmd.gait_seq);
         let (wanted, params) = match &mut self.stand_in {
             Some(si) => {
-                // a stand-in runs as rl_deploy's gait 0xf001
+                // runs as gait 0xf001, written over the gait slot: a gait sent meanwhile is lost (update_policy_ptr)
                 let mut params = si.params().clone();
                 params.insert("gait".into(), 0xf001 as f64);
                 let out = (si.spec.runner.clone(), params);
@@ -923,17 +930,17 @@ impl Controller {
                 out
             }
             None => {
-                // a gait change after entry (rl_deploy's gait-change marker) is followed as is
-                // (a change of the commanded gait since the last one: switching back to the entry gait counts)
-                let gait = if cmd.gait != self.entry_raw_gait {
-                    self.entry_raw_gait = cmd.gait;
-                    cmd.gait
-                } else {
-                    self.gait
-                };
-                if gait != self.gait {
-                    self.gait = gait;
-                    self.start_stand_in(gait, false);
+                if write {
+                    self.target_gait = cmd.gait;
+                }
+                // update_policy_ptr switches only while |vx| + |vy| + |wz| < 0.01 (normalized); else the gait waits
+                let runner = self.runner.clone().unwrap_or_default();
+                let speed: f64 = self.axes_for(&runner, cmd).iter().map(|a| a.abs()).sum();
+                if self.target_gait != self.gait
+                    && speed < self.cfg.states.rl_control.switch_below_speed
+                {
+                    self.gait = self.target_gait;
+                    self.start_stand_in(self.gait, false);
                 }
                 // a forced runner the config does not have is ignored (the gait's runner runs)
                 let name = cmd
@@ -1076,6 +1083,109 @@ mod tests {
         // the gait's runner ran (and, with no networks loaded, failed into a policy fault)
         assert_eq!(c.state, State::JointDamping);
         assert!(c.fault.as_deref().is_some_and(|f| f.starts_with("policy")));
+    }
+
+    /// Answers every request with the pose held (no networks), so rl_control runs without policies.
+    struct HoldPolicy(Option<PolicyRequest>);
+
+    impl PolicyService for HoldPolicy {
+        fn offer(&mut self, request: PolicyRequest) -> bool {
+            self.0 = Some(request);
+            true
+        }
+        fn take_result(&mut self) -> Option<crate::policy::PolicyResult> {
+            self.0.take().map(|r| crate::policy::PolicyResult {
+                runner: r.runner,
+                seq: r.seq,
+                targets: Ok(Targets {
+                    q: r.state.q,
+                    wheel_velocity: [0.0; 4],
+                    action: [0.0; JOINTS],
+                    velocity_estimate: None,
+                }),
+                gain_scale: 1.0,
+                inference_s: 0.0,
+            })
+        }
+        fn dropped(&self) -> u64 {
+            0
+        }
+    }
+
+    /// rl_control entered on 0x1001, run `ticks` with `cmd`, varying the joints so no frozen-motor fault.
+    fn run(
+        c: &mut Controller,
+        s: &mut RobotState,
+        cmd: &UserCommand,
+        ticks: usize,
+        p: &mut HoldPolicy,
+    ) {
+        for _ in 0..ticks {
+            s.stamp += 0.001;
+            s.tau = [s.stamp; JOINTS];
+            c.tick(s, cmd, p);
+        }
+    }
+
+    #[test]
+    fn a_gait_sent_during_the_stand_in_is_lost_and_a_resend_switches() {
+        let cfg = config();
+        let mut s = standing_state(&cfg);
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let mut p = HoldPolicy(None);
+        let mut cmd = UserCommand {
+            target: Target::RlControl,
+            gait: 0x1001,
+            ..Default::default()
+        };
+        c.force(State::RlControl, &s, &cmd, false);
+        c.stand_in = None;
+        c.start_stand_in(0x1001, true);
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        assert!(c.in_stand_in());
+        // M20Connection's first 0x3003, while the stand-in runs
+        cmd.gait = 0x3003;
+        cmd.gait_seq = 1;
+        run(&mut c, &mut s, &cmd, 4000, &mut p);
+        assert!(!c.in_stand_in());
+        assert_eq!(c.gait(), 0x1001, "lost: basic_flat after the stand-in");
+        assert_eq!(c.current_runner(), Some("basic_flat"));
+        // its resend of the same code switches
+        cmd.gait_seq = 2;
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        assert_eq!(c.gait(), 0x3003);
+        assert_eq!(c.current_runner(), Some("basic_stair"));
+    }
+
+    #[test]
+    fn a_gait_switch_waits_until_the_command_is_still() {
+        let cfg = config();
+        let mut s = standing_state(&cfg);
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let mut p = HoldPolicy(None);
+        let mut cmd = UserCommand {
+            target: Target::RlControl,
+            gait: 0x3003,
+            axes: [0.3, 0.0, 0.0],
+            ..Default::default()
+        };
+        c.force(State::RlControl, &s, &cmd, false);
+        c.stand_in = None;
+        c.gait = 0x3003;
+        c.target_gait = 0x3003;
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        cmd.gait = 0x3002;
+        cmd.gait_seq = 1;
+        run(&mut c, &mut s, &cmd, 500, &mut p);
+        assert_eq!(c.gait(), 0x3003, "moving: the switch waits");
+        cmd.axes = [0.008, 0.0, -0.004];
+        run(&mut c, &mut s, &cmd, 1, &mut p);
+        assert_eq!(c.gait(), 0x3003, "0.012: still moving");
+        cmd.axes = [0.005, 0.0, -0.004];
+        run(&mut c, &mut s, &cmd, 1, &mut p);
+        assert_eq!(c.gait(), 0x3002);
     }
 
     #[test]
