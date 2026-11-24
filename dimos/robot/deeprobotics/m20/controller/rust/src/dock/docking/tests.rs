@@ -618,3 +618,34 @@ fn an_undock_no_dock_this_run_set_restores_robot_commander_s_initial_gait() {
         "backed off {out_m:.3} m, goal {goal} m"
     );
 }
+
+#[test]
+fn an_undock_during_the_approach_ends_the_dock_in_idle() {
+    // goToPileAction's loop runs while the command is 1: an undock (0) ends it (INITNULL), Start sets 2, idle
+    let cfg = cfg();
+    let v = vendor();
+    let mut k = Docking::new(&cfg, true, Some(&v));
+    let view = standing("navi_charge");
+    k.request(Request::Dock, &view).unwrap();
+    let mut seq = 0;
+    run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+    assert_eq!(k.phase(), Phase::Approach);
+    k.record_writes();
+    assert!(k.request(Request::Undock, &view).is_ok());
+    assert_eq!(k.phase(), Phase::Idle);
+    assert!(!k.status().error);
+    // no motion written: the robot stays as it is (the caller stands it for navigation)
+    assert!(k
+        .take_writes()
+        .iter()
+        .all(|(_, w)| !matches!(w, Write::MotionState(_))));
+}
+
+#[test]
+fn the_nochargeplug_error_reports_charge_manager_s_error_state() {
+    let mut b = Boot::new();
+    b.run(30_000, Some(docked(0.001, 0.001)), u64::MAX);
+    assert!(b.k.status().no_plug);
+    assert_eq!(crate::basic_server::charger_state_of(b.k.status()), 4);
+    assert!(b.k.request(Request::Undock, &lying()).is_ok());
+}

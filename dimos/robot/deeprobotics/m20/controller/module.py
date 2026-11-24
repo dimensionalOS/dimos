@@ -431,8 +431,19 @@ class M20ControllerApi:
 
     @rpc
     def stop_movement(self) -> None:
-        """Publish a zero velocity now (later commands still move it)."""
-        self._send("cmd_vel", Twist.zero())
+        """M20Connection.stop_movement(): a zero velocity, or a dock under way cancelled (charge command 0)."""
+        with self._state_lock:
+            docking = self._charge_job == "dock" or self._charger() == CHARGE_ENTERING
+        if docking:
+            logger.info("M20 stop_movement cancels docking")
+            with self._status_changed:
+                self._charge_job = None
+                self._status_changed.notify_all()
+            self._send("dock_cmd", String("undock"))
+        elif self._charge_busy():
+            logger.info("M20 stop_movement left the robot to the docking sequence")
+        else:
+            self._send("cmd_vel", Twist.zero())
 
     @rpc
     def controller_status(self) -> str:

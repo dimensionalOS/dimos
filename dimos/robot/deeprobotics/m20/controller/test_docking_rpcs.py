@@ -119,3 +119,23 @@ def test_velocity_while_on_the_dock_cancels_the_goal(fake) -> None:
         cb(None)
         cb(None)
     assert len(fake.goals) == 1
+
+
+def test_stop_movement_cancels_a_dock_under_way(fake) -> None:
+    fake.report(1)
+    fake.stop_movement()
+    assert [(p, m.data) for p, m in fake.sent] == [("dock_cmd", "undock")]
+
+
+def test_stop_movement_off_the_dock_is_a_zero_velocity(fake) -> None:
+    fake.report(0)
+    fake.stop_movement()
+    assert [p for p, _ in fake.sent] == ["cmd_vel"]
+
+
+def test_undock_from_the_nochargeplug_error_leaves_the_dock(fake) -> None:
+    fake.report(4)
+    fake.on_dock_cmd = lambda cmd: [3, 3, 0] if cmd == "undock" else []
+    fake.undock()
+    assert ("dock_cmd", "undock") in [(p, m.data) for p, m in fake.sent]
+    FakeController.standup.assert_called_once()  # type: ignore[attr-defined]

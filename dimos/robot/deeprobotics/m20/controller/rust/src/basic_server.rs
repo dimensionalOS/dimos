@@ -52,6 +52,8 @@ pub fn charger_state_of(status: &DockStatus) -> i32 {
         Phase::Charging if status.charging => 2,
         Phase::Charging => 5,
         Phase::StandUp | Phase::BackOff | Phase::Restore => 3,
+        // charge_manager's error state (NOCHARGEPLUG): an undock (command 0) leaves it, where idle ignores one
+        Phase::Idle if status.no_plug => 4,
         Phase::Idle => 0,
         _ if status.active => 1,
         _ => 0,

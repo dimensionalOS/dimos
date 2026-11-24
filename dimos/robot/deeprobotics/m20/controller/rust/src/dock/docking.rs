@@ -239,6 +239,8 @@ pub struct Status {
     pub obstacle_stop: Option<f32>,
     /// charge_manager.toml is read
     pub vendor_config: bool,
+    /// charge_manager's error state with NOCHARGEPLUG (0x1007)
+    pub no_plug: bool,
 }
 
 /// What charge_manager does once its detector process's service calls return.
@@ -413,6 +415,7 @@ impl Docking {
                 obstacle: None,
                 obstacle_stop: None,
                 vendor_config: false,
+                no_plug: false,
             },
             seq,
         };
@@ -930,6 +933,23 @@ impl Docking {
                 if self.core.is_none() {
                     return Err("charge_manager.toml is not read yet".into());
                 }
+                if self.active() && self.phase != Phase::Charging {
+                    if self.undocking() {
+                        return Err(format!("an undock is under way ({:?})", self.phase));
+                    }
+                    if matches!(
+                        self.phase,
+                        Phase::SitHold | Phase::LyingDown | Phase::ConfirmCharge
+                    ) {
+                        // past SitDown goToPileAction checks only command 2: the charge check runs, then the undock
+                        self.undock_pending = true;
+                        return Ok(());
+                    }
+                    // goToPileAction's loop runs while the command is 1: it ends (INITNULL), Start sets 2, idle
+                    let target = self.target;
+                    self.finish(target, "DoChargeTaskRet status to INITNULL", false);
+                    return Ok(());
+                }
                 let charging_now = self.charge.is_some_and(|r| self.charged(&r));
                 let allowed = self.phase == Phase::Charging
                     || (!self.active() && (self.failed || charging_now));
@@ -947,6 +967,20 @@ impl Docking {
                 self.undock_pending = true;
                 Ok(())
             }
+        }
+    }
+
+    /// An undock (or a give-up's back-off) under way, not a dock.
+    fn undocking(&self) -> bool {
+        match self.phase {
+            Phase::StandUp | Phase::BackOff | Phase::Restore => true,
+            Phase::Restart => self.resume == Phase::BackOff,
+            Phase::DetectorCall => !matches!(
+                self.calls_then,
+                Some(AfterCalls::Charging) | Some(AfterCalls::FindTarget(Next::Dock))
+            ),
+            Phase::FindTarget | Phase::OpenObstacle => self.next != Next::Dock,
+            _ => false,
         }
     }
 
@@ -1122,12 +1156,14 @@ impl Docking {
         self.tick += 1;
         self.charge_enable_now = None;
         if self.undock_pending
-            && (self.phase != Phase::Charging || self.tick >= self.charge_sleep_until)
+            && ((self.phase == Phase::Charging && self.tick >= self.charge_sleep_until)
+                || self.phase == Phase::Idle)
         {
             self.start_undock(view);
         }
         self.idle_step(view);
         self.status.phase = self.phase;
+        self.status.no_plug = self.no_plug;
         self.status.active = self.active();
         self.status.obstacle = if self.obstacle_open {
             self.core.as_ref().map(|c| c.direction)
@@ -1195,6 +1231,15 @@ impl Docking {
                                     z: self.seq.sit_z,
                                     ..Default::default()
                                 });
+                                if self.undock_pending {
+                                    // an undock during the charge check: the retry's loop ends at once (INITNULL), idle
+                                    let target = self.target;
+                                    return self.finish(
+                                        target,
+                                        "DoChargeTaskRet status to INITNULL",
+                                        false,
+                                    );
+                                }
                             }
                             self.woke_at_us = self.now_us();
                             self.set_phase(Phase::Approach);
