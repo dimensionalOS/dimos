@@ -167,7 +167,6 @@ def test_stream_periods_override_type_periods_over_the_default_period(tmp_path: 
         "post_s",
         "segment_s",
         "sync_s",
-        "max_clip_s",
         "max_window_mib",
         "trigger",
         "periods",

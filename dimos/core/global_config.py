@@ -78,7 +78,7 @@ class GlobalConfig(BaseSettings):
     record_window_dir: str = str(
         Path("/dev/shm" if sys.platform == "linux" else tempfile.gettempdir()) / "dimos-recorder"
     )
-    # Most event window data (MiB) waiting to be stored before the oldest segment is stored thinned.
+    # Most event window data (MiB) waiting to be stored before the oldest segment is stored early.
     record_window_mib: float = Field(default=2048.0, gt=0)
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"

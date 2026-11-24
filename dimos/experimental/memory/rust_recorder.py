@@ -149,15 +149,10 @@ class RustEventConfig(BaseModel):
         gt=0,
         description="Seconds between syncs of the open segment, the most a power loss loses.",
     )
-    max_clip_s: float = Field(
-        default=600.0,
-        gt=0,
-        description="Longest a clip may grow when overlapping triggers extend it.",
-    )
     max_window_mib: float = Field(
         default=2048.0,
         gt=0,
-        description="Most window data waiting to be stored before the oldest segment is stored thinned.",
+        description="Most window data waiting to be stored before the oldest segment is stored early.",
     )
     trigger: Literal["clip_that"] = "clip_that"
     default_period: _Period = Field(

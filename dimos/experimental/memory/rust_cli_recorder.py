@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import threading
@@ -240,6 +241,7 @@ class RustRecordingSession:
         self._failure: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
+        self._window: Path | None = None
 
     def start(self) -> None:
         executable = prepare_rust_recorder()
@@ -264,6 +266,9 @@ class RustRecordingSession:
         }
         if self.plan.lcm_url is not None:
             env["LCM_DEFAULT_URL"] = self.plan.lcm_url
+        if isinstance(self.plan.mode, RustEventConfig):
+            window = Path(self.plan.mode.window_dir)
+            self._window = None if window.exists() else window
         self._process = subprocess.Popen(
             [executable],
             env=env,
@@ -348,4 +353,10 @@ class RustRecordingSession:
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if process.returncode not in (None, 0):
             logger.warning("Rust recorder stopped with an error", status=process.returncode)
+        if self._window is not None and self._window.exists():
+            logger.warning(
+                "Discarding the event window the Rust recorder left behind",
+                window_dir=str(self._window),
+            )
+            shutil.rmtree(self._window, ignore_errors=True)
         self._process = None

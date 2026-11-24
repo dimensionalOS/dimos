@@ -40,7 +40,6 @@ const BYTES_PER_MIB: f64 = (1 << 20) as f64;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
-#[validate(schema(function = "clip_covers_window"))]
 pub struct EventConfig {
     pub window_dir: PathBuf,
     #[validate(range(min = 0.0))]
@@ -51,8 +50,6 @@ pub struct EventConfig {
     pub segment_s: f64,
     #[validate(range(exclusive_min = 0.0))]
     pub sync_s: f64,
-    #[validate(range(exclusive_min = 0.0))]
-    pub max_clip_s: f64,
     #[validate(range(exclusive_min = 0.0))]
     pub max_window_mib: f64,
     pub trigger: String,
@@ -75,13 +72,6 @@ impl EventConfig {
         }
         Ok(())
     }
-}
-
-fn clip_covers_window(config: &EventConfig) -> Result<(), ValidationError> {
-    if config.max_clip_s < config.pre_s + config.post_s {
-        return Err(invalid("max_clip_s must cover pre_s + post_s"));
-    }
-    Ok(())
 }
 
 fn nonnegative_periods(periods: &HashMap<String, f64>) -> Result<(), ValidationError> {
@@ -168,7 +158,7 @@ impl EventWriter {
             periods: periods.clone(),
             last_kept: vec![f64::NEG_INFINITY; streams.len()],
             stored: vec![0; streams.len()],
-            clips: Clips::new(config.pre_s, config.post_s, config.max_clip_s),
+            clips: Clips::new(config.pre_s, config.post_s),
             pre_s: config.pre_s,
             max_window_bytes,
             window_bytes: Arc::clone(&window_bytes),
@@ -355,27 +345,23 @@ impl WindowGate {
 struct Clips {
     pre_s: f64,
     post_s: f64,
-    max_clip_s: f64,
     ranges: VecDeque<(f64, f64)>,
 }
 
 impl Clips {
-    fn new(pre_s: f64, post_s: f64, max_clip_s: f64) -> Self {
+    fn new(pre_s: f64, post_s: f64) -> Self {
         Self {
             pre_s,
             post_s,
-            max_clip_s,
             ranges: VecDeque::new(),
         }
     }
 
-    /// Adds `[time - pre_s, time + post_s]`, extending an overlapping clip up to `max_clip_s`.
+    /// Adds `[time - pre_s, time + post_s]`, extending an overlapping clip.
     fn add_trigger(&mut self, time: f64) {
         let (start, end) = (time - self.pre_s, time + self.post_s);
         match self.ranges.back_mut() {
-            Some(last) if start <= last.1 => {
-                last.1 = last.1.max(end).min(last.0 + self.max_clip_s);
-            }
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
             _ => self.ranges.push_back((start, end)),
         }
     }
@@ -405,7 +391,8 @@ struct StoreWriter {
 
 impl StoreWriter {
     /// Stores each segment once no trigger can still reach it, then drains the rest on `Finish`.
-    /// Over `max_window_bytes`, the oldest segments are stored thinned right away.
+    /// Over `max_window_bytes`, the oldest segments are stored right away, before later triggers
+    /// can reach them.
     /// A writer that stops without `Finish` leaves the window behind.
     fn run(mut self, events: Receiver<WindowEvent>) -> Result<()> {
         let mut segments: VecDeque<ClosedSegment> = VecDeque::new();
@@ -433,22 +420,21 @@ impl StoreWriter {
                     warn!(
                         segment = segment.index,
                         window_mib = window_bytes as f64 / BYTES_PER_MIB,
-                        "event window over its cap; storing the oldest segment thinned"
+                        "event window over its cap; storing the oldest segment early"
                     );
                 }
-                self.store_segment(&segment, !over_cap)?;
+                self.store_segment(&segment)?;
             }
         }
         for segment in segments {
-            self.store_segment(&segment, true)?;
+            self.store_segment(&segment)?;
         }
         self.store.finish()?;
         remove_window(&self.dir)
     }
 
     /// Writes the segment's kept observations, makes them durable, then deletes the segment.
-    /// Without `keep_clips`, the whole segment is thinned.
-    fn store_segment(&mut self, segment: &ClosedSegment, keep_clips: bool) -> Result<()> {
+    fn store_segment(&mut self, segment: &ClosedSegment) -> Result<()> {
         let mut batch = Vec::with_capacity(WRITE_BATCH_SIZE);
         let mut records = 0;
         for record in SegmentReader::open(&segment.path)? {
@@ -456,8 +442,7 @@ impl StoreWriter {
             records += 1;
             let stream = usize::from(record.stream);
             let time = record.monotonic_ts;
-            let in_clip = keep_clips && self.clips.covers(time);
-            if !in_clip && time - self.last_kept[stream] < self.periods[stream] {
+            if !self.clips.covers(time) && time - self.last_kept[stream] < self.periods[stream] {
                 continue;
             }
             self.last_kept[stream] = time;
@@ -525,7 +510,6 @@ mod tests {
             post_s: 60.0,
             segment_s: 10.0,
             sync_s: 1.0,
-            max_clip_s: 600.0,
             max_window_mib,
             trigger: "clip_that".to_string(),
             periods: HashMap::from([
@@ -628,14 +612,70 @@ mod tests {
     }
 
     #[test]
-    fn a_window_over_its_cap_stores_its_oldest_segments_thinned() {
+    fn a_window_over_its_cap_stores_segments_early_and_thins_new_data() {
         // A cap below one segment stores every closed segment at once, so only the open one waits.
-        // The window is full from the first few records on, so the clip is thinned too.
+        // The window is full from the first few records on, so the gate thins the clip too.
         let (cloud, odom, clip_that) = record_events(0.0001, 1);
         assert_eq!(cloud.len(), 400);
         assert!(cloud.windows(2).all(|pair| pair[1] - pair[0] >= 1.0));
         assert_eq!(odom, 3200);
         assert_eq!(clip_that, 1);
+    }
+
+    #[test]
+    fn a_segment_stored_early_over_the_cap_keeps_its_clip() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("memory.db");
+        let streams = vec![stream("cloud")];
+        let store_config = RecordingStoreConfig::Sqlite {
+            path: database.to_string_lossy().into_owned(),
+        };
+        let mut segment = SegmentWriter::create(dir.path(), 0).unwrap();
+        let cloud = Arc::new(streams[0].clone());
+        for &time in &times()[..80] {
+            let observation = Observation {
+                stream: Arc::clone(&cloud),
+                source_ts: time,
+                reception_ts: time,
+                monotonic_ts: time,
+                data: vec![0],
+            };
+            segment.write(0, &observation).unwrap();
+        }
+        let segment = segment.seal().unwrap();
+        let store_writer = StoreWriter {
+            store: store::open(&store_config, &streams, 1).unwrap(),
+            streams: vec![cloud],
+            periods: vec![1.0],
+            last_kept: vec![f64::NEG_INFINITY],
+            stored: vec![0],
+            clips: Clips::new(60.0, 60.0),
+            pre_s: 60.0,
+            max_window_bytes: 0,
+            window_bytes: Arc::new(AtomicU64::new(segment.bytes)),
+            dir: dir.path().to_path_buf(),
+        };
+        let (events, receiver) = unbounded();
+        // The trigger's clip starts at 5 s, and without `Finish` only the cap stores the segment.
+        events.send(WindowEvent::Trigger(65.0)).unwrap();
+        events.send(WindowEvent::Segment(segment)).unwrap();
+        drop(events);
+        store_writer.run(receiver).unwrap();
+
+        let stored: Vec<f64> = Connection::open(&database)
+            .unwrap()
+            .prepare("SELECT json_extract(tags, '$.reception_ts') FROM cloud ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let expected: Vec<f64> = times()[..80]
+            .iter()
+            .copied()
+            .filter(|&time| time >= 5.0 || time.fract() == 0.0)
+            .collect();
+        assert_eq!(stored, expected);
     }
 
     #[test]
