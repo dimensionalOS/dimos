@@ -377,7 +377,14 @@ impl DimSlam {
         let Some(estimate) = slam.maybe_publish() else {
             return;
         };
-        self.stats.pose_ages.push(age_s(estimate.timestamp_ns));
+        let every = self.config.stats_every_scans as usize;
+        if every > 0 {
+            self.stats.pose_ages.push(age_s(estimate.timestamp_ns));
+            // a camera-only run has no scans to report on: its poses report as often
+            if self.stats.pose_ages.len() >= every && self.stats.scans == 0 {
+                self.log_stats();
+            }
+        }
         self.odometry
             .publish(&to_odometry_msg(&estimate))
             .await
