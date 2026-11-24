@@ -85,15 +85,8 @@ class Replay(Configurable):
     def list_streams(self) -> list[str]:
         return self.store.list_streams()
 
-    def stream(
-        self,
-        name: str,
-        autocast: Callable[[Any], T] | None = None,
-        *,
-        source: Stream[Any] | None = None,
-    ) -> ReplayStream[T]:
-        """Replay a named stream, optionally from a filtered observation query."""
-        return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
+    def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
+        return ReplayStream(replay=self, name=name, autocast=autocast)
 
     def first_ts(self) -> float | None:
         """Earliest source timestamp across non-empty streams in the underlying store.
@@ -146,19 +139,14 @@ class ReplayStream(Generic[T]):
         replay: Replay,
         name: str,
         autocast: Callable[[Any], T] | None = None,
-        source: Stream[Any] | None = None,
     ) -> None:
         self._replay = replay
         self._name = name
         self._autocast = autocast
-        self._source = source
 
     @property
     def name(self) -> str:
         return self._name
-
-    def _source_stream(self) -> Stream[Any]:
-        return self._replay.store.stream(self._name) if self._source is None else self._source
 
     def _decode(self, obs: Any) -> T:
         data = obs.data
@@ -169,7 +157,7 @@ class ReplayStream(Generic[T]):
     def _base_stream(self) -> Stream[Any]:
         """Memory Stream bounded by the replay window, ordered by ts."""
         cfg = self._replay.config
-        s = self._source_stream()
+        s: Stream[Any] = self._replay.store.stream(self._name)
 
         start: float | None = None
         if cfg.from_timestamp is not None:
@@ -239,7 +227,7 @@ class ReplayStream(Generic[T]):
             return None
 
     def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
-        s = self._source_stream()
+        s: Stream[Any] = self._replay.store.stream(self._name)
         try:
             obs: Any = s.at(timestamp, tolerance).first()
         except LookupError:
@@ -279,8 +267,7 @@ class ReplayStream(Generic[T]):
             emission_lock = threading.RLock()
             pending = SerialDisposable()
 
-            def make_iterator() -> Generator[tuple[float, Any, bool], None, None]:
-                wrapped = False
+            def make_iterator() -> Generator[tuple[float, Any], None, None]:
                 while True:
                     emitted = False
                     obs: Any
@@ -288,15 +275,13 @@ class ReplayStream(Generic[T]):
                     try:
                         for obs in rows:
                             emitted = True
-                            yield (obs.ts, obs, wrapped)
-                            wrapped = False
+                            yield (obs.ts, obs)  # decoded at emission, keeping subscribe cheap
                     finally:
                         close = getattr(rows, "close", None)
                         if close is not None:
                             close()
                     if not loop or not emitted:
                         break
-                    wrapped = True
 
             iterator = make_iterator()
 
@@ -318,7 +303,7 @@ class ReplayStream(Generic[T]):
                     observer.on_error(error)
 
             try:
-                first_ts, first_data, _ = next(iterator)
+                first_ts, first_data = next(iterator)
             except StopIteration:
                 terminate()
                 return Disposable()
@@ -336,14 +321,14 @@ class ReplayStream(Generic[T]):
             prev_skip = first_ts
             while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
                 try:
-                    cand_ts, cand_data, wrapped = next(iterator)
+                    cand_ts, cand_data = next(iterator)
                 except StopIteration:
                     terminate()
                     return Disposable()
                 except Exception as error:
                     terminate(error)
                     return Disposable()
-                if wrapped or cand_ts < prev_skip:
+                if cand_ts < prev_skip:
                     wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
                     first_ts, first_data = cand_ts, cand_data
                     break
@@ -352,11 +337,11 @@ class ReplayStream(Generic[T]):
 
             prev_ts = first_ts
 
-            def schedule(message: tuple[float, Any, bool], wrap_off: float, prev: float) -> None:
+            def schedule(message: tuple[float, Any], wrap_off: float, prev: float) -> None:
                 if disposed.is_set():
                     return
-                ts, data, wrapped = message
-                if wrapped or ts < prev:
+                ts, data = message
+                if ts < prev:
                     wrap_off += (prev - ts) + _LOOP_GAP
                 target = wall_t0 + ((ts + wrap_off) - replay_t0) / speed
                 delay = max(0.0, target - time.time())
@@ -396,7 +381,7 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            schedule((first_ts, first_data, False), wrap_offset, prev_ts)
+            schedule((first_ts, first_data), wrap_offset, prev_ts)
 
             return Disposable(dispose)
 
