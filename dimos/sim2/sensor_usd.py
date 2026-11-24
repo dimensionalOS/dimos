@@ -28,8 +28,8 @@ def frame_usd(frame_id: str, *, name: str) -> UsdModel:
     return UsdModel.from_robot_model(RobotModel.from_root_link(frame_id, name=name))
 
 
-def camera_usd(frame_id: str, *, name: str, fovy: float) -> UsdModel:
-    """A USD that is one frame with a camera looking down its +x."""
+def camera_usd(frame_id: str, *, name: str, fovy: float, aspect: float) -> UsdModel:
+    """A USD that is one frame with a camera looking down its +x, ``aspect`` (width / height) wide."""
     from dimos.robot.assets.usd_utils.frames import link_prim_paths
     from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr, prim_identifier, usd_matrix
 
@@ -41,7 +41,7 @@ def camera_usd(frame_id: str, *, name: str, fovy: float) -> UsdModel:
         stage, pxr.Sdf.Path(mount).AppendChild(prim_identifier(pxr, f"{frame_id}_optics"))
     )
     camera.CreateVerticalApertureAttr(_APERTURE_MM)
-    camera.CreateHorizontalApertureAttr(_APERTURE_MM)
+    camera.CreateHorizontalApertureAttr(_APERTURE_MM * aspect)
     camera.CreateFocalLengthAttr(_APERTURE_MM / 2 / math.tan(math.radians(fovy) / 2))
     facing = np.eye(4)
     facing[:3, :3] = Rotation.from_euler("x", math.pi).as_matrix()
