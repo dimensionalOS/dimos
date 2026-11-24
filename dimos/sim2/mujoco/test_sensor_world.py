@@ -77,7 +77,7 @@ def test_the_robots_in_the_world_are_the_ones_the_world_announced():
 
 
 def test_the_view_is_posed_by_the_world_alone(composed):
-    view = _view(composed, "camera", "dog/eye")
+    view = _view(composed)
     view.update(_World().at(1.0, 2.0, np.pi / 2))
     assert view.time == 1.0
     assert view.pose("dog/base")[0] == pytest.approx([2.0, 0.0, 1.0])
@@ -88,6 +88,13 @@ def test_the_view_is_posed_by_the_world_alone(composed):
         np.array([5.0, 0.0, 1.0]), np.array([[0.0, 0.0, -1.0]]), 10.0
     )
     assert distance[0] == pytest.approx(1.0)
+    view.close()
+
+
+@pytest.mark.self_hosted  # renders: GitHub-hosted runners have no OpenGL context
+def test_the_view_renders_from_a_camera_frame(composed):
+    view = _view(composed, "camera", "dog/eye")
+    view.update(_World().at(1.0, 2.0, np.pi / 2))
     assert view.render("dog/eye", 32, 24).shape == (24, 32, 3)
     view.close()
 
