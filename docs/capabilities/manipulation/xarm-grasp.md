@@ -36,8 +36,8 @@ In another terminal, use `dimos shell` and follow [Driving it](#driving-it) to s
 objects and request grasps. See the [isolated-runtime development guide](/dimos/experimental/isolated_python/README.md#runtime-development)
 for test and type-check commands.
 
-What differs between the arm and the sim is decided at import time: the hardware
-adapter, the base pose, the camera (RealSense plus its mount edge, versus the
+What differs between the arm and the sim is decided at import time: the arm's
+connection, the base pose, the camera (RealSense plus its mount edge, versus the
 MuJoCo wrist camera), and the home pose.
 
 The manipulation viewer is on viser at `http://127.0.0.1:8095`. To watch the
