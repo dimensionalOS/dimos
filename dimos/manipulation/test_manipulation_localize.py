@@ -406,6 +406,13 @@ def test_the_table_is_what_the_camera_looks_at():
     assert pick_surface([floor, table], sight=(np.zeros(3), -down)) is floor
 
 
+def test_at_a_height_the_biggest_surface_there_is_taken():
+    table = _surface(center=(0.4, -0.3, 0.046), size=(0.31, 0.26))
+    scrap = _surface(center=(0.7, -0.4, 0.053), size=(0.22, 0.11))
+
+    assert pick_surface([scrap, table], height=0.05) is table
+
+
 def test_add_surface_takes_the_newest_view(localizer, mocker):
     _ready(localizer, mocker, [])
     floor = _surface(center=(1.2, 0.0, -0.6), size=(1.4, 0.9), points=26000, above=400)

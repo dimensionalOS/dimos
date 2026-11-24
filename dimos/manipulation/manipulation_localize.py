@@ -415,13 +415,14 @@ def pick_surface(
     height: float | None = None,
     sight: tuple[NDArray[np.float64], NDArray[np.float64]] | None = None,
 ) -> dict[str, Any] | None:
-    """The surface to work on: the one at ``height``, else the first the line of
+    """The surface to work on: the biggest at ``height``, else the first the line of
     ``sight`` (origin, direction) meets, else the widest with objects standing on it."""
     if not surfaces:
         return None
     if height is not None:
-        nearest = min(surfaces, key=lambda surface: abs(surface["height"] - height))
-        return nearest if abs(nearest["height"] - height) <= SURFACE_HEIGHT_TOLERANCE else None
+        # Of those at that height, the biggest: a scrap of floor or a box top may be too.
+        near = [s for s in surfaces if abs(s["height"] - height) <= SURFACE_HEIGHT_TOLERANCE]
+        return max(near, key=lambda s: s["size"][0] * s["size"][1]) if near else None
     if sight is not None:
         hits = [(t, surface) for surface in surfaces if (t := _sight_hit(surface, *sight))]
         if hits:
