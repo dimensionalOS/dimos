@@ -37,3 +37,14 @@ def test_adding_a_frame_again_replaces_it_in_joints_and_the_layer_alike(tmp_path
     assert [joint.origin_xyz for joint in welded] == [(0.3, 0.0, 0.0)]
     assert model.usd.count('displayName = "tool"') == 1
     assert "(0.3, 0, 0)" in model.usd
+
+
+def test_a_layer_with_a_source_path_resolves_its_assets_from_there(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
+    from dimos.robot.assets.model import UsdModel
+
+    layer = '#usda 1.0\ndef Xform "arm" (\n    references = @parts/arm.usda@\n)\n{\n}\n'
+    model = UsdModel.from_layer(layer, tmp_path / "robot.usda")
+
+    assert model.source_path == tmp_path / "robot.usda"
+    assert UsdModel.from_layer(layer).source_path is None
