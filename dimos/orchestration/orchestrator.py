@@ -16,22 +16,29 @@
 
 from collections import deque
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from functools import partial
+import json
 from pathlib import Path
 import threading
 import time
+
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.introspection.module.info import RpcInfo, StreamDescriptor
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.stream import Transport
+from dimos.core.stream import In, Out, Transport
+from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.String import String
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve, streams
 from dimos.orchestration.checks import CheckedDefinition
 from dimos.orchestration.definition import OrchestratorDefinition, StreamValue
 from dimos.orchestration.engine import (
     DEFAULT_LIMITS,
+    AfterTimer,
     Call,
     ClearTimer,
     Effect,
@@ -39,6 +46,7 @@ from dimos.orchestration.engine import (
     Limits,
     QueueItem,
     ReturnItem,
+    Runtime,
     SendCancel,
     SendStart,
     SetTimer,
@@ -58,6 +66,48 @@ logger = setup_logger()
 _START_TIMEOUT_S = 365 * 24 * 3600.0
 
 
+def _handled(item: QueueItem) -> str:
+    """What a step handled, in words."""
+    match item:
+        case StreamItem(stream):
+            return f"message on {stream}"
+        case ReturnItem(call, _, raised):
+            return f"{call.kind} of {call.rpc} {'raised' if raised else 'returned'}"
+        case TimerItem(AfterTimer(node)):
+            return f"after timer of {node}"
+        case TimerItem(timer):
+            return f"cancel deadline of {timer.node}"
+
+
+def _state(checked: CheckedDefinition, runtime: Runtime, now: float) -> dict[str, Plain]:
+    """The active nodes, the values that change, the RPCs still out and the timers."""
+    constants = checked.definition.constants
+    calls: list[Plain] = [
+        {
+            "node": call.node,
+            "kind": call.kind,
+            "phase": call.phase,
+            "rpc": call.rpc,
+            "args": dict(call.args),
+        }
+        for call in runtime.calls
+    ]
+    timers: list[Plain] = [
+        {
+            "node": timer.node,
+            "kind": "after" if isinstance(timer, AfterTimer) else "cancel_deadline",
+            "due_in_s": timer.due - now,
+        }
+        for timer in runtime.timers
+    ]
+    return {
+        "active": [name for name in checked.tree.nodes if name in runtime.active],
+        "blackboard": {k: v for k, v in runtime.blackboard.items() if k not in constants},
+        "calls": calls,
+        "timers": timers,
+    }
+
+
 class OrchestratorConfig(ModuleConfig):
     file: Path
     cancel_deadline_s: float = DEFAULT_LIMITS.cancel_deadline_s
@@ -69,11 +119,17 @@ class Orchestrator(Module):
 
     config: OrchestratorConfig
 
+    # The state after each step, and again whenever orchestrator_state_request is True.
+    orchestrator_state: Out[String]
+    orchestrator_state_request: In[Bool]
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._definition: OrchestratorDefinition | None = None
         self._checked: CheckedDefinition | None = None
         self._rpcs: Mapping[str, RpcInfo] = {}
+        # The RPCs and streams the file uses, as the state message describes them to a viewer.
+        self._interface: dict[str, Plain] = {"rpcs": {}, "streams": {}}
         # Each deployed module's RPC address, by the name the file uses for it.
         self._addresses: dict[str, str] = {}
         self._queue: deque[QueueItem] = deque()
@@ -85,11 +141,19 @@ class Orchestrator(Module):
         self._transports: list[Transport[object]] = []
         self._unsubscribes: list[Callable[[], None]] = []
         self._unreadable: set[str] = set()
+        self._published = 0
+        # The last state published, for orchestrator_state_request. Guarded by _publishing.
+        self._latest: tuple[CheckedDefinition, Runtime] | None = None
+        self._publishing = threading.Lock()
 
     @rpc
     def start(self) -> None:
         super().start()
         self._definition = load_and_check(self.config.file)
+        if self.orchestrator_state_request.transport is not None:
+            self.register_disposable(
+                Disposable(self.orchestrator_state_request.subscribe(self._on_state_request))
+            )
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
@@ -108,6 +172,19 @@ class Orchestrator(Module):
 
         self._checked = checked
         self._rpcs = deployed.rpcs
+        targets = {t for a in definition.activities for t in (a.start, a.cancel) if t}
+        self._interface = {
+            "rpcs": {
+                name: {"signature": info.signature, "doc": info.documentation}
+                for name, info in deployed.rpcs.items()
+                if name in targets
+            },
+            "streams": {
+                name: getattr(deployed.streams[name], "msg_name", deployed.streams[name].__name__)
+                for name in streams(definition)
+                if name in deployed.streams
+            },
+        }
         for activity in definition.activities:
             self.rpc.rpc_timeouts[self._address(activity.start)] = _START_TIMEOUT_S
         with self._wake:
@@ -151,16 +228,70 @@ class Orchestrator(Module):
 
     def _run(self, checked: CheckedDefinition) -> None:
         limits = Limits(self.config.cancel_deadline_s, self.config.transition_cap)
+        runtime = Runtime({})
         try:
-            runtime, effects = engine.start(checked, time.monotonic(), limits)
+            now = time.monotonic()
+            runtime, effects = engine.start(checked, now, limits)
             self._perform(effects)
+            self._publish(checked, runtime, now, "startup", effects)
             while (item := self._next()) is not None:
-                runtime, effects = engine.step(checked, runtime, item, time.monotonic(), limits)
+                before, now = runtime, time.monotonic()
+                runtime, effects = engine.step(checked, runtime, item, now, limits)
                 self._perform(effects)
-        except Exception:
+                # A step that only wrote stream values is not published.
+                if effects or runtime.calls != before.calls or runtime.timers != before.timers:
+                    self._publish(checked, runtime, now, _handled(item), effects)
+        except Exception as error:
             logger.exception("Orchestrator engine stopped on an error")
             self._halt()
             self._cancel_all()
+            stopped = replace(runtime, active=frozenset(), calls=(), timers=())
+            rule = f"an engine error: {type(error).__name__}: {error}"
+            self._publish(checked, stopped, time.monotonic(), "engine error", [], rule)
+
+    def _publish(
+        self,
+        checked: CheckedDefinition,
+        runtime: Runtime,
+        now: float,
+        handled: str,
+        effects: list[Effect],
+        error: str | None = None,
+    ) -> None:
+        """Publish what one step did, the state after it and the definition, as JSON."""
+        transitions: list[Plain] = [
+            {"node": effect.node, "cause": effect.cause, "goto": effect.goto}
+            for effect in effects
+            if isinstance(effect, TransitionRecord)
+        ]
+        faults: list[Plain] = [
+            {"rule": effect.rule, "node": effect.node}
+            for effect in effects
+            if isinstance(effect, FaultReport)
+        ]
+        if error is not None:
+            faults = [{"rule": error, "node": None}]
+        with self._publishing:
+            self._published += 1
+            self._latest = (checked, runtime)
+            message: dict[str, Plain] = {
+                "seq": self._published,
+                "handled": handled,
+                "transitions": transitions,
+                "fault": faults[0] if faults else None,
+                **_state(checked, runtime, now),
+                "definition": checked.definition.model_dump(mode="json", by_alias=True),
+                **self._interface,
+            }
+            # Under the lock, so the messages go out in seq order.
+            self.orchestrator_state.publish(String(json.dumps(message)))
+
+    def _on_state_request(self, message: Bool) -> None:
+        """Publish the state again, for a viewer that joined between steps."""
+        with self._publishing:
+            latest = self._latest
+        if message.data and latest is not None:
+            self._publish(*latest, time.monotonic(), "state request", [])
 
     def _next(self) -> QueueItem | None:
         """The next queue item, after adding the timers that are due. None once stopped."""
