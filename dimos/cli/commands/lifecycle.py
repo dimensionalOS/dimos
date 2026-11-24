@@ -143,6 +143,7 @@ def _run_hosted(
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     try:
+        typer.echo("Waiting for Hosts...")
         with root_rpc(connect) as rpc:
             descriptors = wait_for_hosts(rpc, named, tag_sets=tag_sets)
             with deployed(

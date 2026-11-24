@@ -258,8 +258,9 @@ class PGOMap:
         taken the columns they saw, and keyframes left owning none are pruned.
         None when there is nothing to save.
         """
-        # settled, not just attached, so a run outside the premap never writes into it
-        if not self.pgo.n_keyframes or (self._premap is not None and not self.pgo.settled):
+        # Require initial settlement so a run outside the premap cannot write into it.
+        # Later accepted corrections must not discard the rest of an established run.
+        if not self.pgo.n_keyframes or (self._premap is not None and not self.pgo.has_settled):
             return None
         stamps, poses, edges, measured, cov = self.pgo.joint_graph()
         owners = self._owners()

@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import subprocess
+import sys
 from typing import get_origin, get_type_hints
 
 import pytest
@@ -120,3 +123,19 @@ def test_mixed_arm_task_bindings_have_coordinator_inputs() -> None:
         for binding in control_task_registry.bindings_for(task.type).consumes:
             port = task.stream_bind.get(binding.stream, binding.stream)
             assert get_origin(annotations.get(port)) is In, (task.name, port)
+
+
+def test_real_arm_blueprints_load_without_mujoco() -> None:
+    """mujoco is an optional extra; without --simulation the blueprints must not need it."""
+    code = (
+        "import sys; sys.modules['mujoco'] = None; "
+        "import dimos.robot.manipulators.xarm.blueprints.basic"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "SIMULATION": ""},
+    )
+    assert result.returncode == 0, result.stderr
