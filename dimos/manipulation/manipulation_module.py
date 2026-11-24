@@ -1079,9 +1079,28 @@ class ManipulationModule(Module):
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
                 has_gripper=self._group_gripper_task(group) is not None,
+                grasp_point=self._grasp_point(group),
             )
             for group in self._world_monitor.planning_groups.list()
         )
+
+    def _grasp_point(self, group: PlanningGroup) -> tuple[float, float, float] | None:
+        """Where the gripper's grasp frame sits in the group's tip frame, metres;
+        None without a grasp frame or when it is not fixed to the tip."""
+        gripper = self.config.model.gripper
+        if gripper is None or gripper.grasp_frame is None or group.tip_link is None:
+            return None
+        parents = {joint.child_link: joint for joint in self.config.model.model.load().joints}
+        frame, tip_from_grasp = gripper.grasp_frame, np.eye(4)
+        while frame != group.tip_link:
+            joint = parents.get(frame)
+            if joint is None or joint.type != "fixed":
+                return None
+            # Walk up the fixed joints: tip_from_grasp = parent_from_child @ child_from_grasp.
+            tip_from_grasp = joint.origin() @ tip_from_grasp
+            frame = joint.parent_link
+        x, y, z = tip_from_grasp[:3, 3]
+        return (float(x), float(y), float(z))
 
     def _group_joint_presets(self, group: PlanningGroup) -> dict[str, JointState]:
         config = self.config.model

@@ -81,19 +81,22 @@ class CommandStatus(Enum):
 
 @dataclass(frozen=True, repr=False)
 class PlanningGroupInfo:
-    """Public planning-group capability metadata."""
+    """Public planning-group capability metadata. ``grasp_point`` is where the
+    point midway between the finger pads sits in the tip frame, metres; None
+    when the robot's gripper config names no grasp frame."""
 
     id: PlanningGroupID
     joint_names: tuple[str, ...]
     base_frame: str
     tip_frame: str | None
     has_gripper: bool
+    grasp_point: tuple[float, float, float] | None = None
 
     def __repr__(self) -> str:
         return (
             f"PlanningGroupInfo({self.id!r}, joints={self.joint_names!r}, "
             f"base={self.base_frame!r}, tip={self.tip_frame!r}, "
-            f"gripper={self.has_gripper})"
+            f"gripper={self.has_gripper}, grasp_point={self.grasp_point!r})"
         )
 
 
