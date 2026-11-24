@@ -33,16 +33,19 @@ use depth2depth::{
 };
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
+use futures_util::FutureExt;
 use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use nalgebra::{Isometry3, Point3};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::undistort::{Lens, UndistortMap};
 
 const TIMING_REPORT_EVERY: Duration = Duration::from_secs(5);
+/// A probe is polled once, then cancelled, well before this deadline.
+const TF_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Scans up to this far after a frame still anchor it...
 const SCAN_LEAD_S: f64 = 0.5;
 /// ...and history is kept this far past `lidar_history_s`, since frames run behind the newest scan.
@@ -149,13 +152,92 @@ pub struct Depth2DepthCloud {
 /// What the handlers hand the worker.
 #[derive(Default)]
 struct Shared {
-    frames: Mutex<VecDeque<CompressedImage>>,
+    frames: Mutex<Frames>,
     frame_arrived: Notify,
     camera_info: Mutex<Option<CameraInfo>>,
     /// Scans waiting for their transform to the world frame.
     pending: Mutex<VecDeque<PointCloud2>>,
     scan_arrived: Notify,
     history: Mutex<VecDeque<Scan>>,
+}
+
+#[derive(Default)]
+struct Frames {
+    pending: VecDeque<CompressedImage>,
+    dropped_waiting_for_tf: usize,
+    dropped_waiting_for_camera_info: usize,
+    skipped_older_frames: usize,
+    selected: usize,
+    since: Option<Instant>,
+}
+
+impl Frames {
+    fn push(&mut self, image: CompressedImage, max_tf_lag_s: f64, has_camera_info: bool) {
+        let oldest = seconds(&image.header.stamp) - max_tf_lag_s;
+        self.pending.push_back(image);
+        while self
+            .pending
+            .front()
+            .is_some_and(|f| seconds(&f.header.stamp) < oldest)
+        {
+            self.pending.pop_front();
+            if has_camera_info {
+                self.dropped_waiting_for_tf += 1;
+            } else {
+                self.dropped_waiting_for_camera_info += 1;
+            }
+        }
+        self.report();
+    }
+
+    fn discard_through(&mut self, stamp: f64) {
+        let before = self.pending.len();
+        self.pending
+            .retain(|image| seconds(&image.header.stamp) > stamp);
+        self.dropped_waiting_for_tf += before - self.pending.len();
+        self.report();
+    }
+
+    fn take_newest<T>(
+        &mut self,
+        mut resolve: impl FnMut(&CompressedImage) -> Option<T>,
+    ) -> Option<(CompressedImage, T)> {
+        let (index, resolved) = self
+            .pending
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, image)| resolve(image).map(|resolved| (i, resolved)))?;
+        let image = self.pending.drain(..=index).next_back()?;
+        self.skipped_older_frames += index;
+        self.selected += 1;
+        Some((image, resolved))
+    }
+
+    // Report independently of inference, including when no frame has usable TF.
+    fn report(&mut self) {
+        if self.since.get_or_insert_with(Instant::now).elapsed() < TIMING_REPORT_EVERY {
+            return;
+        }
+        info!(
+            selected_frames = self.selected,
+            dropped_waiting_for_tf = self.dropped_waiting_for_tf,
+            dropped_waiting_for_camera_info = self.dropped_waiting_for_camera_info,
+            skipped_older_frames = self.skipped_older_frames,
+            "depth2depth_cloud frame selection (over the window)",
+        );
+        if self.selected == 0 && self.dropped_waiting_for_tf > 0 {
+            warn!(
+                dropped_waiting_for_tf = self.dropped_waiting_for_tf,
+                "No camera frames selected while waiting for transforms",
+            );
+        }
+        self.selected = 0;
+        self.dropped_waiting_for_tf = 0;
+        self.dropped_waiting_for_camera_info = 0;
+        self.skipped_older_frames = 0;
+        self.since = Some(Instant::now());
+    }
 }
 
 /// One item handed between stages: a newer one replaces one still waiting (and counts it as dropped),
@@ -275,15 +357,9 @@ impl Depth2DepthCloud {
     }
 
     async fn on_image(&mut self, msg: CompressedImage) {
-        let oldest = seconds(&msg.header.stamp) - self.config.max_tf_lag_s;
+        let has_camera_info = self.shared.camera_info.lock().unwrap().is_some();
         let mut frames = self.shared.frames.lock().unwrap();
-        frames.push_back(msg);
-        while frames
-            .front()
-            .is_some_and(|f| seconds(&f.header.stamp) < oldest)
-        {
-            frames.pop_front();
-        }
+        frames.push(msg, self.config.max_tf_lag_s, has_camera_info);
         drop(frames);
         self.shared.frame_arrived.notify_one();
     }
@@ -340,7 +416,7 @@ impl Worker {
             frame_arrived.as_mut().enable();
             let info = self.shared.camera_info.lock().unwrap().clone();
             let Some(info) = info else {
-                if !self.shared.frames.lock().unwrap().is_empty() {
+                if !self.shared.frames.lock().unwrap().pending.is_empty() {
                     warn_throttled!(Duration::from_secs(5), "No CameraInfo yet, waiting.");
                 }
                 frame_arrived.await;
@@ -350,11 +426,21 @@ impl Worker {
                 self.to_model.put(picked);
                 continue;
             }
-            let newest = self.shared.frames.lock().unwrap().back().map(|image| {
-                let frame_id =
-                    resolve_frame_id(&cfg.frame_id, &info.header.frame_id, &image.header.frame_id);
-                (frame_id.to_string(), seconds(&image.header.stamp))
-            });
+            let newest = self
+                .shared
+                .frames
+                .lock()
+                .unwrap()
+                .pending
+                .back()
+                .map(|image| {
+                    let frame_id = resolve_frame_id(
+                        &cfg.frame_id,
+                        &info.header.frame_id,
+                        &image.header.frame_id,
+                    );
+                    (frame_id.to_string(), seconds(&image.header.stamp))
+                });
             let Some((frame_id, stamp)) = newest else {
                 frame_arrived.await;
                 continue;
@@ -385,7 +471,7 @@ impl Worker {
                             .frames
                             .lock()
                             .unwrap()
-                            .retain(|image| seconds(&image.header.stamp) > stamp);
+                            .discard_through(stamp);
                     }
                 }
             }
@@ -597,17 +683,15 @@ impl Worker {
     /// The newest frame whose transforms are known; it and every older frame leave the queue.
     fn next_frame(&self, info: CameraInfo) -> Option<Picked> {
         let mut frames = self.shared.frames.lock().unwrap();
-        let (index, (frame_id, poses)) =
-            frames.iter().enumerate().rev().find_map(|(i, image)| {
-                let frame_id = resolve_frame_id(
-                    &self.config.frame_id,
-                    &info.header.frame_id,
-                    &image.header.frame_id,
-                );
-                let poses = self.poses(frame_id, seconds(&image.header.stamp))?;
-                Some((i, (frame_id.to_string(), poses)))
-            })?;
-        let image = frames.drain(..=index).next_back()?;
+        let (image, (frame_id, poses)) = frames.take_newest(|image| {
+            let frame_id = resolve_frame_id(
+                &self.config.frame_id,
+                &info.header.frame_id,
+                &image.header.frame_id,
+            );
+            let poses = self.poses(frame_id, seconds(&image.header.stamp))?;
+            Some((frame_id.to_string(), poses))
+        })?;
         Some(Picked {
             image,
             frame_id,
@@ -618,13 +702,13 @@ impl Worker {
 
     fn poses(&self, frame_id: &str, stamp: f64) -> Option<Poses> {
         let pose = |target: &str| {
-            let transform = self
-                .tf
-                .lookup(target, frame_id)
-                .at(stamp)
-                .tolerance(self.config.tf_tolerance_s)
-                .get()?;
-            Some(isometry(&transform))
+            probe_pose(
+                &self.tf,
+                target,
+                frame_id,
+                stamp,
+                self.config.tf_tolerance_s,
+            )
         };
         let optional = |target: &str| match target {
             "" => Some(None),
@@ -656,6 +740,26 @@ impl Worker {
             })
             .collect()
     }
+}
+
+fn probe_pose(
+    tf: &Tf,
+    target: &str,
+    frame: &str,
+    stamp: f64,
+    tolerance: f64,
+) -> Option<Isometry3<f64>> {
+    // The pinned SDK's get() can warn on a miss, including a normal newest-frame
+    // miss before falling back. Poll a waiting lookup once instead: pending misses
+    // stay quiet and are cancelled here. pick_frames owns the actual bounded wait.
+    let transform = tf
+        .lookup(target, frame)
+        .at(stamp)
+        .tolerance(tolerance)
+        .within(TF_PROBE_TIMEOUT)
+        .now_or_never()
+        .flatten()?;
+    Some(isometry(&transform))
 }
 
 /// The model built into the depth2depth crate: TensorRT on a Jetson (candle's CUDA path is bound by kernel
@@ -823,6 +927,160 @@ impl Timing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dimos_module::transport::Dispatch;
+    use dimos_module::{Builder, NoConfig, Transform, Transport};
+    use std::io;
+
+    fn image_at(sec: i32) -> CompressedImage {
+        CompressedImage {
+            header: Header {
+                stamp: Time { sec, nsec: 0 },
+                frame_id: "camera_optical".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    // Obtain the SDK's real TF client through its public module lifecycle.
+    // No model, network, or robot is needed for frame selection.
+    struct TfSelectionTest {
+        tf: Tf,
+    }
+
+    impl Module for TfSelectionTest {
+        type Config = NoConfig;
+
+        fn build(builder: &mut Builder, _config: NoConfig) -> Self {
+            Self { tf: builder.tf() }
+        }
+
+        async fn handle(&mut self) {
+            self.tf.lookup("odom", "camera_optical");
+            tokio::time::advance(Duration::from_secs(11)).await;
+            let transforms = |stamp| {
+                ["odom", "base_link"].map(|parent| {
+                    Transform::new(
+                        parent,
+                        "camera_optical",
+                        stamp,
+                        Isometry3::translation(stamp, 0.0, 0.0),
+                    )
+                })
+            };
+            self.tf.publish(&transforms(1.0)).await.unwrap();
+            let mut frames = Frames::default();
+            for sec in 0..=2 {
+                frames.push(image_at(sec), 2.0, true);
+            }
+            let resolve = |image: &CompressedImage| {
+                let stamp = seconds(&image.header.stamp);
+                let world = probe_pose(&self.tf, "odom", "camera_optical", stamp, 0.1)?;
+                let height = probe_pose(&self.tf, "base_link", "camera_optical", stamp, 0.1)?;
+                Some((world, height))
+            };
+            let (image, (world, height)) = frames.take_newest(resolve).unwrap();
+            assert_eq!(image.header.stamp.sec, 1);
+            assert_eq!(world.translation.x, 1.0);
+            assert_eq!(height.translation.x, 1.0);
+            assert_eq!(frames.skipped_older_frames, 1);
+            assert_eq!(frames.dropped_waiting_for_tf, 0);
+            assert_eq!(frames.pending.len(), 1);
+            assert!(frames.take_newest(resolve).is_none());
+            assert!(frames.take_newest(resolve).is_none());
+            assert_eq!(frames.dropped_waiting_for_tf, 0);
+
+            // World TF alone is insufficient when the height crop needs another pose.
+            self.tf.publish(&transforms(2.0)[..1]).await.unwrap();
+            assert!(frames.take_newest(resolve).is_none());
+            self.tf.publish(&transforms(2.0)[1..]).await.unwrap();
+            let (image, (world, height)) = frames.take_newest(resolve).unwrap();
+            assert_eq!(image.header.stamp.sec, 2);
+            assert_eq!(world.translation.x, 2.0);
+            assert_eq!(height.translation.x, 2.0);
+            assert!(frames.pending.is_empty());
+            assert_eq!(frames.selected, 2);
+            assert_eq!(frames.dropped_waiting_for_tf, 0);
+        }
+    }
+
+    struct TestTransport;
+
+    impl Transport for TestTransport {
+        async fn publish(&self, _channel: &str, _data: Vec<u8>) -> io::Result<()> {
+            Ok(())
+        }
+
+        async fn subscribe(&self, _channel: &str, _on_msg: Dispatch) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    #[tracing_test::traced_test]
+    async fn newest_tf_misses_are_quiet_and_retained_until_their_poses_arrive() {
+        dimos_module::run::<TfSelectionTest, _>(
+            TestTransport,
+            serde_json::json!({"topics": {"tf": "/tf"}, "config": null}),
+        )
+        .await;
+        assert!(!logs_contain("No transform found between frames"));
+    }
+
+    #[test]
+    fn frames_expiring_without_camera_info_are_not_reported_as_tf_losses() {
+        let mut frames = Frames::default();
+        frames.push(image_at(1), 1.0, false);
+        frames.push(image_at(3), 1.0, false);
+        assert_eq!(frames.dropped_waiting_for_camera_info, 1);
+        assert_eq!(frames.dropped_waiting_for_tf, 0);
+    }
+
+    #[test]
+    fn expired_and_timed_out_frames_are_counted_once() {
+        let mut frames = Frames::default();
+        frames.push(image_at(1), 1.0, true);
+        frames.push(image_at(2), 1.0, true);
+        frames.push(image_at(3), 1.0, true);
+        assert_eq!(frames.dropped_waiting_for_tf, 1);
+        assert_eq!(frames.pending.len(), 2);
+        frames.discard_through(2.0);
+        assert_eq!(frames.dropped_waiting_for_tf, 2);
+        assert_eq!(frames.pending.front().unwrap().header.stamp.sec, 3);
+        frames.discard_through(2.0);
+        assert_eq!(frames.dropped_waiting_for_tf, 2);
+        frames.discard_through(3.0);
+        assert_eq!(frames.dropped_waiting_for_tf, 3);
+        assert!(frames.pending.is_empty());
+        assert_eq!(frames.skipped_older_frames, 0);
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn tf_losses_are_reported_even_without_a_published_cloud_and_counts_reset() {
+        let mut frames = Frames::default();
+        frames.push(image_at(1), 1.0, true);
+        frames.push(image_at(2), 1.0, true);
+        frames.push(image_at(3), 1.0, true);
+        frames.since = Some(Instant::now() - TIMING_REPORT_EVERY);
+        frames.discard_through(3.0);
+        assert!(logs_contain("dropped_waiting_for_tf=3"));
+        assert!(logs_contain("selected_frames=0"));
+        assert!(logs_contain(
+            "No camera frames selected while waiting for transforms"
+        ));
+        assert_eq!(frames.dropped_waiting_for_tf, 0);
+        frames.push(image_at(4), 1.0, true);
+        frames.push(image_at(5), 1.0, true);
+        frames.take_newest(|_| Some(())).unwrap();
+        frames.since = Some(Instant::now() - TIMING_REPORT_EVERY);
+        frames.report();
+        assert!(logs_contain("selected_frames=1"));
+        assert!(logs_contain("dropped_waiting_for_tf=0"));
+        assert!(logs_contain("skipped_older_frames=1"));
+        assert_eq!(frames.selected, 0);
+        assert_eq!(frames.skipped_older_frames, 0);
+    }
 
     #[test]
     fn a_stage_behind_takes_the_newest_item_and_counts_the_ones_it_missed() {
