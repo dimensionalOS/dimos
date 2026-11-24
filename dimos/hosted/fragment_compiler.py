@@ -28,6 +28,7 @@ from dimos.core.coordination.blueprints import (
     HostedPlacement,
 )
 from dimos.core.coordination.module_coordinator import (
+    resolve_module_ref_lists,
     resolve_module_refs,
     stream_name_types,
     verify_no_name_conflicts,
@@ -69,7 +70,14 @@ def compile_fragments(
         raise ValueError(f"Placement contains unknown modules: {', '.join(sorted(unknown))}")
     host_ids = sorted(set(assignments.values()))
     atoms_by_name = {atom.name: atom for atom in atoms}
-    resolved_references = resolve_module_refs(blueprint)
+    resolved_references = [
+        (consumer, reference, provider, None)
+        for (consumer, reference), provider in sorted(resolve_module_refs(blueprint).items())
+    ] + [
+        (consumer, reference, provider, index)
+        for (consumer, reference), providers in sorted(resolve_module_ref_lists(blueprint).items())
+        for index, provider in enumerate(providers)
+    ]
     disabled_atoms = tuple(
         atom for atom in blueprint.blueprints if atom not in blueprint.active_blueprints
     )
@@ -90,10 +98,9 @@ def compile_fragments(
                 provider_host_id=assignments[provider_name],
                 rpcs=frozenset(atoms_by_name[provider_name].module.rpcs),
                 rpc_name=run_module_rpc_name(run_id, assignments[provider_name], provider_name),
+                list_index=list_index,
             )
-            for (consumer_name, reference_name), provider_name in sorted(
-                resolved_references.items()
-            )
+            for consumer_name, reference_name, provider_name, list_index in resolved_references
             if assignments[consumer_name] == host_id and assignments[provider_name] != host_id
         )
         local_blueprint = _local_blueprint(blueprint, local_atoms, disabled_atoms)
