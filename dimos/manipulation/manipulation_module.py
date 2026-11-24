@@ -118,6 +118,11 @@ ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
 # replaces this obstacle rather than adding another.
 VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
 
+# Odometry older than this (seconds) leaves the planar base joints out of the
+# model state, so it counts as incomplete. The world monitor allows the model
+# state itself the same age.
+BASE_POSE_MAX_AGE = 1.0
+
 _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
     "box": ObstacleType.BOX,
     "sphere": ObstacleType.SPHERE,
@@ -244,8 +249,9 @@ class ManipulationModule(Module):
         self._error_message = ""
         self._state_epoch = 0
         self._started = False
-        # The planar base's [x, y, yaw, x rate, y rate, yaw rate] from odometry.
-        self._base_state: list[float] | None = None
+        # The planar base's [x, y, yaw, x rate, y rate, yaw rate] from odometry,
+        # and the time.monotonic() it arrived at.
+        self._base_state: tuple[list[float], float] | None = None
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -376,8 +382,13 @@ class ManipulationModule(Module):
             received, position = list(msg.name), list(msg.position)
             velocity = list(msg.velocity) if len(msg.velocity) == len(msg.name) else []
             planar_base = self.config.model.model.planar_base
-            base_state = self._base_state
-            if planar_base is not None and base_state is not None:
+            base = self._base_state
+            if (
+                planar_base is not None
+                and base is not None
+                and time.monotonic() - base[1] <= BASE_POSE_MAX_AGE
+            ):
+                base_state = base[0]
                 received += planar_base.joint_names
                 position += base_state[:3]
                 velocity += base_state[3:] if velocity else []
@@ -414,14 +425,17 @@ class ManipulationModule(Module):
         """Keep the planar base's x (m), y (m), yaw (rad) and their rates in the odom frame."""
         cos_yaw, sin_yaw = math.cos(msg.yaw), math.sin(msg.yaw)
         vx, vy = msg.twist.linear.x, msg.twist.linear.y
-        self._base_state = [
-            msg.x,
-            msg.y,
-            msg.yaw,
-            cos_yaw * vx - sin_yaw * vy,
-            sin_yaw * vx + cos_yaw * vy,
-            msg.twist.angular.z,
-        ]
+        self._base_state = (
+            [
+                msg.x,
+                msg.y,
+                msg.yaw,
+                cos_yaw * vx - sin_yaw * vy,
+                sin_yaw * vx + cos_yaw * vy,
+                msg.twist.angular.z,
+            ],
+            time.monotonic(),
+        )
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""

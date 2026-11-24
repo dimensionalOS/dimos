@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_module import BASE_POSE_MAX_AGE, ManipulationModule
 from dimos.manipulation.manipulation_spec import CommandStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -227,6 +227,27 @@ class TestOnJointState:
         assert state.position == pytest.approx([1.0, 2.0, math.pi / 2, 0.3])
         # Forward at a quarter turn moves the base along +y.
         assert state.velocity == pytest.approx([0.0, 0.5, 0.1, 0.0])
+
+    def test_stops_forwarding_once_odometry_goes_stale(self, module_factory, mocker):
+        clock = mocker.patch("dimos.manipulation.manipulation_module.time.monotonic")
+        clock.return_value = 100.0
+        planar = PlanarBaseDefinition(
+            velocity_limits=(1.0, 1.0, 2.0), acceleration_limits=(1, 1, 1)
+        )
+        module = _make_module_with_monitor(module_factory)
+        module.config.model = RobotModelConfig(
+            model=RobotModel.from_file(Path("/path/to/robot.urdf")).with_planar_base(planar),
+            joint_names=["base/x", "base/y", "base/yaw", "left/joint1"],
+        )
+        module._on_odometry(Odometry())
+        arm = JointState(name=["left/joint1"], position=[0.3])
+
+        module._on_joint_state(arm)
+        assert module._world_monitor.on_joint_state.call_count == 1
+
+        clock.return_value = 100.0 + BASE_POSE_MAX_AGE + 0.01
+        module._on_joint_state(arm)
+        assert module._world_monitor.on_joint_state.call_count == 1
 
     def test_skips_incomplete_model_state(self, canonical_model_config, module_factory):
         module = _make_module_with_monitor(module_factory)
