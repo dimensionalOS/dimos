@@ -91,8 +91,8 @@ def test_the_view_is_posed_by_the_world_alone(composed):
     view.close()
 
 
-@pytest.mark.self_hosted  # renders: GitHub-hosted runners have no OpenGL context
-def test_the_view_renders_from_a_camera_frame(composed):
+@pytest.mark.self_hosted
+def test_the_view_renders_from_a_camera_frame(composed, renders):
     view = _view(composed, "camera", "dog/eye")
     view.update(_World().at(1.0, 2.0, np.pi / 2))
     assert view.render("dog/eye", 32, 24).shape == (24, 32, 3)
