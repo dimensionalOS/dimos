@@ -8,6 +8,7 @@ import { Value } from "typebox/value";
 import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
 import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
 import { json } from "node:stream/consumers";
+import { isDeepStrictEqual } from "node:util";
 import { connect, type Client } from "#dimos/agents/sdk/main.ts";
 import { owner, RefusalError, refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
 import { until } from "#dimos/agents/sdk/until.ts";
@@ -21,6 +22,32 @@ import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
 
 function write(value: unknown): void {
   process.stdout.write(JSON.stringify(value) + "\n");
+}
+
+/** The SDK supplies whole lists. Publish each changed row under its stable id or name. */
+function publishRowChanges<K extends "id" | "name">(type: string, key: K) {
+  type Row = Record<K, string | number> & Record<string, unknown>;
+  let previous: Map<Row[K], Row> | undefined;
+  return (rows: readonly Row[]) => {
+    const current = new Map(rows.map((row) => [row[key], row]));
+    if (previous === undefined) {
+      write({ type, change: "snapshot", rows });
+    } else {
+      for (const [id, row] of current) {
+        const before = previous.get(id);
+        if (before === undefined) {
+          write({ type, change: "added", [key]: id, row });
+        } else if (before !== row) {
+          const fields = Object.keys(row).filter((field) => !isDeepStrictEqual(before[field], row[field]));
+          if (fields.length) write({ type, change: "updated", [key]: id, fields, row });
+        }
+      }
+      for (const id of previous.keys()) {
+        if (!current.has(id)) write({ type, change: "removed", [key]: id });
+      }
+    }
+    previous = current;
+  };
 }
 
 function turn(live: LiveState) {
@@ -84,9 +111,10 @@ async function watch(client: Client): Promise<never> {
       },
     );
   };
-  const jobs = gateway.jobs.subscribe(() => write({ type: "agent/jobs" }));
+  const jobs = gateway.jobs.subscribe(publishRowChanges("agent/jobs", "name"));
+  const publishConversations = publishRowChanges("agent/conversations", "id");
   const conversations = gateway.conversations.subscribe((rows) => {
-    write({ type: "agent/conversations" });
+    publishConversations(rows);
     for (const row of rows) {
       if (row.running && !active.has(row.id)) start(row.id);
     }
