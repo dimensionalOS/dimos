@@ -112,24 +112,25 @@ class Replay(Configurable):
         return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
 
     def first_ts(self) -> float | None:
-        """Common origin for relative seek and duration: the earliest timed row in the store.
+        """Return the earliest timed row's timestamp for relative seek and duration.
 
         Static metadata is often stamped long before the run, so a clip measured
-        from it would hold no sensor data.
+        from it would hold no sensor data. In a setup-only recording, use the
+        earliest recorded row.
         """
         if self._first_ts is None:
-            candidates: list[float] = []
+            timed_starts: list[float] = []
+            setup_starts: list[float] = []
             for name in self.store.list_streams():
                 stream: ReplayStream[Any] = self.stream(name)
                 try:
                     _, timed = stream.split_static()
-                    if timed is not None:
-                        rows = timed._source_stream()
-                        candidates.append(float(rows.order_by("ts").first().ts))
+                    source = timed if timed is not None else stream
+                    starts = timed_starts if timed is not None else setup_starts
+                    starts.append(float(source._source_stream().order_by("ts").first().ts))
                 except (LookupError, ImportError, AttributeError):
                     continue
-            if candidates:
-                self._first_ts = min(candidates)
+            self._first_ts = min(timed_starts or setup_starts, default=None)
         return self._first_ts
 
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
@@ -140,7 +141,7 @@ class Replay(Configurable):
             return self._anchor
 
     def pin_anchor(self, ts: float | None = None) -> None:
-        """Pin the anchor at *ts* (default: the earliest timed row) now, before any stream
+        """Pin the anchor at *ts* (defaults to :meth:`first_ts`) now, before any stream
         subscribes, so streams that start earlier than the first-subscribed one keep their
         frames."""
         first = self.first_ts() if ts is None else ts

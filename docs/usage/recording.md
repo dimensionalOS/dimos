@@ -129,7 +129,8 @@ repeat unchanged. If the entire stream has multiple rows at one recording timest
 also holds edges that appear just once.
 On a declared static channel such as `tf_static`, replay publishes the last recorded mount for
 each edge at startup and repeats it every second. Raw stream iteration retains all mount revisions.
-Other samples play in order even at the same timestamp. Relative `seek` and `duration` start at the first timed row.
+Other samples play in order even at the same timestamp. Relative `seek` and `duration` start
+at the first timed row, or at the earliest recorded row if the recording contains only setup data.
 
 An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
 
