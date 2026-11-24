@@ -38,7 +38,7 @@ from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import sim
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
 # linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
 pytest.importorskip("pxr")
@@ -203,8 +203,6 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
 
 
 class _Collect:
-    busy = False
-
     def __init__(self) -> None:
         self.world = WorldMirror()
 
@@ -339,3 +337,41 @@ def test_closing_the_publisher_while_a_frame_is_in_flight_does_not_wedge_it():
     closer.join(5)
 
     assert not closer.is_alive(), "close() never returned: the publishing thread is wedged"
+
+
+def test_frames_offered_while_one_is_in_flight_are_merged_not_lost() -> None:
+    from threading import Event as ThreadEvent
+
+    from dimos.sim2.mujoco.sim import _LatestPublisher
+
+    writer = WorldWriter()
+    writer.add("crate")
+    published: list[Any] = []
+    in_flight, release, followed = ThreadEvent(), ThreadEvent(), ThreadEvent()
+
+    def publish(frame: Any) -> None:
+        published.append(frame)
+        if len(published) == 1:
+            in_flight.set()
+            release.wait(5)
+        else:
+            followed.set()
+
+    publisher = _LatestPublisher(publish)
+    publisher.offer(writer.end_frame(0.0))
+    assert in_flight.wait(5), "the publisher thread never picked the frame up"
+    writer.set("crate", "note", {"a": 1})
+    publisher.offer(writer.end_frame(0.1))
+    writer.position("crate", [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    publisher.offer(writer.end_frame(0.2))
+    release.set()
+    assert followed.wait(5), "the frames offered mid-publish were dropped"
+    publisher.close()
+
+    mirror = WorldMirror()
+    for frame in published:
+        mirror.apply(frame)
+    crate = mirror.entity("crate")
+    assert len(published) == 2
+    assert crate is not None and crate.cbor["note"] == {"a": 1}
+    assert crate.pose is not None and crate.pose[:3] == pytest.approx([1.0, 0.0, 0.0])
