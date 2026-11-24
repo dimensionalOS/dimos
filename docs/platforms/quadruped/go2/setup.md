@@ -46,11 +46,29 @@ Scans BLE and connects to the only robot it finds, or prompts you to pick if the
 dimos go2tool discover
 ```
 
-Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
+Prints `SOURCE NAME IP MAC SERIAL` for robots it sees over BLE and LAN. BLE rows
+identify nearby robots but do not contain an IP. Match the full `SERIAL` on the
+intended robot's BLE row (or its label) to a LAN row, then export that row's IP.
+Do not select the first Unitree MAC or an unrelated LAN row when several robots
+share the network.
 
 ```bash
 export ROBOT_IP=<discovered_ip>
 ```
+
+If the scan reports `No LAN robots found.` or no LAN match for your BLE serial,
+the robot may still be reachable by IP. LAN discovery depends on UDP multicast
+to `231.1.1.1:10131` and replies on UDP port `10134`. Check that the laptop and
+robot are on the same LAN, that the firewall permits these packets, and that the
+Wi-Fi network permits multicast between clients. Ask the network administrator
+to check multicast filtering and client isolation, or retry on a network that
+permits discovery. These are possible causes, not a diagnosis of the network.
+
+You can isolate the LAN scan with `dimos go2tool discover --lan -t 30`. A longer
+timeout cannot fix blocked multicast. DimOS currently has no direct IP-to-serial
+lookup when discovery receives no reply. If you obtain an IP through the Unitree
+app or network administrator, verify that it belongs to the intended serial
+before setting `ROBOT_IP`. A successful ping alone does not identify the robot.
 
 ### Pre-flight checks
 
