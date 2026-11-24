@@ -72,10 +72,6 @@ policy_cpu = 5
 policy_fifo_priority = 70
 
 [safety]
-# no faults are raised for this long after start (rl_deploy SafeController grace)
-startup_grace_s = 1.0
-# no fresh hardware / IMU state for this long -> fault (joint damping)
-state_timeout_s = 0.02
 # no operator command for this long -> velocity axes zeroed (the state is kept): rl_deploy's MonitorSteer checks
 # IsUpdate(150 ms) every 10 ms, so its zeroing lands 150-160 ms after the last sample (recordings: from 155 ms)
 command_timeout_s = 0.155

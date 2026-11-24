@@ -85,8 +85,6 @@ pub struct Timing {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Safety {
-    pub startup_grace_s: f64,
-    pub state_timeout_s: f64,
     pub command_timeout_s: f64,
     /// joint-damping commands sent after a stop request before the process exits
     pub shutdown_damping_ticks: u64,
@@ -536,8 +534,6 @@ impl Config {
             bail!("timing.policy_decimation must be at least 1");
         }
         let durations = [
-            ("safety.startup_grace_s", self.safety.startup_grace_s),
-            ("safety.state_timeout_s", self.safety.state_timeout_s),
             ("safety.command_timeout_s", self.safety.command_timeout_s),
             ("ecan.reply_timeout_s", self.ecan.reply_timeout_s),
             ("realtime.sleep_slack_s", self.realtime.sleep_slack_s),

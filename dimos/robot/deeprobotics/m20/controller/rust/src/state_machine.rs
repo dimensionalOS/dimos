@@ -171,26 +171,6 @@ fn gains(kp: &[f64], kd: &[f64]) -> ([f64; JOINTS], [f64; JOINTS]) {
     (tiled(kp), tiled(kd))
 }
 
-/// The first non-finite number in a state the faults are judged on, by name.
-fn non_finite_state(s: &RobotState) -> Option<&'static str> {
-    // the joints' NaNs are rl_deploy's counter's (JointWatch)
-    let fields: [(&str, &[f64]); 3] = [
-        ("orientation", &s.quat),
-        ("gyro", &s.gyro),
-        ("stamp", std::slice::from_ref(&s.stamp)),
-    ];
-    fields
-        .iter()
-        .find(|(_, v)| v.iter().any(|x| !x.is_finite()))
-        .map(|(name, _)| *name)
-}
-
-fn command_is_finite(c: &JointCommand) -> bool {
-    [&c.kp, &c.q, &c.kd, &c.dq, &c.tau]
-        .iter()
-        .all(|a| a.iter().all(|x| x.is_finite()))
-}
-
 /// SafeController::Run's tilt limits for a UserCommand target and gait (f32 rad angles, compared as f64, strictly).
 pub fn tilt_fault(target: Target, gait: u32, roll: f32, pitch: f32) -> Option<String> {
     let (roll, pitch) = (roll.abs() as f64, pitch.abs() as f64);
@@ -457,7 +437,7 @@ impl Controller {
         self.time
     }
 
-    /// The hardware missed a reply; a run of them longer than state_timeout_s is a fault.
+    /// The hardware missed a reply (counted; rl_deploy raises no fault for it).
     pub fn note_stale(&mut self) {
         self.counters.stale_ticks += 1;
         self.stale_run += 1;
@@ -469,26 +449,11 @@ impl Controller {
 
     /// Recomputed every tick like rl_deploy's SafeController (a fault clears when its cause does).
     fn check_faults(&mut self, s: &RobotState, cmd: &UserCommand) -> Option<String> {
-        // rl_deploy's joint checks count on every tick, the start-up grace included
+        // rl_deploy's SafeController faults on the joint data and the tilt only (IMU staleness and NaN, and its 20 ms
+        // reply gap, set status bits it publishes, not the fault byte), from its first tick
         let joints = self.joint_watch.check(s, &self.cfg.robot.joint_names);
         if !self.fault_checks {
             return None;
-        }
-        let safety = &self.cfg.safety;
-        if self.time < safety.startup_grace_s {
-            return None;
-        }
-        // NaN compares false against every limit below, so a non-finite reading is a fault of its own
-        if let Some(name) = non_finite_state(s) {
-            return Some(format!("non-finite {name} in the hardware state"));
-        }
-        if self.stale_run as f64 * self.dt > safety.state_timeout_s {
-            return Some(format!("no hardware state for {} ticks", self.stale_run));
-        }
-        if let Some(last) = self.last_stamp {
-            if s.stamp - last > safety.state_timeout_s {
-                return Some(format!("hardware state stale for {:.3} s", s.stamp - last));
-            }
         }
         joints.or_else(|| self.tilt_fault(s, cmd))
     }
@@ -674,13 +639,6 @@ impl Controller {
             State::StandUp => self.stand_up(),
             State::LieDown => self.lie_down(),
             State::RlControl => self.rl_control(s, cmd, policy),
-        };
-        // a NaN / inf target or gain (a policy output, a bad state through a spline) never reaches the motors
-        let out = if self.fault_checks && !command_is_finite(&out) {
-            self.fault = Some("policy: non-finite joint command".into());
-            self.constant(&st.joint_damping.kp, &st.joint_damping.kd)
-        } else {
-            out
         };
         let out = if self.enable_left > 0 {
             self.enable_left -= 1;
@@ -1088,22 +1046,6 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_state_is_a_fault() {
-        let cfg = config();
-        let mut s = standing_state(&cfg);
-        let mut c = Controller::new(cfg);
-        c.set_time(10.0);
-        let mut policy = InlinePolicy::new(RunnerSet::empty());
-        c.tick(&s, &UserCommand::default(), &mut policy);
-        assert!(c.fault.is_none());
-        s.gyro[1] = f64::NAN;
-        c.tick(&s, &UserCommand::default(), &mut policy);
-        assert!(c.fault.as_deref().is_some_and(|f| f.contains("non-finite")));
-        c.tick(&s, &UserCommand::default(), &mut policy);
-        assert_eq!(c.state, State::JointDamping);
-    }
-
-    #[test]
     fn joint_checks_count_like_rl_deploy() {
         let cfg = config();
         let names = cfg.robot.joint_names.clone();
@@ -1167,37 +1109,5 @@ mod tests {
         assert!(tilt_fault(Target::RlControl, 0xf003, deg(80.0), deg(80.0)).is_none());
         assert!(tilt_fault(Target::LieDown, 0, deg(80.0), deg(80.0)).is_none());
         assert!(tilt_fault(Target::JointDamping, 0, deg(80.0), deg(80.0)).is_none());
-    }
-
-    #[test]
-    fn non_finite_policy_target_never_goes_out() {
-        let cfg = config();
-        let s = standing_state(&cfg);
-        let damping = gains(&cfg.states.joint_damping.kp, &cfg.states.joint_damping.kd);
-        let mut c = Controller::new(cfg);
-        let cmd = UserCommand {
-            target: Target::RlControl,
-            ..Default::default()
-        };
-        c.set_time(10.0);
-        c.force(State::RlControl, &s, &cmd, false);
-        let mut q = [0.0; JOINTS];
-        q[1] = f64::NAN;
-        let mut policy = Fixed(
-            Targets {
-                q,
-                wheel_velocity: [0.0; 4],
-                action: [0.0; JOINTS],
-                velocity_estimate: None,
-            },
-            None,
-        );
-        let mut sent = Vec::new();
-        for _ in 0..100 {
-            sent.push(c.tick(&s, &cmd, &mut policy));
-        }
-        assert!(sent.iter().all(command_is_finite));
-        assert!(sent.iter().any(|o| (o.kp, o.kd) == damping));
-        assert_eq!(c.state, State::JointDamping);
     }
 }

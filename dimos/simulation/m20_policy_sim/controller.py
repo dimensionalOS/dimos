@@ -15,7 +15,7 @@
 """Reference re-implementation of rl_deploy's state machine (the Rust controller mirrors it).
 
 States (rl_deploy names): passive (idle_state) -> stand_up -> rl_control (runner by gait code, after a stand-in policy
-on some gaits) -> lie_down; joint_damping on a request or a fault (stale state, joint beyond its range).
+on some gaits) -> lie_down; joint_damping on a request or a fault (rl_deploy's: joint data, tilt).
 One call to `tick` per 1 ms control step returns the 16 joint commands. See SPEC.md for the decoded rules.
 """
 
@@ -215,13 +215,8 @@ class Controller:
         return "tilt" if roll > limits[0] or pitch > limits[1] else ""
 
     def check_faults(self, s: RobotState, cmd: UserCommand) -> str:
-        joints = self.joint_watch(s)
-        safety = self.cfg["safety"]
-        if self.time < safety["startup_grace_s"]:
-            return ""
-        if self.last_stamp is not None and s.stamp - self.last_stamp > safety["state_timeout_s"]:
-            return "stale state"
-        return joints or self.tilt_fault(s, cmd)
+        # rl_deploy's SafeController faults on the joint data and the tilt only, from its first tick
+        return self.joint_watch(s) or self.tilt_fault(s, cmd)
 
     def effective_target_peek(self, cmd: UserCommand) -> str:
         """effective_target without clearing the block."""
