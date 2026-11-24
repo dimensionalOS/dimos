@@ -50,7 +50,7 @@ def run(robot, task):
     robot.scene.clear(cube.id)
     robot.gripper.open()
     robot.arm.move_pose([x, y, z + 0.10], [math.pi, 0.0, 0.0])
-    robot.arm.move_linear(dz=-0.08)
+    robot.arm.move_linear(dz=-0.10)
     robot.gripper.close()
     robot.arm.move_linear(dz=0.10)
 ```
@@ -78,7 +78,7 @@ the program may catch it and try another way.
 | `observe()` | saves a keyframe, returns its path | an `Observer` |
 | `log(text)` | a line in the trace | the trace |
 
-This is program API version 1 (`API_VERSION`); `API_REFERENCE` is the same
+This is program API version 2 (`API_VERSION`); `API_REFERENCE` is the same
 table as text, shown to the coding agent and exported with each skill.
 Every call is appended to `trace.jsonl` as one JSON line: time, call, args,
 status (`OK`, `PLANNING_FAILED`, `EXECUTION_FAILED`, `TIMEOUT`, `RAISED`), a
