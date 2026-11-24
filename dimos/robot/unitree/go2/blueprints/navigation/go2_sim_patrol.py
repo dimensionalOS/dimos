@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The simulated Go2 patrolling a route and returning to charge, driven by the Orchestrator."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.orchestration.demo.fake_robot import FakeBase, FakeBattery, FakeEstop
 from dimos.orchestration.orchestrator import Orchestrator
+from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
+from dimos.simulation.go2_sim.fake_battery import FakeBattery
 
-demo_orchestrator = autoconnect(
-    FakeBase.blueprint(),
-    FakeBattery.blueprint(),
-    FakeEstop.blueprint(),
-    Orchestrator.blueprint(file=Path(__file__).parent / "patrol.toml"),
-)
+# One worker per module.
+go2_sim_patrol = autoconnect(
+    go2_sim_nav,
+    FakeBattery.blueprint(start_pct=60.0, drain_per_s=0.7, charge_per_s=10.0),
+    Orchestrator.blueprint(file=Path(__file__).parent / "go2_sim_patrol.toml"),
+).global_config(n_workers=11)

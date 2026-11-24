@@ -35,6 +35,7 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
 )
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav_episode import go2_sim_nav_episode
+from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_patrol import go2_sim_patrol
 from dimos.robot.unitree.go2.dds.blueprints import go2_nav
 from dimos.spec.utils import Spec
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -78,7 +79,9 @@ def test_viewer_gets_the_navigation_config() -> None:
     assert go2_nav_static().keys() <= bridge.kwargs["static"].keys()
 
 
-@pytest.mark.parametrize("blueprint", [go2_sim.solidify(), go2_sim_nav.solidify()])
+@pytest.mark.parametrize(
+    "blueprint", [go2_sim.solidify(), go2_sim_nav.solidify(), go2_sim_patrol.solidify()]
+)
 def test_one_worker_per_module_with_gossip_off(blueprint: Blueprint) -> None:
     overrides = blueprint.global_config_overrides
     assert overrides["n_workers"] == len(blueprint.active_blueprints)

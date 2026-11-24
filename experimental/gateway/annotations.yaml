@@ -409,6 +409,10 @@ robots:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
           recommended_config: []
+        go2-sim-patrol:
+          title: 'Go2 in simulation (patrol)'
+          description: 'The simulated Go2 patrolling waypoints and docking to recharge, run by an orchestration workflow. No robot needed.'
+          recommended_config: []
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
@@ -1208,9 +1212,6 @@ robots:
         demo-osm:
           title: OpenStreetMap skill demo
           description: An agent on a pretend robot with an OpenStreetMap skill.
-        demo-orchestrator:
-          title: Orchestrator demo
-          description: 'A toy robot run by an orchestration workflow (TOML): no robot needed.'
         teleop-phone:
           title: Phone driving
           description: 'Drive from a phone''s touch controls: publishes cmd_vel for any robot.'
