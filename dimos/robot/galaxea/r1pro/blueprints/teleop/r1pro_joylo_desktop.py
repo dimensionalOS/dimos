@@ -23,6 +23,7 @@ The added opening links are invisible measurement frames, not physical bodies.
 
 from dimos.constants import CACHE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
     _camera_transports,
@@ -31,7 +32,8 @@ from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
     _webxr_joystick_blueprint,
 )
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_real import make_joylo_real
-from dimos.robot.galaxea.r1pro.collection import r1pro_collection
+from dimos.robot.galaxea.r1pro.collection import HARDWARE_WRIST_SHAPE, r1pro_collection
+from dimos.robot.galaxea.r1pro.external_camera import R1ProExternalCamera
 from dimos.robot.galaxea.r1pro.head_cameras import (
     HEAD_JPEG_QUALITY,
     HeadCameraInfo,
@@ -87,15 +89,31 @@ _vision = (
 )
 
 
-def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
-    """Compose hardware teleop, optionally with robot-side recording and episodes.
+def _external_camera() -> Blueprint:
+    """The operator laptop's camera filming the robot, as external_color JPEG."""
+    return (
+        R1ProExternalCamera.blueprint()
+        .remappings([(R1ProExternalCamera, "color", "external_color")])
+        .transports(_camera_transports)
+    )
 
-    Recording compositions require --recorder.recording and --episodes.task.
+
+def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
+    """Hardware teleop: control and cameras on the robot, leaders and Joy-Cons here.
+
+    Args:
+        recording: Add the recorder and episode monitor on the robot, and the
+            laptop's external camera. The run then needs --recorder.recording
+            (a new folder on the robot) and --episodes.task.
     """
+    collection = r1pro_collection(
+        wrist_shape=HARDWARE_WRIST_SHAPE, extra_inputs={"external_color": CompressedImage}
+    )
+    operator = autoconnect(_operator_blueprint(), *([_external_camera()] if recording else []))
     return autoconnect(
         autoconnect(
             # When requested, the recorder starts first and shuts down last.
-            *([r1pro_collection()] if recording else []),
+            *([collection] if recording else []),
             # Operator video uses head_*_color / wrist_*_color independently of
             # the paired, rectified RGB-D streams used by the mesh and recorder.
             make_joylo_real(publish_odom_tf=True, enable_wrist_color=True, webxr=True),
@@ -104,10 +122,11 @@ def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
             _webxr_joystick_blueprint(),
             _vision,
         ).hosted(tags={"r1pro": True}),
-        _operator_blueprint().hosted(local=True),
+        operator.hosted(local=True),
         UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
     ).global_config(viewer="none", transport="zenoh", n_workers=11)
 
 
 # autoconnect(...) is what the registry generator recognises as a runnable blueprint.
 r1pro_openarm_joylo_real = autoconnect(make_joylo_desktop())
+r1pro_openarm_joylo_collect = autoconnect(make_joylo_desktop(recording=True))

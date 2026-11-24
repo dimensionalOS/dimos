@@ -407,6 +407,8 @@ def test_collection_config_roundtrip_keeps_derived_store(tmp_path, format, paylo
     restored = CollectionModuleConfig.model_validate(config.model_dump())
     assert restored.store.path == str(tmp_path / "session" / payload)
     assert restored.to_config_dict() == config.to_config_dict()
+    explicit = CollectionModuleConfig.model_validate(config.model_dump(exclude_unset=True))
+    assert explicit.store == config.store
 
 
 @pytest.mark.parametrize(

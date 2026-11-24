@@ -28,6 +28,7 @@ from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_sim2
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_desktop import (
     make_joylo_desktop,
+    r1pro_openarm_joylo_collect,
     r1pro_openarm_joylo_real,
 )
 from dimos.robot.galaxea.r1pro.collection import CAMERAS, r1pro_collection
@@ -65,7 +66,6 @@ SIMULATION = {
 def _solid(blueprint):  # type: ignore[no-untyped-def]
     """autoconnect() gives a MetaBlueprint; its atoms exist once it is solidified."""
     return blueprint.solidify() if hasattr(blueprint, "solidify") else blueprint
-
 
 
 def _publishers(blueprint, name, kind):
@@ -133,32 +133,53 @@ def test_collection_contract_has_explicit_selection_and_rpc_episode_controls():
 
 
 def test_hardware_run_starts_without_recording_options():
-    blueprint = r1pro_openarm_joylo_real
+    blueprint = _solid(r1pro_openarm_joylo_real)
     BlueprintConfigParser(blueprint).parse([], environ={})
-    names = {atom.name for atom in _solid(blueprint).active_blueprints}
+    names = {atom.name for atom in blueprint.active_blueprints}
     assert {"recorder", "episodes"}.isdisjoint(names)
     assert {"ControlCoordinator", "r1projoylo", "r1prowebxr"} <= names
     assert resolve_module_refs(blueprint)["ControlCoordinator", "_leader"] == "r1projoylo"
 
 
-def test_hardware_collection_records_robot_streams_with_robot_side_producers():
-    blueprint = make_joylo_desktop(recording=True)
-    modules = {atom.name: atom for atom in _solid(blueprint).active_blueprints}
+def test_collect_run_is_the_hardware_run_recording_the_operator(tmp_path):
+    real, blueprint = _solid(r1pro_openarm_joylo_real), _solid(r1pro_openarm_joylo_collect)
+    BlueprintConfigParser(blueprint).parse(
+        ["--recorder.recording", str(tmp_path / "take"), "--episodes.task", "pick the cup"],
+        environ={},
+    )
+    # Same Hosts; the recorder joins the robot, the external camera the laptop.
+    added = {"r1pro": {"recorder", "episodes"}, "laptop": {"r1proexternalcamera"}}
+    for before, after in zip(real.hosted_placements, blueprint.hosted_placements, strict=True):
+        assert (before.tags, before.local) == (after.tags, after.local)
+        host = "r1pro" if before.tags else "laptop"
+        extra = added.get(host, set()) if "usdmanager" not in before.module_names else set()
+        assert set(after.module_names) == set(before.module_names) | extra
+    modules = {atom.name: atom for atom in blueprint.active_blueprints}
     recorder = modules["recorder"]
     required_inputs = set(recorder.kwargs["input_types"]) | {"status"}
-    robot = next(p for p in blueprint.hosted_placements if p.tags == {"r1pro": True})
+    robot, laptop = (p for p in blueprint.hosted_placements if "usdmanager" not in p.module_names)
     assert robot.module_names[0] == "recorder"
-    assert "episodes" in robot.module_names
-    assert "r1prowebxr" in robot.module_names
-    assert "r1proleaderconnection" not in robot.module_names
+    operator = {
+        "leader_readings": "r1proleaderconnection",
+        "joycon_sample": "joyconteleopmodule",
+        "external_color": "r1proexternalcamera",
+    }
+    assert {*operator, "leader_joint_command"} <= required_inputs
+    schema = recorder.kwargs["recording_schema"]
+    for camera in ("left_wrist", "right_wrist"):
+        assert schema.observation[f"observation.images.{camera}"].shape == (480, 640, 3)
     for port in recorder.streams:
         if port.name not in required_inputs:
             continue
         topic = blueprint.remapping_map.get((recorder.name, port.name), port.name)
         publishers = _publishers(blueprint, topic, port.type)
         assert len(publishers) == 1, (port.name, publishers)
+        if port.name in operator:
+            assert publishers == [operator[port.name]]
+            assert publishers[0] in laptop.module_names
+            continue
         # Headset mapping, state, actions and camera evidence stay beside the
-        # robot-side recorder; only the physical leaders need the operator host.
+        # robot-side recorder.
         if port.name in {
             "arm_calibration_state",
             "arm_retarget_state",
@@ -170,7 +191,6 @@ def test_hardware_collection_records_robot_streams_with_robot_side_producers():
         }:
             assert publishers == ["r1prowebxr"]
         assert publishers[0] in robot.module_names
-    schema = recorder.kwargs["recording_schema"]
     assert {feature.stream for feature in schema.action.values()} == {
         "coordinator_joint_command",
         "coordinator_joint_velocity",

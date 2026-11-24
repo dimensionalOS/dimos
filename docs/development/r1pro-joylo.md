@@ -10,17 +10,24 @@ the hardware blueprint below connects the same operator inputs to vendor ROS.
 | Run | Blueprint | The robot behind it |
 | --- | --- | --- |
 | Hardware | `r1pro-openarm-joylo-real` | CC's ROS connection and the head and wrist cameras, hosted on the robot |
+| Hardware, recorded | `r1pro-openarm-joylo-collect` | The same, plus the recorder on the robot and the laptop's external camera |
 | Simulation | `r1pro-openarm-joylo-sim2` | A sim2 world (the SF555 office unless another scene is named) and MuJoCo cameras on the hardware's streams |
 
 Both are the same composition (`blueprints/teleop/r1pro_joylo_inputs.py`): the
 operator devices, the headset page, JoyLo, `R1ProTeleopCoordinator` with its
-tasks, with optional hardware recording and episode control. Stream names, message types, camera
-sizes and RPCs are the same, so an app or a dataset tool needs no simulation
+tasks, with optional hardware recording and episode control. Stream names, message types
+and RPCs are the same, so an app or a dataset tool needs no simulation
 case. `test_simulation_is_the_hardware_stack_on_a_simulated_robot` holds this.
-Hardware recording is currently disabled: `r1pro-openarm-joylo-real` includes
-neither the recorder nor episode monitor and needs no recording options.
-Simulation still requires `--recorder.recording <new folder>` and
-`--episodes.task "<task>"`; see [the backend contract](/docs/development/r1pro-teleop-backend.md).
+The wrist cameras differ in size: 640x480 on the robot, 1280x720 in simulation.
+`r1pro-openarm-joylo-real` includes neither the recorder nor episode monitor and
+needs no recording options. `r1pro-openarm-joylo-collect` and the simulation
+require `--recorder.recording <new folder>` and `--episodes.task "<task>"`; see
+[the backend contract](/docs/development/r1pro-teleop-backend.md). On hardware the
+folder is on the robot, where the recorder runs. Besides joint state, cameras and
+commands, the hardware recording holds the leader readings (`leader_readings`),
+the Joy-Con samples (`joycon_sample`), JoyLo's joint command
+(`leader_joint_command`) and the laptop's external camera (`external_color`,
+640x480 JPEG; the device is `--r1proexternalcamera.device`).
 
 The simulation differs in three declared ways: its own tracking rates
 (1.5 rad/s arms, 0.5 rad/s torso), the sim2 robot model, and leaders that are

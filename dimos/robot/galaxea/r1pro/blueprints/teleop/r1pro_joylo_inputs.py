@@ -75,6 +75,7 @@ _camera_transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
         "head_right_color",
         "wrist_left_color",
         "wrist_right_color",
+        "external_color",
     )
 }
 

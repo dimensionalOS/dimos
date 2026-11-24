@@ -14,8 +14,9 @@
 
 """R1 data contracts for application-independent episode collection."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -32,22 +33,45 @@ from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER
 
 # The cameras' own color streams, at the camera rate; capture keeps their compressed
 # bytes. The 5 Hz RGB-D of the spatial sensors is for the mesh view, not for a dataset.
+# The wrist size is the simulation's; the robot's wrists stream HARDWARE_WRIST_SHAPE.
 CAMERAS = {
     "head": ("head_left_color", (1536, 1920, 3)),
     "left_wrist": ("wrist_left_color", (720, 1280, 3)),
     "right_wrist": ("wrist_right_color", (720, 1280, 3)),
 }
+HARDWARE_WRIST_SHAPE = (480, 640, 3)
 # The rate of every camera above.
 CAMERA_HZ = 30
 POSITION_JOINTS = (*UPPER, *JAWS)
+# What the operator does with the leader arms and Joy-Cons, and what JoyLo makes of it.
+OPERATOR_INPUTS: dict[str, type[Any]] = {
+    "leader_readings": JointState,
+    "joycon_sample": Joy,
+    "leader_joint_command": JointState,
+}
 
 
-def collection_profile(cameras: Sequence[str] = tuple(CAMERAS)) -> CollectionProfile:
+def collection_profile(
+    cameras: Sequence[str] = tuple(CAMERAS),
+    *,
+    wrist_shape: tuple[int, int, int] = CAMERAS["left_wrist"][1],
+) -> CollectionProfile:
+    """The dataset layout: joint state, camera images and commanded actions.
+
+    Args:
+        cameras: Which of CAMERAS to record.
+        wrist_shape: Wrist image size as (height, width, channels), in pixels.
+            Dataset export rejects frames of any other size.
+    """
     if not cameras or len(set(cameras)) != len(cameras):
         raise ValueError("select at least one distinct camera")
     unknown = set(cameras) - CAMERAS.keys()
     if unknown:
         raise ValueError(f"unknown R1 cameras: {sorted(unknown)}")
+    shapes = {
+        camera: wrist_shape if camera.endswith("_wrist") else shape
+        for camera, (_, shape) in CAMERAS.items()
+    }
     return CollectionProfile(
         observations={
             "observation.state": FeatureSpec(
@@ -63,7 +87,7 @@ def collection_profile(cameras: Sequence[str] = tuple(CAMERAS)) -> CollectionPro
                     stream=CAMERAS[camera][0],
                     message_type=CompressedImage,
                     dtype="video",
-                    shape=CAMERAS[camera][1],
+                    shape=shapes[camera],
                     names=["height", "width", "channels"],
                 )
                 for camera in cameras
@@ -105,6 +129,7 @@ def collection_profile(cameras: Sequence[str] = tuple(CAMERAS)) -> CollectionPro
                 "webxr_head_observed",
                 "webxr_joy_observed",
                 "webxr_gamepad_observed",
+                *OPERATOR_INPUTS,
             ],
             "mapped_hand_streams": [
                 "hand_left_pose",
@@ -135,15 +160,34 @@ def collection_schema(profile: CollectionProfile) -> RecordingSchema:
 
 
 def r1pro_collection(
-    *, cameras: Sequence[str] = tuple(CAMERAS), recording: Path | None = None
+    *,
+    cameras: Sequence[str] = tuple(CAMERAS),
+    recording: Path | None = None,
+    wrist_shape: tuple[int, int, int] = CAMERAS["left_wrist"][1],
+    extra_inputs: Mapping[str, type[Any]] | None = None,
 ) -> Blueprint:
-    """Place before producers on the robot host. Supply --recorder.recording and --episodes.task."""
-    profile = collection_profile(cameras)
+    """The recorder and episode monitor. Supply --recorder.recording and --episodes.task.
+
+    Place it first, on the robot host, so it starts before the streams it records.
+
+    Args:
+        cameras: Which of CAMERAS go into the dataset.
+        recording: Folder for the new recording; the launch option sets it otherwise.
+        wrist_shape: Wrist image size as (height, width, channels), in pixels.
+        extra_inputs: More streams to record, by name and message type, outside
+            the dataset layout (for example a camera filming the robot).
+    """
+    profile = collection_profile(cameras, wrist_shape=wrist_shape)
+    schema = collection_schema(profile)
+    extra = dict(extra_inputs or {})
+    schema.metadata["extra_streams"] = list(extra)
     return autoconnect(
         CollectionModule.blueprint(
             instance_name="recorder",
             input_types={
                 **profile.input_types(),
+                **OPERATOR_INPUTS,
+                **extra,
                 "motion_settings": String,
                 "arm_calibration_state": String,
                 "arm_retarget_state": String,
@@ -156,7 +200,7 @@ def r1pro_collection(
                 "hand_left_pose": PoseStamped,
                 "hand_right_pose": PoseStamped,
             },
-            recording_schema=collection_schema(profile),
+            recording_schema=schema,
             **({"recording": recording} if recording else {}),
         ),
         EpisodeMonitorModule.blueprint(instance_name="episodes", button_map={}),
