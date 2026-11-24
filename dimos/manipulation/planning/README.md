@@ -7,7 +7,7 @@ planning from conversion to an executable timed trajectory.
 
 ```bash
 # 1. Verify manipulation dependencies with mock hardware:
-dimos run xarm7-planner-coordinator
+dimos run lite6-planner-coordinator
 
 # Plan for the mobile, bimanual R1 Pro with fake hardware:
 dimos run r1pro-planar-preview
@@ -16,7 +16,7 @@ dimos run r1pro-planar-preview
 dimos run keyboard-teleop-xarm7
 
 # 3. SDK and RPCs in the generic Python shell:
-dimos run xarm7-planner-coordinator  # terminal 1
+dimos run lite6-planner-coordinator  # terminal 1
 dimos shell                         # terminal 2
 ```
 
@@ -34,6 +34,11 @@ help(arm)
 Use `arm.` followed by Tab for completion and `arm.move_linear?` for method help.
 The [manipulation guide](/docs/capabilities/manipulation/python_api.md) covers
 manual motion and explicit planning, preview, and execution through `arm.rpc`.
+
+For a real xArm7 or xArm6, use `xarm7-planner-coordinator` or
+`xarm6-planner-coordinator` with `--xarmconnection.ip <arm-ip>` (or set
+`XARMCONNECTION__IP`). These planners require hardware even with `--simulation`.
+The Lite6 commands above use a mock when no arm address is configured.
 
 ## Architecture
 
@@ -314,7 +319,9 @@ accepted.
 
 | Blueprint | Description |
 |-----------|-------------|
-| `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
+| `lite6-planner-coordinator` | Lite6 planner with mock hardware when no arm address is configured |
+| `xarm7-planner-coordinator` | Real xArm7 with coordinator, requires an arm IP |
+| `xarm6-planner-coordinator` | Real xArm6 with coordinator, requires an arm IP |
 | `dual-xarm6-planner-coordinator` | Dual XArm 6-DOF with mock coordinator hardware |
 | `r1pro-planar-preview` | R1 Pro planar base, torso, and both arms with fake hardware |
 | `xarm-perception-sim` | XArm 7-DOF simulation perception stack |

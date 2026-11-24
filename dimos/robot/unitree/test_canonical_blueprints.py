@@ -54,9 +54,9 @@ def test_go2_shipped_connections_and_tasks(name):
 
 
 @pytest.mark.parametrize("simulation", ["", "mujoco"])
-def test_g1_shipped_basic_and_groot_backends(simulation, monkeypatch):
+def test_g1_shipped_groot_backends(simulation, monkeypatch):
     from dimos.core.global_config import global_config
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+    from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import G1WholeBodyConnection
     from dimos.utils.data import LfsPath
 
     def no_download(self):
@@ -65,9 +65,9 @@ def test_g1_shipped_basic_and_groot_backends(simulation, monkeypatch):
     monkeypatch.setattr(LfsPath, "_ensure_downloaded", no_download)
     with monkeypatch.context() as scoped:
         scoped.setattr(global_config, "simulation", simulation)
-        for name in ["coordinator", "groot_wbc"]:
+        for name in ["groot_wbc"]:
             module = importlib.import_module(
-                f"dimos.robot.unitree.g1.blueprints.basic.unitree_g1_{name}"
+                f"dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_{name}"
             )
             module = importlib.reload(module)
             bp = getattr(module, f"unitree_g1_{name}").solidify()

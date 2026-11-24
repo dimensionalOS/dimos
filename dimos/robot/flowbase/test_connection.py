@@ -26,6 +26,8 @@ from typing import Any
 
 import pytest
 
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.flowbase import connection
@@ -158,6 +160,15 @@ def test_no_command_within_the_deadman_sends_zero_speed(rig: Callable[..., Rig])
     r.drive(0.5, 0.0, 0.0)
     wait_until(lambda: r.module.status().deadman_fired, timeout=2.0)
     assert r.client.speeds[-1] == [0.0, 0.0, 0.0]
+
+
+def test_a_twist_on_cmd_vel_goes_out_flipped_and_the_deadman_halts_it(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(deadman_timeout_s=0.05)
+    r.ports["cmd_vel"].publish(Twist(linear=Vector3(0.5, 0.2, 0.0), angular=Vector3(0.0, 0.0, 1.0)))
+    wait_until(lambda: r.module.status().deadman_fired, timeout=2.0)
+    assert r.client.speeds == [[0.5, -0.2, -1.0], [0.0, 0.0, 0.0]]
 
 
 def test_odometry_and_body_speeds_come_out_in_ros_frame(rig: Callable[..., Rig]) -> None:

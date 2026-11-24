@@ -47,6 +47,7 @@ from dimos.imitation.dataprep.schema import (
     Episode,
     EpisodeExtractor,
     EpisodeQualityReport,
+    EpisodeReport,
     FeatureSpec,
     OutputConfig,
     QualityConfig,
@@ -911,8 +912,8 @@ def test_run_dataprep_rejects_empty_recorded_stream_before_writer(mocker, tmp_pa
     )
     mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
     mocker.patch(
-        "dimos.imitation.dataprep.build.extract_episodes",
-        return_value=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)],
+        "dimos.imitation.dataprep.build.inspect_episodes",
+        return_value=EpisodeReport(episodes=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)]),
     )
     writer = mocker.Mock(return_value=tmp_path)
     cfg = DataPrepConfig(
@@ -948,7 +949,10 @@ def test_run_dataprep_excludes_only_invalid_episode(mocker, tmp_path: Path) -> N
         Episode(id="bad", start_ts=0.0, end_ts=1.0, task_label="pick"),
         Episode(id="good", start_ts=2.0, end_ts=3.0, task_label="pick"),
     ]
-    mocker.patch("dimos.imitation.dataprep.build.extract_episodes", return_value=episodes)
+    mocker.patch(
+        "dimos.imitation.dataprep.build.inspect_episodes",
+        return_value=EpisodeReport(episodes=episodes),
+    )
     mocker.patch(
         "dimos.imitation.dataprep.build.inspect_episode_quality",
         side_effect=[
@@ -1117,3 +1121,62 @@ def test_alignment_endpoint_respects_source_timestamp_precision(last_timestamp, 
         )
     )
     assert [sample.observation["state"].item() for sample in samples] == expected
+
+
+@pytest.mark.parametrize(
+    ("events", "counts"),
+    [
+        ([(1.0, "start", "pick")], "0 saved, 0 discarded, 1 incomplete"),
+        ([(1.0, "start", "pick"), (2.0, "discard", "pick")], "0 saved, 1 discarded, 0 incomplete"),
+        ([], "0 saved, 0 discarded, 0 incomplete"),
+    ],
+)
+@pytest.mark.parametrize("status_stream", ["status", "custom_status"])
+def test_prepare_explains_unsaved_episodes(tmp_path, mocker, events, counts, status_stream):
+    store = _FakeStore({status_stream: _status(events)})
+    mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
+    config = DataPrepConfig(
+        source="recording.db",
+        recording_schema=RecordingSchema(episodes=EpisodeExtractor(status_stream=status_stream)),
+        output=OutputConfig(path=tmp_path / "dataset"),
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        run_dataprep(config)
+
+    assert str(caught.value) == (
+        f"No saved episodes in 'recording.db'. {counts}. "
+        "Finish and save at least one episode before preparing the dataset."
+    )
+    assert not config.output.path.exists()
+
+
+@pytest.mark.parametrize(
+    ("extractor", "message"),
+    [
+        (
+            EpisodeExtractor(status_stream="custom_status"),
+            "Episode status stream 'custom_status' is missing.",
+        ),
+        (
+            EpisodeExtractor(extractor="ranges"),
+            "using extractor='ranges'. No episode ranges were configured.",
+        ),
+    ],
+)
+def test_prepare_explains_missing_episode_boundaries(tmp_path, extractor, message):
+    source = tmp_path / "recording.db"
+    with SqliteStore(path=str(source)):
+        pass
+    config = DataPrepConfig(
+        source=str(source),
+        recording_schema=RecordingSchema(episodes=extractor),
+        output=OutputConfig(path=tmp_path / "dataset"),
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        run_dataprep(config)
+
+    assert str(source) in str(caught.value)
+    assert str(caught.value).endswith(message)
+    assert not config.output.path.exists()

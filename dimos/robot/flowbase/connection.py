@@ -91,10 +91,13 @@ class FlowBaseConfig(ConnectionConfig):
     Attributes:
         address: The controller's Portal RPC address, "host:port".
         source: The robot's name, in front of each joint's name ("base/base_forward").
+        odom_frame: The frame odometry is stamped in, e.g. "wheel_odom" when
+            something else already publishes "odom".
     """
 
     address: str = DEFAULT_ADDRESS
     source: str = "base"
+    odom_frame: str = "odom"
     model: RobotModel | None = FLOWBASE_MODEL
     joint_commands: dict[str, tuple[Interface, ...]] = FLOWBASE_JOINT_COMMANDS
 
@@ -104,12 +107,14 @@ class FlowBaseConnection(ConnectionModule):
 
     Body speeds come in on ``velocity_command``: ``base/base_forward`` and
     ``base/base_lateral`` in m/s, ``base/base_turn`` in rad/s, x forward and
-    y left. ``odometry`` and ``joint_state`` (the measured body speeds) go out
-    50 times a second. When commands stop, the base is sent zero speed.
+    y left. A Twist on ``cmd_vel`` does the same, with the same limits.
+    ``odometry`` and ``joint_state`` (the measured body speeds) go out 50
+    times a second. When commands stop, the base is sent zero speed.
     """
 
     config: FlowBaseConfig
 
+    cmd_vel: In[Twist]
     velocity_command: In[JointState]
     joint_state: Out[JointState]
     odometry: Out[Odometry]
@@ -130,6 +135,7 @@ class FlowBaseConnection(ConnectionModule):
                 )
             )
         )
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_twist)))
         self._stop_reading.clear()
         self._reader = threading.Thread(
             target=self._read_loop, daemon=True, name="FlowBaseConnection-read"
@@ -154,6 +160,16 @@ class FlowBaseConnection(ConnectionModule):
             raise ConnectionError(f"no FlowBase answers at {address}")
         self._client = client
         logger.info(f"Connected to FlowBase at {address}")
+
+    def _on_twist(self, twist: Twist) -> None:
+        """Drive at a Twist's forward and left speeds (m/s) and turn rate (rad/s)."""
+        speeds = (twist.linear.x, twist.linear.y, twist.angular.z)
+        self.command(
+            {
+                f"{joint}/{Interface.VELOCITY}": speed
+                for joint, speed in zip(FLOWBASE_BASE_JOINTS, speeds, strict=True)
+            }
+        )
 
     def write(self, values: Values) -> None:
         vx, vy, wz = (
@@ -205,7 +221,7 @@ class FlowBaseConnection(ConnectionModule):
         self.odometry.publish(
             Odometry(
                 ts=ts,
-                frame_id=self.frame("odom"),
+                frame_id=self.frame(self.config.odom_frame),
                 child_frame_id=self.frame("base_link"),
                 pose=Pose(
                     position=Vector3(x, y, 0.0),

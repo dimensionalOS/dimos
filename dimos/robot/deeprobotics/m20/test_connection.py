@@ -69,6 +69,7 @@ ERROR_LIST_REPORT = 3
 BATTERY_STATUS_REPORT = 5
 BASIC_STATUS_REPORT = 6
 CHARGE_MESSAGE = (2, 24)
+LIGHT_MESSAGE = (1101, 2)
 HEARTBEAT_MESSAGE = (100, 100)
 
 
@@ -116,7 +117,9 @@ class FakeBasicServer:
         self.usage_mode = USAGE_MODE_NAVIGATION
         self.errors: list[int] = []
         self.battery: dict[str, Any] = dict(BATTERY_STATUS)
+        self.lights = {"Front": 0, "Back": 0}
         self.received: list[dict[str, Any]] = []
+        self.requests: list[dict[str, Any]] = []
         self.raw: list[bytes] = []
         self.reporting = True
         self._stop = Event()
@@ -124,13 +127,22 @@ class FakeBasicServer:
         self._socket.bind(("127.0.0.1", 0))
         self._socket.settimeout(0.02)
         self.port = int(self._socket.getsockname()[1])
-        self._thread = Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self._listener.settimeout(0.02)
+        self.tcp_port = int(self._listener.getsockname()[1])
+        self._threads = [
+            Thread(target=self._run, daemon=True),
+            Thread(target=self._serve_requests, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
 
     def close(self) -> None:
         self._stop.set()
-        self._thread.join()
+        for thread in self._threads:
+            thread.join()
         self._socket.close()
+        self._listener.close()
 
     def charge_commands(self) -> list[int]:
         return [
@@ -154,7 +166,10 @@ class FakeBasicServer:
                 b"garbage",
                 MAGIC + b"\0" * 12 + b"{not json",
                 self._report(MOTION_STATUS_REPORT, {"MotionStatus": {"Height": 0.5}}),
-                self._report(BATTERY_STATUS_REPORT, {"BatteryStatus": self.battery}),
+                self._report(
+                    BATTERY_STATUS_REPORT,
+                    {"BatteryStatus": self.battery, "Led": {"Fill": dict(self.lights)}},
+                ),
                 self._report(
                     BASIC_STATUS_REPORT,
                     {
@@ -171,6 +186,25 @@ class FakeBasicServer:
                 ),
             ):
                 self._socket.sendto(frame, peer)
+
+    def _serve_requests(self) -> None:
+        while not self._stop.is_set():
+            try:
+                client, _address = self._listener.accept()
+            except TimeoutError:
+                continue
+            with client:
+                _magic, length, message_id, _encoding, _reserved = HEADER.unpack(
+                    client.recv(HEADER.size, socket.MSG_WAITALL)
+                )
+                request = json.loads(client.recv(length, socket.MSG_WAITALL))["PatrolDevice"]
+                self.requests.append(request)
+                if (request["Type"], request["Command"]) == LIGHT_MESSAGE:
+                    self.lights = dict(request["Items"])
+                body = json.dumps({"PatrolDevice": {**request, "Items": {"ErrorCode": 0}}}).encode()
+                client.sendall(
+                    HEADER.pack(MAGIC, len(body), message_id, JSON_ENCODING, b"\0" * 7) + body
+                )
 
     @staticmethod
     def _report(command: int, items: dict[str, Any]) -> bytes:
@@ -210,6 +244,7 @@ def connection(
 ) -> Iterator[M20Connection]:
     module = M20Connection(
         basic_server_host="127.0.0.1",
+        basic_server_tcp_port=server.tcp_port,
         basic_server_udp_port=server.port,
         dock_settle_s=0.05,
         dock_start_timeout_s=0.4,
@@ -403,6 +438,15 @@ def test_a_report_without_a_usable_pack_is_dropped(
 
     assert _transport(conn.battery).sent == []
     assert conn.charge_status() == "idle"
+
+
+def test_set_lights_sends_the_flashlight_request_and_waits_for_the_report(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    assert connection.set_lights(True, False)
+    assert [(r["Type"], r["Command"], r["Items"]) for r in server.requests] == [
+        (*LIGHT_MESSAGE, {"Front": 1, "Back": 0})
+    ]
 
 
 def test_dock_cancels_nav_then_sends_the_vendor_command_and_returns_once_charging(

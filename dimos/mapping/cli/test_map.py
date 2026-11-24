@@ -28,6 +28,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.go2.loop_closure.premap import Premap
 
 
 @pytest.fixture
@@ -79,3 +80,41 @@ def test_map_pgo_finishes_when_window_contains_no_lidar(
     assert result.exit_code == 0, result.output
     assert f"wrote {output}" in result.output
     RrdReader(output).store()  # The empty recording must still be finalized.
+
+
+def test_map_exports_identify_compatible_blueprints(
+    tmp_path: Path, map_app: typer.Typer, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("gtsam")  # no Python 3.10 wheel on Linux
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "source.db"
+    with SqliteStore(path=source) as store:
+        cloud = PointCloud2.from_numpy(
+            np.random.default_rng(0).normal(size=(100, 3)).astype(np.float32),
+            frame_id="world",
+            timestamp=100.0,
+        )
+        store.stream("lidar", PointCloud2).append(
+            cloud, ts=100.0, pose=Transform(translation=Vector3(1.0, 0.0, 0.0))
+        )
+        mocker.patch("dimos.memory.cli.dataset.open_store", return_value=store)
+        result = CliRunner().invoke(
+            map_app,
+            [
+                str(source),
+                "--export",
+                "--export-cloud",
+                "--device",
+                "CPU:0",
+                "--block-count",
+                "16",
+                "--no-gui",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "run relocalize-mid360 --map-file source_map.db" in result.output
+    assert "run unitree-go2 --map-file source.map.db" in result.output
+    assert len(Premap.load(tmp_path / "source.map.db")) == 1
+    with SqliteStore(path=tmp_path / "source_map.db", read_only=True) as store:
+        assert store.list_streams() == ["map_v1_cloud"]
