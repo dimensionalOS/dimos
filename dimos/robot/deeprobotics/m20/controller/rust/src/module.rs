@@ -101,7 +101,7 @@ pub struct Config {
     status_log_height_step_m: f64,
     /// policy: |vx|, |vy|, |wz| clamp on cmd_vel (m/s, m/s, rad/s), the vendor bridge's
     cmd_vel_limits: [f64; 3],
-    /// policy: command_ready's publish rate (Hz), the vendor bridge's
+    /// policy: the vendor bridge's cycle (Hz): command_ready, and the latest cmd_vel resent (zero after the timeout)
     #[validate(range(exclusive_min = 0.0))]
     command_ready_hz: f64,
 }
@@ -717,9 +717,13 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     let dock_seen = dock_latest.clone();
     let mut status_log = crate::status::StatusLog::new(config.status_log_height_step_m);
     let docking_commands = DockingCommands::new(
-        SharedCommands {
-            shared: shared.clone(),
-        },
+        crate::commands::NavBridge::new(
+            SharedCommands {
+                shared: shared.clone(),
+            },
+            config.command_ready_hz,
+            cfg.safety.command_timeout_s,
+        ),
         docking,
         shared.dock.clone(),
         Box::new(move |s| {
