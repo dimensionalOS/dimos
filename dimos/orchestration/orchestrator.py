@@ -58,11 +58,6 @@ logger = setup_logger()
 _START_TIMEOUT_S = 365 * 24 * 3600.0
 
 
-def _topic(target: str) -> str:
-    """The RPC name of a target written `Module.rpc`."""
-    return target.replace(".", "/", 1)
-
-
 class OrchestratorConfig(ModuleConfig):
     file: Path
     cancel_deadline_s: float = DEFAULT_LIMITS.cancel_deadline_s
@@ -79,6 +74,8 @@ class Orchestrator(Module):
         self._definition: OrchestratorDefinition | None = None
         self._checked: CheckedDefinition | None = None
         self._rpcs: Mapping[str, RpcInfo] = {}
+        # Each deployed module's RPC address, by the name the file uses for it.
+        self._addresses: dict[str, str] = {}
         self._queue: deque[QueueItem] = deque()
         self._wake = threading.Condition()
         self._running = False
@@ -102,7 +99,8 @@ class Orchestrator(Module):
             logger.info("Orchestrator ignores a change to the system's modules")
             return
         namespace = (self.config.instance_name or "").rpartition("/")[0]
-        definition = resolve(definition, namespace, {module.remote_name for module in modules})
+        self._addresses = {module.instance_name: module.remote_name for module in modules}
+        definition = resolve(definition, namespace, set(self._addresses))
         deployed, descriptors = self._describe(definition, modules)
         checked = bind(definition, deployed)
         if checked.problems:
@@ -111,7 +109,7 @@ class Orchestrator(Module):
         self._checked = checked
         self._rpcs = deployed.rpcs
         for activity in definition.activities:
-            self.rpc.rpc_timeouts[_topic(activity.start)] = _START_TIMEOUT_S
+            self.rpc.rpc_timeouts[self._address(activity.start)] = _START_TIMEOUT_S
         with self._wake:
             self._running = True
         for stream, values in streams(definition).items():
@@ -137,7 +135,7 @@ class Orchestrator(Module):
         self, definition: OrchestratorDefinition, modules: list[RPCClient]
     ) -> tuple[Deployed, dict[str, StreamDescriptor]]:
         """Ask each module the definition names for its RPCs or its streams."""
-        clients = {module.remote_name: module for module in modules}
+        clients = {module.instance_name: module for module in modules}
         targets = [t for a in definition.activities for t in (a.start, a.cancel) if t]
         rpcs: dict[str, RpcInfo] = {}
         for module in sorted({target.partition(".")[0] for target in targets} & clients.keys()):
@@ -208,11 +206,16 @@ class Orchestrator(Module):
                     )
                     self._halt()
 
+    def _address(self, target: str) -> str:
+        """The RPC name of a target written `Module.rpc`, at that module's address."""
+        module, _, rpc = target.partition(".")
+        return f"{self._addresses.get(module, module)}/{rpc}"
+
     def _send(self, call: Call) -> None:
         with self._wake:
             if call.kind == "start" and not self._running:
                 return
-        name = _topic(call.rpc)
+        name = self._address(call.rpc)
         annotations = {param.name: param.annotation for param in self._rpcs[call.rpc].params}
         try:
             arguments = {
@@ -284,4 +287,4 @@ class Orchestrator(Module):
         if checked is None:
             return
         for target in checked.tree.cancel_rpcs:
-            self.rpc.call_nowait(_topic(target), ((), {}))
+            self.rpc.call_nowait(self._address(target), ((), {}))
