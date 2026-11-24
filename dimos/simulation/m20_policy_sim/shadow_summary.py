@@ -30,7 +30,7 @@ import struct
 
 import numpy as np
 
-from dimos.simulation.m20_policy_sim.replay import JOINT_NAMES, PAGE, clean, gain_quant
+from dimos.simulation.m20_policy_sim.replay import JOINT_NAMES, clean, compose, gain_quant
 
 MAGIC = b"M20SHDW1"
 FLAG_OURS = 1
@@ -166,10 +166,9 @@ def page(header: dict, rec: np.ndarray, report: list[dict], path: Path) -> None:
         f"<td>{e.get('kp_match', 1):.3f} / {e.get('kd_match', 1):.3f}</td><td>shadow</td></tr>"
         for e in report
     )
-    html = PAGE.replace("__TITLE__", "M20 shadow vs rl_deploy").replace(
-        "__DATA__", json.dumps(series)
-    )
-    path.write_text(html.replace("__TABLE__", table).replace("<th>segment</th>", "<th>phase</th>"))
+    # the page takes a list of sections (replay.py's compose), one here
+    section = {"name": "shadow", "series": series, "table": table, "summary": ""}
+    compose([section], path, "M20 shadow vs rl_deploy")
 
 
 def main() -> None:
