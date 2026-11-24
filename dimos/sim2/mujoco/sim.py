@@ -60,7 +60,7 @@ class MujocoSim(Module):
         self._built = Event()
         self._commanded: set[str] = set()
         self._held: set[str] = set()
-        self._all_commanded = asyncio.Event()
+        self._all_commanded = Event()
 
     async def main(self) -> AsyncIterator[None]:
         self.actions.subscribe(self._on_actions)
@@ -100,14 +100,15 @@ class MujocoSim(Module):
         await asyncio.to_thread(self._built.wait)
         backend, publisher = self._backend, self._publisher
         assert backend is not None and publisher is not None
-        # Held still until every held robot is commanded; each command re-offers the frame its policy reads joints from.
         publisher.offer(self._first_frame)
-        if self._held:
-            await self._all_commanded.wait()
-        logger.info("sim2: every robot is being driven; starting the world")
         backend.restart_clock()
+        # Held still until every held robot is commanded, with the clock running so the readings its policy waits on stay fresh.
+        held = True
         while True:
-            _when, frame = backend.step()
+            if held and (not self._held or self._all_commanded.is_set()):
+                held = False
+                logger.info("sim2: every robot is being driven; starting the world")
+            _when, frame = backend.step(hold=held)
             publisher.offer(frame)
             await asyncio.sleep(backend.timestep)
 
@@ -124,12 +125,7 @@ class MujocoSim(Module):
         if not self._all_commanded.is_set():
             self._commanded |= {a.entity for a in actions if isinstance(a, JointCommand)}
             if self._held <= self._commanded:
-                # main() runs on the module's loop, so the event it awaits is set from there.
-                loop = self._loop
-                assert loop is not None
-                loop.call_soon_threadsafe(self._all_commanded.set)
-            elif self._publisher is not None:
-                self._publisher.offer(backend.frame())
+                self._all_commanded.set()
 
     async def handle_render_file_request(self, request: String) -> None:
         backend = self._backend
