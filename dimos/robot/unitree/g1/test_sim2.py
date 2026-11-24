@@ -26,6 +26,7 @@ MOUNT_XYZ = (1.0, -2.0, 0.5)
 MOUNT_YAW = 0.7
 
 
+@pytest.mark.self_hosted  # MuJoCo compiles the G1 from its Git LFS meshes
 def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it() -> None:
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.robot.assets.model import UsdModel

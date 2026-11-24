@@ -75,6 +75,7 @@ def test_every_file_the_layer_names_is_beside_it_and_hashes(robot: str) -> None:
     assert not unhashable, f"{robot}: {unhashable} (a git-lfs pointer, most likely)"
 
 
+@pytest.mark.self_hosted  # MuJoCo compiles the robot from its Git LFS meshes
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_mujoco_simulates_the_robot_off_the_layer_alone(robot: str) -> None:
     import mujoco._usd
@@ -120,6 +121,7 @@ def _mujoco_frames(model: Any, data: Any) -> dict[str, tuple[Any, Any]]:
     return frames
 
 
+@pytest.mark.self_hosted  # MuJoCo compiles the robot from its Git LFS meshes
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_the_physics_and_the_tf_chain_place_a_frame_the_same(robot: str) -> None:
     """One layer, two readers, and they have to agree.
