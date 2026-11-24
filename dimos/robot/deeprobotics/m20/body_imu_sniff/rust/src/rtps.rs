@@ -218,6 +218,21 @@ pub fn decode_imu(payload: &[u8]) -> Option<ImuSample> {
     })
 }
 
+/// rt/IMU_DATA's roll, pitch, yaw (deg) from one 56-byte CDR drdds ImuData (MetaType, then nine f32), else None.
+pub fn decode_imu_data(payload: &[u8]) -> Option<[f32; 3]> {
+    if payload.len() != 56 {
+        return None;
+    }
+    let little = match payload.get(..2)? {
+        [0x00, 0x01] => true,
+        [0x00, 0x00] => false,
+        _ => return None,
+    };
+    let cdr = payload.get(4..)?;
+    let f = |at: usize| u32_at(cdr, at, little).map(f32::from_bits);
+    Some([f(16)?, f(20)?, f(24)?])
+}
+
 /// Learns the named participant's GUID prefix from its SPDP announcements, then yields each of its Imu samples once
 /// (a sample sent to several readers arrives once per reader).
 #[derive(Debug)]
@@ -227,6 +242,8 @@ pub struct Sniffer {
     last_sequence: HashMap<[u8; 4], i64>,
     /// Sequence numbers skipped by the participant's Imu writers since it was found (samples never captured).
     pub missed: i64,
+    /// rt/IMU_DATA angles seen by `feed` since the last `take_angles`
+    angles: Vec<[f32; 3]>,
 }
 
 impl Sniffer {
@@ -235,12 +252,18 @@ impl Sniffer {
             participant: participant.to_string(),
             prefix: None,
             last_sequence: HashMap::new(),
+            angles: Vec::new(),
             missed: 0,
         }
     }
 
     pub fn prefix(&self) -> Option<[u8; 12]> {
         self.prefix
+    }
+
+    /// The rt/IMU_DATA roll, pitch, yaw (deg) the participant sent in what was fed since the last call.
+    pub fn take_angles(&mut self) -> Vec<[f32; 3]> {
+        std::mem::take(&mut self.angles)
     }
 
     /// The new Imu samples in one captured UDP payload.
@@ -261,7 +284,10 @@ impl Sniffer {
             if data.sequence <= last {
                 continue;
             }
-            if let Some(sample) = decode_imu(data.payload) {
+            if let Some(rpy) = decode_imu_data(data.payload) {
+                self.last_sequence.insert(data.writer, data.sequence);
+                self.angles.push(rpy);
+            } else if let Some(sample) = decode_imu(data.payload) {
                 if last > 0 {
                     self.missed = self
                         .missed
@@ -281,6 +307,20 @@ mod tests {
 
     const IMU: &[u8] = include_bytes!("../tests/fixtures/imu.bin");
     const SPDP: &[u8] = include_bytes!("../tests/fixtures/spdp.bin");
+
+    #[test]
+    fn decodes_the_vendor_imu_data_angles() {
+        // a yesense rt/IMU_DATA sample as it went over the wire (2026-11-20 AOS capture, UDP 7441)
+        let hex = "000100000000000000000000a3e5ff6ab787e019c05cd9bf27a213bf114a0fc11d73043b1e6aa53940d1973b753cc63dfa7a96be9e5a1d41";
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let [roll, _, _] = decode_imu_data(&bytes).unwrap();
+        assert_eq!(roll, -1.6981430053710938);
+        assert!(decode_imu_data(&bytes[..55]).is_none());
+        assert!(decode_imu_data(IMU).is_none());
+    }
 
     #[test]
     fn spdp_names_the_yesense_participant() {

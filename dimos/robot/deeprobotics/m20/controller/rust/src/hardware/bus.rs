@@ -243,6 +243,7 @@ impl BusHardware {
         s.quat = imu.quat;
         s.gyro = imu.gyro;
         s.accel = imu.accel;
+        s.imu_rpy_deg = imu.rpy_deg;
         Ok(s)
     }
 }

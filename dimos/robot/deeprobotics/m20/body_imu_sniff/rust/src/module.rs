@@ -66,6 +66,9 @@ pub struct Config {
 pub struct M20BodyImuSniff {
     #[output(encode = Imu::encode)]
     imu: Output<Imu>,
+    /// rt/IMU_DATA's roll, pitch, yaw (deg) as yesense_node sends them over UDP
+    #[output(encode = geometry_msgs::Vector3::encode)]
+    imu_rpy: Output<geometry_msgs::Vector3>,
     #[tf]
     tf: Tf,
 
@@ -77,9 +80,10 @@ impl M20BodyImuSniff {
     async fn start(&mut self) {
         let config = self.config.clone();
         let output = self.imu.clone();
+        let rpy = self.imu_rpy.clone();
         let handle = Handle::current();
         let reader_config = config.clone();
-        std::thread::spawn(move || sniff_forever(reader_config, output, handle));
+        std::thread::spawn(move || sniff_forever(reader_config, output, rpy, handle));
         tokio::spawn(publish_mount(config, self.tf.clone()));
     }
 }
@@ -111,7 +115,12 @@ pub fn imu_message(sample: &ImuSample, frame_id: &str) -> Imu {
 }
 
 #[cfg(target_os = "linux")]
-fn sniff_forever(config: Config, output: Output<Imu>, handle: Handle) {
+fn sniff_forever(
+    config: Config,
+    output: Output<Imu>,
+    rpy: Output<geometry_msgs::Vector3>,
+    handle: Handle,
+) {
     use crate::capture::{wait_readable, SniffCaptures};
     use crate::rtps::Sniffer;
     use tracing::info;
@@ -163,6 +172,16 @@ fn sniff_forever(config: Config, output: Output<Imu>, handle: Handle) {
                                 warn!(%error, "cannot publish the IMU sample");
                             }
                         }
+                        for [x, y, z] in sniffer.take_angles() {
+                            let v = geometry_msgs::Vector3 {
+                                x: x as f64,
+                                y: y as f64,
+                                z: z as f64,
+                            };
+                            if let Err(error) = handle.block_on(rpy.publish(&v)) {
+                                warn!(%error, "cannot publish the IMU angles");
+                            }
+                        }
                     }
                 }
             }
@@ -175,7 +194,12 @@ fn sniff_forever(config: Config, output: Output<Imu>, handle: Handle) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn sniff_forever(_config: Config, _output: Output<Imu>, _handle: Handle) {
+fn sniff_forever(
+    _config: Config,
+    _output: Output<Imu>,
+    _rpy: Output<geometry_msgs::Vector3>,
+    _handle: Handle,
+) {
     warn!("the body IMU sniffer captures with AF_PACKET, which only Linux has");
 }
 

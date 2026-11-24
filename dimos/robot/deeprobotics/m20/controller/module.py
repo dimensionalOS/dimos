@@ -48,6 +48,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -157,6 +158,8 @@ class M20ControllerApi:
 
     cmd_vel: In[Twist]
     imu: In[Imu]
+    # rt/IMU_DATA's roll, pitch, yaw (deg) from the body IMU module: rl_deploy's gravity and tilt
+    imu_rpy: In[Vector3]
     motion_cmd: In[String]
     gait_cmd: In[UInt32]
     # basic_server's usage mode: 0 regular, 1 navigation (cmd_vel is obeyed in 1 and 2), 2 assist

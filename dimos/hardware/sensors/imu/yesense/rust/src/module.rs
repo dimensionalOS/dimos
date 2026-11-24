@@ -18,12 +18,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dimos_module::nalgebra::{Isometry3, Translation3, UnitQuaternion};
 use dimos_module::{native_config, Module, Output, Tf, Transform};
+use lcm_msgs::geometry_msgs::Vector3;
 use lcm_msgs::sensor_msgs::Imu;
 use tokio::runtime::Handle;
 use tracing::{info, warn};
 use yesense_imu::{DecoderConfig, Imu as YesenseDevice};
 
-use crate::mount::{imu_message, mount_rotation};
+use crate::mount::{imu_message, mount_rotation, vendor_rpy_deg};
 
 #[native_config]
 #[derive(Clone)]
@@ -63,6 +64,9 @@ pub struct Config {
 pub struct YesenseImu {
     #[output(encode = Imu::encode)]
     imu: Output<Imu>,
+    /// rt/IMU_DATA's roll, pitch, yaw (deg) as the vendor yesense_node writes them for rl_deploy
+    #[output(encode = Vector3::encode)]
+    imu_rpy: Output<Vector3>,
     #[tf]
     tf: Tf,
 
@@ -74,9 +78,10 @@ impl YesenseImu {
     async fn start(&mut self) {
         let config = self.config.clone();
         let output = self.imu.clone();
+        let rpy = self.imu_rpy.clone();
         let handle = Handle::current();
         let reader_config = config.clone();
-        std::thread::spawn(move || read_forever(reader_config, output, handle));
+        std::thread::spawn(move || read_forever(reader_config, output, rpy, handle));
         tokio::spawn(publish_mount(config, self.tf.clone()));
     }
 }
@@ -88,7 +93,7 @@ fn wall_s(time: SystemTime) -> f64 {
 }
 
 /// Open the device, publish every frame stamped with its host receive time, reopen after an error.
-fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
+fn read_forever(config: Config, output: Output<Imu>, rpy: Output<Vector3>, handle: Handle) {
     let mount = mount_rotation(config.mount_rpy_rad);
     // the validator bounds these; a value that still does not fit falls back to the smallest legal one
     let serial = yesense_imu::Config {
@@ -116,6 +121,16 @@ fn read_forever(config: Config, output: Output<Imu>, handle: Handle) {
                             );
                             if let Err(error) = handle.block_on(output.publish(&msg)) {
                                 warn!(%error, "cannot publish the IMU sample");
+                            }
+                            if let Some([x, y, z]) = vendor_rpy_deg(&sample.frame) {
+                                let v = Vector3 {
+                                    x: x as f64,
+                                    y: y as f64,
+                                    z: z as f64,
+                                };
+                                if let Err(error) = handle.block_on(rpy.publish(&v)) {
+                                    warn!(%error, "cannot publish the IMU angles");
+                                }
                             }
                         }
                         Err(error) => break error,

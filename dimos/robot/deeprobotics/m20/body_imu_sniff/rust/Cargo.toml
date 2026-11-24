@@ -22,6 +22,7 @@ tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.m20_body_imu_sniff.outputs]
 imu = "sensor_msgs.Imu"
+imu_rpy = "geometry_msgs.Vector3"
 
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }

@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dimos_module::{native_config, Input, Module, Output};
-use lcm_msgs::geometry_msgs::{PoseStamped, Twist};
+use lcm_msgs::geometry_msgs::{PoseStamped, Twist, Vector3};
 use lcm_msgs::sensor_msgs::{BatteryState, Imu, JointState};
 use lcm_msgs::std_msgs::{self, Bool, Float32, UInt32};
 use m20_ecan::tap::{TapRecord, TapSocket};
@@ -108,6 +108,9 @@ pub struct M20Controller {
     cmd_vel: Input<Twist>,
     #[input(decode = Imu::decode, handler = on_imu)]
     imu: Input<Imu>,
+    /// rt/IMU_DATA's roll, pitch, yaw (deg) as yesense_node writes them: rl_deploy's gravity and tilt come from these
+    #[input(decode = Vector3::decode, handler = on_imu_rpy)]
+    imu_rpy: Input<Vector3>,
     #[input(decode = std_msgs::String::decode, handler = on_motion_cmd)]
     motion_cmd: Input<std_msgs::String>,
     #[input(decode = UInt32::decode, handler = on_gait_cmd)]
@@ -168,6 +171,8 @@ pub struct M20Controller {
 pub struct Shared {
     command: Mutex<Option<UserCommand>>,
     imu: Mutex<Option<(ImuSample, std::time::Instant)>>,
+    /// the newest rt/IMU_DATA roll, pitch, yaw (deg)
+    imu_rpy: Mutex<Option<[f32; 3]>>,
     stop: AtomicBool,
     /// docking's inputs (dock pose, battery reading, requests)
     dock: Arc<DockFeed>,
@@ -189,8 +194,16 @@ pub struct SharedImu {
 
 impl ImuSource for SharedImu {
     fn latest(&mut self) -> Option<ImuSample> {
+        let rpy = *self
+            .shared
+            .imu_rpy
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let guard = self.shared.imu.lock().unwrap_or_else(|p| p.into_inner());
-        guard.as_ref().map(|(sample, _)| *sample)
+        guard.as_ref().map(|(sample, _)| ImuSample {
+            rpy_deg: rpy,
+            ..*sample
+        })
     }
 }
 
@@ -223,6 +236,7 @@ pub fn imu_sample(msg: &Imu) -> ImuSample {
         gyro: [g.x, g.y, g.z],
         accel: [a.x, a.y, a.z],
         stamp: msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 * 1e-9,
+        rpy_deg: None,
     }
 }
 
@@ -535,6 +549,14 @@ impl M20Controller {
             }
             None => warn!(command = %msg.data, "unknown dock command (dock, undock, cancel)"),
         }
+    }
+
+    async fn on_imu_rpy(&mut self, msg: Vector3) {
+        *self
+            .shared
+            .imu_rpy
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some([msg.x as f32, msg.y as f32, msg.z as f32]);
     }
 
     async fn on_imu(&mut self, msg: Imu) {

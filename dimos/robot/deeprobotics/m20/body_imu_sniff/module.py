@@ -28,6 +28,7 @@ from pydantic import Field
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.deeprobotics.m20.constants import IMU_FRAME, IMU_XYZ_M
@@ -64,6 +65,8 @@ class M20BodyImuSniff(NativeModule):
     config: M20BodyImuSniffConfig
 
     imu: Out[Imu]
+    # rt/IMU_DATA's roll, pitch, yaw (deg) as yesense_node writes them (what rl_deploy's gravity uses)
+    imu_rpy: Out[Vector3]
     tf: Out[TFMessage]
 
 

@@ -24,6 +24,15 @@ pub fn mount_rotation(rpy_rad: [f64; 3]) -> UnitQuaternion<f64> {
     UnitQuaternion::from_euler_angles(rpy_rad[0], rpy_rad[1], rpy_rad[2])
 }
 
+/// yesense_node's rt/IMU_DATA roll, pitch, yaw (deg): f32(i32) x f32(1e-6) per 0x40 count (0x16eec8), roll - 90 (0x15cf30).
+pub fn vendor_rpy_deg(frame: &Frame) -> Option<[f32; 3]> {
+    let e = frame.euler?;
+    // yesense-imu's f64 radians back to the 0x40 counts (exact: its error is far below half a count)
+    let count = |rad: f64| (rad.to_degrees() * 1e6).round() as i32;
+    let deg = |rad: f64| count(rad) as f32 * 1e-6_f32;
+    Some([deg(e.roll) - 90.0_f32, deg(e.pitch), deg(e.yaw)])
+}
+
 /// `frame` as an Imu stamped `ts`. With `body_axes`, vectors are rotated into base_link (`mount * v`) and the
 /// orientation is base_link's (`q * mount⁻¹`), as the vendor driver publishes; otherwise both stay in sensor axes.
 pub fn imu_message(
@@ -118,6 +127,25 @@ mod tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn vendor_angles_are_the_device_euler_block_in_f32_with_roll_less_90() {
+        // a device euler block of (pitch, roll, yaw) counts of 1e-6 deg
+        let counts = [1_234_567_i32, 91_234_567, -179_999_999];
+        let [pitch, roll, yaw] = counts.map(|c| (c as f64 * 1e-6).to_radians());
+        let f = Frame {
+            euler: Some(Euler { roll, pitch, yaw }),
+            ..Frame::default()
+        };
+        let want = [
+            91_234_567_f32 * 1e-6_f32 - 90.0_f32,
+            1_234_567_f32 * 1e-6_f32,
+            -179_999_999_f32 * 1e-6_f32,
+        ];
+        let got = vendor_rpy_deg(&f).unwrap();
+        assert_eq!(got.map(f32::to_bits), want.map(f32::to_bits));
+        assert!(vendor_rpy_deg(&Frame::default()).is_none());
     }
 
     #[test]

@@ -88,6 +88,7 @@ python = "dimos.robot.deeprobotics.m20.controller.module:M20Controller"
 [package.metadata.dimos.module.m20_controller.inputs]
 cmd_vel = "geometry_msgs.Twist"
 imu = "sensor_msgs.Imu"
+imu_rpy = "geometry_msgs.Vector3"
 motion_cmd = "std_msgs.String"
 gait_cmd = "std_msgs.UInt32"
 usage_mode = "std_msgs.UInt32"
