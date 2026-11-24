@@ -188,8 +188,8 @@ class NativeModuleConfig(ModuleConfig):
                 raise ValueError("executable must stay within the project root")
         return self
 
-    def _source_dir_owner(self) -> Path:
-        """File of the class that declares source_dir, whose project it is relative to."""
+    def _config_class_file(self) -> Path:
+        """The file that sets source_dir: this config's class, or the parent it inherits it from."""
         owner = next(
             cls
             for cls in type(self).__mro__
@@ -200,7 +200,7 @@ class NativeModuleConfig(ModuleConfig):
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
-            build_cwd = get_project_root(self._source_dir_owner()) / self.source_dir
+            build_cwd = get_project_root(self._config_class_file()) / self.source_dir
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)
