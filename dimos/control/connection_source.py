@@ -191,6 +191,9 @@ class ConnectionSource:
         self._group_ports = dict(group_ports or {})
         if self._group_ports.keys() != self.group_joints.keys():
             raise ValueError(f"{robot!r}: each declared command needs a typed Out")
+        self._group_axes = frozenset(
+            joint for group in self.group_joints.values() for joint in group
+        )
 
         table = limits_of(config)
         self._robot = robot
@@ -277,6 +280,7 @@ class ConnectionSource:
         self._received_at = 0.0
         # When the last reading arrived, by time.monotonic().
         self._port_receipts: dict[str, float] = {}
+        self._group_receipts: dict[str, float] = {}
         # Readings came back after stopping for longer than the timeout, or
         # after drop_holds. The tick loop drops the holds when it sees this.
         self._resumed = False
@@ -315,9 +319,10 @@ class ConnectionSource:
             raise ValueError(f"{joint_name!r} has no declared position command")
         return self._limits[key]
 
-    def supports_joint_mode(self, joint: str, mode: ControlMode) -> bool:
-        """Whether the joint has a per-axis interface for this mode."""
-        return f"{joint}/{_INTERFACE_BY_MODE.get(mode)}" in self._limits
+    def accepts_joint_command(self, joint: str, mode: ControlMode, value: float) -> bool:
+        """Whether this scalar can contend with a native command."""
+        limit = self._limits.get(f"{joint}/{_INTERFACE_BY_MODE.get(mode)}")
+        return limit is not None and math.isfinite(value) and (limit.clamp or _within(value, limit))
 
     @property
     def command_ports(self) -> list[str]:
@@ -367,6 +372,7 @@ class ConnectionSource:
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._port_receipts.clear()
+                self._group_receipts.clear()
                 self._resumed = True
                 self._restart = False
             # Replaced whole, so the tick loop never sees half of one update.
@@ -378,6 +384,11 @@ class ConnectionSource:
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
             self._port_receipts[port] = now
+            if port == JOINT_STATE and self._group_axes:
+                for key in mine:
+                    joint, _, _ = key.rpartition(SEPARATOR)
+                    if joint in self._group_axes:
+                        self._group_receipts[joint] = now
             self._received_at = time.time()
 
     def drop_holds(self) -> None:
@@ -390,14 +401,17 @@ class ConnectionSource:
     def publish_group(self, interface: str, payload: object) -> bool:
         """Publish a whole winning command to the ordinary typed stream."""
         port = self._group_ports[interface]
-        if type(payload) is not port.type or not self.ready_for_control():
+        joints = self.group_joints[interface]
+        if type(payload) is not port.type or not self.ready_for_control(group_joints=joints):
             return False
-        for joint in self.group_joints[interface]:
+        for joint in joints:
             self._holds.pop(joint, None)
         port.publish(payload)
         return True
 
-    def ready_for_control(self, now: float | None = None) -> bool:
+    def ready_for_control(
+        self, now: float | None = None, *, group_joints: Collection[str] = ()
+    ) -> bool:
         """Whether every required reading port has reported and is fresh.
 
         Joint ports need a reading for each declared joint; traffic on one
@@ -405,12 +419,18 @@ class ConnectionSource:
 
         Args:
             now: The current ``time.monotonic()``, in seconds. Defaults to now.
+            group_joints: Native command axes that each need recent feedback.
         """
         if now is None:
             now = time.monotonic()
         with self._lock:
-            return len(self._reported) == len(self._needed) and all(
-                now - self._port_receipts[port] <= self._timeout for port in self._needed
+            return (
+                len(self._reported) == len(self._needed)
+                and all(now - self._port_receipts[port] <= self._timeout for port in self._needed)
+                and all(
+                    now - self._group_receipts.get(joint, -math.inf) <= self._timeout
+                    for joint in group_joints
+                )
             )
 
     def unreported(self) -> list[str]:

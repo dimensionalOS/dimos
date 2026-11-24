@@ -442,21 +442,27 @@ class ControlCoordinator(Module):
             raise ValueError(
                 "robot ports require exactly one matching connection declaration per source"
             )
+        bound = {f"{robot}_{kind}" for robot, kinds in commands.items() for kind in kinds}
+        group_ports: dict[str, dict[str, Out[Any]]] = {}
+        for robot in robots:
+            groups = group_ports[robot] = {}
+            for name in declarations[robot].group_commands:
+                interface, output_name = f"{robot}/{name}", f"{robot}_{name}"
+                if output_name in bound:
+                    raise ValueError(f"{interface}: {output_name} is already bound")
+                output_port = self.outputs.get(output_name)
+                if output_port is None:
+                    raise ValueError(f"{interface}: expected an additional typed Out")
+                bound.add(output_name)
+                groups[interface] = output_port
         with self._hardware_lock:
             for robot in robots:
-                groups = {}
-                for name in declarations[robot].group_commands:
-                    interface = f"{robot}/{name}"
-                    output_port = self.outputs.get(f"{robot}_{name}")
-                    if output_port is None or name in COMMAND_PORTS:
-                        raise ValueError(f"{interface}: expected an additional typed Out")
-                    groups[interface] = output_port
                 source = ConnectionSource(
                     declarations[robot],
                     commands.get(robot, []),
                     readings.get(robot, []),
                     self.config.reading_timeout_s,
-                    group_ports=groups,
+                    group_ports=group_ports[robot],
                     zero_stiffness_joints=[
                         joint
                         for joint in self.config.zero_stiffness_joints

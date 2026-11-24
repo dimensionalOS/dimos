@@ -419,12 +419,12 @@ class TickLoop:
                     owned = dict.fromkeys(joints, task.name)
                     reserved.update(owned)
                     covered.update(owned)
-                elif output is not None and output.get_values() is not None:
-                    for joint in output.joint_names:
+                elif output is not None and (values := output.get_values()) is not None:
+                    for joint, value in zip(output.joint_names, values, strict=True):
                         robot = self._joint_to_hardware.get(joint)
                         scalar_source = self._connections.get(robot) if robot is not None else None
-                        if scalar_source is not None and scalar_source.supports_joint_mode(
-                            joint, output.mode
+                        if scalar_source is not None and scalar_source.accepts_joint_command(
+                            joint, output.mode, value
                         ):
                             reserved.setdefault(joint, task.name)
         return covered

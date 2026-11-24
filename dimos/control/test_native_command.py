@@ -84,10 +84,14 @@ class NativeCoordinator(ControlCoordinator):
                 low=Reference("low", 0, JointCommandOutput([J2, J3], positions=[0.4, 0.6])),
                 pose=Reference("pose", 20, GroupCommandOutput("mock/pose", POSE)),
             )
-            if mode == "native":
+            if mode in {"native", "invalid_scalar"}:
                 self._tasks["other_pose"] = Reference(
                     "other_pose", 10, GroupCommandOutput("mock/other_pose", POSE)
                 )
+                if mode == "invalid_scalar":
+                    self._tasks["top"] = Reference(
+                        "top", 30, JointCommandOutput([J1], positions=[float("nan")])
+                    )
             else:
                 joints, values = ([J1], [0.8]) if mode == "blocked" else ([J1, J2], [0.8, 0.7])
                 self._tasks["top"] = Reference(
@@ -192,7 +196,7 @@ def test_native_command_over_ordinary_worker_remap() -> None:
         )
         assert not receiver.evidence()[2]
 
-        cc.scenario("native")
+        cc.scenario("invalid_scalar")
         wait_until(lambda: receiver.evidence()[2], timeout=10)
         assert receiver.evidence()[2] == {
             "pose": ("PoseStamped", "tool_base", 17.5, 0.25, 0.5, 0.75)
@@ -202,8 +206,9 @@ def test_native_command_over_ordinary_worker_remap() -> None:
         system.stop()
 
 
-def test_cancel_discards_a_computed_native_result(
-    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+@pytest.mark.parametrize("stop", ["cancel", "estop"])
+def test_stop_discards_a_computed_native_result(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, stop: str
 ) -> None:
     cc = NativeCoordinator()
     request.addfinalizer(cc.stop)
@@ -221,7 +226,14 @@ def test_cancel_discards_a_computed_native_result(
     source.on_message("joint_state", JointState(name=[J1, J2], position=[0.0, 0.0]))
     cc._tasks["pose"] = Reference("pose", 20, GroupCommandOutput("mock/pose", POSE))
     loop = TickLoop(
-        100, {}, cc._hardware_lock, cc._tasks, cc._task_lock, {}, connections={"mock": source}
+        100,
+        {},
+        cc._hardware_lock,
+        cc._tasks,
+        cc._task_lock,
+        {},
+        connections={"mock": source},
+        group_commands_allowed=lambda: not cc._estopped,
     )
     cc._tick_loop = loop
     loop._stop_event.clear()  # Drive ticks by hand without a second tick thread.
@@ -244,9 +256,66 @@ def test_cancel_discards_a_computed_native_result(
         stale_tick = worker.submit(loop._tick)
         try:
             assert computed.wait(timeout=5)
-            cc.task_invoke("pose", "cancel")
+            if stop == "cancel":
+                cc.task_invoke("pose", "cancel")
+            else:
+                cc.set_estop(True)
         finally:
             release.set()
         stale_tick.result(timeout=5)
     loop._tick()
     assert published == [POSE]
+
+
+def test_group_needs_fresh_feedback_for_each_covered_axis(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    clock = 10.0
+    monkeypatch.setattr("dimos.control.connection_source.time.monotonic", lambda: clock)
+    cc = NativeCoordinator()
+    request.addfinalizer(cc.stop)
+    source = ConnectionSource(
+        ConnectionConfig(
+            source="mock",
+            model=fake_arm_model(("joint1", "joint2")),
+            group_commands={"pose": frozenset({"joint1", "joint2"})},
+        ),
+        [],
+        ["joint_state"],
+        1.0,
+        group_ports={"mock/pose": cc.mock_pose},
+    )
+    received: list[PoseStamped] = []
+    cc.mock_pose.subscribe(received.append)
+    source.on_message("joint_state", JointState(name=[J1, J2], position=[0.0, 0.0]))
+    assert source.publish_group("mock/pose", POSE)
+    for reading_time in (10.75, 11.5):
+        clock = reading_time
+        source.on_message("joint_state", JointState(name=[J1], position=[0.0]))
+    assert source.ready_for_control()  # Ordinary legacy port remains fresh.
+    assert not source.publish_group("mock/pose", POSE)
+    assert received == [POSE]
+    source.on_message("joint_state", JointState(name=[J2], position=[0.0]))
+    assert source.publish_group("mock/pose", POSE)
+
+
+def test_group_outputs_cannot_alias() -> None:
+    class AmbiguousCoordinator(ControlCoordinator):
+        left_joint_state: In[JointState]
+        left_arm_joint_state: In[JointState]
+        left_arm_pose: Out[PoseStamped]
+
+    model = fake_arm_model(("joint1",))
+    joint_set = frozenset({"joint1"})
+    cc = AmbiguousCoordinator(
+        connections=[
+            ConnectionConfig(source="left", model=model, group_commands={"arm_pose": joint_set}),
+            ConnectionConfig(source="left_arm", model=model, group_commands={"pose": joint_set}),
+        ]
+    )
+    try:
+        with pytest.raises(ValueError, match="already bound"):
+            cc._connect_robots()
+    finally:
+        cc.stop()
