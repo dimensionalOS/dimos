@@ -1,0 +1,184 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import AsyncIterator
+import time
+from typing import Any
+import uuid
+
+import numpy as np
+import pytest
+
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import UsdModel
+from dimos.sim2.assets.logistics import LOGISTICS
+from dimos.sim2.assets.toy import toy_robot
+from dimos.sim2.camera import SimCamera
+from dimos.sim2.imu import SimImu
+from dimos.sim2.l1 import SimL1
+from dimos.sim2.livox import LivoxSim
+from dimos.sim2.mujoco.sim import MujocoSim
+from dimos.sim2.scene import SimScene, SimSceneConfig
+from dimos.sim2.sim import sim
+from dimos.sim2.spec import SimulatedRobot
+
+pytest.importorskip("pxr")
+
+L1_PERIOD = 0.13
+RATES = {
+    "color_image": 10.0,
+    "imu": 50.0,
+    "lidar": 10.0,
+    "livox_imu": 50.0,
+    "l1_lidar": 1 / L1_PERIOD,
+}
+MOUNTS = {"eye": "head", "imu": "base", "livox": "head", "l1": "base"}
+
+
+class _RoomConfig(SimSceneConfig):
+    usd: UsdModel | None = UsdModel.from_file(LOGISTICS).with_frames(
+        {"dog": ("logistics", (-9.0, -9.0, -8.7), (0.0, 0.0, 0.0))}
+    )
+
+
+class _Room(SimScene):
+    config: _RoomConfig
+    mounts = Mounts("dog")
+
+
+class _DogConfig(HardwareModuleConfig):
+    usd: UsdModel | None = toy_robot().with_frames(
+        {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in MOUNTS.items()}
+    )
+
+
+class _Dog(HardwareModule):
+    """A toy robot nothing drives, so the world is not held for it."""
+
+    config: _DogConfig
+    mounts = Mounts(*MOUNTS)
+
+    @rpc
+    def simulated_robot(self) -> SimulatedRobot:
+        assert self.config.usd is not None
+        return SimulatedRobot(self.namespace, self.config.usd)
+
+
+class _Readings(Module):
+    color_image: In[Image]
+    imu: In[Imu]
+    lidar: In[PointCloud2]
+    livox_imu: In[Imu]
+    l1_lidar: In[PointCloud2]
+
+    async def main(self) -> AsyncIterator[None]:
+        self._stamps: dict[str, list[float]] = {name: [] for name in RATES}
+        self._accelerations: list[float] = []
+        self._started = time.monotonic()
+        for name in RATES:
+            getattr(self, name).subscribe(
+                lambda message, n=name: self._stamps[n].append(message.ts)
+            )
+        self.imu.subscribe(
+            lambda m: self._accelerations.append(
+                float(np.linalg.norm(m.linear_acceleration.to_numpy()))
+            )
+        )
+        yield
+
+    @rpc
+    def readings(self) -> dict[str, Any]:
+        return {
+            "stamps": self._stamps,
+            "accelerations": self._accelerations,
+            "wall": time.monotonic() - self._started,
+        }
+
+
+SENSOR_STREAMS = {"world_observations", "color_image", "imu", "lidar", "livox_imu", "l1_lidar"}
+
+
+def _run(seconds: float, speed: float) -> dict[str, Any]:
+    blueprint = autoconnect(
+        sim({"mujoco": MujocoSim.blueprint(speed=speed)}, default="mujoco"),
+        _Room.blueprint(),
+        autoconnect(
+            _Dog.blueprint(_mount="dog"),
+            # A mount namespaces its sensor's streams; these take them back out to _Readings.
+            SimCamera.mount("eye", width=64, height=48, rate_hz=RATES["color_image"]).remappings(
+                [(SimCamera, "color_image", "color_image")]
+            ),
+            SimImu.mount("imu", rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
+            LivoxSim.mount(
+                "livox", rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
+            ).remappings([(LivoxSim, "imu", "livox_imu"), (LivoxSim, "lidar", "lidar")]),
+            SimL1.mount("l1", period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
+        ).namespace("dog", shared=SENSOR_STREAMS),
+        _Readings.blueprint(),
+    ).solidify()
+    overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
+    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
+    coordinator = ModuleCoordinator.build(blueprint, parsed)
+    try:
+        readings = coordinator.get_instance(_Readings)
+        deadline = time.monotonic() + seconds + MAX_EXTRA_WALL
+        time.sleep(seconds)
+        while time.monotonic() < deadline and not _steady(readings.readings()["stamps"]):
+            time.sleep(1.0)
+        return readings.readings()
+    finally:
+        coordinator.stop()
+
+
+MAX_EXTRA_WALL = 60.0
+STEADY_STAMPS = 8
+WARM_UP = 1.0
+
+
+def _steady(stamps: dict[str, list[float]]) -> bool:
+    if not all(stamps[name] for name in RATES):
+        return False
+    start = min(stamps[name][0] for name in RATES)
+    return all(
+        sum(stamp >= start + WARM_UP for stamp in stamps[name]) >= STEADY_STAMPS for name in RATES
+    )
+
+
+def _per_sim_second(stamps: list[float], start: float) -> float:
+    steady = [stamp for stamp in stamps if stamp >= start + WARM_UP]
+    assert len(steady) > 5, f"only {len(steady)} after warming up"
+    return (len(steady) - 1) / (steady[-1] - steady[0])
+
+
+@pytest.mark.parametrize("speed", [0.5, 4.0], ids=["half_speed", "four_times_speed"])
+def test_sensors_keep_their_rates_per_sim_second(speed: float) -> None:
+    readings = _run(seconds=8.0, speed=speed)
+    stamps = readings["stamps"]
+    counts = {name: len(stamps[name]) for name in RATES}
+    assert all(count > 5 for count in counts.values()), counts
+    start = min(stamps[name][0] for name in RATES)
+    for name, rate in RATES.items():
+        measured = _per_sim_second(stamps[name], start)
+        assert measured == pytest.approx(rate, rel=0.1), (name, measured)
+    settled = readings["accelerations"][len(readings["accelerations"]) // 2 :]
+    assert np.mean(settled) == pytest.approx(9.81, abs=0.3)

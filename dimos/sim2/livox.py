@@ -1,0 +1,125 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import numpy as np
+
+from dimos.core.hardware_module import HardwareModuleConfig
+from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import UsdModel
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
+from dimos.sim2.mujoco.world import SensorMount
+from dimos.sim2.sensor import SimSensor
+from dimos.sim2.sim import until_it_stops
+from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
+from dimos.simulation.sensors.mid360.lidar import sim_mid360
+from dimos.simulation.sensors.mid360.pattern import POINT_RATE
+from dimos.utils.data import get_data
+
+
+class LivoxSimConfig(HardwareModuleConfig):
+    usd: UsdModel | None = UsdModel.from_file(Path(__file__).parent / "assets" / "mid360.usda")
+    rate_hz: float = 10.0
+    imu_rate_hz: float = 200.0
+    geom_groups: tuple[int, ...] = (0, 3)
+    blind_to: tuple[str, ...] = ()
+    go2_occlusion: bool = False
+    seed: int = 0
+
+
+class LivoxSim(SimSensor):
+    config: LivoxSimConfig
+    lidar: Out[PointCloud2]
+    imu: Out[Imu]
+
+    @property
+    def imu_frame_id(self) -> str:
+        return self.usd_frame("imu_link")
+
+    async def main(self) -> AsyncIterator[None]:
+        self._world = self.mirror_world()
+        self._scanning = asyncio.create_task(until_it_stops(f"{self.frame_id} lidar", self._scan()))
+        self._reading = asyncio.create_task(
+            until_it_stops(f"{self.frame_id} lidar imu", self._read_imu())
+        )
+        yield
+        self._scanning.cancel()
+        self._reading.cancel()
+
+    def _open(self) -> WorldView:
+        return open_view(
+            self.world_layer(),
+            robot_ids(self._world),
+            SensorMount("lidar", self.frame_id, self.frame_id),
+        )
+
+    async def _scan(self) -> None:
+        site = self.frame_id
+        view: WorldView | None = None
+        sensor: SimLidar | None = None
+        points_per_scan = int(POINT_RATE / self.config.rate_hz)
+        async for _ in self._world.ticks(self.config.rate_hz):
+            if view is None:
+                view = await asyncio.to_thread(self._open)
+                sensor = sim_mid360(
+                    view.raycaster(
+                        self.config.geom_groups,
+                        mounted_at=site,
+                        blind_to=self.config.blind_to,
+                    ),
+                    self.config.seed,
+                    OcclusionMap.load(get_data("go2_sim") / "go2_mid360_occlusion.npz")
+                    if self.config.go2_occlusion
+                    else None,
+                )
+            assert sensor is not None
+            view.update(self._world)
+            position, orientation = view.pose(site)
+            points = await asyncio.to_thread(
+                sensor.cast, position, rotation_matrix(orientation), points_per_scan
+            )
+            self.lidar.publish(
+                PointCloud2.from_numpy(
+                    points,
+                    self.frame_id,
+                    self._world.stamp(),
+                    offset_times=np.zeros(len(points), np.uint32),
+                )
+            )
+            self.publish_usd_tf(ts=self._world.stamp())
+
+    async def _read_imu(self) -> None:
+        site, view = self.frame_id, None
+        async for _ in self._world.ticks(self.config.imu_rate_hz):
+            if view is None:
+                view = await asyncio.to_thread(self._open)
+            view.update(self._world)
+            gyro, accelerometer, (w, x, y, z) = view.imu(site)
+            self.imu.publish(
+                Imu(
+                    angular_velocity=Vector3(*gyro),
+                    linear_acceleration=Vector3(*accelerometer),
+                    orientation=Quaternion(x, y, z, w),
+                    frame_id=self.imu_frame_id,
+                    ts=self._world.stamp(),
+                )
+            )
