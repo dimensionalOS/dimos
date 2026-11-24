@@ -23,13 +23,13 @@ import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.keys import Interface
-from dimos.hardware.manipulators.spec import ControlMode
-from dimos.hardware.whole_body.spec import POS_STOP
+from dimos.control.task import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
 from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
+    POS_STOP,
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.task import (
+    ControlMode,
     ControlTask,
     CoordinatorState,
     JointCommandOutput,
@@ -40,7 +41,6 @@ from dimos.control.task import (
     ResourceClaim,
     SensorStateSnapshot,
 )
-from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage

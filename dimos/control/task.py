@@ -28,17 +28,29 @@ Use the t_now passed in CoordinatorState.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
-from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.teleop.webxr.controller_types import Buttons
+
+
+class ControlMode(Enum):
+    """How a task's command values are meant: as positions, speeds or torques."""
+
+    POSITION = "position"  # Planned position control (slower, smoother)
+    SERVO_POSITION = "servo_position"  # High-freq joint position streaming (100Hz+)
+    VELOCITY = "velocity"
+    TORQUE = "torque"
+    CARTESIAN = "cartesian"
+    CARTESIAN_VELOCITY = "cartesian_velocity"
+    IMPEDANCE = "impedance"
 
 
 @dataclass(frozen=True)
