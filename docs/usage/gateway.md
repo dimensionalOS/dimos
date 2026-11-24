@@ -91,13 +91,21 @@ Generate a request UUID per action and reuse it for retries. A schedule action i
 
 Subscribe to `<namespace>/dimos/events/agent/*` to receive all agent events, or select one topic.
 
-| Topic under `<namespace>/dimos/events/` | Client action |
+| Topic under `<namespace>/dimos/events/` | Payload |
 | --- | --- |
-| `agent/chat` | Filter on the payload’s `conversation` ID. Replace the displayed partial reply with `turn.text`, merge committed `entries` by entry ID, and refresh the conversation when `turn` is null. |
-| `agent/conversations` | Refresh `GET /agent/conversations`. |
-| `agent/jobs` | Refresh `GET /agent/jobs`. |
+| `agent/chat` | `conversation` identifies the chat. `turn.text` contains the reply so far, `entries` carries saved transcript items, and `turn: null` ends a run. |
+| `agent/conversations` | `id` identifies the conversation. Adds and updates include the full conversation summary in `row`. Updates also list the changed field names in `fields`. |
+| `agent/jobs` | `name` identifies the job. Adds and updates include the full schedule and recent runs in `row`. Updates also list the changed field names in `fields`. |
 
-On open or reconnect, subscribe first, then read `GET /agent/conversations/{id}` for the current transcript and turn.
+Each list event includes its topic suffix in `type` (e.g. `agent/jobs`) and a `change` of `added`, `updated`, or
+`removed`. For example, deleting the job named `demo` publishes
+`{"type":"agent/jobs","change":"removed","name":"demo"}`. When the gateway starts watching, it publishes each
+current list in `rows` with `change: "snapshot"`.
+
+On open or reconnect, subscribe first and buffer events while fetching the initial lists from `GET /agent/conversations`
+and `GET /agent/jobs`. Apply the buffered events in order, replacing the list on a snapshot. For an open chat, read
+`GET /agent/conversations/{id}`, replace the partial reply on each turn update, and merge transcript entries by entry ID.
+Refresh the conversation when `turn` is null.
 
 ## Running it yourself
 

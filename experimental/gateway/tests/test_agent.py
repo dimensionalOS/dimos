@@ -168,11 +168,21 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
                 assert frame["type"] == kind
                 return frame
 
-    await event("agent/conversations")
+    assert await event("agent/conversations") == {
+        "type": "agent/conversations",
+        "change": "snapshot",
+        "rows": [],
+    }
     created = (await http.post("/agent/conversations", json=request_id())).raise_for_status().json()
     cid = created["conversation"]
     room = f"/agent/conversations/{cid}"
-    assert [row["id"] for row in (await http.get("/agent/conversations")).json()] == [cid]
+    [conversation] = (await http.get("/agent/conversations")).raise_for_status().json()
+    assert await event("agent/conversations") == {
+        "type": "agent/conversations",
+        "change": "added",
+        "id": cid,
+        "row": conversation,
+    }
     draft = {
         "name": "demo",
         "conversation": cid,
@@ -181,11 +191,18 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
         "action": {"kind": "notify", "text": "scheduled input"},
     }
     assert (await http.post("/agent/jobs", json=draft)).raise_for_status().json()["runs"] == []
-    await event("agent/jobs")
+    job = await event("agent/jobs", lambda e: e["change"] == "added")
+    assert job["name"] == job["row"]["name"] == draft["name"]
+    assert job["row"]["conversation"] == cid
+    assert job["row"]["action"] == draft["action"]
     assert len((await http.get("/agent/jobs")).json()[0]["upcoming"]) == 3
     assert (await http.put("/agent/jobs/demo", json={**draft, "cron": "5 0 * * *"})).json()[
         "cron"
     ] == "5 0 * * *"
+    updated = await event("agent/jobs", lambda e: "cron" in e.get("fields", []))
+    assert updated["change"] == "updated"
+    assert updated["name"] == draft["name"]
+    assert updated["row"]["cron"] == "5 0 * * *"
     image = {
         "type": "image",
         "mimeType": "image/png",
@@ -194,6 +211,10 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     msg = {**request_id(), "text": "describe", "images": [image], "whenBusy": "followUp"}
     sent = (await http.post(f"{room}/submissions", json=msg)).raise_for_status().json()
     assert (await http.post(f"{room}/submissions", json=msg)).json() == sent
+    titled = await event("agent/conversations", lambda e: "title" in e.get("fields", []))
+    assert titled["change"] == "updated"
+    assert titled["id"] == cid
+    assert titled["row"]["title"] == msg["text"]
     partial = await event(
         "agent/chat", lambda e: 0 < len((e.get("turn") or {}).get("text", "")) < len(ANSWER)
     )
@@ -242,8 +263,18 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     assert edited.raise_for_status().json()["action"] == skill
     result = (await http.post("/agent/jobs/demo/runs", json=request_id())).raise_for_status().json()
     assert result == {"kind": "ok", "text": "21 celsius"}
+    ran = await event(
+        "agent/jobs",
+        lambda e: "runs" in e.get("fields", []) and e["row"]["runs"][-1]["outcome"] == result,
+    )
+    assert ran["name"] == draft["name"]
     assert (await http.get("/agent/jobs")).json()[0]["runs"][-1]["outcome"] == result
     assert (await http.delete("/agent/jobs/demo")).status_code == 200
+    assert await event("agent/jobs", lambda e: e["change"] == "removed") == {
+        "type": "agent/jobs",
+        "change": "removed",
+        "name": draft["name"],
+    }
     assert (await http.get("/agent/jobs")).json() == []
     other = (await http.post("/agent/conversations", json=request_id())).json()["conversation"]
     assert (
