@@ -580,6 +580,29 @@ def test_refused_refinements_fall_back_to_a_global_search(module):
     np.testing.assert_allclose(m._world_to_map().translation.x, -3.0)
 
 
+def test_a_refinement_moves_the_fix_part_way_and_a_global_search_whole(module):
+    m = module(map_frame="premap", relocalize_once=False, fix_smoothing_s=2.0)
+    m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
+    m.tf = SimpleNamespace(publish=lambda _: None)
+
+    class FakeRelocalizer:
+        def attempt(self, cloud, cloud_frame, map_frame, initial_fix=None):
+            found = _fix(2.0 if initial_fix is None else 3.0, frame_id="map")
+            return SimpleNamespace(fix=found, result=SimpleNamespace(fitness=0.9))
+
+    m._relocalizer = FakeRelocalizer()
+
+    def cloud(ts):
+        points = np.zeros((3, 3), dtype=np.float32)
+        return PointCloud2.from_numpy(points, frame_id="map", timestamp=ts)
+
+    m._relocalize(cloud(100.0))
+    np.testing.assert_allclose(m._map_fix.translation.x, 2.0)
+    # One time constant later a refinement 1 m off moves the fix 1 - 1/e of the way
+    m._relocalize(cloud(102.0))
+    np.testing.assert_allclose(m._map_fix.translation.x, 3.0 - np.exp(-1.0), atol=1e-9)
+
+
 def test_scans_are_kept_in_map_whatever_world_to_map_does(module):
     """A body scan is placed by map -> base_link at its stamp, so a world -> map jump moves nothing kept."""
     m = module(map_frame="premap", relocalize_once=False, live_cloud="lidar")

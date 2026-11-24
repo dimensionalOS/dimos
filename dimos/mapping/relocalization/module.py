@@ -23,6 +23,7 @@ Named locations live in the ``map`` frame; ``named_locations`` carries the whole
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import threading
 import time
@@ -44,6 +45,7 @@ from dimos.mapping.relocalization.cloud_relocalizer import (
 from dimos.mapping.relocalization.utils import (
     DEFAULT_MAP_FRAME,
     LiveMap,
+    blend,
     load_locations,
     load_premap,
     resolve_map,
@@ -108,6 +110,9 @@ class Config(ModuleConfig):
     scan_tf_tolerance_s: float = 0.1
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
     global_after_refusals: int = 3
+    # relocalize_once off: a refinement moves the fix toward its own with this time constant (s), so
+    # a single noisy match barely shows; a global search applies at once, as does 0
+    fix_smoothing_s: float = 2.0
 
 
 class PremapModule(Module):
@@ -158,6 +163,8 @@ class PremapModule(Module):
         self._live_changed: Subject[None] = Subject()
         self._center: tuple[float, float] | None = None
         self._refusals = 0
+        # Stamp of the cloud the last accepted fix came from
+        self._fix_ts: float | None = None
 
     @rpc
     def start(self) -> None:
@@ -310,7 +317,17 @@ class PremapModule(Module):
             return
         self._refusals = 0
         logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
+        if initial_fix is not None:
+            tf = self._smoothed(tf, msg.ts)
+        self._fix_ts = msg.ts
         self.submit(tf, "lidar")
+
+    def _smoothed(self, tf: Transform, ts: float) -> Transform:
+        """The current fix moved toward *tf* by as much of fix_smoothing_s as passed since the last fix."""
+        tau = self.config.fix_smoothing_s
+        if tau <= 0 or self.fix is None or self._fix_ts is None:
+            return tf
+        return blend(self.fix, tf, 1.0 - math.exp(-max(ts - self._fix_ts, 0.0) / tau))
 
     def _start_tf(self) -> None:
         # Each scan carries the edges stamped with its own stamp, so the ray tracer's lookup at that stamp finds them exactly; a fix goes out at once

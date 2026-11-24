@@ -26,6 +26,7 @@ import threading
 
 import numpy as np
 from reactivex import Observable, operators as ops
+from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.mapping.relocalization.cloud_relocalizer import RelocalizeConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -71,6 +72,17 @@ def moved(points: np.ndarray, tf: Transform) -> np.ndarray:
     """*points* in tf's child frame, expressed in its parent frame."""
     matrix = tf.to_matrix()
     return (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+
+
+def blend(start: Transform, end: Transform, weight: float) -> Transform:
+    """*start* moved *weight* (0-1) of the way to *end*, translation linearly and rotation by slerp."""
+    a, b = start.to_matrix(), end.to_matrix()
+    matrix = np.eye(4)
+    matrix[:3, :3] = Slerp([0.0, 1.0], Rotation.from_matrix([a[:3, :3], b[:3, :3]]))(
+        weight
+    ).as_matrix()
+    matrix[:3, 3] = (1.0 - weight) * a[:3, 3] + weight * b[:3, 3]
+    return Transform.from_matrix(matrix, frame_id=end.frame_id, child_frame_id=end.child_frame_id)
 
 
 class LiveMap:
