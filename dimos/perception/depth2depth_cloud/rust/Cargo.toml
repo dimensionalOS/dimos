@@ -30,7 +30,7 @@ tf = "tf2_msgs.TFMessage"
 depth_cloud = "sensor_msgs.PointCloud2"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "526859e096ea6deebd329cb9fb573dc6c1f5aa56" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "60fac317bdba06cdec17b0c8db6945a7c4ba0cf9" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
