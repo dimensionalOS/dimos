@@ -133,6 +133,7 @@ def set_mju_user_warning(cb: Callable[[str], None] | None) -> None: ...
 def get_mju_user_warning() -> Callable[[str], None] | None: ...
 
 mjNGROUP: int
+mjMINVAL: float
 
 # --- enum-like namespaces ---------------------------------------------
 
@@ -159,9 +160,12 @@ class mjtGeom:
     mjGEOM_PLANE: int
     mjGEOM_SPHERE: int
     mjGEOM_CAPSULE: int
+    mjGEOM_ELLIPSOID: int
     mjGEOM_CYLINDER: int
     mjGEOM_BOX: int
     mjGEOM_MESH: int
+    name: str
+    def __init__(self, value: int) -> None: ...
 
 class mjtTexture:
     mjTEXTURE_2D: int

@@ -22,9 +22,9 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.sim2.mujoco.names import resolved
+from dimos.sim2.mujoco.ray_scene import RayScene
 from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
-from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
 
 _GRAVITY = np.array([0.0, 0.0, -9.81])
 
@@ -44,7 +44,6 @@ class MujocoView:
         self.data = mujoco.MjData(self.model)
         mujoco.mj_kinematics(self.model, self.data)
         self._frames: dict[str, tuple[int, int]] = {}
-        self._hidden: list[tuple[int, int, NDArray[np.uint8]]] = []
         self._names: dict[int, list[str]] = {}
         self._velocities_current = False
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
@@ -129,15 +128,13 @@ class MujocoView:
         groups: Sequence[int],
         mounted_at: str | None = None,
         blind_to: Sequence[str] = (),
-    ) -> MujocoRaycaster:
-        mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
-        self._show_hidden()
+    ) -> RayScene:
+        """A cast against the geoms in `groups` as this view poses them; build a new one when the world's geometry changes."""
+        blind: set[int] = set()
         # The hardware a sensor is mounted in is as invisible to it as the robot link it rides.
         for frame in [*blind_to, *([] if mounted_at is None else [mounted_at])]:
-            for body in {self._mount(frame), *self._carried_by(frame)}:
-                self._hide_from_rays(body, groups)
-        mount = NO_BODY_EXCLUDED if mounted_at is None else self._mount(mounted_at)
-        return MujocoRaycaster(self.model, self.data, mask, mount)
+            blind |= {self._mount(frame), *self._carried_by(frame)}
+        return RayScene(self.model, self.data, groups, blind)
 
     def _carried_by(self, frame: str) -> list[int]:
         """The bodies welded (no joint between) under a body frame, such as a sensor's housing."""
@@ -152,18 +149,6 @@ class MujocoView:
             if holder == index:
                 carried.append(body)
         return carried
-
-    def _hide_from_rays(self, body: int, groups: Sequence[int]) -> None:
-        spare = next((g for g in range(mujoco.mjNGROUP) if g not in groups), None)
-        if spare is None:
-            raise ValueError(
-                f"a cast over every geom group ({sorted(groups)}) leaves nowhere to put a frame "
-                f"it is meant to be blind to"
-            )
-        start = int(self.model.body_geomadr[body])
-        count = int(self.model.body_geomnum[body])
-        self._hidden.append((start, count, self.model.geom_group[start : start + count].copy()))
-        self.model.geom_group[start : start + count] = spare
 
     def _mount(self, frame: str) -> int:
         kind, index = self._frame(frame)
@@ -180,13 +165,7 @@ class MujocoView:
             body = parent
         return body
 
-    def _show_hidden(self) -> None:
-        for start, count, groups in reversed(self._hidden):
-            self.model.geom_group[start : start + count] = groups
-        self._hidden.clear()
-
     def close(self) -> None:
-        self._show_hidden()
         for renderer in self._renderers.values():
             renderer.close()
         self._renderers.clear()
