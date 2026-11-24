@@ -235,3 +235,43 @@ def test_two_bindings_to_one_outside_material_share_one_copy() -> None:
     assert _targets(stage, "/room/arm/shell", "material:binding") == _targets(
         stage, "/room/arm/shell", "material:binding:physics"
     )
+
+
+def test_a_carried_copy_does_not_swallow_a_source_prim_its_name_now_shadows() -> None:
+    # /Looks/paint is carried first and lands at /paint, where a different source prim lives.
+    arm = """#usda 1.0
+(
+    defaultPrim = "arm"
+)
+
+def Xform "arm"
+{
+    def Mesh "shell" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Looks/paint>
+        rel material:binding:physics = </paint>
+    }
+}
+
+def Scope "Looks"
+{
+    def Material "paint"
+    {
+        custom string dimos_owner = "looks"
+    }
+}
+
+def Material "paint"
+{
+    custom string dimos_owner = "root"
+}
+"""
+    stage = _stage(graft_usd(_SCENE, {"room": arm}))
+
+    (looks,) = _targets(stage, "/room/arm/shell", "material:binding")
+    (root,) = _targets(stage, "/room/arm/shell", "material:binding:physics")
+    assert looks != root
+    assert stage.GetPrimAtPath(looks).GetAttribute("dimos_owner").Get() == "looks"
+    assert stage.GetPrimAtPath(root).GetAttribute("dimos_owner").Get() == "root"
