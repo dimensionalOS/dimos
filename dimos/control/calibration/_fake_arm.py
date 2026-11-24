@@ -78,6 +78,8 @@ class FakeArm:
         self.on_tick: Callable[[FakeArm], None] | None = None
         self._rng = np.random.default_rng(0)
         self._buzz = 1.0
+        self._awaited: threading.Event | None = None
+        self._ticked = 0
         # Start at rest where the arm sags to under its gains.
         for _ in range(round(1.0 / period_s)):
             self.tick()
@@ -191,13 +193,20 @@ class FakeArm:
         if self.on_tick is not None:
             self.on_tick(self)
 
-    def run_until(self, event: threading.Event, max_ticks: int = 100_000) -> None:
-        """Tick until ``event`` is set; a test that would tick forever fails instead."""
-        for _ in range(max_ticks):
-            if event.is_set():
-                return
+    def run_until(
+        self, event: threading.Event, timeout_s: float = math.inf, max_ticks: int = 100_000
+    ) -> bool:
+        """Tick until ``event`` is set (True) or ``timeout_s`` has passed (False); a test that
+        would tick forever on one event fails instead."""
+        if event is not self._awaited:
+            self._awaited, self._ticked = event, 0
+        end = self.t + timeout_s
+        while not event.is_set() and self.t < end:
+            if self._ticked >= max_ticks:
+                raise AssertionError(f"still waiting after {max_ticks} ticks at t={self.t:.2f} s")
+            self._ticked += 1
             self.tick()
-        raise AssertionError(f"still waiting after {max_ticks} ticks at t={self.t:.2f} s")
+        return event.is_set()
 
 
 class FakeOperator(Operator):

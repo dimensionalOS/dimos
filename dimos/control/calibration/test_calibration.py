@@ -82,7 +82,14 @@ def calibration(arm: ArmModel, operator: Operator, fake: FakeArm, **settings: An
     )
     operator.begin(plan(config.steps, can_float=True))
     run = Calibration(
-        arm.spec, config, fake, operator, fake.command, arm.max_torque, fake.run_until
+        arm.spec,
+        config,
+        fake,
+        operator,
+        fake.command,
+        arm.max_torque,
+        fake.run_until,
+        lambda: fake.t,
     )
     fake.listener = run.feed
     return run
@@ -295,6 +302,32 @@ def test_an_abort_while_the_run_waits_holds_the_arm_and_offers_home(arm: ArmMode
     assert len(fake.commands) == commands and run.measurements == []
 
 
+def test_a_run_whose_readings_stop_fails_within_the_timeout_and_going_home_cannot_hang(
+    arm: ArmModel,
+) -> None:
+    assert CalibrationModuleConfig().reading_timeout_s == 1.0
+    fake, operator = FakeArm(arm), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["gravity_poses"])
+    stopped: list[float] = []
+
+    def stop_publishing(arm_: FakeArm) -> None:
+        if not stopped and run.poses is not None and run._motion is not None:
+            stopped.append(arm_.t)
+            arm_.listener = None
+
+    fake.on_tick = stop_publishing
+    run.run()
+
+    assert operator.done is not None
+    ok, text, rest = operator.done
+    lost = "RuntimeError: no joint_state for 1.0 s; the connection stopped publishing"
+    assert not ok and not rest
+    assert text == f"gravity_poses failed: {lost}; parking failed: {lost}"
+    assert f"gravity_poses failed: {lost}\nThe arm holds where it is. Go home?" in operator.asked
+    [t_stop] = stopped
+    assert fake.t - t_stop == pytest.approx(1.0, abs=fake.period_s)
+
+
 def test_bake_writes_the_fitted_links_of_every_arm_with_a_file_and_names_the_rest(
     dual_openyam_specs: list[ArmCalibrationSpec], tmp_path: Path
 ) -> None:
@@ -378,6 +411,36 @@ def test_the_sweep_tries_kd_below_the_joints_own_and_each_pair_once(arm: ArmMode
     assert {(m.kp, m.kd) for m in run.step_metrics if m.joint == "elbow"} == {
         (kp, kd) for kp in (24.0, 40.0, 60.0) for kd in (0.8, 2.0, 5.0)
     }
+
+
+def test_a_candidate_streams_and_stalls_only_at_its_own_gains(arm: ArmModel) -> None:
+    fake, operator = FakeArm(arm), FakeOperator()
+    run = calibration(
+        arm, operator, fake, steps=["step_sweep"], kp_scales=[1.0, 1.5], kd_scales=[1.0]
+    )
+    held: dict[float, dict[str, tuple[float, float]]] = {}
+    streamed: list[tuple[Motion, dict[str, tuple[float, float]]]] = []
+    set_config, stream = fake.set_config, run.stream
+
+    def in_flight(patch: dict[str, Any], save: bool = False) -> dict[str, Any]:
+        fake.tick()
+        return set_config(patch, save)
+
+    def recorded(motion: Motion) -> Motion:
+        ended = stream(motion)
+        streamed.append((motion, fake.gains()))
+        return ended
+
+    fake.set_config, run.stream = in_flight, recorded
+    fake.on_tick = lambda arm_: held.__setitem__(arm_.t, arm_.gains())
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert {kp for _, gains in streamed for kp, _ in gains.values()} == {40.0, 60.0}
+    for motion, gains in streamed:
+        kp = np.asarray([gains[joint][0] for joint in arm.joint_names])
+        np.testing.assert_array_equal(motion.stall_rad, arm.max_torque / kp)
+        assert all(held[t] == gains for t in motion.t)
 
 
 def test_friction_sets_each_joints_rest_limit_and_a_stuck_largest_step_rejects_its_gains(
@@ -509,11 +572,11 @@ def test_a_dither_that_stalls_is_dropped_for_its_joint_and_pose(arm: ArmModel) -
     run = calibration(arm, operator, FakeArm(arm), steps=["gravity_poses"])
     stream = run.stream
 
-    def stalling(motion: Motion, patch: dict[str, Any] | None = None) -> Motion:
+    def stalling(motion: Motion) -> Motion:
         pose = np.asarray(run.poses[1].joints_rad) if run.poses else None
         if pose is not None and np.flatnonzero(motion.path[-1] != pose).tolist() == [2]:
             motion.stall_rad = np.where(np.arange(3) == 2, 1e-3, motion.stall_rad)
-        return stream(motion, patch)
+        return stream(motion)
 
     run.stream = stalling
     run.run()
@@ -686,6 +749,27 @@ def test_proposed_gains_that_rest_worse_than_the_first_visit_are_not_saved(
     assert "gains" not in fake.file and fake.gains() == fake.defaults
 
 
+def test_a_joint_without_proposed_gains_that_rests_worse_keeps_the_others_from_being_saved(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if prompt == "Sweep elbow?":
+            return "skip"
+        if "The arm revisits" in prompt:
+            fake.friction[2] = 1.5
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "pick_gains: accepted gains for yaw, shoulder;" in operator.done[1]
+    assert "gains not saved: elbow rests" in operator.done[1]
+    assert "gains" not in fake.file and fake.gains() == fake.defaults
+
+
 def test_moves_default_to_10_deg_s_up_to_60_and_each_dither_holds_a_second(
     arm: ArmModel,
 ) -> None:
@@ -700,8 +784,8 @@ def test_moves_default_to_10_deg_s_up_to_60_and_each_dither_holds_a_second(
     holds: list[float] = []
     stream = run.stream
 
-    def timed(motion: Motion, patch: dict[str, Any] | None = None) -> Motion:
-        ended = stream(motion, patch)
+    def timed(motion: Motion) -> Motion:
+        ended = stream(motion)
         if motion.mode == "fixed":
             holds.append(motion.t[-1] - motion.t[0])
         return ended
