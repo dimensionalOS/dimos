@@ -591,6 +591,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+# world_msgs is not in a dimos-lcm release yet: pinned to the sim2_world branch's commit until one ships it.
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm", rev = "b367dd412fe9cda763b5b9d712fe455d86505861" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
