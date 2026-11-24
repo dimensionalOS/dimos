@@ -81,7 +81,7 @@ def _verify(blueprint: MetaBlueprint) -> None:
 def test_mounts_are_named_on_the_class() -> None:
     assert Arm.mounts.wrist == "wrist"
     with pytest.raises(AttributeError, match="the mounts are \\['wrist'\\]"):
-        _ = Arm.mounts.elbow
+        Arm.mounts.elbow  # noqa: B018
 
 
 def test_mount_namespaces_under_the_mount_name() -> None:
@@ -118,6 +118,7 @@ def test_build_refuses_two_unmounted() -> None:
 
 
 def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
+    pytest.importorskip("pxr")
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
     coordinator = _build(

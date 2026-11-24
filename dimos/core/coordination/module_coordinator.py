@@ -1442,7 +1442,7 @@ def _connect_module_refs(
     for (base_key, ref_name), targets in many_refs.items():
         base_instance = module_coordinator.get_instance(base_key)
         async_methods = _async_methods_of_spec(declared_spec[base_key, ref_name])
-        instances = [module_coordinator.get_instance(target) for target in targets]
+        instances: list[Any] = [module_coordinator.get_instance(target) for target in targets]
         if async_methods:
             instances = [AsyncSpecProxy(instance, async_methods) for instance in instances]
         setattr(base_instance, ref_name, instances)
