@@ -112,6 +112,48 @@ def test_a_sensor_does_not_see_the_body_it_is_mounted_on(composed):
     assert seeing[0] > 1.0
 
 
+_HOUSING = """#usda 1.0
+(
+    defaultPrim = "housing"
+)
+def Xform "housing"
+{
+    def Xform "housing_link" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Cube "shell" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double size = 0.1
+        }
+    }
+}
+"""
+
+
+def test_a_sensor_does_not_see_the_housing_it_is_mounted_in():
+    robot = toy_robot().with_frames({"lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    housed = graft_usd(robot.usd, {"lidar": _HOUSING})
+    scene = UsdModel.from_file(SCENE).with_frames(
+        {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
+    )
+    layer = graft_usd(scene.usd, {"dog": prefix_usd_frames(housed, "dog")})
+    view = _view(layer_file(layer, called="housed-sensor-world"))
+    view.update(_World().at(0.0, 0.0, 0.0))
+    origin, _ = view.pose("dog/lidar")
+    out_and_down = np.array([[1.0, 0.0, -1.0]]) / np.sqrt(2.0)
+
+    inside, _ = view.raycaster((0,)).cast(origin, out_and_down, 10.0)
+    seeing, _ = view.raycaster((0,), mounted_at="dog/lidar").cast(origin, out_and_down, 10.0)
+    again, _ = view.raycaster((0,)).cast(origin, out_and_down, 10.0)
+
+    assert seeing[0] > 1.0, "the housing around the lidar should not stop its own rays"
+    assert again[0] == pytest.approx(inside[0]), "other sensors still see the housing"
+    view.close()
+
+
 def test_blind_to_lets_the_rays_through_further_frames(composed):
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
