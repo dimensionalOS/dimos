@@ -664,7 +664,7 @@ impl TfRoute {
                 }
             }
         });
-        received.filter(|received| !received.is_empty())
+        received
     }
 }
 
@@ -1480,5 +1480,19 @@ mod tests {
         let (tx, _rx) = mpsc::channel(8);
         let (plain, _route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
         assert!(plain.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_declared_handler_receives_an_empty_message() {
+        let (tx, _rx) = mpsc::channel(8);
+        let (mut tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
+        tf.enable_handler();
+        route.dispatch(&lcm_msgs::tf2_msgs::TFMessage { transforms: vec![] }.encode());
+
+        let got = tf
+            .recv()
+            .await
+            .expect("a handler receives the empty message");
+        assert!(got.is_empty());
     }
 }

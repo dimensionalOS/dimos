@@ -317,6 +317,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let mut classified: Vec<ClassifiedField> = Vec::new();
     let mut config_seen: Option<&Ident> = None;
+    let mut tf_handler_seen: Option<&Ident> = None;
 
     for field in fields {
         let name = field.ident.as_ref().expect("named field has an identifier");
@@ -331,6 +332,18 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 ));
             }
             config_seen = Some(name);
+        }
+        // Tf ports share one receiver, so two handlers would split the messages.
+        if matches!(attr.kind, FieldKind::Tf { handler: Some(_) }) {
+            if let Some(prev) = tf_handler_seen {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "multiple #[tf(handler = ...)] fields (previous: `{prev}`); at most one is allowed"
+                    ),
+                ));
+            }
+            tf_handler_seen = Some(name);
         }
         classified.push(ClassifiedField {
             name,
