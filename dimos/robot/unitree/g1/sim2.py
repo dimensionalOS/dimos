@@ -16,6 +16,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from functools import cached_property
 import math
 from pathlib import Path
 import time
@@ -41,6 +42,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 from dimos.robot.unitree.g1.config import G1_JOINT_MODEL, G1_JOINT_NAMES
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
 from dimos.sim2.actions import JointCommand, world_action
@@ -96,7 +98,7 @@ class G1Sim(ConnectionModule, HardwareModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._soft_start: float | None = None
-        self._start_pose: Transform | None = None
+        self._start: np.ndarray | None = None
 
     @property
     def joint_names(self) -> list[str]:
@@ -176,16 +178,24 @@ class G1Sim(ConnectionModule, HardwareModule):
             )
         )
 
+    @cached_property
+    def _pelvis_on_mount(self) -> np.ndarray:
+        usd = self.config.usd
+        assert usd is not None
+        root = usd.source_path.parent if usd.source_path is not None else None
+        return usd_frame_pose(usd.usd, usd.root_link, root)
+
     def _odom(self, stamp: float) -> PoseStamped | None:
         base = self._world.entity(self.namespace)
         if base is None or base.pose is None:
             return None
-        here = Transform(translation=Vector3(*base.pose[:3]), rotation=Quaternion(*base.pose[3:7]))
-        if self._start_pose is None:
-            self._start_pose = here
-        relative = Transform.from_matrix(
-            np.linalg.inv(self._start_pose.to_matrix()) @ here.to_matrix()
-        )
+        here = Transform(
+            translation=Vector3(*base.pose[:3]), rotation=Quaternion(*base.pose[3:7])
+        ).to_matrix()
+        if self._start is None:
+            # Odometry is from the mount the G1 started on, so the pelvis keeps its height above it.
+            self._start = np.linalg.inv(here @ np.linalg.inv(self._pelvis_on_mount))
+        relative = Transform.from_matrix(self._start @ here)
         return PoseStamped(
             ts=stamp,
             frame_id=self.tf_frames["odom"],
