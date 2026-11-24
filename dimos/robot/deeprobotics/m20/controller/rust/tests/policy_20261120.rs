@@ -20,7 +20,8 @@
 //!
 //! rl_deploy infers with ONNX Runtime 1.20.0 on Linux aarch64 (1 intra-op thread, all graph optimizations); other
 //! builds differ in the last bits (macOS's by up to 4e-6, tract by up to 5e-5), so the test needs that library:
-//! M20_ONNXRUNTIME=path/to/libonnxruntime.so.1.20.0 (rl_deploy's deb has it), else it skips. M20_POLICY_TOLERANCE
+//! the configured one ([inference] onnxruntime, where rl_deploy installs it) or M20_ONNXRUNTIME=path/to/
+//! libonnxruntime.so.1.20.0 (rl_deploy's deb has it), else it skips. M20_POLICY_TOLERANCE
 //! widens the tolerance to report how far another build is.
 //!
 //! Fixture: tests/fixtures/policy_20261120_141603.bin.gz, cut by tools/policy_steps.py (its layout there) from
@@ -147,13 +148,13 @@ fn policy_steps_match_rl_deploy() {
     let Some(dir) = common::policy_dir() else {
         return;
     };
-    let Some(library) = std::env::var("M20_ONNXRUNTIME")
-        .ok()
-        .filter(|p| !p.is_empty())
+    let cfg = common::config();
+    // rl_deploy's own library where it is installed ([inference] onnxruntime), else $M20_ONNXRUNTIME
+    let Some(library) = m20_controller::runner::onnxruntime_library(&cfg.inference.onnxruntime)
     else {
         eprintln!(
-            "\n\n!!! SKIPPING policy_steps_match_rl_deploy: set M20_ONNXRUNTIME to rl_deploy's ONNX Runtime \
-             (libonnxruntime.so.1.20.0, Linux aarch64) to compare our policy steps with rl_deploy's !!!\n\n"
+            "\n\n!!! SKIPPING policy_steps_match_rl_deploy: no ONNX Runtime library: set M20_ONNXRUNTIME to rl_deploy's \
+             (libonnxruntime.so.1.20.0, Linux aarch64; its deb has it) to compare our policy steps with rl_deploy's !!!\n\n"
         );
         return;
     };
@@ -161,7 +162,6 @@ fn policy_steps_match_rl_deploy() {
         .ok()
         .map(|v| v.parse().unwrap())
         .unwrap_or(1e-6);
-    let cfg = common::config();
     let dt = cfg.timing.policy_decimation as f64 / cfg.timing.control_hz;
     let mut misses = Vec::new();
     let mut compared = 0;
