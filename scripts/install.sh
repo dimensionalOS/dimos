@@ -961,7 +961,12 @@ verify_install() {
 run_post_install_tests() {
     [[ "$INSTALL_DEPS" != 1 || "$SKIP_TESTS" == 1 || "$DRY_RUN" == 1 ]] && return 0
     [[ ",$EXTRAS," == *,unitree,* ]] || return 0
-    prompt_confirm "Run a quick smoke test? (unitree-go2 replay, up to 60s including startup)" yes || return 0
+    prompt_confirm "Run the unitree-go2 replay smoke test? (up to 10 min for replay data, then 60s for startup)" yes || return 0
+    run_bounded 600 .venv/bin/python -c '
+from dimos.core.global_config import global_config
+from dimos.memory.cli.dataset import resolve_dataset
+resolve_dataset(global_config.replay_db)
+' || die "smoke test failed: could not prepare replay data (exit $?)"
     SMOKE_LOG=$(mktemp)
     info "running smoke test (up to 60s); output will follow (log: $SMOKE_LOG)"
     local exit_code=0

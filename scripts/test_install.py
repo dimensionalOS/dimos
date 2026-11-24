@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -48,6 +49,8 @@ def test_macos_checks_brew_permissions_before_installing(
     expected_calls: str,
 ) -> None:
     brew_prefix.chmod(0o755 if writable else 0o555)
+    if not writable and missing and not dry_run and os.access(brew_prefix, os.W_OK):
+        pytest.skip("This account can write to the read-only Homebrew prefix")
     calls = tmp_path / "calls"
     calls.touch()
 
@@ -185,9 +188,18 @@ DRY_RUN=0
 USE_NIX=0
 EXTRAS=unitree
 NON_INTERACTIVE=1
-# Keep the real timeout and process cleanup, but shorten the test's deadline.
+# Simulate a cold download that takes 90s, then exercise real startup and cleanup.
 eval "$(declare -f run_bounded | sed '1s/run_bounded/run_bounded_original/')"
-run_bounded() { shift; run_bounded_original 1 "$@"; }
+run_bounded() {
+    if [[ "$2" == .venv/bin/python ]]; then
+        (( $1 >= 90 )) || return 124
+        touch "$INSTALL_DIR/replay-ready"
+        return 0
+    fi
+    [[ -f "$INSTALL_DIR/replay-ready" && "$1" == 60 ]] || return 2
+    shift
+    run_bounded_original 1 "$@"
+}
 run_post_install_tests
 """,
             "smoke-test",
