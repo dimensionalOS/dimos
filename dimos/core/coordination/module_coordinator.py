@@ -408,12 +408,17 @@ class ModuleCoordinator(Resource):
                 self._transport_observers.remove(callback)
 
     def _send_on_system_modules(self) -> None:
+        """Refresh module discovery, then notify consumers of the completed discovery.
+
+        Both phases run on startup and whenever the deployed module list changes.
+        """
         modules = list(self._deployed_modules.values())
-        for module in modules:
-            # Only an @rpc counts: a plain method would be fetched over the worker
-            # pipe as a bound method, which cannot cross it.
-            if "on_system_modules" in getattr(module, "rpcs", ()):
-                cast("Any", module).on_system_modules(modules)
+        for hook in ("on_system_modules", "on_system_modules_ready"):
+            for module in modules:
+                # Only an @rpc counts: a plain method would be fetched over the worker
+                # pipe as a bound method, which cannot cross it.
+                if hook in getattr(module, "rpcs", ()):
+                    getattr(module, hook)(modules)
 
     def _connect_streams(
         self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
