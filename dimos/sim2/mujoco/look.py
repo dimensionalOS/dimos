@@ -42,15 +42,6 @@ _CURVES = {"neutral", "linear", "none"}
 _START_COMPRESSION = 0.8 - 0.04
 _DESATURATION = 0.15
 
-# Fine enough that the steepest part of the sRGB curve moves under one 8-bit step per entry.
-_SRGB_STEPS = 1 << 14
-_SRGB = np.where(
-    (ramp := np.linspace(0.0, 1.0, _SRGB_STEPS + 1)) <= 0.0031308,
-    12.92 * ramp,
-    1.055 * ramp ** (1 / 2.4) - 0.055,
-)
-_SRGB_BYTES = np.round(_SRGB * 255).astype(np.uint8)
-
 
 def stage_tone_map(scene: Path) -> str | None:
     """The tone curve the stage's RenderSettings name, or None when it names none."""
@@ -147,8 +138,10 @@ def pbr_neutral(color: NDArray[np.float32]) -> NDArray[np.float32]:
 
 def srgb_bytes(linear: NDArray[np.float32]) -> NDArray[np.uint8]:
     """Linear light in [0, 1] encoded with the sRGB transfer curve, as 8-bit."""
-    index = np.rint(np.clip(linear, 0.0, 1.0) * _SRGB_STEPS).astype(np.int32)
-    return _SRGB_BYTES[index]
+    # The sRGB transfer curve as IEC 61966-2-1 defines it.
+    light = np.clip(linear, 0.0, 1.0)
+    encoded = np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
+    return np.rint(encoded * 255).astype(np.uint8)
 
 
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:
