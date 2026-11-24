@@ -73,6 +73,13 @@ GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with
 )
 
 
+# What a real Go2 publishes, for any module simulating one: odom unprefixed, the body its root link.
+GO2_TF_FRAMES: dict[str, dict[str, str]] = {
+    "tf_frames_local": {"body": GO2_USD.root_link},
+    "tf_frames_global": {"odom": ConnectionConfig.model_fields["odom_frame_id"].default},
+}
+
+
 def with_policy_drives(usd: UsdModel, policy: Go2Policy) -> UsdModel:
     """The USD with the policy's gains and default pose on its joint drives, which the world holds it at."""
     pxr = load_pxr()
@@ -101,11 +108,8 @@ class Go2SimConfig(HardwareModuleConfig):
     policy: Path | None = None
     # Proportional yaw hold while no turn is commanded, rad/s per rad of drift.
     heading_gain: float = 2.0
-    # The frames a real Go2 publishes: odometry in its unprefixed odom frame, the body as base_link.
-    tf_frames_local: dict[str, str] = {"body": "base_link"}
-    tf_frames_global: dict[str, str] = {
-        "odom": ConnectionConfig.model_fields["odom_frame_id"].default
-    }
+    tf_frames_local: dict[str, str] = GO2_TF_FRAMES["tf_frames_local"]
+    tf_frames_global: dict[str, str] = GO2_TF_FRAMES["tf_frames_global"]
     tf_edges: list[tuple[str, str]] = [("odom", "body")]
 
 
