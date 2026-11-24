@@ -22,7 +22,9 @@ from reactivex.testing import TestScheduler
 
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.base import StreamAccessor
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -60,6 +62,15 @@ def test_first_ts_across_streams(sqlite_store: SqliteStore) -> None:
 def test_first_ts_empty_store(sqlite_store: SqliteStore) -> None:
     replay = sqlite_store.replay()
     assert replay.first_ts() is None
+
+
+def test_first_ts_in_setup_only_recording(sqlite_store: SqliteStore) -> None:
+    mounts = sqlite_store.stream("tf_static", TFMessage)
+    mount = TFMessage(Transform(frame_id="base", child_frame_id="lidar", ts=1.0))
+    for ts in (12.0, 10.0):
+        mounts.append(mount, ts=ts)
+
+    assert sqlite_store.replay().first_ts() == 10.0
 
 
 def test_seek_filters_frames_before_offset(sqlite_store: SqliteStore) -> None:
