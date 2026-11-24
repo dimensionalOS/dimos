@@ -701,6 +701,15 @@ impl Controller {
         out
     }
 
+    /// Lying down is over (the lie-down's spline and damping are done), or the robot is not held at all.
+    pub fn at_rest(&self) -> bool {
+        match self.state {
+            State::LieDown => self.spline_time() > 2.0 * self.cfg.states.lie_down.phase_s,
+            State::StandUp | State::RlControl => false,
+            _ => true,
+        }
+    }
+
     /// Jump to `state` now (replays of recorded sessions): no stand-in policy, optional enable frames.
     pub fn force(&mut self, state: State, s: &RobotState, cmd: &UserCommand, enable: bool) {
         self.enter(state, s, cmd);

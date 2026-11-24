@@ -66,7 +66,21 @@ NAVIGATION_GAITS: dict[str, int] = {"flat": 0x3002, "stairs": 0x3003}
 logger = setup_logger()
 
 
+_PYTHON_ONLY = frozenset(
+    {
+        "navigation_terrain",
+        "stand_timeout_s",
+        "rl_control_timeout_s",
+        "gait_timeout_s",
+        "navigation_mode_attempts",
+        "control_ready_timeout_s",
+    }
+)
+
+
 class M20ControllerConfig(NativeModuleConfig):
+    # SIGTERM -> the native lies a standing robot down (safety.shutdown_lie_down_max_s 11 s) before it exits
+    shutdown_timeout: float = 15.0
     source_dir: str | None = "dimos/robot/deeprobotics/m20/controller/rust"
     executable: str = "result/bin/m20_controller_module"
     build_command: str | None = "nix build -L path:."

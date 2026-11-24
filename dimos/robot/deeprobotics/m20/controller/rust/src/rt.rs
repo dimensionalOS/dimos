@@ -271,6 +271,27 @@ pub fn run<H: Hardware + ?Sized>(
     };
     // the shutdown ticks keep the loop's absolute deadlines (no drift)
     deadline = deadline.max(Instant::now());
+    // nothing holds the robot once this process exits, so a standing robot lies down first (rl_deploy, which stays
+    // up, would keep it standing)
+    let lie_down = UserCommand {
+        target: crate::types::Target::LieDown,
+        gait: user.gait,
+        ..Default::default()
+    };
+    let lie_ticks = (cfg.safety.shutdown_lie_down_max_s / cfg.control_dt()) as u64;
+    for _ in 0..lie_ticks {
+        if controller.at_rest() {
+            break;
+        }
+        let cmd = controller.tick(&state, &lie_down, policy);
+        if let Ok(s) = hardware.exchange(&cmd) {
+            state = s;
+        }
+        if pacing == Pacing::Realtime {
+            sleep_until(deadline, slack);
+            deadline += period;
+        }
+    }
     for _ in 0..cfg.safety.shutdown_damping_ticks {
         let cmd = controller.tick(&state, &damping, policy);
         if let Ok(s) = hardware.exchange(&cmd) {
@@ -295,5 +316,138 @@ mod placement_tests {
         assert!(check_placement(&[0, 1, 2, 3], true, 80, 4, 80).is_err());
         assert!(check_placement(&[4], false, 0, 4, 80).is_err());
         assert!(check_placement(&[4], true, 70, 4, 80).is_err());
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    use crate::commands::CommandSource;
+    use crate::policy::{PolicyRequest, PolicyResult};
+    use crate::state_machine::State;
+    use crate::types::{JointCommand, RobotState, Target};
+
+    /// Joints that follow the command exactly (and a moving stamp and torque, so no frozen-motor fault).
+    struct Follow(RobotState);
+
+    impl Hardware for Follow {
+        fn read_state(&mut self) -> Result<RobotState> {
+            Ok(self.0.clone())
+        }
+        fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {
+            self.0.stamp += 0.001;
+            self.0.tau = [self.0.stamp; crate::config::JOINTS];
+            if cmd.kp.iter().any(|k| *k > 0.0) {
+                self.0.q = cmd.q;
+            }
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Holds the pose it is given for every runner.
+    struct Hold(Option<PolicyRequest>);
+
+    impl crate::policy::PolicyService for Hold {
+        fn offer(&mut self, request: PolicyRequest) -> bool {
+            self.0 = Some(request);
+            true
+        }
+        fn take_result(&mut self) -> Option<PolicyResult> {
+            self.0.take().map(|r| PolicyResult {
+                runner: r.runner,
+                seq: r.seq,
+                targets: Ok(crate::runner::Targets {
+                    q: r.state.q,
+                    wheel_velocity: [0.0; 4],
+                    action: [0.0; crate::config::JOINTS],
+                    velocity_estimate: None,
+                }),
+                gain_scale: 1.0,
+                inference_s: 0.0,
+            })
+        }
+        fn dropped(&self) -> u64 {
+            0
+        }
+    }
+
+    /// Stands for `stand_s`, then asks the loop to stop.
+    struct StandThenStop<'a> {
+        sent: bool,
+        stand_s: f64,
+        stop: &'a AtomicBool,
+    }
+
+    impl CommandSource for StandThenStop<'_> {
+        fn poll(&mut self, now: f64) -> Option<UserCommand> {
+            if now > self.stand_s {
+                self.stop.store(true, Ordering::Relaxed);
+            }
+            if self.sent {
+                return None;
+            }
+            self.sent = true;
+            Some(UserCommand {
+                target: Target::RlControl,
+                gait: 0x1001,
+                motion_seq: 1,
+                ..Default::default()
+            })
+        }
+    }
+
+    fn shutdown_after(stand_s: f64) -> (State, f64) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        let cfg = Config::load(&path).unwrap();
+        let mut s = RobotState {
+            quat: [1.0, 0.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        s.q = crate::state_machine::leg_pose_for_height(&cfg.robot, 0.03, 0.0);
+        let mut hw = Follow(s);
+        let mut c = Controller::new(cfg.clone());
+        c.set_time(10.0);
+        let stop = AtomicBool::new(false);
+        let mut commands = StandThenStop {
+            sent: false,
+            stand_s: 10.0 + stand_s,
+            stop: &stop,
+        };
+        let mut policy = Hold(None);
+        let mut lay = false;
+        let _ = run(
+            &cfg,
+            &mut hw,
+            &mut c,
+            &mut policy,
+            &mut commands,
+            Pacing::Free,
+            &stop,
+            |_, _| {},
+        );
+        // the transitions after the stop request: a lie-down, then the damping
+        for (_, _, to) in &c.transitions {
+            lay |= *to == State::LieDown;
+        }
+        assert!(lay, "a standing robot lay down: {:?}", c.transitions);
+        let height = crate::dock::obstacle::body_height(&cfg.robot, &hw.0.q, 0.0);
+        (c.state, height)
+    }
+
+    #[test]
+    fn a_stop_while_walking_lies_the_robot_down_before_the_damping() {
+        let (state, height) = shutdown_after(12.0);
+        assert_eq!(state, State::JointDamping);
+        // the lie-down pose (IK 0.03, the knee clamped) is 0.086 hip-to-axle; standing is 0.38
+        assert!(height < 0.1, "lying: hip-to-axle {height}");
+    }
+
+    #[test]
+    fn a_stop_during_the_stand_up_and_stand_in_waits_them_out_then_lies_down() {
+        for stand_s in [0.5, 4.0] {
+            let (state, height) = shutdown_after(stand_s);
+            assert_eq!(state, State::JointDamping, "stop after {stand_s} s");
+            assert!(height < 0.1, "stop after {stand_s} s: hip-to-axle {height}");
+        }
     }
 }

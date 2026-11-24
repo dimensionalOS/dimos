@@ -77,6 +77,9 @@ policy_fifo_priority = 70
 command_timeout_s = 0.155
 # joint-damping ticks sent on shutdown before the controller exits
 shutdown_damping_ticks = 500
+# ours: rl_deploy keeps a robot standing when its client goes; ours exits, so a standing robot lies down first:
+# stand-up 3 s + the 0x1001 stand-in 3.5 s (lie-down is refused in both) + lie-down 4 s, rounded up
+shutdown_lie_down_max_s = 11.0
 
 # rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
 [states.enable]

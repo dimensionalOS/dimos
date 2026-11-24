@@ -88,6 +88,8 @@ pub struct Safety {
     pub command_timeout_s: f64,
     /// joint-damping commands sent after a stop request before the process exits
     pub shutdown_damping_ticks: u64,
+    /// at most this long lying a standing robot down on shutdown, before the damping ticks
+    pub shutdown_lie_down_max_s: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
