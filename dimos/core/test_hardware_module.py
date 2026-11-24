@@ -13,28 +13,56 @@
 # limitations under the License.
 
 from dataclasses import replace
+import math
 
+import numpy as np
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
+from dimos.robot.assets.model import RobotModel, UsdModel
+
+_ARM_URDF = """<robot name="arm">
+  <link name="base"/>
+  <link name="forearm"/>
+  <joint name="elbow" type="revolute">
+    <parent link="base"/><child link="forearm"/>
+    <origin xyz="0 0 0.5"/><axis xyz="0 0 1"/>
+    <limit lower="-3" upper="3" effort="1" velocity="1"/>
+  </joint>
+</robot>"""
+
+_CAMERA_URDF = """<robot name="camera">
+  <link name="camera_link"/>
+  <link name="optical"/>
+  <joint name="optical_joint" type="fixed">
+    <parent link="camera_link"/><child link="optical"/><origin xyz="0.02 0 0"/>
+  </joint>
+</robot>"""
+
+
+def _arm_usd() -> UsdModel:
+    model = UsdModel.from_robot_model(RobotModel.from_urdf_string(_ARM_URDF))
+    return model.with_frames({"wrist": ("forearm", (0.0, 0.0, 0.1), (0.0, 0.0, 0.0))})
 
 
 class ArmConfig(HardwareModuleConfig):
-    mounts: dict[str, str] = {"wrist": "/arm/link6"}
+    usd: UsdModel | None = _arm_usd()
 
 
 class Arm(HardwareModule):
     config: ArmConfig
+    mounts = Mounts("wrist")
+
+
+class CameraConfig(HardwareModuleConfig):
+    usd: UsdModel | None = UsdModel.from_robot_model(RobotModel.from_urdf_string(_CAMERA_URDF))
 
 
 class Camera(HardwareModule):
-    @rpc
-    def mounted_on(self) -> str | None:
-        return self.config.mount
+    config: CameraConfig
 
 
 def _verify(blueprint: MetaBlueprint) -> None:
@@ -46,14 +74,20 @@ def _verify(blueprint: MetaBlueprint) -> None:
     )
 
 
+def test_mounts_are_named_on_the_class() -> None:
+    assert Arm.mounts.wrist == "wrist"
+    with pytest.raises(AttributeError, match="the mounts are \\['wrist'\\]"):
+        _ = Arm.mounts.elbow
+
+
 def test_mount_namespaces_under_the_mount_name() -> None:
-    (atom,) = Camera.mount("wrist").active_blueprints
+    (atom,) = Camera.mount(Arm.mounts.wrist).active_blueprints
     assert atom.name == "wrist/camera"
     assert atom.kwargs["_mount"] == "wrist"
 
 
 def test_one_unmounted_with_mounted_hardware_passes() -> None:
-    _verify(autoconnect(Arm.blueprint(), Camera.mount("wrist")))
+    _verify(autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist)))
 
 
 def test_two_unmounted_in_one_namespace_is_refused() -> None:
@@ -62,24 +96,59 @@ def test_two_unmounted_in_one_namespace_is_refused() -> None:
 
 
 def test_each_namespace_gets_its_own_unmounted_hardware() -> None:
-    robot = autoconnect(Arm.blueprint(), Camera.mount("wrist"))
+    robot = autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist))
     _verify(autoconnect(robot.namespace("left"), robot.namespace("right")))
     with pytest.raises(ValueError, match=r"left: left/arm, left/camera"):
         _verify(autoconnect(Arm.blueprint(), Camera.blueprint()).namespace("left"))
 
 
-def test_build_passes_the_mount_to_the_module_and_refuses_two_unmounted() -> None:
-    blueprint = autoconnect(Arm.blueprint(), Camera.mount("wrist")).solidify()
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
-    coordinator = ModuleCoordinator.build(blueprint, parsed)
+def _build(blueprint: MetaBlueprint) -> ModuleCoordinator:
+    solid = blueprint.solidify()
+    parsed = BlueprintConfigParser(solid).parse(environ={}, overrides={"g": {"viewer": "none"}})
+    return ModuleCoordinator.build(solid, parsed)
+
+
+def test_build_refuses_two_unmounted() -> None:
+    with pytest.raises(ValueError, match="more than one unmounted HardwareModule"):
+        _build(autoconnect(Arm.blueprint(), Camera.blueprint()))
+
+
+def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
+    from dimos.robot.assets.usd_utils.frames import usd_frame_names
+
+    coordinator = _build(
+        autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist)).namespace("left")
+    )
     try:
-        assert coordinator.get_instance("wrist/camera").mounted_on() == "wrist"
+        arm = coordinator.get_instance("left/arm")
+        camera = coordinator.get_instance("left/wrist/camera")
+        assert arm.mounted_on() is None
+        assert camera.mounted_on() == "left/wrist"
+        arm_frames = usd_frame_names(arm.get_usd())
+        assert {"left/base", "left/forearm", "left/wrist"} <= arm_frames
+        assert not any("camera" in frame for frame in arm_frames)
+        assert {"left/wrist/camera_link", "left/wrist/optical"} <= usd_frame_names(camera.get_usd())
     finally:
         coordinator.stop()
 
-    blueprint = autoconnect(Arm.blueprint(), Camera.blueprint()).solidify()
-    with pytest.raises(ValueError, match="more than one unmounted HardwareModule"):
-        ModuleCoordinator.build(
-            blueprint,
-            BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
-        )
+
+def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
+    camera = Camera(_mount="wrist", instance_name="left/wrist/camera")
+    arm = Arm(instance_name="left/arm")
+    try:
+        edges = {
+            (t.frame_id, t.child_frame_id): t for t in arm.usd_transforms({"elbow": math.pi / 2})
+        }
+        assert set(edges) == {("left/base", "left/forearm"), ("left/forearm", "left/wrist")}
+        elbow = edges["left/base", "left/forearm"].to_matrix()
+        np.testing.assert_allclose(elbow[:3, 3], [0.0, 0.0, 0.5], atol=1e-9)
+        np.testing.assert_allclose(elbow[:3, 0], [0.0, 1.0, 0.0], atol=1e-9)
+
+        edges = {(t.frame_id, t.child_frame_id) for t in camera.usd_transforms(ts=1.0)}
+        assert edges == {
+            ("left/wrist/camera_link", "left/wrist/optical"),
+            ("left/wrist", "left/wrist/camera_link"),
+        }
+    finally:
+        arm.stop()
+        camera.stop()
