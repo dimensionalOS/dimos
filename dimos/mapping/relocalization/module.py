@@ -48,6 +48,7 @@ from dimos.mapping.relocalization.utils import (
     blend,
     load_locations,
     load_premap,
+    moved,
     resolve_map,
     window,
     yaw_deg,
@@ -96,7 +97,7 @@ class Config(ModuleConfig):
     new_map: bool = False
     # Live cloud to match against the premap: the ray tracer's local_map, a window of lidar scans, or none
     live_cloud: Literal["none", "local_map", "lidar"] = "none"
-    # Skip clouds sparser than this (smaller local maps are too small a patch; a mid360 sweep is ~3k points)
+    # local_map: skip local maps sparser than this, too small a patch to match
     min_local_points: int = 20_000
     # Seconds live clouds may stay under min_local_points (normal while the map builds) before that warns, once
     sparse_cloud_grace_s: float = 10.0
@@ -110,8 +111,9 @@ class Config(ModuleConfig):
     scan_tf_tolerance_s: float = 0.1
     # Refused ICP refinements in a row before searching the whole premap again; 0 never does
     global_after_refusals: int = 3
-    # relocalize_once off: a refinement moves the fix toward its own with this time constant (s), so
-    # a single noisy match barely shows; a global search applies at once, as does 0
+    # Least time (s) from one match's start to the next, 0 matches back to back
+    match_interval_s: float = 1.0
+    # relocalize_once off: time constant (s) for easing refinements into the fix, 0 applies them at once
     fix_smoothing_s: float = 2.0
 
 
@@ -191,12 +193,15 @@ class PremapModule(Module):
         assert self.premap is not None
         # Premap preprocessing is the dominant cost, paid once here.
         self._relocalizer = CloudRelocalizer(self.premap.pointcloud, self.config.relocalize)
+        interval = self.config.match_interval_s
+        throttle = [ops.throttle_first(interval)] if interval > 0 else []
         self.register_disposable(
             self._clouds()
             .pipe(
                 ops.filter(lambda _: not (self._placed and self.config.relocalize_once)),
                 ops.do_action(self._log_point_count_change),
                 ops.filter(self._has_enough_points),
+                *throttle,
             )
             .subscribe(self._relocalize)
         )
@@ -235,7 +240,8 @@ class PremapModule(Module):
                 f"scan skipped: no transform from {scan.frame_id!r} to {self._live_frame!r} at its stamp"
             )
             return None
-        return scan.transform(to_live)
+        points = moved(scan.points_f32().reshape(-1, 3), to_live)
+        return PointCloud2.from_numpy(points, frame_id=self._live_frame, timestamp=scan.ts)
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
         to_live = self.frame_to(self._live_frame, cloud.frame_id)
@@ -277,7 +283,7 @@ class PremapModule(Module):
             )
 
     def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return len(msg) >= self.config.min_local_points
+        return self.config.live_cloud != "local_map" or len(msg) >= self.config.min_local_points
 
     def _relocalize(self, msg: PointCloud2) -> None:
         assert self._relocalizer is not None
@@ -323,7 +329,7 @@ class PremapModule(Module):
         self.submit(tf, "lidar")
 
     def _smoothed(self, tf: Transform, ts: float) -> Transform:
-        """The current fix moved toward *tf* by as much of fix_smoothing_s as passed since the last fix."""
+        """The current fix moved toward *tf*, further the longer since the last fix."""
         tau = self.config.fix_smoothing_s
         if tau <= 0 or self.fix is None or self._fix_ts is None:
             return tf

@@ -86,7 +86,7 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
     cloud = PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32))
     for once in (True, False):
-        m = module(live_cloud="lidar", relocalize_once=once, min_local_points=0)
+        m = module(live_cloud="lidar", relocalize_once=once)
         m.relocalization_strength = SimpleNamespace(publish=strengths.append)
         # Synchronous, so the attempts land before the assert and no worker thread is left behind
         clouds = Subject()
@@ -260,7 +260,9 @@ def test_continuous_matching_starts_on_the_latest_live_map_as_the_last_attempt_e
             return SimpleNamespace(fix=None, result=SimpleNamespace(fitness=0.1))
 
     monkeypatch.setattr(relocalization, "CloudRelocalizer", FakeRelocalizer)
-    m = module(live_cloud="local_map", relocalize_once=False, min_local_points=0)
+    m = module(
+        live_cloud="local_map", relocalize_once=False, min_local_points=0, match_interval_s=0.0
+    )
     m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
     local_maps = Subject()
     m.local_map = SimpleNamespace(observable=lambda: local_maps)
@@ -281,6 +283,62 @@ def test_continuous_matching_starts_on_the_latest_live_map_as_the_last_attempt_e
     wait_for(lambda: len(seen) == 2)
     # One attempt on the first map, then one on the latest, none for those between
     assert seen == [1, 4]
+
+
+def test_continuous_lidar_matches_the_latest_window_of_placed_scans(
+    module, monkeypatch, immediate_handoff
+):
+    import threading
+
+    from reactivex import Subject
+
+    from dimos.mapping.relocalization.cloud_relocalizer import MID360
+
+    seen, busy, release = [], threading.Event(), threading.Event()
+
+    class FakeRelocalizer:
+        def __init__(self, *_):
+            pass
+
+        def attempt(self, cloud, cloud_frame, map_frame, initial_fix=None):
+            seen.append(sorted(np.asarray(cloud.points)[:, 0].round(2).tolist()))
+            busy.set()
+            release.wait()
+            return SimpleNamespace(fix=None, result=SimpleNamespace(fitness=0.1))
+
+    monkeypatch.setattr(relocalization, "CloudRelocalizer", FakeRelocalizer)
+    m = module(
+        map_frame="premap",
+        relocalize_once=False,
+        live_cloud="lidar",
+        match_interval_s=0.0,
+        relocalize=MID360.model_copy(update={"min_frames": 2, "max_frames": 2}),
+    )
+    m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
+    odom = Transform(translation=Vector3(1.0, 0.0, 0.0), frame_id="map", child_frame_id="base_link")
+    m._tf = SimpleNamespace(
+        get=lambda parent, child, *_: odom if (parent, child) == ("map", "base_link") else None,
+        dispose=lambda: None,
+    )
+    scans = Subject()
+    m.lidar = SimpleNamespace(observable=lambda: scans)
+    m.local_map = SimpleNamespace(observable=Subject)
+    m.premap = local_map([[0, 0, 0]])
+    m._start_matching()
+
+    def send(x):
+        points = np.asarray([[x, 0, 0]], dtype=np.float32)
+        scans.on_next(PointCloud2.from_numpy(points, frame_id="base_link", timestamp=float(x)))
+
+    send(1)
+    send(2)
+    busy.wait(5.0)
+    for x in (3, 4, 5):
+        send(x)
+    release.set()
+    wait_for(lambda: len(seen) == 2)
+    # Scans placed 1 m along by odometry; the second match takes only the latest window
+    assert seen == [[2.0, 3.0], [5.0, 6.0]]
 
 
 def test_from_matrix_inverse_matches_linalg_inv():
@@ -584,10 +642,14 @@ def test_a_refinement_moves_the_fix_part_way_and_a_global_search_whole(module):
     m = module(map_frame="premap", relocalize_once=False, fix_smoothing_s=2.0)
     m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
     m.tf = SimpleNamespace(publish=lambda _: None)
+    searches = iter([2.0, 5.0])
 
     class FakeRelocalizer:
         def attempt(self, cloud, cloud_frame, map_frame, initial_fix=None):
-            found = _fix(2.0 if initial_fix is None else 3.0, frame_id="map")
+            if initial_fix is None:
+                found = _fix(next(searches), frame_id="map")
+            else:
+                found = _fix(3.0, 10.0, frame_id="map")
             return SimpleNamespace(fix=found, result=SimpleNamespace(fitness=0.9))
 
     m._relocalizer = FakeRelocalizer()
@@ -596,11 +658,20 @@ def test_a_refinement_moves_the_fix_part_way_and_a_global_search_whole(module):
         points = np.zeros((3, 3), dtype=np.float32)
         return PointCloud2.from_numpy(points, frame_id="map", timestamp=ts)
 
+    def map_fix():
+        return m._map_fix.translation.x, np.degrees(m._map_fix.rotation.euler.z)
+
     m._relocalize(cloud(100.0))
-    np.testing.assert_allclose(m._map_fix.translation.x, 2.0)
-    # One time constant later a refinement 1 m off moves the fix 1 - 1/e of the way
+    np.testing.assert_allclose(map_fix(), (2.0, 0.0), atol=1e-9)
+    # One time constant later a refinement 1 m and 10 deg off moves the fix 1 - 1/e of the way
     m._relocalize(cloud(102.0))
-    np.testing.assert_allclose(m._map_fix.translation.x, 3.0 - np.exp(-1.0), atol=1e-9)
+    np.testing.assert_allclose(
+        map_fix(), (3.0 - np.exp(-1.0), 10.0 * (1 - np.exp(-1.0))), atol=1e-6
+    )
+    # Lost, the next match searches the whole premap and its fix applies whole
+    m._refusals = m.config.global_after_refusals
+    m._relocalize(cloud(102.1))
+    np.testing.assert_allclose(map_fix(), (5.0, 0.0), atol=1e-9)
 
 
 def test_scans_are_kept_in_map_whatever_world_to_map_does(module):
@@ -618,3 +689,15 @@ def test_scans_are_kept_in_map_whatever_world_to_map_does(module):
     placed = m._place_scan(scan)
     assert placed.frame_id == "map"
     assert placed.points_f32().tolist() == [[3, 0, 0]]
+
+
+def test_clouds_without_a_transform_are_skipped(module):
+    m = module(map_frame="premap", relocalize_once=False, live_cloud="lidar")
+    m._tf = SimpleNamespace(get=lambda *_: None, dispose=lambda: None)
+    scan = PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32), frame_id="base_link")
+    assert m._place_scan(scan) is None
+    attempts = []
+    m._relocalizer = SimpleNamespace(attempt=lambda *args: attempts.append(args))
+    m._relocalize(PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), frame_id="nowhere"))
+    assert attempts == []
+    assert m._refusals == 0

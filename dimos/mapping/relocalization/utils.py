@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 from collections import deque
-from functools import reduce
 import math
-import operator
 from pathlib import Path
 import re
 import threading
@@ -52,7 +50,14 @@ def window(scans: Observable[PointCloud2], cfg: RelocalizeConfig) -> Observable[
             # A snapshot, so the merge on the worker never sees the deque change under it
             ops.map(lambda _: tuple(held)),
         )
-    ).pipe(ops.map(lambda frames: reduce(operator.add, frames)))
+    ).pipe(ops.map(_merged))
+
+
+def _merged(frames: tuple[PointCloud2, ...]) -> PointCloud2:
+    points = np.concatenate([frame.points_f32().reshape(-1, 3) for frame in frames])
+    return PointCloud2.from_numpy(
+        points, frame_id=frames[0].frame_id, timestamp=max(frame.ts for frame in frames)
+    )
 
 
 _PREMAP_BIT = 1 << FLAG_NAMES.index("premap")
@@ -75,7 +80,7 @@ def moved(points: np.ndarray, tf: Transform) -> np.ndarray:
 
 
 def blend(start: Transform, end: Transform, weight: float) -> Transform:
-    """*start* moved *weight* (0-1) of the way to *end*, translation linearly and rotation by slerp."""
+    """*start* moved *weight* (0-1) of the way to *end*."""
     a, b = start.to_matrix(), end.to_matrix()
     matrix = np.eye(4)
     matrix[:3, :3] = Slerp([0.0, 1.0], Rotation.from_matrix([a[:3, :3], b[:3, :3]]))(

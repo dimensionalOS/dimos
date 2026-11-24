@@ -52,7 +52,6 @@ m20 = (
             live_cloud="lidar",
             relocalize_once=False,
             new_map=True,
-            min_local_points=2_000,
         ).remappings([(PremapModule, "lidar", "slam_body_points")]),
     )
     .global_config(
