@@ -25,7 +25,6 @@ import pytest
 
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.hardware.manipulators.registry import AdapterRegistry, adapter_registry
-from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
 # Vendor SDKs that are legitimately absent in some environments. A factory
 # path failing on one of these still passes IF the SDK is not installed;
@@ -51,16 +50,11 @@ EXPECTED_NAMES = {
     "drive_trains": {
         "mock_twist_base",
     },
-    "whole_body": {
-        "mock_whole_body",
-        "sim_mujoco_g1",
-    },
 }
 
 FAMILIES = [
     pytest.param(adapter_registry, "manipulators", id="manipulators"),
     pytest.param(twist_base_adapter_registry, "drive_trains", id="drive_trains"),
-    pytest.param(whole_body_adapter_registry, "whole_body", id="whole_body"),
 ]
 
 
@@ -107,25 +101,6 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
             assert not missing, f"{manifest} declares {missing} missing from available()"
             checked += 1
     assert checked > 0
-
-
-def test_every_sim_whole_body_module_is_declared() -> None:
-    """Sim whole-body adapters are flat modules; each must appear in the root manifest."""
-    pkg = importlib.import_module("dimos.simulation.adapters.whole_body")
-    manifest = importlib.import_module("dimos.simulation.adapters.whole_body._registry")
-    names = set(manifest.ADAPTER_FACTORIES)
-    assert "sim_mujoco_g1" in names
-    assert names <= set(whole_body_adapter_registry.available())
-    declared_modules = {path.split(":", 1)[0] for path in manifest.ADAPTER_FACTORIES.values()}
-    for root in pkg.__path__:
-        for mod_file in sorted(Path(root).glob("*.py")):
-            if mod_file.name.startswith(("_", ".", "test_")):
-                continue
-            mod_name = f"dimos.simulation.adapters.whole_body.{mod_file.stem}"
-            assert mod_name in declared_modules, (
-                f"{mod_file} is not referenced by _registry.py; "
-                f"its adapter would silently vanish from the registry"
-            )
 
 
 @pytest.mark.parametrize(("registry", "family"), FAMILIES)

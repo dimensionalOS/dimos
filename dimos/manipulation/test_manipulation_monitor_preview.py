@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -30,13 +31,16 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 
 @pytest.fixture
@@ -198,22 +202,31 @@ class TestOnJointState:
         assert state.position == [0.1, 0.2, 0.3]
         assert state.velocity == [1.0, 2.0, 3.0]
 
-    def test_aliases_coordinator_names_onto_model_joints(
-        self, canonical_model_config, module_factory
-    ):
-        module = _make_module_with_monitor(module_factory)
-        module.config.model = canonical_model_config
-        module.config.joint_state_aliases = {"chassis/vx": "left/joint1"}
-
-        msg = JointState(
-            name=["left/joint3", "chassis/vx", "left/joint2"],
-            position=[0.3, 0.1, 0.2],
+    def test_fills_planar_base_joints_from_odometry(self, module_factory):
+        planar = PlanarBaseDefinition(
+            velocity_limits=(1.0, 1.0, 2.0), acceleration_limits=(1, 1, 1)
         )
-        module._on_joint_state(msg)
+        module = _make_module_with_monitor(module_factory)
+        module.config.model = RobotModelConfig(
+            model=RobotModel.from_file(Path("/path/to/robot.urdf")).with_planar_base(planar),
+            joint_names=["base/x", "base/y", "base/yaw", "left/joint1"],
+        )
+        module._on_odometry(
+            Odometry(
+                pose=Pose(
+                    Vector3(1.0, 2.0, 0.0), Quaternion.from_euler(Vector3(0, 0, math.pi / 2))
+                ),
+                twist=Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)),
+            )
+        )
+
+        module._on_joint_state(JointState(name=["left/joint1"], position=[0.3], velocity=[0.0]))
 
         state = module._world_monitor.on_joint_state.call_args.args[0]
-        assert state.name == canonical_model_config.joint_names
-        assert state.position == [0.1, 0.2, 0.3]
+        assert state.name == ["base/x", "base/y", "base/yaw", "left/joint1"]
+        assert state.position == pytest.approx([1.0, 2.0, math.pi / 2, 0.3])
+        # Forward at a quarter turn moves the base along +y.
+        assert state.velocity == pytest.approx([0.0, 0.5, 0.1, 0.0])
 
     def test_skips_incomplete_model_state(self, canonical_model_config, module_factory):
         module = _make_module_with_monitor(module_factory)

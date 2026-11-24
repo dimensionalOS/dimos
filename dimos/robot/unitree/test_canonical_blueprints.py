@@ -57,6 +57,7 @@ def test_go2_shipped_connections_and_tasks(name):
 def test_g1_shipped_groot_backends(simulation, monkeypatch):
     from dimos.core.global_config import global_config
     from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import G1WholeBodyConnection
+    from dimos.simulation.engines.mujoco_g1_connection import MujocoG1Connection
     from dimos.utils.data import LfsPath
 
     def no_download(self):
@@ -76,20 +77,16 @@ def test_g1_shipped_groot_backends(simulation, monkeypatch):
             )
             atom = next(a for a in bp.blueprints if issubclass(a.module, ControlCoordinator))
             config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
-            if simulation == "mujoco" and name == "groot_wbc":
-                assert not config.connections
-                assert config.hardware[0].adapter_type == "sim_mujoco_g1"
-                assert not any(a.module is G1WholeBodyConnection for a in bp.blueprints)
-            else:
-                assert not config.hardware
-                source = ConnectionSource(
-                    config.connections[0], ["position_command"], ["joint_state", "imu"], 0.2
-                )
-                assert len(source.joint_names) == 29
-                assert any(a.module is G1WholeBodyConnection for a in bp.blueprints)
-                if name == "groot_wbc":
-                    assert config.tasks[0].params["hardware_id"] == "g1"
-                    assert config.tasks[0].params["auto_dry_run"] is True
+            assert not config.hardware
+            source = ConnectionSource(
+                config.connections[0], ["position_command"], ["joint_state", "imu"], 0.2
+            )
+            assert len(source.joint_names) == 29
+            # Sim and hardware present the same connection; only the module behind it differs.
+            connection = MujocoG1Connection if simulation else G1WholeBodyConnection
+            assert any(a.module is connection for a in bp.blueprints)
+            assert config.tasks[0].params["hardware_id"] == "g1"
+            assert config.tasks[0].params["auto_dry_run"] is (not simulation)
     # Leave import-time backend selection consistent with the restored globals.
     importlib.reload(module)
 

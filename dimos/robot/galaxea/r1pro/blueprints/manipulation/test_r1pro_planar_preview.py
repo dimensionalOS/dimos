@@ -19,6 +19,7 @@ import platform
 
 import pytest
 
+from dimos.control.connection.mock_base_connection import MockBaseConnection
 from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
@@ -37,6 +38,7 @@ from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview impo
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_PLANAR_BASE
 from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 
 
 def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
@@ -80,15 +82,34 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     platform.system() == "Darwin" and bool(os.environ.get("CI")),
     reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
 )
-def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
+def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(mocker, wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
-    config = _coordinator_config(r1pro_planar_preview.solidify())
-    coordinator = ControlCoordinator(
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    blueprint = r1pro_planar_preview.solidify()
+    config = _coordinator_config(blueprint)
+    mock_kwargs = BlueprintConfigParser(blueprint).parse(environ={}).module_kwargs("r1pro")
+    coordinator_cls = next(
+        atom.module for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
+    )
+    coordinator = coordinator_cls(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
-        hardware=config.hardware,
+        connections=config.connections,
         tasks=config.tasks,
     )
+    mock = MockBaseConnection(**mock_kwargs)
+    wires = {
+        "r1pro_position_command": "position_command",
+        "r1pro_velocity_command": "velocity_command",
+        "r1pro_joint_state": "joint_state",
+        "odometry": "odometry",
+    }
+    transports = {port: LocalTransport() for port in wires}
+    for coordinator_port, mock_port in wires.items():
+        coordinator.set_transport(coordinator_port, transports[coordinator_port])
+        mock.set_transport(mock_port, transports[coordinator_port])
+    mock.start()
     coordinator.start()
     try:
         accepted = coordinator.task_invoke(
@@ -101,13 +122,12 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
             timeout=5.0,
             message="the base trajectory never completed",
         )
-        # The mock base moves a fixed step per tick, so a slow tick loop leaves it
-        # behind, and COMPLETED only promises it got within the goal tolerance.
-        assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(
+        assert transports["odometry"].sent[-1].x == pytest.approx(
             0.2, abs=PlanarBaseTrajectoryTaskConfig.position_goal_tolerance
         )
     finally:
         coordinator.stop()
+        mock.stop()
 
 
 def test_real_control_declares_body_velocity_joints_without_position_commands() -> None:
