@@ -63,7 +63,6 @@ class MujocoSim(Module):
         self._all_commanded = asyncio.Event()
 
     async def main(self) -> AsyncIterator[None]:
-        self._loop = asyncio.get_running_loop()
         self.actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
         running = asyncio.create_task(until_it_stops("the world", self._run()))
@@ -125,7 +124,10 @@ class MujocoSim(Module):
         if not self._all_commanded.is_set():
             self._commanded |= {a.entity for a in actions if isinstance(a, JointCommand)}
             if self._held <= self._commanded:
-                self._loop.call_soon_threadsafe(self._all_commanded.set)
+                # main() runs on the module's loop, so the event it awaits is set from there.
+                loop = self._loop
+                assert loop is not None
+                loop.call_soon_threadsafe(self._all_commanded.set)
             elif self._publisher is not None:
                 self._publisher.offer(backend.frame())
 
