@@ -542,6 +542,9 @@ robots:
           title: R1 Pro teleop + recording (simulation)
           description: The R1 Pro teleop stack on a simulated robot in the office, with head and wrist cameras and episode recording.
         r1pro-openarm-joylo-real:
+          title: R1 Pro teleop
+          description: Leader arms, Joy-Cons or a headset drive the physical R1 Pro, with its head and wrist cameras.
+        r1pro-openarm-joylo-collect:
           title: R1 Pro teleop + recording
           description: Leader arms, Joy-Cons or a headset drive the physical R1 Pro; cameras and episodes are recorded on the robot.
         r1pro-joylo-real:
