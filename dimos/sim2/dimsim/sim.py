@@ -124,11 +124,7 @@ class DimSimSim(Module):
         # An action that reshapes the world (a door opening) gives it a new USD, so its files are answered anew.
         if self._files is None or self._files.usd is not backend.usd:
             self._files = WorldFiles(backend.usd)
-        data = await self._files.file(request.data)
-        if data is None:
-            logger.debug(f"render_file_request for {request.data!r}, which the world does not name")
-            return
-        self.file_info.publish(File(request.data, data))
+        await self._files.answer(request.data, self.file_info.publish)
 
     @rpc
     def describe(self) -> dict[str, Any]:
