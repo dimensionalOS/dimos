@@ -222,15 +222,24 @@ def test_rerun_bridge_resolves_its_settings_like_a_blueprint_module(
     assert "--rerunbridgemodule.host" in help_output
 
 
-def test_rerun_bridge_applies_global_options_given_after_the_command(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_rerun_bridge_applies_resolved_global_options(monkeypatch: pytest.MonkeyPatch) -> None:
     import dimos.visualization.rerun.bridge as bridge
 
     seen: list[str] = []
     monkeypatch.setattr(bridge, "run_bridge", lambda **config: seen.append(global_config.transport))
 
-    result = CliRunner().invoke(main, ["rerun-bridge", "--transport", "lcm"])
+    result = CliRunner().invoke(
+        main,
+        [
+            "--record-encoding-threads",
+            "4",
+            "rerun-bridge",
+            "--record-engine",
+            "rust",
+            "--transport",
+            "lcm",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert seen == ["lcm"]
@@ -728,6 +737,25 @@ def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any])
     assert result.exit_code == 2
     assert "matched none of" in result.output
     assert "blueprint" not in stubbed_run  # failed before build
+
+
+def test_run_validates_root_flags_with_config_file(
+    stubbed_run: dict[str, Any], tmp_path: Path
+) -> None:
+    config = tmp_path / "recorder.json"
+    config.write_text('{"g": {"record_engine": "rust"}}')
+    result = CliRunner().invoke(
+        main, ["--record-encoding-threads", "4", "run", "alpha", "--config", str(config)]
+    )
+    assert result.exit_code == 0, result.output
+    values = stubbed_run["parsed_config"].global_config
+    assert (values["record_encoding_threads"], values["record_engine"]) == (4, "rust")
+
+
+def test_show_config_refuses_incompatible_recording_flags() -> None:
+    result = CliRunner().invoke(main, ["--record", "mcap", "show-config"])
+    assert result.exit_code == 2
+    assert "rust" in result.output
 
 
 def test_python_recording_rejects_rust_encoding_threads(

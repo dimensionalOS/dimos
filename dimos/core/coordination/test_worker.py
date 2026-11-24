@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from contextlib import nullcontext
+import multiprocessing
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 from pytest_mock import MockerFixture
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
 
 
 class SimpleModule(Module):
+    robot_ip_at_import: ClassVar[str | None] = global_config.robot_ip
     output: Out[Vector3]
     input: In[Vector3]
 
@@ -138,6 +140,23 @@ def create_worker_manager():
 
     if manager is not None:
         manager.stop()
+
+
+def test_worker_imports_modules_with_resolved_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A fresh interpreter must see the corrected settings before decoding the module class.
+    monkeypatch.setenv("ROBOT_IP", "127.0.0.2")
+    monkeypatch.setattr(global_config, "robot_ip", "127.0.0.1")
+    monkeypatch.setattr(
+        "dimos.core.coordination.python_worker.get_forkserver_context",
+        lambda: multiprocessing.get_context("spawn"),
+    )
+    worker = PythonWorker()
+    worker.start_process()
+    try:
+        actor = worker.deploy_module(SimpleModule)
+        assert actor.robot_ip_at_import == "127.0.0.1"
+    finally:
+        worker.shutdown()
 
 
 def test_worker_manager_basic(create_worker_manager):

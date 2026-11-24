@@ -14,6 +14,7 @@
 
 """Render Blueprint relationships as a Graphviz SVG."""
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -22,8 +23,11 @@ import sys
 import typer
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.introspection.blueprint.dot import render_svg
 from dimos.robot import get_all_blueprints
+
+_SETTINGS_STDIN = "DIMOS_GRAPH_SETTINGS_STDIN"
 
 
 class GraphRenderError(RuntimeError):
@@ -39,7 +43,7 @@ def _render_in_subprocess(blueprint_name: str, output: Path, *, include_rpc: boo
     """Import and render a Blueprint without opening its runtime transports."""
     env = os.environ.copy()
     env["LCM_DEFAULT_URL"] = "memq://"
-    env["viewer"] = "none"
+    env[_SETTINGS_STDIN] = "1"
     env.setdefault("PYTHONWARNINGS", "ignore")
 
     command = [sys.executable, "-m", __name__, blueprint_name, str(output)]
@@ -49,6 +53,7 @@ def _render_in_subprocess(blueprint_name: str, output: Path, *, include_rpc: boo
     result = subprocess.run(
         command,
         env=env,
+        input=global_config.model_dump_json(),
         text=True,
         capture_output=True,
     )
@@ -71,7 +76,7 @@ def graph(
         help="Include RPC contracts and relationships.",
     ),
 ) -> None:
-    """Render a Blueprint's relationships as a Graphviz SVG."""
+    """Render a Blueprint's relationships with the selected global options as a Graphviz SVG."""
     output_path = (output or Path(f"{blueprint}.svg")).expanduser().resolve()
     if output_path.suffix.lower() != ".svg":
         raise typer.BadParameter("output path must end in .svg", param_hint="--output")
@@ -95,6 +100,8 @@ def _worker_main() -> None:
         raise SystemExit("usage: python -m dimos.cli.commands.graph BLUEPRINT OUTPUT.svg [--rpc]")
 
     try:
+        if os.environ.get(_SETTINGS_STDIN) == "1":
+            global_config.update(**json.load(sys.stdin))
         _render_graph(args[0], Path(args[1]), include_rpc=include_rpc)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
