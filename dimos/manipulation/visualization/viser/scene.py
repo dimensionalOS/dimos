@@ -340,9 +340,7 @@ class ViserManipulationScene:
             if is_work_surface(name) and stored.obstacle_type == ObstacleType.BOX:
                 pose = stored.pose
                 matrix = np.eye(4)
-                matrix[:3, :3] = trimesh.transformations.quaternion_matrix(
-                    [pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z]
-                )[:3, :3]
+                matrix[:3, :3] = pose.orientation.to_rotation_matrix()
                 matrix[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
                 boxes.append((matrix, np.asarray(stored.dimensions[:3], dtype=np.float64)))
         return boxes
