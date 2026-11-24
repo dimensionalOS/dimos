@@ -326,13 +326,35 @@ def test_add_surface_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, moc
 
     assert answer.startswith("surface added: top at z=0.080 m in world, 0.90 x 0.60 m")
     name, pose, shape, size, mesh, touch = localizer._obstacles.add_obstacle.call_args.args
-    assert (name, shape, mesh, touch) == (SURFACE, "box", None, ["link_base"])
+    assert (name, shape, mesh, touch) == (f"{SURFACE}/1", "box", None, ["link_base"])
     assert size == pytest.approx([0.9, 0.6, 0.03])
     cut_name, _, cut_size = localizer._box_filter.set_box.call_args.args
-    assert cut_name == SURFACE
+    assert cut_name == f"{SURFACE}/1"
     assert cut_size.to_tuple() == pytest.approx((0.9, 0.6, 0.03))
-    # A second call replaces the table rather than stacking another.
-    localizer._obstacles.remove_obstacle.assert_called_once_with(SURFACE)
+    # A second call at the same height replaces the table rather than stacking another.
+    localizer.add_surface()
+    localizer._obstacles.remove_obstacle.assert_called_once_with(f"{SURFACE}/1")
+    assert localizer._surfaces == {f"{SURFACE}/2": pytest.approx(0.08)}
+
+
+def test_two_surfaces_at_different_heights_stay_in_the_planner(localizer, mocker):
+    _ready(localizer, mocker, [])
+    low = _surface(center=(0.2, -0.5, 0.04), size=(0.3, 0.3), above=50)
+    mocker.patch.object(localizer, "surfaces", return_value=[_surface(above=50), low])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = SURFACE
+    localizer._box_filter = mocker.Mock()
+
+    localizer.add_surface(height=0.08)
+    answer = localizer.add_surface(height=0.04)
+
+    assert "In the planner: 0.040 m, 0.080 m" in answer
+    localizer._obstacles.remove_obstacle.assert_not_called()
+    assert localizer.clear_surface(0.04) == "1 surface(s) removed"
+    localizer._obstacles.remove_obstacle.assert_called_once_with(f"{SURFACE}/2")
+    assert localizer.clear_surface() == "1 surface(s) removed"
+    assert localizer.clear_surface() == "no surface to remove"
 
 
 def test_add_surface_without_a_planner_says_so(localizer, mocker):

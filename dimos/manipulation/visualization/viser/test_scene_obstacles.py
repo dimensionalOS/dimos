@@ -26,6 +26,7 @@ from dimos.manipulation.planning.spec.models import WORK_SURFACE_OBSTACLE, Obsta
 from dimos.manipulation.visualization.viser.scene import (
     BELOW_SURFACE_COLOR,
     HEIGHT_RAMP,
+    WORK_SURFACE_COLOR,
     ViserManipulationScene,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -92,22 +93,44 @@ def test_an_empty_octree_is_a_render_failure_not_a_blank_cloud() -> None:
     assert "mapping/voxel-map" in scene._obstacle_render_failures
 
 
-def test_with_a_work_surface_the_ramp_starts_there_and_cells_below_are_grey() -> None:
-    scene = _scene()
-    points = np.array([[0.0, 0.0, -0.3], [0.0, 0.0, 0.09], [0.0, 0.0, 0.3]], dtype=np.float32)
-    scene.add_vis_obstacle("mapping/voxel-map", _octree(points))
-    # Its top at 0.08 m.
-    surface = Obstacle(
-        name=WORK_SURFACE_OBSTACLE,
+def _surface_box(name: str, x: float, top: float, side: float = 0.4) -> Obstacle:
+    return Obstacle(
+        name=name,
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(frame_id="world", position=Vector3(0.0, 0.0, 0.065)),
-        dimensions=(2.0, 2.0, 0.03),
+        pose=PoseStamped(frame_id="world", position=Vector3(x, 0.0, top - 0.015)),
+        dimensions=(side, side, 0.03),
     )
 
-    scene.add_vis_obstacle(WORK_SURFACE_OBSTACLE, surface)
 
-    # The map is drawn again with the surface's floor.
+def test_with_work_surfaces_only_what_stands_on_them_is_coloured() -> None:
+    scene = _scene()
+    points = np.array(
+        [
+            [0.0, 0.0, 0.09],  # on the table, top 0.08
+            [0.0, 0.0, 0.3],  # higher on the table
+            [1.0, 0.0, 0.05],  # on the low table, top 0.04
+            [0.0, 0.0, -0.3],  # under the table
+            [0.5, 0.0, 0.2],  # between the tables: a chair, say
+        ],
+        dtype=np.float32,
+    )
+    scene.add_vis_obstacle("mapping/voxel-map", _octree(points))
+
+    scene.add_vis_obstacle(f"{WORK_SURFACE_OBSTACLE}/1", _surface_box("t", 0.0, 0.08))
+    scene.add_vis_obstacle(f"{WORK_SURFACE_OBSTACLE}/2", _surface_box("t", 1.0, 0.04))
+
+    # The map is drawn again, in focus on the two surfaces.
     colors = scene.server.scene.add_point_cloud.call_args.kwargs["colors"]
-    assert tuple(colors[0]) == BELOW_SURFACE_COLOR
-    assert tuple(colors[2]) == HEIGHT_RAMP[-1]
-    assert tuple(colors[1]) != BELOW_SURFACE_COLOR
+    assert tuple(colors[1]) == HEIGHT_RAMP[-1]
+    assert tuple(colors[0]) != BELOW_SURFACE_COLOR
+    assert tuple(colors[2]) != BELOW_SURFACE_COLOR
+    assert tuple(colors[3]) == BELOW_SURFACE_COLOR
+    assert tuple(colors[4]) == BELOW_SURFACE_COLOR
+
+
+def test_work_surfaces_are_drawn_in_their_own_colour() -> None:
+    scene = _scene()
+
+    scene.add_vis_obstacle(f"{WORK_SURFACE_OBSTACLE}/1", _surface_box("t", 0.0, 0.08))
+
+    assert scene.server.scene.add_box.call_args.kwargs["color"] == WORK_SURFACE_COLOR

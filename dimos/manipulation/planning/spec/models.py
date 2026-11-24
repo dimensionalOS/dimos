@@ -93,9 +93,15 @@ Jacobian: TypeAlias = "NDArray[np.float64]"
 
 
 DEFAULT_OBSTACLE_RGBA: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
-# The obstacle that is the surface the arm works on, as ManipulationLocalize.add_surface names it.
-WORK_SURFACE_OBSTACLE = "scene/surface"
 """Default RGBA (0-1 range) applied to obstacles that carry no explicit color."""
+# The surfaces the arm works on, as ManipulationLocalize.add_surface names them:
+# WORK_SURFACE_OBSTACLE, or WORK_SURFACE_OBSTACLE/<n> when there are several.
+WORK_SURFACE_OBSTACLE = "scene/surface"
+
+
+def is_work_surface(name: str) -> bool:
+    """Whether an obstacle is one of add_surface's surfaces."""
+    return name == WORK_SURFACE_OBSTACLE or name.startswith(f"{WORK_SURFACE_OBSTACLE}/")
 
 
 @dataclass

@@ -34,8 +34,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
-    WORK_SURFACE_OBSTACLE,
     Obstacle,
+    is_work_surface,
 )
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -109,8 +109,13 @@ OBSTACLE_PROXY_COLOR = (255, 45, 25)
 # across these percentiles of the heights, so a few stray cells do not flatten the rest.
 HEIGHT_RAMP = ((40, 70, 220), (30, 190, 220), (60, 200, 80), (240, 210, 40), (220, 50, 40))
 HEIGHT_RAMP_PERCENTILES = (2, 98)
-# Cells under the work surface: mapped, but not part of the ramp.
+# With work surfaces in the planner, cells not standing on one: mapped, but not in focus.
 BELOW_SURFACE_COLOR = (110, 110, 110)
+# Over a work surface's outline, cells this high above its top are what stands on it, metres.
+STANDING_ON_SURFACE_M = (-0.005, 0.30)
+# The work surfaces themselves, so they stand out from other obstacles.
+WORK_SURFACE_COLOR = (255, 170, 30)
+WORK_SURFACE_OPACITY = 0.55
 GRASP_PROPOSAL_NAMESPACE = "/manipulation/grasp-proposals"
 # Best rank green through worst orange, so the ordering reads at a glance.
 GRASP_PROPOSAL_BEST_COLOR = (60, 220, 60)
@@ -195,7 +200,11 @@ class ViserManipulationScene:
             self.remove_vis_obstacle(obstacle_id)
             self._obstacle_render_failures.pop(obstacle_id, None)
             position, wxyz = self._obstacle_pose(obstacle)
-            color, opacity = self._obstacle_appearance(obstacle)
+            color, opacity = (
+                (WORK_SURFACE_COLOR, WORK_SURFACE_OPACITY)
+                if is_work_surface(obstacle_id) and obstacle.obstacle_type == ObstacleType.BOX
+                else self._obstacle_appearance(obstacle)
+            )
             path = f"{OBSTACLE_NAMESPACE}/{obstacle_id}"
             scene = self.server.scene
             handles: list[Any] = []
@@ -287,7 +296,7 @@ class ViserManipulationScene:
                 )
             self._obstacle_handles[obstacle_id] = handles
             self._obstacles[obstacle_id] = replace(deepcopy(obstacle), name=obstacle_id)
-            if obstacle_id == WORK_SURFACE_OBSTACLE:
+            if is_work_surface(obstacle_id):
                 self._redraw_octrees()
 
     def update_vis_obstacle(self, obstacle: Obstacle) -> None:
@@ -315,7 +324,7 @@ class ViserManipulationScene:
                 self._remove_scene_handle(handle)
             removed = self._obstacles.pop(obstacle_id, None)
             self._obstacle_render_failures.pop(obstacle_id, None)
-            if removed is not None and obstacle_id == WORK_SURFACE_OBSTACLE:
+            if removed is not None and is_work_surface(obstacle_id):
                 self._redraw_octrees()
 
     def _redraw_octrees(self) -> None:
@@ -324,12 +333,19 @@ class ViserManipulationScene:
             if stored.obstacle_type == ObstacleType.OCTREE:
                 self.add_vis_obstacle(obstacle_id, stored)
 
-    def _work_surface_top(self) -> float | None:
-        """The world z of the work surface's box top, if the planner has one."""
-        surface = self._obstacles.get(WORK_SURFACE_OBSTACLE)
-        if surface is None or surface.obstacle_type != ObstacleType.BOX:
-            return None
-        return float(surface.pose.position.z) + float(surface.dimensions[2]) / 2
+    def _work_surfaces(self) -> list[tuple[NDArray[np.float64], NDArray[np.float64]]]:
+        """The work surfaces' boxes in the planner, as (world-from-box 4x4, edge lengths)."""
+        boxes = []
+        for name, stored in self._obstacles.items():
+            if is_work_surface(name) and stored.obstacle_type == ObstacleType.BOX:
+                pose = stored.pose
+                matrix = np.eye(4)
+                matrix[:3, :3] = trimesh.transformations.quaternion_matrix(
+                    [pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z]
+                )[:3, :3]
+                matrix[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
+                boxes.append((matrix, np.asarray(stored.dimensions[:3], dtype=np.float64)))
+        return boxes
 
     def clear_vis_obstacles(self) -> None:
         """Remove every obstacle entity while retaining the robot scene."""
@@ -500,6 +516,29 @@ class ViserManipulationScene:
             round(float(color[2]) * 255),
         ), float(color[3])
 
+    def _map_colors(self, points: NDArray[np.float32]) -> NDArray[np.uint8]:
+        """The mapped cells' colours: by height, or with work surfaces in the planner,
+        what stands on them by height and the rest ``BELOW_SURFACE_COLOR``."""
+        surfaces = self._work_surfaces()
+        if not surfaces:
+            return self._height_colors(points[:, 2])
+        on_one = np.zeros(len(points), dtype=bool)
+        low, high = STANDING_ON_SURFACE_M
+        for matrix, size in surfaces:
+            local = (points - matrix[:3, 3]) @ matrix[:3, :3]
+            over_top = local[:, 2] - size[2] / 2
+            on_one |= (
+                (np.abs(local[:, 0]) <= size[0] / 2)
+                & (np.abs(local[:, 1]) <= size[1] / 2)
+                & (over_top >= low)
+                & (over_top <= high)
+            )
+        colors = np.tile(np.asarray(BELOW_SURFACE_COLOR, dtype=np.uint8), (len(points), 1))
+        if on_one.any():
+            floor = min(float(matrix[2, 3] + size[2] / 2) for matrix, size in surfaces)
+            colors[on_one] = self._height_colors(points[on_one, 2], floor)
+        return colors
+
     @staticmethod
     def _height_colors(
         heights: NDArray[np.float32], floor: float | None = None
@@ -543,7 +582,7 @@ class ViserManipulationScene:
         if not len(points):
             raise ValueError("octree obstacle carries no occupied cells")
         if obstacle.color == OBSTACLE_DEFAULT_RGBA:
-            colors = self._height_colors(points[:, 2] + position[2], self._work_surface_top())
+            colors = self._map_colors(points + np.asarray(position, dtype=np.float32))
         else:
             colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
         return scene.add_point_cloud(
