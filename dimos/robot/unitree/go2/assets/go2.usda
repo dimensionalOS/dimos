@@ -117,6 +117,7 @@ def Xform "go2" (
     {
         def Xform "base" (
             apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
+            displayName = "base_link"
         )
         {
             uniform bool newton:jointsAddMobility = 1

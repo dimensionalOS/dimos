@@ -28,7 +28,7 @@ from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.mujoco.drives import usd_with_mjc_servos
 from dimos.sim2.mujoco.names import resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.spec import Simulated, SimulatedRobot
+from dimos.sim2.spec import ODOM_FRAME, Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import REFUSED, WorldWriter
 from dimos.utils.logging_config import setup_logger
@@ -282,7 +282,10 @@ class MujocoBackend:
         world.add("world", backend="mujoco")
         for name in self._roots:
             robot = self._robots.get(name)
-            world.add(name, **({"model": str(self._layers[name])} if robot is not None else {}))
+            announced = {} if robot is None else {"model": str(self._layers[name])}
+            if robot is not None and robot.odom_frame is not None:
+                announced[ODOM_FRAME] = robot.odom_frame
+            world.add(name, **announced)
             for joint_name in self._joints[name][1]:
                 world.add(f"{name}/{joint_name}")
 

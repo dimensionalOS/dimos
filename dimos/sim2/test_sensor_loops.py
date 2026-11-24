@@ -103,10 +103,11 @@ def livox() -> Iterator[Any]:
 
 
 @pytest.fixture
-def l1() -> Iterator[Any]:
+def l1(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     from dimos.sim2.l1 import SimL1
 
     sensor = SimL1(instance_name="left/l1")
+    monkeypatch.setattr(sensor, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
     yield sensor
     sensor.stop()
 
@@ -145,6 +146,9 @@ def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
     assert run["transforms"] == cast_at
 
 
+SPOT_XY, SPOT_YAW = (2.0, 1.0), np.pi / 2
+
+
 def _toy_world(sensor: Any, mount: str) -> Any:
     """A real MuJoCo view of the toy dog standing in a scene, with ``sensor`` grafted on at ``mount``."""
     from pathlib import Path
@@ -153,6 +157,7 @@ def _toy_world(sensor: Any, mount: str) -> Any:
     from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
     from dimos.sim2.assets.toy import toy_robot
     from dimos.sim2.sim import compose_world
+    from dimos.sim2.spec import ODOM_FRAME
     from dimos.sim2.usd_layer import layer_file
     from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
@@ -168,9 +173,14 @@ def _toy_world(sensor: Any, mount: str) -> Any:
 
     scene = Path(__file__).parent / "mujoco" / "assets" / "scene.usda"
     room = UsdModel.from_file(scene).with_frames(
-        {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
+        {"dog": ("scene", (*SPOT_XY, 0.0), (0.0, 0.0, SPOT_YAW))}
     )
-    dog = toy_robot().with_frames({"lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    dog = toy_robot().with_frames(
+        {
+            "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "l1": ("base", (0.0, 0.0, 0.0), (np.pi, 0.0, 0.0)),
+        }
+    )
     world_usd = compose_world(
         [
             _Part(room.usd, None),
@@ -181,8 +191,8 @@ def _toy_world(sensor: Any, mount: str) -> Any:
     writer, mirror = WorldWriter(), WorldMirror()
     writer.start_ns = 0
     writer.add("world")
-    writer.add("dog", model="dog.usda")
-    writer.position("dog", [0.0, 0.0, 1.0, 0, 0, 0, 1])
+    writer.add("dog", model="dog.usda", **{ODOM_FRAME: "dog/odom"})
+    writer.position("dog", [*SPOT_XY, 0.3, 0, 0, np.sin(SPOT_YAW / 2), np.cos(SPOT_YAW / 2)])
     mirror.apply(writer.end_frame(1.0))
 
     async def ticks(rate_hz: float) -> AsyncIterator[float]:
@@ -209,3 +219,25 @@ def test_a_livox_in_its_housing_sees_past_the_housing() -> None:
     finally:
         livox.stop()
     assert published and all(len(cloud.as_numpy()[0]) > 0 for cloud in published)
+
+
+def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides() -> None:
+    from dimos.sim2.l1 import SimL1
+
+    l1 = SimL1(instance_name="dog/l1/l1", mount="dog/l1")
+    published: list[Any] = []
+    try:
+        _toy_world(l1, "dog/l1")
+        l1.lidar.publish = published.append
+        l1.publish_usd_tf = lambda ts=None: None
+        asyncio.run(l1._map())
+    finally:
+        l1.stop()
+    cloud = published[-1]
+    points, _ = cloud.as_numpy()
+    floor = points[points[:, 2] < l1.config.cell]
+    assert cloud.frame_id == "dog/odom"
+    assert len(floor) > 0 and np.abs(floor[:, 2]).max() <= l1.config.cell
+    assert np.abs(floor[:, :2].mean(axis=0)).max() < 0.5, (
+        "the floor is mapped around the odom origin"
+    )
