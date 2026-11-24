@@ -21,9 +21,16 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.look import (
+    display,
+    light_headroom,
+    linear_textures,
+    scale_light,
+    stage_tone_map,
+)
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
-from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
+from dimos.sim2.mujoco.world import USD_SUFFIXES, SensorMount, compile_world, mount_sensor
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 
 _GRAVITY = np.array([0.0, 0.0, -9.81])
@@ -37,7 +44,16 @@ class MujocoView:
         spec = compile_world(scene, ids=self._robots)
         if mount is not None:
             mount_sensor(spec, mount)
+        is_usd = Path(scene).suffix.lower() in USD_SUFFIXES
+        self._tone_map = stage_tone_map(Path(scene)) if is_usd else None
+        if self._tone_map is not None:
+            linear_textures(spec, Path(scene))
         self.model = spec.compile()
+        self._headroom = 1.0
+        if self._tone_map is not None:
+            # MuJoCo writes linear light to 8 bits and clips at 1, so render it scaled to fit.
+            self._headroom = light_headroom(self.model)
+            scale_light(self.model, 1.0 / self._headroom)
         self._joints: dict[str, int] = {}
         self._robot_roots: dict[str, int] = {}
         self._object_bodies: dict[str, int] = {}
@@ -121,7 +137,9 @@ class MujocoView:
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
         renderer.update_scene(self.data, camera=camera)
-        return renderer.render().copy()
+        if self._tone_map is None:
+            return renderer.render().copy()
+        return display(renderer.render(), self._headroom, self._tone_map)
 
     def raycaster(
         self,
