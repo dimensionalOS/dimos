@@ -230,20 +230,25 @@ async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
         sim_module.stop()
 
 
+async def _ran_for(backend: MujocoBackend, published: _Collect, seconds: float) -> None:
+    """Until the published world has run ``seconds`` of sim time, however long that takes on the wall."""
+    assert backend.world.start_ns is not None
+    await published.world.reached(backend.world.start_ns / 1e9 + seconds)
+
+
 def test_backend_steps_physics_and_takes_commands(world, robot_model):
     backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
     published = _Collect()
 
     async def run_briefly() -> None:
         async with _looping(backend, published):
-            await asyncio.sleep(0.05)
+            await _ran_for(backend, published, 0.05)
             # The head is light: a bigger torque spins it up until the solver diverges.
             backend.apply([JointCommand("dog", ("neck",), effort=(0.01,))])
-            await asyncio.sleep(0.5)
+            await _ran_for(backend, published, 0.55)
 
     asyncio.run(run_briefly())
     world_seen = published.world
-    assert world_seen.time > 0.3
     assert world_seen.entity("dog").pose[2] < 0.3
     names, joints = world_seen.joints("dog")
     assert names == ["neck"]
@@ -303,11 +308,11 @@ def test_a_motor_command_drives_a_servo_with_its_own_gains(robot_model):
 
     async def run_briefly() -> None:
         async with _looping(backend, published):
-            await asyncio.sleep(0.05)
+            await _ran_for(backend, published, 0.05)
             backend.apply(
                 [JointCommand("dog", ("neck",), position=(0.5,), kp=(0.05,), kd=(0.005,))]
             )
-            await asyncio.sleep(1.0)
+            await _ran_for(backend, published, 1.05)
 
     asyncio.run(run_briefly())
     actuator = backend.model.actuator("dog/neck").id
