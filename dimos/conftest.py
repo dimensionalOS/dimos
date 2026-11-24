@@ -21,6 +21,7 @@ import os
 import pathlib
 import platform
 import re
+import subprocess
 import tempfile
 import threading
 import time
@@ -116,6 +117,44 @@ def _has_ros() -> bool:
 
 def _is_macos() -> bool:
     return platform.system() == "Darwin"
+
+
+@pytest.fixture
+def macos_lcm_networking() -> None:
+    """Fail before LCM tests time out on macOS's default UDP limits."""
+    if not _is_macos():
+        return
+
+    # Match the macOS CI setup. Pytest disables interactive system configuration.
+    targets = (
+        ("kern.ipc.maxsockbuf", 6291456),
+        ("net.inet.udp.recvspace", 2097152),
+        ("net.inet.udp.maxdgram", 65535),
+    )
+    problems = []
+    for key, target in targets:
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", key], check=True, capture_output=True, text=True
+            )
+            current = int(result.stdout.strip())
+        except (OSError, subprocess.CalledProcessError, ValueError) as error:
+            problems.append(f"Cannot read {key}: {error}")
+            continue
+        if current < target:
+            problems.append(f"{key}={current} (requires at least {target})")
+
+    if problems:
+        commands = "\n".join(f"sudo sysctl -w {key}={target}" for key, target in targets)
+        pytest.fail(
+            "macOS LCM test prerequisites are not met:\n"
+            + "\n".join(problems)
+            + "\nLCM needs large UDP datagrams and receive buffers. Run:\n"
+            + commands
+            + "\nSee docs/development/testing.md#macos-lcm-test-setup for multicast routing "
+            "and setup after a reboot. Pytest does not change these settings.",
+            pytrace=False,
+        )
 
 
 def _has_turbojpeg() -> bool:

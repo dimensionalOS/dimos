@@ -18,8 +18,91 @@ import subprocess
 import sys
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+
+
+@pytest.mark.parametrize("system", ["Linux", "Windows"])
+def test_macos_lcm_networking_does_not_read_sysctl_on_other_platforms(
+    request: pytest.FixtureRequest, mocker: MockerFixture, system: str
+) -> None:
+    mocker.patch("platform.system", return_value=system)
+    run = mocker.patch("subprocess.run")
+
+    request.getfixturevalue("macos_lcm_networking")
+
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("extra", [0, 1024])
+def test_macos_lcm_networking_accepts_ci_limits_or_higher(
+    request: pytest.FixtureRequest, mocker: MockerFixture, extra: int
+) -> None:
+    mocker.patch("platform.system", return_value="Darwin")
+    run = mocker.patch(
+        "subprocess.run",
+        side_effect=[
+            subprocess.CompletedProcess([], 0, stdout=str(value + extra))
+            for value in (6291456, 2097152, 65535)
+        ],
+    )
+
+    assert request.getfixturevalue("macos_lcm_networking") is None
+    assert [call.args[0] for call in run.call_args_list] == [
+        ["sysctl", "-n", "kern.ipc.maxsockbuf"],
+        ["sysctl", "-n", "net.inet.udp.recvspace"],
+        ["sysctl", "-n", "net.inet.udp.maxdgram"],
+    ]
+
+
+@pytest.mark.parametrize(
+    "values, problem",
+    [
+        ((6291455, 2097152, 65535), "kern.ipc.maxsockbuf=6291455"),
+        ((6291456, 2097151, 65535), "net.inet.udp.recvspace=2097151"),
+        ((6291456, 2097152, 9216), "net.inet.udp.maxdgram=9216"),
+    ],
+)
+def test_macos_lcm_networking_reports_low_limits_with_remediation(
+    request: pytest.FixtureRequest,
+    mocker: MockerFixture,
+    values: tuple[int, int, int],
+    problem: str,
+) -> None:
+    mocker.patch("platform.system", return_value="Darwin")
+    mocker.patch(
+        "subprocess.run",
+        side_effect=[subprocess.CompletedProcess([], 0, stdout=str(value)) for value in values],
+    )
+
+    with pytest.raises(pytest.fail.Exception) as error:
+        request.getfixturevalue("macos_lcm_networking")
+
+    message = str(error.value)
+    assert problem in message
+    assert "sudo sysctl -w net.inet.udp.maxdgram=65535" in message
+    assert "docs/development/testing.md#macos-lcm-test-setup" in message
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        FileNotFoundError("sysctl missing"),
+        subprocess.CalledProcessError(1, ["sysctl"]),
+        subprocess.CompletedProcess([], 0, stdout="not an integer"),
+    ],
+)
+def test_macos_lcm_networking_reports_unreadable_limits(
+    request: pytest.FixtureRequest,
+    mocker: MockerFixture,
+    result: Exception | subprocess.CompletedProcess[str],
+) -> None:
+    mocker.patch("platform.system", return_value="Darwin")
+    mocker.patch("subprocess.run", side_effect=[result, result, result])
+
+    with pytest.raises(pytest.fail.Exception, match="Cannot read kern.ipc.maxsockbuf"):
+        request.getfixturevalue("macos_lcm_networking")
 
 
 @pytest.mark.parametrize(

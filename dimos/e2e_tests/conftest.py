@@ -49,6 +49,7 @@ def _pin_dimsim_to_lcm(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
     """
     if "dim_sim" not in request.fixturenames:
         return
+    request.getfixturevalue("macos_lcm_networking")
     monkeypatch.setenv("DIMOS_TRANSPORT", "lcm")
     monkeypatch.setattr(global_config, "transport", "lcm")
 
@@ -138,7 +139,7 @@ def serve_channel() -> Iterator[Callable[..., str]]:
 
 
 @pytest.fixture
-def lcm_spy() -> Iterator[LcmSpy]:
+def lcm_spy(macos_lcm_networking: None) -> Iterator[LcmSpy]:
     lcm_spy = LcmSpy()
     lcm_spy.start()
     yield lcm_spy

@@ -82,6 +82,41 @@ When writing or debugging a specific self-hosted test, override `-m` yourself to
 pytest -m self_hosted dimos/path/to/test_something.py
 ```
 
+## macOS LCM test setup
+
+The Livox native tests and DimSim tests (including walk-forward) use LCM over UDP,
+even though the default dimOS transport is Zenoh. macOS's default UDP datagram
+limit is 9216 bytes, while LCM sends datagrams up to 64 KB. Large messages such as
+point clouds can fail to leave the sender, causing missing streams or timeouts.
+
+Before running these tests, apply the UDP limits used by macOS CI from an account
+with `sudo` access:
+
+```sh skip
+sudo sysctl -w kern.ipc.maxsockbuf=6291456
+sudo sysctl -w net.inet.udp.recvspace=2097152
+sudo sysctl -w net.inet.udp.maxdgram=65535
+```
+
+For local tests, CI also routes multicast through loopback:
+
+```sh skip
+sudo route add -net 224.0.0.0/4 -interface lo0
+```
+
+If the route already exists, inspect it with `netstat -rn -f inet`. If the
+`224.0.0.0/4` route uses another interface, replace it with
+`sudo route delete -net 224.0.0.0/4` followed by the add command above. This routes
+multicast locally, so do not use this route when communicating with a robot over
+the LAN.
+
+These commands change the running system and must be reapplied after a reboot.
+Verify the limits with
+`sysctl kern.ipc.maxsockbuf net.inet.udp.recvspace net.inet.udp.maxdgram`.
+The installer does not configure these macOS settings, and pytest disables the
+interactive runtime system configurator. The Livox and DimSim LCM fixtures check
+the limits and fail with setup instructions if they are too low or cannot be read.
+
 ## Testing on a fresh Ubuntu install
 
 Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04/26.04 containers on x86_64 and ARM64. On a pull request, library mode builds and installs a wheel from the PR's source distribution. Developer mode installs the checkout. Both render the Go2 graph without an audio server. To check the latest published PyPI package, run the **Test installation script** workflow manually. See [local installation checks](#test-a-checkout-locally).

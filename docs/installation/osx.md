@@ -22,6 +22,12 @@ See [installer options](/docs/installation/index.md).
 
 LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. dimOS defaults the global stream transport to **Zenoh** everywhere, so you never need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
 
+The installer does not change macOS UDP limits or multicast routes. Before running
+LCM tests such as Livox and DimSim walk-forward, follow the
+[macOS LCM test setup](/docs/development/testing.md#macos-lcm-test-setup) for the
+`sysctl` values and loopback route used by CI. Pytest disables interactive system
+configuration, so it cannot apply these settings for you.
+
 See the [Zenoh transport guide](/docs/usage/transports/index.md#zenoh) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
 
 ## Manual installation

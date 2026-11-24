@@ -213,7 +213,7 @@ class Spawner:
 
 
 @pytest.fixture
-def spawn(tmp_path: Path) -> Iterator[Spawner]:
+def spawn(tmp_path: Path, macos_lcm_networking: None) -> Iterator[Spawner]:
     """Spawn a native module binary. Everything spawned is torn down."""
     spawner = Spawner(tmp_path)
     yield spawner
