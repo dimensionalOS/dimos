@@ -156,15 +156,25 @@ def _is_cli_settable(annotation: Any) -> bool:
     bare ``TypeAdapter`` refuses to generate a JSON schema for exactly those
     types, even nested inside containers.
     """
-    return any(_member_is_cli_settable(member) for member in scalar_annotation_types(annotation))
+    return any(_json_schema(member) is not None for member in scalar_annotation_types(annotation))
 
 
-def _member_is_cli_settable(member: Any) -> bool:
+def takes_json(member: Any) -> bool:
+    """Whether a union member may be written as a JSON array or object.
+
+    Pydantic's JSON schema decides. Text, numbers, booleans, paths, literals
+    and enums are scalars there, and their values keep any leading bracket.
+    """
+    scalars = ("string", "integer", "number", "boolean")
+    schema = _json_schema(member)
+    return schema is not None and schema.get("type") not in scalars
+
+
+def _json_schema(member: Any) -> dict[str, Any] | None:
     try:
-        TypeAdapter(member).json_schema()
+        return TypeAdapter(member).json_schema()
     except (PydanticInvalidForJsonSchema, PydanticSchemaGenerationError):
-        return False
-    return True
+        return None
 
 
 def prepare_model_input(

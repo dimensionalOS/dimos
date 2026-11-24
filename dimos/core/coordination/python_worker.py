@@ -240,14 +240,14 @@ class PythonWorker:
         """Reserve a slot so _select_worker() sees the pending load."""
         self._reserved += 1
 
-    def start_process(self) -> None:
+    def start_process(self, g: GlobalConfig = global_config) -> None:
         ctx = get_forkserver_context()
         parent_conn, child_conn = ctx.Pipe()
         self._conn = parent_conn
 
         self._process = ctx.Process(
             target=_worker_entrypoint,
-            args=(child_conn, self._worker_id),
+            args=(child_conn, self._worker_id, g),
             daemon=True,
         )
         self._process.start()
@@ -390,8 +390,10 @@ class _WorkerState:
     should_stop: bool = False
 
 
-def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
+def _worker_entrypoint(conn: Connection, worker_id: int, g: GlobalConfig) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
+    # The first deploy request can import modules while it is being decoded.
+    global_config.update(**g.model_dump())
     state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:

@@ -86,7 +86,9 @@ Dynamic values accept both `--field=value` and `--field value`. A shorthand is
 available only when it identifies one active module. If two modules expose the
 same field, the CLI reports the ambiguity and lists stable qualified forms such
 as `--pgovoxelmapper.map-file`. Global flags work on either side of
-`run`; older wrapper-style overrides are no longer accepted.
+`run`. Related settings may come from different sources. For example, a JSON
+file can set `g.record_engine` to `rust` and the CLI can supply
+`--record-encoding-threads 4`. Older wrapper-style overrides are no longer accepted.
 
 ```bash
 # Foreground replay without a robot (Ctrl-C to stop)
@@ -157,11 +159,14 @@ publishing details.
 
 Render a Blueprint's stream flow as a Graphviz SVG without starting the Blueprint or
 opening its runtime transports. RPC relationships are hidden by default; pass `--rpc`
-to include RPC contracts and their declared Spec methods as dashed edges.
+to include RPC contracts and their declared Spec methods as dashed edges. The graph
+reflects the selected simulation, replay, and viewer settings. Use `VIEWER` or the
+root `--viewer` flag to choose the viewer used for graph composition.
 
 ```bash
 dimos graph unitree-go2-agentic
 dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+dimos --simulation mujoco graph keyboard-teleop-xarm7
 ```
 
 The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
