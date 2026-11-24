@@ -390,7 +390,7 @@ class DimSimBackend:
         world.add("world", backend="dimsim")
         odom_frames = {robot.robot_id: robot.odom_frame for robot in self._robots}
         for robot_id in self._base:
-            announced = {MOUNTED_AT: self._mounts[robot_id]}
+            announced: dict[str, Any] = {MOUNTED_AT: self._mounts[robot_id]}
             if odom_frames.get(robot_id) is not None:
                 announced[ODOM_FRAME] = odom_frames[robot_id]
             world.add(robot_id, model=str(self._layers[robot_id]), **announced)
