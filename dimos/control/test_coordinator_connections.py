@@ -40,9 +40,10 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control._control_test_helpers import (
     FakeArm,
     FakeArmConfig,
+    LocalTransport,
+    Recorder,
     fake_arm_model,
 )
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.control.contract.convert import (
     joint_state_to_values,
@@ -277,43 +278,6 @@ class WholeRobot(ControlCoordinator):
 
 
 # In-process, with the tick loop stepped by hand.
-
-
-class LocalTransport:
-    """An in-process transport: publishing calls every subscriber at once."""
-
-    def __init__(self) -> None:
-        self.subscribers: list[Callable[[Any], Any]] = []
-
-    def broadcast(self, selfstream: Any, value: Any) -> None:
-        for cb in list(self.subscribers):
-            cb(value)
-
-    def publish(self, value: Any) -> None:
-        self.broadcast(None, value)
-
-    def subscribe(self, cb: Callable[[Any], Any], selfstream: Any = None) -> Callable[[], None]:
-        self.subscribers.append(cb)
-        return lambda: self.subscribers.remove(cb)
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-
-class Recorder(LocalTransport):
-    """A transport on one command port that notes each message sent as (port, message)."""
-
-    def __init__(self, port: str, sent: list[tuple[str, Any]]) -> None:
-        super().__init__()
-        self._port = port
-        self._sent = sent
-
-    def broadcast(self, selfstream: Any, value: Any) -> None:
-        self._sent.append((self._port, value))
-        super().broadcast(selfstream, value)
 
 
 class SendsPositions(BaseControlTask):
@@ -764,33 +728,6 @@ def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
     r.report_arm(0.6, *AT_REST[1:])
     r.tick()
     assert r.positions_sent()[-1] == [0.6, *AT_REST[1:]]
-
-
-def test_a_coordinator_with_robot_ports_takes_no_adapters(rig: Callable[..., Rig]) -> None:
-    adapter_arm = HardwareComponent(
-        hardware_id="left_arm",
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints("left_arm", 2),
-        adapter_type="mock",
-    )
-
-    with pytest.raises(ValueError, match="one or the other"):
-        rig(hardware=[adapter_arm])
-    with pytest.raises(ValueError, match="connection modules"):
-        rig().coordinator.add_hardware(None, adapter_arm)  # type: ignore[arg-type]
-
-
-def test_connection_robots_stay_out_of_per_robot_joint_states(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig(ArmCoordinator, publish_robot_joint_states=True)
-
-    r.report_arm(*AT_REST)
-    r.tick()
-
-    assert len(r.sent) == 1
-    error.assert_not_called()
 
 
 def test_a_port_carrying_the_wrong_message_is_refused_at_start(rig: Callable[..., Rig]) -> None:

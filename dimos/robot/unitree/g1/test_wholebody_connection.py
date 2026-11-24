@@ -182,7 +182,7 @@ def test_canonical_source_routes_model_order_and_keeps_limits(connection):
 
 
 def test_canonical_port_deadman_damping_and_final_firmware_stop(connection, monkeypatch):
-    from dimos.control.test_coordinator_connections import LocalTransport
+    from dimos.control._control_test_helpers import LocalTransport
 
     publisher = _wire(connection, soft_start_seconds=0.0)
     connection.config.deadman_timeout_s = 0.03
