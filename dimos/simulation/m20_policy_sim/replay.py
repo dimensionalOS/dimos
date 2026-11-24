@@ -159,7 +159,8 @@ def load_imu(session: Path, cache: Path) -> dict[str, np.ndarray]:
             stamp = sec + nsec * 1e-9
             if stamp not in rows:  # each sample goes to two readers
                 rows[stamp] = (t, *struct.unpack("<9f", d[20:56]))
-    a = np.array([rows[k] for k in sorted(rows)])
+    # none since 2026-11-21 (yesense hands /IMU_DATA to rl_deploy over shared memory, which no capture sees)
+    a = np.array([rows[k] for k in sorted(rows)]).reshape(-1, 10)
     out = {"t": a[:, 0], "rpy_deg": a[:, 1:4], "gyro": a[:, 4:7], "accel": a[:, 7:10]}
     np.savez(path, **out)
     return out

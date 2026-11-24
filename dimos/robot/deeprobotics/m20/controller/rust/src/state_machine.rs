@@ -23,7 +23,7 @@ use std::f64::consts::PI;
 use crate::config::{tile, Config, Robot, StandIn, JOINTS};
 use crate::policy::{PolicyRequest, PolicyService};
 use crate::runner::Targets;
-use crate::types::{JointCommand, RobotState, Target, UserCommand};
+use crate::types::{roll_pitch, JointCommand, RobotState, Target, UserCommand};
 
 /// The config's name of a state (states.enable.on_enter).
 pub fn state_name(state: State) -> &'static str {
@@ -189,6 +189,31 @@ fn command_is_finite(c: &JointCommand) -> bool {
     [&c.kp, &c.q, &c.kd, &c.dq, &c.tau]
         .iter()
         .all(|a| a.iter().all(|x| x.is_finite()))
+}
+
+/// SafeController::Run's tilt limits for a UserCommand target and gait (f32 rad angles, compared as f64, strictly).
+pub fn tilt_fault(target: Target, gait: u32, roll: f32, pitch: f32) -> Option<String> {
+    let (roll, pitch) = (roll.abs() as f64, pitch.abs() as f64);
+    let (max_roll, max_pitch) = match target {
+        Target::Passive => (0.349066, 0.349066),
+        Target::Stand => (0.7854, 0.7854),
+        Target::RlControl => {
+            if gait & 0xff00 == 0x2000 || gait == 0xf003 {
+                return None;
+            }
+            (0.7854, if gait == 0x1002 { 1.5708 } else { 1.134464 })
+        }
+        _ => return None,
+    };
+    (roll > max_roll || pitch > max_pitch).then(|| {
+        format!(
+            "tilt roll {:.1} pitch {:.1} deg (limits {:.0} / {:.0})",
+            roll.to_degrees(),
+            pitch.to_degrees(),
+            f64::to_degrees(max_roll),
+            f64::to_degrees(max_pitch)
+        )
+    })
 }
 
 /// rl_deploy's joint-data checks (SafeController::IsJointDataNormal, 0x1773a8, on every 1 ms SafeController tick):
@@ -443,7 +468,7 @@ impl Controller {
     }
 
     /// Recomputed every tick like rl_deploy's SafeController (a fault clears when its cause does).
-    fn check_faults(&mut self, s: &RobotState, _cmd: &UserCommand) -> Option<String> {
+    fn check_faults(&mut self, s: &RobotState, cmd: &UserCommand) -> Option<String> {
         // rl_deploy's joint checks count on every tick, the start-up grace included
         let joints = self.joint_watch.check(s, &self.cfg.robot.joint_names);
         if !self.fault_checks {
@@ -465,7 +490,43 @@ impl Controller {
                 return Some(format!("hardware state stale for {:.3} s", s.stamp - last));
             }
         }
-        joints
+        joints.or_else(|| self.tilt_fault(s, cmd))
+    }
+
+    /// rl_deploy's tilt fault (SafeController::Run, 0x183980, every 1 ms, no debounce): |roll| or |pitch| of the IMU's
+    /// own angles (f32 rad, as HandlerIMU converts them; else from the orientation) above a limit that depends on the
+    /// target state and gait in its UserCommand: idle (0) 0.349066 rad, stand-up (1) 0.7854, rl_control (0x11) roll
+    /// 0.7854 and pitch 1.134464 (1.5708 on 0x1002), none on 0x2xxx (Extre) and 0xf003, none in any other state
+    /// (joint damping, lie-down). Its target is the operator's, except that joint damping replaces it (rl_deploy's
+    /// states write 2 on a fault) and rl_control's gait is the one rl_control runs (stand-ins 0xf001).
+    fn tilt_fault(&self, s: &RobotState, cmd: &UserCommand) -> Option<String> {
+        let (roll, pitch) = match s.imu_rpy_deg {
+            Some(rpy) => {
+                let rad = |d: f32| ((d / 180.0) as f64 * std::f64::consts::PI) as f32;
+                (rad(rpy[0]), rad(rpy[1]))
+            }
+            None => {
+                let (r, p) = roll_pitch(&s.quat);
+                (r as f32, p as f32)
+            }
+        };
+        let target = if self.state == State::JointDamping {
+            Target::JointDamping
+        } else {
+            self.blocked_target
+                .filter(|b| *b == cmd.target)
+                .map_or(cmd.target, |_| Target::Passive)
+        };
+        let gait = if self.state == State::RlControl {
+            if self.stand_in.is_some() {
+                0xf001
+            } else {
+                self.gait
+            }
+        } else {
+            cmd.gait
+        };
+        tilt_fault(target, gait, roll, pitch)
     }
 
     /// After a fault the operator's standing request is ignored until they send a different one.
@@ -1089,6 +1150,23 @@ mod tests {
             let f = w.check(&s, &names);
             assert_eq!(f.is_some(), k == 51, "frozen reading {k}: {f:?}");
         }
+    }
+
+    #[test]
+    fn tilt_limits_are_rl_deploy_s() {
+        let deg = |d: f64| d.to_radians() as f32;
+        assert!(tilt_fault(Target::Passive, 0, deg(19.9), 0.0).is_none());
+        assert!(tilt_fault(Target::Passive, 0, 0.0, deg(20.1)).is_some());
+        assert!(tilt_fault(Target::Stand, 0, deg(44.9), deg(44.9)).is_none());
+        assert!(tilt_fault(Target::Stand, 0, deg(45.1), 0.0).is_some());
+        assert!(tilt_fault(Target::RlControl, 0x1001, deg(44.9), deg(64.9)).is_none());
+        assert!(tilt_fault(Target::RlControl, 0x1001, 0.0, deg(65.1)).is_some());
+        assert!(tilt_fault(Target::RlControl, 0x1002, 0.0, deg(89.9)).is_none());
+        assert!(tilt_fault(Target::RlControl, 0x1002, deg(45.1), 0.0).is_some());
+        assert!(tilt_fault(Target::RlControl, 0x2001, deg(80.0), deg(80.0)).is_none());
+        assert!(tilt_fault(Target::RlControl, 0xf003, deg(80.0), deg(80.0)).is_none());
+        assert!(tilt_fault(Target::LieDown, 0, deg(80.0), deg(80.0)).is_none());
+        assert!(tilt_fault(Target::JointDamping, 0, deg(80.0), deg(80.0)).is_none());
     }
 
     #[test]

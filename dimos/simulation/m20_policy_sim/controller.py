@@ -190,6 +190,30 @@ class Controller:
             return "joint beyond its range"
         return ""
 
+    def tilt_fault(self, s: RobotState, cmd: UserCommand) -> str:
+        """rl_deploy's tilt fault (SafeController::Run 0x183980, no debounce): limits by its UserCommand target and
+        gait: idle 20 deg, stand-up 45, rl_control roll 45 / pitch 65 (90 on 0x1002; none on 0x2xxx, 0xf003)."""
+        roll, pitch = (abs(float(np.float32(a))) for a in roll_pitch(s.quat))
+        target = (
+            "joint_damping" if self.state == "joint_damping" else self.effective_target_peek(cmd)
+        )
+        if target == "passive":
+            limits = (0.349066, 0.349066)
+        elif target == "stand":
+            limits = (0.7854, 0.7854)
+        elif target == "rl_control":
+            gait = (
+                (0xF001 if self.stand_in is not None else self.gait)
+                if self.state == "rl_control"
+                else cmd.gait
+            )
+            if gait & 0xFF00 == 0x2000 or gait == 0xF003:
+                return ""
+            limits = (0.7854, 1.5708 if gait == 0x1002 else 1.134464)
+        else:
+            return ""
+        return "tilt" if roll > limits[0] or pitch > limits[1] else ""
+
     def check_faults(self, s: RobotState, cmd: UserCommand) -> str:
         joints = self.joint_watch(s)
         safety = self.cfg["safety"]
@@ -197,7 +221,13 @@ class Controller:
             return ""
         if self.last_stamp is not None and s.stamp - self.last_stamp > safety["state_timeout_s"]:
             return "stale state"
-        return joints
+        return joints or self.tilt_fault(s, cmd)
+
+    def effective_target_peek(self, cmd: UserCommand) -> str:
+        """effective_target without clearing the block."""
+        if self.blocked_target is not None and cmd.target == self.blocked_target:
+            return "passive"
+        return cmd.target
 
     def effective_target(self, cmd: UserCommand) -> str:
         """After a fault the operator's standing request is ignored until they send a different one."""

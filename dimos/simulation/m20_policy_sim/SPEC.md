@@ -70,15 +70,21 @@ Transitions (any state: fault mask != 0 -> JointDamping):
 | RLControl | LieDown | target 4, not while a stand-in policy runs |
 | JointDamping | Idle | after 2 s, or at once if target != 2; under a fault it stays (and resets joint errors every 3 s) |
 
-Faults (SafeController, 1 kHz, 1 s start-up grace): joint position beyond its range by > 0.1 rad; tilt |roll| or
-|pitch| > 20 deg in Idle, > 45 deg in StandUp, in RLControl roll > 45 deg or pitch > 65 deg (BasicPlat pitch 90 deg;
-Extre and 0xf003 skip it; SafeController::Run 0x183980, thresholds at 0x1e1bf8 / 0x1e1c00 / 0x1e1c08 / 0x1e1c10);
-IMU stale > 20 ms; battery and motor temperature flags. The joint check (SafeController::IsJointDataNormal 0x1773a8)
-counts: a joint beyond its range by more than 0.1 + 0.14 rad for 31 checks in a row, or a joint whose position,
-velocity and torque repeat exactly for 51 checks (a frozen motor), or 31 NaN readings. The re-implementations do not
-check tilt (removed on purpose); they recompute the other faults every tick like SafeController (the joint range one at
-once, 0.1 rad past the range) and, after a fault, ignore the operator's standing request until a different one arrives
-(rl_deploy resets the target to damping).
+Faults (SafeController, 1 kHz, 1 s start-up grace), each recomputed every tick, any of them making rl_deploy's
+states go to JointDamping (Idle stays Idle):
+- Tilt (SafeController::Run 0x183980, no debounce): |roll| or |pitch| of the IMU's own angles (f32 rad) strictly above
+  a limit set by the UserCommand's target state and gait: Idle (0, 3) 0.349066 rad (20 deg), StandUp (1) 0.7854,
+  RLControl (0x11) roll 0.7854 and pitch 1.134464 (65 deg; 1.5708 on 0x1002), none on 0x2xxx (Extre) and 0xf003, none
+  for any other target (constants 0x1e1bf8 / 0x1e1c00 / 0x1e1c08 / 0x1e1c10).
+- Joint data (SafeController::IsJointDataNormal 0x1773a8), per joint: 31 readings in a row with a NaN in position,
+  velocity or torque; 51 in a row identical to the one before (a frozen motor, all 16 joints); 31 in a row of a hip /
+  knee position more than 0.1 + 0.14 rad past ControlParameters' front-leg range, mirrored per leg.
+- IMU stale > 20 ms; battery and motor temperature flags.
+The re-implementations do the tilt and joint checks exactly so (their target: the operator's, joint damping while in
+it, rl_control's own gait); their own beyond that: the stale-state timeout as a tick count too, and a non-finite
+orientation, gyro or stamp. After a fault they ignore the operator's standing request until a different one arrives
+(rl_deploy resets the target to damping). examples/fault_replay.rs runs both over a session's every reply: none on
+11-20 14:16 (218687 replies) and 16:36 (142448); 11-24's (118525) joint checks only (its IMU is not in the capture).
 
 ### RLControl entry and gait handling [C]
 
