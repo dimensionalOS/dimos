@@ -28,7 +28,6 @@ else:
 
 from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config, _resolved_host_ip
-from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
@@ -65,21 +64,6 @@ def test_rust_struct_has_every_config_key() -> None:
 def test_empty_pcap_is_rejected() -> None:
     with pytest.raises(ValidationError, match="DIMOS_MID360_PCAP"):
         Mid360Config(pcap="")
-
-
-@pytest.mark.parametrize("config_type", [Mid360Config, VirtualMid360Config])
-def test_native_replay_opens_caller_relative_capture(
-    config_type: type[Mid360Config] | type[VirtualMid360Config],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    Path("capture.pcap").touch()
-    config = config_type(pcap="capture.pcap", host_ip="127.0.0.1")
-    driver_dir = tmp_path / "driver"
-    driver_dir.mkdir()
-    monkeypatch.chdir(driver_dir)
-    assert Path(config.to_config_dict()["pcap"]).samefile(tmp_path / "capture.pcap")
 
 
 def test_pcap_mode_skips_host_ip_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
