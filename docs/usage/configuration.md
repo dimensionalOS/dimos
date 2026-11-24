@@ -48,7 +48,7 @@ https://errors.pydantic.dev/2.12/v/extra_forbidden
 
 For `dimos run`, values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Python callers can also pass `overrides` to `BlueprintConfigParser.parse()`; these apply after environment values and before CLI flags. Explicit `global_overrides` apply last.
 
-Module flags go **after the blueprint names**. Use the module's instance name, lowercase, with hyphens in field names. Environment variables use double underscores between path components. A unique short flag is also accepted; qualified names avoid ambiguity.
+Module flags go **after the blueprint names**. Use the module's instance name, lowercase, with hyphens in field names. Environment variables use double underscores between path components. String and path fields take their literal text, including leading brackets. List and object fields accept JSON. A unique short flag is also accepted; qualified names avoid ambiguity.
 
 ```bash skip
 dimos --simulation mujoco run unitree-go2 \
