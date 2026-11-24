@@ -710,7 +710,7 @@ def main(
         subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
 
     if export_cloud and pgo_map is not None:
-        from dimos.mapping.relocalization.module import map_cloud_stream, named_map_frame
+        from dimos.mapping.relocalization.utils import map_cloud_stream, named_map_frame
         from dimos.memory.store.sqlite import SqliteStore
 
         out_path = Path.cwd() / f"{db_path.stem}_map.db"
