@@ -88,7 +88,7 @@ Downstream consumers that undistort or project points must branch on `distortion
 
 Output files are explicit. Pass `--out ./camera_info.yaml` to write the ROS CameraInfo YAML. Pass a preview PNG path immediately after it to write a corner-overlay preview, for example `--out ./camera_info.yaml ./camera_info.preview.png`. If you omit both output paths, the command still runs calibration and prints RMS, but does not write YAML or PNG files. A preview PNG path without `--out` is rejected.
 
-Optional flags (shared across sources): `--target-count` (webcam/topic; default 20), `--camera-name` (default `webcam`), `--no-display` (no OpenCV window; for headless or automation), `--debug` (write detailed capture logs to the system temp directory).
+Optional flags (shared across sources): `--target-count` (webcam/topic; default 20), `--camera-name` (default `webcam`), `--no-display` (no OpenCV window; for headless or automation).
 
 On success the process prints the calibration RMS, the detected pattern, and any output paths you requested. Example:
 

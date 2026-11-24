@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred's physical layer: mount transforms and base controller, with or without the mast D455.
+"""Alfred's physical layer: mount transforms and the FlowBase, with or without the mast D455.
 
 Every Alfred blueprint composes one of these and then adds what it does with the sensors. Private,
 so they stay out of the runnable blueprint registry: sensors with nothing consuming them.
@@ -20,15 +20,27 @@ so they stay out of the runnable blueprint registry: sensors with nothing consum
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
-from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
+from dimos.robot.flowbase.connection import FlowBaseConnection
 
 # librealsense leaks usbfs fds (~8/s) in this worker; keep socket-accepting modules
 # out of its fd table so EMFILE cannot take down rerun/keyboard controls.
 RealSenseCamera.dedicated_worker = True
+
+
+def _alfred_base(odometry_topic: str) -> Blueprint:
+    """The FlowBase, driven by Twists on cmd_vel, with its wheel odometry on ``odometry_topic``."""
+    return FlowBaseConnection.blueprint(
+        # The trajectory follower sends a Twist every 0.1 s, so the default 0.1 s deadman
+        # would halt the base between two of them.
+        deadman_timeout_s=0.2,
+        # dimSLAM fuses a source stamped in "odom" as absolute; the wheels drift.
+        tf_frames_local={"odom": "wheel_odom", "base_link": "base_link"},
+    ).remappings([(FlowBaseConnection, "odometry", odometry_topic)])
+
 
 _alfred_hardware = autoconnect(
     RealSenseCamera.blueprint(
@@ -54,10 +66,11 @@ _alfred_hardware = autoconnect(
         ]
     ),
     AlfredMountTf.blueprint(),
-    AlfredHighLevel.blueprint().remappings([(AlfredHighLevel, "wheel_odometry", "odom_sources")]),
+    _alfred_base("odom_sources"),
 ).global_config(robot_model="alfred")
 
 _alfred_lidar_hardware = autoconnect(
     AlfredMountTf.blueprint(root_frame="mid360_link"),
-    AlfredHighLevel.blueprint(),
+    # Off "odometry", which Point-LIO publishes.
+    _alfred_base("wheel_odometry"),
 ).global_config(robot_model="alfred")
