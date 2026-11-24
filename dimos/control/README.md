@@ -79,20 +79,27 @@ def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
     self._state = TrajectoryState.PREEMPTED
 ```
 
-### Whole-group connection commands (opt-in)
+### Indivisible native connection inputs
 
-Map each indivisible command's local name to its movable model joints in
-`ConnectionConfig.group_commands`. A task returns `GroupCommandOutput("source/name", payload)`;
-its ordinary claim supplies priority. The handler validates the opaque payload.
+Declare a `pose: In[PoseStamped]` on the connection and map `"pose"` to its
+physical model joints in `ConnectionConfig.group_commands`. Declare
+`arm_pose: Out[PoseStamped]` on the coordinator and use the ordinary blueprint
+remap to connect the ports. Use a dedicated Out and transport channel: startup
+rejects a group output that shares a channel with this coordinator's status/TF,
+legacy command, or another group output. Subscribe to the input as usual.
 
-A group wins all its axes or reserves none. Scalars still win per joint.
-Group-owned joints skip scalar commands and resume holds from feedback.
-
-Use `bind_group_handler` before start. The local `(payload, lease)` handler may
-enqueue; the worker must call `lease.try_write` around the final bounded synchronous
-write, which must not reenter the coordinator. The single-use lease is fenced by
-ownership, feedback freshness, cancellation and stop. It is not a device watchdog.
-A mixed consumer must use one device writer and prevent replay of queued scalars.
+A task returns `GroupCommandOutput("arm/pose", pose)` and sets its claim priority.
+The command gets every covered joint or none; other axes keep ordinary per-joint
+arbitration and holds. A coordinator cancel discards pending native results and
+stops new publications from the cancelled task; it cannot recall messages already
+published. Every covered joint must have reported recently to the coordinator;
+missing feedback on other joints does not block the group. Group-only joint
+readings neither gate nor keep the scalar path alive, and missing group-only axes
+do not gate aggregated joint state. Freshness measures receipt time, not device
+acquisition time. The concrete connection
+owns native validation, mode transitions, physical writes and watchdog behavior.
+Receive on the connection's `In`; do not attach synchronous `Out` callbacks that
+call back into coordinator control methods while publication owns its stop guard.
 
 ## Files
 

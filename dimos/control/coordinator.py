@@ -44,7 +44,6 @@ from dimos.control.components import (
 )
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
-from dimos.control.group_command import GroupCommandHandler
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -63,6 +62,7 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport import PubSubTransport
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
@@ -225,7 +225,7 @@ class ControlCoordinator(Module):
 
         # Connected hardware (keyed by hardware_id)
         self._hardware: dict[HardwareId, ConnectedHardware | ConnectedWholeBody] = {}
-        self._hardware_lock = threading.RLock()
+        self._hardware_lock = threading.Lock()
 
         # Joint -> hardware mapping (built when hardware added)
         self._joint_to_hardware: dict[JointName, HardwareId] = {}
@@ -248,7 +248,6 @@ class ControlCoordinator(Module):
         # command ports by kind. Filled on start; guarded by _hardware_lock.
         self._connections: dict[str, ConnectionSource] = {}
         self._command_ports: dict[str, dict[str, Out[Any]]] = {}
-        self._group_handlers: dict[str, dict[str, GroupCommandHandler]] = {}
         # While set, robots behind connection modules are sent nothing.
         # Guarded by _hardware_lock.
         self._estopped = False
@@ -419,23 +418,6 @@ class ControlCoordinator(Module):
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
         self._robot_joint_port(hardware_id).publish(msg)
 
-    def bind_group_handler(self, interface: str, handler: GroupCommandHandler) -> None:
-        """Bind a local consumer for ``source/interface`` before starting.
-
-        The consumer must return promptly (e.g. enqueue for a worker). Its
-        final write must use the lease guard. This is not a stream or RPC.
-        """
-        source, sep, name = interface.partition("/")
-        if not sep or not source or not name or "/" in name or not callable(handler):
-            raise ValueError("expected a qualified source/interface and a callable handler")
-        with self._hardware_lock:
-            if self._connections or self._tick_loop is not None:
-                raise RuntimeError("bind group handlers before starting the coordinator")
-            handlers = self._group_handlers.setdefault(source, {})
-            if interface in handlers:
-                raise ValueError(f"handler already bound for {interface!r}")
-            handlers[interface] = handler
-
     def _connect_robots(self) -> None:
         """Set up each robot this coordinator's ports name, and listen on its reading ports.
 
@@ -447,8 +429,6 @@ class ControlCoordinator(Module):
         commands = _robot_ports(self.outputs, COMMAND_PORTS)
         readings = _robot_ports(self.inputs, READING_PORTS)
         robots = list(dict.fromkeys((*commands, *readings)))
-        if self._group_handlers.keys() - set(robots):
-            raise ValueError("group handlers require matching robot ports")
         if not robots:
             if self.config.connections:
                 raise ValueError("connection declarations require matching robot ports")
@@ -463,6 +443,49 @@ class ControlCoordinator(Module):
             raise ValueError(
                 "robot ports require exactly one matching connection declaration per source"
             )
+        outputs = self.outputs
+        reserved = {f"{robot}_{kind}" for robot, kinds in commands.items() for kind in kinds}
+        # Native commands must have an exclusive publisher, not reuse an Out
+        # the coordinator writes to independently of native arbitration.
+        reserved.update(("coordinator_joint_state", "coordinator_joint_command"))
+        if self.config.publish_frame_poses:
+            reserved.add("tf")
+        if self.config.publish_robot_joint_states:
+            reserved.update(f"{hw_id}_joints" for hw_id in self._hardware)
+
+        def stream_key(port: Out[Any]) -> tuple[type, str] | int | None:
+            transport = port.transport
+            if isinstance(transport, PubSubTransport):
+                # Blueprint wiring deserializes transports per port. Compare the
+                # resolved channel, not the logical port name or transport object.
+                return type(transport), transport.channel
+            return id(transport) if transport is not None else None
+
+        bound = {id(outputs[name]) for name in reserved if name in outputs}
+        streams = {
+            key: name
+            for name in sorted(reserved)
+            if name in outputs and (key := stream_key(outputs[name])) is not None
+        }
+        group_ports: dict[str, dict[str, Out[Any]]] = {}
+        for robot in robots:
+            groups = group_ports[robot] = {}
+            for name in declarations[robot].group_commands:
+                interface, output_name = f"{robot}/{name}", f"{robot}_{name}"
+                output_port = outputs.get(output_name)
+                if output_port is None:
+                    raise ValueError(f"{interface}: expected an additional typed Out")
+                if id(output_port) in bound:
+                    raise ValueError(f"{interface}: {output_name} is already bound")
+                key = stream_key(output_port)
+                if key is not None:
+                    if key in streams:
+                        raise ValueError(
+                            f"{interface}: {output_name} shares a command stream with {streams[key]}"
+                        )
+                    streams[key] = output_name
+                bound.add(id(output_port))
+                groups[interface] = output_port
         with self._hardware_lock:
             for robot in robots:
                 source = ConnectionSource(
@@ -470,8 +493,7 @@ class ControlCoordinator(Module):
                     commands.get(robot, []),
                     readings.get(robot, []),
                     self.config.reading_timeout_s,
-                    group_handlers=self._group_handlers.get(robot),
-                    group_lock=self._hardware_lock,
+                    group_ports=group_ports[robot],
                     zero_stiffness_joints=[
                         joint
                         for joint in self.config.zero_stiffness_joints
@@ -645,7 +667,7 @@ class ControlCoordinator(Module):
                     TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
                     "Control coordinator has no trajectory task",
                 )
-            self._revoke_task_groups(self._trajectory_task.name)
+            self._invalidate_group_results()
             return self._trajectory_task.cancel()
 
     @rpc
@@ -699,7 +721,7 @@ class ControlCoordinator(Module):
             task = self._tasks.pop(task_name, None)
             if task is None:
                 return False
-            self._revoke_task_groups(task_name)
+            self._invalidate_group_results()
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
@@ -877,8 +899,6 @@ class ControlCoordinator(Module):
                 # already sending finishes first, and none sends after.
                 with self._hardware_lock:
                     self._estopped = True
-                    if self._tick_loop is not None:
-                        self._tick_loop.revoke_group_commands(enabled=False)
                 self._set_tasks_estop(True)
             else:
                 self._set_tasks_estop(False)
@@ -886,14 +906,13 @@ class ControlCoordinator(Module):
                     for connection in self._connections.values():
                         connection.drop_holds()
                     self._estopped = False
-                    if self._tick_loop is not None:
-                        self._tick_loop.revoke_group_commands(enabled=True)
                 logger.warning("E-STOP cleared at coordinator")
         return True
 
     def _set_tasks_estop(self, estopped: bool) -> None:
         """Call ``set_estop(estopped)`` on every task, and on tasks added later."""
         with self._task_lock:
+            self._invalidate_group_results()
             self._tasks_estopped = estopped
             for task in self._tasks.values():
                 task.set_estop(estopped)
@@ -989,12 +1008,13 @@ class ControlCoordinator(Module):
                 method=method,
             )
             if method in _GROUP_INVALIDATING_COMMANDS:
-                self._revoke_task_groups(task_name)
+                self._invalidate_group_results()
             return getattr(task, method)(**kwargs)
 
-    def _revoke_task_groups(self, task_name: TaskName) -> None:
+    def _invalidate_group_results(self) -> None:
+        """Discard pending native results; caller holds the task lock."""
         if self._tick_loop is not None:
-            self._tick_loop.revoke_group_commands(task_name)
+            self._tick_loop.invalidate_group_results()
 
     def _invoke_declared(
         self, task: ControlTask, task_name: TaskName, method: str, kwargs: dict[str, Any]
@@ -1024,7 +1044,7 @@ class ControlCoordinator(Module):
         except TypeError as exc:
             raise TypeError(f"{where}: {exc}") from exc
         if method in _GROUP_INVALIDATING_COMMANDS:
-            self._revoke_task_groups(task_name)
+            self._invalidate_group_results()
         return handler(*bound.args, **bound.kwargs)
 
     @rpc
@@ -1107,10 +1127,9 @@ class ControlCoordinator(Module):
             log_ticks=self.config.log_ticks,
             connections=self._connections,
             connection_command_callback=self._publish_command,
+            group_commands_allowed=lambda: not self._estopped,
         )
-        with self._estop_lock:
-            self._tick_loop.revoke_group_commands(enabled=not self._estopped)
-            self._tick_loop.start()
+        self._tick_loop.start()
 
         # Subscribe only streams that registered tasks' cards consume.
         self._sync_stream_subscriptions()
