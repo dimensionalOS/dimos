@@ -67,7 +67,8 @@ def test_the_blueprint_is_named_after_the_robot_it_hands_the_module(name: str) -
 
     assert name == f"{robot.name.replace('_', '-')}-calibrate"
     # It reaches the module's worker as a constructor argument, never a flag.
-    assert decode(encode(robot)) == robot
+    # Compared encoded, since comparing the robots would pull their models.
+    assert encode(decode(encode(robot))) == encode(robot)
     assert "robot" not in CalibrationModuleConfig.model_fields
 
 
