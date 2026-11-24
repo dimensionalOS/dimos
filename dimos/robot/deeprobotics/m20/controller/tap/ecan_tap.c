@@ -14,6 +14,8 @@
 //   with any gain cancels the request.
 // rl_deploy's real-time threads only memcpy into a preallocated ring (a full ring drops, never waits); a low-priority
 // writer thread on cores 1-3 does all file and socket I/O, and drops a datagram the reader is not ready for.
+// Built with ort_tap.c (gcc -O2 -shared -fPIC -o ecan_tap.so ecan_tap.c ort_tap.c -ldl -lpthread) the same .so also
+// records every ONNX Runtime inference (see there).
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
@@ -58,6 +60,9 @@ static _Atomic int drop_charge_enable = 0;
 static _Atomic int inject_pending = 0;
 static _Atomic uint64_t dropped_charge_enable = 0;
 static _Atomic uint64_t injected_charge_enable = 0;
+// frames received on the motor-bus socket and the realtime of the last one (ort_tap.c stamps each inference with them)
+_Atomic uint64_t ecan_tap_rx_frames = 0;
+_Atomic uint64_t ecan_tap_last_rx_ns = 0;
 
 #define ETH_LEN 14
 #define JOINT_UNITS 16
@@ -182,6 +187,11 @@ ssize_t recvfrom(int fd, void* buf, size_t len, int flags, struct sockaddr* addr
     }
     ssize_t result = real_recvfrom(fd, buf, len, flags, addr, addrlen);
     if (result > 0 && is_packet_fd(fd)) {
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        atomic_store_explicit(&ecan_tap_last_rx_ns, (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec,
+                              memory_order_relaxed);
+        atomic_fetch_add_explicit(&ecan_tap_rx_frames, 1, memory_order_relaxed);
         capture(buf, (size_t)result, 1);
     }
     return result;

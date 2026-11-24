@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # M20 motor-bus recorder: the ECAN frames rl_deploy exchanges with the motor board (via the ecan_tap.so LD_PRELOAD
-# shim, which the kernel's private ECAN path makes the only way to see them) and, time-aligned, the commands sent to
-# the robot. Runs as root on AOS (10.21.31.103); `wrap`/`unwrap` also work on GOS.
+# shim, which the kernel's private ECAN path makes the only way to see them), every policy inference it runs (the same
+# shim, built with ort_tap.c: each ONNX Runtime Run's inputs and outputs, session/policy.bin, read with
+# ort_capture.py) and, time-aligned, the commands sent to the robot. Runs as root on AOS (10.21.31.103); `wrap`/`unwrap` also work on GOS.
 #   record.sh install       shim into rl_deploy.service + restart rl_deploy (robot sitting/docked), wrap m20tool here
 #   record.sh <seconds>     one session in session_<time>/: motor frames, basic_server + DDS + m20tool traffic,
 #                           rl_deploy/basic_server logs and the vendor CSV of those seconds; then timeline.py on it
@@ -137,7 +138,7 @@ record() {
         imu_pid=$!
     fi
     sleep 1  # tcpdump gives no readiness signal; let it open its capture before the session starts
-    rm -f "$dir/last_stats"
+    rm -f "$dir/last_stats" "$dir/ort_last_stats" "$dir/ort_latest_path"
     start_ns=$(date +%s%N)
     touch "$dir/enable"
     echo "M20TOOL $start_ns $(hostname) record.sh session start $session" > /dev/udp/127.0.0.1/$note_port || true
@@ -161,6 +162,12 @@ record() {
     wait "$tcpdump_pid" 2>/dev/null || true
     tx1=$(cat /sys/class/net/eth1/statistics/tx_packets); rx1=$(cat /sys/class/net/eth1/statistics/rx_packets)
     mv "$(cat "$dir/latest_path")" "$session/ecan.pcapng"
+    # the policy inferences (ort_tap, in the same shim when built with it): its writer closes the file when it sees
+    # the enable file gone (within 50 ms)
+    if [ -f "$dir/ort_latest_path" ]; then
+        for _ in $(seq 1 20); do [ -f "$dir/ort_last_stats" ] && break; sleep 0.1; done
+        [ -f "$(cat "$dir/ort_latest_path")" ] && mv "$(cat "$dir/ort_latest_path")" "$session/policy.bin"
+    fi
     [ -f /var/tmp/m20tool_invocations.log ] && cp /var/tmp/m20tool_invocations.log "$session/m20tool_aos.log"
     tail -c +"$((rl_offset + 1))" "$(rl_log)" > "$session/rl_deploy.log" 2>/dev/null || true
     tail -c +"$((bs_offset + 1))" "$(bs_log)" > "$session/basic_server.log" 2>/dev/null || true
@@ -175,6 +182,7 @@ record() {
         echo "start_ns=$start_ns"
         echo "end_ns=$end_ns"
         echo "shim: $(cat "$dir/last_stats" 2>/dev/null || echo 'no stats')"
+        echo "policy tap: $(cat "$dir/ort_last_stats" 2>/dev/null || echo 'no stats (ecan_tap.so built without ort_tap.c?)')"
         echo "eth1 tx $((tx1 - tx0)) rx $((rx1 - rx0))"
         echo "rl_deploy 'send Data update timeout' +$(( $(timeouts) - before_net )), 'IMU update timeout' +$(( $(imu_timeouts) - before_imu ))"
         grep -E 'packets (captured|dropped)' "$session/tcpdump.log" || true
@@ -187,7 +195,7 @@ record() {
 
 case "${1:-status}" in
     install)
-        [ -f "$dir/ecan_tap.so" ] || { echo "missing $dir/ecan_tap.so (gcc -O2 -shared -fPIC -o ecan_tap.so ecan_tap.c -ldl -lpthread)" >&2; exit 1; }
+        [ -f "$dir/ecan_tap.so" ] || { echo "missing $dir/ecan_tap.so (build: zig cc -target aarch64-linux-gnu.2.31 -O2 -shared -fPIC -o ecan_tap.so ecan_tap.c ort_tap.c -ldl -lpthread)" >&2; exit 1; }
         rm -f "$dir/enable"
         printf '[Service]\nEnvironment=LD_PRELOAD=%s/ecan_tap.so\nEnvironment=ECAN_TAP_DIR=%s\n' "$dir" "$dir" > "$dropin"
         restart_and_wait
@@ -213,6 +221,7 @@ case "${1:-status}" in
         [ -f "$dir/recording.pid" ] && kill -0 "$(cat "$dir/recording.pid")" 2>/dev/null && echo "recording now (pid $(cat "$dir/recording.pid"))"
         [ -f "$dir/drop_charge_enable" ] && echo "DROPPING rl_deploy's charge-enable frames (rm $dir/drop_charge_enable)"
         [ -f "$dir/charge_control_stats" ] && echo "charge controls: $(cat "$dir/charge_control_stats")"
+        [ -f "$dir/ort_last_stats" ] && echo "policy tap, last recording: $(cat "$dir/ort_last_stats")"
         [ -S "$dir/live.sock" ] && echo "live reader bound: $dir/live.sock" || echo "no live reader"
         mounted /usr/local/bin/m20tool && echo "m20tool wrapped" || echo "m20tool not wrapped"
         ls -dt "$dir"/session_* "$dir"/capture_*.pcapng 2>/dev/null | head -5 || true
