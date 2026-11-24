@@ -343,13 +343,13 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
 
     @rpc
     def infer(self, x: HumanMessage) -> AIMessage:
-        """Send x like a message on agent_input and return the answer once the queue is empty."""
-        if not self._thread.is_alive():
-            raise RuntimeError("Agent is not running; it starts with the blueprint")
-        self._message_queue.put(x)
-        self._message_queue.join()
-        answer = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
-        if TURN_FAILED_KEY in answer.additional_kwargs:
+        """Run one turn on x, under the lock the message loop takes, and return its answer."""
+        with self._lock:
+            if self._state_graph is None or self._stop_event.is_set():
+                raise RuntimeError("Agent is not running; it starts with the blueprint")
+            self._process_message(self._state_graph, x)
+            answer = self._history[-1]
+        if not isinstance(answer, AIMessage) or TURN_FAILED_KEY in answer.additional_kwargs:
             raise RuntimeError(str(answer.text))
         return answer
 
@@ -419,13 +419,10 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             except Empty:
                 continue
 
-            try:
-                with self._lock:
-                    if not self._state_graph:
-                        raise ValueError("No state graph initialized")
-                    self._process_message(self._state_graph, message)
-            finally:
-                self._message_queue.task_done()
+            with self._lock:
+                if not self._state_graph:
+                    raise ValueError("No state graph initialized")
+                self._process_message(self._state_graph, message)
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage

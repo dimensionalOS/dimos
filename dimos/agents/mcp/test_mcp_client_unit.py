@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty
 from threading import RLock, Thread
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, create_autospec, patch
@@ -564,6 +565,79 @@ def test_infer_raises_when_its_turn_fails(
 def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
     with pytest.raises(RuntimeError, match="not running"):
         mcp_client.infer(HumanMessage("too early"))
+
+
+class _SlowGraph(_AnswersGraph):
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        time.sleep(0.3)
+        yield from super().stream(state, stream_mode)
+
+
+class _EchoGraph:
+    """Answers each message with its own text, after a short pause."""
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        question = state["messages"][-1].content
+        time.sleep(0.002)
+        yield {"model": {"messages": [AIMessage(content=f"answer to {question}")]}}
+
+
+def test_infer_under_load_gives_every_caller_its_own_answer(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent infer() calls with stream messages arriving among them."""
+    monkeypatch.setattr(running_agent, "_state_graph", _EchoGraph())
+    answers: dict[str, str] = {}
+
+    def ask(question: str) -> None:
+        answers[question] = str(running_agent.infer(HumanMessage(question)).text)
+
+    questions = [f"q{i}" for i in range(20)]
+    callers = [Thread(target=ask, args=(question,)) for question in questions]
+    same = HumanMessage("same object")
+    callers += [Thread(target=running_agent.infer, args=(same,)) for _ in range(5)]
+    for i, caller in enumerate(callers):
+        caller.start()
+        running_agent.add_message(HumanMessage(f"stream {i}"))
+    for caller in callers:
+        caller.join(timeout=30)
+
+    assert answers == {question: f"answer to {question}" for question in questions}
+    assert not any(caller.is_alive() for caller in callers)
+    wait_until(lambda: len(running_agent._history) == 100, timeout=5, interval=0.01)
+    # Turns never interleave: every question is followed by its own answer.
+    history = [str(message.content) for message in running_agent._history]
+    assert history[1::2] == [f"answer to {question}" for question in history[::2]]
+
+
+def test_infer_called_during_a_turn_raises_once_the_agent_stops(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _SlowGraph())
+    errors: list[BaseException] = []
+
+    def ask() -> None:
+        try:
+            running_agent.infer(HumanMessage("never answered"))
+        except RuntimeError as error:
+            errors.append(error)
+
+    running_agent.add_message(HumanMessage("a turn from the stream"))
+    wait_until(lambda: len(running_agent._history) == 1, timeout=5, interval=0.01)
+    caller = Thread(target=ask)
+    caller.start()
+    time.sleep(0.05)  # the caller is now waiting for the turn in progress
+
+    running_agent.stop()
+    caller.join(timeout=5)
+
+    assert not caller.is_alive()
+    assert len(errors) == 1 and "not running" in str(errors[0])
+    assert len(running_agent._history) == 2
 
 
 def test_each_turn_publishes_its_final_answer_on_agent_output(
