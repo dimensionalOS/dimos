@@ -89,7 +89,9 @@ STATE_NAMES = {
 }
 STAND_IN_GAIT = 0xF001
 # NAV_CMD stops counting after this long without a sample (rl_deploy's /STEER timeout)
-COMMAND_TIMEOUT_S = 0.15
+# rl_deploy's MonitorSteer zeroes the velocity when neither steer channel updated in 150 ms, polling every 10 ms:
+# 150-160 ms after the last sample (the sessions match from 155 ms)
+COMMAND_TIMEOUT_S = 0.155
 
 
 # ---------------------------------------------------------------------------------------------------- session input
@@ -407,9 +409,12 @@ def build_plan(
                 pose[gait] = {
                     param: k * axis[name] for param, (name, k) in STEER_POSE[gait].items()
                 }
+                if gait == 0x3004:
+                    # HandlerSteer: FinetuneStand's height is -z of the same sample (0 for z > 0)
+                    pose[gait]["height"] = -min(axis["z"], 0.0)
             params.update(pose.get(gait, {}))
             axes = np.zeros(3)
-        if runner == "finetune_stand":
+        if runner == "finetune_stand" and "height" not in params:
             h = last_before(s.events["heights"], t)
             params["height"] = h[1] if h else 0.0
         # rl_deploy keeps one object per runner: history and last action carry over to its next use

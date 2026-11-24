@@ -16,7 +16,7 @@
 joint state and command as the ECAN frames carry them, the body IMU samples as DDS carried them).
 
     python tools/policy_steps.py windows PLAN.json IMU.npz ECAN_DUMP.bin JOINTS.npz OUT.bin.gz RUNNER:FIRST_ROW:N ...
-    python tools/policy_steps.py session SESSION_DIR ECAN_DUMP.bin CACHE_DIR OUT.bin [IMU_OFFSET_S]
+    python tools/policy_steps.py session SESSION_DIR ECAN_DUMP.bin CACHE_DIR OUT.bin [NET_OFFSET_S]
 
 windows: the compact fixture of tests/policy_20261120.rs. session: every step of the session, for
 examples/policy_session.rs (layout in session()).
@@ -106,14 +106,15 @@ def windows(plan_path, imu_path, dump_path, joints_path, out_path, *windows):
     print(f"{len(out)} bytes")
 
 
-def session(session_dir, dump_path, cache, out_path, imu_offset_s="0"):
+def session(session_dir, dump_path, cache, out_path, net_offset_s="0"):
     """Layout (little-endian): "M20SS2"; u32 rows, f64 time (s) per joint-frame row; u32 IMU samples, per sample f64
     arrival time (s), 9 f32 (roll / pitch / yaw deg, gyro, accel); u32 segments, per segment u8 name length, name, u32
     start row, u32 end row; u32 steps, per step u8 runner length, runner, u32 row, u32 state row, u32 gait, u8 reset, u8 activate,
     3 f32 axes, u8 params, per param u8 name length, name, f64 value, 16 f32 q and 16 f32 dq (the state row's reply), 16 f32 commanded motor positions and 4 f32 wheel velocity commands as sent after it.
 
-    IMU_OFFSET_S: added to the IMU samples' capture times, onto the ECAN capture's clock as rl_deploy saw them: the
-    middle of the range of offsets over which the steps match (14:16: 0, -0.5 .. 0.5 ms; 16:36: -1.7 ms, -3.0 .. -0.4)."""
+    NET_OFFSET_S: added to the IMU samples' net.pcap times, onto the ECAN capture's clock as rl_deploy saw them (the
+    commands' times keep COMMAND_LEAD_S: shifting them too fits worse): the middle of the range of IMU offsets over which the steps match (14:16: 0, -0.5 .. 0.5 ms;
+    16:36: -1.7 ms, -3.0 .. -0.4)."""
     from pathlib import Path
 
     from dimos.simulation.m20_policy_sim import replay
@@ -121,6 +122,8 @@ def session(session_dir, dump_path, cache, out_path, imu_offset_s="0"):
 
     cfg = load_config()
     cfg["ecan_enable_word"] = 2
+    if "M20_STEER_TIMEOUT_S" in os.environ:
+        replay.COMMAND_TIMEOUT_S = float(os.environ["M20_STEER_TIMEOUT_S"])
     s = replay.load_session(Path(session_dir), Path(cache))
     # a command takes effect COMMAND_LEAD_S before the step's row: rl_deploy's Run copies UserCommand at the start of
     # the tick that reads the reply before the step (row - 1), and a DDS sample reaches UserCommand ~0.5 ms after the
@@ -137,7 +140,7 @@ def session(session_dir, dump_path, cache, out_path, imu_offset_s="0"):
     imu = s.imu
     out += struct.pack("<I", len(imu["t"]))
     for k in range(len(imu["t"])):
-        out += struct.pack("<d", imu["t"][k] + float(imu_offset_s))
+        out += struct.pack("<d", imu["t"][k] + float(net_offset_s))
         out += np.r_[imu["rpy_deg"][k], imu["gyro"][k], imu["accel"][k]].astype("<f4").tobytes()
     out += struct.pack("<I", len(segments))
     for g in segments:
