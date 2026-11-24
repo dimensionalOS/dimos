@@ -117,14 +117,20 @@ def _radiance(UsdLux: Any, light: Any) -> np.ndarray:
     return color * intensity * 2.0 ** _value(light.GetExposureAttr(), 0.0)
 
 
-def _camera_exposure_scale(pxr: Any, stage: Any) -> float:
-    """The linear exposure of the camera the stage says it is rendered through, else 1."""
+def render_settings(stage: Any) -> Any:
+    """The RenderSettings the stage names, else its only one, else None."""
     from pxr import UsdRender
 
     settings = UsdRender.Settings.GetStageRenderSettings(stage)
-    if not settings:
-        everything = [p for p in stage.Traverse() if p.IsA(UsdRender.Settings)]
-        settings = UsdRender.Settings(everything[0]) if len(everything) == 1 else None
+    if settings:
+        return settings
+    everything = [p for p in stage.Traverse() if p.IsA(UsdRender.Settings)]
+    return UsdRender.Settings(everything[0]) if len(everything) == 1 else None
+
+
+def _camera_exposure_scale(pxr: Any, stage: Any) -> float:
+    """The linear exposure of the camera the stage says it is rendered through, else 1."""
+    settings = render_settings(stage)
     targets = settings.GetCameraRel().GetForwardedTargets() if settings else []
     camera = pxr.UsdGeom.Camera(stage.GetPrimAtPath(targets[0])) if targets else None
     return float(camera.ComputeLinearExposureScale()) if camera else 1.0
