@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T16:21:07.028966Z"
+exclude-newer = "2026-11-17T18:17:38.003202Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2610,7 +2610,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", specifier = ">=0.1.6" },
+    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm?rev=b367dd412fe9cda763b5b9d712fe455d86505861" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2965,17 +2965,13 @@ wheels = [
 
 [[package]]
 name = "dimos-lcm"
-version = "0.1.6"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.5"
+source = { git = "https://github.com/dimensionalOS/dimos-lcm?rev=b367dd412fe9cda763b5b9d712fe455d86505861#b367dd412fe9cda763b5b9d712fe455d86505861" }
 dependencies = [
     { name = "foxglove-websocket" },
     { name = "lcm" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/42/39/2e9e0e229e9bfe2d597cf1fb9e3871dd804c85c530344675da98823dc3ca/dimos_lcm-0.1.6.tar.gz", hash = "sha256:96dcb5f7b8416559221d79d77195118a9a5e802a9117420702534b44462f0dee", size = 153015, upload-time = "2026-10-17T13:27:47.363Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/9f/993eec0b2fae4b73a87fef45b506e4a130a92aa8a893eb0e6c3e95ded68b/dimos_lcm-0.1.6-py3-none-any.whl", hash = "sha256:f55e637ff853f6a8bfa2fd47900367a9ac23f571946ea04c74705dfb293777e8", size = 727525, upload-time = "2026-10-17T13:27:45.412Z" },
 ]
 
 [[package]]
