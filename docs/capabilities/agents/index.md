@@ -62,7 +62,7 @@ Agent.accepts(HumanMessage("walk to the door"))  # True
 app.get_module("Agent").infer(HumanMessage("what do you see?")).text
 ```
 
-`infer` blocks until the agent is done, background skills included, and shares its history with messages that arrive on the input stream.
+`infer` runs one turn and returns its answer. It shares its history with messages that arrive on the input stream. A background skill the turn starts keeps running after `infer` returns.
 
 An input with several parts is one dataclass:
 
