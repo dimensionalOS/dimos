@@ -12,21 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import dataclasses
-from enum import Enum
-from pathlib import Path
-from typing import (
-    Any,
-    ClassVar,
-    Generic,
-    TypeVar,
-    get_args,
-    get_origin,
-)
+from typing import Any, ClassVar, Generic, TypeVar, get_args, get_origin
 
 from langchain_core.messages.base import BaseMessage
-import numpy as np
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic.errors import PydanticUserError
 
 from dimos.core.core import rpc
@@ -35,8 +24,6 @@ from dimos.core.stream import In, Out
 
 I = TypeVar("I")
 O = TypeVar("O")
-_SENDABLE: tuple[type, ...] = (bool, int, float, str, bytes, tuple, list, dict, set, frozenset)
-_SENDABLE += (type(None), Enum, Path, BaseModel, np.ndarray, np.generic)
 
 
 def _resolve(cls: type, target: type) -> tuple[Any, ...] | None:
@@ -75,15 +62,6 @@ def _matches(tp: Any, value: Any) -> bool:
         return True
 
 
-def _sendable(tp: Any) -> bool:
-    """Whether values of tp can cross RPC or a transport (see protocol/encode/cbor.py)."""
-    if args := get_args(tp):
-        return all(_sendable(arg) for arg in args if arg is not Ellipsis)
-    if not isinstance(tp, type) or tp in (Any, object) or dataclasses.is_dataclass(tp):
-        return True
-    return issubclass(tp, _SENDABLE) or hasattr(tp, "lcm_encode") or hasattr(tp, "cbor_encode")
-
-
 class BaseAgent(Module, Generic[I, O]):
     """Base for agents: one inference call and the chat streams.
 
@@ -112,12 +90,6 @@ class BaseAgent(Module, Generic[I, O]):
         ]
         if unbound and not getattr(cls, "__parameters__", ()):
             raise TypeError(f"{cls.__name__} leaves {unbound} of BaseAgent unbound")
-        for tp in types:
-            if not _sendable(tp):
-                raise TypeError(
-                    f"{cls.__name__}: {tp!r} cannot be sent over RPC or a transport; use a "
-                    "dataclass, a pydantic model or a DimOS message"
-                )
         cls.input_type, cls.output_type = types
 
     @classmethod
