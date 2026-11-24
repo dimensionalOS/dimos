@@ -35,6 +35,10 @@ class _World:
     def stamp(self) -> float:
         return self.time
 
+    def entity(self, name: str) -> None:
+        # No world entity, so its geometry never changes and the views are built once.
+        return None
+
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
         for _ in range(TICKS):
             yield self.time
