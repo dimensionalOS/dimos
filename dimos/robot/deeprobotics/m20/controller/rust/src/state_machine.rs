@@ -319,20 +319,12 @@ impl JointWatch {
             }
             if fault.is_none() {
                 fault = if self.frozen[i] >= 51 {
-                    Some(format!(
-                        "joint {} frozen for {} readings",
-                        names[i], self.frozen[i]
-                    ))
+                    // fixed text while it lasts (the status logs every change of the fault)
+                    Some(format!("joint {} frozen (51 identical readings)", names[i]))
                 } else if self.nan[i] > 30 {
-                    Some(format!(
-                        "joint {} NaN for {} readings",
-                        names[i], self.nan[i]
-                    ))
+                    Some(format!("joint {} NaN (31 readings)", names[i]))
                 } else if self.out_of_range[i] > 30 {
-                    Some(format!(
-                        "joint {} at {:.3} rad, beyond its range for {} readings",
-                        names[i], v[0], self.out_of_range[i]
-                    ))
+                    Some(format!("joint {} beyond its range (31 readings)", names[i]))
                 } else {
                     None
                 };

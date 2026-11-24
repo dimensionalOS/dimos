@@ -38,4 +38,5 @@ pub mod runner;
 #[cfg(feature = "shadow")]
 pub mod shadow;
 pub mod state_machine;
+pub mod status;
 pub mod types;

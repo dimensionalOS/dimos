@@ -96,6 +96,9 @@ pub struct Config {
     /// policy: charge_manager.toml (NOS's, docking reads it); when this board has none, the copy the dock detector
     /// module publishes on charge_manager_config is taken
     charge_manager_toml: String,
+    /// policy: log the status when the commanded body height moves this far (m); other changes always log
+    #[validate(range(exclusive_min = 0.0))]
+    status_log_height_step_m: f64,
 }
 
 #[derive(Module)]
@@ -144,6 +147,9 @@ pub struct M20Controller {
     /// policy: base_link's height above the wheels' contact (m, from the joints), for the dock's obstacle check
     #[output(encode = Float32::encode)]
     body_height: Output<Float32>,
+    /// policy: crate::status::ControllerStatus as JSON, on every change and once a second
+    #[output(encode = std_msgs::String::encode)]
+    controller_status: Output<std_msgs::String>,
 
     #[config]
     config: Config,
@@ -314,6 +320,12 @@ impl M20Controller {
         forward(dock_status_rx, self.dock_state.clone(), "dock_state");
         let (body_height, body_height_rx) = watch::channel(None::<Float32>);
         forward(body_height_rx, self.body_height.clone(), "body_height");
+        let (full_status, full_status_rx) = watch::channel(None::<std_msgs::String>);
+        forward(
+            full_status_rx,
+            self.controller_status.clone(),
+            "controller_status",
+        );
         if config.policy && !config.charge_manager_toml.is_empty() {
             match ChargeManagerToml::load(&config.charge_manager_toml) {
                 Ok((t, _)) => {
@@ -348,7 +360,17 @@ impl M20Controller {
             std::thread::Builder::new()
                 .name("m20-controller".into())
                 .spawn(move || {
-                    run_policy(&config, latest, shared, status, dock_status, body_height)
+                    run_policy(
+                        &config,
+                        latest,
+                        shared,
+                        Publishers {
+                            status,
+                            dock_status,
+                            body_height,
+                            full_status,
+                        },
+                    )
                 })
         } else if config.mode == "owner" {
             std::thread::Builder::new()
@@ -522,15 +544,22 @@ fn forward_status(
     });
 }
 
-#[cfg(target_os = "linux")]
-fn run_policy(
-    config: &Config,
-    latest: Latest,
-    shared: Arc<Shared>,
+/// What the policy loop publishes through.
+struct Publishers {
     status: watch::Sender<Option<Status>>,
     dock_status: watch::Sender<Option<std_msgs::String>>,
     body_height: watch::Sender<Option<Float32>>,
-) {
+    full_status: watch::Sender<Option<std_msgs::String>>,
+}
+
+#[cfg(target_os = "linux")]
+fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Publishers) {
+    let Publishers {
+        status,
+        dock_status,
+        body_height,
+        full_status,
+    } = publish;
     use crate::dock::docking::{Docking, DockingCommands};
     use crate::dock::obstacle;
     use crate::hardware::bus::{BusHardware, Sink};
@@ -633,6 +662,10 @@ fn run_policy(
     // charge_manager's charge-enables come from the dock sequence (rl_deploy has no rule of its own)
     hardware.set_charge_rule(false);
     let docking = Docking::new(&cfg, cfg.ecan.charge_enable, None);
+    // docking's latest status, for the controller status (written and read on this thread)
+    let dock_latest = Arc::new(Mutex::new(None::<crate::dock::docking::Status>));
+    let dock_seen = dock_latest.clone();
+    let mut status_log = crate::status::StatusLog::new(config.status_log_height_step_m);
     let mut commands = DockingCommands::new(
         SharedCommands {
             shared: shared.clone(),
@@ -641,6 +674,9 @@ fn run_policy(
         shared.dock.clone(),
         Box::new(move |s| {
             info!(phase = ?s.phase, result = %s.result, error = s.error, charging = s.charging, "docking");
+            if let Ok(mut slot) = dock_seen.lock() {
+                *slot = Some(s.clone());
+            }
             let data = serde_json::to_string(s).unwrap_or_default();
             dock_status.send_replace(Some(std_msgs::String { data }));
         }),
@@ -688,6 +724,28 @@ fn run_policy(
                     data: height as f32,
                 }));
             }
+            let dock = dock_latest.lock().ok().and_then(|d| d.clone());
+            let full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref());
+            let logged = status_log.changed(&full);
+            if logged {
+                info!(
+                    state = %full.state,
+                    fault = ?full.fault,
+                    target = %full.target,
+                    commanded_gait = %full.commanded_gait,
+                    gait = %full.gait,
+                    runner = ?full.runner,
+                    stand_in = full.stand_in,
+                    commanded_body_height_m = ?full.commanded_body_height_m,
+                    body_height_m = full.body_height_m,
+                    dock_phase = ?full.dock_phase,
+                    "controller status"
+                );
+            }
+            if logged || tick.stats.ticks % status_every == 0 {
+                let data = serde_json::to_string(&full).unwrap_or_default();
+                full_status.send_replace(Some(std_msgs::String { data }));
+            }
             let c = tick.controller;
             let now = Status {
                 ready: c.state == State::RlControl && c.fault.is_none(),
@@ -697,9 +755,6 @@ fn run_policy(
                 },
             };
             if last.as_ref() != Some(&now) || tick.stats.ticks % status_every == 0 {
-                if last.as_ref() != Some(&now) {
-                    info!(state = %now.state, runner = ?c.current_runner(), "controller state");
-                }
                 status.send_replace(Some(now.clone()));
                 last = Some(now);
             }
@@ -732,14 +787,7 @@ pub fn charge_reading(direction: Direction, frame: &[u8], seq: u64) -> Option<Ch
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_policy(
-    _: &Config,
-    _: Latest,
-    _: Arc<Shared>,
-    _: watch::Sender<Option<Status>>,
-    _: watch::Sender<Option<std_msgs::String>>,
-    _: watch::Sender<Option<Float32>>,
-) {
+fn run_policy(_: &Config, _: Latest, _: Arc<Shared>, _: Publishers) {
     warn!("the policy on the motor bus needs Linux (the vendor motor-bus socket)");
 }
 
@@ -926,6 +974,7 @@ mod tests {
             "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
             "controller_config": "", "policy_dir": "",
             "command_timeout_s": command_timeout_s, "gait": 0x3002, "charge_manager_toml": "",
+            "status_log_height_step_m": 0.01,
         });
         serde_json::from_value(fields).unwrap()
     }

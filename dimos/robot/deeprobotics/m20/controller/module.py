@@ -104,6 +104,8 @@ class M20ControllerConfig(NativeModuleConfig):
     # policy: the vendor's charge_manager.toml (docking reads it at startup); a board without it takes the copy
     # M20DockDetector publishes from NOS
     charge_manager_toml: str = "/opt/robot/share/charge_manager/config/charge_manager.toml"
+    # policy: log the status when the commanded body height moves this far (m); other changes always log
+    status_log_height_step_m: float = Field(default=0.01, gt=0.0)
 
     def to_config_dict(self) -> dict[str, Any]:
         # navigation_terrain is the Python RPCs' alone; the native struct rejects unknown fields
@@ -132,11 +134,14 @@ class M20Controller(NativeModule):
     controller_state: Out[String]
     dock_state: Out[String]
     body_height: Out[Float32]
+    controller_status: Out[String]
 
     @rpc
     def start(self) -> None:
         self._state = ""
         self._dock_state: dict[str, Any] = {}
+        self._status: dict[str, Any] = {}
+        self._battery: dict[str, dict[str, Any]] = {}
         self._navigate_once_walking: int | None = None
         self._state_lock = threading.Lock()
         # before the native process starts: it publishes the state only when it changes, so its first one would be missed
@@ -144,6 +149,14 @@ class M20Controller(NativeModule):
             Disposable(self.controller_state.subscribe(self._on_controller_state))
         )
         self.register_disposable(Disposable(self.dock_state.subscribe(self._on_dock_state)))
+        self.register_disposable(
+            Disposable(self.controller_status.subscribe(self._on_controller_status))
+        )
+        for name in ("battery", "battery_left", "battery_right"):
+            out = getattr(self, name)
+            self.register_disposable(
+                Disposable(out.subscribe(lambda msg, name=name: self._on_battery(name, msg)))
+            )
         super().start()
 
     def _on_dock_state(self, msg: String) -> None:
@@ -154,6 +167,26 @@ class M20Controller(NativeModule):
             return
         with self._state_lock:
             self._dock_state = state
+
+    def _on_controller_status(self, msg: String) -> None:
+        try:
+            status = json.loads(msg.data)
+        except json.JSONDecodeError:
+            logger.warning(f"M20 controller_status is not JSON: {msg.data!r}")
+            return
+        with self._state_lock:
+            self._status = status
+
+    def _on_battery(self, name: str, msg: BatteryState) -> None:
+        reading = {
+            "percentage": msg.percentage,
+            "voltage": msg.voltage,
+            "current": msg.current,
+            "temperature": msg.temperature,
+            "power_supply_status": msg.power_supply_status,
+        }
+        with self._state_lock:
+            self._battery[name] = reading
 
     def _on_controller_state(self, msg: String) -> None:
         with self._state_lock:
@@ -232,6 +265,15 @@ class M20Controller(NativeModule):
         """The state machine's latest state (e.g. "RlControl", "StandUp", "JointDamping (fault: ...)")."""
         with self._state_lock:
             return self._state
+
+    @rpc
+    def status(self) -> dict[str, Any]:
+        """controller_status (state, fault, gait, runner, heights) plus dock_state and the batteries; {} fields before the first."""
+        with self._state_lock:
+            out = dict(self._status)
+            out["dock"] = dict(self._dock_state)
+            out["batteries"] = {k: dict(v) for k, v in self._battery.items()}
+        return out
 
     def _can_sequence(self, what: str) -> bool:
         if self.config.mode != "owner" or not self.config.policy:
