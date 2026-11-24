@@ -53,7 +53,7 @@ def _arm_usd() -> UsdModel:
 
 
 class ArmConfig(HardwareModuleConfig):
-    usd: UsdModel | None = _arm_usd()
+    usd: UsdModel = _arm_usd()
 
 
 class Arm(HardwareModule):
@@ -62,7 +62,7 @@ class Arm(HardwareModule):
 
 
 class WristCameraConfig(HardwareModuleConfig):
-    usd: UsdModel | None = UsdModel.from_robot_model(RobotModel.from_urdf_string(_CAMERA_URDF))
+    usd: UsdModel = UsdModel.from_robot_model(RobotModel.from_urdf_string(_CAMERA_URDF))
 
 
 class WristCamera(HardwareModule):
@@ -280,3 +280,11 @@ def test_a_list_ref_keeps_a_remote_provider_in_its_place() -> None:
             consumer.stop()
     finally:
         provider.stop()
+
+
+def test_hardware_without_a_usd_is_refused() -> None:
+    class Bare(HardwareModule):
+        config: HardwareModuleConfig
+
+    with pytest.raises(ValueError, match="usd"):
+        Bare(instance_name="bare")
