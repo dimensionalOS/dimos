@@ -33,7 +33,7 @@ from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.dimsim.dimsim_scene import INTERACTIVE, PICKABLE, STATE, TITLE
 from dimos.sim2.dimsim.scene import PURPOSES, stage_bodies
 from dimos.sim2.mujoco.names import resolve
-from dimos.sim2.spec import Simulated, SimulatedRobot
+from dimos.sim2.spec import ODOM_FRAME, Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import GEOMETRY, REFUSED, WorldWriter
 from dimos.utils.deno import ensure_deno
@@ -388,10 +388,12 @@ class DimSimBackend:
         """Name every entity once; a listener that missed it asks the world for its ``snapshot()``."""
         world = self.world
         world.add("world", backend="dimsim")
+        odom_frames = {robot.robot_id: robot.odom_frame for robot in self._robots}
         for robot_id in self._base:
-            world.add(
-                robot_id, model=str(self._layers[robot_id]), **{MOUNTED_AT: self._mounts[robot_id]}
-            )
+            announced = {MOUNTED_AT: self._mounts[robot_id]}
+            if odom_frames.get(robot_id) is not None:
+                announced[ODOM_FRAME] = odom_frames[robot_id]
+            world.add(robot_id, model=str(self._layers[robot_id]), **announced)
             for name in BASE_JOINTS:
                 world.add(f"{robot_id}/{name}")
         for name, thing in self._objects.items():

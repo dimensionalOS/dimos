@@ -20,7 +20,7 @@ Only DimSim runs this scene: its meshes are MuJoCo-visible (for the sensors) but
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.sim2 import GO2_USD, Go2Sim
+from dimos.robot.unitree.go2.sim2 import GO2_TF_FRAMES, GO2_USD, Go2Sim
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.dimsim.apartment import DimSimApartment
 from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
@@ -35,7 +35,7 @@ unitree_go2_dimsim = autoconnect(
     sim({"dimsim": DimSimSim.blueprint()}, default="dimsim"),
     DimSimApartment.blueprint(),
     autoconnect(
-        SimKinematicBase.blueprint(usd=GO2_USD, mount=ROBOT),
+        SimKinematicBase.blueprint(usd=GO2_USD, mount=ROBOT, **GO2_TF_FRAMES),
         SimL1.mount(Go2Sim.mounts.l1),
         SimCamera.mount(Go2Sim.mounts.camera),
     ).namespace(ROBOT, shared={"world_observations", "actions", "cmd_vel"}),

@@ -25,6 +25,7 @@ from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 from dimos.sim2.dimsim.sim import DimSimSim
 from dimos.sim2.scene import SimScene
 from dimos.sim2.sim import compose_world
+from dimos.sim2.spec import ODOM_FRAME
 from dimos.sim2.world_observations import REFUSED, WorldMirror
 
 pytest.importorskip("pxr")
@@ -241,3 +242,17 @@ def test_stopping_before_the_modules_report_ends_the_wait() -> None:
     sim = DimSimSim()
     sim.stop()
     assert sim._built.is_set(), "a thread in _built.wait would never return"
+
+
+def test_the_world_announces_the_frame_the_base_reports_its_odometry_in(
+    backend: _Stepped,
+) -> None:
+    world = backend.step(1)
+    bot = _bot()
+    try:
+        bot._world = world
+        odom = bot._odom(world.time)
+    finally:
+        bot.stop()
+    assert odom is not None
+    assert _cbor(world, "bot")[ODOM_FRAME] == odom.frame_id

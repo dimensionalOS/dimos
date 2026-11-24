@@ -74,13 +74,16 @@ def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
     assert sensed <= frames, f"{name} leaves {sorted(sensed - frames)} out of the world"
 
 
-@pytest.mark.self_hosted  # Go2Sim loads its policy and meshes from Git LFS
-def test_a_simulated_go2_publishes_the_tf_a_real_one_does() -> None:
+@pytest.mark.self_hosted  # the Go2 policy, meshes and the apartment are Git LFS data
+@pytest.mark.parametrize("name", ["unitree_go2_sim2_l1", "unitree_go2_dimsim"])
+def test_a_simulated_go2_publishes_the_tf_a_real_one_does(name: str) -> None:
     from dimos.robot.unitree.go2.connection import ConnectionConfig
     from dimos.robot.unitree.go2.sim2 import Go2Sim
+    from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 
-    with _hardware("unitree_go2_sim2_l1") as hardware:
-        go2 = next(module for module in hardware if isinstance(module, Go2Sim))
+    robot_class = (Go2Sim, SimKinematicBase)
+    with _hardware(name) as hardware:
+        go2 = next(module for module in hardware if isinstance(module, robot_class))
         edges = {
             (go2.tf_frames[parent], go2.tf_frames[child]) for parent, child in go2.config.tf_edges
         }
