@@ -52,6 +52,8 @@ class YesenseImuConfig(NativeModuleConfig):
     read_chunk_bytes: int = Field(default=256, ge=1)
     # Read with this syscall number instead of read(2), for a kernel that only delivers the UART that way (0 = read(2)).
     read_syscall: int = Field(default=0, ge=0)
+    # Read one frame of this many bytes at a time (sync 'Y' 'S', then the rest) as the M20's yesense_node (0 = chunks).
+    frame_sync_bytes: int = Field(default=0, ge=0)
     # Bytes the decoder holds waiting for a frame before dropping the oldest.
     max_buffered_bytes: int = Field(default=4096, ge=7)
     retry_s: float = Field(default=2.0, ge=0.1, le=60.0)

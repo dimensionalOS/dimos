@@ -482,8 +482,8 @@ _m20_real = autoconnect(
                 # AOS's vendor kernel hands this UART's bytes only to syscall 0x1cb (what yesense_node calls); read(2)
                 # gets none of them
                 read_syscall=0x1CB,
-                # one frame per read as yesense_node does: the vendor read waits to fill 256 B (5 frames, 25 ms bursts)
-                read_chunk_bytes=YESENSE_FRAME_BYTES,
+                # one frame per sync as yesense_node reads: a 256 B read waits to fill (5 frames, 25 ms bursts)
+                frame_sync_bytes=YESENSE_FRAME_BYTES,
                 frame_id=constants.IMU_FRAME,
                 imu_xyz=constants.IMU_XYZ_M,
                 mount_rpy_rad=constants.IMU_MOUNT_RPY_RAD,

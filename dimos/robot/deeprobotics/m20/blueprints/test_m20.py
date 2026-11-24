@@ -407,6 +407,8 @@ def test_the_serial_body_imu_gets_the_m20s_uart_and_mount() -> None:
         (0.0632, -0.0268, -0.0435),
     )
     assert config.mount_rpy_rad == (math.pi / 2, 0.0, 0.0)
+    # yesense_node's read: one 49-byte frame per 'Y' 'S' sync through syscall 0x1cb, not 256-byte chunks
+    assert (config.read_syscall, config.frame_sync_bytes) == (0x1CB, 0x31)
 
 
 # --- sim and sim-bench ---
