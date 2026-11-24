@@ -24,10 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from dimos.control.calibration._calibration_test_helpers import (
-    offline_robot_assets,
-    robot_specs_or_skip,
-)
+from dimos.control.calibration._calibration_test_helpers import robot_specs_or_skip
+from dimos.control.calibration._offline_models import offline_robot_assets
 from dimos.control.calibration.spec import ArmCalibrationSpec, WorkspaceGuard
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM

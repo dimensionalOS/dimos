@@ -28,18 +28,18 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import math
 import os
-from pathlib import Path
 import threading
 from typing import Any
-from unittest import mock
 
 import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
-import pytest
 from reactivex.disposable import Disposable
 
 from dimos.control.calibration._fake_arm import FakeArm
+from dimos.control.calibration._offline_models import (
+    require_model,
+)
 from dimos.control.calibration._toy_arm import TOY_URDF as TOY_ARM_URDF, toy_arm
 from dimos.control.calibration.gravity_poses import ArmModel
 from dimos.control.calibration.module import CalibrationModule
@@ -63,49 +63,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
-import dimos.utils.data as lfs_data
-
-
-class ModelNotOnDiskError(RuntimeError):
-    """A robot model would have to be downloaded."""
-
-
-def _cached_checkout(self: GitAssetCache, repo_url: str, ref: str, checkout_path: Path) -> Path:
-    return checkout_path
-
-
-def _no_clone(self: GitAssetCache, repo_url: str, ref: str, checkout_path: Path) -> Path:
-    raise ModelNotOnDiskError(f"{repo_url} at {ref} is not in the robot asset cache")
-
-
-def _local_archive(filename: str | Path) -> Path:
-    path = lfs_data._get_lfs_dir() / f"{filename}.tar.gz"
-    if not path.exists() or lfs_data._is_lfs_pointer_file(path):
-        raise ModelNotOnDiskError(f"the LFS archive {path.name} has not been pulled")
-    return path
-
-
-@contextmanager
-def offline_robot_assets() -> Iterator[None]:
-    """Use cached description checkouts as they are and never pull LFS data."""
-    with (
-        mock.patch.object(GitAssetCache, "_refresh_cached", _cached_checkout),
-        mock.patch.object(GitAssetCache, "_clone_missing", _no_clone),
-        mock.patch.object(lfs_data, "_pull_lfs_archive", _local_archive),
-    ):
-        yield
-
-
-def require_model(model: RobotModel, what: str) -> None:
-    """Load ``model`` from disk or skip the test, saying what is missing."""
-    try:
-        with offline_robot_assets():
-            model.load()
-    except ModelNotOnDiskError as error:
-        pytest.skip(f"{what} model is not on disk: {error}")
 
 
 def robot_specs_or_skip(robot: DamiaoRobot, what: str, **options: Any) -> list[ArmCalibrationSpec]:

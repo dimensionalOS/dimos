@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.control.calibration._calibration_test_helpers import require_model
+from dimos.control.calibration._offline_models import require_model
 from dimos.control.calibration.module import CalibrationModule, CalibrationModuleConfig
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
