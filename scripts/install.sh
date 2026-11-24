@@ -45,6 +45,7 @@ GUM=""
 INSTALL_DEPS=1
 DEV_TOOLS=0
 CHILD_PID=""
+SMOKE_LOG=""
 
 if [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 8 ]]; then
     CYAN=$'\033[38;5;44m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
@@ -953,13 +954,25 @@ verify_install() {
 run_post_install_tests() {
     [[ "$INSTALL_DEPS" != 1 || "$SKIP_TESTS" == 1 || "$DRY_RUN" == 1 ]] && return 0
     [[ ",$EXTRAS," == *,unitree,* ]] || return 0
-    prompt_confirm "Run a quick smoke test? (starts unitree-go2 replay for 60s)" yes || return 0
+    prompt_confirm "Run a quick smoke test? (unitree-go2 replay, up to 60s including startup)" yes || return 0
+    SMOKE_LOG=$(mktemp)
+    info "running smoke test (up to 60s); output will follow (log: $SMOKE_LOG)"
     local exit_code=0
-    run_bounded 60 .venv/bin/dimos --viewer none --replay run unitree-go2 || exit_code=$?
+    # Startup confirmation relies on INFO logs, regardless of the user's log level.
+    run_bounded 60 /usr/bin/env DIMOS_LOG_LEVEL=INFO .venv/bin/dimos --viewer none --replay run unitree-go2 >"$SMOKE_LOG" 2>&1 || exit_code=$?
+    cat "$SMOKE_LOG"
     case "$exit_code" in
-        0|124) ok "smoke test passed" ;;
+        0|124)
+            # A timeout is expected for a running replay, but can also mean startup hung.
+            if ! grep -Fq "Replay started" "$SMOKE_LOG" || ! grep -Fq "Blueprint started" "$SMOKE_LOG"; then
+                die "smoke test failed: replay and blueprint startup not confirmed (exit $exit_code)"
+            fi
+            ok "smoke test passed"
+            ;;
         *) die "smoke test failed (exit $exit_code)" ;;
     esac
+    rm -f "$SMOKE_LOG"
+    SMOKE_LOG=""
 }
 
 # ─── quickstart ───────────────────────────────────────────────────────────────
@@ -1000,6 +1013,7 @@ cleanup() {
         kill -TERM "$CHILD_PID" 2>/dev/null || true
         wait "$CHILD_PID" 2>/dev/null || true
     fi
+    if [[ -n "$SMOKE_LOG" ]]; then rm -f "$SMOKE_LOG"; fi
     [[ $ec -eq 130 ]] && { warn "interrupted"; }
     [[ $ec -ne 0 ]] && [[ $ec -ne 130 ]] && { printf "\n"; err "installation failed (exit ${ec})"; err "help: https://github.com/dimensionalOS/dimos/issues"; }
     return 0
