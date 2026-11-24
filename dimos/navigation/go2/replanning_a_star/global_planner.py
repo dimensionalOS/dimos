@@ -48,6 +48,7 @@ class GlobalPlanner(Resource):
 
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
+    _plan_id: int = 0
     _goal_reached: bool = False
     _goal_cancel_reason: str | None = None
     _goal_cancelled: bool = False
@@ -68,6 +69,8 @@ class GlobalPlanner(Resource):
     _safe_goal_tolerance: float = 4.0
     _goal_tolerance: float = 0.2
     _rotation_tolerance: float = math.radians(15)
+    # A half-turn at the controller's minimum 0.2 rad/s takes about 16 seconds.
+    _rotation_timeout: float = 30.0
     _replan_goal_tolerance: float = 0.5
     _stuck_time_window: float = 8.0
     _stuck_threshold: float = 0.4
@@ -149,8 +152,10 @@ class GlobalPlanner(Resource):
             self._goal_reached = False
             self._goal_cancel_reason = None
             self._goal_cancelled = False
-        self._replan_limiter.reset()
-        self._plan_path()
+            self._replan_limiter.reset()
+            current_odom = self._current_odom
+            plan_id = self._begin_plan()
+        self._plan_path(plan_id, goal, current_odom)
 
     def set_safe_goal_clearance(self, clearance: float) -> None:
         with self._lock:
@@ -172,6 +177,8 @@ class GlobalPlanner(Resource):
             # Claim the terminal outcome once, even while the local controller
             # is still stopping. Later stop requests must preserve its reason.
             if self._current_goal is None:
+                if self._local_planner.get_state() != NavigationState.IDLE:
+                    self._local_planner.stop_planning()
                 return
 
             if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
@@ -192,11 +199,11 @@ class GlobalPlanner(Resource):
                 self._goal_cancelled = not arrived and not failed
                 self._replan_limiter.reset()
 
-        self.path.on_next(Path())
-        self._local_planner.stop_planning()
+            self._local_planner.stop_planning()
+            self.path.on_next(Path())
 
-        if not but_will_try_again:
-            self.goal_reached.on_next(Bool(arrived))
+            if not but_will_try_again:
+                self.goal_reached.on_next(Bool(arrived))
 
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -288,10 +295,21 @@ class GlobalPlanner(Resource):
                 last_stuck_check = time.perf_counter()
                 continue
 
+            elapsed = time.perf_counter() - last_stuck_check
+            if state in ("initial_rotation", "final_rotation") and elapsed > self._rotation_timeout:
+                with self._lock:
+                    if (
+                        self._current_goal is current_goal
+                        and self._local_planner.get_unique_state() == (state, new_id)
+                    ):
+                        phase = state.replace("_", " ")
+                        self.cancel_goal(reason=f"GlobalPlanner: {phase} timed out", failed=True)
+                continue
+
             if (
                 # Rotation intentionally makes no progress in x/y.
                 state == "path_following"
-                and time.perf_counter() - last_stuck_check > self._stuck_time_window
+                and elapsed > self._stuck_time_window
                 and self._position_tracker.is_stuck()
             ):
                 logger.info("Robot is stuck. Replanning.")
@@ -327,48 +345,59 @@ class GlobalPlanner(Resource):
         with self._lock:
             current_odom = self._current_odom
             current_goal = self._current_goal
+            if current_goal is None or current_odom is None:
+                return
 
-        logger.info("Replanning.", attempt=self._replan_limiter.get_attempt())
+            logger.info("Replanning.", attempt=self._replan_limiter.get_attempt())
+            if (
+                _planar_distance(current_goal.position, current_odom.position)
+                < self._replan_goal_tolerance
+                and abs(
+                    angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+                )
+                < self._rotation_tolerance
+            ):
+                self.cancel_goal(arrived=True, reason="GlobalPlanner: goal reached")
+                return
 
-        assert current_odom is not None
-        assert current_goal is not None
+            if not self._replanning_enabled:
+                self.cancel_goal(reason=f"{reason}: replanning is disabled", failed=True)
+                return
 
-        if (
-            _planar_distance(current_goal.position, current_odom.position)
-            < self._replan_goal_tolerance
-            and abs(
-                angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
-            )
-            < self._rotation_tolerance
-        ):
-            self.cancel_goal(arrived=True, reason="GlobalPlanner: goal reached")
-            return
+            if not self._replan_limiter.can_retry(current_odom.position):
+                self.cancel_goal(reason=f"{reason}: replan attempts exhausted", failed=True)
+                return
 
-        if not self._replanning_enabled:
-            self.cancel_goal(reason=f"{reason}: replanning is disabled", failed=True)
-            return
+            self._replan_limiter.will_retry()
+            plan_id = self._begin_plan()
 
-        if not self._replan_limiter.can_retry(current_odom.position):
-            self.cancel_goal(reason=f"{reason}: replan attempts exhausted", failed=True)
-            return
+        self._plan_path(plan_id, current_goal, current_odom)
 
-        self._replan_limiter.will_retry()
-
-        self._plan_path()
-
-    def _plan_path(self) -> None:
+    def _begin_plan(self) -> int:
+        """Supersede earlier calculations while the caller holds the goal lock."""
+        self._plan_id += 1
+        plan_id = self._plan_id
         self.cancel_goal(but_will_try_again=True, reason="GlobalPlanner: planning a new path")
+        return plan_id
 
+    def _plan_path(self, plan_id: int, goal: PoseStamped, current_odom: PoseStamped | None) -> None:
+        # Route calculation can be slow. Stops and newer plans can supersede it.
+        result = self._calculate_path(goal, current_odom)
         with self._lock:
-            current_odom = self._current_odom
-            current_goal = self._current_goal
+            if self._current_goal is None or self._plan_id != plan_id:
+                return
+            if isinstance(result, str):
+                self.cancel_goal(reason=result, failed=True)
+                return
+            self._local_planner.start_planning(result)
+            self.path.on_next(result)
 
-        assert current_goal is not None
-
+    def _calculate_path(
+        self, current_goal: PoseStamped, current_odom: PoseStamped | None
+    ) -> Path | str:
         if current_odom is None:
             logger.warning("Cannot handle goal request: missing odometry.")
-            self.cancel_goal(reason="GlobalPlanner: missing odometry", failed=True)
-            return
+            return "GlobalPlanner: missing odometry"
 
         # The first map update fills these separately; both must be available
         # before goal validation and near/far path planning can use them.
@@ -377,8 +406,7 @@ class GlobalPlanner(Resource):
                 "Missing global costmap: check that lidar data is arriving and mapping is running"
             )
             logger.warning("Cannot handle goal request.", reason=reason)
-            self.cancel_goal(reason=reason, failed=True)
-            return
+            return reason
 
         safe_goal = self._find_safe_goal(current_goal.position)
 
@@ -386,8 +414,7 @@ class GlobalPlanner(Resource):
             logger.warning(
                 "No safe goal found.", x=round(current_goal.x, 3), y=round(current_goal.y, 3)
             )
-            self.cancel_goal(reason="GlobalPlanner: no safe goal found", failed=True)
-            return
+            return "GlobalPlanner: no safe goal found"
 
         path = self._find_wide_path(safe_goal, current_odom.position)
 
@@ -395,14 +422,9 @@ class GlobalPlanner(Resource):
             logger.warning(
                 "No path found to the goal.", x=round(safe_goal.x, 3), y=round(safe_goal.y, 3)
             )
-            self.cancel_goal(reason="GlobalPlanner: no path found to the goal", failed=True)
-            return
+            return "GlobalPlanner: no path found to the goal"
 
-        resampled_path = smooth_resample_path(path, current_goal, 0.1)
-
-        self.path.on_next(resampled_path)
-
-        self._local_planner.start_planning(resampled_path)
+        return smooth_resample_path(path, current_goal, 0.1)
 
     def _find_wide_path(self, goal: Vector3, robot_pos: Vector3) -> Path | None:
         #        sizes_to_try: list[float] = [2.2, 1.7, 1.3, 1]
