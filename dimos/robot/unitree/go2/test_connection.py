@@ -19,7 +19,7 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
-from contextlib import closing
+from contextlib import ExitStack, closing
 import json
 from pathlib import Path
 import sqlite3
@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from mcap.writer import Writer
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 from reactivex import Subject
@@ -43,6 +44,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -279,8 +281,8 @@ def test_replay_exit_fires_after_the_last_stream_completes(
 
     first: Subject[int] = Subject()
     second: Subject[int] = Subject()
-    conn._tracked(first).subscribe()
-    conn._tracked(second).subscribe()
+    conn._progress.track(first).subscribe()
+    conn._progress.track(second).subscribe()
     conn.seal_subscriptions()
 
     first.on_completed()
@@ -301,12 +303,12 @@ def test_replay_exit_waits_for_the_seal(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(conn, "_request_shutdown", fired.set)
 
     first: Subject[int] = Subject()
-    conn._tracked(first).subscribe()
+    conn._progress.track(first).subscribe()
     first.on_completed()  # counters now 1/1 with more subscriptions to come
     assert not fired.wait(0.1)
 
     second: Subject[int] = Subject()
-    conn._tracked(second).subscribe()
+    conn._progress.track(second).subscribe()
     conn.seal_subscriptions()
     assert not fired.wait(0.1)
 
@@ -322,7 +324,7 @@ def test_replay_exit_fires_at_the_seal_when_already_complete(
     monkeypatch.setattr(conn, "_request_shutdown", fired.set)
 
     only: Subject[int] = Subject()
-    conn._tracked(only).subscribe()
+    conn._progress.track(only).subscribe()
     only.on_completed()
     conn.seal_subscriptions()
     assert fired.wait(2)
@@ -333,7 +335,7 @@ def test_replay_logs_completion_without_requesting_shutdown(mocker) -> None:
     shutdown = mocker.patch.object(conn, "_request_shutdown")
     log = mocker.patch("dimos.memory.replay_progress.logger")
     with Subject() as first, Subject() as second:
-        with conn._tracked(first).subscribe(), conn._tracked(second).subscribe():
+        with conn._progress.track(first).subscribe(), conn._progress.track(second).subscribe():
             conn.seal_subscriptions()
             first.on_completed()
             log.info.assert_not_called()
@@ -626,16 +628,117 @@ def test_loop_period_uses_selected_sensors_when_subscription_runs_before_seal(tm
     path = tmp_path / "sensors.db"
     with SqliteStore(path=str(path)) as store:
         store.stream("odom", PoseStamped).append(PoseStamped(ts=10.0), ts=10.0)
+        cloud = PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=10.1)
+        store.stream("lidar", PointCloud2).append(cloud, ts=10.1)
         store.stream("unused", int).append(1, ts=100.0)
 
     clock = TestScheduler()
     mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: clock.clock))
     times = []
     with go2_conn.ReplayConnection(str(path), loop=True) as connection:
-        with connection.odom_stream().subscribe(
-            lambda _: times.append(clock.clock), scheduler=clock
+        with (
+            connection.odom_stream().subscribe(
+                lambda _: times.append(clock.clock), scheduler=clock
+            ),
+            connection.lidar_stream().subscribe(scheduler=clock),
         ):
             clock.advance_to(0.01)
             connection.seal_subscriptions()
-            clock.advance_to(0.18)
-    assert [t - times[0] for t in times] == pytest.approx([0, 0.05, 0.10, 0.15])
+            clock.advance_to(0.33)
+    assert times == pytest.approx([0.01, 0.16, 0.31])
+
+
+def test_new_sensor_joins_only_the_sealed_loop_window(staggered_sensor_recording, mocker):
+    with SqliteStore(path=str(staggered_sensor_recording)) as store:
+        for ts in (9.0, 12.0):
+            cloud = PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=ts)
+            store.stream("lidar", PointCloud2).append(cloud, ts=ts)
+
+    clock = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: clock.clock))
+    received = []
+    with go2_conn.ReplayConnection(str(staggered_sensor_recording), loop=True) as connection:
+        with connection.odom_stream().subscribe(scheduler=clock):
+            connection.seal_subscriptions()
+            clock.advance_to(1.1)
+            with connection.lidar_stream().subscribe(
+                lambda msg: received.append((clock.clock, msg.ts)), scheduler=clock
+            ):
+                clock.advance_to(3)
+    assert received == [(1.55, 10.5), (2.6, 10.5)]
+
+
+@pytest.fixture
+def staggered_sensor_recording(tmp_path):
+    path = tmp_path / "recording.db"
+    with SqliteStore(path=str(path)) as store:
+        for ts in (10.0, 11.0):
+            store.stream("odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+        store.stream("lidar", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((1, 3)), timestamp=10.5), ts=10.5
+        )
+        store.stream("unused", int).append(1, ts=1.0)
+
+    return path
+
+
+def test_replay_starts_at_earliest_enabled_sensor(staggered_sensor_recording, mocker):
+    path = staggered_sensor_recording
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: scheduler.clock))
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    module = GO2Connection(g=GlobalConfig(replay=True, replay_db=str(path)), camera=False)
+    mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    received = []
+    with ExitStack() as cleanup:
+        cleanup.callback(module.stop)
+        for name in ("lidar", "odom"):
+            module.set_transport(name, mocker.Mock())
+            cleanup.enter_context(
+                Disposable(
+                    module.outputs[name].subscribe(
+                        lambda msg, n=name: received.append((scheduler.clock, n, msg.ts))
+                    )
+                )
+            )
+        module.start()
+        scheduler.advance_by(2)
+    assert received == [(0, "odom", 10.0), (0.5, "lidar", 10.5), (1, "odom", 11.0)]
+
+
+def test_direct_sensor_subscriptions_start_together_at_seal(staggered_sensor_recording, mocker):
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: scheduler.clock))
+    received = []
+    with (
+        go2_conn.ReplayConnection(dataset=str(staggered_sensor_recording)) as connection,
+        ExitStack() as cleanup,
+    ):
+        for sensor in (connection.lidar_stream, connection.odom_stream):
+            cleanup.enter_context(
+                sensor().subscribe(
+                    lambda msg: received.append((scheduler.clock, msg.ts)), scheduler=scheduler
+                )
+            )
+            scheduler.advance_by(0.25)
+        assert received == []
+        connection.seal_subscriptions()
+        scheduler.advance_by(2)
+
+    assert received == [(0.5, 10.0), (1.0, 10.5), (1.5, 11.0)]
+
+
+def test_late_subscriber_joins_the_running_sensor_clock(staggered_sensor_recording, mocker):
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.time", SimpleNamespace(time=lambda: scheduler.clock))
+    received = []
+    with go2_conn.ReplayConnection(dataset=str(staggered_sensor_recording)) as connection:
+        odom = connection.odom_stream()
+        with odom.subscribe(scheduler=scheduler):
+            connection.seal_subscriptions()
+            scheduler.advance_to(0.5)
+            with odom.subscribe(
+                lambda msg: received.append((scheduler.clock, msg.ts)), scheduler=scheduler
+            ):
+                scheduler.advance_to(2.0)
+    assert received == [(1.0, 11.0)]

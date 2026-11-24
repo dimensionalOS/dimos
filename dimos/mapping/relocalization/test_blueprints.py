@@ -140,10 +140,10 @@ def test_player_closes_store_after_partial_startup(
 ) -> None:
     observable = ReplayStream.observable
 
-    def fail_tf(self: ReplayStream[Any]) -> Observable[Any]:
+    def fail_tf(self: ReplayStream[Any], **kwargs: Any) -> Observable[Any]:
         if self.name == "tf":
             raise RuntimeError("cannot open tf replay")
-        return observable(self)
+        return observable(self, **kwargs)
 
     mocker.patch.object(ReplayStream, "observable", fail_tf)
     replay = mocker.spy(SqliteStore, "replay")

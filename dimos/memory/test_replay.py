@@ -22,6 +22,7 @@ from reactivex.testing import TestScheduler
 
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.base import StreamAccessor
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -158,12 +159,14 @@ def test_replay_anchor_thread_safe(sqlite_store: SqliteStore) -> None:
 def test_looped_streams_share_one_bounded_period(
     sqlite_store: SqliteStore, mocker: MockerFixture, join_at: float
 ) -> None:
+    for _ in range(2):
+        sqlite_store.stream("camera_info", CameraInfo).append(CameraInfo(ts=10), ts=10)
     _populate(sqlite_store, "odom", [100, 101, 110])
     _populate(sqlite_store, "lidar", [100.5, 101.5])
     replay = sqlite_store.replay(loop=True, duration=2)
     scheduler = TestScheduler()
     mocker.patch("dimos.memory.replay.time.time", side_effect=lambda: scheduler.clock)
-    replay.pin_anchor(100)
+    replay.pin_anchor()
     events = []
     with ExitStack() as subscriptions:
         subscriptions.enter_context(

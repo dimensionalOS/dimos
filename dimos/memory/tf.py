@@ -28,6 +28,9 @@ if TYPE_CHECKING:
     from dimos.protocol.tf.tf import TFLookup
 
 
+STATIC_SUFFIX = "_static"  # "<tf stream>_static" holds edges published once (ROS 2 /tf_static)
+
+
 def tf_stream(store: Any, stream: str = "tf") -> Stream[TFMessage] | None:
     """The recording's tf stream, or None if it has none."""
     # check if it's there first so we don't create one
@@ -64,7 +67,7 @@ class StreamTF(MultiTBuffer):
 
     @classmethod
     def from_store(cls, store: Any, stream: str = "tf") -> StreamTF | None:
-        static = tf_stream(store, f"{stream}_static")
+        static = tf_stream(store, stream + STATIC_SUFFIX)
         # a recording with only static transforms still has a tree (a camera's mount)
         recorded = tf_stream(store, stream)
         recorded = static if recorded is None else recorded

@@ -18,10 +18,10 @@ from importlib import resources
 import sys
 from threading import Event, Thread
 import time
-from typing import Any, NoReturn, Protocol
+from typing import Any, Protocol
 
 from pydantic import Field, model_validator
-from reactivex import Subject, concat, empty
+from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -225,7 +225,6 @@ class ReplayConnection(CompositeResource):
         self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
         self._replay_path: str | None = None
         self._pending_streams: list[ReplayStream[Any]] = []
-        self._loop_window_ready: Subject[NoReturn] = Subject()
 
     @cached_property
     def replay(self) -> Replay:
@@ -278,26 +277,17 @@ class ReplayConnection(CompositeResource):
                 return name
         raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
 
-    def _tracked(self, source: Observable[_T]) -> Observable[_T]:
-        return self._progress.track(source)
-
     def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
         self._pending_streams.append(stream)
-        source = stream.observable()
-        if self._loop:
-            # A singleton can wrap on its first callback. Set the selected
-            # window before any loop can fall back to the full recording.
-            source = concat(self._loop_window_ready, source)
-        return self._tracked(source)
+        return self._progress.play(stream)
 
     def seal_subscriptions(self) -> None:
-        """Finish selecting sensors and start looped playback on their shared window."""
+        """Start the selected sensor subscriptions together on their earliest recorded timestamp."""
         if self._pending_streams:
             # Only inspect selected streams: unused recordings may depend on
             # unavailable payload types or contain unrelated timestamp ranges.
             self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
             self._pending_streams.clear()
-        self._loop_window_ready.on_completed()
         self._progress.seal()
 
     def _on_complete(self) -> None:
@@ -437,8 +427,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             self._camera_info_thread.start()
 
         if isinstance(self.connection, ReplayConnection):
-            # Every replay subscription is wired; completion can now be reported
-            # and optionally shut the run down (--go2connection.replay-exit).
+            # Start the replay clock once all enabled sensor subscriptions are wired.
             self.connection.seal_subscriptions()
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):

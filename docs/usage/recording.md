@@ -121,6 +121,16 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.mcap run unitree-go2
 ```
 
+Sensor replay opens all selected streams before starting the playback clock at their earliest timed row.
+Initial subscriptions include the first recorded rows even when opening another sensor takes time.
+Replay republishes camera calibration when every row of a `CameraInfo` stream repeats the same
+message at one timestamp. On ordinary TF, replay holds an edge when its transform stamp and pose
+repeat unchanged. If the entire stream has multiple rows at one recording timestamp, replay
+also holds edges that appear just once.
+On a declared static channel such as `tf_static`, replay publishes the last recorded mount for
+each edge at startup and repeats it every second. Raw stream iteration retains all mount revisions.
+Other samples play in order even at the same timestamp. Relative `seek` and `duration` start at the first timed row.
+
 An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
 
 `--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds.

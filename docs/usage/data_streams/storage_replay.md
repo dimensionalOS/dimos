@@ -185,9 +185,11 @@ dimos --replay run unitree-go2
 Replay your own recording with
 `dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2`.
 
-When using a looped Go2 `ReplayConnection` directly, subscribe to the sensors you
-need and call `seal_subscriptions()`. Playback then repeats over their combined
-time span. The Go2 module calls this method during startup.
+When using `ReplayConnection` directly, subscribe to the desired sensors and call
+`seal_subscriptions()` to start playback. Their shared clock begins at the earliest timed sample.
+A later subscription joins the running clock and skips frames already in the past.
+In looped playback the selected sensors repeat together after their combined time span and a 50 ms pause.
+A sensor added after startup replays only rows within that same source interval on each pass.
 
 ## Data Format
 

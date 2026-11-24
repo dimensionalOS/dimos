@@ -25,9 +25,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
-
-from reactivex import interval
+from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -37,18 +35,8 @@ from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, 
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from reactivex import Observable
-
-    from dimos.memory.replay import Replay, ReplayStream
-    from dimos.memory.stream import Stream
-    from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
 
@@ -136,68 +124,17 @@ class ReplayModule(Module):
         store: Store = open_store(path)
         store.start()
         self._store = store
-        replay: Replay = store.replay(
+        replay = store.replay(
             speed=self.config.speed,
             loop=self.config.loop,
             seek=self.config.seek,
             duration=self.config.duration,
         )
-        # Open every stream before pinning the anchor, so setup time does not
-        # put the playback behind the wall clock from the start.
-        streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs
-        }
-        # A stream whose rows all carry one timestamp (camera_info recorded from a
-        # constant stamped at import, often long before the run) is republished at
-        # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
-        # would spend that lead time emitting nothing.
-        static: dict[str, DimosMsg] = {}
-        timed_streams: dict[str, Observable[DimosMsg]] = {}
-        timed_starts = []
-        for name, stream in streams.items():
-            if issubclass(self.outputs[name].type, TFMessage):
-                # Frozen frames describe the coordinate system even when their
-                # original source stamp is outside the selected time window.
-                rows = store.stream(name, TFMessage)
-                frozen, edges = _frozen_tf(rows)
-                if frozen.transforms:
-                    static[name] = frozen
-                    dynamic = rows.filter(partial(_has_dynamic_tf, edges))
-                    try:
-                        start = dynamic.order_by("ts").first().ts
-                    except LookupError:
-                        continue
-                    stream = streams[name] = replay.stream(
-                        name,
-                        autocast=partial(_dynamic_tf, edges),
-                        source=dynamic.time_range(start, float("inf")),
-                    )
-            elif stream.count() > 1 and stream.first_ts() == stream.last_ts():
-                message = stream.first()
-                if message is not None:
-                    static[name] = message
-                continue
-            first_ts = stream.first_ts()
-            if first_ts is not None:
-                timed_starts.append(first_ts)
-                timed_streams[name] = stream.observable(skip_late=False)
-        for name, message in static.items():
-            if isinstance(message, TFMessage):
-                self.outputs[name].publish(message)
         progress = ReplayProgress(str(path))
-        progress.start(replay, (streams[n] for n in timed_streams))
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
+        progress.start(replay, (replay.stream(name) for name in self.outputs))
         for name, port in self.outputs.items():
             logger.info("Replaying %s -> %s", name, port)
-            if name in static:
-                self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, static[name]))
-                )
-            if name in timed_streams:
-                self.register_disposable(
-                    progress.track(timed_streams[name]).subscribe(port.publish)
-                )
+            self.register_disposable(progress.play(replay.stream(name)).subscribe(port.publish))
         progress.seal()
 
     @rpc
@@ -206,49 +143,6 @@ class ReplayModule(Module):
         if self._store is not None:
             self._store.stop()
             self._store = None
-
-
-def _has_dynamic_tf(edges: set[tuple[str, str]], row: Observation[TFMessage]) -> bool:
-    return not row.data.transforms or any(
-        (t.frame_id, t.child_frame_id) not in edges for t in row.data.transforms
-    )
-
-
-def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
-    # Older recordings can carry both fixed and changing edges in one row.
-    return TFMessage(
-        *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
-    )
-
-
-def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
-    """Find fixed edges in a finite recording, independent of playback bounds."""
-    all_static = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
-    # A changing stamp disqualifies the edge. Only the last stamp and count
-    # are kept for each edge, irrespective of the length of the recording.
-    stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
-    for row in rows:
-        for transform in row.data.transforms:
-            edge = (transform.frame_id, transform.child_frame_id)
-            previous = stamps.get(edge, (transform.ts, 0))
-            if previous is not None:
-                stamps[edge] = (
-                    (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
-                )
-    edges = {
-        edge for edge, stamp in stamps.items() if stamp is not None and (all_static or stamp[1] > 1)
-    }
-    transforms: dict[bytes, Transform] = {}
-    if edges:
-        for row in rows:
-            for transform in row.data.transforms:
-                if (transform.frame_id, transform.child_frame_id) in edges:
-                    transforms[transform.lcm_encode()] = transform
-    return TFMessage(*transforms.values()), edges
-
-
-def _republish(port: Out[Any], msg: Any, _tick: int) -> None:
-    port.publish(msg)
 
 
 def _port_names(topics: str, types: dict[str, type]) -> list[str]:

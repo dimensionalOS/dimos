@@ -15,13 +15,17 @@
 """Source metadata and completion reporting for module-owned replay subscriptions."""
 
 from collections.abc import Callable, Iterable
+from functools import partial
 from threading import Lock
 from typing import Any, TypeVar
 
-from reactivex import Observable, defer, operators as ops
-from reactivex.abc import SchedulerBase
+from reactivex import Observable, create, defer, interval, operators as ops
+from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
+from reactivex.disposable import CompositeDisposable
+from reactivex.subject import AsyncSubject
 
 from dimos.memory.replay import Replay, ReplayStream
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -44,6 +48,8 @@ class ReplayProgress:
         self._completed = 0
         self._sealed = False
         self._finished = False
+        self._ready: AsyncSubject[None] = AsyncSubject()
+        self._anchor: tuple[Replay, float] | None = None
 
     def start(
         self,
@@ -52,15 +58,51 @@ class ReplayProgress:
         *,
         path: str | None = None,
     ) -> None:
-        """Log the selected replay window's duration in source seconds."""
+        """Select the first timed source timestamp without starting the playback clock."""
+        start, duration = replay.select_window(streams)
+        if start is not None:
+            self._anchor = (replay, start)
         logger.info(
             "Replay started",
             source=self._source,
             path=path or self._source,
-            duration_s=replay.set_window_duration(streams),
+            duration_s=duration,
             speed=replay.config.speed,
             loop=replay.config.loop,
         )
+
+    def play(self, stream: ReplayStream[T]) -> Observable[T]:
+        """Start initial subscribers together and let later subscribers join the running clock.
+
+        Setup metadata stays off that clock and is republished every second instead.
+        """
+        static, timed = stream.split_static()
+        sources: list[Observable[T]] = []
+        if timed is not None:
+            sources.append(self.track(defer(partial(self._open, timed))))
+        if static is None:
+            return sources[0]
+        sources.append(interval(1.0).pipe(ops.map(lambda _tick: static)))
+
+        def subscribe(
+            observer: ObserverBase[T], scheduler: SchedulerBase | None = None
+        ) -> DisposableBase:
+            if isinstance(static, TFMessage):
+                observer.on_next(static)  # The first sensor frames need the frame tree.
+            return CompositeDisposable(
+                [
+                    source.subscribe(observer.on_next, observer.on_error, scheduler=scheduler)
+                    for source in sources
+                ]
+            )
+
+        return create(subscribe)
+
+    def _open(self, stream: ReplayStream[T], _scheduler: SchedulerBase | None) -> Observable[T]:
+        with self._lock:
+            if self._sealed:
+                return stream.observable()
+        return stream.observable(skip_late=False, start_on=self._ready)
 
     def track(self, source: Observable[T]) -> Observable[T]:
         def factory(_scheduler: SchedulerBase | None) -> Observable[T]:
@@ -78,7 +120,14 @@ class ReplayProgress:
         With no timed subscriptions, playback is already complete.
         """
         with self._lock:
+            if self._sealed:
+                return
+            if self._anchor is not None:
+                replay, ts = self._anchor
+                replay.pin_anchor(ts)
             self._sealed = True
+        self._ready.on_next(None)
+        self._ready.on_completed()
         self._maybe_finish()
 
     def _stream_completed(self) -> None:
