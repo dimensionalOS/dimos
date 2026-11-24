@@ -122,6 +122,7 @@ _SIM_BLUEPRINTS: dict[str, ModuleType] = {
     "coordinator_teleop_xarm6": teleop,
     "coordinator_teleop_xarm7": teleop,
     "coordinator_xarm6": basic,
+    "coordinator_xarm7": basic,
 }
 
 
