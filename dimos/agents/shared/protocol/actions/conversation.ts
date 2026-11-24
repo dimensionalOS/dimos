@@ -1,5 +1,6 @@
 import type { ActionGroup } from "#dimos/agents/shared/protocol/actions/base.ts";
-import type { ConversationId, SubmissionId, TaskId } from "@earendil-works/pi-durable";
+import type { ConversationId, SubmissionId, SubmissionRecord, TaskId } from "@earendil-works/pi-durable";
+import type { TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { QueuedText } from "#dimos/agents/shared/protocol/conversation/queue.ts";
 import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
@@ -110,6 +111,15 @@ export const CONVERSATION_ACTIONS = {
     access: "owner",
     retry: "unknown",
     rule: rules.moved,
+  }),
+  /** One durable input, including answers outside the room's recent outcomes. */
+  submission: action({
+    args: Type.Object({ id: Type.Unsafe<SubmissionId>(Type.Integer({ minimum: 1 })) }),
+    value: carried<{ record: SubmissionRecord; answer: TranscriptItem | null }>(),
+    executor: "pi-durable",
+    access: "any",
+    retry: "unknown",
+    rule: rules.open,
   }),
   /** The bytes of one image the transcript carries only as a ref, in its stored format. */
   image: action({

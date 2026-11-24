@@ -256,8 +256,7 @@ def _installed(package: Path) -> bool:
 
 
 def _built(package: Path) -> bool:
-    """Whether every file the last build read, as build.mjs recorded in dist/inputs.json, is
-    unchanged."""
+    """Whether the recorded inputs and JavaScript outputs of the last build are current."""
     try:
         read = json.loads((package / "dist" / "inputs.json").read_text())
         return (
