@@ -1154,6 +1154,9 @@ robots:
           title: RealSense viewer
           description: A RealSense's color, depth and RGBD cloud in Rerun.
           starter: 21
+        orbbec-camera-vis:
+          title: Orbbec viewer
+          description: An Orbbec Gemini's color, depth and RGBD cloud in Rerun.
         demo-camera:
           title: Webcam demo
           description: 'This computer''s camera as a dimos stream: the smallest blueprint there is.'

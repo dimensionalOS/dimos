@@ -102,7 +102,7 @@ class OrbbecCamera(Module, perception.DepthCamera):
     def _frame(self, suffix: str) -> str:
         stem = (self.config.frame_id or "camera_link").removesuffix("_link")
         name = f"{stem}_{suffix}"
-        return f"{self.config.frame_id_prefix}/{name}" if self.config.frame_id_prefix else name
+        return f"{self.frame_id_prefix}/{name}" if self.frame_id_prefix else name
 
     @classmethod
     def check_dependencies(cls, **kwargs: Any) -> None:
