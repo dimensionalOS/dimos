@@ -469,14 +469,14 @@ def test_a_reading_arriving_after_the_snapshot_waits_for_the_next_tick(
     r.coordinator.set_transport("coordinator_joint_state", Recorder("state", published))
     loop = r.coordinator._tick_loop
     assert loop is not None
-    read_all = loop._read_all_hardware
+    read_all = loop._read_all_joints
 
     def report_after_snapshot():
         snapshot = read_all()
         r.report_arm(*([0.2] * len(MOCK_JOINTS)))
         return snapshot
 
-    mocker.patch.object(loop, "_read_all_hardware", side_effect=report_after_snapshot)
+    mocker.patch.object(loop, "_read_all_joints", side_effect=report_after_snapshot)
     r.tick()
     assert published == []
     r.tick()

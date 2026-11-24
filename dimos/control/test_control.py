@@ -934,7 +934,6 @@ class TestTickLoop:
         task.compute.return_value = None
         tick_loop = TickLoop(
             tick_rate=100.0,
-            hardware={},
             hardware_lock=threading.Lock(),
             tasks={"test_task": task},
             task_lock=threading.Lock(),

@@ -133,7 +133,7 @@ class GripperControlTask(BaseControlTask):
                 self._stamp_pending = False
             hold = self._config.hold_duration
             if hold > 0.0 and (state.t_now - self._target_set_at) > hold:
-                # Hold expired; ConnectedHardware keeps re-sending the last value.
+                # Hold expired; the coordinator keeps the joint at its last value.
                 self._target = None
                 return None
             target = list(self._target)

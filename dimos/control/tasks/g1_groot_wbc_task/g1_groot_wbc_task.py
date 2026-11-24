@@ -493,17 +493,13 @@ class G1GrootWBCTask(BaseControlTask):
         # Select this robot explicitly: neither another robot's IMU nor an
         # assumed identity orientation is a valid policy observation.
         reading = state.sensors.readings.get(f"{self._hardware_id}/imu")
-        if reading is not None:
-            try:
-                quaternion = tuple(reading[key] for key in ("qw", "qx", "qy", "qz"))
-                gyroscope = tuple(reading[key] for key in ("gx", "gy", "gz"))
-            except KeyError:
-                return None
-        else:
-            imu = state.imu.get(self._hardware_id)
-            if imu is None:
-                return None
-            quaternion, gyroscope = imu.quaternion, imu.gyroscope
+        if reading is None:
+            return None
+        try:
+            quaternion = tuple(reading[key] for key in ("qw", "qx", "qy", "qz"))
+            gyroscope = tuple(reading[key] for key in ("gx", "gy", "gz"))
+        except KeyError:
+            return None
         gyro = np.asarray(gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(quaternion)
 

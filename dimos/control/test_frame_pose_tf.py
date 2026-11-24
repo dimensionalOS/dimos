@@ -81,7 +81,6 @@ def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate(
     published: list[TFMessage] = []
     loop = TickLoop(
         tick_rate=100.0,
-        hardware={},
         hardware_lock=threading.Lock(),
         tasks={"ik": _PoseTask()},
         task_lock=threading.Lock(),

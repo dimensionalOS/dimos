@@ -80,7 +80,6 @@ def test_published_path_arms_the_follower_through_the_tick_loop(coordinator):
     # A real tick, not a hand-called compute(): the loop skips inactive tasks.
     TickLoop(
         tick_rate=100.0,
-        hardware=coord._hardware,
         hardware_lock=coord._hardware_lock,
         tasks=coord._tasks,
         task_lock=coord._task_lock,
