@@ -442,18 +442,27 @@ class ControlCoordinator(Module):
             raise ValueError(
                 "robot ports require exactly one matching connection declaration per source"
             )
-        bound = {f"{robot}_{kind}" for robot, kinds in commands.items() for kind in kinds}
+        outputs = self.outputs
+        reserved = {f"{robot}_{kind}" for robot, kinds in commands.items() for kind in kinds}
+        # Native commands must have an exclusive publisher, not reuse an Out
+        # the coordinator writes to independently of native arbitration.
+        reserved.update(("coordinator_joint_state", "coordinator_joint_command"))
+        if self.config.publish_frame_poses:
+            reserved.add("tf")
+        if self.config.publish_robot_joint_states:
+            reserved.update(f"{hw_id}_joints" for hw_id in self._hardware)
+        bound = {id(outputs[name]) for name in reserved if name in outputs}
         group_ports: dict[str, dict[str, Out[Any]]] = {}
         for robot in robots:
             groups = group_ports[robot] = {}
             for name in declarations[robot].group_commands:
                 interface, output_name = f"{robot}/{name}", f"{robot}_{name}"
-                if output_name in bound:
-                    raise ValueError(f"{interface}: {output_name} is already bound")
-                output_port = self.outputs.get(output_name)
+                output_port = outputs.get(output_name)
                 if output_port is None:
                     raise ValueError(f"{interface}: expected an additional typed Out")
-                bound.add(output_name)
+                if id(output_port) in bound:
+                    raise ValueError(f"{interface}: {output_name} is already bound")
+                bound.add(id(output_port))
                 groups[interface] = output_port
         with self._hardware_lock:
             for robot in robots:

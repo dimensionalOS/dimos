@@ -42,10 +42,12 @@ from dimos.core.stream import In, Out
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.testing.waiting import wait_until
 
 J1, J2, J3 = "mock/joint1", "mock/joint2", "mock/joint3"
 POSE = PoseStamped(ts=17.5, frame_id="tool_base", position=[0.25, 0.5, 0.75])
+JOINT_REF = JointState(name=[J2, J1], position=[0.375, -0.625])
 
 
 class Reference(BaseControlTask):
@@ -75,6 +77,7 @@ class Reference(BaseControlTask):
 class NativeCoordinator(ControlCoordinator):
     mock_pose: Out[PoseStamped]
     mock_other_pose: Out[PoseStamped]
+    mock_joint_ref: Out[JointState]
     mock_position_command: Out[JointState]
     mock_joint_state: In[JointState]
 
@@ -82,6 +85,11 @@ class NativeCoordinator(ControlCoordinator):
     def scenario(self, mode: str) -> int:
         with self._task_lock:
             self._tasks.clear()
+            if mode == "joint_ref":
+                self._tasks["reference"] = Reference(
+                    "reference", 20, GroupCommandOutput("mock/joint_ref", JOINT_REF)
+                )
+                return os.getpid()
             self._tasks.update(
                 low=Reference("low", 0, JointCommandOutput([J2, J3], positions=[0.4, 0.6])),
                 pose=Reference("pose", 20, GroupCommandOutput("mock/pose", POSE)),
@@ -105,25 +113,30 @@ class NativeCoordinator(ControlCoordinator):
 class RecordingConnection(FakeArm):
     pose: In[PoseStamped]
     other_pose: In[PoseStamped]
+    joint_ref: In[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.received: dict[str, tuple[str, str, float, float, float, float]] = {}
+        self.received: dict[str, Any] = {}
 
     @rpc
     def start(self) -> None:
         super().start()
         for port in (self.pose, self.other_pose):
             self.register_disposable(Disposable(port.subscribe(partial(self.record, port.name))))
+        self.register_disposable(Disposable(self.joint_ref.subscribe(self.record_joint_ref)))
 
     def record(self, port: str, msg: PoseStamped) -> None:
         self.received[port] = (type(msg).__name__, msg.frame_id, msg.ts, msg.x, msg.y, msg.z)
+
+    def record_joint_ref(self, msg: JointState) -> None:
+        self.received["joint_ref"] = (type(msg).__name__, msg.name, msg.position)
 
     @rpc
     def evidence(self) -> tuple[int, bool, dict[str, Any], dict[str, float]]:
         return (
             os.getpid(),
-            type(self.pose.transport) is ZenohTransport,
+            type(self.pose.transport) is type(self.joint_ref.transport) is ZenohTransport,
             self.received.copy(),
             self.writes[-1] if self.writes else {},
         )
@@ -140,6 +153,7 @@ def assembly() -> Blueprint:
         group_commands={
             "pose": frozenset({"joint1", "joint2"}),
             "other_pose": frozenset({"joint2", "joint3"}),
+            "joint_ref": frozenset({"joint1", "joint2"}),
         },
         deadman_timeout_s=2.0,
     )
@@ -160,6 +174,7 @@ def assembly() -> Blueprint:
             [
                 (RecordingConnection, "pose", "mock_pose"),
                 (RecordingConnection, "other_pose", "mock_other_pose"),
+                (RecordingConnection, "joint_ref", "mock_joint_ref"),
                 (RecordingConnection, "position_command", "mock_position_command"),
                 (RecordingConnection, "joint_state", "mock_joint_state"),
             ]
@@ -179,6 +194,10 @@ def test_native_command_over_ordinary_worker_remap() -> None:
         cc = system.get_instance(NativeCoordinator)
         receiver = system.get_instance(RecordingConnection)
         wait_until(lambda: J3 in cc.get_joint_positions(), timeout=10)
+        # Receiving the scalar hold proves both workers are processing ticks,
+        # even before any task has authorized a native command.
+        wait_until(lambda: receiver.evidence()[3], timeout=10)
+        assert not receiver.evidence()[2]
         sender_pid = cc.scenario("blocked")
         wait_until(
             lambda: receiver.evidence()[3]
@@ -204,6 +223,10 @@ def test_native_command_over_ordinary_worker_remap() -> None:
             "pose": ("PoseStamped", "tool_base", 17.5, 0.25, 0.5, 0.75)
         }
         wait_until(lambda: receiver.evidence()[3] == {f"{J3}/position": 0.6}, timeout=10)
+
+        cc.scenario("joint_ref")
+        wait_until(lambda: "joint_ref" in receiver.evidence()[2], timeout=10)
+        assert receiver.evidence()[2]["joint_ref"] == ("JointState", [J2, J1], [0.375, -0.625])
     finally:
         system.stop()
 
@@ -319,6 +342,120 @@ def test_group_outputs_cannot_alias() -> None:
     try:
         with pytest.raises(ValueError, match="already bound"):
             cc._connect_robots()
+    finally:
+        cc.stop()
+
+
+@pytest.mark.parametrize("port", ["state", "command"])
+def test_group_cannot_bind_framework_joint_output(port: str) -> None:
+    class CollidingCoordinator(ControlCoordinator):
+        coordinator_joint_joint_state: In[JointState]
+
+    cc = CollidingCoordinator(
+        connections=[
+            ConnectionConfig(
+                source="coordinator_joint",
+                model=fake_arm_model(("joint1",)),
+                group_commands={port: frozenset({"joint1"})},
+            )
+        ]
+    )
+    try:
+        cc.set_transport("coordinator_joint_joint_state", LocalTransport())  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match=f"coordinator_joint_{port} is already bound"):
+            cc.start()
+        assert not cc._connections
+        assert cc._tick_loop is None
+    finally:
+        cc.stop()
+
+
+def test_group_cannot_alias_enabled_tf_output() -> None:
+    class CollidingCoordinator(NativeCoordinator):
+        tf: Out[TFMessage]
+        mock_target: Out[TFMessage]
+
+    cc = CollidingCoordinator(
+        publish_frame_poses=True,
+        connections=[
+            ConnectionConfig(
+                source="mock",
+                model=fake_arm_model(("joint1",)),
+                group_commands={"target": frozenset({"joint1"})},
+            )
+        ],
+    )
+    try:
+        cc.mock_target = cc.tf
+        cc.set_transport("mock_joint_state", LocalTransport())  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="mock_target is already bound"):
+            cc.start()
+    finally:
+        cc.stop()
+
+
+@pytest.mark.parametrize("idle_group", ["none", "mixed", "separate"])
+def test_aggregate_keeps_scalar_state_without_group_feedback(idle_group: str) -> None:
+    class AggregateCoordinator(NativeCoordinator):
+        extra_joint_state: In[JointState]
+        extra_pose: Out[PoseStamped]
+
+    cc_type = AggregateCoordinator if idle_group == "separate" else NativeCoordinator
+    connections = [
+        ConnectionConfig(
+            source="mock",
+            model=fake_arm_model(("joint1", "joint3")),
+            joint_commands={"joint3": (Interface.POSITION,)},
+            group_commands={"pose": frozenset({"joint1"})} if idle_group == "mixed" else {},
+        )
+    ]
+    if idle_group == "separate":
+        connections.append(
+            ConnectionConfig(
+                source="extra",
+                model=fake_arm_model(("joint1",)),
+                group_commands={"pose": frozenset({"joint1"})},
+            )
+        )
+    cc = cc_type(connections=connections)
+    received: list[JointState] = []
+    holds: list[JointState] = []
+    try:
+        cc.set_transport("mock_joint_state", LocalTransport())  # type: ignore[arg-type]
+        if idle_group == "separate":
+            cc.set_transport("extra_joint_state", LocalTransport())  # type: ignore[arg-type]
+        cc._connect_robots()
+        cc.coordinator_joint_state.subscribe(received.append)
+        cc.mock_position_command.subscribe(holds.append)
+        loop = TickLoop(
+            100,
+            {},
+            cc._hardware_lock,
+            cc._tasks,
+            cc._task_lock,
+            cc._joint_to_hardware,
+            connections=cc._connections,
+            publish_callback=cc.coordinator_joint_state.publish,
+            connection_command_callback=cc._publish_command,
+        )
+        loop._stop_event.clear()
+        loop._tick()
+        assert not received
+
+        source = cc._connections["mock"]
+        source.on_message("joint_state", JointState(name=[J3], position=[0.2]))
+        loop._tick()
+        assert [(msg.name, msg.position) for msg in holds] == [([J3], [0.2])]
+        assert [(msg.name, msg.position) for msg in received] == [([J3], [0.2])]
+
+        extra_source = cc._connections.get("extra", source)
+        extra_axis = f"{extra_source.robot}/joint1"
+        extra_source.on_message("joint_state", JointState(name=[extra_axis], position=[0.4]))
+        loop._tick()
+        assert len(received) == 2
+        assert dict(zip(received[-1].name, received[-1].position, strict=True)) == (
+            {J3: 0.2, extra_axis: 0.4} if idle_group != "none" else {J3: 0.2}
+        )
     finally:
         cc.stop()
 

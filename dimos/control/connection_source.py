@@ -315,6 +315,11 @@ class ConnectionSource:
         return [joint.name for joint in self._joints]
 
     @property
+    def scalar_joint_names(self) -> list[str]:
+        """Joint axes declared on the legacy per-joint command ports."""
+        return [joint.name for joint in self._joints if joint.command_keys]
+
+    @property
     def joint_command_interfaces(self) -> dict[str, frozenset[Interface]]:
         """Declared command interfaces, independent of feedback freshness."""
         return {
