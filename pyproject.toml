@@ -339,8 +339,8 @@ sim = [
     "mujoco>=3.3.4",
     # MuJoCo's USD reader: sim2 worlds are composed as USD and loaded straight into MuJoCo (4.0 needs Python 3.11).
     "mujoco>=4.0.0; python_version >= '3.11'",
-    "mujoco-usd>=4.0.0; python_version >= '3.11'",
-    # No linux-aarch64 wheel before usd-core 26.11, and a robot does not run a simulation.
+    # mujoco-usd pins usd-core 25.11, which has no linux-aarch64 wheel; a robot does not run a simulation.
+    "mujoco-usd>=4.0.0; python_version >= '3.11' and (sys_platform != 'linux' or platform_machine != 'aarch64')",
     "usd-core>=23.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
@@ -481,7 +481,7 @@ tests = [
     "roboplan-core==0.8.0",
     "mujoco>=3.3.4",
     "mujoco>=4.0.0; python_version >= '3.11'",
-    "mujoco-usd>=4.0.0; python_version >= '3.11'",
+    "mujoco-usd>=4.0.0; python_version >= '3.11' and (sys_platform != 'linux' or platform_machine != 'aarch64')",
     "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
     "python-can>=4",
