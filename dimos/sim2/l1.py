@@ -78,8 +78,13 @@ class SimL1(SimSensor):
         async for _ in self._world.ticks(1 / config.period):
             if view is None:
                 view = await asyncio.to_thread(self._open)
-                raycaster = view.raycaster(config.geom_groups, mounted_at=site)
                 rider = view.owner(site)
+                # The real L1's voxel map has no returns off the robot it rides (none within 0.3 m of a Go2's base, two recordings).
+                raycaster = view.raycaster(
+                    config.geom_groups,
+                    mounted_at=site,
+                    blind_to_robots=() if rider is None else (rider,),
+                )
                 odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
             assert raycaster is not None
             view.update(self._world)
