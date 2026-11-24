@@ -75,7 +75,7 @@ def mcp_shared(mcp_url: str, mcp_port: int) -> Iterator[ModuleCoordinator]:
     bp = autoconnect(
         StressTestModule.blueprint(),
         McpServer.blueprint(port=mcp_port),
-    )
+    ).solidify()
     coord = ModuleCoordinator.build(bp)
     ready = McpAdapter(url=mcp_url).wait_for_ready()
     yield coord
@@ -337,14 +337,18 @@ class TestDaemonMCPRecovery:
         global_config.update(viewer="none", n_workers=1)
 
         # First run
-        bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+        bp1 = autoconnect(
+            StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+        ).solidify()
         coord1 = ModuleCoordinator.build(bp1)
         assert adapter.wait_for_ready(), "First MCP start failed"
         coord1.stop()
         assert adapter.wait_for_down(), "MCP didn't stop"
 
         # Second run -- should work without port conflicts
-        bp2 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+        bp2 = autoconnect(
+            StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+        ).solidify()
         coord2 = ModuleCoordinator.build(bp2)
         assert adapter.wait_for_ready(), "Second MCP start failed (port conflict?)"
         coord2.stop()
@@ -385,7 +389,9 @@ class TestMCPRapidRestart:
         global_config.update(viewer="none", n_workers=1)
 
         for cycle in range(3):
-            bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+            bp = autoconnect(
+                StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+            ).solidify()
             coord = ModuleCoordinator.build(bp)
             assert adapter.wait_for_ready(timeout=15), f"MCP failed to start on cycle {cycle}"
 
@@ -402,7 +408,9 @@ class TestMCPNoServer:
     def test_mcp_dead_after_stop(self, adapter: McpAdapter, mcp_port: int) -> None:
         """After coordinator.stop(), MCP should stop responding."""
         global_config.update(viewer="none", n_workers=1)
-        bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
+        bp = autoconnect(
+            StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port)
+        ).solidify()
         coord = ModuleCoordinator.build(bp)
         assert adapter.wait_for_ready(), "MCP server did not start"
 

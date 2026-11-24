@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
 import math
 from pathlib import Path
 import subprocess
@@ -160,6 +161,16 @@ class PiperConnection(ConnectionModule):
 
     position_command: In[JointState]
     joint_state: Out[JointState]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        try:
+            import_module("piper_sdk")
+        except ImportError as exc:
+            raise ImportError(
+                f"Piper vendor SDK unavailable: {exc}. "
+                "Install piper-sdk via the control extra: `uv sync --extra control`."
+            ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

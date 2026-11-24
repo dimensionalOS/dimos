@@ -37,7 +37,8 @@ def to_svg(
     - Blueprint -> blueprint/dot.render_svg
 
     Args:
-        target: Either a ModuleInfo (single module) or Blueprint (blueprint graph).
+        target: Either a ModuleInfo (single module) or a blueprint (blueprint graph).
+            A Blueprint is drawn with its default choices.
         output_path: Path to write the SVG file.
         layout: Layout algorithms (only used for blueprints).
     """
@@ -45,6 +46,8 @@ def to_svg(
     from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
 
+    if isinstance(target, Blueprint):
+        target = target.solidify()
     if isinstance(target, ModuleInfo):
         from dimos.core.introspection.module import dot as module_dot
 
@@ -54,4 +57,4 @@ def to_svg(
 
         blueprint_dot.render_svg(target.solidify(), output_path, layout=layout)
     else:
-        raise TypeError(f"Expected ModuleInfo or Blueprint, got {type(target).__name__}")
+        raise TypeError(f"Expected ModuleInfo, Blueprint, got {type(target).__name__}")

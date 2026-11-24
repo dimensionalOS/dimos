@@ -14,8 +14,12 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
+from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
 
 
@@ -39,6 +43,29 @@ def test_resolve_string_module_or_exit():
     assert bp is not None
 
 
+@pytest.mark.parametrize("lookup", [get_by_name, get_by_name_or_exit])
+def test_exported_composition_stays_unresolved(lookup) -> None:
+    blueprint = lookup("demo-capabilities")
+
+    assert isinstance(blueprint, Blueprint)
+    assert {atom.module.__name__ for atom in blueprint.solidify().blueprints} == {
+        "DemoSensors",
+        "DemoRobotActions",
+        "DemoMonitoring",
+        "McpServer",
+        "Agent",
+    }
+
+
 def test_resolve_unknown_name():
     with pytest.raises(ValueError, match="Unknown blueprint or module"):
         get_by_name("nonexistent-blueprint-xyz")
+
+
+@pytest.mark.parametrize("lookup", [get_by_name, get_by_name_or_exit])
+def test_registry_preserves_unresolved_choices(monkeypatch: pytest.MonkeyPatch, lookup) -> None:
+    mapping = autoconnect(ChoiceAtom(name="Required", choices={"empty": Blueprint(blueprints=())}))
+    monkeypatch.setattr(sys.modules[__name__], "mapping", mapping, raising=False)
+    monkeypatch.setitem(all_blueprints, "test-mapping", f"{__name__}:mapping")
+
+    assert lookup("test-mapping") is mapping

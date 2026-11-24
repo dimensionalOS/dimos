@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
@@ -83,6 +83,8 @@ def _check_blueprint(blueprint_name: str) -> None:
     assert isinstance(blueprint, Blueprint), (
         f"Blueprint '{blueprint_name}' is not a Blueprint, got {type(blueprint)}"
     )
+    # Deferred operations and default choices are only validated on solidification.
+    autoconnect(blueprint).solidify()
 
 
 def test_old_self_hosted_blueprints() -> None:

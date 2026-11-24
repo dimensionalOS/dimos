@@ -151,6 +151,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
             its wrist.
     """
     dof, robot_type = XARM_ARMS[arm]
+    control: Blueprint
     if simulated and arm != "xarm7":
         raise ValueError(f"only the xArm7 has a simulated grasping scene, not the {arm}")
     if simulated:

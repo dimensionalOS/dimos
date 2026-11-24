@@ -316,7 +316,7 @@ blueprint.remappings([
 
 You can use namespaces to control several robot instances.
 
-Use `.namespace(prefix, expose=...)` on a blueprint to isolate its modules
+Use `.namespace(prefix, shared=...)` on a blueprint to isolate its modules
 under a name prefix so several copies can coexist. Because blueprints are plain
 Python values, a variable-size (and mixed-type) fleet is just a loop:
 
@@ -340,7 +340,7 @@ robot_ips = ["10.0.0.1", "10.0.0.2"]
 fleet = autoconnect(
     AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
     *[
-        Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+        Sensor.blueprint(ip=ip).namespace(f"robot{i}", shared={"pointcloud"})
         for i, ip in enumerate(robot_ips)
     ],
 )
@@ -350,12 +350,12 @@ Inside a namespace everything is prefixed:
 
 * instance names (`robot0/go2connection`),
 * stream names and topics (`/robot0/lidar`),
-* TF frames (`frame_id_prefix`, unless you set one yourself),
-* and RPC topics (`robot0/go2connection/move`).
+* TF frames (`frame_id_prefix` comes from the instance name, ahead of any you set yourself),
+* and the module's name within its run-scoped RPC address (`robot0/go2connection`).
 
 Prefixed streams only connect within their namespace.
 
-Stream names listed in `expose` are left unprefixed, so they connect globally.
+Stream names listed in `shared` are left unprefixed, so they connect globally.
 That is how data crosses the boundary.
 
 In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
@@ -390,6 +390,31 @@ This works in simulation too: adding `--simulation` starts one MuJoCo instance p
 ```bash
 ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
 ```
+
+## Sharing a transport bus
+
+Each coordinator gives its modules distinct RPC addresses. Two stacks can deploy the same
+module class or instance name and call it independently. By default, `dimos run` claims the
+shared `Coordinator` service before deploying modules. To run a companion stack on the same
+bus, set `serve_coordinator_rpc=False` on that stack. `dimos shell` attaches to the stack
+that serves `Coordinator`.
+
+A stack started from Python with `ModuleCoordinator.build(...).loop()` claims the service in
+`loop()`, after its modules have started and published on the shared stream topics. If the
+service is taken, `loop()` stops the modules and raises `CoordinatorAlreadyRunningError`. Pass
+`reserve_rpc_name=CoordinatorRPC.NAME` to `build()` to be rejected before any module starts,
+as with `dimos run`.
+
+Launches sharing a local runtime directory take turns claiming the service. Across hosts,
+the check uses bus discovery, so simultaneous launches can both miss the other's claim.
+
+An explicit `rpc_name` in a blueprint is an alias within its run. For a manual remote
+reference, use the provider's resolved wire address from its `Coordinator/list_modules`
+descriptor (`rpc_name`) or its local proxy (`remote_name`). Hosted fragments use the
+run and host namespace agreed on by the fragment compiler.
+
+Stream topics are shared by default so companion stacks can exchange camera images, commands,
+and other data. Use blueprint namespaces or remappings to separate selected topics.
 
 ## Running across machines
 

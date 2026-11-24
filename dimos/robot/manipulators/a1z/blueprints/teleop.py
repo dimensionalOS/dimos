@@ -150,7 +150,10 @@ a1z_teleop = _teleop(A1ZTwistCoordinator, _eef_twist_task(), "right_gripper_comm
 )
 # From the keyboard, in a pygame window.
 a1z_keyboard_teleop = _teleop(
-    A1ZKeyboardCoordinator, _eef_twist_task(), "gripper_command", KeyboardTeleopModule.blueprint()
+    A1ZKeyboardCoordinator,
+    _eef_twist_task(),
+    "gripper_command",
+    KeyboardTeleopModule.blueprint(),
 ).remappings(_remaps(A1ZKeyboardCoordinator))
 # From a VR headset's left controller; teleop_webxr_a1z adds the WebXR module.
 coordinator_teleop_a1z = _teleop(

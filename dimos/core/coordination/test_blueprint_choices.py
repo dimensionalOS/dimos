@@ -297,8 +297,8 @@ def test_choices_can_be_configured_before_selection() -> None:
 def test_operations_are_validated_where_they_are_called() -> None:
     with pytest.raises(ValueError, match="hosted.*at least one module"):
         autoconnect(ChoiceAtom(name="Clearing", choices={"off": autoconnect()})).hosted()
-    with pytest.raises(ValueError, match="expose names.*typo"):
-        autoconnect(VisModule.blueprint(), _clearing()).namespace("robot", expose=["typo"])
+    with pytest.raises(ValueError, match="shared names.*typo"):
+        autoconnect(VisModule.blueprint(), _clearing()).namespace("robot", shared=["typo"])
     with pytest.raises(ValueError, match="RaytracerModule has multiple instances"):
         autoconnect(
             RaytracerModule.blueprint(),
@@ -310,8 +310,8 @@ def test_operations_are_validated_where_they_are_called() -> None:
         ).remappings([(RaytracerModule, "points", "cleared")])
 
 
-def test_expose_may_name_a_stream_that_only_an_option_has() -> None:
-    mapping = autoconnect(_clearing()).namespace("robot", expose=["points"])
+def test_shared_may_name_a_stream_that_only_an_option_has() -> None:
+    mapping = autoconnect(_clearing()).namespace("robot", shared=["points"])
 
     assert mapping.solidify().remapping_map == {}
 
@@ -327,7 +327,7 @@ def test_arguments_are_snapshotted_and_reusable(clearing: ChoiceAtom) -> None:
         autoconnect(VisModule.blueprint(), clearing)
         .transports(transports)
         .remappings(remappings)
-        .namespace("robot", expose=iter(["cleared"]))
+        .namespace("robot", shared=iter(["cleared"]))
         .hosted(tags=tags, minimum=minimum)
     )
     first = mapping.solidify()

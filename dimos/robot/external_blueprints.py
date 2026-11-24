@@ -151,7 +151,7 @@ def list_external_blueprints() -> list[ExternalBlueprintEntry]:
 
 
 def resolve_external_blueprint_by_name(name: str) -> Blueprint:
-    """Resolve a fully-qualified external blueprint name to a Blueprint."""
+    """Load an external blueprint without resolving its choices."""
 
     namespace, sep, local_name = name.partition(".")
     if not sep:

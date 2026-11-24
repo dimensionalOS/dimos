@@ -24,16 +24,17 @@ import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.stream import Stream, Transport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 
 
-class _GoalTransport(Transport[PointStamped]):
+class _GoalTransport(Transport[PoseStamped]):
     """Keeps every goal message the wrapper sends."""
 
     def __init__(self) -> None:
-        self.sent: list[PointStamped] = []
+        self.sent: list[PoseStamped] = []
 
     def start(self) -> None:
         pass
@@ -41,20 +42,20 @@ class _GoalTransport(Transport[PointStamped]):
     def stop(self) -> None:
         pass
 
-    def broadcast(self, selfstream: Stream[PointStamped] | None, value: PointStamped) -> None:
+    def broadcast(self, selfstream: Stream[PoseStamped] | None, value: PoseStamped) -> None:
         self.sent.append(value)
 
     def subscribe(
         self,
-        callback: Callable[[PointStamped], object],
-        selfstream: Stream[PointStamped] | None = None,
+        callback: Callable[[PoseStamped], object],
+        selfstream: Stream[PoseStamped] | None = None,
     ) -> Callable[[], None]:
         return lambda: None
 
 
 class _Rig(NamedTuple):
     module: MLSPlannerNative
-    sent: list[PointStamped]
+    sent: list[PoseStamped]
 
 
 @pytest.fixture()
@@ -72,9 +73,10 @@ def test_the_planner_exposes_navigation_as_plain_rpcs(rig: _Rig) -> None:
 
 
 def test_go_to_takes_a_pose_stamped() -> None:
-    (param,) = extract_rpc_info(MLSPlannerNative.go_to).params
+    pose, face_heading = extract_rpc_info(MLSPlannerNative.go_to).params
 
-    assert (param.name, param.annotation) == ("pose", PoseStamped)
+    assert (pose.name, pose.annotation) == ("pose", PoseStamped)
+    assert face_heading.name == "face_heading"
 
 
 def test_go_to_sends_the_pose_position_under_a_new_stamp_and_returns_it(rig: _Rig) -> None:
@@ -82,11 +84,29 @@ def test_go_to_sends_the_pose_position_under_a_new_stamp_and_returns_it(rig: _Ri
 
     stamp = rig.module.go_to(pose)
 
-    (point,) = rig.sent
-    assert (point.x, point.y, point.z) == pytest.approx((4.0, 2.0, 1.2))
-    assert point.frame_id == "map"
-    assert point.ts != pose.ts
-    assert [stamp.sec, stamp.nsec] == point.ros_timestamp()
+    (goal,) = rig.sent
+    assert (goal.x, goal.y, goal.z) == pytest.approx((4.0, 2.0, 1.2))
+    assert goal.frame_id == "map"
+    assert goal.ts != pose.ts
+    assert [stamp.sec, stamp.nsec] == goal.ros_timestamp()
+
+
+def test_go_to_sends_the_pose_heading_when_asked(rig: _Rig) -> None:
+    facing = Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(90.0)))
+
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0), orientation=facing), face_heading=True)
+
+    (goal,) = rig.sent
+    assert goal.yaw == pytest.approx(math.radians(90.0))
+
+
+def test_go_to_sends_no_heading_by_default(rig: _Rig) -> None:
+    facing = Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(90.0)))
+
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0), orientation=facing))
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0)))
+
+    assert [goal.orientation.is_zero() for goal in rig.sent] == [True, True]
 
 
 def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
@@ -99,6 +119,13 @@ def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
 
 def test_stop_navigation_sends_the_cancel_with_no_go_to_under_way(rig: _Rig) -> None:
     rig.module.stop_navigation()
+
+    (cancel,) = rig.sent
+    assert all(math.isnan(v) for v in (cancel.x, cancel.y, cancel.z))
+
+
+def test_stopping_the_planner_cancels_the_goal(rig: _Rig) -> None:
+    rig.module.stop()
 
     (cancel,) = rig.sent
     assert all(math.isnan(v) for v in (cancel.x, cancel.y, cancel.z))

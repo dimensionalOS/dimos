@@ -98,7 +98,9 @@ def _collection_components(
     button_map: dict[EpisodeCommand, str] = (
         {"toggle": "B", "discard": "A"} if headset_view else {"toggle": "B", "discard": "Y"}
     )
-    producers = autoconnect(teleop, *real_camera, *bench)
+    # The profile below is built from the coordinator and camera atoms, so the stack is
+    # resolved here. That fixes any choice inside `teleop` to its default.
+    producers = autoconnect(teleop, *real_camera, *bench).solidify()
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )

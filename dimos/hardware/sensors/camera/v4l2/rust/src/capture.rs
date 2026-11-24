@@ -52,6 +52,7 @@ mod ffi {
             width: u32,
             height: u32,
             fourcc: u32,
+            fps: f64,
             hardware: c_int,
             jpeg_quality: c_int,
             error: *mut c_char,
@@ -94,14 +95,16 @@ fn error_text(buffer: &[u8]) -> String {
 }
 
 impl Capture {
-    /// Opens and starts streaming. With `hardware`, frames come back JPEG-encoded at `jpeg_quality` when the
-    /// Jetson encoder is available; otherwise (or without it) they come back raw.
+    /// Opens and starts streaming at `fps` frames per second, or the driver's default rate when `fps` is 0.
+    /// With `hardware`, frames come back JPEG-encoded at `jpeg_quality` when the Jetson encoder is available;
+    /// otherwise (or without it) they come back raw.
     #[cfg(v4l2_capture)]
     pub fn open(
         device: &str,
         width: u32,
         height: u32,
         fourcc: u32,
+        fps: f64,
         hardware: bool,
         jpeg_quality: i32,
     ) -> Result<Self, String> {
@@ -114,6 +117,7 @@ impl Capture {
                 width,
                 height,
                 fourcc,
+                fps,
                 hardware as i32,
                 jpeg_quality,
                 error.as_mut_ptr().cast(),
@@ -127,7 +131,7 @@ impl Capture {
     }
 
     #[cfg(not(v4l2_capture))]
-    pub fn open(_: &str, _: u32, _: u32, _: u32, _: bool, _: i32) -> Result<Self, String> {
+    pub fn open(_: &str, _: u32, _: u32, _: u32, _: f64, _: bool, _: i32) -> Result<Self, String> {
         Err("V4L2 capture needs Linux".into())
     }
 
