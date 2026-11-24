@@ -52,7 +52,9 @@ class Cache:
     def forget_name(self, name: str) -> None:
         """Every introspection of one blueprint or module (its blueprint, config, source...), from any checkout."""
         self.entries = {
-            key: entry for key, entry in self.entries.items() if key.split(" ")[1:2] != [name]
+            key: entry
+            for key, entry in self.entries.items()
+            if key.split("\t")[0].split(" ")[1:2] != [name]
         }
 
     async def get(self, key: str, ttl: float, compute: Callable[[], Awaitable[Any]]) -> Any:
