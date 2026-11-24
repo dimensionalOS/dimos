@@ -41,6 +41,10 @@ pub struct Truth {
 
 pub struct MujocoSim {
     stream: TcpStream,
+    /// the motor bus's timing: joints from the newest reply before the previous send, the IMU the newest (default on)
+    pub reply_lag: bool,
+    lag: crate::hardware::bus::ReplyLag<RobotState>,
+    last: Option<RobotState>,
 }
 
 impl MujocoSim {
@@ -48,7 +52,12 @@ impl MujocoSim {
         let stream =
             TcpStream::connect(addr).with_context(|| format!("connecting to the sim at {addr}"))?;
         stream.set_nodelay(true)?;
-        Ok(MujocoSim { stream })
+        Ok(MujocoSim {
+            stream,
+            reply_lag: true,
+            lag: Default::default(),
+            last: None,
+        })
     }
 
     fn read_doubles(&mut self) -> Result<Vec<f64>> {
@@ -92,6 +101,9 @@ impl MujocoSim {
         self.stream.write_all(&[3])?;
         self.stream.write_all(&(body.len() as u32).to_le_bytes())?;
         self.stream.write_all(&body)?;
+        // a reset world has no replies in flight
+        self.lag = Default::default();
+        self.last = None;
         self.read_robot_state()
     }
 
@@ -145,6 +157,26 @@ impl Hardware for MujocoSim {
             }
         }
         self.stream.write_all(&buf)?;
-        self.read_robot_state()
+        if !self.reply_lag {
+            return self.read_robot_state();
+        }
+        if let Some(s) = self.last.take() {
+            self.lag.reply(s);
+        }
+        let before = self.lag.send();
+        let now = self.read_robot_state()?;
+        self.last = Some(now.clone());
+        Ok(match before {
+            Some(b) => RobotState {
+                quat: now.quat,
+                gyro: now.gyro,
+                accel: now.accel,
+                imu_rpy_deg: now.imu_rpy_deg,
+                stamp: now.stamp,
+                height_map: now.height_map,
+                ..b
+            },
+            None => now,
+        })
     }
 }

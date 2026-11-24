@@ -70,6 +70,26 @@ pub fn motor_commands(
         .collect()
 }
 
+/// rl_deploy's reply lag: the state a tick computes from is the newest reply received before the previous send.
+#[derive(Debug, Clone, Default)]
+pub struct ReplyLag<T> {
+    newest: Option<T>,
+    at_send: Option<T>,
+}
+
+impl<T: Clone> ReplyLag<T> {
+    /// A reply came in.
+    pub fn reply(&mut self, s: T) {
+        self.newest = Some(s);
+    }
+
+    /// A command goes out: the state the next tick computes from (the newest reply before this send).
+    pub fn send(&mut self) -> Option<T> {
+        self.at_send = self.newest.clone();
+        self.at_send.clone()
+    }
+}
+
 /// A joint-state reply over the last state: a missing joint keeps its last record (rl_deploy 0x167720), else None.
 pub fn robot_state(
     joints: &[m20_ecan::JointState],
@@ -118,6 +138,7 @@ pub struct BusHardware {
     reply_timeout: Duration,
     started: std::time::Instant,
     last: Option<RobotState>,
+    lag: ReplyLag<RobotState>,
 }
 
 #[cfg(target_os = "linux")]
@@ -142,6 +163,7 @@ impl BusHardware {
             reply_timeout: Duration::from_secs_f64(reply_timeout_s),
             started: std::time::Instant::now(),
             last: None,
+            lag: ReplyLag::default(),
         })
     }
 
@@ -272,14 +294,19 @@ impl Hardware for BusHardware {
             cmd
         };
         let commands = motor_commands(cmd, &self.calibration);
+        // the joints rl_deploy's next tick computes from: the newest reply before this send (its IMU the newest)
+        if let Some(s) = self.last.clone() {
+            self.lag.reply(s);
+        }
+        let before = self.lag.send();
         match self.step(Some(&commands))? {
             (Some(s), _) => {
                 self.last = Some(s.clone());
-                self.with_imu(s)
+                self.with_imu(before.unwrap_or(s))
             }
             // the board does not answer a charge-enable frame: the tick runs on the last state, as rl_deploy's does
             (None, true) if self.last.is_some() => {
-                let s = self.last.clone().unwrap_or_default();
+                let s = before.or_else(|| self.last.clone()).unwrap_or_default();
                 self.with_imu(s)
             }
             (None, _) => bail!("no joint-state reply within {:?}", self.reply_timeout),
@@ -290,6 +317,18 @@ impl Hardware for BusHardware {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tick_computes_from_the_newest_reply_before_the_previous_send() {
+        let mut lag = ReplyLag::default();
+        // send 1 (nothing yet), reply 1, send 2, reply 2, send 3 (no reply: a charge-enable frame), send 4
+        assert_eq!(lag.send(), None);
+        lag.reply(1);
+        assert_eq!(lag.send(), Some(1));
+        lag.reply(2);
+        assert_eq!(lag.send(), Some(2));
+        assert_eq!(lag.send(), Some(2));
+    }
 
     #[test]
     fn conversions_round_trip_through_the_vendor_calibration() {

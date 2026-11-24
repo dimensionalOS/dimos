@@ -593,11 +593,28 @@ fn an_undock_no_dock_this_run_set_restores_robot_commander_s_initial_gait() {
             break;
         }
     }
-    for (_, w) in b.k.take_writes() {
+    let writes = b.k.take_writes();
+    for (_, w) in &writes {
         if let Write::Gait(g) = w {
-            gaits.push(g);
+            gaits.push(*g);
         }
     }
     assert_eq!(b.k.status().result, "undocked");
     assert_eq!(gaits.last(), Some(&0x1001), "{gaits:#x?}");
+    // the undock's Close24vPower first, then rl_control restored (mInitRobotStatus_ ours 17)
+    assert!(
+        matches!(writes.first(), Some((_, Write::ChargeEnable(0)))),
+        "{writes:?}"
+    );
+    let restored = writes.iter().rev().find_map(|(_, w)| match w {
+        Write::MotionState(m) => Some(*m),
+        _ => None,
+    });
+    assert_eq!(restored, Some(MOTION_RL_CONTROL));
+    // no start point this run: back off to exit_pile_distance_x (1.3 m) from the docked point
+    let goal = vendor().exit_pile_distance_x as f64;
+    assert!(
+        (out_m - goal).abs() < 0.1,
+        "backed off {out_m:.3} m, goal {goal} m"
+    );
 }

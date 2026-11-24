@@ -41,6 +41,7 @@ use std::path::PathBuf;
 
 use m20_controller::config::{Config, JOINTS};
 use m20_controller::frames::{decode_command, decode_state, encode_command, Mapping};
+use m20_controller::hardware::bus::ReplyLag;
 use m20_controller::hardware::ecan::{encode_charge_enable, Charge};
 use m20_controller::policy::{InlinePolicy, PolicyService, RunnerSet};
 use m20_controller::state_machine::{Controller, State};
@@ -187,23 +188,28 @@ struct Tick {
 fn load(frames: &[Frame], cfg: &Config) -> Vec<Tick> {
     let map = Mapping::new(&cfg.ecan).unwrap();
     let mut out = Vec::new();
-    let (mut state, mut state_t) = (None, None);
-    let mut at_previous_send: (Option<RobotState>, Option<u64>) = (None, None);
+    // the live bus's lag (BusHardware): each send hands the next tick the newest reply before it
+    let mut lag: ReplyLag<(RobotState, u64)> = ReplyLag::default();
+    let mut state: Option<RobotState> = None;
+    let mut computed_from: Option<(RobotState, u64)> = None;
     let mut last_t = 0;
     for (t, d, f) in frames {
         let (t, d, f) = (*t, *d, &f[..]);
         // a gap (between windows): nothing carries over
         if t > last_t + 50_000_000 {
-            (state, state_t) = (None, None);
-            at_previous_send = (None, None);
+            state = None;
+            lag = ReplyLag::default();
+            computed_from = None;
         }
         last_t = t;
         match d {
             Direction::FromBoard if f.get(19) == Some(&0x89) => {
-                state_t = Some(t);
                 // a reply cut to its header keeps the state before it (its time is what rl_deploy stamps)
                 if let Ok(Some(s)) = decode_state(f, cfg.ecan.ethertype, &map) {
                     state = Some(s);
+                }
+                if let Some(s) = state.clone() {
+                    lag.reply((s, t));
                 }
             }
             Direction::FromBoard => {}
@@ -211,10 +217,10 @@ fn load(frames: &[Frame], cfg: &Config) -> Vec<Tick> {
                 out.push(Tick {
                     t,
                     frame: f.to_vec(),
-                    state: at_previous_send.0.clone(),
-                    state_t: at_previous_send.1,
+                    state: computed_from.as_ref().map(|c| c.0.clone()),
+                    state_t: computed_from.as_ref().map(|c| c.1),
                 });
-                at_previous_send = (state.clone(), state_t);
+                computed_from = lag.send();
             }
         }
     }
