@@ -65,6 +65,14 @@ GOALS = [
 ]
 
 
+BATTERY = {
+    "low_battery": 0.70,
+    "full_battery": 0.80,
+    "critical_battery": 0.10,
+    "recover_battery": 0.20,
+}
+
+
 def _checked() -> CheckedDefinition:
     deployed = Deployed(
         modules=frozenset(module.__name__ for module in MODULES),
@@ -79,7 +87,10 @@ def _checked() -> CheckedDefinition:
             "Orchestrator.orchestrator_request": String,
         },
     )
-    return bind(load_and_check(PATROL), deployed)
+    # The walks below are written against these thresholds, not the file's tuning of them.
+    definition = load_and_check(PATROL)
+    constants = {**definition.constants, **BATTERY}
+    return bind(definition.model_copy(update={"constants": constants}), deployed)
 
 
 def test_the_patrol_file_fits_the_planner_the_connection_and_the_relocalizer() -> None:
