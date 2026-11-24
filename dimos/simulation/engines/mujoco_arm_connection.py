@@ -130,10 +130,11 @@ class MujocoArmConnection(ConnectionModule):
         if shm is None:
             raise ConnectionError(f"the MuJoCo sim of {scene} never reported its joints")
         grippers = 0 if self._gripper is None else 1
-        if shm.arm_joints() != len(self._arm) or shm.num_joints() != len(self._arm) + grippers:
+        arm_joints, num_joints = shm.arm_joints(), shm.num_joints()
+        if arm_joints != len(self._arm) or num_joints != len(self._arm) + grippers:
             shm.cleanup()
             raise ValueError(
-                f"the sim of {scene} has {shm.arm_joints()} arm joints of {shm.num_joints()}; "
+                f"the sim of {scene} has {arm_joints} arm joints of {num_joints}; "
                 f"the model has {len(self._arm)} arm joints and {grippers} gripper"
             )
         low, high = shm.read_gripper_range()

@@ -93,3 +93,18 @@ def test_a_position_command_reaches_the_sim_and_its_joints_come_back(sim, rig):
     assert reading.name == ["arm/joint1", "arm/joint2", "arm/drive_joint"]
     assert reading.position == pytest.approx([0.3, -0.2, 0.6])
     assert reading.velocity == pytest.approx([0.1, 0.2, 0.0])
+
+
+def test_a_scene_with_other_joint_counts_is_refused(sim, mocker):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    module = MujocoArmConnection(
+        model=fake_arm_model(("joint1", "joint2", "joint3", "drive_joint")),
+        gripper_joint="drive_joint",
+    )
+    module._mujoco_sim = SimpleNamespace(scene_path=lambda: "/fake/scene.xml")
+    try:
+        with pytest.raises(ValueError, match="has 2 arm joints of 3; the model has 3 arm joints"):
+            module.connect()
+    finally:
+        module.stop()
