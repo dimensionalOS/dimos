@@ -260,42 +260,50 @@ def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000,
     }
 
 
-_SURFACE_SETTINGS = dict(reach=1.0, thickness=0.03, cut_above=0.01, cut_below=0.02)
+_SURFACE_SETTINGS = dict(margin=0.05, thickness=0.03, cut_above=0.01, cut_below=0.02)
 
 
-def test_table_box_tops_out_on_the_surface_round_the_whole_reach():
-    base = np.zeros(3)
-    (box_pose, box_size), (cut_pose, cut_size) = surface_boxes(
-        _surface(), [base], **_SURFACE_SETTINGS
-    )
+def test_table_box_is_the_measured_outline_a_margin_wider():
+    (box_pose, box_size), (cut_pose, cut_size) = surface_boxes(_surface(), **_SURFACE_SETTINGS)
 
-    # Centred under the base, not on the measured table: its edges are never used.
-    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
-    assert box_size == pytest.approx([2.0, 2.0, 0.03])
+    # On the measured table, not round the arm's base.
+    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.5, 0.0])
+    assert box_size == pytest.approx([0.9, 0.6, 0.03])
     assert box_pose.position.z + box_size[2] / 2 == pytest.approx(0.08)
-    assert cut_size == pytest.approx([2.0, 2.0, 0.03])
+    assert cut_size == pytest.approx([0.9, 0.6, 0.03])
     assert cut_pose.position.z + cut_size[2] / 2 == pytest.approx(0.09)
     assert cut_pose.position.z - cut_size[2] / 2 == pytest.approx(0.06)
     assert pose_to_matrix(box_pose)[:3, 2] == pytest.approx([0.0, 0.0, 1.0])
 
 
-def test_two_arms_share_one_table_round_both():
-    bases = [np.array([0.0, -0.3, 0.0]), np.array([0.0, 0.3, 0.0])]
-    (box_pose, box_size), _ = surface_boxes(_surface(), bases, **_SURFACE_SETTINGS)
+def test_table_box_turns_with_the_table():
+    (box_pose, box_size), _ = surface_boxes(_surface(yaw_deg=30.0), **_SURFACE_SETTINGS)
 
-    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
-    assert box_size[:2] == pytest.approx([2.0, 2.6])
+    long_side = pose_to_matrix(box_pose)[:3, 0]
+    assert long_side == pytest.approx([np.cos(np.radians(30)), np.sin(np.radians(30)), 0.0])
+    assert box_size[:2] == pytest.approx([0.9, 0.6])
+
+
+def test_tilted_table_box_lies_in_its_plane():
+    normal = np.array([0.0, np.sin(np.radians(10)), np.cos(np.radians(10))])
+    surface = {**_surface(), "normal": list(normal)}
+
+    (box_pose, _), _ = surface_boxes(surface, **_SURFACE_SETTINGS)
+
+    rotation = pose_to_matrix(box_pose)[:3, :3]
+    assert rotation[:, 2] == pytest.approx(normal)
+    assert float(rotation[:, 0] @ normal) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_the_cut_takes_the_surface_cells_and_keeps_what_is_over_and_under_it():
-    _, (cut_pose, cut_size) = surface_boxes(_surface(), [np.zeros(3)], **_SURFACE_SETTINGS)
+    _, (cut_pose, cut_size) = surface_boxes(_surface(), **_SURFACE_SETTINGS)
     cells = np.array(
         [
             [0.5, 0.0, 0.085],  # a 1 cm cell of the table top, its centre half a cell up
             [0.5, 0.0, 0.065],  # the table top's cell, its centre half a cell down
             [0.3, 0.2, -0.4],  # under the table: a lower step, mapped behind the box
             [0.5, 0.0, 0.105],  # a block's cell 2.5 cm over the table
-            [1.2, 0.0, 0.085],  # past the arm's reach
+            [1.2, 0.0, 0.085],  # past the table's edge
         ]
     )
 
@@ -313,19 +321,16 @@ def test_add_surface_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, moc
     )
     localizer._obstacles.add_obstacle.return_value = SURFACE
     localizer._box_filter = mocker.Mock()
-    localizer.rig.tf.get.return_value = Transform(
-        translation=Vector3(0.0, 0.0, 0.0), frame_id="world", child_frame_id="link_base"
-    )
 
     answer = localizer.add_surface()
 
-    assert answer.startswith("surface added: top at z=0.080 m in world, 2.00 x 2.00 m")
+    assert answer.startswith("surface added: top at z=0.080 m in world, 0.90 x 0.60 m")
     name, pose, shape, size, mesh, touch = localizer._obstacles.add_obstacle.call_args.args
     assert (name, shape, mesh, touch) == (SURFACE, "box", None, ["link_base"])
-    assert size == pytest.approx([2.0, 2.0, 0.03])
+    assert size == pytest.approx([0.9, 0.6, 0.03])
     cut_name, _, cut_size = localizer._box_filter.set_box.call_args.args
     assert cut_name == SURFACE
-    assert cut_size.to_tuple() == pytest.approx((2.0, 2.0, 0.03))
+    assert cut_size.to_tuple() == pytest.approx((0.9, 0.6, 0.03))
     # A second call replaces the table rather than stacking another.
     localizer._obstacles.remove_obstacle.assert_called_once_with(SURFACE)
 

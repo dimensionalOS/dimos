@@ -203,9 +203,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
         PickAndPlaceModule.blueprint(planning_frame="world", robot=model),
         *_sensing(simulated),
         # Finds the objects pick_object takes by id, and the dense scene its contact check needs.
-        ManipulationLocalize.blueprint(
-            world_frame="world", surface_reach_m=XARM_GRASP_WORKSPACE_RADIUS
-        ),
+        ManipulationLocalize.blueprint(world_frame="world"),
         manipulation_mapping(
             # Filter only the arm; gripper returns may remain in the map.
             self_filter_model=self_filter_model,

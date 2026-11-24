@@ -27,7 +27,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.manipulation.manipulation_spec import PlanningObstaclesSpec
 from dimos.manipulation.planning.spec.models import WORK_SURFACE_OBSTACLE
-from dimos.manipulation.surfaces import MAX_TILT_DEG, find_surfaces, in_outline, plane_axes
+from dimos.manipulation.surfaces import MAX_TILT_DEG, find_surfaces, in_outline
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -59,11 +59,11 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     surface_frames: int = 10
     # find_surface: surfaces parallel to the reporting frame's xy plane; False fits tilt
     surface_parallel_to_frame: bool = True
-    # add_surface, metres: the box spans surface_reach_m round the arm's base,
-    # surface_thickness_m under the surface. The voxel map is cut from surface_cut_above_m
+    # add_surface, metres: the box is the surface's measured outline, surface_margin_m
+    # wider on every side, surface_thickness_m under the surface. The voxel map is cut from surface_cut_above_m
     # over it (half a cell plus depth noise: 0.01 for 1 cm cells, about 0.018 for 2.5 cm)
     # to surface_cut_below_m under it: the surface's own cells; what lies below stays.
-    surface_reach_m: float = 1.0
+    surface_margin_m: float = 0.05
     surface_thickness_m: float = 0.03
     surface_cut_above_m: float = 0.01
     surface_cut_below_m: float = 0.02
@@ -284,8 +284,9 @@ class ManipulationLocalize(PerceptionLocalize):
 
         The surface is the one the camera looks at in the newest frame, else the widest
         with objects on it; ``height`` picks one from ``find_surface`` instead. The box
-        spans the arm's reach and the surface's own voxel map cells are cut; what lies
-        below stays mapped, behind the box. Calling it again replaces it.
+        is the outline the camera saw, a margin wider, and the surface's own voxel map
+        cells are cut; what lies below or past its edges stays mapped. Look over the
+        whole surface first: a part not yet seen is left out. Calling it again replaces it.
         """
         if not self._ready.is_set():
             return (
@@ -303,15 +304,10 @@ class ManipulationLocalize(PerceptionLocalize):
         )
         if platform is None:
             return f"no surface at {height} m: the surfaces are at {heights}"
-        groups = self._obstacles.list_planning_groups()
-        bases = sorted({group.base_frame for group in groups})
-        origins = [self._origin(base) for base in bases]
-        if any(origin is None for origin in origins):
-            return f"no surface: no transform from {self.rig.world_frame} to the arm's base {bases}"
+        bases = sorted({group.base_frame for group in self._obstacles.list_planning_groups()})
         (box_pose, box_size), (cut_pose, cut_size) = surface_boxes(
             platform,
-            [origin for origin in origins if origin is not None],
-            reach=self.config.surface_reach_m,
+            margin=self.config.surface_margin_m,
             thickness=self.config.surface_thickness_m,
             cut_above=self.config.surface_cut_above_m,
             cut_below=self.config.surface_cut_below_m,
@@ -323,7 +319,8 @@ class ManipulationLocalize(PerceptionLocalize):
         self._box_filter.set_box(SURFACE, cut_pose, Vector3(*cut_size))
         return (
             f"surface added: top at z={platform['height']:.3f} m in {self.rig.world_frame}, "
-            f"{box_size[0]:.2f} x {box_size[1]:.2f} m round the arm's base; its own voxel "
+            f"{box_size[0]:.2f} x {box_size[1]:.2f} m, its outline {self.config.surface_margin_m:.2f} m "
+            f"wider on each side; its own voxel "
             f"map cells are cut. Surfaces seen: {heights}; for another, "
             f"call add_surface(height=...)"
         )
@@ -346,14 +343,6 @@ class ManipulationLocalize(PerceptionLocalize):
                 forward = pose.orientation.rotate_vector(Vector3(0.0, 0.0, 1.0))
                 return pose.position.to_numpy(), forward.to_numpy()
         return None
-
-    def _origin(self, frame: str) -> NDArray[np.float64] | None:
-        """A frame's origin in the world frame now; None while tf lacks it."""
-        if frame == self.rig.world_frame:
-            return np.zeros(3)
-        _, head = self.index.get_time_range()
-        transform = self.rig.tf.get(self.rig.world_frame, frame, head, TF_TOLERANCE)
-        return None if transform is None else transform.translation.to_numpy()
 
     def _localize(
         self,
@@ -442,28 +431,27 @@ def _sight_hit(
 
 def surface_boxes(
     surface: dict[str, Any],
-    bases: list[NDArray[np.float64]],
     *,
-    reach: float,
+    margin: float,
     thickness: float,
     cut_above: float,
     cut_below: float,
 ) -> tuple[tuple[Pose, list[float]], tuple[Pose, list[float]]]:
-    """The planner box and the voxel map cut, as (pose, edge lengths): a square ``reach``
-    round every base, the box ``thickness`` under the surface, the cut from ``cut_above``
-    over it to ``cut_below`` under it."""
+    """The planner box and the voxel map cut, as (pose, edge lengths): the surface's
+    outline ``margin`` wider on every side, the box ``thickness`` under the surface, the
+    cut from ``cut_above`` over it to ``cut_below`` under it."""
     normal = np.asarray(surface["normal"], dtype=np.float64)
-    a, b, c, d = surface["coefficients"]
-    # The bases dropped onto the plane, along the normal.
-    feet = [base - normal * (float(np.dot([a, b, c], base)) + d) for base in bases]
-    axes = np.column_stack([*plane_axes(normal), normal])
+    yaw = np.radians(surface["yaw_deg"])
+    # The long side: in the plane, heading yaw seen from above.
+    heading = np.array([np.cos(yaw), np.sin(yaw), 0.0])
+    if abs(normal[2]) > 1e-6:
+        heading[2] = -float(normal[:2] @ heading[:2]) / normal[2]
+    long_side = heading / np.linalg.norm(heading)
+    axes = np.column_stack([long_side, np.cross(normal, long_side), normal])
     qx, qy, qz, qw = Rotation.from_matrix(axes).as_quat()
     orientation = Quaternion(float(qx), float(qy), float(qz), float(qw))
-    # The square in the plane's own axes, round all the feet.
-    in_plane = np.array([axes.T @ foot for foot in feet])
-    low, high = in_plane[:, :2].min(axis=0) - reach, in_plane[:, :2].max(axis=0) + reach
-    middle = axes @ np.array([*(low + high) / 2, in_plane[0, 2]])
-    side = [float(v) for v in high - low]
+    middle = np.asarray(surface["center"], dtype=np.float64)
+    side = [float(length) + 2 * margin for length in surface["size"]]
 
     def placed(offset: float) -> Pose:
         return Pose(position=Vector3(*(middle + normal * offset)), orientation=orientation)

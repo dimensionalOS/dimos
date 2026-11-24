@@ -182,8 +182,9 @@ print(table["height"], table["tilt_deg"], table["size"])
 ```
 
 `add_surface` gives the planner the surface the arm works on, such as the table, as one
-flat box across the arm's reach and cuts its voxel map cells, so grasps reach the real
-surface. Call it once after looking at the surface; `clear_surface` removes it:
+flat box the size of its measured outline, 5 cm wider on each side, and cuts its voxel
+map cells, so grasps reach the real surface. Call it once after looking over the whole
+surface, since a part the camera has not seen is left out; `clear_surface` removes it:
 
 ```python skip
 print(localize.add_surface(start=-30.0, duration=30.0))
