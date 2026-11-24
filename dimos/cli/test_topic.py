@@ -159,6 +159,9 @@ def test_topic_echo_delivers(topic_form: str, type_name: str | None, mocker: Moc
         ("zenoh", "dimos/cmd_vel", ("cmd_vel", None)),
         ("zenoh", "dimos/cmd_vel/geometry_msgs.Twist", ("cmd_vel", Twist)),
         ("zenoh", "dimos/robot0/cmd_vel/geometry_msgs.Twist", ("robot0/cmd_vel", Twist)),
+        ("zenoh", "/*", ("/*", None)),
+        ("zenoh", "/**", ("/**", None)),
+        ("zenoh", "/cmd$*", ("/cmd$*", None)),
         ("lcm", "/cmd_vel", ("/cmd_vel", None)),
         ("lcm", "/cmd_vel#geometry_msgs.Twist", ("/cmd_vel", Twist)),
     ],
@@ -251,4 +254,36 @@ def test_topic_send_reports_invalid_zenoh_key(
         topic_send("cmd?vel", "Twist()")
 
     assert "Invalid topic 'cmd?vel'" in capsys.readouterr().err
+    create_transport.assert_not_called()
+
+
+@pytest.mark.parametrize("wildcard", ["*", "**", "cmd$*"])
+@pytest.mark.parametrize(
+    "topic_template",
+    [
+        "/{}",
+        "/robot/{}/cmd_vel",
+        "/{}#geometry_msgs.Twist",
+        "dimos/{}/geometry_msgs.Twist",
+        "dimos-domains/review/{}/geometry_msgs.Twist",
+    ],
+)
+def test_topic_send_rejects_zenoh_wildcards(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    capsys: pytest.CaptureFixture[str],
+    wildcard: str,
+    topic_template: str,
+) -> None:
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    create_transport = mocker.patch("dimos.cli.topic.make_transport")
+    topic = topic_template.format(wildcard)
+
+    with pytest.raises(typer.Exit) as exc:
+        topic_send(topic, "Twist()")
+
+    assert exc.value.exit_code == 1
+    output = capsys.readouterr()
+    assert f"Cannot send to wildcard topic '{topic}'" in output.err
+    assert "Sent to" not in output.out
     create_transport.assert_not_called()
