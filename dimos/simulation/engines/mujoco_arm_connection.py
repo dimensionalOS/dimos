@@ -50,13 +50,18 @@ class MujocoArmConnectionConfig(ConnectionConfig):
             are the sim's arm joints, in the scene's actuator order.
         gripper_joint: The model joint the scene's gripper actuator drives,
             e.g. "drive_joint", or None for an arm without one. It reads and
-            takes the scene joint's own value (rad for the xArm Gripper).
+            takes the scene joint's own value (rad for the xArm Gripper),
+            times ``gripper_scale``.
+        gripper_scale: Model gripper units per unit of the scene's gripper
+            joint, e.g. 2.0 when the model joint is the gap between two
+            fingers (m) and the scene joint moves one finger (m).
         state_rate_hz: How many times a second the joints are read.
     """
 
     source: str = "arm"
     model: RobotModel
     gripper_joint: str | None = None
+    gripper_scale: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
@@ -158,7 +163,7 @@ class MujocoArmConnection(ConnectionModule):
         if self._gripper is not None:
             gripper = values.get(f"{self._gripper}/{Interface.POSITION}")
             if gripper is not None:
-                shm.write_gripper_command(self._gripper_span - gripper)
+                shm.write_gripper_command(self._gripper_span - gripper / self.config.gripper_scale)
 
     def halt(self) -> None:
         shm = self._shm
@@ -193,7 +198,8 @@ class MujocoArmConnection(ConnectionModule):
                 velocities, efforts = shm.read_velocities(dof), shm.read_efforts(dof)
                 if self._gripper is not None:
                     names.append(self._gripper)
-                    positions.append(self._gripper_span - shm.read_gripper_position())
+                    scene = self._gripper_span - shm.read_gripper_position()
+                    positions.append(scene * self.config.gripper_scale)
                     velocities.append(0.0)
                     efforts.append(0.0)
                 self.joint_state.publish(

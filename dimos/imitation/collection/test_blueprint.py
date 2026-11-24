@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.control.contract.limits import movable_joints
+from dimos.control.contract.keys import SEPARATOR
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
@@ -81,9 +81,9 @@ def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
             for joint in hardware.joints
         ),
         *(
-            joint.name
+            joint if SEPARATOR in joint else f"{connection.source}{SEPARATOR}{joint}"
             for connection in coordinator.kwargs.get("connections", [])
-            for joint in movable_joints(connection.model)
+            for joint in connection.joint_commands
         ),
     ]
     assert joints
@@ -143,18 +143,19 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
 
 
 @pytest.mark.parametrize(
-    "blueprint", [learning_collect_webxr_xarm7.solidify(), learning_collect_webxr_piper.solidify()]
+    ("blueprint", "required"),
+    [
+        (learning_collect_webxr_xarm7.solidify(), ["--xarmconnection.ip", "192.0.2.1"]),
+        (learning_collect_webxr_piper.solidify(), ["--piperconnection.can-port", "can0"]),
+    ],
 )
 @pytest.mark.parametrize("dimension,value", [("width", "640"), ("height", "360")])
 def test_collection_rejects_camera_dimensions_that_disagree_with_saved_schema(
-    blueprint, dimension, value
+    blueprint, required, dimension, value
 ):
     parser = BlueprintConfigParser(blueprint)
     with pytest.raises(BlueprintConfigError, match=dimension):
-        parser.parse(
-            [f"--RealSenseCamera.{dimension}", value],
-            environ={"XARMCONNECTION__IP": "192.0.2.1"},
-        )
+        parser.parse([*required, f"--RealSenseCamera.{dimension}", value], environ={})
 
 
 @pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])

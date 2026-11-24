@@ -130,9 +130,7 @@ A coordinator's `hardware` list names each device's adapter. Device addresses (a
 ```
 
 ```bash skip
-dimos run coordinator-piper --config robot.json
-CONTROLCOORDINATOR__ADDRESSES='{"arm": "can0"}' dimos run coordinator-piper
-dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
+dimos run coordinator-flowbase --config robot.json
 ```
 
 The coordinator settles each component when it starts, once the execution mode is known:
@@ -140,4 +138,4 @@ The coordinator settles each component when it starts, once the execution mode i
 - On hardware, a component takes its address from `addresses`. A component left without one runs the mock adapter when its blueprint allows that (`mock_without_address` in the robot's config helper), and otherwise fails to connect.
 - With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
-The robot config helpers (`piper_hardware`, ...) also take an explicit `address=` for a blueprint of your own. The xArm, YAM, OpenArm, Metal, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select an xArm with `--xarmconnection.ip 192.168.1.185` (the dual xArm blueprint takes `--left_arm.ip` and `--right_arm.ip`, the Piper + xArm6 ones `--xarm_arm.ip`), YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
+The xArm, YAM, OpenArm, Metal, the Piper, the A1Z and the A-750 instead own their CAN or serial port in their connection modules. Select an xArm with `--xarmconnection.ip 192.168.1.185` (the dual xArm blueprint takes `--left_arm.ip` and `--right_arm.ip`, the Piper + xArm6 ones `--xarm_arm.ip` and `--piper_arm.can_port`), YAM with `--openyamconnection.can-port can1`, the Piper with `--piperconnection.can-port can0`, the A1Z with `--a1zconnection.can-port a1zcan`, the A-750 with `--a750connection.device-path /dev/ttyACM0`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
