@@ -25,19 +25,19 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any
 
 import numpy as np
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
 
 DIMSIM_SCENES = DIMOS_PROJECT_ROOT / "misc" / "DimSim" / "scenes"
 INTERACTIVE = "interactive"
 PICKABLE = "pickable"
 TITLE = "title"
 STATE = "state"
-_MESHES = Path(tempfile.gettempdir()) / "dimos-dimsim-meshes"
+# Loaded as scene content, so it is this user's alone: see _private().
+_MESHES = CACHE_DIR / "dimsim-meshes"
 _LFS_POINTER = b"version https://git-lfs.github.com/spec/v1"
 # DimSim's scenes are three.js, y up: this rotation (120 degrees about x+y+z) takes its x, y, z to our y, z, x.
 _Y_UP_TO_Z_UP = (0.5, 0.5, 0.5, 0.5)
@@ -116,7 +116,7 @@ def _mesh_file(pxr: Any, glb: Path, scene: str) -> Path:
             f"{glb} is a Git LFS pointer, not the model; fetch the scene with "
             f'git lfs pull --include="misc/DimSim/scenes/{scene}/**"'
         )
-    out = _MESHES / f"{hashlib.sha256(data).hexdigest()[:16]}.usdc"
+    out = _private(_MESHES) / f"{hashlib.sha256(data).hexdigest()[:16]}.usdc"
     if out.exists():
         return out
     import trimesh
@@ -137,11 +137,22 @@ def _mesh_file(pxr: Any, glb: Path, scene: str) -> Path:
             pxr.Vt.IntArray.FromNumpy(mesh.faces.astype(np.int32).ravel())
         )
         _shell(pxr, part.GetPrim())
-    _MESHES.mkdir(parents=True, exist_ok=True)
     partial = out.with_suffix(f".{os.getpid()}.usdc")
     stage.GetRootLayer().Export(str(partial))
     partial.replace(out)
     return out
+
+
+def _private(directory: Path) -> Path:
+    """The directory, made if missing; refused if another user owns it or anyone else can write to it."""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    held = directory.stat()
+    if held.st_uid != os.getuid() or held.st_mode & 0o022:
+        raise PermissionError(
+            f"{directory} holds meshes loaded into the scene, and someone else could put their own"
+            f" there: it must be yours and writable by you alone (chmod go-w), or removed"
+        )
+    return directory
 
 
 def _shell(pxr: Any, prim: Any) -> None:
