@@ -33,7 +33,6 @@ class SimSensor(HardwareModule):
     @property
     def frame_id(self) -> str:
         """The sensor's frame: its USD's root link, under its namespace."""
-        assert self.config.usd is not None
         return self.usd_frame(self.config.usd.root_link)
 
     def mirror_world(self) -> WorldMirror:

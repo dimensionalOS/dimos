@@ -72,12 +72,11 @@ def compose_world(hardware: Sequence[HardwareSpec]) -> UsdModel:
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
     from dimos.robot.assets.usd_utils.layers import graft_usd
 
-    parts = [(part.get_usd(), part.mounted_on()) for part in hardware]
-    described = [(usd, mounted_on) for usd, mounted_on in parts if usd is not None]
+    described = [(part.get_usd(), part.mounted_on()) for part in hardware]
     roots = [usd for usd, mounted_on in described if mounted_on is None]
     if len(roots) != 1:
         raise ValueError(
-            f"a simulated world needs exactly one unmounted HardwareModule with a USD (the scene "
+            f"a simulated world needs exactly one unmounted HardwareModule (the scene "
             f"everything else mounts onto), and this blueprint has {len(roots)}"
         )
     mounted = [(usd, mounted_on) for usd, mounted_on in described if mounted_on is not None]
