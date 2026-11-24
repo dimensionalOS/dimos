@@ -144,27 +144,32 @@ def test_a_buzzing_rest_fails(rng: np.random.Generator, noise: RestNoise) -> Non
     assert metrics.buzzing and any("buzzes" in reason for reason in metrics.failures)
 
 
+# One step of a 12-bit velocity reading over +-45 rad/s.
+VELOCITY_STEP_DEG_S = math.degrees(90.0 / 4095)
+
+
 @pytest.mark.parametrize(
-    ("rms", "rest_peak", "limit", "buzzing"),
+    ("amplitude_steps", "rest_peak", "buzzing"),
     [
-        (0.43, 0.42, 1.26, False),
-        (2.0, 0.42, 1.26, True),
-        (82.98, 1.26, 3.78, True),
-        (1.1, 0.5, 1.5, False),
-        (0.9, 0.2, 1.0, False),
-        (1.1, 0.2, 1.0, True),
+        (0, 0.42, False),
+        (1, 0.0, False),
+        (2, 0.0, True),
+        (2, 1.26, False),
+        (40, 1.26, True),
     ],
 )
-def test_a_step_buzzes_past_one_deg_s_and_three_times_its_rest_peak(
-    rms: float, rest_peak: float, limit: float, buzzing: bool
+def test_a_step_buzzes_past_one_velocity_step_and_three_times_its_rest_peak(
+    amplitude_steps: int, rest_peak: float, buzzing: bool
 ) -> None:
     kp, kd = 30.0, 2.0 * math.sqrt(30.0 * INERTIA)
-    t, q, _ = simulate(kp, kd)
-    dq = rms * math.sqrt(2.0) * np.sin(2 * math.pi * 10 * t)
+    t, q, dq = simulate(kp, kd)
+    dq = dq + amplitude_steps * VELOCITY_STEP_DEG_S * np.sin(2 * math.pi * 10 * t)
+    dq = VELOCITY_STEP_DEG_S * np.round(dq / VELOCITY_STEP_DEG_S)
     rest = RestNoise(window_s=0.49, band_deg=0.01, speed_peak_deg_s=rest_peak)
     metrics = analyze_step(event(kp, kd), t, q, dq, rest, **ANALYSIS)
-    assert metrics.buzz_rms_deg_s == pytest.approx(rms) and metrics.buzzing is buzzing
-    buzz = f"+2 deg step buzzes at {rms:.2f} deg/s RMS (limit {limit:.2f})"
+    limit = max(VELOCITY_STEP_DEG_S, 3.0 * rest_peak)
+    assert metrics.buzzing is buzzing
+    buzz = f"+2 deg step buzzes at {metrics.buzz_rms_deg_s:.2f} deg/s RMS (limit {limit:.2f})"
     assert metrics.failures == ((buzz,) if buzzing else ())
 
 
