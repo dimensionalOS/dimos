@@ -22,6 +22,7 @@ import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.lights import apply_lights
 from dimos.sim2.mujoco.names import resolved, shorten
 from dimos.sim2.spec import Simulated, SimulatedRobot, validate
 
@@ -113,6 +114,8 @@ def compile_world(
 
     world = mujoco.MjSpec.from_file(str(scene))
     _apply_sliding_friction(world, Path(scene))
+    if Path(scene).suffix.lower() in _USD_SUFFIXES:
+        apply_lights(world, Path(scene))
     shorten(world, ids=owners)
     for robot in robots:
         standing = resolved(
