@@ -228,8 +228,7 @@ pub fn centroid(cloud: &[Point]) -> Point {
 pub fn voxel_grid(cloud: &[Point], leaf: [f32; 3]) -> Vec<Point> {
     let inv = [1.0 / leaf[0], 1.0 / leaf[1], 1.0 / leaf[2]];
     let (lo, hi) = min_max(cloud);
-    // PCL's int64 / int arithmetic as aarch64 runs it: float -> int saturates (NaN -> 0), + and * wrap (an empty cloud's
-    // FLT_MAX / -FLT_MAX bounds pass the check and index nothing)
+    // PCL's ints as aarch64 runs them: float -> int saturates (NaN -> 0), + and * wrap
     let span = |k: usize| (((hi[k] - lo[k]) * inv[k]) as i64).wrapping_add(1);
     // "Leaf size is too small for the input dataset. Integer indices would overflow": the cloud as it is
     if span(0).wrapping_mul(span(1)).wrapping_mul(span(2)) > i32::MAX as i64 {
@@ -438,8 +437,7 @@ mod tests {
 
     #[test]
     fn voxel_grid_wraps_as_pcl_does() {
-        // empty: FLT_MAX / -FLT_MAX bounds, spans of INT64_MIN + 1 whose wrapped product (INT64_MIN + 1) passes the
-        // overflow check, then nothing to index
+        // empty: spans of INT64_MIN + 1 whose wrapped product passes the overflow check, then nothing to index
         assert!(voxel_grid(&[], [0.01; 3]).is_empty());
         // one point: one voxel
         assert_eq!(
