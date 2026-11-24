@@ -70,7 +70,7 @@ def _robot_asset_name(robot: str) -> str:
 
 def load_model(
     input_device: InputController, robot: str, scene_xml: str
-) -> tuple[mujoco.MjModel, mujoco.MjData]:
+) -> tuple[mujoco.MjModel, mujoco.MjData, OnnxController]:
     configure_mujoco_logging()
     mujoco.set_mjcb_control(None)
     asset_robot = _robot_asset_name(robot)
@@ -115,7 +115,7 @@ def load_model(
 
     mujoco.set_mjcb_control(policy.get_control)
 
-    return model, data
+    return model, data, policy
 
 
 def get_model_xml(robot: str, scene_xml: str) -> str:
@@ -126,6 +126,17 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
         scene_name += f" ({asset_robot} stand-in)"
     root.set("model", scene_name)
     root.insert(0, ET.Element("include", file=f"{asset_robot}.xml"))
+
+    # G1 disables automatic collisions and only pairs its feet with "floor".
+    # The office floor is finite, with a separate ground plane below it.
+    if robot == "unitree_g1" and root.find(".//geom[@name='ground'][@type='plane']") is not None:
+        contact = root.find("contact")
+        if contact is None:
+            contact = ET.SubElement(root, "contact")
+        for foot in ("left_foot", "right_foot"):
+            ET.SubElement(
+                contact, "pair", geom1=foot, geom2="ground", condim="3", friction="0.6 0.6"
+            )
 
     _add_person_object(root)
 

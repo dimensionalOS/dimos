@@ -70,6 +70,11 @@ class OnnxController(ABC):
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
         pass
 
+    def reset(self) -> None:
+        """Clear policy history when the physics state is reset."""
+        self._last_action.fill(0)
+        self._counter = 0
+
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         self._counter += 1
         if self._counter % self._n_substeps == 0:
@@ -132,6 +137,10 @@ class G1OnnxController(OnnxController):
         self._phase = np.array([0.0, np.pi])
         self._gait_freq = 1.5
         self._phase_dt = 2 * np.pi * self._gait_freq * ctrl_dt
+
+    def reset(self) -> None:
+        super().reset()
+        self._phase[:] = [0.0, np.pi]
 
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
         linvel = data.sensor("local_linvel_pelvis").data

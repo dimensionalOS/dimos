@@ -17,6 +17,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import mujoco
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 from structlog.testing import capture_logs
@@ -94,7 +95,7 @@ def test_loaded_policy_identifies_requested_robot_and_keeps_controller(
     session = mocker.patch.object(policy.ort, "InferenceSession")
     session.return_value.get_providers.return_value = ["CPUExecutionProvider"]
     with capture_logs() as records:
-        mj_model, _ = model.load_model(mocker.Mock(), robot=robot, scene_xml="")
+        mj_model, _, _ = model.load_model(mocker.Mock(), robot=robot, scene_xml="")
 
     policy_path = (tmp_path / f"{asset_robot}_policy.onnx").as_posix()
     session.assert_called_once_with(
@@ -116,7 +117,8 @@ def test_loaded_policy_identifies_requested_robot_and_keeps_controller(
 @pytest.fixture
 def g1_model(model_loading: None, mocker: MockerFixture) -> tuple[mujoco.MjModel, mujoco.MjData]:
     mocker.patch.object(model, "G1OnnxController")
-    return model.load_model(mocker.Mock(), robot="unitree_g1", scene_xml="")
+    mj_model, data, _ = model.load_model(mocker.Mock(), robot="unitree_g1", scene_xml="")
+    return mj_model, data
 
 
 def test_g1_instability_warning_is_logged_without_cwd_file(
@@ -136,3 +138,40 @@ def test_g1_instability_warning_is_logged_without_cwd_file(
             "log_level": "warning",
         }
     ]
+
+
+@pytest.mark.parametrize(("x", "height", "surface"), [(0, 0.1, "floor"), (2, -0.9, "ground")])
+def test_g1_feet_contact_floor_and_ground_beyond_edge(
+    x: float, height: float, surface: str, mocker: MockerFixture
+) -> None:
+    # Isolate the robot/scene contact composition from the person's mesh assets.
+    mocker.patch.object(model, "_add_person_object")
+    xml = model.get_model_xml(
+        "unitree_g1",
+        """<mujoco><worldbody>
+          <geom name="floor" type="box" size="1 1 .5" pos="0 0 -.5"/>
+          <geom name="ground" type="plane" size="0 0 .1" pos="0 0 -1"/>
+        </worldbody></mujoco>""",
+    )
+    robot_xml = b"""<mujoco><worldbody><body pos="0 0 .5">
+      <freejoint/>
+      <geom name="left_foot" type="sphere" size=".1" pos="0 .2 0" contype="0" conaffinity="0"/>
+      <geom name="right_foot" type="sphere" size=".1" pos="0 -.2 0" contype="0" conaffinity="0"/>
+    </body></worldbody><contact>
+      <pair geom1="left_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
+      <pair geom1="right_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
+    </contact></mujoco>"""
+    mj_model = mujoco.MjModel.from_xml_string(xml, assets={"unitree_g1.xml": robot_xml})
+    data = mujoco.MjData(mj_model)
+    data.qpos[0] = x
+
+    for _ in range(1000):
+        mujoco.mj_step(mj_model, data)
+
+    assert data.qpos[2] == pytest.approx(height, abs=0.001)
+    assert np.isfinite(data.qpos).all()
+    assert data.warning.number.sum() == 0
+    assert {
+        frozenset(mj_model.geom(int(geom)).name for geom in contact.geom)
+        for contact in data.contact
+    } == {frozenset((foot, surface)) for foot in ("left_foot", "right_foot")}

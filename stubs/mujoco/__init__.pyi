@@ -1,6 +1,7 @@
 """mujoco is ~20 MB, so we have a stub to avoid installing in lint job."""
 
 from collections.abc import Callable
+from enum import IntEnum
 from typing import Any
 
 import numpy as np
@@ -168,3 +169,9 @@ class mjtTrn:
 
 class mjtWrap:
     mjWRAP_JOINT: int
+
+class mjtWarning(IntEnum):
+    mjWARN_BADQPOS = 3
+    mjWARN_BADQVEL = 4
+    mjWARN_BADQACC = 5
+    mjWARN_BADCTRL = 6

@@ -41,6 +41,7 @@ from dimos.simulation.mujoco.constants import (
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
+from dimos.simulation.mujoco.policy import OnnxController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
@@ -69,6 +70,62 @@ class MockController:
     def stop(self) -> None:
         """Stop method to satisfy InputController protocol."""
         pass
+
+    def reset(self) -> None:
+        """Discard commands from before the physics reset."""
+        self.shm.read_command()
+        self._command.fill(0)
+
+
+def _reset_simulation(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    policy: OnnxController,
+    controller: MockController,
+    start_pos: tuple[float, float, float],
+) -> None:
+    controller.reset()
+    policy.reset()
+    mujoco.mj_resetDataKeyframe(model, data, 0)
+    data.qpos[:3] = start_pos
+    mujoco.mj_forward(model, data)
+
+
+def _step_simulation(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    policy: OnnxController,
+    controller: MockController,
+    start_pos: tuple[float, float, float],
+) -> bool:
+    """Step physics, recovering before publishing a reset or invalid state."""
+    simulation_time = data.time
+    mujoco.mj_step(model, data)
+    # MuJoCo can already have reset to qpos0 by the time mj_step returns.
+    # Its warning counters survive that reset, unlike the invalid values.
+    warnings = [
+        warning.name
+        for warning in (
+            mujoco.mjtWarning.mjWARN_BADQPOS,
+            mujoco.mjtWarning.mjWARN_BADQVEL,
+            mujoco.mjtWarning.mjWARN_BADQACC,
+            mujoco.mjtWarning.mjWARN_BADCTRL,
+        )
+        if data.warning[warning].number
+    ]
+    finite = all(np.isfinite(state).all() for state in (data.qpos, data.qvel, data.qacc, data.ctrl))
+    if not warnings and finite:
+        return False
+
+    _reset_simulation(model, data, policy, controller, start_pos)
+    logger.error(
+        "MuJoCo simulation reset after invalid physics state",
+        simulation_time=simulation_time,
+        warnings=warnings,
+        start_pos=start_pos,
+        odometry_discontinuity=True,
+    )
+    return True
 
 
 def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
@@ -108,7 +165,7 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
     robot_name = robot_model or "unitree_go1"
 
     controller = MockController(shm)
-    model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
+    model, data, policy = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
 
     if model is None or data is None:
         raise ValueError("Failed to load MuJoCo model: model or data is None")
@@ -121,11 +178,8 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
         case _:
             z = 0
 
-    start_pos = config.start_pos
-
-    data.qpos[0:3] = [start_pos[0], start_pos[1], z]
-
-    mujoco.mj_forward(model, data)
+    start_pos = (config.start_pos[0], config.start_pos[1], z)
+    _reset_simulation(model, data, policy, controller, start_pos)
 
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
@@ -208,7 +262,8 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
 
             # Step simulation
             for _ in range(config.steps_per_frame):
-                mujoco.mj_step(model, data)
+                if _step_simulation(model, data, policy, controller, start_pos):
+                    break
 
             person_position_controller.tick(data)
 
