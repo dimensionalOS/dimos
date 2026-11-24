@@ -22,6 +22,7 @@ import itertools
 from pathlib import Path
 from typing import Any
 
+from dimos.robot.assets.usd_utils.assets import repointed_arc
 from dimos.robot.assets.usd_utils.frames import link_prim_paths
 from dimos.robot.assets.usd_utils.pxr import (
     Layer,
@@ -125,6 +126,8 @@ def _rebase_relationships(
 
 
 _REFERENCE_FIELDS = ("explicitItems", "addedItems", "prependedItems", "appendedItems")
+# A delete or a reorder names a target stated elsewhere: it follows a carried prim, never carries one.
+_MATCHING_FIELDS = ("deletedItems", "orderedItems")
 
 
 def _free_root_name(layer: Layer, name: str) -> str:
@@ -159,22 +162,23 @@ def _carry_outside_references(
     pending = [target]
     while pending:
         for spec in _specs_under(root_layer, pending.pop()):
-            for field in _REFERENCE_FIELDS:
-                arcs = list(getattr(spec.referenceList, field))
-                moved = [
-                    _moved_reference(
-                        pxr, arc, sub_layer, root_layer, inside, landed, carried, pending
-                    )
-                    for arc in arcs
-                ]
-                if moved != arcs:
-                    setattr(spec.referenceList, field, moved)
-            _carry_outside_connections(
+            for arcs in (spec.referenceList, spec.payloadList):
+                for field in _REFERENCE_FIELDS:
+                    items = list(getattr(arcs, field))
+                    moved = [
+                        _moved_reference(
+                            pxr, arc, sub_layer, root_layer, inside, landed, carried, pending
+                        )
+                        for arc in items
+                    ]
+                    if moved != items:
+                        setattr(arcs, field, moved)
+            _carry_outside_targets(
                 pxr, spec, sub_layer, root_layer, inside, landed, carried, pending
             )
 
 
-def _carry_outside_connections(
+def _carry_outside_targets(
     pxr: Pxr,
     spec: Any,
     sub_layer: Layer,
@@ -184,39 +188,70 @@ def _carry_outside_connections(
     carried: dict[str, str],
     pending: list[str],
 ) -> None:
-    """Carry what a shader connection reaches outside the subtree, as its arcs already are.
+    """Carry what a connection or relationship reaches outside the subtree, as its arcs already are.
 
-    Sdf.CopySpec repoints a connection that names a prim inside the copy, but one that names a
-    prim beside it -- the shape a converted asset's shader network takes when it is wired
-    directly rather than through a reference -- keeps its absolute path, which in the scene
-    belongs to whatever already sits there. Same failure as a stale arc: the graft wears the
-    room's materials.
+    Sdf.CopySpec repoints a target that names a prim inside the copy, but one that names a prim
+    beside it -- a shader network wired directly rather than through a reference, or a
+    material:binding to /Materials/paint next to the default prim -- keeps its absolute path,
+    which in the scene belongs to whatever already sits there. Same failure as a stale arc: the
+    graft wears the room's materials, or none.
     """
     for prop in spec.properties:
-        if not isinstance(prop, pxr.Sdf.AttributeSpec):
+        if isinstance(prop, pxr.Sdf.AttributeSpec):
+            targets_of = prop.connectionPathList
+        elif isinstance(prop, pxr.Sdf.RelationshipSpec):
+            targets_of = prop.targetPathList
+        else:
             continue
-        targets = list(prop.connectionPathList.explicitItems)
-        moved = []
-        for target in targets:
-            prim_path = target.GetPrimPath()
-            if target.HasPrefix(inside) or target.HasPrefix(landed):
-                moved.append(target)
-                continue
-            at = carried.get(str(prim_path))
-            if at is None:
-                if sub_layer.GetPrimAtPath(prim_path) is None:
-                    # Nothing to carry: the target is not a prim this layer states, it is
-                    # composed -- an instancing prototype, say -- so leave the arc alone.
-                    moved.append(target)
-                    continue
-                at = _carry_one(pxr, sub_layer, prim_path, root_layer)
-                carried[str(prim_path)] = at
-                pending.append(at)
-            moved.append(
-                pxr.Sdf.Path(at).AppendProperty(target.name) if target.IsPropertyPath() else at
-            )
-        if moved != targets:
-            prop.connectionPathList.explicitItems = moved
+        for field in _REFERENCE_FIELDS + _MATCHING_FIELDS:
+            targets = list(getattr(targets_of, field))
+            moved = [
+                _moved_target(
+                    pxr,
+                    path,
+                    sub_layer,
+                    root_layer,
+                    inside,
+                    landed,
+                    carried,
+                    pending,
+                    carry=field in _REFERENCE_FIELDS,
+                )
+                for path in targets
+            ]
+            if moved != targets:
+                setattr(targets_of, field, moved)
+
+
+def _moved_target(
+    pxr: Pxr,
+    path: Any,
+    sub_layer: Layer,
+    root_layer: Layer,
+    inside: Any,
+    landed: Any,
+    carried: dict[str, str],
+    pending: list[str],
+    *,
+    carry: bool,
+) -> Any:
+    if path.HasPrefix(inside) or path.HasPrefix(landed):
+        return path
+    if any(path.HasPrefix(pxr.Sdf.Path(at)) for at in carried.values()):
+        # Already in a carried copy, which Sdf.CopySpec repointed.
+        return path
+    prim_path = path.GetPrimPath()
+    for source, at in carried.items():
+        if prim_path.HasPrefix(pxr.Sdf.Path(source)):
+            return path.ReplacePrefix(pxr.Sdf.Path(source), pxr.Sdf.Path(at))
+    if not carry or sub_layer.GetPrimAtPath(prim_path) is None:
+        # Nothing to carry: the target is not a prim this layer states, it is composed -- an
+        # instancing prototype, say -- so leave it alone.
+        return path
+    at = _carry_one(pxr, sub_layer, prim_path, root_layer)
+    carried[str(prim_path)] = at
+    pending.append(at)
+    return path.ReplacePrefix(prim_path, pxr.Sdf.Path(at))
 
 
 def _moved_reference(
@@ -240,4 +275,4 @@ def _moved_reference(
         at = _carry_one(pxr, sub_layer, arc.primPath, root_layer)
         carried[str(arc.primPath)] = at
         pending.append(at)
-    return pxr.Sdf.Reference(arc.assetPath, at, arc.layerOffset, arc.customData)
+    return repointed_arc(pxr, arc, arc.assetPath, pxr.Sdf.Path(at))

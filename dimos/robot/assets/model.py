@@ -135,8 +135,12 @@ class UsdModel:
         return cls(source_path)
 
     def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
-        added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in frames.items())
-        return replace(self, _added_frames=self._added_frames + added)
+        # A frame added again replaces the earlier one where it stood, so joints and the layer
+        # agree on it and frames hung off it still come after it.
+        merged = {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames}
+        merged.update(frames)
+        added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in merged.items())
+        return replace(self, _added_frames=added)
 
     @classmethod
     def from_layer(cls, usd: str) -> UsdModel:
