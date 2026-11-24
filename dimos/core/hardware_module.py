@@ -30,7 +30,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 import numpy as np
-from pydantic import ConfigDict
 
 from dimos.core.core import rpc
 from dimos.core.tf_module import TfModule, TfModuleConfig
@@ -64,8 +63,6 @@ class Mounts:
 
 
 class HardwareModuleConfig(TfModuleConfig):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
     # Required: hardware without a USD is not a HardwareModule.
     usd: UsdModel
