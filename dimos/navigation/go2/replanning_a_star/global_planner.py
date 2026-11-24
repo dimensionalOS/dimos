@@ -50,6 +50,7 @@ class GlobalPlanner(Resource):
     _current_goal: PoseStamped | None = None
     _goal_reached: bool = False
     _goal_cancel_reason: str | None = None
+    _goal_cancelled: bool = False
     _thread: Thread | None = None
 
     _navigation_map: NavigationMap
@@ -118,7 +119,7 @@ class GlobalPlanner(Resource):
         self._thread.start()
 
     def stop(self) -> None:
-        self.cancel_goal()
+        self.cancel_goal(reason="GlobalPlanner.stop: planner shutting down")
         self._local_planner.stop()
         self._disposables.dispose()
         self._stop_planner.set()
@@ -147,6 +148,7 @@ class GlobalPlanner(Resource):
             self._current_goal = goal
             self._goal_reached = False
             self._goal_cancel_reason = None
+            self._goal_cancelled = False
         self._replan_limiter.reset()
         self._plan_path()
 
@@ -158,29 +160,36 @@ class GlobalPlanner(Resource):
         self._reset_safe_goal_clearance()
 
     def cancel_goal(
-        self, *, but_will_try_again: bool = False, arrived: bool = False, reason: str | None = None
+        self,
+        *,
+        but_will_try_again: bool = False,
+        arrived: bool = False,
+        reason: str = "GlobalPlanner.cancel_goal: cancellation requested",
+        failed: bool = False,
     ) -> None:
-        # return silently so we don't flood the logs.
+        """Stop motion, retaining whether the goal failed or was externally cancelled."""
         with self._lock:
-            no_goal = self._current_goal is None
-        if no_goal and self._local_planner.get_state() == NavigationState.IDLE:
-            return
+            # Claim the terminal outcome once, even while the local controller
+            # is still stopping. Later stop requests must preserve its reason.
+            if self._current_goal is None:
+                return
 
-        if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
-            logger.info(
-                "Cancelling goal.",
-                but_will_try_again=but_will_try_again,
-                arrived=arrived,
-                reason=reason,
-            )
+            if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
+                logger.info(
+                    "Cancelling goal.",
+                    but_will_try_again=but_will_try_again,
+                    arrived=arrived,
+                    reason=reason,
+                    failed=failed,
+                )
 
-        with self._lock:
             self._position_tracker.reset_data()
 
             if not but_will_try_again:
                 self._current_goal = None
                 self._goal_reached = arrived
                 self._goal_cancel_reason = None if arrived else reason
+                self._goal_cancelled = not arrived and not failed
                 self._replan_limiter.reset()
 
         self.path.on_next(Path())
@@ -199,6 +208,10 @@ class GlobalPlanner(Resource):
     def is_goal_reached(self) -> bool:
         with self._lock:
             return self._goal_reached
+
+    def is_goal_cancelled(self) -> bool:
+        with self._lock:
+            return self._goal_cancelled
 
     def get_goal_cancel_reason(self) -> str | None:
         with self._lock:
@@ -253,7 +266,7 @@ class GlobalPlanner(Resource):
                 < self._rotation_tolerance
             ):
                 logger.info("Close enough to goal. Accepting as arrived.")
-                self.cancel_goal(arrived=True)
+                self.cancel_goal(arrived=True, reason="GlobalPlanner: goal reached")
                 continue
 
             # Check if robot has veered too far off the path
@@ -299,7 +312,7 @@ class GlobalPlanner(Resource):
 
         if stop_message == "arrived":
             logger.info("Arrived at goal.")
-            self.cancel_goal(arrived=True)
+            self.cancel_goal(arrived=True, reason="GlobalPlanner: goal reached")
         elif stop_message == "obstacle_found":
             logger.info("Replanning path due to obstacle found.")
             self._replan_path("Obstacle found")
@@ -308,7 +321,7 @@ class GlobalPlanner(Resource):
             self._replan_path("Local planner error")
         else:
             logger.error(f"No code to handle '{stop_message}'.")
-            self.cancel_goal()
+            self.cancel_goal(reason=f"Unhandled local planner stop: {stop_message}", failed=True)
 
     def _replan_path(self, reason: str = "Replanning requested") -> None:
         with self._lock:
@@ -328,15 +341,15 @@ class GlobalPlanner(Resource):
             )
             < self._rotation_tolerance
         ):
-            self.cancel_goal(arrived=True)
+            self.cancel_goal(arrived=True, reason="GlobalPlanner: goal reached")
             return
 
         if not self._replanning_enabled:
-            self.cancel_goal(reason=f"{reason}: replanning is disabled")
+            self.cancel_goal(reason=f"{reason}: replanning is disabled", failed=True)
             return
 
         if not self._replan_limiter.can_retry(current_odom.position):
-            self.cancel_goal(reason=f"{reason}: replan attempts exhausted")
+            self.cancel_goal(reason=f"{reason}: replan attempts exhausted", failed=True)
             return
 
         self._replan_limiter.will_retry()
@@ -344,7 +357,7 @@ class GlobalPlanner(Resource):
         self._plan_path()
 
     def _plan_path(self) -> None:
-        self.cancel_goal(but_will_try_again=True)
+        self.cancel_goal(but_will_try_again=True, reason="GlobalPlanner: planning a new path")
 
         with self._lock:
             current_odom = self._current_odom
@@ -354,6 +367,7 @@ class GlobalPlanner(Resource):
 
         if current_odom is None:
             logger.warning("Cannot handle goal request: missing odometry.")
+            self.cancel_goal(reason="GlobalPlanner: missing odometry", failed=True)
             return
 
         # The first map update fills these separately; both must be available
@@ -363,7 +377,7 @@ class GlobalPlanner(Resource):
                 "Missing global costmap: check that lidar data is arriving and mapping is running"
             )
             logger.warning("Cannot handle goal request.", reason=reason)
-            self.cancel_goal(reason=reason)
+            self.cancel_goal(reason=reason, failed=True)
             return
 
         safe_goal = self._find_safe_goal(current_goal.position)
@@ -372,7 +386,7 @@ class GlobalPlanner(Resource):
             logger.warning(
                 "No safe goal found.", x=round(current_goal.x, 3), y=round(current_goal.y, 3)
             )
-            self.cancel_goal()
+            self.cancel_goal(reason="GlobalPlanner: no safe goal found", failed=True)
             return
 
         path = self._find_wide_path(safe_goal, current_odom.position)
@@ -381,7 +395,7 @@ class GlobalPlanner(Resource):
             logger.warning(
                 "No path found to the goal.", x=round(safe_goal.x, 3), y=round(safe_goal.y, 3)
             )
-            self.cancel_goal()
+            self.cancel_goal(reason="GlobalPlanner: no path found to the goal", failed=True)
             return
 
         resampled_path = smooth_resample_path(path, current_goal, 0.1)

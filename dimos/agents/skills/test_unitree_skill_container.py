@@ -50,7 +50,11 @@ class StubNavigation(Module):
         return None
 
     @rpc
-    def cancel_goal(self) -> bool:
+    def is_goal_cancelled(self) -> bool:
+        return False
+
+    @rpc
+    def cancel_goal(self, reason: str = "cancel_goal RPC: cancellation requested") -> bool:
         return True
 
 

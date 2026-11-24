@@ -18,6 +18,7 @@ import math
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
+from reactivex import operators as ops
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -179,17 +180,26 @@ def test_positional_stuck_check_only_applies_to_path_following(
     assert replan.call_count == int(state == "path_following")
 
 
-def test_first_goal_does_not_log_cancellation_but_explicit_cancel_does(planner, mocker):
+def test_first_goal_does_not_log_cancellation_but_explicit_cancel_does(mapped_planner, mocker):
+    planner = mapped_planner
+    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
     log = mocker.patch.object(global_planner.logger, "info")
     goal = PoseStamped(position=[1.0, 2.0, 0.0])
 
     planner.handle_goal_request(goal)
 
-    log.assert_called_once_with("Got new goal", goal=str(goal))
+    log.assert_any_call("Got new goal", goal=str(goal))
+    assert all(call.args != ("Cancelling goal.",) for call in log.call_args_list)
 
     planner.cancel_goal()
 
-    log.assert_called_with("Cancelling goal.", but_will_try_again=False, arrived=False, reason=None)
+    log.assert_called_with(
+        "Cancelling goal.",
+        but_will_try_again=False,
+        arrived=False,
+        reason="GlobalPlanner.cancel_goal: cancellation requested",
+        failed=False,
+    )
 
 
 @pytest.mark.parametrize("distance", [0.3, 2.0], ids=["near", "far"])
@@ -234,3 +244,61 @@ def test_goal_before_first_costmap_fails_and_can_be_retried(
         assert path.poses[-1].x == pytest.approx(goal.x)
         assert path.poses[-1].y == pytest.approx(goal.y)
         assert outcomes == [False]
+
+
+@pytest.mark.parametrize(
+    "boundary, reason",
+    [
+        ("_find_safe_goal", "GlobalPlanner: no safe goal found"),
+        ("_find_wide_path", "GlobalPlanner: no path found to the goal"),
+    ],
+)
+def test_path_failure_keeps_reason_after_repeated_stop(mapped_planner, mocker, boundary, reason):
+    planner = mapped_planner
+    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
+    mocker.patch.object(planner, boundary, return_value=None)
+    log = mocker.spy(global_planner.logger, "info")
+
+    planner.handle_goal_request(PoseStamped(position=[3.0, 1.0, 0.3]))
+    planner.cancel_goal(reason="Later external stop")
+
+    assert planner.get_state() == NavigationState.IDLE
+    assert not planner.is_goal_reached()
+    assert not planner.is_goal_cancelled()
+    assert planner.get_goal_cancel_reason() == reason
+    log.assert_any_call(
+        "Cancelling goal.", but_will_try_again=False, arrived=False, reason=reason, failed=True
+    )
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_overlapping_stop_preserves_first_outcome(mapped_planner, mocker, failed):
+    planner = mapped_planner
+    planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
+    planner.handle_goal_request(PoseStamped(position=[3.0, 1.0, 0.3]))
+    planner._local_planner._change_state("path_following")
+    outcomes = []
+    log = mocker.spy(global_planner.logger, "info")
+
+    # Another stop arrives after the goal is cleared but before the local
+    # controller has stopped, as can happen with concurrent teleop frames.
+    with (
+        planner.path.pipe(ops.take(1)).subscribe(
+            lambda _: planner.cancel_goal(reason="Later external stop")
+        ),
+        planner.goal_reached.subscribe(lambda msg: outcomes.append(msg.data)),
+    ):
+        planner.cancel_goal(reason="Original reason", failed=failed)
+
+    assert planner.get_goal_cancel_reason() == "Original reason"
+    assert planner.is_goal_cancelled() == (not failed)
+    assert outcomes == [False]
+    assert planner.get_state() == NavigationState.IDLE
+    log.assert_any_call(
+        "Cancelling goal.",
+        but_will_try_again=False,
+        arrived=False,
+        reason="Original reason",
+        failed=failed,
+    )
+    assert sum(call.args == ("Cancelling goal.",) for call in log.call_args_list) == 1
