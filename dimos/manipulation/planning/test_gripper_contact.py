@@ -20,10 +20,13 @@ frame, Z up, metres. Grasps come from above: the tool tip's z axis points down.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.planning.gripper_contact import GraspContactChecker, scene_obstacles
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -32,6 +35,7 @@ from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.robot.manipulators.xarm.config import XARM_HEURISTIC_AIM, make_xarm7_sim_robot_config
 from dimos.utils.transform_utils import matrix_to_pose
 
 CONTACT_MARGIN = 0.005
@@ -86,8 +90,6 @@ def _clear(checker: GraspContactChecker, grasp: Pose, target: NDArray, *scene: N
 
 
 def _xarm(closing_steps: int = 4) -> GraspContactChecker:
-    from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
-
     config = make_xarm7_sim_robot_config()
     assert config.gripper is not None
     gripper = config.gripper.model_copy(update={"closing_steps": closing_steps})
@@ -103,6 +105,55 @@ def xarm() -> GraspContactChecker:
 def xarm_open() -> GraspContactChecker:
     """Checks the open fingers only."""
     return _xarm(closing_steps=0)
+
+
+@pytest.fixture
+def heuristic() -> Iterator[HeuristicGraspModule]:
+    module = HeuristicGraspModule(**XARM_HEURISTIC_AIM)
+    yield module
+    module.stop()
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("top_only", [True, False], ids=["top-view", "full-cloud"])
+@pytest.mark.parametrize(
+    "center, size, yaw",
+    [((0.0, 0.10, 0.14), 0.04, 0.0), ((0.12, 0.12, 0.135), 0.03, 0.5)],
+    ids=["red-cube", "blue-cube"],
+)
+def test_heuristic_grasps_on_perception_sim_cubes_pass_contact_check(
+    xarm: GraspContactChecker,
+    heuristic: HeuristicGraspModule,
+    center: tuple[float, float, float],
+    size: float,
+    yaw: float,
+    top_only: bool,
+) -> None:
+    # Match data/xarm7/scene.xml, including the table at z=0.12. A wrist view
+    # from above can see only the top face, as in ticket 049.
+    cube = _box((0.0, 0.0, 0.0), (size, size, size)) - (X, 0.0, 0.0)
+    c, s = np.cos(yaw), np.sin(yaw)
+    cube = cube @ np.asarray([[c, s, 0], [-s, c, 0], [0, 0, 1]])
+    cube += np.asarray([X + center[0], center[1], center[2]])
+    visible = cube[np.isclose(cube[:, 2], cube[:, 2].max())] if top_only else cube
+    target = _cloud(*visible)
+    table = _cloud(*(_table(hole=0.0) + np.asarray([center[0], center[1], 0.12])))
+    proposals = heuristic.propose_grasps(target)
+
+    kept = xarm.keep_clear(proposals, target, table, [], CONTACT_MARGIN, OBSTACLE_MARGIN)
+
+    assert kept.candidates
+    # Validate against the whole cube too, not just the visible surface.
+    assert all(
+        xarm.check(
+            [candidate.pose for candidate in kept.candidates],
+            cube,
+            table.points_f32(),
+            "world",
+            CONTACT_MARGIN,
+            OBSTACLE_MARGIN,
+        )
+    )
 
 
 # A 4 x 4 x 6 cm box.
