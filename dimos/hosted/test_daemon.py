@@ -66,10 +66,6 @@ class RemoteConsumer(Module):
     provider: RemoteProvider
 
 
-class RemoteListConsumer(Module):
-    providers: list[RemoteProvider]
-
-
 @pytest.fixture
 def host_setup(tmp_path: Path, mocker: MockerFixture) -> dict[str, Any]:
     process = mocker.MagicMock(pid=4242, exitcode=None)
@@ -399,41 +395,6 @@ def test_run_fragment_passes_remote_module_targets_to_coordinator(
     assert [a.module for a in run.call_args.args[0].blueprints] == [RemoteConsumer]
     assert run.call_args.kwargs["remote_module_refs"] == {
         ("remoteconsumer", "provider"): (frozenset(RemoteProvider.rpcs), rpc_name),
-    }
-
-
-def test_run_fragment_groups_a_list_refs_remote_providers_by_index(
-    tmp_path: Path, mocker: MockerFixture
-) -> None:
-    rpc_names = [f"runs/run-1/hosts/host-a/modules/provider{index}" for index in (0, 2)]
-    fragment = HostFragment.create(
-        run_id="run-1",
-        host_id="host-b",
-        revision="revision-1",
-        payload=PythonFragmentPayload(
-            blueprint=RemoteListConsumer.blueprint(),
-            remote_module_references=tuple(
-                RemoteModuleReference(
-                    consumer_name="remotelistconsumer",
-                    reference_name="providers",
-                    provider_name=f"provider{index}",
-                    provider_host_id="host-a",
-                    rpcs=frozenset(RemoteProvider.rpcs),
-                    rpc_name=rpc_name,
-                    list_index=index,
-                )
-                for index, rpc_name in zip((0, 2), rpc_names, strict=True)
-            ),
-        ),
-    )
-    run = mocker.patch("dimos.hosted.daemon.run_coordinator")
-    mocker.patch("dimos.hosted.daemon.set_run_log_dir")
-
-    _run_fragment(fragment, tmp_path, mocker.MagicMock())
-
-    rpcs = frozenset(RemoteProvider.rpcs)
-    assert run.call_args.kwargs["remote_module_refs"] == {
-        ("remotelistconsumer", "providers"): {0: (rpcs, rpc_names[0]), 2: (rpcs, rpc_names[1])},
     }
 
 

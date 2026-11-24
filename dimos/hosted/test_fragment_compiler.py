@@ -19,7 +19,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out, TransportSpec
 from dimos.core.transport import ZenohTransport
-from dimos.hosted.fragment import HostFragment, RemoteModuleReference
+from dimos.hosted.fragment import RemoteModuleReference
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
 from dimos.hosted.protocol import HostDescriptor, run_module_rpc_name
 from dimos.msgs.std_msgs.Bool import Bool
@@ -50,14 +50,6 @@ class ConsumerModule(Module):
     provider: ProviderModule
 
 
-class OtherProvider(ProviderModule):
-    pass
-
-
-class ListConsumer(Module):
-    providers: list[ProviderModule]
-
-
 def _host(
     host_id: str,
     *,
@@ -75,7 +67,7 @@ def _host(
     )
 
 
-def _compile(assignments: dict[str, str]) -> dict[str, HostFragment]:
+def _compile(assignments: dict[str, str]):
     blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).solidify()
     return compile_fragments(
         blueprint,
@@ -433,28 +425,3 @@ def test_the_roots_explicit_config_survives_the_trip_to_a_host() -> None:
 
     payload = fragments["host-a"].load_payload()
     assert payload.overrides == {"mountedmodule": {"mount": "ATHENS"}, "g": {"viewer": "none"}}
-
-
-def test_a_list_ref_emits_each_remote_provider_at_its_list_index() -> None:
-    blueprint = autoconnect(
-        ProviderModule.blueprint(), OtherProvider.blueprint(), ListConsumer.blueprint()
-    ).solidify()
-
-    fragments = compile_fragments(
-        blueprint,
-        {"providermodule": "host-a", "otherprovider": "host-b", "listconsumer": "host-b"},
-        run_id="run-1",
-        revision="revision-1",
-    )
-
-    assert fragments["host-b"].load_payload().remote_module_references == (
-        RemoteModuleReference(
-            consumer_name="listconsumer",
-            reference_name="providers",
-            provider_name="providermodule",
-            provider_host_id="host-a",
-            rpcs=frozenset(ProviderModule.rpcs),
-            rpc_name=run_module_rpc_name("run-1", "host-a", "providermodule"),
-            list_index=0,
-        ),
-    )

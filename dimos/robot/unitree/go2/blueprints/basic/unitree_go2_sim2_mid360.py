@@ -28,7 +28,7 @@ unitree_go2_sim2_mid360 = autoconnect(
     sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
     Logistics.blueprint(),
     autoconnect(
-        Go2Sim.blueprint(_mount=Logistics.mounts.go2),
+        Go2Sim.blueprint(mount=Logistics.mounts.go2),
         LivoxSim.mount(Go2Sim.mounts.lidar, go2_occlusion=True),
         SimCamera.mount(Go2Sim.mounts.camera),
     ).namespace("go2", shared={"world_observations", "actions", "cmd_vel"}),

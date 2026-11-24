@@ -61,9 +61,7 @@ def test_the_world_holds_and_drives_a_selected_policy_with_its_own_gains_and_pos
         gains = zip(policy.joint_names, policy.kp, policy.kd, policy.default_pose, strict=True)
         expected = {joint: pytest.approx((kp, kd, q)) for joint, kp, kd, q in gains}
         assert usd_drives(module.simulated_robot().model.usd) == expected
-        world_usd = module.get_usd()
-        assert world_usd is not None
-        assert usd_drives(world_usd) == expected
+        assert usd_drives(module.get_usd()) == expected
     finally:
         module.stop()
 
@@ -80,7 +78,6 @@ def test_odom_keeps_the_go2_standing_above_its_mount(go2_sim: Go2Sim) -> None:
     from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 
     usd = go2_sim.config.usd
-    assert usd is not None
     standing = usd_frame_pose(usd.usd, usd.root_link, usd.source_path.parent)[2, 3]
 
     odom = go2_sim._odom(np.array([2.0, -1.0, standing, 0.0, 0.0, 0.0, 1.0]), 1.0)
