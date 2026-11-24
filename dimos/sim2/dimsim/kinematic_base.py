@@ -15,7 +15,7 @@
 """A robot the world moves as a box on cmd_vel: DimSim's kinematic base, wearing the robot's own USD."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -31,7 +31,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.dimsim.backend import BASE_JOINTS
+from dimos.sim2.dimsim.backend import BASE_JOINTS, MOUNTED_AT
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
@@ -89,24 +89,30 @@ class SimKinematicBase(HardwareModule):
             if self._expires is not None and stamp > self._expires:
                 self._expires = None
                 self._drive((0.0, 0.0, 0.0))
-            base = self._world.entity(self.namespace)
-            if base is None or base.pose is None:
+            odom = self._odom(stamp)
+            if odom is None:
                 continue
-            here = Transform(
-                translation=Vector3(*base.pose[:3]), rotation=Quaternion(*base.pose[3:7])
-            ).to_matrix()
-            if self._start is None:
-                self._start = np.linalg.inv(here)
-            # Odometry is from where the base started, the frame it is mounted on.
-            relative = Transform.from_matrix(self._start @ here)
-            translation, rotation = relative.translation, relative.rotation
-            odom = PoseStamped(
-                ts=stamp,
-                frame_id=self.frame.odom,
-                position=[translation.x, translation.y, translation.z],
-                orientation=[rotation.x, rotation.y, rotation.z, rotation.w],
-            )
             self.odom.publish(odom)
             self.tfbuffer.publish(
                 Transform.from_pose(self.frame.body, odom), *self.usd_transforms(ts=stamp)
             )
+
+    def _odom(self, stamp: float) -> PoseStamped | None:
+        base = self._world.entity(self.namespace)
+        if base is None or base.pose is None:
+            return None
+        if self._start is None:
+            self._start = np.linalg.inv(_matrix(base.cbor[MOUNTED_AT]))
+        # Odometry is from where the base started, the frame it is mounted on (which it stands above).
+        relative = Transform.from_matrix(self._start @ _matrix(base.pose))
+        translation, rotation = relative.translation, relative.rotation
+        return PoseStamped(
+            ts=stamp,
+            frame_id=self.frame.odom,
+            position=[translation.x, translation.y, translation.z],
+            orientation=[rotation.x, rotation.y, rotation.z, rotation.w],
+        )
+
+
+def _matrix(pose: Sequence[float] | np.ndarray) -> np.ndarray:
+    return Transform(translation=Vector3(*pose[:3]), rotation=Quaternion(*pose[3:7])).to_matrix()

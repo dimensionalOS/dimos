@@ -160,6 +160,23 @@ def test_the_world_says_what_is_in_it_and_stands_the_robot_on_its_mount(backend:
     assert _cbor(world, "cup") == {"path": "cup", "title": "Cup", HELD_BY: None}
 
 
+def test_odometry_puts_the_base_where_the_world_does(backend: _Stepped) -> None:
+    """Its odometry frame is its mount's, so the height it stands above that mount stays in it."""
+    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
+    world = backend.step(50)
+    bot = _bot()
+    try:
+        bot._world = world
+        odom = bot._odom(world.time)
+    finally:
+        bot.stop()
+    assert odom is not None
+    assert [odom.position.x, odom.position.y, odom.position.z] == pytest.approx(
+        backend.pose("bot")[:3], abs=1e-6
+    )
+    assert odom.position.z == pytest.approx(0.2, abs=0.02)
+
+
 def test_the_base_moves_on_a_base_joint_velocity_and_pushes_a_crate(backend: _Stepped) -> None:
     backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
     backend.step(100)

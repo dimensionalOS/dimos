@@ -49,6 +49,8 @@ ACTION = "action"
 ACTIONS = "actions"
 # CborKeyValueCommand(object, HELD_BY, <robot id>) picks a pickable object up; None puts it down where it is.
 HELD_BY = "held_by"
+# A robot's pose of the frame it is mounted on, where its odometry starts from.
+MOUNTED_AT = "mounted_at"
 
 
 def _world_dir() -> Path:
@@ -135,6 +137,7 @@ class DimSimBackend:
         self._base = {robot_id: [0.0, 0.0, 0.0] for robot_id in robot_ids}
         self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
+        self._mounts: dict[str, list[float]] = {}
         self._refusals: list[tuple[str, str]] = []
         world = _world_dir()
         self._world = subprocess.Popen(
@@ -380,7 +383,9 @@ class DimSimBackend:
         world = self.world
         world.add("world", backend="dimsim")
         for robot_id in self._base:
-            world.add(robot_id, model=str(self._layers[robot_id]))
+            world.add(
+                robot_id, model=str(self._layers[robot_id]), **{MOUNTED_AT: self._mounts[robot_id]}
+            )
             for name in BASE_JOINTS:
                 world.add(f"{robot_id}/{name}")
         for name, thing in self._objects.items():
@@ -456,9 +461,8 @@ class DimSimBackend:
             raise ValueError(f"{robot.robot_id}: it has no geometry to be the size of")
         low, high = np.min(corners, axis=0), np.max(corners, axis=0)
         x, y, _ = placed.ExtractTranslation()
-        floor = (
-            pxr.UsdGeom.Xformable(mount).ComputeLocalToWorldTransform(at).ExtractTranslation()[2]
-        )
+        self._mounts[robot.robot_id] = _pose(self._usd_pose(mount.GetPath().pathString))
+        floor = self._mounts[robot.robot_id][2]
         forward = placed.TransformDir(pxr.Gf.Vec3d(1, 0, 0))
         return {
             "id": robot.robot_id,
