@@ -90,7 +90,9 @@ def _resolve_rpc_connections(blueprint: Blueprint) -> list[RpcConnection]:
                 continue
 
             if module_ref.many:
-                provider_names = _resolve_many_ref(atom, module_ref, blueprint, disabled_set)
+                provider_names = _resolve_many_ref(
+                    atom, module_ref, replacement, blueprint, disabled_set
+                )
             else:
                 single = _resolve_single_ref(
                     atom,

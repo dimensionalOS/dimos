@@ -99,6 +99,7 @@ class LivoxSim(SimSensor):
                 )
             assert sensor is not None
             view.update(self._world)
+            stamp = view.time
             position, orientation = view.pose(site)
             points = await asyncio.to_thread(
                 sensor.cast, position, rotation_matrix(orientation), points_per_scan
@@ -107,14 +108,14 @@ class LivoxSim(SimSensor):
                 PointCloud2.from_numpy(
                     points,
                     self.frame_id,
-                    self._world.stamp(),
+                    stamp,
                     offset_times=np.zeros(len(points), np.uint32),
                 )
             )
-            self.publish_usd_tf(ts=self._world.stamp())
+            self.publish_usd_tf(ts=stamp)
 
     async def _read_imu(self) -> None:
-        site, view = self.frame_id, None
+        site, view = self.imu_frame_id, None
         async for _ in self._world.ticks(self.config.imu_rate_hz):
             if view is None:
                 view = await asyncio.to_thread(self._open)
@@ -125,7 +126,7 @@ class LivoxSim(SimSensor):
                     angular_velocity=Vector3(*gyro),
                     linear_acceleration=Vector3(*accelerometer),
                     orientation=Quaternion(x, y, z, w),
-                    frame_id=self.imu_frame_id,
-                    ts=self._world.stamp(),
+                    frame_id=site,
+                    ts=view.time,
                 )
             )

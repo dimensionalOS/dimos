@@ -82,10 +82,11 @@ class SimL1(SimSensor):
             if view is None:
                 built = geometry(self._world)
                 view = await asyncio.to_thread(self._open)
-                raycaster = view.raycaster(config.geom_groups)
+                raycaster = view.raycaster(config.geom_groups, mounted_at=site)
                 rider = view.owner(site)
             assert raycaster is not None
             view.update(self._world)
+            stamp = view.time
             origin, orientation = view.pose(site)
             directions = _hemisphere(rng, rays) @ rotation_matrix(orientation).T
             distance, _ = raycaster.cast(origin, directions, config.max_range)
@@ -96,10 +97,10 @@ class SimL1(SimSensor):
                 PointCloud2.from_numpy(
                     (self._indices(cells) + 0.5) * config.cell,
                     config.map_frame_id,
-                    self._world.stamp(),
+                    stamp,
                 )
             )
-            self.publish_usd_tf(ts=self._world.stamp())
+            self.publish_usd_tf(ts=stamp)
 
     def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
         entity = self._world.entity(rider) if rider is not None else None

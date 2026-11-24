@@ -34,6 +34,8 @@ class RemoteModuleReference:
     provider_host_id: str
     rpcs: frozenset[str]
     rpc_name: str
+    # For a ``list[Spec]`` ref, the provider's place in the consumer's list.
+    list_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

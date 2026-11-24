@@ -57,6 +57,23 @@ def geometry(world: "WorldMirror") -> int:
     return 0 if entity is None else int(entity.cbor.get(GEOMETRY, 0))
 
 
+def merged(earlier: WorldObservations, later: WorldObservations) -> WorldObservations:
+    """One frame saying what both did: every cbor value in order, the latest pose and joint of each entity."""
+    cbor = [*earlier.cbor_key_values, *later.cbor_key_values]
+    positions = {p.entity_id: p for p in [*earlier.positions, *later.positions]}
+    joint_states = {j.entity_id: j for j in [*earlier.joint_states, *later.joint_states]}
+    return WorldObservations(
+        ts=later.ts,
+        frame=later.frame,
+        cbor_key_values_length=len(cbor),
+        cbor_key_values=cbor,
+        positions_length=len(positions),
+        positions=list(positions.values()),
+        joint_states_length=len(joint_states),
+        joint_states=list(joint_states.values()),
+    )
+
+
 def _resolve(future: "asyncio.Future[None]") -> None:
     if not future.done():
         future.set_result(None)

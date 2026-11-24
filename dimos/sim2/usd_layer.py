@@ -15,18 +15,19 @@
 
 from collections.abc import Callable
 import hashlib
-import os
 from pathlib import Path
 import tempfile
 from typing import Any
 
+from dimos.constants import CACHE_DIR
 from dimos.robot.assets.model import UsdModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_CACHE = Path(tempfile.gettempdir()) / "dimos-sim2-usd"
-_ASSETS = Path(tempfile.gettempdir()) / "dimos-usd-assets"
+# Under this user's cache, not the shared temp dir: these files are loaded as scene content.
+_CACHE = CACHE_DIR / "sim2-usd"
+_ASSETS = CACHE_DIR / "usd-assets"
 
 
 def usd_layer(model: UsdModel, transform: Callable[[str], str] | None = None) -> Path:
@@ -43,11 +44,18 @@ def usd_layer(model: UsdModel, transform: Callable[[str], str] | None = None) ->
 def layer_file(layer: str, called: str = "layer") -> Path:
     out = _CACHE / f"{called}-{hashlib.sha256(layer.encode()).hexdigest()[:16]}.usda"
     if not out.exists():
-        out.parent.mkdir(parents=True, exist_ok=True)
-        partial = out.with_suffix(f".{os.getpid()}.partial")
-        partial.write_text(layer)
-        partial.replace(out)
+        _write_whole(out, layer.encode())
     return out
+
+
+def _write_whole(out: Path, data: bytes) -> None:
+    """Write ``out`` so a reader sees all of it or none; each writer, thread or process, has its own partial."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=out.parent, prefix=f"{out.name}.", suffix=".partial", delete=False
+    ) as partial:
+        partial.write(data)
+    Path(partial.name).replace(out)
 
 
 def _name_of(model: UsdModel) -> str:
@@ -103,7 +111,5 @@ def _cached(name: str, digest: str | None, fetch: Callable[[str], bytes]) -> Pat
 
     out = _ASSETS / f"{asset_hash(data)}{suffix}"
     if not out.exists():
-        partial = out.with_suffix(f"{suffix}.{os.getpid()}.partial")
-        partial.write_bytes(data)
-        partial.replace(out)
+        _write_whole(out, data)
     return out

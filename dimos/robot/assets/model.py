@@ -143,8 +143,11 @@ class UsdModel:
         return replace(self, _added_frames=added)
 
     @classmethod
-    def from_layer(cls, usd: str) -> UsdModel:
-        return cls(_text=usd)
+    def from_layer(
+        cls, usd: str, source_path: Path | str | os.PathLike[str] | None = None
+    ) -> UsdModel:
+        # source_path is where the layer's relative asset paths resolve from, as for from_file.
+        return cls(source_path, _text=usd)
 
     @classmethod
     def from_robot_model(cls, model: RobotModel) -> UsdModel:

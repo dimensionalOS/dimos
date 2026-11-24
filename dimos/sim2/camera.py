@@ -37,7 +37,9 @@ class SimCameraConfig(HardwareModuleConfig):
     @model_validator(mode="after")
     def _camera_with_this_fovy(self) -> "SimCameraConfig":
         if self.usd is None:
-            self.usd = camera_usd("camera_link", name="sim_camera", fovy=self.fovy)
+            self.usd = camera_usd(
+                "camera_link", name="sim_camera", fovy=self.fovy, aspect=self.width / self.height
+            )
         return self
 
 
@@ -70,7 +72,7 @@ class SimCamera(SimSensor):
                     )
                 view.update(self._world)
                 rgb = view.render(site, self.config.width, self.config.height)
-                stamp = self._world.stamp()
+                stamp = view.time
                 self.color_image.publish(
                     Image(data=rgb, format=ImageFormat.RGB, frame_id=site, ts=stamp)
                 )
