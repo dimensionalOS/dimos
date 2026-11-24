@@ -21,7 +21,9 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
+from dimos.core.core import rpc
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, HardwareSpec, Mounts
+from dimos.core.module import Module
 from dimos.robot.assets.model import RobotModel, UsdModel
 
 _ARM_URDF = """<robot name="arm">
@@ -152,3 +154,27 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
     finally:
         arm.stop()
         camera.stop()
+
+
+class Assembler(Module):
+    hardware: list[HardwareSpec]
+
+    @rpc
+    def mounted(self) -> list[str | None]:
+        return sorted(str(part.mounted_on()) for part in self.hardware)
+
+
+def test_a_list_ref_gets_every_hardware_module() -> None:
+    robot = autoconnect(Arm.blueprint(), Camera.mount(Arm.mounts.wrist))
+    coordinator = _build(
+        autoconnect(robot.namespace("left"), robot.namespace("right"), Assembler.blueprint())
+    )
+    try:
+        assert coordinator.get_instance("assembler").mounted() == [
+            "None",
+            "None",
+            "left/wrist",
+            "right/wrist",
+        ]
+    finally:
+        coordinator.stop()

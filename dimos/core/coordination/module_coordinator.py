@@ -1172,6 +1172,8 @@ def resolve_module_refs(blueprint: Blueprint) -> dict[tuple[str, str], str]:
     resolved: dict[tuple[str, str], str] = {}
     for consumer in blueprint.active_blueprints:
         for reference in consumer.module_refs:
+            if reference.many:
+                continue
             replacement = blueprint.remapping_map.get((consumer.name, reference.name))
             spec = (
                 replacement
@@ -1182,6 +1184,37 @@ def resolve_module_refs(blueprint: Blueprint) -> dict[tuple[str, str], str]:
             if isinstance(provider, str):
                 resolved[consumer.name, reference.name] = provider
     return resolved
+
+
+def _resolve_many_ref(
+    bp: Any, module_ref: Any, blueprint: Blueprint, disabled_set: set[type]
+) -> list[str]:
+    """Every other active atom meeting a ``list[Spec]`` ref, by instance name, in blueprint order."""
+    spec = module_ref.spec
+    providers = []
+    for other in blueprint.active_blueprints:
+        if other == bp or other.module in disabled_set:
+            continue
+        meets = (
+            issubclass(other.module, spec)
+            if is_module_type(spec)
+            else spec_structural_compliance(other.module, spec)
+        )
+        if not meets:
+            continue
+        missing = [] if is_module_type(spec) else spec_methods_without_rpc(other.module, spec)
+        if missing:
+            raise Exception(
+                _ref_msg(
+                    bp.module.__name__,
+                    module_ref,
+                    spec.__name__,
+                    f"{other.module.__name__} has {', '.join(missing)} without @rpc, "
+                    "and a module reference can only call @rpc methods. Add @rpc to them.",
+                )
+            )
+        providers.append(other.name)
+    return providers
 
 
 def _resolve_single_ref(
@@ -1350,10 +1383,15 @@ def _connect_module_refs(
     disabled_ref_proxies: dict[tuple[str, str], DisabledModuleProxy] = {}
     disabled_set = set(blueprint.disabled_modules_tuple)
 
+    many_refs: dict[tuple[str, str], list[str]] = {}
+
     for bp in blueprint.active_blueprints:
         for module_ref in bp.module_refs:
             ref_key = (bp.name, module_ref.name)
             declared_spec[ref_key] = module_ref.spec
+            if module_ref.many:
+                many_refs[ref_key] = _resolve_many_ref(bp, module_ref, blueprint, disabled_set)
+                continue
             if ref_key in external_refs:
                 mod_and_mod_ref_to_proxy[ref_key] = external_refs.pop(ref_key)
                 continue
@@ -1400,6 +1438,15 @@ def _connect_module_refs(
             target_keys = module_coordinator._instance_keys_of(cast("type[ModuleBase]", target))
             if target_keys:
                 module_coordinator._resolved_module_refs[base_key, ref_name] = target_keys[0]
+
+    for (base_key, ref_name), targets in many_refs.items():
+        base_instance = module_coordinator.get_instance(base_key)
+        async_methods = _async_methods_of_spec(declared_spec[base_key, ref_name])
+        instances = [module_coordinator.get_instance(target) for target in targets]
+        if async_methods:
+            instances = [AsyncSpecProxy(instance, async_methods) for instance in instances]
+        setattr(base_instance, ref_name, instances)
+        base_instance.set_module_ref(ref_name, cast("Any", instances))
 
     for (base_key, ref_name), proxy in disabled_ref_proxies.items():
         base_instance = module_coordinator.get_instance(base_key)

@@ -30,7 +30,7 @@ from enum import Enum, auto
 
 from dimos.cli import theme
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.module_coordinator import _resolve_single_ref
+from dimos.core.coordination.module_coordinator import _resolve_many_ref, _resolve_single_ref
 from dimos.core.introspection.utils import (
     GROUP_COLORS,
     RPC_COLOR,
@@ -89,28 +89,30 @@ def _resolve_rpc_connections(blueprint: Blueprint) -> list[RpcConnection]:
             if not (is_spec(replacement) or is_module_type(replacement)):
                 continue
 
-            provider_name = _resolve_single_ref(
-                atom,
-                module_ref,
-                replacement,
-                blueprint,
-                disabled_set,
-            )
-            if not isinstance(provider_name, str):
-                continue
-            provider = atoms_by_name.get(provider_name)
-            if provider is None:
-                continue
-
-            connections.append(
-                RpcConnection(
-                    caller=atom.module.__name__,
-                    provider=provider.module.__name__,
-                    ref_name=module_ref.name,
-                    contract_name=module_ref.spec.__name__,
-                    methods=_rpc_methods(module_ref.spec),
+            if module_ref.many:
+                provider_names = _resolve_many_ref(atom, module_ref, blueprint, disabled_set)
+            else:
+                single = _resolve_single_ref(
+                    atom,
+                    module_ref,
+                    replacement,
+                    blueprint,
+                    disabled_set,
                 )
-            )
+                provider_names = [single] if isinstance(single, str) else []
+            for provider_name in provider_names:
+                provider = atoms_by_name.get(provider_name)
+                if provider is None:
+                    continue
+                connections.append(
+                    RpcConnection(
+                        caller=atom.module.__name__,
+                        provider=provider.module.__name__,
+                        ref_name=module_ref.name,
+                        contract_name=module_ref.spec.__name__,
+                        methods=_rpc_methods(module_ref.spec),
+                    )
+                )
 
     return connections
 
