@@ -267,9 +267,8 @@ dimos --replay run drone-basic
 
 ### No MAVLink Connection
 
-The `--droneconnectionmodule.connection-string` option accepts pymavlink endpoints,
-serial devices, log files, and `replay`. For TCP and UDP use `protocol:host:port`.
-A bare `host:port` also selects UDP, for example `localhost:14550`.
+Set `--droneconnectionmodule.connection-string` to `replay` or a connection
+string supported by your installed pymavlink. A blank value fails configuration.
 A live run requires a heartbeat within 30 seconds. If opening the endpoint or
 waiting for its heartbeat fails, startup stops before video starts.
 

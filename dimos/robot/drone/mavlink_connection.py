@@ -81,8 +81,11 @@ class MavlinkConnection:
             self.update_telemetry()
             return True
         except Exception as e:
-            self.disconnect()
             logger.error(f"Connection failed: {e}")
+            try:
+                self.disconnect()
+            except Exception as close_error:
+                logger.warning(f"Failed to close MAVLink connection: {close_error}")
             return False
 
     def update_telemetry(self, timeout: float = 0.1) -> None:
@@ -1006,10 +1009,11 @@ class MavlinkConnection:
 
     def disconnect(self) -> None:
         """Disconnect from drone."""
-        if self.mavlink is not None:
-            self.mavlink.close()
-            self.mavlink = None
+        link = self.mavlink
+        self.mavlink = None
         self.connected = False
+        if link is not None:
+            link.close()
         logger.info("Disconnected")
 
     @property

@@ -14,7 +14,7 @@ class MavlinkConnection:
     target_system: int
     target_component: int
     mav: _MavSender
-    def wait_heartbeat(self, timeout: float | None = ...) -> _MavlinkMessage: ...
+    def wait_heartbeat(self, timeout: float | None = ...) -> _MavlinkMessage | None: ...
     def recv_match(
         self,
         type: str | list[str] | None = ...,

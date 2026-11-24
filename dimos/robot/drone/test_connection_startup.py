@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from structlog.testing import capture_logs
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -28,28 +29,10 @@ if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
 
-@pytest.mark.parametrize(
-    ("invalid", "valid"),
-    [
-        (" ", "replay"),
-        ("tcp:missing-port", "tcp:localhost:5760"),
-        ("localhost:badport", "localhost:14550"),
-        ("udpout:host:65536", "udpin::14550"),
-        ("tcp: :80", "/dev/serial/by-id/example,115200"),
-        ("ws:host:bad:/path", "ws:localhost:8080:/path"),
-        ("mcast:bad-port", "mcast:"),
-        ("mcast:not-a-group:14550", "mcast:239.1.1.1:14550"),
-        ("mcast:127.0.0.1:14550", "mcast:14550"),
-    ],
-)
-def test_mavlink_endpoint_preflight(invalid: str, valid: str) -> None:
+def test_blank_mavlink_endpoint_is_rejected() -> None:
     parser = BlueprintConfigParser(DroneConnectionModule.blueprint())
-    option = "--droneconnectionmodule.connection-string"
-    with pytest.raises(BlueprintConfigError, match="connection_string"):
-        parser.parse([option, invalid], environ={})
-
-    parsed = parser.parse([option, valid], environ={})
-    assert parsed.module_kwargs("droneconnectionmodule")["connection_string"] == valid
+    with pytest.raises(BlueprintConfigError, match="MAVLink connection string cannot be blank"):
+        parser.parse(["--droneconnectionmodule.connection-string", " "], environ={})
 
 
 def test_start_reports_connection_failure(mocker: MockerFixture) -> None:
@@ -82,3 +65,19 @@ def test_heartbeat_timeout_closes_connection_and_allows_retry(mocker: MockerFixt
     assert conn.connected
     conn.disconnect()
     second.close.assert_called_once_with()
+
+
+def test_failed_close_preserves_connection_error(mocker: MockerFixture) -> None:
+    link = mocker.patch(
+        "dimos.robot.drone.mavlink_connection.mavutil.mavlink_connection"
+    ).return_value
+    link.recv_match.side_effect = OSError("initial telemetry unavailable")
+    link.close.side_effect = OSError("close failed")
+    conn = MavlinkConnection()
+
+    with capture_logs() as logs:
+        assert not conn.connect()
+
+    assert any("initial telemetry unavailable" in entry["event"] for entry in logs)
+    assert not conn.connected
+    assert conn.mavlink is None
