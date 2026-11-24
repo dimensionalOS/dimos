@@ -148,7 +148,7 @@ class M20Controller(NativeModule):
     controller_state: Out[String]
     dock_state: Out[String]
     body_height: Out[Float32]
-    controller_status: Out[String]
+    controller_report: Out[String]
 
     @rpc
     def start(self) -> None:
@@ -160,18 +160,24 @@ class M20Controller(NativeModule):
         self._state_lock = threading.Lock()
         # before the native process starts: it publishes the state only when it changes, so its first one would be missed
         self.register_disposable(
-            Disposable(self.controller_state.subscribe(self._on_controller_state))
+            Disposable(self._watch("controller_state", self._on_controller_state))
         )
-        self.register_disposable(Disposable(self.dock_state.subscribe(self._on_dock_state)))
+        self.register_disposable(Disposable(self._watch("dock_state", self._on_dock_state)))
         self.register_disposable(
-            Disposable(self.controller_status.subscribe(self._on_controller_status))
+            Disposable(self._watch("controller_report", self._on_controller_status))
         )
         for name in ("battery", "battery_left", "battery_right"):
-            out = getattr(self, name)
             self.register_disposable(
-                Disposable(out.subscribe(lambda msg, name=name: self._on_battery(name, msg)))
+                Disposable(self._watch(name, lambda msg, name=name: self._on_battery(name, msg)))
             )
         super().start()
+
+    def _watch(self, port: str, callback: Any) -> Any:
+        # an Out's own subscribe() sees only this process's publishes; the native publishes on the transport
+        transport = getattr(getattr(self, port), "_transport", None)
+        if transport is None:
+            return lambda: None
+        return transport.subscribe(callback)
 
     def _on_dock_state(self, msg: String) -> None:
         try:

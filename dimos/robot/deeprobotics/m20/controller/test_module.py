@@ -30,3 +30,39 @@ def test_the_wire_config_has_every_rust_field() -> None:
         if ": " in line and not line.strip().startswith(("//", "#"))
     }
     assert set(M20ControllerConfig(mode="owner").to_config_dict()) == declared
+
+
+def test_what_the_native_process_publishes_reaches_the_python_side(mocker) -> None:
+    """The native publishes on its outputs' zenoh keys from another session; Out.subscribe() alone never sees that."""
+    import json
+
+    from dimos.core.native_module import NativeModule
+    from dimos.core.transport import ZenohTransport
+    from dimos.msgs.std_msgs.String import String
+    from dimos.robot.deeprobotics.m20.controller.module import M20Controller
+    from dimos.utils.testing.waiting import wait_until
+
+    mocker.patch.object(NativeModule, "start", lambda self: None)
+    keys = {
+        name: f"test/m20_controller_watch/{name}"
+        for name in ("controller_state", "controller_report")
+    }
+    with M20Controller(mode="owner") as module:
+        for name, key in keys.items():
+            module.set_transport(name, ZenohTransport(key, String))
+        module.start()
+        status = json.dumps({"state": "RlControl", "gait": "0x1001"})
+        native_state = ZenohTransport(keys["controller_state"], String)
+        native_status = ZenohTransport(keys["controller_report"], String)
+
+        def arrived() -> bool:
+            native_state.publish(String("RlControl"))
+            native_status.publish(String(status))
+            return (
+                module.controller_status() == "RlControl"
+                and module.status().get("gait") == "0x1001"
+            )
+
+        wait_until(arrived, timeout=5.0, interval=0.05)
+        native_state.stop()
+        native_status.stop()

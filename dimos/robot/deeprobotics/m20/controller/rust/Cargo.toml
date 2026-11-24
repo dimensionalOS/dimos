@@ -105,7 +105,7 @@ command_ready = "std_msgs.Bool"
 controller_state = "std_msgs.String"
 dock_state = "std_msgs.String"
 body_height = "std_msgs.Float32"
-controller_status = "std_msgs.String"
+controller_report = "std_msgs.String"
 
 [package.metadata.dimos.module.m20_dock_detector]
 path = "m20_controller::dock::detector_module::M20DockDetector"

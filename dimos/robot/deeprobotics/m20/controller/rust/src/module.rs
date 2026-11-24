@@ -149,7 +149,7 @@ pub struct M20Controller {
     body_height: Output<Float32>,
     /// policy: crate::status::ControllerStatus as JSON, on every change and once a second
     #[output(encode = std_msgs::String::encode)]
-    controller_status: Output<std_msgs::String>,
+    controller_report: Output<std_msgs::String>,
 
     #[config]
     config: Config,
@@ -323,8 +323,8 @@ impl M20Controller {
         let (full_status, full_status_rx) = watch::channel(None::<std_msgs::String>);
         forward(
             full_status_rx,
-            self.controller_status.clone(),
-            "controller_status",
+            self.controller_report.clone(),
+            "controller_report",
         );
         if config.policy && !config.charge_manager_toml.is_empty() {
             match ChargeManagerToml::load(&config.charge_manager_toml) {
