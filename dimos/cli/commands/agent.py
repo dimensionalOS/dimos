@@ -202,7 +202,11 @@ def _node_argv(args: list[str]) -> list[str]:
             f"dimos agent needs Node.js 24 or 26, and {node} is {version}. Put Node 24 or 26 first on PATH."
         )
     cli = package / "dist" / "cli.js"
-    if not args or args[0] not in ("gateway", "stop", "status"):
+    skip_build = os.environ.get("DIMOS_AGENT_SKIP_BUILD") == "1"
+    if skip_build:
+        if not cli.exists() or not (package / "node_modules").is_dir():
+            _fail("The agent is not built. Run: dimos agent version")
+    elif not args or args[0] not in ("gateway", "stop", "status"):
         _build(package, node)
     else:
         if args[0] == "gateway":

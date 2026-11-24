@@ -34,6 +34,7 @@ function renderOf(result: ToolResult): RenderDetails | null {
     case "bash":
     case "inventory":
     case "stream_get":
+    case "memory":
     case "agent_module":
       return details.details.render;
     case "read":

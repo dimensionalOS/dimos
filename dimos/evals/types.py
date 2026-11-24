@@ -175,6 +175,7 @@ class EvalCase:
     tags: frozenset[str] = frozenset()
     timeout_s: float = 60.0  # wall-clock is a task property; max_steps is the agent's
     threshold: float = 1.0  # passed = score >= threshold; the case knows its own pass bar
+    judge_model: str = ""  # set when grade calls an LLM judge; copied onto the run manifest
 
 
 Suite = Sequence[EvalCase]

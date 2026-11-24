@@ -45,6 +45,7 @@ import { promptExtension } from "#dimos/agents/harness/prompt.ts";
 import { readTool } from "#dimos/agents/harness/tools/read.ts";
 import { runtimeTools } from "#dimos/agents/harness/tools/runtime.ts";
 import { writeTool } from "#dimos/agents/harness/tools/write.ts";
+import { memoryTool } from "#dimos/agents/harness/tools/lib/memory.ts";
 
 type AgentOptions = {
   readonly install: DimosInstall;
@@ -102,6 +103,8 @@ type ToolTableDeps = {
   readonly schemas: RuntimeToolSchemas;
   readonly job: AgentTool<"job">;
   readonly background: AgentTool<"background">;
+  /** Conversation files live here; recording.db is resolved against it. */
+  readonly workspace: () => string;
 };
 
 /**
@@ -145,7 +148,12 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
     maxSourceBytes: 64 * 2 ** 20,
   });
   const budget = new ContextBudget(options.models);
-  const limiter = new OutputLimiter({ dir: options.toolResultsDir, budget, defaultMaxChars: 2_000 });
+  // Inputs and tool results share this cut. Eval recording prompts need ~4k; override with
+  // DIMOS_AGENT_DEFAULT_MAX_CHARS when a smaller default is required.
+  const rawMax = gatewayEnv["DIMOS_AGENT_DEFAULT_MAX_CHARS"];
+  const parsedMax = rawMax !== undefined && rawMax !== "" ? Number.parseInt(rawMax, 10) : Number.NaN;
+  const defaultMaxChars = Number.isFinite(parsedMax) && parsedMax >= 1 ? parsedMax : 4_000;
+  const limiter = new OutputLimiter({ dir: options.toolResultsDir, budget, defaultMaxChars });
   const observer = new RuntimeObserver({
     harness,
     runtime,
@@ -176,6 +184,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
       schemas: catalog.schemas.value,
       job: jobTool(jobs),
       background: backgroundTool(detacher),
+      workspace: () => options.defaults().workspace,
     });
     registry.install(toolsExtension(table, limiter, detacher));
   };
@@ -272,6 +281,11 @@ function toolTable(deps: ToolTableDeps): AgentToolTable {
     bash: bashTool({ install: deps.install, gatewayEnv: deps.gatewayEnv, renderer: deps.renderer }),
     edit: editTool(),
     write: writeTool(),
+    memory: memoryTool({
+      install: deps.install,
+      renderer: deps.renderer,
+      workspace: deps.workspace,
+    }),
     ...runtimeTools(deps.schemas, {
       connection: deps.connection,
       install: deps.install,

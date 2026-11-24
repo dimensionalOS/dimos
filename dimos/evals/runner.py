@@ -112,12 +112,16 @@ class EvalRunner(Configurable):
             raise ValueError("duplicate eval case IDs")
         self._run_dir = self._new_run_dir()
         provenance = provenance or {"source": {"kind": "unavailable"}, "agent": None}
+        runner_record: dict[str, Any] = {"strict": self.config.strict}
+        judge_models = sorted({case.judge_model for case in selected if case.judge_model})
+        if judge_models:
+            runner_record["judge_models"] = judge_models
         manifest = {
             "schema_version": 1,
             "source": provenance["source"],
             "selection": {"tags": sorted(tags), "limit": limit, "case_ids": ids},
             "agent": provenance["agent"],
-            "runner": {"strict": self.config.strict},
+            "runner": runner_record,
             "code": _git_record(),
         }
         with (self.run_dir / "manifest.json").open("x") as stream:

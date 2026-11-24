@@ -59,3 +59,6 @@ class MemoryVectorStore(VectorStore):
     def delete(self, stream_name: str, key: int) -> None:
         vectors = self._vectors.get(stream_name, {})
         vectors.pop(key, None)
+
+    def get(self, stream_name: str, key: int) -> Embedding | None:
+        return self._vectors.get(stream_name, {}).get(key)

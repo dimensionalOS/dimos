@@ -1,0 +1,42 @@
+[
+  {"id": "person_exact", "question": "Is a person visible in any of these images?", "reference": "Yes, a person is visible.", "answer": "Yes, a person is visible.", "human": 5},
+  {"id": "person_yes", "question": "Is a person visible in any of these images?", "reference": "Yes, a person is visible.", "answer": "Yes.", "human": 5},
+  {"id": "person_paraphrase", "question": "Is a person visible in any of these images?", "reference": "Yes, a person is visible.", "answer": "A person shows up in the frames.", "human": 5},
+  {"id": "person_extra", "question": "Is a person visible in any of these images?", "reference": "Yes, a person is visible.", "answer": "Yes, a person is sitting at a table near the end.", "human": 4},
+  {"id": "person_wrong", "question": "Is a person visible in any of these images?", "reference": "Yes, a person is visible.", "answer": "No person appears.", "human": 1},
+  {"id": "person_other", "question": "Is a person visible in any of these images?", "reference": "Yes, a person is visible.", "answer": "There is a dog.", "human": 1},
+
+  {"id": "chairs_exact", "question": "At the start of these observations, which furniture is most numerous?", "reference": "chairs", "answer": "chairs", "human": 5},
+  {"id": "chairs_sentence", "question": "At the start of these observations, which furniture is most numerous?", "reference": "chairs", "answer": "Chairs are the most numerous.", "human": 5},
+  {"id": "chairs_extra", "question": "At the start of these observations, which furniture is most numerous?", "reference": "chairs", "answer": "office chairs", "human": 4},
+  {"id": "chairs_partial", "question": "At the start of these observations, which furniture is most numerous?", "reference": "chairs", "answer": "beds and chairs", "human": 3},
+  {"id": "chairs_sofas", "question": "At the start of these observations, which furniture is most numerous?", "reference": "chairs", "answer": "sofas", "human": 1},
+  {"id": "chairs_desks", "question": "At the start of these observations, which furniture is most numerous?", "reference": "chairs", "answer": "desks", "human": 1},
+
+  {"id": "couch_yes", "question": "Did you see a couch or sofa at any point?", "reference": "Yes.", "answer": "Yes, there is a sofa.", "human": 5},
+  {"id": "couch_paraphrase", "question": "Did you see a couch or sofa at any point?", "reference": "Yes.", "answer": "A couch is visible.", "human": 5},
+  {"id": "couch_no", "question": "Did you see a couch or sofa at any point?", "reference": "Yes.", "answer": "No.", "human": 1},
+  {"id": "couch_bed", "question": "Did you see a couch or sofa at any point?", "reference": "Yes.", "answer": "I saw a bed, not a couch.", "human": 1},
+
+  {"id": "plants_yes", "question": "Did you see any potted plants?", "reference": "Yes.", "answer": "Yes, potted plants are visible.", "human": 5},
+  {"id": "plants_paraphrase", "question": "Did you see any potted plants?", "reference": "Yes.", "answer": "There are plants in pots.", "human": 5},
+  {"id": "plants_tree", "question": "Did you see any potted plants?", "reference": "Yes.", "answer": "I saw a tree outside.", "human": 2},
+  {"id": "plants_no", "question": "Did you see any potted plants?", "reference": "Yes.", "answer": "No plants.", "human": 1},
+
+  {"id": "pool_no", "question": "Did you see a swimming pool anywhere in the observations?", "reference": "No.", "answer": "No.", "human": 5},
+  {"id": "pool_paraphrase", "question": "Did you see a swimming pool anywhere in the observations?", "reference": "No.", "answer": "No swimming pool is visible.", "human": 5},
+  {"id": "pool_unsure", "question": "Did you see a swimming pool anywhere in the observations?", "reference": "No.", "answer": "I am not sure, maybe a pool.", "human": 2},
+  {"id": "pool_yes", "question": "Did you see a swimming pool anywhere in the observations?", "reference": "No.", "answer": "Yes, there is a pool.", "human": 1},
+
+  {"id": "disp_exact", "question": "How far in a straight line is your final position from your first shown position, in meters?", "reference": "about 1.7 meters", "answer": "1.7 meters", "human": 5},
+  {"id": "disp_bare", "question": "How far in a straight line is your final position from your first shown position, in meters?", "reference": "about 1.7 meters", "answer": "1.7", "human": 5},
+  {"id": "disp_round", "question": "How far in a straight line is your final position from your first shown position, in meters?", "reference": "about 1.7 meters", "answer": "about 2 meters", "human": 4},
+  {"id": "disp_close", "question": "How far in a straight line is your final position from your first shown position, in meters?", "reference": "about 1.7 meters", "answer": "roughly 1.5 m", "human": 4},
+  {"id": "disp_path", "question": "How far in a straight line is your final position from your first shown position, in meters?", "reference": "about 1.7 meters", "answer": "about 38 meters", "human": 1},
+
+  {"id": "path_exact", "question": "Roughly how many meters did you travel in total, counting path length rather than straight-line displacement?", "reference": "about 37.9 meters", "answer": "37.9 m", "human": 5},
+  {"id": "path_round", "question": "Roughly how many meters did you travel in total, counting path length rather than straight-line displacement?", "reference": "about 37.9 meters", "answer": "about 38 meters", "human": 5},
+  {"id": "path_vague", "question": "Roughly how many meters did you travel in total, counting path length rather than straight-line displacement?", "reference": "about 37.9 meters", "answer": "several dozen meters", "human": 3},
+  {"id": "path_forty", "question": "Roughly how many meters did you travel in total, counting path length rather than straight-line displacement?", "reference": "about 37.9 meters", "answer": "about 40 meters", "human": 4},
+  {"id": "path_disp", "question": "Roughly how many meters did you travel in total, counting path length rather than straight-line displacement?", "reference": "about 37.9 meters", "answer": "1.7 meters", "human": 1}
+]

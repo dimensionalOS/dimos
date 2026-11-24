@@ -184,7 +184,9 @@ export async function ensureGateway(
     if (await reachable(paths.socket, 500)) return await waitUntilServing(paths, null, held);
     const [executable, ...args] = command;
     if (executable === undefined) throw new Error("No command to start the gateway with");
-    const gateway = spawn(executable, args, { detached: true, stdio: "ignore", env });
+    const gatewayEnv = { ...env };
+    delete gatewayEnv.DIMOS_EVAL_RUN_ID;
+    const gateway = spawn(executable, args, { detached: true, stdio: "ignore", env: gatewayEnv });
     gateway.unref();
     await waitUntilServing(
       paths,
