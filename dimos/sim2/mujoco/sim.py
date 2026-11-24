@@ -137,11 +137,7 @@ class MujocoSim(Module):
             return
         if self._files is None:
             self._files = WorldFiles(backend.usd, backend.assets())
-        data = await self._files.file(request.data)
-        if data is None:
-            logger.debug(f"render_file_request for {request.data!r}, which the world does not name")
-            return
-        self.file_info.publish(File(request.data, data))
+        await self._files.answer(request.data, self.file_info.publish)
 
     @rpc
     def describe(self) -> dict[str, Any]:

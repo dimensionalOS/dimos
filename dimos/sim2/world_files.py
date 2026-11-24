@@ -15,10 +15,14 @@
 """A simulated world's files as a viewer asks for them on render_file_request: `*.usd` is the world, the rest its assets."""
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from dimos.msgs.files.File import File
 from dimos.robot.assets.usd_utils.assets import publish_usd_assets
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # A request for either is a request for the world's layer, answered under the name it asked by.
 USD_SUFFIXES = (".usd", ".usda")
@@ -27,16 +31,29 @@ USD_SUFFIXES = (".usd", ".usda")
 class WorldFiles:
     def __init__(self, usd: str, files: Mapping[str, Path | bytes] | None = None) -> None:
         """`usd` is the composed world (assets as absolute paths); `files` are further names answered as they are."""
-        self._usd = usd
+        self.usd = usd
         self._files = dict(files or {})
         self._published: asyncio.Future[tuple[str, dict[str, str]]] | None = None
+        self._answering: set[str] = set()
+
+    async def answer(self, name: str, publish: Callable[[File], None]) -> None:
+        """Publish the reply to a request for `name`; a repeat asked while one is on its way is that same reply."""
+        if name in self._answering:
+            return
+        self._answering.add(name)
+        try:
+            data = await self.file(name)
+        finally:
+            self._answering.discard(name)
+        if data is None:
+            logger.debug(f"render_file_request for {name!r}, which the world does not name")
+            return
+        publish(File(name, data))
 
     async def file(self, name: str) -> bytes | None:
         """What a request for `name` is answered with, or None for a name this world does not have."""
         if self._published is None:
-            self._published = asyncio.ensure_future(
-                asyncio.to_thread(publish_usd_assets, self._usd)
-            )
+            self._published = asyncio.ensure_future(asyncio.to_thread(publish_usd_assets, self.usd))
         usd, published = await asyncio.shield(self._published)
         found: Path | bytes | None = (
             Path(published[name]) if name in published else self._files.get(name)
