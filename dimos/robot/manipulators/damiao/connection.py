@@ -306,10 +306,16 @@ class DamiaoConnection(ConnectionModule):
 
     @rpc
     def get_config(self) -> dict[str, Any]:
-        """How each arm is driven now, by arm id: ``ArmConfigState`` as a dict."""
+        """How each arm is driven now, by arm id: ``ArmConfigState`` as a dict.
+
+        While teaching every joint floats with the robot's ``teach_kd``, as sent.
+        """
         with self._hardware_lock:
             arm = self._live_arm()
             gains, floating = arm.get_gains(), arm.floating
+            if self.config.teach:
+                assert self.robot.teach_kd is not None
+                floating = dict(zip(self.robot.arm_joint_names, self.robot.teach_kd, strict=True))
             states = {}
             for arm_id, joints in self._arm_joints().items():
                 item = self._applied.get(arm_id)
