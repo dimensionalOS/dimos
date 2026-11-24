@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The surfaces a sensor's rays can hit, cast through a BVH instead of geom by geom.
-
-mj_multiRay tests every geom of its model on every ray, and every face of each mesh whose bounds
-a ray crosses, so a 20k-ray scan of office 555 (4150 geoms, 1.3M collision faces) costs ~60 ms.
-Here every box and mesh is triangles in Embree (open3d's RaycastingScene): the static ones as one
-world-frame scene, each moving body's as a scene in its own frame that the rays near it are moved
-into. The few remaining primitives (planes, spheres, capsules, cylinders) are cast by MuJoCo in a
-model of only those, the moving ones riding mocap bodies posed from the world's model.
-"""
+"""Sensor rays cast through Embree BVHs (static triangles as one scene, each moving body in its own frame), MuJoCo for the rest: mj_multiRay over office 555's 4150 geoms costs ~60 ms a scan."""
 
 from collections.abc import Collection
 from typing import Any
