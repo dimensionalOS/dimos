@@ -119,6 +119,37 @@ fn sent_action(
     a
 }
 
+/// The live orientation without imu_rpy: yesense-imu's quaternion of the device euler times the mount's inverse
+fn live_quaternion(rpy_deg: [f32; 3]) -> [f64; 4] {
+    let counts = |d: f32| (d as f64 * 1e6).round() * 1e-6;
+    let [roll, pitch, yaw] = [
+        counts(rpy_deg[0] + 90.0),
+        counts(rpy_deg[1]),
+        counts(rpy_deg[2]),
+    ]
+    .map(f64::to_radians);
+    let (sr, cr) = (roll * 0.5).sin_cos();
+    let (sp, cp) = (pitch * 0.5).sin_cos();
+    let (sy, cy) = (yaw * 0.5).sin_cos();
+    let q = [
+        cy * cp * cr + sy * sp * sr,
+        cy * cp * sr - sy * sp * cr,
+        cy * sp * cr + sy * cp * sr,
+        sy * cp * cr - cy * sp * sr,
+    ];
+    // q * mount^-1, mount^-1 = (cos(-pi/4), sin(-pi/4), 0, 0)
+    let (mw, mx) = (
+        std::f64::consts::FRAC_PI_4.cos(),
+        -std::f64::consts::FRAC_PI_4.sin(),
+    );
+    [
+        q[0] * mw - q[1] * mx,
+        q[0] * mx + q[1] * mw,
+        q[2] * mw + q[3] * mx,
+        q[3] * mw - q[2] * mx,
+    ]
+}
+
 /// experiment knobs (integers from the environment)
 fn knob(name: &str, default: i64) -> i64 {
     std::env::var(name)
@@ -225,6 +256,7 @@ fn main() -> Result<()> {
         writeln!(o, "row\tt\trunner\tgait\tkind\tleg_err\tleg_ulps\twheel_err\tworst_joint\tours\trl_deploy\twheel_ours\twheel_rl_deploy")?;
     }
     // per runner: steps, leg-target steps within, wheel-command steps within
+    let mut max_leg = 0.0f32;
     let mut tally: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
     let mut prev_segment = None;
     let mut prev_runner: Option<String> = None;
@@ -275,7 +307,8 @@ fn main() -> Result<()> {
                 accel: accel_at[state_row],
                 q: step.q.map(|x| x as f64),
                 dq: step.dq.map(|x| x as f64),
-                imu_rpy_deg: Some(s.rpy),
+                imu_rpy_deg: (knob("M20_QUAT_IMU", 0) == 0).then_some(s.rpy),
+                quat: live_quaternion(s.rpy),
                 ..Default::default()
             },
             axes: step.axes.map(|x| x as f64),
@@ -326,6 +359,7 @@ fn main() -> Result<()> {
             }
             wheel_ok &= close(ours, step.wheel_dq[w]);
         }
+        max_leg = max_leg.max(leg_err);
         let t = tally.entry(step.runner.clone()).or_default();
         t.0 += 1;
         t.1 += leg_ok as u64;
@@ -347,6 +381,18 @@ fn main() -> Result<()> {
             }
         }
     }
+    // the gravity observation each IMU sample gives on the two paths
+    let mut worst_g = 0.0f32;
+    for s in &imu {
+        let a = m20_controller::types::vendor_projected_gravity(s.rpy);
+        let b = m20_controller::types::projected_gravity(&live_quaternion(s.rpy));
+        for k in 0..3 {
+            worst_g = worst_g.max((a[k] - b[k] as f32).abs());
+        }
+    }
+    println!(
+        "gravity: rl_deploy's rpy path vs the live quaternion path, max |difference| {worst_g:.3e}"
+    );
     let (mut n, mut legs, mut wheels) = (0, 0, 0);
     for (name, (steps, l, w)) in &tally {
         println!(

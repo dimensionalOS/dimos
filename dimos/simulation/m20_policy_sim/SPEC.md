@@ -751,6 +751,14 @@ rl_deploy computes each step in f32 (RLControl / PolicyRunnerBase, aarch64 disas
 - Phase: phase = f32(f64(phase) + 0.02 x f64(frequency)) - f32(trunc of that sum); observed as f32(sin / cos of
   f64(phase) x 2 pi).
 - Joint terms: f32(q) - f32(default), dq x scale, gyro x 0.25, each in f32.
+- Live, the controller gets those angles on `imu_rpy` from the body IMU module: yesense_node's rt/IMU_DATA is the
+  device's euler block (0x40: pitch, roll, yaw i32 x 1e-6 deg) as f32(i32) x f32(1e-6), roll then minus 90 in f32
+  (parse_data_by_id 0x16eec8, publish_msg 0x15cf30); the serial driver rebuilds that from the same counts, the sniffer
+  decodes rt/IMU_DATA when yesense_node sends it over UDP. Without `imu_rpy` the orientation quaternion is used: on the
+  11-20 sessions the two give gravity within 6e-8 and the same closed-loop agreement (78.1 / 78.4%, 70.8 / 71.0%), but
+  only if that quaternion is the euler block's: the driver prefers the device's own quaternion block (0x41) when it is
+  sent [U: whether this device sends 0x41 and fuses it alike]. To check it live, log the driver's orientation next to
+  vendor_rpy_deg for the same frames.
 - Gravity: from yesense's own roll / pitch / yaw (degrees, f32; rad = f32(f64(f32(deg / 180)) x pi)), Eigen's
   AngleAxis(yaw, Z) AngleAxis(pitch, Y) AngleAxis(roll, X) (sincosf of the half angles, its NEON quaternion product
   and toRotationMatrix with FMAs), gravity = -(R20, R21, R22) (types.rs `vendor_projected_gravity`).
