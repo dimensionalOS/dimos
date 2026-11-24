@@ -793,6 +793,12 @@ and 81%. Where they part [U]:
   rotation's op order is the disassembly's (fmul, fmla, fmla with the zero z term, fmadd with 0.145 dx / 0.1 dy), and
   dock::libm::sincosf is glibc 2.31's to the bit below |x| = 120 (tests/libm_glibc.rs).
 
+## Vendor functions, one by one
+
+Every function of the vendor binaries, with each branch, topic, service and timer: ported (our file:line) or n/a
+with the reason, and the differences still to fix ordered by risk:
+[charge_manager](SPEC_charge_manager.md), [reflective_column_node](SPEC_reflective_column.md).
+
 ## Building the controller for the robot
 
     cd dimos/robot/deeprobotics/m20/controller/rust
