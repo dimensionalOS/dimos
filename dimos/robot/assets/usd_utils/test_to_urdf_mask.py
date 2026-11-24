@@ -585,3 +585,224 @@ def test_a_nested_link_with_no_record_is_still_read_as_welded() -> None:
     root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
 
     assert [joint.get("type") for joint in root.findall("joint")] == ["fixed"]
+
+
+def _link_pose(urdf: str, link: str, positions: dict[str, float] | None = None) -> Any:
+    """Where `link` sits in the root link, walking the URDF's joints at the given positions."""
+    loaded = RobotModel.from_urdf_string(urdf).load()
+    by_child = {joint.child_link: joint for joint in loaded.joints}
+    pose = np.eye(4)
+    while link in by_child:
+        joint = by_child[link]
+        pose = joint.parent_from_child((positions or {}).get(joint.name, 0.0)) @ pose
+        link = joint.parent_link
+    return pose
+
+
+def _anchored_usda(joint_type: str) -> str:
+    return f"""#usda 1.0
+(
+    defaultPrim = "rig"
+)
+
+def Xform "rig"
+{{
+    def Xform "base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {{
+    }}
+
+    def Xform "arm" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {{
+        def {joint_type} "elbow"
+        {{
+            uniform token physics:axis = "X"
+            rel physics:body0 = </rig/base>
+            rel physics:body1 = </rig/arm>
+            point3f physics:localPos0 = (0, 0, 1)
+            point3f physics:localPos1 = (0, 0, 0.2)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (0.70710678, 0, 0, 0.70710678)
+        }}
+    }}
+}}
+"""
+
+
+def _expected_anchored_pose(angle: float) -> Any:
+    """base_from_joint @ joint motion @ inverse(arm_from_joint), straight from UsdPhysics."""
+    from scipy.spatial.transform import Rotation
+
+    base_from_joint = np.eye(4)
+    base_from_joint[:3, 3] = [0, 0, 1]
+    motion = np.eye(4)
+    motion[:3, :3] = Rotation.from_rotvec([angle, 0, 0]).as_matrix()
+    arm_from_joint = np.eye(4)
+    arm_from_joint[:3, :3] = Rotation.from_euler("z", np.pi / 2).as_matrix()
+    arm_from_joint[:3, 3] = [0, 0, 0.2]
+    return base_from_joint @ motion @ np.linalg.inv(arm_from_joint)
+
+
+def test_a_joint_anchored_off_the_child_origin_keeps_the_child_where_it_sits() -> None:
+    urdf = usd_to_urdf(_anchored_usda("PhysicsFixedJoint"))
+
+    np.testing.assert_allclose(_link_pose(urdf, "arm"), _expected_anchored_pose(0.0), atol=1e-6)
+
+
+def test_a_moving_joint_anchored_off_the_child_origin_turns_about_the_anchor() -> None:
+    urdf = usd_to_urdf(_anchored_usda("PhysicsRevoluteJoint"))
+
+    for angle in (0.0, 0.7, -1.3):
+        np.testing.assert_allclose(
+            _link_pose(urdf, "arm", {"elbow": angle}), _expected_anchored_pose(angle), atol=1e-6
+        )
+
+
+def test_a_usd_model_places_an_anchored_child_where_the_layer_does(tmp_path: Path) -> None:
+    from dimos.robot.assets.model import UsdModel
+
+    scene = tmp_path / "rig.usda"
+    scene.write_text(_anchored_usda("PhysicsRevoluteJoint"))
+    joints = {joint.child_link: joint for joint in UsdModel.from_file(scene).joints}
+
+    pose = np.eye(4)
+    link = "arm"
+    while link in joints:
+        joint = joints[link]
+        pose = joint.parent_from_child(0.5 if joint.name == "elbow" else 0.0) @ pose
+        link = joint.parent_link
+    np.testing.assert_allclose(pose, _expected_anchored_pose(0.5), atol=1e-6)
+
+
+_GROUPED_USDA = """#usda 1.0
+(
+    defaultPrim = "rig"
+)
+
+def Xform "rig"
+{
+    def Xform "chassis" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Xform "parts"
+        {
+            float3 xformOp:translate = (0, 0, 0.5)
+            quatf xformOp:orient = (0.70710678, 0, 0, 0.70710678)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Scope "shapes"
+            {
+                def Cube "hull" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI"]
+                )
+                {
+                    double size = 1
+                    float3 xformOp:translate = (0.1, 0, 0)
+                    float3 xformOp:scale = (0.2, 0.3, 0.4)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+                }
+            }
+
+            def Xform "mast" (
+                prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            )
+            {
+                float3 xformOp:translate = (0.2, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+    }
+}
+"""
+
+
+def test_geometry_inside_a_grouping_prim_stays_on_its_body() -> None:
+    links = {link.get("name"): link for link in ET.fromstring(usd_to_urdf(_GROUPED_USDA))}
+
+    box = links["chassis"].find("collision/geometry/box")
+    origin = links["chassis"].find("collision/origin")
+    assert box is not None, "geometry beneath an Xform and a Scope was dropped"
+    assert origin is not None
+    np.testing.assert_allclose([float(v) for v in (box.get("size") or "").split()], [0.2, 0.3, 0.4])
+    np.testing.assert_allclose(
+        [float(v) for v in (origin.get("xyz") or "").split()], [0, 0.1, 0.5], atol=1e-6
+    )
+    np.testing.assert_allclose(
+        [float(v) for v in (origin.get("rpy") or "").split()], [0, 0, np.pi / 2], atol=1e-6
+    )
+
+
+def test_a_body_inside_a_grouping_prim_is_welded_with_the_group_s_offset() -> None:
+    joints = {joint.get("name"): joint for joint in ET.fromstring(usd_to_urdf(_GROUPED_USDA))}
+    origin = joints["mast_weld"].find("origin")
+
+    assert origin is not None
+    np.testing.assert_allclose(
+        [float(v) for v in (origin.get("xyz") or "").split()], [0, 0.2, 0.5], atol=1e-6
+    )
+    np.testing.assert_allclose(
+        [float(v) for v in (origin.get("rpy") or "").split()], [0, 0, np.pi / 2], atol=1e-6
+    )
+
+
+def _round_shape_usda(type_name: str, axis: str) -> str:
+    return f"""#usda 1.0
+(
+    defaultPrim = "leg"
+)
+
+def Xform "leg"
+{{
+    def Xform "thigh" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {{
+        def {type_name} "collision_0" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {{
+            uniform token axis = "{axis}"
+            double height = 0.3
+            double radius = 0.04
+            float3 xformOp:scale = (2, 3, 5)
+            uniform token[] xformOpOrder = ["xformOp:scale"]
+        }}
+    }}
+}}
+"""
+
+
+@pytest.mark.parametrize(
+    ("type_name", "axis", "direction", "radius", "length"),
+    [
+        ("Cylinder", "X", [1, 0, 0], 0.04 * 3, 0.3 * 2),
+        ("Cylinder", "Y", [0, 1, 0], 0.04 * 2, 0.3 * 3),
+        ("Cylinder", "Z", [0, 0, 1], 0.04 * 2, 0.3 * 5),
+        ("Capsule", "X", [1, 0, 0], 0.04 * 3, (0.3 + 0.08) * 2),
+        ("Capsule", "Y", [0, 1, 0], 0.04 * 2, (0.3 + 0.08) * 3),
+    ],
+)
+def test_a_round_shape_lies_along_the_axis_it_names(
+    type_name: str, axis: str, direction: list[float], radius: float, length: float
+) -> None:
+    from scipy.spatial.transform import Rotation
+
+    root = ET.fromstring(usd_to_urdf(_round_shape_usda(type_name, axis)))
+    collision = next(link for link in root.findall("link") if link.get("name") == "thigh").find(
+        "collision"
+    )
+    assert collision is not None
+    cylinder = collision.find("geometry/cylinder")
+    assert cylinder is not None
+    origin = collision.find("origin")
+    rpy = [float(v) for v in (origin.get("rpy") or "").split()] if origin is not None else [0] * 3
+
+    np.testing.assert_allclose(
+        Rotation.from_euler("xyz", rpy).apply([0, 0, 1]), direction, atol=1e-6
+    )
+    assert float(cylinder.get("radius") or 0) == pytest.approx(radius)
+    assert float(cylinder.get("length") or 0) == pytest.approx(length)
