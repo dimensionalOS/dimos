@@ -27,16 +27,14 @@ USD_SUFFIXES = (".usd", ".usda")
 class WorldFiles:
     def __init__(self, usd: str, files: Mapping[str, Path | bytes] | None = None) -> None:
         """`usd` is the composed world (assets as absolute paths); `files` are further names answered as they are."""
-        self._usd = usd
+        self.usd = usd
         self._files = dict(files or {})
         self._published: asyncio.Future[tuple[str, dict[str, str]]] | None = None
 
     async def file(self, name: str) -> bytes | None:
         """What a request for `name` is answered with, or None for a name this world does not have."""
         if self._published is None:
-            self._published = asyncio.ensure_future(
-                asyncio.to_thread(publish_usd_assets, self._usd)
-            )
+            self._published = asyncio.ensure_future(asyncio.to_thread(publish_usd_assets, self.usd))
         usd, published = await asyncio.shield(self._published)
         found: Path | bytes | None = (
             Path(published[name]) if name in published else self._files.get(name)

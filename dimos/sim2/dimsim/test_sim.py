@@ -256,3 +256,25 @@ def test_the_world_announces_the_frame_the_base_reports_its_odometry_in(
         bot.stop()
     assert odom is not None
     assert _cbor(world, "bot")[ODOM_FRAME] == odom.frame_id
+
+
+def test_a_usd_request_is_answered_with_the_world_as_it_is_now() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from dimos.msgs.std_msgs.String import String
+
+    sim = DimSimSim()
+    published: list[Any] = []
+    try:
+        backend = SimpleNamespace(usd=_ROOM, close=lambda: None)
+        sim._backend = backend  # type: ignore[assignment]
+        sim.file_info.publish = published.append  # type: ignore[method-assign]
+        asyncio.run(sim.handle_render_file_request(String("*.usd")))
+        # An action that reshapes the world hands the backend a new USD.
+        backend.usd = _ROOM.replace('"wall"', '"door"')
+        asyncio.run(sim.handle_render_file_request(String("*.usd")))
+    finally:
+        sim.stop()
+    assert [reply.uri for reply in published] == ["*.usd", "*.usd"]
+    assert b'"wall"' in published[0].data and b'"door"' in published[1].data

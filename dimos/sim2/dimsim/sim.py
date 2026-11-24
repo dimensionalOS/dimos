@@ -24,10 +24,13 @@ from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareSpec
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.files.File import File
+from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import read_actions
 from dimos.sim2.dimsim.backend import DimSimBackend
 from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, until_it_stops
 from dimos.sim2.spec import validate
+from dimos.sim2.world_files import WorldFiles
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -49,10 +52,13 @@ class DimSimSim(Module):
     config: DimSimSimConfig
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
+    render_file_request: In[String]
+    file_info: Out[File]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._backend: DimSimBackend | None = None
+        self._files: WorldFiles | None = None
         self._built = Event()
 
     async def main(self) -> AsyncIterator[None]:
@@ -110,6 +116,19 @@ class DimSimSim(Module):
             logger.warning(f"sim2: an action this world cannot read: {error}")
             return
         backend.apply(actions)
+
+    async def handle_render_file_request(self, request: String) -> None:
+        backend = self._backend
+        if backend is None:
+            return
+        # An action that reshapes the world (a door opening) gives it a new USD, so its files are answered anew.
+        if self._files is None or self._files.usd is not backend.usd:
+            self._files = WorldFiles(backend.usd)
+        data = await self._files.file(request.data)
+        if data is None:
+            logger.debug(f"render_file_request for {request.data!r}, which the world does not name")
+            return
+        self.file_info.publish(File(request.data, data))
 
     @rpc
     def describe(self) -> dict[str, Any]:
