@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "unitree_go2": "dimos.hardware.drive_trains.unitree_go2.adapter:UnitreeGo2TwistAdapter",
-}
+"""Dual OpenYAM calibration: its connection with ``config_writes`` and the calibration module.
+
+    dimos run dual-openyam-calibrate --calibrationmodule.arm left --calibrationmodule.floor-z-m Z --calibrationmodule.min-x-m X
+
+Drive it from ``dimos shell``. See ``docs/capabilities/manipulation/arm_calibration.md``.
+"""
+
+from dimos.control.calibration.blueprints import calibration_blueprint
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+
+dual_openyam_calibrate = calibration_blueprint(DualOpenYamConnection, arm="left").remappings([])

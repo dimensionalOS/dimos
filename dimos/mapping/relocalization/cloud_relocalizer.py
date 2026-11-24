@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Placing a live lidar cloud into a prior map.
+"""Placing a live point cloud (lidar scans or a local map) into a prior map.
 
 Coarse FPFH+RANSAC to find the place, then point-to-plane ICP over narrowing
-distances to settle it. Pure computation; ``lidar/module.py`` is the runtime
+distances to settle it. Pure computation; ``module.py`` is the runtime
 and ``tune.py`` measures it.
 
-    relocalizer = LidarRelocalizer(premap_cloud, PRESETS["mid360"])
+    relocalizer = CloudRelocalizer(premap_cloud, PRESETS["mid360"])
     tf = relocalizer.relocalize(live_cloud, "world", "map")  # world -> map, or None
 
 Configs are per-rig :data:`PRESETS`; see tune.md to measure a new one.
@@ -35,6 +35,9 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Premap kept around the placed live cloud for ICP (m)
+_ICP_MARGIN_M = 2.0
 
 if TYPE_CHECKING:
     # open3d is imported lazily (heavy); these names are for signatures only.
@@ -117,7 +120,7 @@ PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "mid360-nav": MID360_N
 DEFAULT_PRESET = "mid360"
 
 
-class LidarRelocalizer:
+class CloudRelocalizer:
     """A prior map, preprocessed once under ``config``, that places live clouds into itself."""
 
     def __init__(self, global_map: PointCloud, config: RelocalizeConfig) -> None:
@@ -130,47 +133,79 @@ class LidarRelocalizer:
         import open3d as o3d  # type: ignore[import-untyped]
 
         cfg = self.config
-        reg = o3d.pipelines.registration
-
-        def normals(pcd: PointCloud, voxel: float) -> PointCloud:
-            pcd.estimate_normals(
-                o3d.geometry.KDTreeSearchParamHybrid(
-                    radius=voxel * cfg.normal_radius_factor, max_nn=cfg.normal_max_nn
-                )
-            )
-            if cfg.orient_normals:
-                pcd.orient_normals_to_align_with_direction([0.0, 0.0, 1.0])
-            return pcd
-
-        coarse = normals(cloud.voxel_down_sample(cfg.voxel_coarse), cfg.voxel_coarse)
-        fpfh = reg.compute_fpfh_feature(
+        coarse = self._normals(cloud.voxel_down_sample(cfg.voxel_coarse), cfg.voxel_coarse)
+        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
             coarse,
             o3d.geometry.KDTreeSearchParamHybrid(
                 radius=cfg.voxel_coarse * cfg.fpfh_radius_factor, max_nn=cfg.fpfh_max_nn
             ),
         )
-        fine = normals(cloud.voxel_down_sample(cfg.voxel_fine), cfg.voxel_fine)
-        return _Prepared(coarse=coarse, fpfh=fpfh, fine=fine)
+        return _Prepared(coarse=coarse, fpfh=fpfh, fine=self._fine(cloud))
 
-    def align(self, local_map: PointCloud) -> RegistrationResult:
+    def _fine(self, cloud: PointCloud) -> PointCloud:
+        return self._normals(
+            cloud.voxel_down_sample(self.config.voxel_fine), self.config.voxel_fine
+        )
+
+    def _normals(self, pcd: PointCloud, voxel: float) -> PointCloud:
+        import open3d as o3d  # type: ignore[import-untyped]
+
+        cfg = self.config
+        pcd.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(
+                radius=voxel * cfg.normal_radius_factor, max_nn=cfg.normal_max_nn
+            )
+        )
+        if cfg.orient_normals:
+            pcd.orient_normals_to_align_with_direction([0.0, 0.0, 1.0])
+        return pcd
+
+    def _near(self, source: PointCloud, placement: np.ndarray) -> PointCloud:
+        """The premap's fine cloud around *source* placed by *placement*."""
+        import open3d as o3d  # type: ignore[import-untyped]
+
+        points = np.asarray(source.points) @ placement[:3, :3].T + placement[:3, 3]
+        lo, hi = points.min(axis=0) - _ICP_MARGIN_M, points.max(axis=0) + _ICP_MARGIN_M
+        return self._target.fine.crop(o3d.geometry.AxisAlignedBoundingBox(lo, hi))
+
+    def align(self, local_map: PointCloud, initial: np.ndarray | None = None) -> RegistrationResult:
         """Best registration of ``local_map`` against the prior map, however poor.
 
-        ``.transformation`` places the live cloud in the map (map <- live).
+        ``.transformation`` places the live cloud in the map (map <- live). With an
+        ``initial`` placement (map <- live, 4x4) only ICP runs from it, no global search.
         """
         import open3d as o3d  # type: ignore[import-untyped]
 
         cfg = self.config
         reg = o3d.pipelines.registration
+
+        def refine(source: PointCloud, coarse_T: np.ndarray) -> RegistrationResult:
+            """Point-to-plane ICP from wide to narrow, so a distant guess is still reachable."""
+            target = self._near(source, coarse_T)
+            result = None
+            for stage in reversed(range(max(cfg.icp_stages, 1))):
+                result = reg.registration_icp(
+                    source,
+                    target,
+                    cfg.voxel_fine * cfg.icp_dist_factor * (2**stage),
+                    coarse_T,
+                    reg.TransformationEstimationPointToPlane(),
+                    reg.ICPConvergenceCriteria(max_iteration=cfg.icp_max_iter),
+                )
+                coarse_T = result.transformation
+            return result
+
+        if initial is not None:
+            return refine(self._fine(local_map), initial)
         source = self._prepare(local_map)
-        target = self._target
         dist = cfg.voxel_coarse * cfg.coarse_dist_factor
 
         def hypothesis() -> RegistrationResult:
             return reg.registration_ransac_based_on_feature_matching(
                 source.coarse,
-                target.coarse,
+                self._target.coarse,
                 source.fpfh,
-                target.fpfh,
+                self._target.fpfh,
                 mutual_filter=cfg.mutual_filter,
                 max_correspondence_distance=dist,
                 estimation_method=reg.TransformationEstimationPointToPoint(False),
@@ -182,23 +217,8 @@ class LidarRelocalizer:
                 criteria=reg.RANSACConvergenceCriteria(cfg.ransac_iters, cfg.ransac_confidence),
             )
 
-        def refine(coarse_T: np.ndarray) -> RegistrationResult:
-            """Point-to-plane ICP from wide to narrow, so a distant guess is still reachable."""
-            result = None
-            for stage in reversed(range(max(cfg.icp_stages, 1))):
-                result = reg.registration_icp(
-                    source.fine,
-                    target.fine,
-                    cfg.voxel_fine * cfg.icp_dist_factor * (2**stage),
-                    coarse_T,
-                    reg.TransformationEstimationPointToPlane(),
-                    reg.ICPConvergenceCriteria(max_iteration=cfg.icp_max_iter),
-                )
-                coarse_T = result.transformation
-            return result
-
         scored = [
-            refine(np.asarray(hypothesis().transformation))
+            refine(source.fine, np.asarray(hypothesis().transformation))
             for _ in range(max(cfg.ransac_restarts, 1))
         ]
         return max(scored, key=lambda r: r.fitness)
@@ -209,9 +229,19 @@ class LidarRelocalizer:
         """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough."""
         return self.attempt(local_map, world_frame, map_frame).fix
 
-    def attempt(self, local_map: PointCloud, world_frame: str, map_frame: str) -> RelocAttempt:
-        """The fix if accepted, ready to publish, with the registration it was scored on."""
-        result = self.align(local_map)
+    def attempt(
+        self,
+        local_map: PointCloud,
+        world_frame: str,
+        map_frame: str,
+        initial_fix: Transform | None = None,
+    ) -> RelocAttempt:
+        """The fix if accepted, ready to publish, with the registration it was scored on.
+
+        With ``initial_fix`` (a ``world_frame -> map_frame`` fix) it is refined from there instead of searched for.
+        """
+        initial = None if initial_fix is None else np.asarray(initial_fix.inverse().to_matrix())
+        result = self.align(local_map, initial)
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
             return RelocAttempt(None, result)
