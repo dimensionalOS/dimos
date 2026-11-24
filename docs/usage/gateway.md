@@ -93,7 +93,7 @@ Subscribe to `<namespace>/dimos/events/agent/*` to receive all agent events, or 
 
 | Topic under `<namespace>/dimos/events/` | Payload |
 | --- | --- |
-| `agent/chat` | `conversation` identifies the chat. `turn.text` contains the reply so far, `entries` carries saved transcript items, and `turn: null` ends a run. |
+| `agent/chat` | Text updates carry `conversation`, `messageTimestamp`, `offset`, and `delta` (new text). A separate `turn` event identifies the active run and message. `entries` carries saved transcript items, and `turn: null` ends a run. |
 | `agent/conversations` | `id` identifies the conversation. Adds and updates include the full conversation summary in `row`. Updates also list the changed field names in `fields`. |
 | `agent/jobs` | `name` identifies the job. Adds and updates include the full schedule and recent runs in `row`. Updates also list the changed field names in `fields`. |
 
@@ -103,9 +103,15 @@ Each list event includes its topic suffix in `type` (e.g. `agent/jobs`) and a `c
 current list in `rows` with `change: "snapshot"`.
 
 On open or reconnect, subscribe first and buffer events while fetching the initial lists from `GET /agent/conversations`
-and `GET /agent/jobs`. Apply the buffered events in order, replacing the list on a snapshot. For an open chat, read
-`GET /agent/conversations/{id}`, replace the partial reply on each turn update, and merge transcript entries by entry ID.
-Refresh the conversation when `turn` is null.
+and `GET /agent/jobs`. Apply the buffered events in order, replacing the list on a snapshot.
+
+For chat, `GET /agent/conversations/{id}` supplies the transcript and the current `turn.text` and
+`turn.messageTimestamp`. For each message, append `delta` at `offset`, measured in JavaScript string units
+(UTF-16). For example, after `"Hel"`, the next update can carry `{"offset":3,"delta":"lo"}`.
+Skip overlapping text already present in the snapshot. Fetch the conversation again if an offset skips
+past the local text. A provider correction marked `reset: true` replaces that message's partial text.
+When an assistant entry arrives, display the saved message in place of its draft and clear that draft's text buffer.
+Merge saved entries by entry ID and refresh the conversation when `turn` is null.
 
 ## Running it yourself
 

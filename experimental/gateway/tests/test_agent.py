@@ -38,7 +38,7 @@ from experimental.gateway.routes import agent
 
 ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "dimos/agents"
-ANSWER = "This answer comes from the pi-durable agent."
+ANSWER = "🤖 This answer comes from the pi-durable agent."
 # Only the model is scripted. The agent owns a real store, scheduler, and Chord socket.
 DAEMON = """
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
@@ -160,10 +160,15 @@ def request_id():
 
 async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     http, events = live_agent
+    chunks = []
 
     async def event(kind, predicate=lambda event: True):
         while True:
             key, frame = await asyncio.wait_for(events.get(), 15)
+            if key == "test/dimos/events/agent/chat":
+                assert "text" not in (frame.get("turn") or {})
+                if "delta" in frame:
+                    chunks.append(frame)
             if key == f"test/dimos/events/{kind}" and predicate(frame):
                 assert frame["type"] == kind
                 return frame
@@ -215,12 +220,11 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     assert titled["change"] == "updated"
     assert titled["id"] == cid
     assert titled["row"]["title"] == msg["text"]
-    partial = await event(
-        "agent/chat", lambda e: 0 < len((e.get("turn") or {}).get("text", "")) < len(ANSWER)
-    )
+    partial = await event("agent/chat", lambda e: "delta" in e)
     assert partial["conversation"] == cid
     detail = (await http.get(room)).raise_for_status().json()
     assert detail["turn"]["run"]["inputs"] == [sent["submission"]]
+    assert detail["turn"]["messageTimestamp"] == partial["messageTimestamp"]
     assert ANSWER.startswith(detail["turn"]["text"])
     receipt = f"{room}/submissions/{sent['submission']}"
     pending = (await http.get(receipt)).raise_for_status().json()
@@ -243,6 +247,19 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     assert record["record"]["status"] == "done"
     assert record["answer"]["message"]["content"][0]["text"] == ANSWER
     assert record["answer"] in committed["entries"]
+    assert len(chunks) > 1
+    recovered = detail["turn"]["text"].encode("utf-16-le")
+    offset = 0
+    for chunk in chunks:
+        assert chunk["conversation"] == cid
+        assert chunk["messageTimestamp"] == record["answer"]["message"]["timestamp"]
+        assert chunk["offset"] == offset
+        assert chunk["delta"] and "reset" not in chunk
+        data = chunk["delta"].encode("utf-16-le")
+        recovered += data[max(0, len(recovered) - offset * 2) :]
+        offset += len(data) // 2
+    assert "".join(chunk["delta"] for chunk in chunks) == ANSWER
+    assert recovered.decode("utf-16-le") == ANSWER
     run = (await http.post("/agent/jobs/demo/runs", json=request_id())).raise_for_status().json()
     assert run == {"kind": "submitted"}
     follow_up = {**msg, **request_id(), "images": [], "text": "later"}
