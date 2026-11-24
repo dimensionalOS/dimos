@@ -41,6 +41,11 @@ pub fn known_gait(gait: u32) -> bool {
     )
 }
 
+/// The Extre gaits (0x2001-0x2004: Move, Jump, Bipedal, Inv_Bipedal).
+pub fn extre_gait(gait: u32) -> bool {
+    (0x2001..=0x2004).contains(&gait)
+}
+
 /// charge_manager's /CHARGE_STATUS state (0 idle, 1 going to the pile, 2 charging, 3 leaving it), as basic_server reads it.
 pub trait ChargerState {
     fn charger_state(&self) -> i32;
@@ -51,7 +56,7 @@ pub fn charger_state_of(status: &DockStatus) -> i32 {
     match status.phase {
         Phase::Charging if status.charging => 2,
         Phase::Charging => 5,
-        Phase::StandUp | Phase::BackOff | Phase::Restore => 3,
+        _ if status.active && status.undocking => 3,
         // charge_manager's error state (NOCHARGEPLUG): an undock (command 0) leaves it, where idle ignores one
         Phase::Idle if status.no_plug => 4,
         Phase::Idle => 0,
@@ -71,7 +76,22 @@ impl<C: CommandSource> ChargerState for DockingCommands<C> {
 pub struct UsageMode {
     pub request: Mutex<Option<i32>>,
     pub current: AtomicI32,
+    /// CmdHandle::cmdHandle_AligningBodyPosture: get up after a fall
+    pub align: std::sync::atomic::AtomicBool,
 }
+
+/// aligningBodyPosture (0x262550): from Idle, RL control on 0xf003; every second up to 7 checks, accel z above 9 m/s^2
+/// and MotionInfo's height above 0.4 m switch to 0x1001; else soft e-stop (joint damping).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Align {
+    pub next_check: f64,
+    pub checks_left: u32,
+}
+
+pub const ALIGN_CHECKS: u32 = 7;
+pub const ALIGN_CHECK_PERIOD_S: f64 = 1.0;
+pub const ALIGN_ACCEL_Z: f64 = 9.0;
+pub const ALIGN_HEIGHT_M: f64 = 0.4;
 
 pub struct BasicServer<C> {
     inner: C,
@@ -86,6 +106,12 @@ pub struct BasicServer<C> {
     stand_until: Option<f64>,
     /// a change to send out on the next poll
     dirty: bool,
+    /// a fall recovery under way
+    align: Option<Align>,
+    /// basic_server's MatchAuthorizationCode (its authority_code.toml matched)
+    pub extre_authorized: bool,
+    /// MotionInfo's height from the joints (base_link above the wheels' contact)
+    height_of: Box<dyn Fn(&[f64; crate::config::JOINTS]) -> f64 + Send>,
 }
 
 impl<C: CommandSource + ChargerState> BasicServer<C> {
@@ -99,7 +125,19 @@ impl<C: CommandSource + ChargerState> BasicServer<C> {
             gait_override: None,
             stand_until: None,
             dirty: false,
+            align: None,
+            extre_authorized: false,
+            height_of: Box::new(|_| 0.0),
         }
+    }
+
+    /// How MotionInfo's height is computed from the joints (the fall recovery's check).
+    pub fn with_height(
+        mut self,
+        height_of: Box<dyn Fn(&[f64; crate::config::JOINTS]) -> f64 + Send>,
+    ) -> Self {
+        self.height_of = height_of;
+        self
     }
 
     pub fn inner(&self) -> &C {
@@ -154,6 +192,14 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
                 );
                 c.gait = self.last.gait;
             }
+            // cmdHandle_Gait (0x18b430): Extre needs the authorization code (the M20's authority_code.toml is empty)
+            if c.gait != self.last.gait && extre_gait(c.gait) && !self.extre_authorized {
+                warn!(
+                    gait = format!("{:#x}", c.gait),
+                    "Extre gait without authorization (0xe007); dropped"
+                );
+                c.gait = self.last.gait;
+            }
             if motion && c.target == Target::Stand {
                 self.stand_until = Some(now + STAND_WAIT_S);
             }
@@ -197,6 +243,39 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
 
     fn observe(&mut self, controller: &Controller) {
         self.inner.observe(controller);
+        let now = controller.time();
+        if self.usage.align.swap(false, Ordering::Relaxed) {
+            if controller.state == State::Passive {
+                info!("aligning body posture");
+                self.last.target = Target::RlControl;
+                self.switch_gait(crate::state_machine::ALIGN_GAIT);
+                self.align = Some(Align {
+                    next_check: now + ALIGN_CHECK_PERIOD_S,
+                    checks_left: ALIGN_CHECKS,
+                });
+            } else {
+                warn!(state = ?controller.state, "aligning body posture needs Idle");
+            }
+        }
+        if let Some(mut a) = self.align {
+            if now >= a.next_check {
+                let up = controller.last_accel[2] > ALIGN_ACCEL_Z
+                    && (self.height_of)(&controller.last_q) > ALIGN_HEIGHT_M;
+                a.checks_left -= 1;
+                a.next_check = now + ALIGN_CHECK_PERIOD_S;
+                if up {
+                    self.align = None;
+                    self.switch_gait(GAIT_BASIC);
+                } else if a.checks_left == 0 {
+                    warn!("fall recovery failed: soft e-stop");
+                    self.align = None;
+                    self.last.target = Target::JointDamping;
+                    self.dirty = true;
+                } else {
+                    self.align = Some(a);
+                }
+            }
+        }
         let Some(until) = self.stand_until else {
             return;
         };
@@ -407,6 +486,83 @@ mod tests {
         }
         assert!(s.stand_until.is_none());
         assert_eq!(s.poll(0.0).map(|c| c.target), None);
+    }
+
+    /// One fall recovery: ticks the controller, feeding the accel / height the robot reaches, until `seconds`.
+    fn align_run(
+        up_at: Option<f64>,
+        seconds: f64,
+    ) -> (BasicServer<Script>, Controller, UserCommand) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        let cfg = crate::config::Config::load(&path).unwrap();
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let (s0, usage) = server();
+        let mut s = s0.with_height(Box::new(|q| q[1].abs()));
+        let mut cmd = UserCommand::default();
+        let mut policy = crate::policy::InlinePolicy::new(crate::policy::RunnerSet::empty());
+        usage.align.store(true, Ordering::Relaxed);
+        let start = c.time();
+        while c.time() - start < seconds {
+            let t = c.time() - start;
+            let up = up_at.is_some_and(|u| t >= u);
+            let mut state = crate::types::RobotState {
+                quat: [1.0, 0.0, 0.0, 0.0],
+                accel: [0.0, 0.0, if up { 9.8 } else { 3.0 }],
+                ..Default::default()
+            };
+            // the test's height: |q[1]|
+            state.q[1] = if up { 0.5 } else { 0.1 };
+            state.stamp = t;
+            state.tau = [t; crate::config::JOINTS];
+            c.tick(&state, &cmd, &mut policy);
+            s.observe(&c);
+            if let Some(next) = s.poll(c.time()) {
+                cmd = next;
+            }
+        }
+        (s, c, cmd)
+    }
+
+    #[test]
+    fn a_fall_recovery_enters_rl_control_on_0xf003_and_returns_to_basic_once_up() {
+        let (s, c, cmd) = align_run(Some(2.5), 4.0);
+        assert!(c
+            .transitions
+            .iter()
+            .any(|(_, from, to)| *from == State::Passive && *to == State::RlControl));
+        // up at 2.5 s: the 3 s check switches to 0x1001
+        assert_eq!(cmd.gait, GAIT_BASIC);
+        assert!(s.align.is_none());
+    }
+
+    #[test]
+    fn a_fall_recovery_that_never_gets_up_soft_e_stops_after_7_checks() {
+        let (_, _, cmd) = align_run(None, 6.5);
+        assert_eq!(cmd.target, Target::RlControl);
+        assert_eq!(cmd.gait, crate::state_machine::ALIGN_GAIT);
+        let (s, _, cmd) = align_run(None, 7.5);
+        assert_eq!(cmd.target, Target::JointDamping);
+        assert!(s.align.is_none());
+    }
+
+    #[test]
+    fn extre_gaits_need_the_authorization_code() {
+        let (mut s, _) = server();
+        let _ = send(
+            &mut s,
+            UserCommand {
+                gait: 0x3003,
+                ..Default::default()
+            },
+        );
+        let jump = UserCommand {
+            gait: 0x2002,
+            ..Default::default()
+        };
+        assert_eq!(send(&mut s, jump.clone()).gait, 0x3003);
+        s.extre_authorized = true;
+        assert_eq!(send(&mut s, jump).gait, 0x2002);
     }
 
     #[test]

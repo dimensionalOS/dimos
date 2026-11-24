@@ -241,6 +241,8 @@ pub struct Status {
     pub vendor_config: bool,
     /// charge_manager's error state with NOCHARGEPLUG (0x1007)
     pub no_plug: bool,
+    /// an undock (exitPile) is under way, not a dock
+    pub undocking: bool,
 }
 
 /// What charge_manager does once its detector process's service calls return.
@@ -262,6 +264,8 @@ enum Next {
     BackOff,
     /// stood up after giving up: restart the detector, then back off
     FindTarget,
+    /// goToPile's no-charge retry (0x1814e0): StandUp2WideWalk, then sleep(2), the kicks and the approach again
+    Retry,
 }
 
 /// One pose's charge_manager inputs from our detector's pose.
@@ -416,6 +420,7 @@ impl Docking {
                 obstacle_stop: None,
                 vendor_config: false,
                 no_plug: false,
+                undocking: false,
             },
             seq,
         };
@@ -973,7 +978,8 @@ impl Docking {
     /// An undock (or a give-up's back-off) under way, not a dock.
     fn undocking(&self) -> bool {
         match self.phase {
-            Phase::StandUp | Phase::BackOff | Phase::Restore => true,
+            Phase::StandUp => self.next != Next::Retry,
+            Phase::BackOff | Phase::Restore => true,
             Phase::Restart => self.resume == Phase::BackOff,
             Phase::DetectorCall => !matches!(
                 self.calls_then,
@@ -1013,10 +1019,10 @@ impl Docking {
 
     /// StandUp2WideWalk returned: what the stand-up was for.
     fn stood(&mut self) {
-        if self.next == Next::FindTarget {
-            self.find_target(Next::BackOff);
-        } else {
-            self.begin_back_off();
+        match self.next {
+            Next::FindTarget => self.find_target(Next::BackOff),
+            Next::Retry => self.set_phase(Phase::StandForRetry),
+            _ => self.begin_back_off(),
         }
     }
 
@@ -1035,7 +1041,7 @@ impl Docking {
                 self.set_phase(Phase::EnterGait);
             }
             Next::Undock => self.stand_up(Next::BackOff, view),
-            Next::BackOff | Next::FindTarget => self.begin_back_off(),
+            Next::BackOff | Next::FindTarget | Next::Retry => self.begin_back_off(),
         }
     }
 
@@ -1164,6 +1170,7 @@ impl Docking {
         self.idle_step(view);
         self.status.phase = self.phase;
         self.status.no_plug = self.no_plug;
+        self.status.undocking = self.undocking();
         self.status.active = self.active();
         self.status.obstacle = if self.obstacle_open {
             self.core.as_ref().map(|c| c.direction)
@@ -1226,7 +1233,13 @@ impl Docking {
                         };
                         if self.phase_ms() >= settle {
                             if self.phase == Phase::StandForRetry {
-                                // the back-off steer, at once overwritten by the stale finetune struct (0, 0, 0, sit_z)
+                                // the back-off kicks (5x (-0.8, 0, 0)), at once overwritten by the stale finetune struct
+                                for _ in 0..self.seq.back_off_writes {
+                                    self.send(Steer {
+                                        x: self.seq.back_off_x,
+                                        ..Default::default()
+                                    });
+                                }
                                 self.send(Steer {
                                     z: self.seq.sit_z,
                                     ..Default::default()
@@ -1457,10 +1470,9 @@ impl Docking {
         match core.no_charge() {
             NoCharge::Retry => {
                 self.status.retries += 1;
-                self.set_target(Target::RlControl);
-                self.set_gait(self.seq.approach_gait);
                 self.steer = None;
-                self.set_phase(Phase::StandForRetry);
+                // StandUp2WideWalk: MotionState 1, 2 s later 17 and NaviCharge (log 2026-11-06 05:01:40: new:1, new:17 3 s on)
+                self.stand_up(Next::Retry, view);
             }
             NoCharge::Exhausted => {
                 core.end();
