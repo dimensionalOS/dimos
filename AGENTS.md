@@ -39,7 +39,7 @@ dimos restart          # stop + re-run with same original args
 
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
-| `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
+| `unitree-go2-agentic` | Go2 | real | via Agent | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
 | `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
@@ -53,7 +53,7 @@ Run `dimos list` for the full list.
 
 ## Tools available to you (MCP)
 
-**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `McpClient`. E.g.: `unitree-go2-agentic`.
+**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `Agent`. E.g.: `unitree-go2-agentic`.
 
 ```bash
 # Start the MCP-enabled blueprint first:
@@ -61,12 +61,12 @@ dimos --replay run unitree-go2-agentic --daemon
 
 # Then use MCP tools:
 dimos mcp list-tools                                              # all available skills as JSON
-dimos mcp call move --arg x=0.5 --arg duration=2.0               # call by key=value args
-dimos mcp call move --json-args '{"x": 0.5, "duration": 2.0}'    # call by JSON
+dimos mcp call move_to --arg x=0.5 --arg relative=true            # call by key=value args
+dimos mcp call move_to --json-args '{"x": 0.5, "relative": true}' # call by JSON
 dimos mcp status      # PID, module list, skill list
 dimos mcp modules     # module → skills mapping
 
-# Send a message to the running agent (works without McpServer too):
+# Send a message to the running agent (also needs McpServer):
 dimos agent-send "walk forward 2 meters then wave"
 ```
 
@@ -74,16 +74,16 @@ The MCP server runs at `http://localhost:9990/mcp` (`McpServerConfig.port`).
 
 ### Adding McpServer to a blueprint
 
-Use **both** `McpServer.blueprint()` and `McpClient.blueprint()`.
+Use **both** `McpServer.blueprint()` and `Agent.blueprint()`.
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 
 unitree_go2_agentic = autoconnect(
     unitree_go2_spatial,   # robot stack
     McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
-    McpClient.blueprint(), # LLM agent — fetches tools from McpServer
+    Agent.blueprint(), # LLM agent — fetches tools from McpServer
     _common_agentic,       # skill containers
 )
 ```
@@ -111,7 +111,7 @@ dimos/
 ├── cli/                     # `dimos` CLI entry point (typer) + TUI tools (spy, dtop, apriltag)
 ├── robot/
 │   ├── all_blueprints.py    # Auto-generated blueprint registry (DO NOT EDIT MANUALLY)
-│   ├── unitree/             # Unitree robot implementations (Go2, G1, B1)
+│   ├── unitree/             # Unitree robot implementations (Go2, G1)
 │   │   ├── unitree_skill_container.py  # Go2 @skill methods
 │   │   ├── go2/             # Go2 blueprints and connection
 │   │   └── g1/              # G1 blueprints, connection, sim, skills
@@ -123,7 +123,9 @@ dimos/
 ├── agents/
 │   ├── system_prompt.py     # Default Go2 system prompt
 │   ├── annotation.py        # @skill decorator
-│   ├── mcp/                 # McpServer, McpClient, McpAdapter (the LangGraph agent lives here)
+│   ├── agent.py             # Agent, the LangGraph LLM agent module
+│   ├── base_agent.py        # BaseAgent, the chat streams
+│   ├── mcp/                 # McpServer, McpAdapter
 │   └── skills/              # NavigationSkillContainer, SpeakSkill, etc.
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
@@ -145,6 +147,8 @@ docs/
 
 If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
 
+Adding a robot arm: follow `docs/capabilities/manipulation/adding_a_custom_arm.md`.
+
 ---
 
 ## Architecture
@@ -157,7 +161,7 @@ Autonomous subsystems. Communicate via `In[T]`/`Out[T]` typed streams. Run in fo
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.core import rpc
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 class MyModule(Module):
     color_image: In[Image]
@@ -174,20 +178,27 @@ class MyModule(Module):
 
 ### Blueprints
 
-Compose modules with `autoconnect()`. Streams auto-connect by `(name, type)` matching.
+Compose modules with `autoconnect()`, which returns a `MetaBlueprint`. Call
+`.solidify()` to resolve any `ChoiceAtom`s into a concrete `Blueprint`, or
+`.build(choices=...)` to resolve and build directly. Streams auto-connect by
+`(name, type)` matching. The CLI resolves choices using repeatable `--choice NAME=OPTION` flags.
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
 
-my_blueprint = autoconnect(module_a(), module_b(), module_c())
+my_blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
 ```
 
 To run a blueprint directly from Python:
 
 ```python
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
 # build() deploys all modules into forkserver workers and wires streams
 # loop() blocks the main thread until stopped (Ctrl-C or SIGTERM)
-autoconnect(module_a(), module_b(), module_c()).build().loop()
+# The workers import this script again, so build under the __main__ guard
+if __name__ == "__main__":
+    ModuleCoordinator.build(my_blueprint).loop()
 ```
 
 For in-repo DimOS blueprints, expose a module-level variable for `dimos run` to find it and add it to the built-in registry by running `pytest dimos/robot/test_all_blueprints_generation.py`. External packages should not edit `all_blueprints.py`; expose runnable blueprints through installed Python package entry points in the `dimos.blueprints` group.
@@ -211,7 +222,7 @@ Shared runtime config. Values cascade: defaults → blueprint → JSON config �
 
 ### Global flags
 
-Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--n-workers`, etc. Flags override `.env` and env vars.
+Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation [mujoco|dimsim]` (bare `--simulation` means `mujoco`), `--replay/--no-replay`, `--viewer {rerun|none}`, `--n-workers`, etc. Flags override `.env` and env vars.
 
 ### Core commands
 
@@ -220,19 +231,19 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos run <blueprint> [--daemon]` | Start a blueprint |
 | `dimos shell` | Open an attached IPython session for live module/RPC discovery and calls |
 | `dimos status` | Show running instance (run ID, PID, blueprint, uptime, log path) |
-| `dimos stop [--force]` | SIGTERM → SIGKILL after 5s; `--force` = immediate SIGKILL |
+| `dimos stop [--force]` | SIGTERM → SIGKILL after 30s; `--force` = immediate SIGKILL |
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
 | `dimos show-config` | Print resolved GlobalConfig values |
 | `dimos cache clean [--yes] [--force]` | Remove DimOS caches; preserve robot Git work unless forced |
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
-| `dimos agent-send "<text>"` | Send text to the running agent via LCM |
+| `dimos agent-send "<text>"` | Send text to the running agent via MCP (requires McpServer in blueprint) |
 | `dimos lcmspy / agentspy / humancli / top` | Debug/diagnostic tools |
-| `dimos topic echo <topic> / send <topic> <expr>` | LCM topic pub/sub |
+| `dimos topic echo <topic> / send <topic> <expr>` | Topic pub/sub on the active transport |
 | `dimos rerun-bridge` | Launch Rerun visualization standalone |
 
-Log files: `~/.local/state/dimos/logs/<run-id>/main.jsonl`
+Log files: `logs/<run-id>/main.jsonl` under the checkout when running from a Git clone, `~/.local/state/dimos/logs/<run-id>/main.jsonl` for an installed package
 Run registry: `~/.local/state/dimos/runs/<run-id>.json`
 
 ---
@@ -283,7 +294,7 @@ class MySkillContainer(Module):
         """
         return f"Moving at {x} m/s for {duration}s"
 
-my_skill_container = MySkillContainer.blueprint
+my_skill_container = MySkillContainer.blueprint()
 ```
 
 ### System Prompts
@@ -291,9 +302,7 @@ my_skill_container = MySkillContainer.blueprint
 | Robot | File | Variable |
 |-------|------|----------|
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
-| G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
 
 ### RPC Wiring
 
@@ -328,7 +337,7 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 3. If it needs another module's RPC, use the Spec pattern.
 4. Return a descriptive `str`, or a `SkillResult`.
 5. Update the system prompt if the skill needs usage guidance — `dimos/agents/system_prompt.py`, or the robot-specific prompt.
-6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
+6. Add `MySkillContainer.blueprint()` to the agentic blueprint's `autoconnect(...)`.
 
 ---
 

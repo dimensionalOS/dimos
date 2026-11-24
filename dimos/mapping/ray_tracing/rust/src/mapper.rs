@@ -19,9 +19,10 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
-    global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_flags,
+    emit_points_ungated, emit_points_ungated_flags, global_normal_fits, global_normals,
+    seed_points, seed_tile, update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds,
+    VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -75,14 +76,24 @@ impl Mapper {
 
     /// Register a sensor-frame cloud into the world by `pose` and fold it into
     /// the map.
-    pub fn add_frame(&mut self, mut sensor_points: Vec<Point>, pose: Pose) {
+    pub fn add_frame(&mut self, sensor_points: Vec<Point>, pose: Pose) {
+        let mut sensor_points = self.pre_trace_subsample(sensor_points);
         register(&mut sensor_points, pose);
         self.ingest(sensor_points, pose.position);
     }
 
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
     pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
+        let world_points = self.pre_trace_subsample(world_points);
         self.ingest(world_points, origin);
+    }
+
+    /// Every `pre_trace_subsample`th point of a lidar cloud, before any other step.
+    fn pre_trace_subsample(&self, points: Vec<Point>) -> Vec<Point> {
+        match self.config.pre_trace_subsample {
+            0 | 1 => points,
+            step => points.into_iter().step_by(step as usize).collect(),
+        }
     }
 
     /// Bulk-seed a world-frame map cloud with no ray tracing, creating only
@@ -97,11 +108,11 @@ impl Mapper {
         self.map.reserve_chunks(additional);
     }
 
-    /// Seed one tile of a partitioned world-frame cloud. Returns how many
-    /// voxels were created.
-    pub fn seed_tile(&mut self, tile: &[Point]) -> usize {
+    /// Seed one tile of a partitioned world-frame cloud, the voxels in
+    /// `non_premap` as non-premap. Returns how many voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point], non_premap: &AHashSet<VoxelKey>) -> usize {
         let pool = Arc::clone(&self.pool);
-        pool.install(|| seed_tile(&mut self.map, tile, &self.config))
+        pool.install(|| seed_tile(&mut self.map, tile, non_premap, &self.config))
             .len()
     }
 
@@ -192,11 +203,30 @@ impl Mapper {
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
+    /// `global_points` as flat (x, y, z, flags) quads.
+    pub fn global_points_flags(&self) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_points_ungated_flags(&self.map, self.config.voxel_size, &self.live.coarse)
+        })
+    }
+
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
     /// flat triples.
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
         self.pool.install(|| {
             emit_points(
+                &self.map,
+                self.config.voxel_size,
+                Some(bounds),
+                &self.live.coarse,
+            )
+        })
+    }
+
+    /// `local_points` as flat (x, y, z, flags) quads.
+    pub fn local_points_flags(&self, bounds: &LocalBounds) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_points_flags(
                 &self.map,
                 self.config.voxel_size,
                 Some(bounds),
@@ -275,6 +305,7 @@ mod tests {
             fine_divisor: 0,
             emit_fine: false,
             max_range: 100.0,
+            pre_trace_subsample: 1,
             ray_subsample: 1,
             shadow_depth: 2.0,
             grace_depth: 0.0,

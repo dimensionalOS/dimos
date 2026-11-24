@@ -68,6 +68,11 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 # Default timeout (seconds) for thread.join() during shutdown.
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
 
+# Allow slow module cleanup, including recorder finalization, before terminating a worker.
+WORKER_SHUTDOWN_TIMEOUT = 10.0
+# Cover both worker waits plus escalation and coordinator cleanup before killing the run.
+RUN_SHUTDOWN_TIMEOUT = 2 * WORKER_SHUTDOWN_TIMEOUT + 10.0
+
 DEFAULT_BUILD_NATIVE = False
 
 # streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)

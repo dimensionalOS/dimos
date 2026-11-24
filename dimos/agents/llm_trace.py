@@ -142,6 +142,16 @@ def list_llm_trace_pairs(trace_dir: Path) -> list[tuple[int, Path, Path]]:
     return sorted(pairs)
 
 
+def last_request_unanswered(trace_dir: Path) -> bool:
+    """Whether the newest request has no response: the call failed before one arrived."""
+    seqs = [
+        int(seq)
+        for request in trace_dir.glob(f"*{REQUEST_SUFFIX}")
+        if (seq := request.name.removesuffix(REQUEST_SUFFIX)).isdigit()
+    ]
+    return bool(seqs) and not response_path(trace_dir, max(seqs)).is_file()
+
+
 def latest_pair(trace_dir: Path, after: int) -> tuple[int, Path, Path] | None:
     """The newest complete request/response pair with seq >= *after*, if any.
     A retried call leaves several pairs; the newest is the one that answered."""

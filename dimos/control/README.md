@@ -140,9 +140,12 @@ my_robot = ControlCoordinator.blueprint(
 
 ## Operator Hold
 
-`operator_hold` (priority 100) freezes every joint where it is and waits for a
-person. It is not an e-stop: the e-stop cuts motion; the hold keeps position
-(zero velocity for a base). Add it with `operator_hold_task()` from
+`operator_hold` (priority 100) automatically freezes every joint that accepts
+position commands at its measured position and waits for a person. Velocity-only
+joints are claimed at the same priority and commanded to zero speed, even when
+they report positions. `joint_names` optionally restricts both groups.
+It is not an e-stop: the e-stop cuts motion; the hold keeps commanding these targets.
+Add it with `operator_hold_task()` from
 `dimos/control/tasks/operator_hold_task/operator_hold_task.py`.
 
 ```python
@@ -164,6 +167,8 @@ The coordinator's `set_estop(True)` turns the hold on (route `failsafe`,
 reason `e-stop`). While stopped the hold commands nothing; after
 `set_estop(False)` it holds each joint where it is then, until acknowledged;
 acknowledge is refused while the e-stop is latched.
+
+Connection commands outside the model's declared bounds are rejected, not clamped.
 
 ## Control Modes
 
@@ -221,6 +226,52 @@ class PIDController:
         pass  # Handle preemption
 ```
 
+## Connection wire and Twist inputs
+
+Shared `ConnectionModule` declarations describe named control resources and their
+supported interfaces. Commands and actuator-state feedback use `JointState` on
+independent `position_command` / `velocity_command` and `joint_state` ports.
+For a mobile base, `<robot>/base_forward`, `<robot>/base_lateral`, and
+`<robot>/base_turn` are velocity-only **BODY-frame** action axes, not odometry
+x/y/yaw coordinates. Native measured body rates may be published as velocity-only
+`JointState` feedback for these resources; leave positions empty, never fabricate
+positions or combine body rates with world positions under the same joint names.
+This is actuator-state feedback, not pose telemetry.
+
+Pose/world x/y/yaw and pose/twist telemetry belong on an independent `Odometry`
+stream. Ordinary body velocity control does not require odometry or measured yaw.
+`ConnectionSource` and the coordinator do not interpret base axes, Twist, yaw, or
+odometry and perform no frame conversion. Existing startup/readiness contracts
+are unchanged: a velocity-only joint-state reading can establish actuator readiness.
+Do not wire optional pose telemetry as a required control reading.
+`PlanarBaseDefinition` / `RobotModel.with_planar_base` still describe geometric
+x/y/yaw position coordinates for planning and limits; they do not define body
+velocity as the derivative of odometry q. Control-only axis declarations must be
+explicit and must not be used as a world-pose kinematic model.
+
+For a body-frame Twist input, explicitly configure its consuming task:
+
+```python
+TaskConfig(
+    name="drive", type="twist_velocity",
+    joint_names=["r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn"],
+    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+)
+```
+
+`TwistVelocityTask` simply maps configured components in joint order, in the
+same declared frame. Neither joint names nor hardware type imply a mapping.
+There is no `yaw_joint` parameter or implicit rotation. World-frame-consuming
+controllers must explicitly use transform helpers at their own boundary; the
+default body action path must not make a body→world→body round trip.
+Timeout emits zero without refreshing the input receipt clock, and E-stop clears
+intent so only fresh post-clear input can restart motion.
+Like `JointVelocityTask`, ordinary `stop()` only deactivates output; it does not
+latch input rejection or discard intent. New input reactivates the stream, and
+`start()` can resume an unexpired command. Use `clear()` to discard cached intent;
+E-stop is the latched stop.
+The coordinator subscribes only to task-card inputs and forwards raw messages.
+
 ## Task Cards
 
 Each task type ships a manifest at `dimos/control/tasks/<task>/_registry.py`.
@@ -228,9 +279,9 @@ Each task type ships a manifest at `dimos/control/tasks/<task>/_registry.py`.
 (Pinocchio, ONNX Runtime) load only when a task is actually created.
 
 ```python
-TASK_FACTORIES = {"servo": "dimos.control.tasks.servo_task.servo_task:create_task"}
-TASK_CONSUMES = {"servo": {"joint_command": ("on_joint_command", "claim_overlap")}}
-TASK_EXPOSES = {"trajectory": ["execute", "cancel", "get_state"]}
+TASK_FACTORIES = {"trajectory": "dimos.control.tasks.trajectory_task.trajectory_task:create_task"}
+TASK_CONSUMES = {"trajectory": {"joint_command": ("on_joint_command", "claim_overlap")}}
+TASK_EXPOSES = {"trajectory": ["execute", "cancel", "get_state", "get_status"]}
 ```
 
 `TASK_CONSUMES` maps a coordinator input to `(handler, routing rule)`. The
@@ -299,8 +350,10 @@ permanent; neither is a downgrade from the other.
 
 Both carry canonical `{hardware_id}/{joint}` names sampled once per tick, so
 they line up with the commands sent on that tick. That is the *control* view.
-Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
-*device* view instead: raw state at the device's own rate, units and ordering.
+Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish canonical
+named `joint_state` readings at the device's own rate. Vendor names, ordering,
+and body/world conversions belong inside those concrete connections. The
+coordinator does not republish their per-robot view.
 
 Choose by what the consumer is, not by how many robots the deployment has.
 
@@ -308,4 +361,40 @@ Consumers that capture or model whatever is present read the aggregate:
 `CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
-reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.
+reads `/g1/joints`, and the Go2 controller blueprints pin the connection's
+`joint_state` to `/coordinator/joint_state` for existing observers.
+
+### Unitree connection boundary
+
+The G1 and Go2 coordinator blueprints declare connection models and per-joint
+command interfaces, not shared transport adapters. G1 accepts named
+`position_command` messages and reports all 29 model joints plus `imu`. The
+concrete DDS connection owns motor order, configured PD gains, CRC,
+firmware-reported mode, and damping-first stiffness soft-start. GR00T supplies
+its trained gains to that connection; the task reads its explicitly selected
+`g1/imu` sensor from `CoordinatorState` (the simulator retains its keyed IMU
+state). No task polls a physical adapter or selects another robot's first IMU.
+
+G1 command silence requests damping, not torque disable. Module teardown also
+retains the firmware safe-stop packet before closing DDS. SDK stop sentinels
+are internal firmware values, never ordinary joint position targets. Feedback
+silence is not hidden by republishing cached DDS samples with fresh timestamps.
+
+Go2's velocity-only control resources are `go2/base_forward`,
+`go2/base_lateral`, and `go2/base_turn`. Commands map directly to the vendor's
+body Twist, without a cached yaw gate. The backend exposes measured
+`PoseStamped` odometry, not native base rates (lowstate carries IMU/motors/battery).
+The concrete connection estimates average body rates from successive valid
+source-timestamped poses. It publishes those rates without positions on
+`joint_state`, and pose plus estimated body twist on independent
+`odometry: Out[Odometry]`. The first pose and invalid/nonpositive/too-large
+intervals cannot produce a rate measurement. WebRTC pose stamps are preserved,
+not replaced by callback receipt time.
+
+The existing `odom: Out[PoseStamped]` port remains for navigation consumers.
+Holonomic and RPP follower cards consume `odometry` separately from the action
+resources. Their control laws already convert world path goals using measured
+pose and produce body velocities; no second output rotation is performed.
+The camera, lidar, replay/simulation backends, body-Twist RPC/stream, and sport
+skills remain available. The canonical command path retains the connection
+deadman and rejects commands after stop without replaying a target.

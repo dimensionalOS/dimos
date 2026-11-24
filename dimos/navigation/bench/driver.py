@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 from threading import Event, Thread
 import time
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -70,7 +71,7 @@ class EpisodeDriver(Module):
     config: EpisodeDriverConfig
 
     ground_truth: In[PoseStamped]
-    goal: In[PointStamped]
+    goal: In[PoseStamped]
     goal_reached: In[Bool]
     cmd_vel: In[Twist]
 
@@ -80,6 +81,10 @@ class EpisodeDriver(Module):
 
     _world: SimWorldSpec
     _thread: Thread | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._stop_event = Event()
 
     @rpc
     def start(self) -> None:
@@ -93,7 +98,6 @@ class EpisodeDriver(Module):
         self._commands: deque[tuple[float, NDArray[np.float64]]] = deque()
         self._echo: float | None = None
         self._arrival: float | None = None
-        self._stop_event = Event()
         self.register_disposable(Disposable(self.ground_truth.subscribe(self._on_pose)))
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_reached)))
@@ -117,7 +121,7 @@ class EpisodeDriver(Module):
         while self._recent and self._recent[0][0] < msg.ts - self._rules.stuck_s:
             self._recent.popleft()
 
-    def _on_goal(self, msg: PointStamped) -> None:
+    def _on_goal(self, msg: PoseStamped) -> None:
         if np.linalg.norm(np.subtract((msg.x, msg.y, msg.z), self._case.goal)) <= GOAL_ECHO_M:
             self._echo = self._echo if self._echo is not None else msg.ts
 

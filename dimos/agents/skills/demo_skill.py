@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
 from dimos.core.coordination.blueprints import autoconnect
@@ -21,5 +21,5 @@ from dimos.core.coordination.blueprints import autoconnect
 demo_skill = autoconnect(
     DemoCalculatorSkill.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
 )

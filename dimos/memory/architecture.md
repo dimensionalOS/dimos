@@ -28,7 +28,7 @@ Supporting Systems:
 |----------------|-------------------------------------------------------------------|
 | `stream.py`    | Stream node — filters, transforms, terminals                      |
 | `backend.py`   | Concrete Backend composite (ObservationStore + Blob + Vector + Live)         |
-| `store.py`     | Store, StoreConfig                                                |
+| `store/base.py`     | Store, StoreConfig                                                |
 | `transform.py` | Transformer ABC, FnTransformer, FnIterTransformer, QualityWindow  |
 | `buffer.py`    | Backpressure buffers for live mode (KeepLast, Bounded, Unbounded) |
 | `embed.py`     | EmbedImages / EmbedText transformers                              |
@@ -74,7 +74,7 @@ Transform-sourced streams (post `.transform()`) always use `StreamQuery.apply()`
 ## Quick start
 
 ```python
-from dimos.memory import MemoryStore
+from dimos.memory.store.memory import MemoryStore
 
 store = MemoryStore()
 images = store.stream("images")
@@ -96,7 +96,7 @@ def running_avg(upstream):
     for obs in upstream:
         total += obs.data; n += 1
         yield obs.derive(data=total / n)
-avgs = stream.transform(running_avg).to_list()
+avgs = images.transform(running_avg).to_list()
 
 # Live
 for obs in images.live().transform(process):

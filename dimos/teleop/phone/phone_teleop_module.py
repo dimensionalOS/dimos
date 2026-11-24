@@ -180,7 +180,8 @@ class PhoneTeleopModule(Module):
             name="PhoneTeleopWebServer",
         )
         self._web_server_thread.start()
-        logger.info(f"Phone teleop web server started on https://0.0.0.0:{self.config.server_port}")
+        for url in self._web_server.get_urls("/teleop", ssl=True):
+            logger.info("Phone teleop web server started", url=url)
 
     def _stop_server(self) -> None:
         """Shutdown the embedded web server."""

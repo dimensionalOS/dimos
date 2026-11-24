@@ -18,11 +18,11 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@dimos/sdk": ["../sdk/src/index.ts"],
       "@dimos/sdk/react": ["../sdk/src/react.ts"],
       "@dimos/sdk/internal/teleop": ["../sdk/src/internal/teleopMachine.ts"],
+      "@dimos/sdk/internal/topics": ["../sdk/src/topics.ts"],
       "@dimos/shared": ["../shared/protocol.ts"],
       "@dimos/shared/manifest": ["../shared/manifest.ts"]
     }

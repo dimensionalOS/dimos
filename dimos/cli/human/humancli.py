@@ -45,6 +45,7 @@ from textual.widgets import Input, RichLog, Static
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli import theme
+from dimos.cli.tui_args import parse_tui_args
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.generic import truncate_display_string
 
@@ -68,7 +69,7 @@ JSON_THEME = Theme(
 
 # How many of a tool's most recent stream lines to show inside its box.
 RECENT_LINES = 5
-# Prefix `McpClient` puts on tool-stream updates it re-emits to `/agent`.
+# Prefix `Agent` puts on tool-stream updates it re-emits to `/agent`.
 TOOL_MSG_PREFIX = "[tool:"
 # Markers pairing a tool call with its result in the scrollback.
 TOOL_CALL_MARKER = "▶"
@@ -137,6 +138,12 @@ class ToolPanelRegion:
         else:
             panel.entries.append((timestamp, kind, text))
             panel.count += 1
+            assert panel.static is not None
+            panel.static.update(self._render(panel))
+
+    def refresh(self) -> None:
+        """Advance elapsed titles even when no tool or agent messages arrive."""
+        for panel in self._panels.values():
             assert panel.static is not None
             panel.static.update(self._render(panel))
 
@@ -324,6 +331,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         self._tool_panels = ToolPanelRegion(
             self.query_one("#tool-panels", Container), self._flush_tool_panel
         )
+        self.set_interval(1.0, self._tool_panels.refresh)
         self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream)
 
         # Start subscription threads
@@ -499,8 +507,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         """Write a finalized tool box into the scrollback, keeping the
         thinking indicator pinned to the bottom."""
         assert self._thinking is not None
+        assert self.chat_log is not None
         reattach = self._thinking.detach_if_needed()
-        self.chat_log.write(renderable)  # type: ignore[union-attr]
+        self.chat_log.write(renderable, width=self.chat_log.scrollable_content_region.width)
         if reattach:
             self._thinking.reattach()
 
@@ -671,9 +680,10 @@ Tool calls are displayed in cyan with ▶ prefix"""
 
 
 def main() -> None:
+    args = parse_tui_args("Chat with the running DimOS agent.")
     apply_transport_arg(sys.argv)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "web":
+    if args.mode == "web":
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

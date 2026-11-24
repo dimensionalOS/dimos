@@ -21,6 +21,7 @@ import sys
 
 import typer
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection.blueprint.dot import render_svg
 from dimos.robot import get_all_blueprints
 
@@ -30,7 +31,7 @@ class GraphRenderError(RuntimeError):
 
 
 def _render_graph(blueprint_name: str, output: Path, *, include_rpc: bool) -> None:
-    blueprint = get_all_blueprints.get_by_name(blueprint_name)
+    blueprint = autoconnect(get_all_blueprints.get_by_name(blueprint_name)).solidify()
     render_svg(blueprint, str(output), include_rpc=include_rpc)
 
 

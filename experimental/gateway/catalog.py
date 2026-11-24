@@ -26,9 +26,23 @@ from experimental.gateway.errors import StatusError
 def notes_for(dimos_dir: Path, names: list[str]) -> dict[str, Any]:
     """annotations.yaml (the checkout's own when it has one), resolved against `names`."""
     checkout = dimos_dir / "experimental" / "gateway" / annotation_file.SOURCE_FILE.name
-    return annotation_file.resolved(
-        annotation_file.load(checkout if checkout.exists() else annotation_file.SOURCE_FILE), names
-    )
+    source = checkout if checkout.exists() else annotation_file.SOURCE_FILE
+    notes = annotation_file.resolved(annotation_file.load(source), names)
+    notes["abilities"], notes["module_abilities"] = annotation_file.load_abilities(source)
+    if not notes["abilities"]:
+        # a checkout from before abilities: module names outlive it, so the gateway's own list still applies
+        notes["abilities"], notes["module_abilities"] = annotation_file.load_abilities()
+    return notes
+
+
+def abilities_of(modules: list[str], notes: dict[str, Any]) -> list[str]:
+    """A blueprint's abilities: its modules', in the order annotations.yaml lists abilities."""
+    have = {
+        ability
+        for module in modules
+        for ability in notes.get("module_abilities", {}).get(module, [])
+    }
+    return [ability for ability in notes.get("abilities", {}) if ability in have]
 
 
 def blueprints(
@@ -60,6 +74,9 @@ def blueprints(
                 "hidden": note.get("hidden", annotation_file.HIDDEN_NAME.search(name) is not None),
                 "recommended_config": note.get("recommended_config", []),
                 "modules": [module["module"] for module in record.get("modules") or []],
+                "abilities": abilities_of(
+                    [module["module"] for module in record.get("modules") or []], notes
+                ),
                 "importable": record.get("importable"),
                 "import_error": record.get("import_error"),
                 "missing_module": record.get("missing_module"),
@@ -71,7 +88,9 @@ def blueprints(
     return found
 
 
-def modules(cache: dict[str, Any] | None) -> list[dict[str, Any]]:
+def modules(
+    cache: dict[str, Any] | None, notes: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     cache = cache or {}
     robots_of: dict[str, set[str]] = {}
     blueprints_of: dict[str, set[str]] = {}
@@ -86,6 +105,7 @@ def modules(cache: dict[str, Any] | None) -> list[dict[str, Any]]:
             "robots": sorted(robots_of.get(record["class"], ())),
             "rpcs": [rpc["name"] for rpc in record["rpcs"]],
             "blueprints": sorted(blueprints_of.get(record["class"], ())),
+            "abilities": (notes or {}).get("module_abilities", {}).get(record["name"], []),
         }
         for record in sorted(cache.get("modules", {}).values(), key=lambda scanned: scanned["name"])
     ]

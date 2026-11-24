@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.core.module import ModuleConfig
+from dimos.manipulation.grasping.grasp_generator_module import GraspGeneratorModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -48,7 +49,7 @@ class HeuristicGraspModuleConfig(ModuleConfig):
     palm_behind_tcp: float | None = None
 
 
-class HeuristicGraspModule(Module, GraspGenSpec):
+class HeuristicGraspModule(GraspGeneratorModule):
     """Generate one top-down parallel-jaw grasp from a gravity-aligned point cloud.
 
     The input frame's XY plane must be horizontal and its -Z axis must point down.
@@ -80,20 +81,51 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             [GraspCandidate(pose, score=1.0)],
         )
 
+    @rpc
+    def propose_grasps_for(
+        self,
+        cloud: PointCloud2,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Propose a straight-down grasp on the cloud of a box, can or other upright object.
+
+        Instant and needs no GPU, but it only ever makes one top-down grasp, so an
+        approach from the side finds none. The grasps are not checked for reach or
+        collisions. Pass one entry of ``grasps`` to pick_object as ``grasp``.
+
+        Args:
+            cloud: The object's points, as localize's get_pointcloud gives them.
+            approach: Unit vector [x, y, z] in the arm's base frame: the direction
+                the gripper moves in, from the operator's hand into the object.
+                [0, 0, -1] is straight down. None accepts any direction.
+            max_angle_deg: Half-angle of the cone around approach, degrees.
+            limit: How many grasps to return, best first.
+
+        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
+        made, which says how far off approach is when ``grasps`` is empty.
+        """
+        return self._propose_for(cloud, approach, max_angle_deg, limit)
+
     def _tip_height(self, low_z: float, high_z: float) -> float:
         """Tool tip height (metres) that puts the closed pads at the object's mid-height.
 
-        Raised if needed so the fingertips stay above the object's low end (what it
-        stands on) and the palm above its high end.
+        Prefer clearance above the lowest visible points only when the fingertips
+        can still reach the observed surface. A top-only cloud does not locate
+        the supporting surface. The contact check validates actual scene clearance.
 
         Args:
-            low_z: Height of the object's low end, metres.
-            high_z: Height of the object's high end, metres.
+            low_z: Lower height quantile of the visible object points, metres.
+            high_z: Upper height quantile of the visible object points, metres.
         """
         config = self.config
         # Straight down: the pads and palm sit above the tool tip, the fingertips below.
         heights = [float(low_z + high_z) / 2.0 - config.pad_behind_tcp]
-        if config.fingertip_reach is not None:
+        if config.fingertip_reach is not None and low_z + _CLEARANCE < high_z:
+            # Otherwise even the farthest-reaching fingertips would stay above
+            # every observed point. Aim the pads at the visible surface instead.
             heights.append(float(low_z) + _CLEARANCE + config.fingertip_reach)
         if config.palm_behind_tcp is not None:
             heights.append(float(high_z) + _CLEARANCE - config.palm_behind_tcp)

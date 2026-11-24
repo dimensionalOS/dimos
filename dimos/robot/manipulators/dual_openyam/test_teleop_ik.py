@@ -25,7 +25,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_HOME_PER_ARM,
-    dual_openyam_arm_joints,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
@@ -51,7 +50,7 @@ def _solver() -> DualOpenYamPinkPoseTargetSolver:
 def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
     solver = _solver()
     state = JointState(
-        name=dual_openyam_arm_joints("left"),
+        name=_dual_openyam_webxr_tasks["left"].joint_names,
         position=DUAL_OPENYAM_HOME_PER_ARM,
     )
     initial = solver.frame_poses(state, _TARGET_FRAMES)

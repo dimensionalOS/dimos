@@ -21,6 +21,7 @@ encodable (see dimos/protocol/encode/cbor.py).
 
 import pytest
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.all_blueprints import all_blueprints
@@ -41,7 +42,7 @@ def test_blueprint_roundtrips_through_the_codec(name: str, monkeypatch: pytest.M
     # The multi-robot blueprints read ROBOT_IPS at import time.
     monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     try:
-        blueprint = load_blueprint(name)
+        blueprint = autoconnect(load_blueprint(name)).solidify()
     except OptionalDependencyError as error:
         pytest.skip(f"{name} is not importable here: {error}")
 

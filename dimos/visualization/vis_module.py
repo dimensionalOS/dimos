@@ -17,7 +17,7 @@
 
 from typing import Any, get_args
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.visualization.rerun.constants import ViewerBackend
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -27,7 +27,7 @@ def vis_module(
     viewer_backend: ViewerBackend,
     rerun_config: dict[str, Any] | None = None,
     websocket_vis: bool = False,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Create a visualization blueprint based on the selected viewer backend.
 
     Bundles the Rerun viewer module together with the ``RerunWebSocketServer``

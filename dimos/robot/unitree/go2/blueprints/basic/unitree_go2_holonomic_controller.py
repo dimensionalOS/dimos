@@ -30,7 +30,7 @@ Interface (pure LCM pub/sub, identical to the RPP controller):
     IN   path   (nav_msgs/Path)        -> coordinator.path  -> holonomic_follower.on_path
     IN   speed  (std_msgs/Float32, m/s)-> coordinator.speed -> holonomic_follower.on_speed
     OUT  odom   (geometry_msgs/PoseStamped, /go2/odom)  -- the Go2 leg odom
-    OUT  cmd_vel(geometry_msgs/Twist,        /cmd_vel)  -- aggregated command echo
+    IN   cmd_vel(geometry_msgs/Twist,        /cmd_vel)  -- operator body-frame intent
 
 The priority-20 ``vel_go2`` teleop task preempts the priority-10 follower while
 a WASD key is held (repositioning between runs); KeyboardTeleop also emits the
@@ -49,11 +49,8 @@ Benchmarker in one process.
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
-from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -61,14 +58,19 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import (
+    GO2_BASE_JOINTS,
+    GO2Connection,
+    go2_joint_connection,
+)
+from dimos.robot.unitree.go2.coordinator import Go2Coordinator
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
-_go2_joints = make_twist_base_joints("go2")
+_go2_joints = list(GO2_BASE_JOINTS)
 
 
-class _Go2HolonomicCoordinator(PathFollowingCoordinator):
-    go2_joints: Out[JointState]
+class _Go2HolonomicCoordinator(Go2Coordinator):
+    """Holonomic deployment with canonical joint I/O."""
 
 
 unitree_go2_holonomic_controller = (
@@ -84,23 +86,19 @@ unitree_go2_holonomic_controller = (
             instance_name="ControlCoordinator",
             publish_joint_state=True,
             publish_robot_joint_states=True,
-            hardware=[
-                HardwareComponent(
-                    hardware_id="go2",
-                    hardware_type=HardwareType.BASE,
-                    joints=_go2_joints,
-                    adapter_type="transport_lcm",
-                ),
-            ],
+            connections=[go2_joint_connection()],
             tasks=[
                 # Idle/teleop velocity task. Priority 20 so a held WASD key
                 # preempts the priority-10 follower for repositioning.
                 TaskConfig(
                     name="vel_go2",
-                    type="velocity",
+                    type="twist_velocity",
                     joint_names=_go2_joints,
                     priority=20,
-                    params={"zero_on_timeout": False},
+                    params={
+                        "axes": ["linear.x", "linear.y", "angular.z"],
+                        "zero_on_timeout": False,
+                    },
                 ),
                 # Sole path/speed consumer: the progress-indexed
                 # holonomic full-pose tracker. Self-calibrates from the
@@ -127,16 +125,18 @@ unitree_go2_holonomic_controller = (
     .remappings(
         [
             (GO2Connection, "cmd_vel", "go2_cmd_vel"),
+            (GO2Connection, "velocity_command", "go2_velocity_command"),
+            (_Go2HolonomicCoordinator, "go2_joint_state", "joint_state"),
             (GO2Connection, "odom", "go2_odom"),
         ]
     )
     .transports(
         {
             # External command interface: teleop publishes on /cmd_vel; the
-            # coordinator's twist_command reads it and echoes cmd_vel back.
+            # coordinator's twist_command reads it as operator intent.
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-            # Base adapter <-> GO2Connection link (drives the robot, reads odom).
+            # Preserve the public body-velocity RPC/stream and navigation odometry.
             ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
             ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
             # Controller IN: planned full-pose path + target speed (any source).
@@ -144,8 +144,8 @@ unitree_go2_holonomic_controller = (
             ("speed", Float32): LCMTransport("/speed", Float32),
             # Operator gate (teleop -> benchmark) to pace runs.
             ("operator_command", Int8): LCMTransport("/benchmark/gate", Int8),
-            # This robot's joint state for observability (positions = [x,y,yaw]).
-            ("go2_joints", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            # Measured native body rates for observability (no pose positions).
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
 )
