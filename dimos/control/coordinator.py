@@ -369,7 +369,6 @@ class ControlCoordinator(Module):
         return control_task_registry.create(
             cfg.type,
             cfg,
-            hardware=self._hardware,
             connections=self._connections,
         )
 

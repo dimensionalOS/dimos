@@ -26,6 +26,7 @@ from the behavior the policies were trained for.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
@@ -37,7 +38,6 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.connection_source import ConnectionSource
-from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -794,22 +794,13 @@ class G1GrootWBCTaskParams(BaseConfig):
     decimation: int | None = None
 
 
-def create_task(cfg: Any, hardware: Any, connections: Any = None) -> G1GrootWBCTask:
+def create_task(cfg: Any, connections: Mapping[str, ConnectionSource]) -> G1GrootWBCTask:
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
-    hw = (connections or {}).get(params.hardware_id)
-    if hw is None:
-        hw = hardware.get(params.hardware_id) if hardware else None
+    hw = connections.get(params.hardware_id)
     if hw is None:
         raise ValueError(
-            f"G1GrootWBCTask {cfg.name!r} references unknown hardware "
-            f"{params.hardware_id!r}. Declare the hardware before the task "
-            f"in the blueprint config."
-        )
-    if not isinstance(hw, (ConnectedWholeBody, ConnectionSource)):
-        raise TypeError(
-            f"G1GrootWBCTask {cfg.name!r} requires a WHOLE_BODY hardware "
-            f"component for {params.hardware_id!r}, got {type(hw).__name__}. "
-            f"Set hardware_type=HardwareType.WHOLE_BODY."
+            f"G1GrootWBCTask {cfg.name!r} references robot {params.hardware_id!r}, which "
+            "has no connection declaration on this coordinator."
         )
 
     model_dir = Path(params.model_path)

@@ -293,7 +293,7 @@ class JointVelocityTaskParams(BaseConfig):
     zero_on_timeout: bool = True
 
 
-def create_task(cfg: Any, hardware: Any) -> JointVelocityTask:
+def create_task(cfg: Any) -> JointVelocityTask:
     params = JointVelocityTaskParams.model_validate(cfg.params)
     return JointVelocityTask(
         cfg.name,
