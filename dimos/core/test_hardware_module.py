@@ -24,6 +24,8 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, HardwareSpec, Mounts
 from dimos.core.module import Module
+from dimos.core.stream import Out
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.assets.model import RobotModel, UsdModel
 
 _ARM_URDF = """<robot name="arm">
@@ -178,3 +180,18 @@ def test_a_list_ref_gets_every_hardware_module() -> None:
         ]
     finally:
         coordinator.stop()
+
+
+class SharedCamera(Camera):
+    mount_shared = frozenset({"color_image"})
+    color_image: Out[Image]
+
+
+def test_a_mount_keeps_its_shared_streams_outside_its_namespace() -> None:
+    blueprint = (
+        autoconnect(Arm.blueprint(), SharedCamera.mount(Arm.mounts.wrist))
+        .namespace("left", shared={"color_image"})
+        .solidify()
+    )
+    (camera,) = [atom for atom in blueprint.active_blueprints if atom.module is SharedCamera]
+    assert blueprint.remapping_map.get((camera.name, "color_image"), "color_image") == "color_image"

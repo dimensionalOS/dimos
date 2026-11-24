@@ -83,11 +83,15 @@ class HardwareModule(TfModule):
     config: HardwareModuleConfig
     # Frames of this hardware's USD that other hardware can mount onto.
     mounts: ClassVar[Mounts] = Mounts()
+    # Streams a mounted copy keeps unprefixed, so they still reach whatever is outside its mount's namespace.
+    mount_shared: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
     def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same name."""
-        return cls.blueprint(_mount=mount_frame, **kwargs).namespace(mount_frame)
+        return cls.blueprint(_mount=mount_frame, **kwargs).namespace(
+            mount_frame, shared=cls.mount_shared
+        )
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
