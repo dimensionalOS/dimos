@@ -105,7 +105,7 @@ def Xform "bot"
 
 def _bot() -> SimKinematicBase:
     return SimKinematicBase(
-        usd=UsdModel.from_layer(_BOT), _mount="bot", instance_name="bot/SimKinematicBase"
+        usd=UsdModel.from_layer(_BOT), mount="bot", instance_name="bot/SimKinematicBase"
     )
 
 

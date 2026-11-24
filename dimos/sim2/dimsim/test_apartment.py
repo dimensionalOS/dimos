@@ -50,7 +50,7 @@ if (_SCENE / "structure.glb").read_bytes().startswith(b"version https://git-lfs"
 def apartment() -> Iterator[_Apartment]:
     scene = DimSimApartment()
     go2 = SimKinematicBase(
-        usd=UsdModel.from_file(_GO2), _mount="go2", instance_name="go2/SimKinematicBase"
+        usd=UsdModel.from_file(_GO2), mount="go2", instance_name="go2/SimKinematicBase"
     )
     try:
         world, robot = compose_world([scene, go2]), go2.simulated_robot()

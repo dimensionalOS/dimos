@@ -33,7 +33,7 @@ def apartment_usd() -> UsdModel:
 
 class DimSimApartmentConfig(SimSceneConfig):
     # Converted when the scene is made, not imported: its objects' meshes are read out of the scene's GLBs.
-    usd: UsdModel | None = Field(default_factory=apartment_usd)
+    usd: UsdModel = Field(default_factory=apartment_usd)
 
 
 class DimSimApartment(SimScene):

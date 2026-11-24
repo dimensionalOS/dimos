@@ -35,7 +35,7 @@ unitree_go2_dimsim = autoconnect(
     sim({"dimsim": DimSimSim.blueprint()}, default="dimsim"),
     DimSimApartment.blueprint(),
     autoconnect(
-        SimKinematicBase.blueprint(usd=GO2_USD, _mount=ROBOT),
+        SimKinematicBase.blueprint(usd=GO2_USD, mount=ROBOT),
         SimL1.mount(Go2Sim.mounts.l1),
         SimCamera.mount(Go2Sim.mounts.camera),
     ).namespace(ROBOT, shared={"world_observations", "actions", "cmd_vel"}),

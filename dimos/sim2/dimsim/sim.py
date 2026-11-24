@@ -26,7 +26,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.sim2.actions import read_actions
 from dimos.sim2.dimsim.backend import DimSimBackend
-from dimos.sim2.sim import SimulatedRobotSpec, compose_world, until_it_stops
+from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, until_it_stops
 from dimos.sim2.spec import validate
 from dimos.utils.logging_config import setup_logger
 
@@ -49,8 +49,6 @@ class DimSimSim(Module):
     config: DimSimSimConfig
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
-    hardware: list[HardwareSpec]
-    robots: list[SimulatedRobotSpec]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -64,11 +62,11 @@ class DimSimSim(Module):
         running.cancel()
 
     @rpc
-    def on_system_modules(self, _modules: list[Any]) -> None:
-        simulated = [robot.simulated_robot() for robot in self.robots]
+    def on_system_modules(self, modules: list[Any]) -> None:
+        simulated = [robot.simulated_robot() for robot in meeting(SimulatedRobotSpec, modules)]
         validate(simulated)
         self._backend = DimSimBackend(
-            compose_world(self.hardware),
+            compose_world(meeting(HardwareSpec, modules)),
             simulated,
             timestep=self.config.timestep,
             speed=self.config.speed,
