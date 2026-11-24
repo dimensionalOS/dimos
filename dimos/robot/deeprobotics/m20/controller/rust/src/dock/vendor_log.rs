@@ -318,6 +318,7 @@ pub fn replay(text: &str, new: impl Fn() -> ChargeCore, obstacle_hold_ms: f64) -
                     // docking logs the pose first; an event alone belongs to the pose before
                     continue;
                 }
+                // replay-only input: taken from the logged failure, so the live navigating check is not tested here
                 let navigating = !matches!(line, Line::Failed(Failure::NotNavigating));
                 let [x, y, yaw] = pose.unwrap_or([0.0; 3]);
                 let comp = core.params.compensation_x;

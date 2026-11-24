@@ -184,6 +184,7 @@ fn policy_steps_match_rl_deploy() {
         let (leg_scale, wheel_scale) = (spec.action.leg_scale[0], spec.action.wheel_scale);
         let mut previous: Option<&Step> = None;
         for (k, step) in w.steps.iter().enumerate() {
+            // replay-only input: rl_deploy's previous action each step (teacher-forced; policy_session runs closed loop)
             if let Some(p) = previous {
                 runner.pipeline.last_action = implied_action(p, &default, leg_scale, wheel_scale);
             }

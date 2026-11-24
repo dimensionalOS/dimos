@@ -807,6 +807,9 @@ Every function of the vendor binaries, with each branch, topic, service and time
 with the reason, and the differences still to fix ordered by risk:
 [charge_manager](SPEC_charge_manager.md), [reflective_column_node](SPEC_reflective_column.md).
 
+What the replay and sim tests take from vendor data instead of deriving it (replay-only inputs, and what the live
+controller does in their place): [SPEC_replay_inputs.md](SPEC_replay_inputs.md).
+
 ## Building the controller for the robot
 
     cd dimos/robot/deeprobotics/m20/controller/rust

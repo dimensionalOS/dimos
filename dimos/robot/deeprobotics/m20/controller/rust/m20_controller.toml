@@ -691,7 +691,7 @@ approach_gait = 0x3001
 finetune_gait = 0x3004
 basic_flat_gait = 0x1001
 default_restore_gait = 0x1001
-# recording: base_link 0.735 m out from the posts' axes' midpoint docked (186 sweeps lying on the dock, dock_compare.py,
+# sim geometry, not in the vendor binary (it cancels out of charge_manager's x); recording: base_link 0.735 m out from the posts' axes' midpoint docked (186 sweeps lying on the dock, dock_compare.py,
 # a circle fit's x minus charge_manager's); the detector puts the dock docked_x_m - filter.pose_offset_x nearer than
 # reflective_column_node's post centres, so charge_manager's x is the vendor's
 docked_x_m = 0.735
@@ -753,7 +753,7 @@ obstacle_open_ms = 10
 stand_rl_control_ms = 2000
 # bin exitPileAction: the -0.8 back-off kick is written 5 times
 back_off_writes = 5
-# recording 2026-11-24: charge_manager's 18 missed pose waits in a row were logged 200.17-200.29 ms apart (mean
+# fitted (charge_manager's runtime cost, not a vendor constant); recording 2026-11-24: charge_manager's 18 missed pose waits in a row were logged 200.17-200.29 ms apart (mean
 # 200.216): each next 200 ms wait starts 216 us after the last one ended (its warning and stopMove)
 pose_wait_overhead_us = 216
 # charge_manager closes / opens its detector process over a DDS service (OpenMarkerProcess, CloseMarkProcess) and waits

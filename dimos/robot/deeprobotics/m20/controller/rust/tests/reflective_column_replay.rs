@@ -295,7 +295,7 @@ fn check(pcap: &PathBuf, log: &PathBuf) {
     let (mut posed, mut centers_same, mut poses_same) = (0, 0, 0);
     let (mut max_center, mut max_pose, mut max_ratio) = (0.0f64, [0.0f64; 3], 0.0f64);
     for l in &logged {
-        // the sweep nearest the logged time; among those within the window, the one whose centres match best
+        // replay-only pairing, keyed on the expected centres: among sweeps within the window, the best match
         let Some(o) = ours
             .iter()
             .filter(|o| (l.t - offset - o.t).abs() < PAIR_WINDOW_S)
