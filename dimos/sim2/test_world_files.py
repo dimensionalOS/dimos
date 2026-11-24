@@ -1,0 +1,87 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from dimos.msgs.std_msgs.String import String
+
+pytest.importorskip("pxr")
+
+_PART = """#usda 1.0
+def Cube "part"
+{
+}
+"""
+
+
+def _world(part: Path) -> str:
+    return f"""#usda 1.0
+(
+    defaultPrim = "room"
+)
+def Xform "room"
+{{
+    def Xform "desk" (
+        prepend references = @{part}@
+    )
+    {{
+    }}
+}}
+"""
+
+
+def test_a_usd_request_is_the_world_with_its_assets_under_names_that_are_answered_too(
+    tmp_path: Path,
+) -> None:
+    from dimos.sim2.world_files import WorldFiles
+
+    part = tmp_path / "part.usda"
+    part.write_text(_PART)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("not the world's")
+    files = WorldFiles(_world(part))
+
+    async def ask() -> tuple[bytes | None, bytes | None, bytes | None]:
+        layer = await files.file("*.usd")
+        assert layer is not None
+        named = [line for line in layer.decode().splitlines() if "references" in line]
+        published = named[0].split("@")[1]
+        return layer, await files.file(published), await files.file(str(secret))
+
+    layer, asset, elsewhere = asyncio.run(ask())
+    assert layer is not None and layer.startswith(b"#usda")
+    assert str(tmp_path).encode() not in layer, "a viewer cannot open this machine's paths"
+    assert asset == _PART.encode()
+    assert elsewhere is None, "only names the world published are answered"
+
+
+def test_the_mujoco_sim_answers_a_usd_request_with_its_world() -> None:
+    from dimos.sim2.assets.toy import toy_robot
+    from dimos.sim2.mujoco.backend import MujocoBackend
+    from dimos.sim2.mujoco.sim import MujocoSim
+
+    sim_module = MujocoSim()
+    published: list[Any] = []
+    try:
+        sim_module._backend = MujocoBackend(toy_robot())
+        sim_module.file_info.publish = published.append
+        asyncio.run(sim_module.handle_render_file_request(String("*.usd")))
+    finally:
+        sim_module.stop()
+    assert [reply.uri for reply in published] == ["*.usd"]
+    assert published[0].data.startswith(b"#usda")

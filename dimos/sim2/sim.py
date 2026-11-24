@@ -65,7 +65,7 @@ def sim(backends: Mapping[str, Blueprint | MetaBlueprint], default: str) -> Choi
     return ChoiceAtom(name="sim", choices=dict(backends), default=default)
 
 
-def meeting(spec: type[Spec], modules: Iterable[Any]) -> list[Any]:
+def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
     """The running modules (as ``on_system_modules`` hands them over) that answer every rpc of ``spec``."""
     rpcs = set(get_protocol_method_signatures(spec))
     return [module for module in modules if rpcs <= set(module.rpcs)]
