@@ -317,12 +317,13 @@ class ManipulationLocalize(PerceptionLocalize):
             cut_above=self.config.surface_cut_above_m,
             cut_below=self.config.surface_cut_below_m,
         )
-        self.clear_surface(platform["height"])
         self._surface_count += 1
         name = f"{SURFACE}/{self._surface_count}"
         # The arm's base may stand inside the box, e.g. on a mount below the surface.
         if not self._obstacles.add_obstacle(name, box_pose, "box", box_size, None, bases):
-            return "the planner refused the surface box"
+            return "the planner refused the surface box; the surfaces in it are kept"
+        # Only now that the new box is in, the old one at this height goes.
+        self._remove_surfaces(self._surfaces_at(platform["height"]))
         self._box_filter.set_box(name, cut_pose, Vector3(*cut_size))
         self._surfaces[name] = platform["height"]
         planned = ", ".join(f"{h:.3f} m" for h in sorted(self._surfaces.values()))
@@ -340,16 +341,24 @@ class ManipulationLocalize(PerceptionLocalize):
         voxel map cells back."""
         if self._obstacles is None or self._box_filter is None:
             return "no surface: the blueprint has no motion planner or voxel map box filter"
-        names = [
+        names = list(self._surfaces) if height is None else self._surfaces_at(height)
+        self._remove_surfaces(names)
+        return f"{len(names)} surface(s) removed" if names else "no surface to remove"
+
+    def _surfaces_at(self, height: float) -> list[str]:
+        """The names of the surfaces in the planner at ``height``."""
+        return [
             name
             for name, top in self._surfaces.items()
-            if height is None or abs(top - height) <= SURFACE_HEIGHT_TOLERANCE
+            if abs(top - height) <= SURFACE_HEIGHT_TOLERANCE
         ]
+
+    def _remove_surfaces(self, names: list[str]) -> None:
+        assert self._obstacles is not None and self._box_filter is not None
         for name in names:
             self._obstacles.remove_obstacle(name)
             self._box_filter.clear_box(name)
             del self._surfaces[name]
-        return f"{len(names)} surface(s) removed" if names else "no surface to remove"
 
     def _line_of_sight(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         """The newest frame's camera position and viewing direction, in the world frame."""

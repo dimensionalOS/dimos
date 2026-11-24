@@ -516,25 +516,28 @@ class ViserManipulationScene:
 
     def _map_colors(self, points: NDArray[np.float32]) -> NDArray[np.uint8]:
         """The mapped cells' colours: by height, or with work surfaces in the planner,
-        what stands on them by height and the rest ``BELOW_SURFACE_COLOR``."""
+        what stands on them by its height above the surface, and the rest ``BELOW_SURFACE_COLOR``."""
         surfaces = self._work_surfaces()
         if not surfaces:
             return self._height_colors(points[:, 2])
-        on_one = np.zeros(len(points), dtype=bool)
+        # Each cell's height above the surface it stands on; NaN where it stands on none.
+        above = np.full(len(points), np.nan)
         low, high = STANDING_ON_SURFACE_M
         for matrix, size in surfaces:
             local = (points - matrix[:3, 3]) @ matrix[:3, :3]
             over_top = local[:, 2] - size[2] / 2
-            on_one |= (
+            on = (
                 (np.abs(local[:, 0]) <= size[0] / 2)
                 & (np.abs(local[:, 1]) <= size[1] / 2)
                 & (over_top >= low)
                 & (over_top <= high)
             )
+            above[on] = np.fmin(above[on], over_top[on])
+        on_one = ~np.isnan(above)
         colors = np.tile(np.asarray(BELOW_SURFACE_COLOR, dtype=np.uint8), (len(points), 1))
         if on_one.any():
-            floor = min(float(matrix[2, 3] + size[2] / 2) for matrix, size in surfaces)
-            colors[on_one] = self._height_colors(points[on_one, 2], floor)
+            # Tilted or not, a cell is coloured by how high it stands above its surface.
+            colors[on_one] = self._height_colors(np.maximum(above[on_one], 0.0), 0.0)
         return colors
 
     @staticmethod

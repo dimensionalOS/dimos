@@ -14,6 +14,7 @@
 
 """Obstacle rendering dispatch, without a running Viser server."""
 
+import math
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -30,6 +31,7 @@ from dimos.manipulation.visualization.viser.scene import (
     ViserManipulationScene,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
@@ -126,6 +128,42 @@ def test_with_work_surfaces_only_what_stands_on_them_is_coloured() -> None:
     assert tuple(colors[2]) != BELOW_SURFACE_COLOR
     assert tuple(colors[3]) == BELOW_SURFACE_COLOR
     assert tuple(colors[4]) == BELOW_SURFACE_COLOR
+
+
+def test_on_a_tilted_surface_the_downhill_side_is_coloured_too() -> None:
+    scene = _scene()
+    # A 0.4 m table tilted 10 degrees about x: its +y edge 3.5 cm higher than its -y edge.
+    tilt = math.radians(10.0)
+    box = Obstacle(
+        name="t",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(
+            frame_id="world",
+            position=Vector3(0.0, 0.0, 0.0),
+            orientation=Quaternion(math.sin(tilt / 2), 0.0, 0.0, math.cos(tilt / 2)),
+        ),
+        dimensions=(0.4, 0.4, 0.03),
+    )
+    top = 0.015
+
+    def on(y: float, h: float) -> list[float]:
+        """A point h above the tilted top, y along it."""
+        z = top + h
+        return [
+            0.0,
+            y * math.cos(tilt) - z * math.sin(tilt),
+            y * math.sin(tilt) + z * math.cos(tilt),
+        ]
+
+    points = np.array([on(-0.15, 0.02), on(0.15, 0.02), on(0.0, 0.2)], dtype=np.float32)
+    scene.add_vis_obstacle("mapping/voxel-map", _octree(points))
+
+    scene.add_vis_obstacle(f"{WORK_SURFACE_OBSTACLE}/1", box)
+
+    colors = scene.server.scene.add_point_cloud.call_args.kwargs["colors"]
+    # The same 2 cm above the surface, downhill or uphill: the same colour, not grey.
+    assert tuple(colors[0]) != BELOW_SURFACE_COLOR
+    assert tuple(colors[0]) == tuple(colors[1])
 
 
 def test_work_surfaces_are_drawn_in_their_own_colour() -> None:

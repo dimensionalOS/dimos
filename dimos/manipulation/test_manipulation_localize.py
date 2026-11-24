@@ -337,6 +337,24 @@ def test_add_surface_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, moc
     assert localizer._surfaces == {f"{SURFACE}/2": pytest.approx(0.08)}
 
 
+def test_a_refused_replacement_keeps_the_surface_already_in(localizer, mocker):
+    _ready(localizer, mocker, [])
+    mocker.patch.object(localizer, "surfaces", return_value=[_surface()])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = SURFACE
+    localizer._box_filter = mocker.Mock()
+    localizer.add_surface()
+
+    localizer._obstacles.add_obstacle.return_value = None
+    answer = localizer.add_surface()
+
+    assert answer.startswith("the planner refused")
+    localizer._obstacles.remove_obstacle.assert_not_called()
+    localizer._box_filter.clear_box.assert_not_called()
+    assert localizer._surfaces == {f"{SURFACE}/1": pytest.approx(0.08)}
+
+
 def test_two_surfaces_at_different_heights_stay_in_the_planner(localizer, mocker):
     _ready(localizer, mocker, [])
     low = _surface(center=(0.2, -0.5, 0.04), size=(0.3, 0.3), above=50)
