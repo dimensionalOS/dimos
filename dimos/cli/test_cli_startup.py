@@ -183,6 +183,30 @@ def test_cli_validates_environment_after_options(
     assert expected in output
 
 
+def test_rerun_bridge_uses_corrected_worker_count(tmp_path: Path) -> None:
+    code = """
+from dimos.cli.entry import main
+from dimos.core.global_config import global_config
+from dimos.visualization.rerun import bridge
+
+def report(**options):
+    print(global_config.n_workers, options["memory_limit"])
+
+bridge.run_bridge = report
+main()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, "--n-workers", "4", "rerun-bridge", "--memory-limit", "4GB"],
+        env={**os.environ, "N_WORKERS": "oops"},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "4 4GB" in result.stdout.splitlines()
+
+
 def test_graph_child_uses_effective_global_options(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
