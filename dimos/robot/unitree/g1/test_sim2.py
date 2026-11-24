@@ -60,3 +60,39 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it() -> None:
         assert odom.position.z == pytest.approx(0.793, abs=1e-4)
     finally:
         sim.stop()
+
+
+def test_odom_is_in_the_frame_a_real_g1_reports_it_in() -> None:
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
+    from dimos.robot.unitree.g1.sim2 import G1Sim
+
+    sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
+    try:
+        # Point-LIO puts its namespace in front of its frame_id itself.
+        assert sim.tf_frames["odom"] == f"g1/{PointLioConfig.model_fields['frame_id'].default}"
+    finally:
+        sim.stop()
+
+
+def test_tf_goes_out_at_the_rate_a_real_g1_publishes_it() -> None:
+    import asyncio
+    from collections.abc import AsyncIterator
+
+    from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisherConfig
+    from dimos.robot.unitree.g1.sim2 import G1Sim
+
+    rates: list[float] = []
+
+    class _World:
+        async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
+            rates.append(rate_hz)
+            for _ in ():
+                yield 0.0
+
+    sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
+    try:
+        sim._world = _World()  # type: ignore[assignment]
+        asyncio.run(sim._publish_tf())
+    finally:
+        sim.stop()
+    assert rates == [G1TfPublisherConfig.model_fields["publish_hz"].default]
