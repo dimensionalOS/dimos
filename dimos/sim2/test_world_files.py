@@ -85,3 +85,16 @@ def test_the_mujoco_sim_answers_a_usd_request_with_its_world() -> None:
         sim_module.stop()
     assert [reply.uri for reply in published] == ["*.usd"]
     assert published[0].data.startswith(b"#usda")
+
+
+def test_a_request_repeated_while_its_reply_is_on_the_way_gets_that_one_reply() -> None:
+    from dimos.sim2.world_files import WorldFiles
+
+    files = WorldFiles('#usda 1.0\ndef Xform "room"\n{\n}\n')
+    published: list[Any] = []
+
+    async def ask_three_times() -> None:
+        await asyncio.gather(*(files.answer("*.usd", published.append) for _ in range(3)))
+
+    asyncio.run(ask_three_times())
+    assert [reply.uri for reply in published] == ["*.usd"]
