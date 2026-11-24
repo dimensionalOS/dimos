@@ -56,7 +56,7 @@ MOUNTS = {"eye": "head", "imu": "base", "livox": "head", "l1": "base"}
 
 
 class _RoomConfig(SimSceneConfig):
-    usd: UsdModel | None = UsdModel.from_file(LOGISTICS).with_frames(
+    usd: UsdModel = UsdModel.from_file(LOGISTICS).with_frames(
         {"dog": ("logistics", (-9.0, -9.0, -8.7), (0.0, 0.0, 0.0))}
     )
 
@@ -67,7 +67,7 @@ class _Room(SimScene):
 
 
 class _DogConfig(HardwareModuleConfig):
-    usd: UsdModel | None = toy_robot().with_frames(
+    usd: UsdModel = toy_robot().with_frames(
         {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in MOUNTS.items()}
     )
 
@@ -80,7 +80,6 @@ class _Dog(HardwareModule):
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        assert self.config.usd is not None
         return SimulatedRobot(self.namespace, self.config.usd)
 
 
@@ -123,7 +122,7 @@ def _run(seconds: float, speed: float) -> dict[str, Any]:
         sim({"mujoco": MujocoSim.blueprint(speed=speed)}, default="mujoco"),
         _Room.blueprint(),
         autoconnect(
-            _Dog.blueprint(_mount="dog"),
+            _Dog.blueprint(mount="dog"),
             # A mount namespaces its sensor's streams; these take them back out to _Readings.
             SimCamera.mount("eye", width=64, height=48, rate_hz=RATES["color_image"]).remappings(
                 [(SimCamera, "color_image", "color_image")]

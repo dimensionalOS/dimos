@@ -36,7 +36,7 @@ _KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
 class SimL1Config(HardwareModuleConfig):
-    usd: UsdModel | None = frame_usd("l1_link", name="sim_l1")
+    usd: UsdModel = frame_usd("l1_link", name="sim_l1")
     map_frame_id: str = "world"
     period: float = 0.13
     points_per_second: float = 21_600.0

@@ -37,7 +37,7 @@ from dimos.utils.data import get_data
 
 
 class LivoxSimConfig(HardwareModuleConfig):
-    usd: UsdModel | None = UsdModel.from_file(Path(__file__).parent / "assets" / "mid360.usda")
+    usd: UsdModel = UsdModel.from_file(Path(__file__).parent / "assets" / "mid360.usda")
     rate_hz: float = 10.0
     imu_rate_hz: float = 200.0
     geom_groups: tuple[int, ...] = (0, 3)
