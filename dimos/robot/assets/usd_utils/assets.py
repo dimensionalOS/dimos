@@ -51,7 +51,7 @@ def resolve_usd_assets(usd: str, root: str) -> str:
     def anchored(asset: str, _where: str, _required: bool) -> str | None:
         return None if Path(asset).is_absolute() else str(base / asset)
 
-    return str(layer.ExportToString()) if _rename_assets(pxr, layer, anchored) else usd
+    return str(layer.ExportToString()) if rename_assets(pxr, layer, anchored) else usd
 
 
 def publish_usd_assets(usd: str, root: Path | str | None = None) -> tuple[str, dict[str, str]]:
@@ -64,7 +64,7 @@ def publish_usd_assets(usd: str, root: Path | str | None = None) -> tuple[str, d
             public[real] = _public_asset_path(where, real, taken)
             taken.add(public[real])
 
-    changed = _rename_assets(pxr, layer, lambda asset, _where, _required: public.get(asset))
+    changed = rename_assets(pxr, layer, lambda asset, _where, _required: public.get(asset))
     rewritten = str(layer.ExportToString()) if changed else usd
     return rewritten, {name: real for real, name in public.items()}
 
@@ -91,11 +91,11 @@ def _required_assets(pxr: Pxr, layer: Layer) -> list[tuple[str, str]]:
         if required:
             found.append((asset, where))
 
-    _rename_assets(pxr, layer, record)
+    rename_assets(pxr, layer, record)
     return found
 
 
-def _rename_assets(pxr: Pxr, layer: Layer, rename: AssetRename) -> bool:
+def rename_assets(pxr: Pxr, layer: Layer, rename: AssetRename) -> bool:
     """Offer every asset path the layer states to rename, writing back what it returns."""
     changed = False
     offsets = list(layer.subLayerOffsets)
