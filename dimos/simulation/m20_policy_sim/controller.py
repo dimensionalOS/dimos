@@ -128,6 +128,9 @@ class Controller:
         self.time = 0.0
         self.tick_count = 0
         self.runner: Runner | None = None
+        # rl_deploy's last_leg_action_mid / last_wheel_action globals, and the runner they belong to
+        self.handover = {"legs": np.zeros(12, np.float32), "wheels": np.zeros(4, np.float32)}
+        self.current = self.cfg["states"]["rl_control"]["fallback_runner"]
         self.targets: Targets | None = None
         self.enter_q = np.zeros(JOINTS)
         self.enter_dq = np.zeros(JOINTS)
@@ -313,8 +316,18 @@ class Controller:
             rl = self.cfg["states"]["rl_control"]
             name = cmd.runner or runner_for_gait(self.cfg, self.gait) or rl["fallback_runner"]
         r = self.runner_named(name)
+        if self.runner is None:
+            # rl_control's entry: OnEnter(false) on the runner OnExit left current (the fallback)
+            self.runner_named(self.cfg["states"]["rl_control"]["fallback_runner"]).on_enter(
+                self.handover, False
+            )
+            self.current = self.cfg["states"]["rl_control"]["fallback_runner"]
         if r is not self.runner:
-            # rl_deploy keeps one object per runner: its history and last action carry over to the next use
+            # a switch hands the last action over (OnExit / OnEnter); the runner restarts its history
+            if self.current != name:
+                self.runners[self.current].on_exit(self.handover)
+                r.on_enter(self.handover, r.spec["action"]["layout"] == "per_leg")
+                self.current = name
             r.activate()
             self.runner, self.policy_tick = r, 0
         r.params.update(params)

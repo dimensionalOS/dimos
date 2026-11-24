@@ -118,14 +118,14 @@ class GaitClock:
 
 class StandMode:
     """SixAxisStand's mode input (rl_deploy cal_command): -mode_byte, but 0 while armed and upright; the arming
-    lasts 100 upright steps; on gait 0xf001 it re-arms whenever it is off."""
+    lasts 100 upright steps; on gait 0xf003 it re-arms whenever it is off (cmp w2, #0xf003 at 0xcb4cc)."""
 
     def __init__(self) -> None:
         self.armed, self.count, self.mode = False, 0, -1
 
     def step(self, mode_byte: bool, gait: int, gravity_z: float) -> None:
         self.mode = -int(mode_byte)
-        if gait == 0xF001 and not self.armed:
+        if gait == 0xF003 and not self.armed:
             self.armed, self.count, self.mode = True, 0, 0
         if gravity_z < -0.9 and self.armed:
             self.mode = 0
@@ -172,6 +172,41 @@ class Runner:
     def activate(self) -> None:
         """The runner becomes the active one (a gait switch): its start-up gains count from here."""
         self.active_steps = 0
+
+    def on_exit(self, handover: dict[str, np.ndarray]) -> None:
+        """rl_deploy's OnExit: the last action into the handover as leg positions (per leg) and wheel velocities."""
+        act = self.spec["action"]
+        a = self.last_action
+        legs = a[LEGS_PER_LEG]
+        if act["leg_mode"] != "absolute":
+            legs = self.default[LEGS_PER_LEG] + act["leg_scale"][0] * legs
+        handover["legs"] = legs.astype(np.float32)
+        handover["wheels"] = (a[WHEELS] * act["wheel_scale"]).astype(np.float32)
+
+    def on_enter(self, handover: dict[str, np.ndarray], per_leg: bool) -> None:
+        """rl_deploy's OnEnter: the handover becomes the last action, laid out per leg (per_leg runners, entries) or
+        by joint type; history, command slew, counters and the stand flags start over; the phase carries on."""
+        act = self.spec["action"]
+        legs = handover["legs"].astype(np.float64)
+        if act["leg_mode"] != "absolute":
+            legs = (legs - self.default[LEGS_PER_LEG]) / act["leg_scale"][0]
+        wheels = handover["wheels"].astype(np.float64) / act["wheel_scale"]
+        handover["legs"], handover["wheels"] = legs.astype(np.float32), wheels.astype(np.float32)
+        a = np.zeros(JOINTS)
+        if act["leg_mode"] == "absolute" or per_leg:
+            a[LEGS_PER_LEG], a[WHEELS] = legs, wheels
+        else:
+            a[:12] = legs[[3 * (k % 4) + k // 4 for k in range(12)]]
+            a[12:] = wheels
+        self.last_action = a
+        self.history = None
+        self.command = np.zeros(3)
+        self.command_state = np.zeros(3, np.float32)
+        if self.clock is not None:
+            self.clock.counter = 0.0
+        self.stand_mode.armed = False
+        self.params = dict(self.spec.get("command_params", {}))
+        self.steps = self.active_steps = self.collected = 0
 
     def gain_scale(self) -> float:
         """rl_deploy scales kp / kd for a runner's first steps after each switch to it (NaviCharge x1.3 for 29)."""

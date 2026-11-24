@@ -608,7 +608,8 @@ policies match to float precision once their state lines up. Rules this settled 
   period wraps), the feet Rz(yaw x 24.5 deg) nominal + (0.145 dx, 0.1 dy) with its FMAs, or nominal x and y = +-0.1
   while UserCommand byte 0x6e is set (update_policy_ptr sets it on a switch to 0xf001 during rl_control's entry
   stand-in). SixAxisStand's mode is -(UserCommand 0x6c), but 0 while its flag is armed and the body upright
-  (gravity z < -0.9), the flag counting 100 upright steps and re-arming on gait 0xf001; FinetuneStand's is -1. Their
+  (gravity z < -0.9), the flag counting 100 upright steps and re-arming on gait 0xf003 (so on 0xf001 the mode is
+  -(0x6c)); FinetuneStand's is -1. Their
   accelerometer input is accel / 9.81 in f32 (a division). update_policy_ptr sets 0x6c to 0 on the entry stand-in's
   first phase and the 0x3001 stand-in, and Run sets it to 1 when the entry stand-in's second phase starts.
 - The accelerometer the runners see is the mean of the last 20 rl_control ticks' samples (UpdateRobotObservation's

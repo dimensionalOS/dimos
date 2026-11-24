@@ -495,7 +495,7 @@ real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 # mode_byte / feet_fixed: rl_deploy's UserCommand bytes 0x6c / 0x6e (update_policy_ptr sets them on a switch to the
 # stand gaits: mode_byte unless the 0x3001 stand-in or rl_control's first stand-in phase runs, feet_fixed in rl_control's
-# stand-in); gait: the commanded gait (0xf001 re-arms the stand mode)
+# stand-in); gait: the commanded gait (0xf003 re-arms the stand mode)
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode_byte = 1.0, feet_fixed = 0.0, warm_hold = 0.0, gait = 61441.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 # feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x

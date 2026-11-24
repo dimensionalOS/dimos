@@ -114,7 +114,7 @@ def command_rows(spec: dict[str, Any]) -> list[str]:
             )
         elif src == "stand_mode":
             text = (
-                "stand mode: -mode_byte, 0 while armed and upright (100 steps, re-armed on 0xf001)"
+                "stand mode: -mode_byte, 0 while armed and upright (100 steps, re-armed on 0xf003)"
             )
         elif src == "gait":
             text = f"gait clock {e['field']} x {fmt(e.get('scale', 1.0))}"

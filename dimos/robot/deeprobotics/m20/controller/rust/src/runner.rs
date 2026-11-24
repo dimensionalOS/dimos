@@ -163,7 +163,7 @@ impl GaitClock {
 }
 
 /// SixAxisStand's mode input (cal_command, 0x2b5 / 0x2d4 / 0x2d8): -mode_byte, but 0 while armed and upright, the
-/// arming counted over 100 upright steps; on gait 0xf001 it re-arms whenever it is off.
+/// arming counted over 100 upright steps; on gait 0xf003 it re-arms whenever it is off (cmp w2, #0xf003 at 0xcb4cc).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StandMode {
     armed: bool,
@@ -175,7 +175,7 @@ impl StandMode {
     pub fn step(&mut self, mode_byte: bool, gait: u32, gravity_z: f32) {
         self.mode = -(mode_byte as i32);
         let upright = (gravity_z as f64) < -0.9;
-        if gait == 0xf001 && !self.armed {
+        if gait == 0xf003 && !self.armed {
             self.armed = true;
             self.count = 0;
             self.mode = 0;
@@ -323,6 +323,9 @@ impl Pipeline {
             clock.counter = 0.0;
         }
         self.stand_mode.armed = false;
+        // UserCommand's stand bytes (mode, feet, warm-up hold) are set anew at each switch (update_policy_ptr): the
+        // runner's defaults until a request carries them
+        self.params = self.spec.command_params.clone();
         self.steps = 0;
         self.active_steps = 0;
         self.collected = 0;
