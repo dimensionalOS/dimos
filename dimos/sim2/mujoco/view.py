@@ -132,10 +132,26 @@ class MujocoView:
     ) -> MujocoRaycaster:
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
         self._show_hidden()
-        for frame in blind_to or ():
-            self._hide_from_rays(self._mount(frame), groups)
+        # The hardware a sensor is mounted in is as invisible to it as the robot link it rides.
+        for frame in [*blind_to, *([] if mounted_at is None else [mounted_at])]:
+            for body in {self._mount(frame), *self._carried_by(frame)}:
+                self._hide_from_rays(body, groups)
         mount = NO_BODY_EXCLUDED if mounted_at is None else self._mount(mounted_at)
         return MujocoRaycaster(self.model, self.data, mask, mount)
+
+    def _carried_by(self, frame: str) -> list[int]:
+        """The bodies welded (no joint between) under a body frame, such as a sensor's housing."""
+        kind, index = self._frame(frame)
+        if kind != mujoco.mjtObj.mjOBJ_BODY:
+            return []
+        model, carried = self.model, []
+        for body in range(index + 1, model.nbody):
+            holder = body
+            while holder > index and model.body_jntnum[holder] == 0:
+                holder = int(model.body_parentid[holder])
+            if holder == index:
+                carried.append(body)
+        return carried
 
     def _hide_from_rays(self, body: int, groups: Sequence[int]) -> None:
         spare = next((g for g in range(mujoco.mjNGROUP) if g not in groups), None)
