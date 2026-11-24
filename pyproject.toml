@@ -337,6 +337,11 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    # MuJoCo's USD reader: sim2 worlds are composed as USD and loaded straight into MuJoCo (4.0 needs Python 3.11).
+    "mujoco>=4.0.0; python_version >= '3.11'",
+    "mujoco-usd>=4.0.0; python_version >= '3.11'",
+    # No linux-aarch64 wheel before usd-core 26.11, and a robot does not run a simulation.
+    "usd-core>=23.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
@@ -475,6 +480,8 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core==0.8.0",
     "mujoco>=3.3.4",
+    "mujoco>=4.0.0; python_version >= '3.11'",
+    "mujoco-usd>=4.0.0; python_version >= '3.11'",
     "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -892,6 +899,10 @@ ignore = [
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
+    # A robot or a scene as a USD layer: text on purpose, so a change to one is a reviewable diff.
+    "dimos/robot/*/*/assets/*.usda",
+    "dimos/simulation/scenes/*/*.usda",
+    "dimos/sim2/*/*.usda",
     "misc/DimSim/src/engine.js",
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
