@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T07:19:57.830982Z"
+exclude-newer = "2026-11-17T16:21:07.028966Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1998,7 +1998,7 @@ all = [
     { name = "moondream" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2154,7 +2154,7 @@ manipulation = [
     { name = "moondream" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2244,7 +2244,7 @@ sim = [
     { name = "mjcf-to-urdf" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
     { name = "playground" },
     { name = "pygame" },
     { name = "usd-core", version = "25.11", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
@@ -2483,7 +2483,7 @@ tests = [
     { name = "moondream" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
     { name = "ollama" },
     { name = "openai" },
     { name = "pre-commit" },
@@ -2543,7 +2543,7 @@ tests-self-hosted = [
     { name = "moondream" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
     { name = "ollama" },
     { name = "openai" },
     { name = "pre-commit" },
@@ -2656,7 +2656,7 @@ requires-dist = [
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "python_full_version >= '3.11' and extra == 'sim'", specifier = ">=4.0.0" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11' and extra == 'sim'", specifier = ">=4.0.0" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and extra == 'sim') or (python_full_version >= '3.11' and sys_platform != 'linux' and extra == 'sim')", specifier = ">=4.0.0" },
     { name = "numba", specifier = ">=0.60.0" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "ollama", marker = "extra == 'agents'", specifier = ">=0.6.0" },
@@ -2846,7 +2846,7 @@ tests = [
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
     { name = "mujoco", marker = "python_full_version >= '3.11'", specifier = ">=4.0.0" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'", specifier = ">=4.0.0" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')", specifier = ">=4.0.0" },
     { name = "ollama", specifier = ">=0.6.0" },
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
@@ -2908,7 +2908,7 @@ tests-self-hosted = [
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
     { name = "mujoco", marker = "python_full_version >= '3.11'", specifier = ">=4.0.0" },
-    { name = "mujoco-usd", marker = "python_full_version >= '3.11'", specifier = ">=4.0.0" },
+    { name = "mujoco-usd", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')", specifier = ">=4.0.0" },
     { name = "ollama", specifier = ">=0.6.0" },
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
@@ -6261,10 +6261,10 @@ name = "mujoco-usd"
 version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mujoco-core", marker = "python_full_version >= '3.11'" },
-    { name = "newton-usd-schemas", marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "usd-core", version = "25.11", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "mujoco-core", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "newton-usd-schemas", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "usd-core", version = "25.11", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6e/6a/303d4f6679e9fcd660f974826f666d7ad9b8b8c27e3ca387f4d9da7cd04f/mujoco_usd-4.0.1.tar.gz", hash = "sha256:a0ec870c5f37aa9f5675289015c97964a543064dd9a3351cccc0ab1fe68bb451", size = 77868, upload-time = "2026-11-11T16:23:48.051Z" }
 wheels = [
