@@ -49,7 +49,6 @@ from dimos.control.hardware_interface import (
     ConnectedTwistBase,
     ConnectedWholeBody,
 )
-from dimos.control.native_command import native_transport
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -225,7 +224,7 @@ class ControlCoordinator(Module):
 
         # Connected hardware (keyed by hardware_id)
         self._hardware: dict[HardwareId, ConnectedHardware | ConnectedWholeBody] = {}
-        self._hardware_lock = threading.RLock()
+        self._hardware_lock = threading.Lock()
 
         # Joint -> hardware mapping (built when hardware added)
         self._joint_to_hardware: dict[JointName, HardwareId] = {}
@@ -451,7 +450,6 @@ class ControlCoordinator(Module):
                     output_port = self.outputs.get(f"{robot}_{name}")
                     if output_port is None or name in COMMAND_PORTS:
                         raise ValueError(f"{interface}: expected an additional typed Out")
-                    native_transport(output_port, interface)
                     groups[interface] = output_port
                 source = ConnectionSource(
                     declarations[robot],
@@ -632,7 +630,7 @@ class ControlCoordinator(Module):
                     TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
                     "Control coordinator has no trajectory task",
                 )
-            self._revoke_task_groups(self._trajectory_task.name)
+            self._invalidate_group_results()
             return self._trajectory_task.cancel()
 
     @rpc
@@ -686,7 +684,7 @@ class ControlCoordinator(Module):
             task = self._tasks.pop(task_name, None)
             if task is None:
                 return False
-            self._revoke_task_groups(task_name)
+            self._invalidate_group_results()
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
@@ -864,8 +862,6 @@ class ControlCoordinator(Module):
                 # already sending finishes first, and none sends after.
                 with self._hardware_lock:
                     self._estopped = True
-                    if self._tick_loop is not None:
-                        self._tick_loop.revoke_group_commands(enabled=False)
                 self._set_tasks_estop(True)
             else:
                 self._set_tasks_estop(False)
@@ -873,14 +869,13 @@ class ControlCoordinator(Module):
                     for connection in self._connections.values():
                         connection.drop_holds()
                     self._estopped = False
-                    if self._tick_loop is not None:
-                        self._tick_loop.revoke_group_commands(enabled=True)
                 logger.warning("E-STOP cleared at coordinator")
         return True
 
     def _set_tasks_estop(self, estopped: bool) -> None:
         """Call ``set_estop(estopped)`` on every task, and on tasks added later."""
         with self._task_lock:
+            self._invalidate_group_results()
             self._tasks_estopped = estopped
             for task in self._tasks.values():
                 task.set_estop(estopped)
@@ -976,12 +971,13 @@ class ControlCoordinator(Module):
                 method=method,
             )
             if method in _GROUP_INVALIDATING_COMMANDS:
-                self._revoke_task_groups(task_name)
+                self._invalidate_group_results()
             return getattr(task, method)(**kwargs)
 
-    def _revoke_task_groups(self, task_name: TaskName) -> None:
+    def _invalidate_group_results(self) -> None:
+        """Discard pending native results; caller holds the task lock."""
         if self._tick_loop is not None:
-            self._tick_loop.revoke_group_commands(task_name)
+            self._tick_loop.invalidate_group_results()
 
     def _invoke_declared(
         self, task: ControlTask, task_name: TaskName, method: str, kwargs: dict[str, Any]
@@ -1011,7 +1007,7 @@ class ControlCoordinator(Module):
         except TypeError as exc:
             raise TypeError(f"{where}: {exc}") from exc
         if method in _GROUP_INVALIDATING_COMMANDS:
-            self._revoke_task_groups(task_name)
+            self._invalidate_group_results()
         return handler(*bound.args, **bound.kwargs)
 
     @rpc
@@ -1094,10 +1090,9 @@ class ControlCoordinator(Module):
             log_ticks=self.config.log_ticks,
             connections=self._connections,
             connection_command_callback=self._publish_command,
+            group_commands_allowed=lambda: not self._estopped,
         )
-        with self._estop_lock:
-            self._tick_loop.revoke_group_commands(enabled=not self._estopped)
-            self._tick_loop.start()
+        self._tick_loop.start()
 
         # Subscribe only streams that registered tasks' cards consume.
         self._sync_stream_subscriptions()

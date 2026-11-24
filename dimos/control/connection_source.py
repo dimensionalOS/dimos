@@ -42,7 +42,6 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
 from dimos.control.contract.limits import Limits, limits as limits_of, movable_joints
-from dimos.control.native_command import native_transport
 from dimos.control.task import JointStateSnapshot
 from dimos.core.stream import Out
 from dimos.hardware.manipulators.spec import ControlMode
@@ -172,7 +171,6 @@ class ConnectionSource:
         ):
             raise ValueError(f"{robot!r}: groups need joint_state and a finite positive timeout")
         self.group_joints: dict[str, frozenset[str]] = {}
-        movable: dict[str, str] = {}
         if config.group_commands:
             if config.model is None:
                 raise ValueError(f"{robot!r}: groups need a model")
@@ -193,10 +191,6 @@ class ConnectionSource:
         self._group_ports = dict(group_ports or {})
         if self._group_ports.keys() != self.group_joints.keys():
             raise ValueError(f"{robot!r}: each declared command needs a typed Out")
-        self._group_owners: dict[str, tuple[str, int]] = {}
-        self._reading_epoch = 0
-        self._group_joint_by_key: dict[str, str] = {}
-        self._joint_receipts: dict[str, tuple[float, int]] = {}
 
         table = limits_of(config)
         self._robot = robot
@@ -216,14 +210,9 @@ class ConnectionSource:
         for raw_key in table:
             key = Key(raw_key)
             keys.setdefault(key.joint, {})[key.interface] = key
-        if self.group_joints:
-            covered = frozenset().union(*self.group_joints.values())
-            for name in movable.values():
-                if name in covered:
-                    keys.setdefault(name, {})
-                    self._group_joint_by_key.update(
-                        {f"{name}/{i}": name for i in JOINT_STATE_FIELDS}
-                    )
+        for covered in self.group_joints.values():
+            for name in covered:
+                keys.setdefault(name, {})
         self._joints = []
         for name, command_keys in keys.items():
             for interface in command_keys:
@@ -327,7 +316,7 @@ class ConnectionSource:
         return self._limits[key]
 
     def supports_joint_mode(self, joint: str, mode: ControlMode) -> bool:
-        """Whether the joint has a legacy interface for this mode."""
+        """Whether the joint has a per-axis interface for this mode."""
         return f"{joint}/{_INTERFACE_BY_MODE.get(mode)}" in self._limits
 
     @property
@@ -368,8 +357,8 @@ class ConnectionSource:
         mine = {key: value for key, value in values.items() if key in self._port_keys[port]}
         if not mine:
             return
+        now = time.monotonic()
         with self._lock:
-            now = time.monotonic()
             latest, reported = self._latest, self._reported
             if self._restart or any(
                 now - receipt > self._timeout for receipt in self._port_receipts.values()
@@ -378,18 +367,8 @@ class ConnectionSource:
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._port_receipts.clear()
-                self._reading_epoch += 1 + sum(gaps for _, gaps in self._joint_receipts.values())
-                self._joint_receipts.clear()
                 self._resumed = True
                 self._restart = False
-            if port == JOINT_STATE and self._group_joint_by_key:
-                updated = {
-                    self._group_joint_by_key[k]
-                    for k in mine.keys() & self._group_joint_by_key.keys()
-                }
-                for joint in updated:
-                    previous, epoch = self._joint_receipts.get(joint, (now, 0))
-                    self._joint_receipts[joint] = now, epoch + (now - previous > self._timeout)
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
             if port not in reported and all(
@@ -407,60 +386,16 @@ class ConnectionSource:
         with self._lock:
             self._reported = frozenset()
             self._restart = True
-            self._reading_epoch += 1
 
-    def accepts_group(self, interface: str, payload: object) -> bool:
-        port = self._group_ports.get(interface)
-        return port is not None and type(payload) is port.type
-
-    def retain_group_owners(self, winners: Mapping[str, str]) -> None:
-        for interface, (task, _) in list(self._group_owners.items()):
-            if winners.get(interface) != task:
-                self._revoke_group(interface)
-
-    def revoke_group_owners(self, task: str | None) -> None:
-        for interface, (owner, _) in list(self._group_owners.items()):
-            if task is None or owner == task:
-                self._revoke_group(interface)
-
-    def _revoke_group(self, interface: str) -> None:
-        del self._group_owners[interface]
-        try:
-            native_transport(self._group_ports[interface], interface).revoke()
-        except Exception:
-            logger.exception(f"Failed to send revoke for {interface}; commands still expire")
-
-    def group_feedback_epoch(self, interface: str) -> int | None:
-        with self._lock:
-            return self._group_feedback(interface, time.monotonic())[0]
-
-    def _group_feedback(self, interface: str, now: float) -> tuple[int | None, float]:
-        if not self._ready(now):
-            return None, 0.0
-        epoch = self._reading_epoch
-        receipt = min(self._port_receipts.values())
-        for joint in self.group_joints[interface]:
-            received, gaps = self._joint_receipts.get(joint, (float("-inf"), 0))
-            receipt = min(receipt, received)
-            epoch += gaps
-        deadline = receipt + self._timeout
-        return (epoch if now < deadline else None), deadline
-
-    def route_group(self, interface: str, task: str, payload: object, feedback_epoch: int) -> None:
-        """Offer a winning payload while the caller holds the coordinator write lock."""
-        with self._lock:
-            epoch, deadline = self._group_feedback(interface, time.monotonic())
-        owner = self._group_owners.get(interface)
-        if owner is not None and (owner != (task, feedback_epoch) or epoch != feedback_epoch):
-            self._revoke_group(interface)
-        if epoch != feedback_epoch:
-            return
+    def publish_group(self, interface: str, payload: object) -> bool:
+        """Publish a whole winning command to the ordinary typed stream."""
         port = self._group_ports[interface]
-        self._group_owners[interface] = task, feedback_epoch
-        native_transport(port, interface).offer(port, payload, int(deadline * 1e9))
-        with self._lock:
-            for joint in self.group_joints[interface]:
-                self._holds.pop(joint, None)
+        if type(payload) is not port.type or not self.ready_for_control():
+            return False
+        for joint in self.group_joints[interface]:
+            self._holds.pop(joint, None)
+        port.publish(payload)
+        return True
 
     def ready_for_control(self, now: float | None = None) -> bool:
         """Whether every required reading port has reported and is fresh.
@@ -474,12 +409,9 @@ class ConnectionSource:
         if now is None:
             now = time.monotonic()
         with self._lock:
-            return self._ready(now)
-
-    def _ready(self, now: float) -> bool:
-        return len(self._reported) == len(self._needed) and all(
-            now - self._port_receipts[port] <= self._timeout for port in self._needed
-        )
+            return len(self._reported) == len(self._needed) and all(
+                now - self._port_receipts[port] <= self._timeout for port in self._needed
+            )
 
     def unreported(self) -> list[str]:
         """The reading ports nothing has ever arrived on, e.g. ["joint_state"]. A

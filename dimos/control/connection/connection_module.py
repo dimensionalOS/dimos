@@ -25,28 +25,23 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
-import math
 import threading
 import time
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar
 import uuid
 
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
-from dimos.control.native_command import CommandTicket, native_transport, received_ticket
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 Values = dict[str, float]
-T = TypeVar("T")
 
 
 class ConnectionConfig(ModuleConfig):
@@ -57,7 +52,7 @@ class ConnectionConfig(ModuleConfig):
         model: The robot's model (its URDF): its joints, their order and their
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
-            listed joints accept legacy commands; planar axes are ordinary joints.
+            listed joints accept per-axis commands; planar axes are ordinary joints.
         group_commands: Native input port names mapped to their indivisible model joints.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
@@ -189,12 +184,9 @@ class ConnectionModule(Module, ABC):
         self._session_id = uuid.uuid4().hex
         # A bad config fails here, before the hardware is touched.
         self._limits = limits_of(self.config)
-        if self.config.group_commands and not (
-            math.isfinite(self.config.deadman_timeout_s) and self.config.deadman_timeout_s > 0
-        ):
-            raise ValueError("native commands need a finite positive deadman timeout")
         for name in self.config.group_commands:
-            self._native_input(name)
+            if name not in self.inputs:
+                raise ValueError(f"{self.config.source}/{name}: expected a native In")
         self.connect()
         with self._hardware_lock:
             self._connected = True
@@ -247,50 +239,20 @@ class ConnectionModule(Module, ABC):
             self._report(f"{result.reason}: {result.detail}", rejection=True)
             return
         with self._hardware_lock:
-            if self._connected:
-                self._run_command(lambda: self.write(result.values))
-
-    def _native_input(self, name: str) -> In[Any]:
-        port = self.inputs.get(name)
-        if port is None or name not in self.config.group_commands:
-            raise ValueError(f"{self.config.source}/{name}: expected a declared native In")
-        native_transport(port, f"{self.config.source}/{name}")
-        return port
-
-    def subscribe_native(
-        self, port: In[T], callback: Callable[[T, CommandTicket], None]
-    ) -> Callable[[], None]:
-        """Receive the native message and its independent, transport-issued ticket."""
-        if self._native_input(port.name) is not port:
-            raise ValueError("native input port is not owned by this connection")
-        return port.subscribe(lambda message: callback(message, received_ticket()))
-
-    def write_native(self, port: In[T], ticket: CommandTicket, write: Callable[[], None]) -> bool:
-        """Admit one bounded synchronous write; compute outside this boundary."""
-        transport = native_transport(port, f"{self.config.source}/{port.name}")
-        with self._hardware_lock:
-            if (
-                not self._connected
-                or self._stopping
-                or not transport.admit(ticket, self.config.deadman_timeout_s)
-            ):
-                return False
-            self._run_command(write)
-            return True
-
-    def _run_command(self, write: Callable[[], None]) -> None:
-        with self._lock:
-            self._last_command_time = time.time()
-            self._deadman_fired = False
-            self._command_seq += 1
-            seq = self._command_seq
-        self._on_loop(lambda: self._arm_deadman(seq))
-        try:
-            write()
-        except Exception as error:
-            self._report(f"write failed: {type(error).__name__}: {error}")
-            self._on_loop(self._disarm_deadman)
-            self._call_halt()
+            if not self._connected:
+                return
+            with self._lock:
+                self._last_command_time = time.time()
+                self._deadman_fired = False
+                self._command_seq += 1
+                seq = self._command_seq
+            self._on_loop(lambda: self._arm_deadman(seq))
+            try:
+                self.write(result.values)
+            except Exception as error:
+                self._report(f"write failed: {type(error).__name__}: {error}")
+                self._on_loop(self._disarm_deadman)
+                self._call_halt()
 
     def frame(self, name: str) -> str:
         """The frame to stamp a reading with: ``name`` behind the config's

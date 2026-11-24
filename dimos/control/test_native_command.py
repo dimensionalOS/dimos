@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native port ownership and fencing over real transport in separate workers."""
+"""Native arbitration, ordinary worker delivery and sender-side cancellation."""
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import os
-import time
+from threading import Event
 from typing import Any
 
 import pytest
@@ -29,14 +30,14 @@ from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.group_command import GroupCommandOutput
-from dimos.control.native_command import CommandTicket, native_transport, wire_native_commands
 from dimos.control.task import BaseControlTask, CoordinatorState, JointCommandOutput, ResourceClaim
+from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.core.transport import pZenohTransport
+from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.testing.waiting import wait_until
@@ -79,53 +80,20 @@ class NativeCoordinator(ControlCoordinator):
     def scenario(self, mode: str) -> int:
         with self._task_lock:
             self._tasks.clear()
-            for name, priority, output in (
-                (
-                    "top",
-                    30,
-                    JointCommandOutput(
-                        [J1, J2] if mode == "legacy" else [J1],
-                        positions=[0.8, 0.7] if mode == "legacy" else [0.8],
-                    ),
-                ),
-                (
-                    "pose",
-                    20,
-                    GroupCommandOutput("mock/pose", POSE if mode != "invalid" else object()),
-                ),
-                ("other_pose", 10, GroupCommandOutput("mock/other_pose", POSE)),
-                ("scalar", 0, JointCommandOutput([J2, J3], positions=[0.4, 0.6])),
-            ):
-                if (
-                    (name == "top" and mode not in {"scalar", "legacy"})
-                    or (name == "other_pose" and mode != "native")
-                    or (name == "pose" and mode == "legacy")
-                ):
-                    continue
-                self._tasks[name] = Reference(name, priority, output)
+            self._tasks.update(
+                low=Reference("low", 0, JointCommandOutput([J2, J3], positions=[0.4, 0.6])),
+                pose=Reference("pose", 20, GroupCommandOutput("mock/pose", POSE)),
+            )
+            if mode == "native":
+                self._tasks["other_pose"] = Reference(
+                    "other_pose", 10, GroupCommandOutput("mock/other_pose", POSE)
+                )
+            else:
+                joints, values = ([J1], [0.8]) if mode == "blocked" else ([J1, J2], [0.8, 0.7])
+                self._tasks["top"] = Reference(
+                    "top", 30, JointCommandOutput(joints, positions=values)
+                )
         return os.getpid()
-
-    @rpc
-    def delay_pose_packets(self) -> tuple[int, int, int, PoseStamped]:
-        transport = native_transport(self.mock_pose, "mock/pose")
-        self._undelayed_send = transport._send
-        captured: list[tuple[int, int, int, PoseStamped]] = []
-
-        def delay(frame: Any) -> None:
-            if frame[2]:
-                if not captured:
-                    captured.append(frame)
-                return
-            self._undelayed_send(frame)
-
-        transport._send = delay  # type: ignore[method-assign]
-        wait_until(lambda: bool(captured), timeout=2)
-        return captured[0]
-
-    @rpc
-    def resume_pose_packets(self) -> None:
-        transport = native_transport(self.mock_pose, "mock/pose")
-        transport._send = self._undelayed_send  # type: ignore[method-assign]
 
 
 class RecordingConnection(FakeArm):
@@ -134,82 +102,28 @@ class RecordingConnection(FakeArm):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.received: list[tuple[str, str, str, float, float]] = []
-        self.held: tuple[In[PoseStamped], CommandTicket] | None = None
-        self.defer_pose = False
-        self.watch_sequence = 0
-        self.replay_seen = False
+        self.received: dict[str, tuple[str, str, float, float, float, float]] = {}
 
     @rpc
     def start(self) -> None:
         super().start()
         for port in (self.pose, self.other_pose):
-            self.register_disposable(
-                Disposable(
-                    self.subscribe_native(
-                        port,
-                        partial(self.record, port),
-                    )
-                )
-            )
-        transport = native_transport(self.pose, "mock/pose")
+            self.register_disposable(Disposable(port.subscribe(partial(self.record, port.name))))
 
-        def observe(wire: Any) -> None:
-            if wire[1] == self.watch_sequence:
-                self.replay_seen = True
-
-        # Test-only observation of the actual replay on the receiver's transport.
-        self.register_disposable(Disposable(pZenohTransport.subscribe(transport, observe)))
-
-    def record(self, port: In[PoseStamped], msg: PoseStamped, ticket: CommandTicket) -> None:
-        if port is self.pose and self.defer_pose:
-            self.held = port, ticket
-            self.defer_pose = False
-            return
-        self.write_native(
-            port,
-            ticket,
-            lambda: self.received.append(
-                (port.name, type(msg).__name__, msg.frame_id, msg.ts, msg.x)
-            ),
-        )
+    def record(self, port: str, msg: PoseStamped) -> None:
+        self.received[port] = (type(msg).__name__, msg.frame_id, msg.ts, msg.x, msg.y, msg.z)
 
     @rpc
-    def evidence(self) -> tuple[int, list[Any], dict[str, float], int, bool, int]:
-        transport = native_transport(self.pose, "mock/pose")
+    def evidence(self) -> tuple[int, bool, dict[str, Any], dict[str, float]]:
         return (
             os.getpid(),
-            self.received[-10:],
+            type(self.pose.transport) is ZenohTransport,
+            self.received.copy(),
             self.writes[-1] if self.writes else {},
-            transport._seen,
-            self.replay_seen,
-            self.halts,
         )
 
-    @rpc
-    def pose_count(self) -> int:
-        return sum(item[0] == "pose" for item in self.received)
 
-    @rpc
-    def watch_replay(self, sequence: int) -> int:
-        self.watch_sequence = sequence
-        return native_transport(self.pose, "mock/pose")._received
-
-    @rpc
-    def defer_one_pose(self) -> bool:
-        if self.held is not None:
-            return True
-        self.defer_pose = True
-        return False
-
-    @rpc
-    def retry_seen_ticket(self) -> bool:
-        assert self.held is not None
-        port, ticket = self.held
-        return self.write_native(port, ticket, lambda: pytest.fail("revoked write ran"))
-
-
-def assembly() -> tuple[Blueprint, FakeArmConfig]:
+def assembly() -> Blueprint:
     declaration = FakeArmConfig(
         model=fake_arm_model(("joint1", "joint2", "joint3")),
         joint_commands={
@@ -223,7 +137,7 @@ def assembly() -> tuple[Blueprint, FakeArmConfig]:
         },
         deadman_timeout_s=2.0,
     )
-    blueprint = (
+    return (
         autoconnect(
             NativeCoordinator.blueprint(
                 connections=[
@@ -245,107 +159,94 @@ def assembly() -> tuple[Blueprint, FakeArmConfig]:
             ]
         )
     )
-    return blueprint, declaration
 
 
-def test_bad_native_binding_and_unknown_joint() -> None:
-    blueprint, declaration = assembly()
-    with pytest.raises(ValueError, match="typed Out"):
-        wire_native_commands(
-            blueprint.remappings([(RecordingConnection, "pose", "elsewhere")]),
-            NativeCoordinator.name,
-            RecordingConnection.name,
-            declaration,
-        )
-    with pytest.raises(ValueError, match="typed Out"):
-        wire_native_commands(
-            blueprint.remappings([(RecordingConnection, "pose", "mock_position_command")]),
-            NativeCoordinator.name,
-            RecordingConnection.name,
-            declaration,
-        )
-    declaration.group_commands["pose"] = frozenset({"unknown"})
-    with pytest.raises(ValueError, match="movable model joints"):
-        ConnectionSource(declaration, ["position_command"], ["joint_state"], 1.0)
-
-
-def test_native_arbitration_and_remote_revoke() -> None:
-    blueprint, declaration = assembly()
-    blueprint = wire_native_commands(
-        blueprint, NativeCoordinator.name, RecordingConnection.name, declaration
-    )
+def test_native_command_over_ordinary_worker_remap() -> None:
+    blueprint = assembly()
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},
         overrides={"g": {"viewer": "none"}},
         global_overrides={"zenoh_scout_addr": os.environ["ZENOH_SCOUT_ADDR"]},
     )
     system = ModuleCoordinator.build(blueprint, parsed)
-    wire = pZenohTransport[tuple[int, int, int, PoseStamped]]("mock_pose")
     try:
-        cc, receiver = (
-            system.get_instance(NativeCoordinator),
-            system.get_instance(RecordingConnection),
-        )
+        cc = system.get_instance(NativeCoordinator)
+        receiver = system.get_instance(RecordingConnection)
         wait_until(lambda: J3 in cc.get_joint_positions(), timeout=10)
-        assert cc.scenario("native") not in {os.getpid(), receiver.evidence()[0]}
-        assert receiver.evidence()[0] != os.getpid()
-        expected = ("pose", "PoseStamped", "tool_base", 17.5, 0.25)
-        wait_until(lambda: expected in receiver.evidence()[1], timeout=10)
-        _, received, scalar, _, _, _ = receiver.evidence()
-        assert set(received) == {expected}
-        assert scalar == {f"{J3}/position": 0.6}
-
-        # A high-priority scalar on J1 defeats the whole J1/J2 input; the low
-        # scalar then drives BOTH J2 and J3. The other pose contender is absent.
-        cc.scenario("scalar")
+        sender_pid = cc.scenario("blocked")
         wait_until(
-            lambda: (
-                receiver.evidence()[2]
-                == {
-                    f"{J1}/position": 0.8,
-                    f"{J2}/position": 0.4,
-                    f"{J3}/position": 0.6,
-                }
-            ),
+            lambda: receiver.evidence()[3]
+            == {f"{J1}/position": 0.8, f"{J2}/position": 0.4, f"{J3}/position": 0.6},
             timeout=10,
         )
-        cc.scenario("legacy")
+        receiver_pid, ordinary_transport, received, _ = receiver.evidence()
+        assert len({sender_pid, receiver_pid, os.getpid()}) == 3
+        assert ordinary_transport
+        assert not received
+
+        cc.scenario("partial")
         wait_until(
-            lambda: receiver.evidence()[2]
-            == {
-                f"{J1}/position": 0.8,
-                f"{J2}/position": 0.7,
-                f"{J3}/position": 0.6,
-            },
+            lambda: receiver.evidence()[3]
+            == {f"{J1}/position": 0.8, f"{J2}/position": 0.7, f"{J3}/position": 0.6},
             timeout=10,
         )
-        cc.scenario("invalid")
-        wait_until(lambda: receiver.evidence()[2].get(f"{J2}/position") == 0.4, timeout=10)
+        assert not receiver.evidence()[2]
 
         cc.scenario("native")
-        wait_until(lambda: receiver.evidence()[2] == {f"{J3}/position": 0.6}, timeout=10)
-        wait_until(receiver.defer_one_pose, timeout=2)
-        old = cc.delay_pose_packets()
-        assert receiver.watch_replay(old[1]) < old[1]
-        cc.task_invoke("pose", "cancel")
-        wait_until(lambda: receiver.evidence()[3] > old[0], timeout=10)
-        accepted = receiver.pose_count()
-        assert time.monotonic_ns() < min(old[2], old[1] + int(2e9))
-        wire.broadcast(None, old)
-        wait_until(lambda: receiver.evidence()[4], timeout=10)
-        assert receiver.pose_count() == accepted
-        assert not receiver.retry_seen_ticket()
-        cc.resume_pose_packets()
-
-        cc.set_estop(True)
-        wait_until(lambda: receiver.status().deadman_fired, timeout=6)
-        assert receiver.evidence()[-1] >= 1
-        cc.set_estop(False)
-        cc.scenario("native")
-        wait_until(lambda: not receiver.status().deadman_fired, timeout=6)
-        cc.stop()
-        wait_until(lambda: receiver.status().deadman_fired, timeout=6)
-        assert receiver.status().connected
+        wait_until(lambda: receiver.evidence()[2], timeout=10)
+        assert receiver.evidence()[2] == {
+            "pose": ("PoseStamped", "tool_base", 17.5, 0.25, 0.5, 0.75)
+        }
+        wait_until(lambda: receiver.evidence()[3] == {f"{J3}/position": 0.6}, timeout=10)
     finally:
-        wire.stop()
         system.stop()
+
+
+def test_cancel_discards_a_computed_native_result(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    cc = NativeCoordinator()
+    request.addfinalizer(cc.stop)
+    source = ConnectionSource(
+        ConnectionConfig(
+            source="mock",
+            model=fake_arm_model(("joint1", "joint2")),
+            group_commands={"pose": frozenset({"joint1", "joint2"})},
+        ),
+        [],
+        ["joint_state"],
+        30.0,
+        group_ports={"mock/pose": cc.mock_pose},
+    )
+    source.on_message("joint_state", JointState(name=[J1, J2], position=[0.0, 0.0]))
+    cc._tasks["pose"] = Reference("pose", 20, GroupCommandOutput("mock/pose", POSE))
+    loop = TickLoop(
+        100, {}, cc._hardware_lock, cc._tasks, cc._task_lock, {}, connections={"mock": source}
+    )
+    cc._tick_loop = loop
+    loop._stop_event.clear()  # Drive ticks by hand without a second tick thread.
+    published: list[PoseStamped] = []
+    cc.mock_pose.subscribe(published.append)
+    loop._tick()
+    assert published == [POSE]
+
+    computed, release = Event(), Event()
+    compute = loop._compute_all_tasks
+
+    def pause_after_compute(state: CoordinatorState):
+        result = compute(state)
+        computed.set()
+        assert release.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(loop, "_compute_all_tasks", pause_after_compute)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        stale_tick = worker.submit(loop._tick)
+        try:
+            assert computed.wait(timeout=5)
+            cc.task_invoke("pose", "cancel")
+        finally:
+            release.set()
+        stale_tick.result(timeout=5)
+    loop._tick()
+    assert published == [POSE]
