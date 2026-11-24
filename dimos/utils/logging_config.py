@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
+import json
 import logging
 import logging.handlers
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -193,6 +195,49 @@ _CONSOLE_TEXT = "\033[0;34m"  # blue
 _CONSOLE_KEY = "\033[0;36m"  # cyan
 _CONSOLE_VAL = "\033[0;35m"  # magenta
 _CONSOLE_EQ = "\033[0;37m"  # white
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(value: Any, memo: dict[int, Any] | None = None) -> Any:
+    """Remove embedded terminal formatting without mutating structured log values."""
+    if isinstance(value, str):
+        return _ANSI_ESCAPE.sub("", value)
+    if not isinstance(value, (Mapping, list, tuple)):
+        return value
+    if memo is None:
+        memo = {}
+    if id(value) in memo:
+        return memo[id(value)]
+    if isinstance(value, Mapping):
+        mapping: dict[Any, Any] = {}
+        memo[id(value)] = mapping
+        mapping.update(
+            (_strip_ansi(key, memo), _strip_ansi(item, memo)) for key, item in value.items()
+        )
+        return mapping
+    if isinstance(value, list):
+        sequence: list[Any] = []
+        memo[id(value)] = sequence
+        sequence.extend(_strip_ansi(item, memo) for item in value)
+        return sequence
+    items = tuple(_strip_ansi(item, memo) for item in value)
+    # A tuple can recur through a list or dict, which may already have copied it.
+    return memo.setdefault(id(value), items)
+
+
+def _strip_ansi_processor(
+    logger: Any, method_name: str, event_dict: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {_strip_ansi(key): _strip_ansi(value) for key, value in event_dict.items()}
+
+
+def _json_dumps(event_dict: Mapping[str, Any], *, default: Callable[[Any], Any]) -> str:
+    # JSONRenderer supplies its fallback for __structlog__ and repr. Clean its
+    # output too: these objects have not been converted to strings yet.
+    def plain_default(value: Any) -> Any:
+        return _strip_ansi(default(value))
+
+    return json.dumps(_strip_ansi(event_dict), default=plain_default)
 
 
 def _module_first(kv: tuple[str, Any]) -> tuple[bool, str]:
@@ -202,7 +247,9 @@ def _module_first(kv: tuple[str, Any]) -> tuple[bool, str]:
 
 def _compact_console_processor(logger: Any, method_name: str, event_dict: Mapping[str, Any]) -> str:
     """Format log lines as: HH:MM:SS.mmm [lvl][file.py              ] Event key=value ..."""
-    event_dict = dict(event_dict)
+    # Objects such as transports embed colors in their string representations.
+    # Only the console renderer should add colors, after this cleanup.
+    event_dict = _strip_ansi_processor(logger, method_name, event_dict)
 
     # Time — HH:MM:SS.mmm
     timestamp = event_dict.pop("timestamp", "")
@@ -229,12 +276,15 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
 
     # Event message
     event = event_dict.pop("event", "")
+    event = _strip_ansi(f"{event}")
+
+    # Traceback rendered by format_exc_info, printed under the line
+    exception = event_dict.pop("exception", "")
 
     # Remove internal / callsite / exception fields
     for key in (
         "func_name",
         "lineno",
-        "exception",
         "exc_info",
         "exception_type",
         "exception_message",
@@ -243,6 +293,9 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         "_from_structlog",
     ):
         event_dict.pop(key, None)
+
+    # Converting custom objects to text can introduce additional colors.
+    event_dict = {key: _strip_ansi(f"{value}") for key, value in event_dict.items()}
 
     # Assemble the line
     if _CONSOLE_USE_COLORS:
@@ -265,6 +318,9 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         line = f"{time_str} [{level_short}][{file_path}] {event}"
         if kv_str:
             line += " " + kv_str
+
+    if exception:
+        line += f"\n{_strip_ansi(f'{exception}')}"
 
     return line
 
@@ -314,7 +370,10 @@ def setup_logger(*, level: int | None = None) -> Any:
     file_handler = _file_handler(log_file_path)
     file_handler.setLevel(level)
     file_formatter = structlog.stdlib.ProcessorFormatter(
-        processor=structlog.processors.JSONRenderer(),
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.JSONRenderer(serializer=_json_dumps),
+        ],
     )
 
     file_handler.setFormatter(file_formatter)
@@ -337,7 +396,12 @@ def setup_exception_handler() -> None:
         # Get a logger for uncaught exceptions
         logger = setup_logger()
 
-        # Log the exception with full traceback to JSON
+        # Uncaught exceptions must remain visible even when error logging is disabled.
+        if not logger.isEnabledFor(logging.ERROR):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # The console handler prints the traceback under the line
         logger.error(
             "Uncaught exception occurred",
             exc_info=(exc_type, exc_value, exc_traceback),
@@ -345,18 +409,6 @@ def setup_exception_handler() -> None:
             exception_message=str(exc_value),
             traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
         )
-
-        # Still display the exception nicely on console using Rich if available
-        try:
-            from rich.console import Console
-            from rich.traceback import Traceback
-
-            console = Console()
-            tb = Traceback.from_exception(exc_type, exc_value, exc_traceback)
-            console.print(tb)
-        except ImportError:
-            # Fall back to standard exception display if Rich is not available
-            sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
     # Set our custom exception handler
     sys.excepthook = handle_exception

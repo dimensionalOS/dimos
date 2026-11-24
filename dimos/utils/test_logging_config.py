@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -101,7 +102,7 @@ def test_log_viewer_time_is_local(tokyo_time: None) -> None:
     assert format_line(raw).startswith("21:00:00 ")
 
 
-def _run_logging_script(tmp_path: Path, code: str) -> None:
+def _run_logging_script(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
     # Logging configuration and handler migration affect the entire interpreter.
     result = subprocess.run(
         [
@@ -125,6 +126,122 @@ logging_config.LOG_DIR = root / "logs"
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stderr == "", result.stderr
+    return result
+
+
+@pytest.mark.parametrize("console_colors", [False, True], ids=["redirected", "terminal"])
+def test_logs_strip_embedded_ansi_colors(tmp_path: Path, console_colors: bool) -> None:
+    result = _run_logging_script(
+        tmp_path,
+        f"logging_config._CONSOLE_USE_COLORS = {console_colors!r}\n"
+        + """
+from contextlib import ExitStack
+from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.utils.colors import blue, green, red
+
+logging_config.set_run_log_dir(root / "run")
+logger = logging_config.setup_logger()
+with ExitStack() as resources:
+    for transport_type in (ZenohTransport, LCMTransport):
+        transport = transport_type("dimos/nav_cmd_vel", Twist)
+        resources.callback(transport.stop)
+        logger.info(
+            "Recording %s (%s) via %s", "nav_cmd_vel", Twist.__name__, transport,
+            transport=transport,
+        )
+
+details = {"streams": [green("nav_cmd_vel")], "count": 2, "enabled": True, "missing": None}
+logger.info(blue("Transport details"), details=details, labels=(red("velocity"),))
+assert details["streams"] == [green("nav_cmd_vel")]
+try:
+    raise ValueError(red("invalid stream"))
+except ValueError:
+    logger.exception("Recording failed")
+""",
+    )
+    raw = (tmp_path / "run/main.jsonl").read_text()
+    assert "\\u001b" not in raw
+    records = [json.loads(line) for line in raw.splitlines()]
+    messages = [
+        "Recording nav_cmd_vel (Twist) via ZenohTransport(dimos/nav_cmd_vel#geometry_msgs.Twist)",
+        "Recording nav_cmd_vel (Twist) via LCMTransport(dimos/nav_cmd_vel#geometry_msgs.Twist)",
+    ]
+    assert [record["event"] for record in records] == [
+        *messages,
+        "Transport details",
+        "Recording failed",
+    ]
+    assert records[2]["details"] == {
+        "streams": ["nav_cmd_vel"],
+        "count": 2,
+        "enabled": True,
+        "missing": None,
+    }
+    assert records[2]["labels"] == ["velocity"]
+    assert records[3]["exception"].endswith("ValueError: invalid stream")
+    assert ("\x1b[" in result.stdout) == console_colors
+    assert all(message in result.stdout for message in messages)
+    assert "\x1b[92m" not in result.stdout
+    assert "streams': ['nav_cmd_vel']" in result.stdout
+    assert "('velocity',)" in result.stdout
+    assert "ValueError: invalid stream" in result.stdout
+
+
+@pytest.mark.parametrize("console_colors", [False, True], ids=["redirected", "terminal"])
+def test_logs_strip_colors_from_custom_values_and_keys(
+    tmp_path: Path, console_colors: bool
+) -> None:
+    result = _run_logging_script(
+        tmp_path,
+        f"logging_config._CONSOLE_USE_COLORS = {console_colors!r}\n"
+        + r"""
+from dimos.utils.colors import blue, green
+
+class ColoredValue:
+    def __str__(self):
+        return green("console value")
+
+    def __repr__(self):
+        return blue("JSON value")
+
+class StructuredValue:
+    def __structlog__(self):
+        return {green("items"): [ColoredValue(), blue("text")], "count": 2}
+
+logging_config.set_run_log_dir(root / "run")
+logger = logging_config.setup_logger()
+value = ColoredValue()
+logger.info(
+    value,
+    value=value,
+    details=StructuredValue(),
+    literal=r"\u001b[31m",
+    **{green("source"): "nav_cmd_vel"},
+)
+""",
+    )
+    record = json.loads((tmp_path / "run/main.jsonl").read_text())
+    assert record["event"] == "JSON value"
+    assert record["value"] == "JSON value"
+    assert record["details"] == {"items": ["JSON value", "text"], "count": 2}
+    assert record["source"] == "nav_cmd_vel"
+    assert record["literal"] == r"\u001b[31m"
+    assert ("\x1b[" in result.stdout) == console_colors
+    assert "console value" in result.stdout
+    assert "\x1b[92m" not in result.stdout
+
+
+def test_console_preserves_recursive_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(logging_config, "_CONSOLE_USE_COLORS", False)
+    items = []
+    details = {"items": (items,)}
+    items.append(details)
+
+    line = _compact_console_processor(None, "info", {"event": "diagnostic", "details": details})
+
+    assert line.endswith("diagnostic details={'items': ([{...}],)}")
+    assert items[0] is details
 
 
 # Subprocess scripts isolate global logging state and handler replacement from pytest.
@@ -321,3 +438,74 @@ with closing(follow_log(path, stop=emit_warning)) as records:
     assert json.loads(next(records))["event"] == "first warning"
 """,
     )
+
+
+def test_console_prints_traceback_of_exc_info(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", "INFO")
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+from dimos.utils.logging_config import setup_logger
+logger = setup_logger()
+try:
+    1 / 0
+except ZeroDivisionError:
+    logger.error("Error during worker shutdown", exc_info=True)
+""",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    assert lines[0].endswith("Error during worker shutdown")
+    assert lines[1] == "Traceback (most recent call last):"
+    assert lines[-1] == "ZeroDivisionError: division by zero"
+
+
+@pytest.mark.parametrize(
+    "level,disable_level",
+    [
+        ("INFO", logging.NOTSET),
+        ("ERROR", logging.NOTSET),
+        ("CRITICAL", logging.NOTSET),
+        ("FATAL", logging.NOTSET),
+        ("INFO", logging.CRITICAL),
+    ],
+)
+def test_uncaught_exception_prints_traceback_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, level: str, disable_level: int
+) -> None:
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", level)
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import logging
+import sys
+from dimos.utils.logging_config import setup_exception_handler
+
+setup_exception_handler()
+logging.disable(int(sys.argv[1]))
+raise RuntimeError("uncaught sentinel")
+""",
+            str(disable_level),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    output = result.stdout + result.stderr
+    assert output.count("Traceback (most recent call last):") == 1
+    assert output.count("RuntimeError: uncaught sentinel") == 1

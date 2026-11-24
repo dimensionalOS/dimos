@@ -44,10 +44,12 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     DEFAULT_ARTIFACT_PATH,
     create_task,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -272,10 +274,15 @@ def test_completion_never_fires_when_robot_never_reaches_goal():
 # End-to-end: RPP follower vs sim plant -> benchmark record -> score
 
 
-def _state(x, y, yaw, t):
+def _state(task, x, y, yaw, t):
+    task.on_odometry(
+        Odometry(
+            ts=t + 1.0, pose=Pose(Vector3(x, y, 0.0), Quaternion.from_euler(Vector3(0.0, 0.0, yaw)))
+        ),
+        t,
+    )
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={_JOINTS[0]: x, _JOINTS[1]: y, _JOINTS[2]: yaw},
             joint_velocities={_JOINTS[0]: 0.0, _JOINTS[1]: 0.0, _JOINTS[2]: 0.0},
         ),
         t_now=t,
@@ -313,7 +320,7 @@ def test_end_to_end_controller_benchmark_scoring(tmp_path):
     monitor = _monitor(ref, dwell_s=0.3)
     done = False
     for k in range(800):
-        out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * 0.1))
+        out = task.compute(_state(task, plant.x, plant.y, plant.yaw, t=k * 0.1))
         cvx, cvy, cwz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         # Benchmark records what it sees over the transport: cmd_vel + odom.
         recorder.on_cmd_vel(Twist(linear=Vector3(cvx, cvy, 0.0), angular=Vector3(0.0, 0.0, cwz)))
@@ -384,7 +391,7 @@ def test_end_to_end_fullpose_benchmark_scoring(tmp_path):
     monitor = _monitor(ref, dwell_s=0.3)
     done = False
     for k in range(800):
-        out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * 0.1))
+        out = task.compute(_state(task, plant.x, plant.y, plant.yaw, t=k * 0.1))
         cvx, cvy, cwz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         recorder.on_cmd_vel(Twist(linear=Vector3(cvx, cvy, 0.0), angular=Vector3(0.0, 0.0, cwz)))
         recorder.on_odom(_pose(plant.x, plant.y, plant.yaw), now=k * 0.1)

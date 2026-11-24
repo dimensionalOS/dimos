@@ -39,7 +39,12 @@ from reactivex.scheduler import TimeoutScheduler
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.introspection.module.info import StreamDescriptor, extract_module_info
+from dimos.core.introspection.module.info import (
+    RpcInfo,
+    StreamDescriptor,
+    extract_module_info,
+    extract_rpc_info,
+)
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport, TransportSpec
@@ -117,12 +122,11 @@ class ModuleConfig(BaseConfig):
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     frame_id_prefix: str | None = None
     frame_id: str | None = None
-    # Set by the coordinator when the same module class is deployed more than
-    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
-    # from the class name to this name.
+    # Blueprint identity for a named instance (see BlueprintAtom.instance_name).
+    # Also supplies the default RPC alias when set.
     instance_name: str | None = None
-    # Optional RPC-only address. Unlike instance_name, this does not change the
-    # module's Blueprint identity, configuration key, or stream namespace.
+    # Optional RPC alias in a blueprint. The coordinator passes the resolved
+    # wire address to the module, independently of its instance and stream names.
     rpc_name: str | None = None
     g: GlobalConfig = global_config
 
@@ -192,11 +196,19 @@ class ModuleBase(Configurable, CompositeResource):
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
     @property
+    def namespace(self) -> str:
+        """The ``Blueprint.namespace`` levels in the instance name: ``fleet/robot0`` for ``fleet/robot0/odom``."""
+        return (self.config.instance_name or "").rpartition("/")[0]
+
+    @property
+    def frame_id_prefix(self) -> str:
+        """The namespace, then the config's own frame_id_prefix: ``robot0/custom``."""
+        return "/".join(part for part in (self.namespace, self.config.frame_id_prefix) if part)
+
+    @property
     def frame_id(self) -> str:
         base = self.config.frame_id or self.__class__.__name__
-        if self.config.frame_id_prefix:
-            return f"{self.config.frame_id_prefix}/{base}"
-        return base
+        return f"{self.frame_id_prefix}/{base}" if self.frame_id_prefix else base
 
     @rpc
     def build(self) -> None:
@@ -205,6 +217,15 @@ class ModuleBase(Configurable, CompositeResource):
         Called after deploy and stream wiring but before start().
         Has a very long timeout (24h) so long-running builds don't fail.
         Default is a no-op — override in subclasses that need a build step.
+        """
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        """Raise ImportError with an install hint before starting any workers.
+
+        Receives pinned module config kwargs merged with resolved overrides,
+        without constructing the module. These kwargs are sparse; overrides
+        must resolve any missing config defaults and must not create runtime resources.
         """
 
     @rpc
@@ -309,8 +330,11 @@ class ModuleBase(Configurable, CompositeResource):
                     f"{type(self).__name__}.tf port has no transport yet — "
                     "deploy via a blueprint or call set_transport('tf', ...) first"
                 )
-            self._tf = TF(port)
+            self._tf = self._create_tfbuffer(port)
         return self._tf
+
+    def _create_tfbuffer(self, port: Any) -> TF:
+        return TF(port)
 
     @classproperty
     def rpcs(self) -> dict[str, Callable[..., Any]]:
@@ -366,6 +390,15 @@ class ModuleBase(Configurable, CompositeResource):
                 )
             )
         return descriptors
+
+    @rpc
+    def get_config(self) -> dict[str, Any]:
+        return self.config.model_dump(mode="json", fallback=repr)
+
+    @rpc
+    def get_rpc_signatures(self) -> list[RpcInfo]:
+        """Describe every RPC's parameters and return annotation."""
+        return [extract_rpc_info(fn) for fn in self.rpcs.values()]
 
     @classmethod
     def _io_class(cls, color: bool = True) -> str:

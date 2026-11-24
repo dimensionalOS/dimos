@@ -5,7 +5,7 @@ These checks need the `manipulation` extra. Most run on mock arms or in MuJoCo w
 ## 3.1 Motion planning in Viser
 
 ```bash
-uv run dimos run xarm7-planner-coordinator --visualization.backend viser
+uv run dimos run lite6-planner-coordinator
 # In another terminal:
 uv run dimos shell
 ```
@@ -36,8 +36,9 @@ uv run dimos run lite6-planner-coordinator
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper`, `keyboard-teleop-a750` and `keyboard-teleop-a1z`. Repeat the planner check with `a1z-planner-coordinator`, adding `--visualization.backend viser`.
-* The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints.
+* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6` and `keyboard-teleop-piper`.
+* The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints. The OpenArm arms start stretched straight down, so drag the target up.
+* `keyboard-teleop-a750` has no mock. It needs the real A-750 and its `a750_control` binding, see the [A-750 guide](../../docs/capabilities/manipulation/a750.md). Run it as `uv run dimos run keyboard-teleop-a750 --a750connection.device-path /dev/ttyACM0` and repeat the keyboard check.
 
 Expected result: each blueprint starts without an arm and the model moves in Viser.
 
@@ -54,15 +55,34 @@ uv run dimos shell
 ...in the shell:
 
 ```python
+import time
+from dimos.manipulation.sdk import Arm
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
-scan = app.PickAndPlaceModule.scan_objects(XARM_GRASP_PROMPTS)
-for o in scan.metadata["objects"]:   # labels are unreliable, so pick by position
-    print(o["object_id"], app.ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id(o["object_id"]).points_f32().mean(axis=0))
-app.PickAndPlaceModule.pick_object("<object_id>")   # the can, near x=0.57 y=0.00
+print(app.ManipulationLocalize.state())   # repeat until it reads ready
+Arm.from_app(app).move_linear(dy=0.08)   # localize confirms an object from two camera poses
+time.sleep(2.0)   # let the second view reach memory
+objects = app.ManipulationLocalize.scan(XARM_GRASP_PROMPTS, window_s=30.0)
+for o in objects:
+    print(o["id"], o["label"], o["position"], "score", o["score"], "views", o["views"])
+```
+
+The scene contains six objects, but `scan` returns only verified detections, not a scene inventory. The six-result expectation belonged to the old OSR pipeline. With localize, the count depends on the prompts, confidence and camera views. A missing label does not mean the object is absent. The default OWLv2 configuration requires a score of at least 0.40 and two distinct camera positions for each returned instance.
+
+This pick-and-place check requires a verified can near `(0.57, 0.00)`, regardless of its label or how many other objects were found. If it is missing, stop the check and inspect the `verification '<label>'` lines in the blueprint log for scores and view counts. Capture additional views with the target visible and keep both poses inside the scan's time window before retrying. Report a missing can as a perception failure, not a successful pick-and-place test.
+
+...then select the can by position and pick it:
+
+```python
+can_candidates = [
+    o for o in objects
+    if abs(o["position"][0] - 0.57) < 0.05 and abs(o["position"][1]) < 0.05
+]
+assert len(can_candidates) == 1, "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+app.PickAndPlaceModule.pick_object(can_candidates[0]["id"])
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 
-Expected result: the scan finds six objects, the pick returns "Pick complete", the place returns "Place complete", and Viser shows the arm lifting the can and setting it down. Restart the blueprint before another pick. `xarm-grasp-graspgenx` is the same check with learned grasps, and needs a CUDA 12.8 GPU.
+Expected result: the scan includes a verified can, the pick returns "Pick complete", the place returns "Place complete", and Viser shows the arm lifting the can and setting it down. There is no fixed expected scan count. Restart the blueprint before another pick. `xarm-grasp-graspgenx` is the same check with learned grasps, and needs a CUDA 12.8 GPU.
 
 ## 3.4 Agentic xArm in MuJoCo
 
@@ -72,13 +92,15 @@ Needs the agent credentials and a CUDA or MPS GPU, see [Agentic xArm simulation]
 uv run dimos run xarm-perception-sim-agent
 # In another terminal:
 uv run dimos mcp call get_robot_state
-uv run dimos mcp call scan_objects --json-args '{"prompts": ["cup"]}'
+# localize confirms an object from two camera poses, so look from a second one first
+uv run dimos mcp call move_to_pose --json-args '{"x": 0.4, "y": 0.1, "z": 0.35}'
+uv run dimos mcp call localize --json-args '{"objects": "red cube", "start": -30, "duration": 30}'
 uv run humancli
 ```
 
 * In `humancli` send "Scan for objects." and then "Move 10 cm to the left."
 
-Expected result: MuJoCo shows the arm, a table, an apple, an orange and a cup. `get_robot_state` prints the joints, end-effector pose and gripper state, `scan_objects` reports the cup with an object ID, the agent lists the objects it found, and the arm moves 10 cm sideways.
+Expected result: MuJoCo shows the arm on a table with small blocks, balls, two bowls and a basket. `get_robot_state` prints the joints, end-effector pose and gripper state, `localize` reports the red cube with an `id`, the agent lists the objects it found, and the arm moves 10 cm sideways.
 
 ## 3.5 WebXR headset teleop
 
@@ -122,3 +144,18 @@ uv run dimos run r1pro-planar-preview
 * Set `moving_base/r1pro/base_yaw` to `3.0`, Plan and Execute. Then set it to `-3.0`, Plan and Preview.
 
 Expected result: each plan succeeds and the mock robot ends at each executed target. The yaw preview from 3.0 to -3.0 turns the short way through pi.
+
+## 3.8 Galaxea A1Z on hardware
+
+Needs the A1Z on the CAN interface `a1zcan` (`dimos hardware a1z configure-can`) and its SDK; see the [A1Z guide](../../docs/capabilities/manipulation/a1z.md). Support the arm and clear its workspace: it moves home after it starts and before it stops.
+
+```bash
+uv run dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan
+uv run dimos run a1z-planner-coordinator --a1zconnection.can-port a1zcan --visualization.backend viser
+```
+
+* Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X. Press [ and ] to open and close the gripper.
+* Planner: drag the target gizmo in Viser, click Plan, then Execute.
+* Jog the arm from the Desktop Manipulation app with `a1z-teleop`, and repeat the headset check from 3.5 with `teleop-webxr-a1z` and the left controller. Both take `--a1zconnection.can-port a1zcan`.
+
+Expected result: the arm moves home, follows each command, and moves home again before its motors turn off on Ctrl+C.

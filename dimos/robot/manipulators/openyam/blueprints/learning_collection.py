@@ -15,7 +15,7 @@
 """Gravity-compensated OpenYAM collection, configured through dimos run."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -46,7 +46,7 @@ OPENYAM_TEACH_JOINTS = [
 ]
 
 
-def openyam_teach_control() -> Blueprint:
+def openyam_teach_control() -> MetaBlueprint:
     """Zero stiffness, teaching damping and passive jaws over the connection."""
     return autoconnect(
         OpenYamCoordinator.blueprint(

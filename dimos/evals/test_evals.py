@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 import threading
 import time
@@ -39,11 +40,11 @@ from pytest_mock import MockerFixture
 from dimos.agents.mcp.constants import TURN_FAILED_KEY
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
+from dimos.evals.agents.agent_adapter import AgentAdapter, _Turn
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.dimos_agent import DimosAgentAdapter
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.mcp_client_adapter import McpClientAdapter, _Turn
 from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
@@ -62,6 +63,7 @@ from dimos.evals.scorers import (
     final,
     first_number,
     floor,
+    inside,
     mean,
     ramp,
     within,
@@ -85,8 +87,10 @@ from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -222,12 +226,10 @@ def test_dataset_preflight_checks_added_modules(dataset: str) -> None:
     """A tool-using agent's modules become the launched stack, so preflight
     validates the names; adding modules to an attached dimos is a conflict."""
     with pytest.raises(ValueError, match="Unknown blueprint or module: 'no-such-module'"):
-        Dataset(dataset).preflight(McpClientAdapter(modules=("no-such-module",)))
-    match = "already attaches to http://x/mcp; McpClientAdapter also adds modules"
+        Dataset(dataset).preflight(AgentAdapter(modules=("no-such-module",)))
+    match = "already attaches to http://x/mcp; AgentAdapter also adds modules"
     with pytest.raises(RuntimeError, match=match):
-        Dataset(dataset, mcp_url="http://x/mcp").preflight(
-            McpClientAdapter(modules=("unitree-go2",))
-        )
+        Dataset(dataset, mcp_url="http://x/mcp").preflight(AgentAdapter(modules=("unitree-go2",)))
 
 
 def test_dataset_launches_and_cleans_up_the_agents_modules(
@@ -291,7 +293,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
 
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
-        _sim(attach=True).preflight(McpClientAdapter(modules=("agent",)))
+        _sim(attach=True).preflight(AgentAdapter(modules=("agent",)))
 
 
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
@@ -401,10 +403,10 @@ def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixtur
 
 def test_agent_preflight_mismatches(dataset: str) -> None:
     frozen = Dataset(dataset)
-    with pytest.raises(RuntimeError, match="McpClientAdapter needs a running Agent"):
-        McpClientAdapter().preflight(frozen)
-    McpClientAdapter(modules=("mcp-server", "agent")).preflight(frozen)  # brings its own
-    McpClientAdapter().preflight(_sim())  # the environment will launch the stack
+    with pytest.raises(RuntimeError, match="AgentAdapter needs a running Agent"):
+        AgentAdapter().preflight(frozen)
+    AgentAdapter(modules=("mcp-server", "agent")).preflight(frozen)  # brings its own
+    AgentAdapter().preflight(_sim())  # the environment will launch the stack
 
 
 @pytest.mark.parametrize(
@@ -412,13 +414,13 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
     [
         (DimosAgentAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ("mcp-server",)),
         (
-            McpClientAdapter(modules=("agent",)),
+            AgentAdapter(modules=("agent",)),
             DimSimEnvironment(blueprint=["unitree-go2"]),
             ("agent", "mcp-server"),
         ),
         (PiAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ()),
         (DimosAgentAdapter(), _sim(), ()),
-        (McpClientAdapter(modules=("agent",)), _sim(), ("agent",)),
+        (AgentAdapter(modules=("agent",)), _sim(), ("agent",)),
     ],
     ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client"],
 )
@@ -586,7 +588,7 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
 
     s = summarize(results)
     assert s.n == 3 and s.errors == 2
-    assert s.pass_rate == pytest.approx(1 / 3)
+    assert s.mean_score == s.pass_rate == 1.0
     assert s.cost_usd is None
 
     run_dir = runner.run_dir
@@ -820,6 +822,39 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     assert score(written(tmp_path / "still.db", [(50.0, 50.0)]), str(N_ROOMS)) == 0.5
 
 
+@pytest.mark.parametrize(
+    ("cube", "yaw", "score"),
+    [
+        ((0.0, 0.0, 0.028), 0.0, 1.0),  # centred
+        ((0.03, 0.0, 0.028), 0.0, 1.0),  # against a short wall
+        ((0.0, 0.05, 0.028), 0.0, 1.0),  # at the end of the long side
+        ((0.06, 0.0, 0.028), 0.0, 0.0),  # beside the bowl
+        ((0.0, 0.0, 0.10), 0.0, 0.0),  # held above it
+        ((0.05, 0.0, 0.028), math.pi / 2, 1.0),  # turned bowl: along its long side
+        ((0.0, 0.06, 0.028), math.pi / 2, 0.0),  # turned bowl: past its short side
+    ],
+)
+def test_inside_scores_anywhere_on_the_container_floor(
+    tmp_path: Path, cube: tuple[float, float, float], yaw: float, score: float
+) -> None:
+    db = tmp_path / "poses.db"
+    bowl = Quaternion(0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
+    with SqliteStore(path=str(db)) as store:
+        store.stream("body_poses", TFMessage).append(
+            TFMessage(
+                Transform(
+                    translation=Vector3(*cube), frame_id="world", child_frame_id="cube", ts=1.0
+                ),
+                Transform(rotation=bowl, frame_id="world", child_frame_id="bowl", ts=1.0),
+            ),
+            ts=1.0,
+        )
+    grade = inside("cube", "bowl", half_extents_m=(0.052, 0.072), rise_m=(0.02, 0.04))
+    outcome = Outcome(trajectory=_trajectory("", tmp_path), artifacts={"recording": db})
+    assert grade(outcome) == score
+    assert inside("ball", "bowl", half_extents_m=(1.0, 1.0), rise_m=(-1.0, 1.0))(outcome) == 0.0
+
+
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
 
@@ -829,7 +864,7 @@ def test_suites_and_agents_importable() -> None:
     assert {m.rsplit(".", 1)[1] for m in agents} == {
         "question_answer",
         "blind",
-        "mcp_client_adapter",
+        "agent_adapter",
         "pi",
         "dimcode",
         "dimos_agent",
@@ -856,11 +891,11 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.blind", ["frames_per_stream=3"])
     with pytest.raises(ValidationError, match="model"):
-        load_agent("dimos.evals.agents.mcp_client_adapter", ["model=gpt-4o"])
+        load_agent("dimos.evals.agents.agent_adapter", ["model=gpt-4o"])
     with pytest.raises(TypeError, match="0 agents"):
         load_agent("dimos.evals.agents.lib.single_call")
     with pytest.raises(ValidationError, match="modules"):
-        load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server agent"])
+        load_agent("dimos.evals.agents.agent_adapter", ["modules=mcp-server agent"])
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
@@ -873,13 +908,13 @@ def _write_trace_pair(trace_dir: Path, seq: int, *, response: bool = True) -> No
         (trace_dir / f"{seq:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + seq}))
 
 
-def _run_mcp_client_adapter(
+def _run_agent_adapter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fake_agent: Callable[[str, Path, PubSubTransport[Any], PubSubTransport[Any]], None],
     timeout_s: float,
 ) -> Trajectory:
-    """Run McpClientAdapter over real transports, with `fake_agent` as Agent."""
+    """Run AgentAdapter over real transports, with `fake_agent` as Agent."""
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
 
@@ -905,7 +940,7 @@ def _run_mcp_client_adapter(
     unsubscribe = human.subscribe(on_human)
     try:
         env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
-        trajectory = McpClientAdapter().run(
+        trajectory = AgentAdapter().run(
             "go to the bed", env, tmp_path / "case", timeout_s=timeout_s
         )
     finally:
@@ -920,7 +955,7 @@ def _run_mcp_client_adapter(
 
 
 @pytest.mark.parametrize("goes_idle", [True, False])
-def test_mcp_client_adapter_drives_a_turn_over_real_transports(
+def test_agent_adapter_drives_a_turn_over_real_transports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
 ) -> None:
     """The production agent points the Agent's raw capture at run_dir/raw,
@@ -949,7 +984,7 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
         if goes_idle:
             idle.publish(True)
 
-    trajectory = _run_mcp_client_adapter(
+    trajectory = _run_agent_adapter(
         tmp_path, monkeypatch, fake_agent, timeout_s=10.0 if goes_idle else 0.5
     )
 
@@ -974,7 +1009,7 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
 
 
 @pytest.mark.parametrize("error_response", [False, True], ids=["no_response", "http_error"])
-def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
+def test_agent_adapter_ends_a_failed_turn_as_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_response: bool
 ) -> None:
     """Agent's failure note is not a model call, so it ends the case as an error.
@@ -997,7 +1032,7 @@ def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
         agent_t.publish(AIMessage(content=note, additional_kwargs={TURN_FAILED_KEY: True}))
         idle.publish(True)
 
-    trajectory = _run_mcp_client_adapter(tmp_path, monkeypatch, fake_agent, timeout_s=10.0)
+    trajectory = _run_agent_adapter(tmp_path, monkeypatch, fake_agent, timeout_s=10.0)
 
     assert (trajectory.extra.ended_by, trajectory.extra.error) == ("error", note)
     user, first = trajectory.steps
@@ -1006,7 +1041,7 @@ def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
     )
 
 
-def test_mcp_client_adapter_turn_waits_for_the_failure_note_of_an_unanswered_call(
+def test_agent_adapter_turn_waits_for_the_failure_note_of_an_unanswered_call(
     tmp_path: Path,
 ) -> None:
     """The idle flip can overtake the failure note. A call with no response leaves
@@ -1029,7 +1064,7 @@ def test_agents_report_every_available_tool() -> None:
 
     assert QuestionAnswer().available_tools(environment_tools) == ()
     assert Blind().available_tools(environment_tools) == ()
-    assert McpClientAdapter().available_tools(environment_tools) == environment_tools
+    assert AgentAdapter().available_tools(environment_tools) == environment_tools
 
 
 @pytest.mark.parametrize(
@@ -1054,6 +1089,18 @@ def test_summary_and_trajectory_preserve_unknown_cost(
     assert trajectory.build("answer").final_metrics.total_cost_usd == expected
     assert summary.n == len(costs)
     assert summary.mean_score == summary.pass_rate == 0.0
+
+
+def test_summarize_excludes_errors_from_judgment_scores() -> None:
+    results = [
+        EvalResult(case_id="pass", score=1.0, passed=True),
+        EvalResult(case_id="fail", score=0.0, passed=False),
+        EvalResult(case_id="preflight", error="preflight: dimos agent version failed"),
+    ]
+    summary = summarize(results)
+    assert summary.n == 3 and summary.errors == 1
+    assert summary.mean_score == pytest.approx(0.5)
+    assert summary.pass_rate == pytest.approx(0.5)
 
 
 def _trajectory_with(command: str, result: str) -> Trajectory:

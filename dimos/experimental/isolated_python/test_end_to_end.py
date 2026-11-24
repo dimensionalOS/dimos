@@ -62,7 +62,7 @@ def test_isolated_python_rpc_refs_and_restart() -> None:
             Offset.blueprint(),
             Producer.blueprint(),
             Consumer.blueprint(),
-        )
+        ).solidify()
     )
     try:
         external = coordinator.get_instance(ExampleExternal)

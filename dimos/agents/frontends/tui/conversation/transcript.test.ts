@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { SubmissionId, TaskId } from "@earendil-works/pi-durable";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import type { TimelineRow } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
@@ -20,7 +21,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
-import { EntryIdSchema } from "#dimos/agents/shared/protocol/args.ts";
+import { CallIdSchema, EntryIdSchema } from "#dimos/agents/shared/protocol/args.ts";
 import { RenderDetailsSchema } from "#dimos/agents/shared/protocol/media.ts";
 import { TranscriptView, type TranscriptSource } from "#dimos/agents/frontends/tui/conversation/transcript.ts";
 import { Value } from "typebox/value";
@@ -57,6 +58,99 @@ function view(rows: readonly TimelineRow[], openPanel: ConstructorParameters<typ
 function plain(lines: readonly string[]): string[] {
   return lines.map((line) => stripVTControlCharacters(line).trimEnd());
 }
+
+test("background results appear on delivery while queued user messages stay visible", (t) => {
+  const result = "[Background] bash call call_1 finished:\none\ntwo\nthree";
+  const queued = {
+    kind: "queued",
+    key: "q1",
+    position: 0,
+    row: { submission: 1 as SubmissionId, mode: "followUp", from: "background", text: result },
+  } satisfies TimelineRow;
+  const user = {
+    ...queued,
+    key: "q2",
+    position: 1,
+    row: { submission: 2 as SubmissionId, mode: "steer", from: "you", text: "keep going" },
+  } satisfies TimelineRow;
+  const { transcript, update } = view([queued, user]);
+  t.after(() => transcript.dispose());
+  assert.deepEqual(plain(transcript.render(80)), ["   queued steer   keep going"]);
+  update([
+    itemRow({
+      kind: "input",
+      entry: ENTRY,
+      images: [],
+      input: {
+        source: {
+          kind: "background",
+          tool: "bash",
+          end: "finished",
+          call: Value.Parse(CallIdSchema, "call_1"),
+          task: 1 as TaskId,
+        },
+        text: result,
+        change: null,
+        render: null,
+        limit: null,
+      },
+    }),
+  ]);
+  assert.deepEqual(plain(transcript.render(80)), [" ⇢ bash finished"]);
+  assert.equal(transcript.render(10).length, 1);
+});
+
+test("a background bash launch goes straight to its status line even with expanded cards", (t) => {
+  const call = {
+    type: "toolCall",
+    id: "call_1",
+    name: "bash",
+    arguments: { command: "echo hello", run_in_background: true },
+  } as const;
+  const assistant = itemRow({ kind: "assistant", entry: ENTRY, message: { ...ANSWER, content: [call] } });
+  const running = {
+    kind: "tool",
+    key: "tcall_1",
+    call,
+    slot: { callId: call.id, name: call.name, status: "running", output: "hello" },
+    backgroundable: false,
+    since: null,
+  } satisfies TimelineRow;
+  const result = itemRow({
+    kind: "tool_result",
+    entry: Value.Parse(EntryIdSchema, 2),
+    result: {
+      role: "toolResult",
+      toolName: call.name,
+      toolCallId: call.id,
+      content: [{ type: "text", text: "Started in the background as call call_1." }],
+      details: {
+        tool: "bash",
+        details: {
+          background: { task: 1 as TaskId },
+          limit: null,
+          render: null,
+          exitCode: null,
+          truncation: null,
+          fullOutputPath: null,
+        },
+      },
+      isError: false,
+      timestamp: 0,
+    },
+  });
+  const { transcript, update } = view([assistant]);
+  t.after(() => transcript.dispose());
+  for (const expanded of [false, true]) {
+    transcript.setExpanded(expanded);
+    update([assistant, running]);
+    assert.deepEqual(plain(transcript.render(80)), []);
+    update([assistant, result, running]);
+    assert.deepEqual(plain(transcript.render(80)), [" ⇢ bash sent to background"]);
+    update([assistant, result]);
+    assert.equal(transcript.render(10).length, 1);
+  }
+});
 
 test("historical and native user messages keep Markdown, prompt boundaries and an unlabeled background", (t) => {
   const text = "3. **Open** the door\n4. Keep \\*literal\\*\n\n```py\nprint('hello')\n```";

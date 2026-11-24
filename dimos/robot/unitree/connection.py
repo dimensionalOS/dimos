@@ -25,16 +25,6 @@ from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
-from unitree_webrtc_connect.constants import (
-    DATA_CHANNEL_TYPE,
-    RTC_TOPIC,
-    SPORT_CMD,
-    VUI_COLOR,
-)
-from unitree_webrtc_connect.webrtc_driver import (
-    UnitreeWebRTCConnection as LegionConnection,
-    WebRTCConnectionMethod,
-)
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
@@ -44,12 +34,21 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.motion_timer import MotionTimer
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.webrtc_connect import (
+    DATA_CHANNEL_TYPE,
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+    UnitreeWebRTCConnection as LegionConnection,
+    WebRTCConnectionMethod,
+)
 from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
@@ -106,12 +105,15 @@ class UnitreeWebRTCConnection(Resource):
         mode: str = "ai",
         aes_128_key: str | None = None,
         velocity_api: bool = False,
+        timed_move_resend_period_s: float = 0.01,
     ) -> None:
         self.ip = ip
         self.mode = mode
-        self.stop_timer: threading.Timer | None = None
+        self._motion_timer = MotionTimer()
+        self._latest_movement: object | None = None
         self.cmd_vel_timeout = CMD_VEL_TIMEOUT
         self._velocity_api = velocity_api
+        self._timed_move_resend_period_s = timed_move_resend_period_s
         self._move_ids = SequentialIds()
         # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.
         self.conn = LegionConnection(
@@ -158,10 +160,8 @@ class UnitreeWebRTCConnection(Resource):
         pass
 
     def stop(self) -> None:
-        # Cancel timer
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
 
         async def async_disconnect() -> None:
             try:
@@ -208,42 +208,23 @@ class UnitreeWebRTCConnection(Resource):
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:
-            bool: True if command was sent successfully
+            bool: True if the command was queued for the robot
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
 
-        async def async_move() -> None:
-            self._publish_movement(x, y, yaw)
-
-        async def async_move_duration() -> None:
-            """Send movement commands continuously for the specified duration."""
-            start_time = time.time()
-            sleep_time = 0.01
-
-            while time.time() - start_time < duration:
-                await async_move()
-                await asyncio.sleep(sleep_time)
-
-        # Cancel existing timer and start a new one
-        if self.stop_timer:
-            self.stop_timer.cancel()
-
-        # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
-        self.stop_timer.daemon = True
-        self.stop_timer.start()
-
         try:
+            with self._motion_timer.command() as timeout:
+                self._send_movement(x, y, yaw)
+                timer = timeout.arm(
+                    duration if duration > 0 else self.cmd_vel_timeout, self._send_stop
+                )
+
             if duration > 0:
-                # Send continuous move commands for the duration
-                future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
-                future.result()
-                # Stop after duration
-                self.stop_movement()
-            else:
-                # Single command for continuous movement
-                future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
-                future.result()
+                while not timer.finished.wait(self._timed_move_resend_period_s):
+                    with self._motion_timer.command() as timeout:
+                        if not timeout.is_current(timer):
+                            break
+                        self._send_movement(x, y, yaw)
             return True
         except Exception as e:
             logger.warning("Failed to send movement command: %s", e)
@@ -309,7 +290,6 @@ class UnitreeWebRTCConnection(Resource):
                 ops.map(
                     Odometry.from_msg,
                 ),
-                ops.map(time_is_now),
             )
         )
 
@@ -498,28 +478,39 @@ class UnitreeWebRTCConnection(Resource):
         """
         return self.video_stream()
 
-    def stop_movement(self) -> None:
-        """Halt the base: publish a zero twist and cancel the auto-stop timer."""
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
-
-        async def async_stop() -> None:
-            self._publish_movement(0, 0, 0)
-
+    def _send_movement(self, x: float, y: float, yaw: float) -> None:
+        """Queue a movement on the event loop; a newer one replaces it if the loop has not run it yet."""
         if not self.loop.is_running():
-            return
+            raise RuntimeError("event loop is not running")
+        token = object()
+        self._latest_movement = token
+
+        def publish() -> None:
+            if self._latest_movement is not token:
+                return
+            try:
+                self._publish_movement(x, y, yaw)
+            except Exception as e:
+                logger.warning("Failed to publish movement: %s", e)
+
+        self.loop.call_soon_threadsafe(publish)
+
+    def _send_stop(self) -> None:
         try:
-            asyncio.run_coroutine_threadsafe(async_stop(), self.loop).result(timeout=1.0)
+            self._send_movement(0, 0, 0)
         except Exception as e:
-            logger.warning("Failed to publish stop twist: %s", e)
+            logger.warning("Failed to queue stop twist: %s", e)
+
+    def stop_movement(self) -> None:
+        """Halt the base and invalidate outstanding commands."""
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
+            self._send_stop()
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
-        # Cancel timer
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
+        with self._motion_timer.command() as timeout:
+            timeout.cancel()
 
         if hasattr(self, "conn"):
 

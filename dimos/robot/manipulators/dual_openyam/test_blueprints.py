@@ -46,7 +46,7 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 
 def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None:
-    parsed = BlueprintConfigParser(teleop_webxr_dual_openyam).parse(
+    parsed = BlueprintConfigParser(teleop_webxr_dual_openyam.solidify()).parse(
         [
             "--left-can-port",
             "follower_l",
@@ -68,7 +68,7 @@ def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None
 def test_mock_webxr_grip_engages_only_its_own_arm(
     mocker: MockerFixture, tmp_path: Path, engaged: str
 ) -> None:
-    kwargs = _module_kwargs(teleop_webxr_dual_openyam, DamiaoTeleopCoordinator)
+    kwargs = _module_kwargs(teleop_webxr_dual_openyam.solidify(), DamiaoTeleopCoordinator)
     mocker.patch.object(DualOpenYamPinkPoseTargetSolver, "_validate_frame_targets")
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,

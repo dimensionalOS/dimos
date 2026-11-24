@@ -15,10 +15,13 @@
 """Mock adapter for testing - no hardware required.
 
 Usage:
-    >>> from dimos.hardware.manipulators.xarm import XArm
-    >>> from dimos.hardware.manipulators.mock import MockAdapter
-    >>> arm = XArm(adapter=MockAdapter())
-    >>> arm.start()  # No hardware!
+    >>> from dimos.hardware.manipulators.mock.adapter import MockAdapter
+    >>> adapter = MockAdapter(dof=6)
+    >>> adapter.connect()  # No hardware!
+    True
+    >>> adapter.read_joint_positions()
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    >>> adapter.disconnect()
 """
 
 from __future__ import annotations

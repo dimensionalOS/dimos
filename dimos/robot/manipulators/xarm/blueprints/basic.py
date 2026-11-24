@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
@@ -89,7 +89,7 @@ XARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def xarm_coordinator(arm: XArmType) -> Blueprint:
+def xarm_coordinator(arm: XArmType) -> MetaBlueprint:
     """Run planned joint trajectories on an xArm and open and close its xArm
     Gripper, through ``XArmConnection``.
 
@@ -132,7 +132,7 @@ def xarm_coordinator(arm: XArmType) -> Blueprint:
     )
 
 
-def _planner_coordinator(arm: XArmType) -> Blueprint:
+def _planner_coordinator(arm: XArmType) -> MetaBlueprint:
     """Plan and run motions of an xArm with the xArm Gripper. Wire it up with
     ``.remappings(XARM_REMAPS)``; see ``xarm_coordinator``."""
     dof, robot_type = XARM_ARMS[arm]
@@ -168,7 +168,7 @@ coordinator_xarm6 = autoconnect(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 _coordinator_lite6_hw = lite6_hardware("arm", gripper=True)

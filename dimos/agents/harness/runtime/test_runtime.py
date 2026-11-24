@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 import os
@@ -39,6 +40,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.harness.runtime import load as runtime_load
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager, _Record
+from dimos.agents.harness.runtime.harness_runtime import HarnessRuntime
 from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
 from dimos.agents.skill_result import SkillResult
@@ -55,7 +57,21 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.agent_msgs.AgentStep import AgentStep
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.porcelain.dimos import Dimos
 from dimos.spec.utils import Spec
+
+
+def test_harness_refuses_to_manage_another_stack(mocker) -> None:
+    mocker.patch("dimos.agents.harness.runtime.harness_runtime.AgentModuleManager")
+    other = mocker.patch.object(Dimos, "connect").return_value
+    other.get_module.return_value.remote_name = "runs/other/modules/HarnessRuntime"
+    runtime = HarnessRuntime(rpc_name="runs/mine/modules/HarnessRuntime")
+    try:
+        with pytest.raises(RuntimeError, match="another stack"):
+            runtime._connect()
+        other.stop.assert_called_once_with()
+    finally:
+        runtime.stop()
 
 
 def test_module_owner_remains_readable_during_record_updates(tmp_path, monkeypatch) -> None:
@@ -184,7 +200,7 @@ def serve_system() -> None:
         patch.setattr(global_config, "record_topics", "*")
         patch.setattr(tap, "RECORDINGS_DIR", STATE_DIR / "recordings")
         coordinator = ModuleCoordinator.build(
-            autoconnect(HarnessProbe.blueprint(), mcp_server_blueprint())
+            autoconnect(HarnessProbe.blueprint(), mcp_server_blueprint()).solidify()
         )
         with tap.recording(coordinator):
             coordinator.loop()
@@ -254,6 +270,7 @@ class Client:
         self._http = requests.Session()
         self._response: requests.Response | None = None
         self._connected = threading.Event()
+        self._stopping = threading.Event()
         self._listener = threading.Thread(target=self._listen, daemon=True)
 
     def rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -301,9 +318,9 @@ class Client:
                     line = raw.decode("utf-8", "replace")
                     if line.startswith("data: "):
                         self.notifications.append(json.loads(line[6:]))
-            except (requests.RequestException, ValueError):
-                # close() ended the stream from another thread.
-                return
+            except requests.RequestException:
+                if not self._stopping.is_set():
+                    raise
 
     def events(self, module: str) -> list[dict[str, Any]]:
         return [
@@ -320,11 +337,90 @@ class Client:
         ]
 
     def close(self) -> None:
+        self._stopping.set()
         if self._response is not None:
-            self._response.close()
-        self._http.close()
+            # Interrupt the read without closing its buffered file from another
+            # thread. The listener owns response.close() via its context manager.
+            try:
+                self._response.raw.shutdown()
+            except (OSError, RuntimeError, ValueError):
+                # EOF can close/release the connection before or during shutdown.
+                if not self._response.raw.closed:
+                    raise
         if self._listener.ident is not None:
             self._listener.join(timeout=5.0)
+            assert not self._listener.is_alive(), "SSE listener did not stop"
+        self._response = None
+        self._http.close()
+
+
+@pytest.fixture
+def idle_sse_client() -> Iterator[tuple[Client, threading.Event]]:
+    release = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            frame = b'data: {"method": "test/notice"}\n\n'
+            self.wfile.write(f"{len(frame):x}\r\n".encode() + frame + b"\r\n")
+            self.wfile.flush()
+            release.wait()
+            try:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                # The client may have already interrupted and closed its stream.
+                pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        client = Client(f"http://127.0.0.1:{server.server_port}/mcp")
+        try:
+            yield client, release
+        finally:
+            release.set()
+            try:
+                client.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_client_close_interrupts_an_idle_sse_read(
+    idle_sse_client: tuple[Client, threading.Event],
+) -> None:
+    client, release = idle_sse_client
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            client.listen()
+            _until(lambda: client.notifications, "the SSE notification")
+            executor.submit(client.close).result(timeout=2)
+        finally:
+            # Unblock the server even if close() is still waiting for more bytes.
+            release.set()
+
+    assert client.notifications == [{"method": "test/notice"}]
+    assert not client._listener.is_alive()
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_client_close_after_the_server_ends_the_sse_stream(
+    idle_sse_client: tuple[Client, threading.Event],
+) -> None:
+    client, release = idle_sse_client
+    client.listen()
+    release.set()
+    client._listener.join(timeout=2)
+    assert not client._listener.is_alive()
+
+    client.close()
+
+    assert client.notifications == [{"method": "test/notice"}]
 
 
 @pytest.fixture(scope="module")
