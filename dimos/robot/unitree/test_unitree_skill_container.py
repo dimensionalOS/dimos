@@ -64,7 +64,8 @@ def test_move_to_before_first_costmap_returns_failure(
     result = skill.move_to(x=0.3, relative=True)
 
     assert result == (
-        "Navigation was cancelled or failed. "
+        "Navigation failed: Missing global costmap: check that lidar data is arriving "
+        "and mapping is running. "
         "Robot is at x=1.00 y=1.00 heading=0deg; goal was x=1.30 y=1.00 heading=0deg."
     )
 

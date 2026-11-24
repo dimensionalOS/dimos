@@ -197,6 +197,7 @@ def test_goal_before_first_costmap_fails_and_can_be_retried(
     planner: GlobalPlanner, mocker: MockerFixture, distance: float
 ) -> None:
     start_planning = mocker.patch.object(LocalPlanner, "start_planning")
+    warning = mocker.patch.object(global_planner.logger, "warning")
     planner.handle_odom(PoseStamped(position=[1.0, 1.0, 0.3]))
     goal = PoseStamped(position=[1.0 + distance, 1.0, 0.3], frame_id="world")
     outcomes: list[bool] = []
@@ -207,6 +208,9 @@ def test_goal_before_first_costmap_fails_and_can_be_retried(
         assert outcomes == [False]
         assert planner.get_state() == NavigationState.IDLE
         assert not planner.is_goal_reached()
+        reason = "Missing global costmap: check that lidar data is arriving and mapping is running"
+        assert planner.get_goal_cancel_reason() == reason
+        warning.assert_called_once_with("Cannot handle goal request.", reason=reason)
         start_planning.assert_not_called()
         # The failed goal must be cleared, not left pending until a map arrives.
         planner.cancel_goal()
@@ -224,6 +228,7 @@ def test_goal_before_first_costmap_fails_and_can_be_retried(
 
         planner.handle_goal_request(goal)
 
+        assert planner.get_goal_cancel_reason() is None
         start_planning.assert_called_once()
         path = start_planning.call_args.args[0]
         assert path.poses[-1].x == pytest.approx(goal.x)

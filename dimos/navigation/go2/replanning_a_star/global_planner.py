@@ -359,8 +359,11 @@ class GlobalPlanner(Resource):
         # The first map update fills these separately; both must be available
         # before goal validation and near/far path planning can use them.
         if not (self._navigation_map.has_costmap and self._navigation_map_near.has_costmap):
-            logger.warning("Cannot handle goal request: missing global costmap.")
-            self.cancel_goal()
+            reason = (
+                "Missing global costmap: check that lidar data is arriving and mapping is running"
+            )
+            logger.warning("Cannot handle goal request.", reason=reason)
+            self.cancel_goal(reason=reason)
             return
 
         safe_goal = self._find_safe_goal(current_goal.position)
