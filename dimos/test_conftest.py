@@ -23,21 +23,44 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 
 
 @pytest.mark.parametrize(
-    "options, expected_exit, expected_summary",
+    "options, missing_marker, expected_exit, expected_summary",
     [
-        ([], 0, "collected 1 item / 1 skipped"),
-        (["--error-for-skips"], 2, "1 test collected, 1 error"),
+        ([], "web_browser", 0, "collected 1 item / 1 skipped"),
+        (["--error-for-skips"], "web_browser", 2, "1 test collected, 1 error"),
+        # -m cannot filter a module that skipped at import, so its source decides.
+        (
+            ["--error-for-skips", "-m", "self_hosted_large"],
+            "web_browser",
+            0,
+            "collected 1 item / 1 skipped",
+        ),
+        (
+            ["--error-for-skips", "-m", "self_hosted_large"],
+            "self_hosted_large",
+            2,
+            "1 test collected, 1 error",
+        ),
     ],
 )
 def test_collection_import_skips_respect_error_for_skips(
-    tmp_path: Path, options: list[str], expected_exit: int, expected_summary: str
+    tmp_path: Path,
+    options: list[str],
+    missing_marker: str,
+    expected_exit: int,
+    expected_summary: str,
 ) -> None:
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     (tmp_path / "conftest.py").symlink_to(DIMOS_PROJECT_ROOT / "dimos/conftest.py")
     (tmp_path / "test_missing.py").write_text(
-        'import pytest\npytest.importorskip("missing_ticket_010_dependency")\n'
+        "import pytest\n"
+        f"pytestmark = pytest.mark.{missing_marker}\n"
+        'pytest.importorskip("missing_ticket_010_dependency")\n'
     )
-    (tmp_path / "test_present.py").write_text("def test_present():\n    assert True\n")
+    (tmp_path / "test_present.py").write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.self_hosted_large\n"
+        "def test_present():\n    assert True\n"
+    )
 
     # This is a new pytest controller, not an outer xdist worker. Give it its
     # own run ID so its watchdog cannot sweep the parent session's workers.

@@ -21,18 +21,6 @@ jobs:
     # DimSim navigation e2e, the self_hosted e2e under dimos/e2e_tests and the
     # memory-hungry replay tests: everything marked self_hosted_large.
     env:
-      # Module import skips happen before -m filtering. Collect only this job's
-      # modules so browser/PyO3 dependencies owned by other jobs aren't needed.
-      # test_e2e_tests_marked.py checks this list against self_hosted_large markers.
-      LARGE_TEST_PATHS: >-
-        dimos/e2e_tests/test_control_coordinator.py
-        dimos/e2e_tests/test_dimsim_path_replaning.py
-        dimos/e2e_tests/test_dimsim_spatial_memory.py
-        dimos/e2e_tests/test_dimsim_typesafe_agent.py
-        dimos/e2e_tests/test_dimsim_walk_forward.py
-        dimos/e2e_tests/test_manipulation_planning_groups.py
-        dimos/mapping/dim_slam/test_dim_odom_replay.py
-        dimos/robot/unitree/go2/test_replay_benchmark.py
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
@@ -115,16 +103,21 @@ jobs:
         # The runner must have an Xorg server with NVIDIA GPU access running
         # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
         # heavier scenes (`apt`). Software X via xvfb is not enough.
+        #
+        # --error-for-skips fails the job when a self_hosted_large test or
+        # module skips. The summary still counts skipped modules: pytest imports
+        # every test module before it applies -m, and the modules of other jobs
+        # skip at import here (no Playwright, no PyO3 extensions).
         env:
           DISPLAY: ":0"
-        run: uv run pytest $LARGE_TEST_PATHS --cov=dimos/ --junitxml=junit.xml -m self_hosted_large --error-for-skips
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large --error-for-skips
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
           DISPLAY: ":0"
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest $LARGE_TEST_PATHS --no-cov -vvvvv --lf -m self_hosted_large --error-for-skips && exit 1
+          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large --error-for-skips && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
