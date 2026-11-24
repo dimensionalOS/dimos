@@ -35,7 +35,7 @@ from dimos.sim2.dimsim.scene import PURPOSES, stage_bodies
 from dimos.sim2.mujoco.names import resolve
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import REFUSED, WorldWriter
+from dimos.sim2.world_observations import GEOMETRY, REFUSED, WorldWriter
 from dimos.utils.deno import ensure_deno
 
 if TYPE_CHECKING:
@@ -138,6 +138,7 @@ class DimSimBackend:
         self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
         self._mounts: dict[str, list[float]] = {}
+        self._reshaped = 0
         self._refusals: list[tuple[str, str]] = []
         world = _world_dir()
         self._world = subprocess.Popen(
@@ -316,6 +317,11 @@ class DimSimBackend:
         thing.state = action["to"]
         if thing.held_by is None:
             self._spawn(thing)
+        # The sensors draw the world from its USD, so it is the USD with the new variant before they hear of it.
+        self.usd = self._stage.GetRootLayer().ExportToString()
+        self._reshaped += 1
+        with self._frame_lock:
+            self.world.set("world", GEOMETRY, self._reshaped)
         self._say(thing)
 
     def _hold(self, thing: _Object, carrier: str | None) -> None:

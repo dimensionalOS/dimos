@@ -30,6 +30,7 @@ from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rota
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sim import until_it_stops
+from dimos.sim2.world_observations import geometry
 from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
 from dimos.simulation.sensors.mid360.lidar import sim_mid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
@@ -76,9 +77,14 @@ class LivoxSim(SimSensor):
         site = self.frame_id
         view: WorldView | None = None
         sensor: SimLidar | None = None
+        built = 0
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
         async for _ in self._world.ticks(self.config.rate_hz):
+            if view is not None and geometry(self._world) != built:
+                view.close()
+                view = None
             if view is None:
+                built = geometry(self._world)
                 view = await asyncio.to_thread(self._open)
                 sensor = sim_mid360(
                     view.raycaster(

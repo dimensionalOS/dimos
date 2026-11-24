@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
@@ -26,8 +27,10 @@ from dimos.sim2.dimsim.apartment import DimSimApartment
 from dimos.sim2.dimsim.backend import ACTION, ACTIONS, DimSimBackend
 from dimos.sim2.dimsim.dimsim_scene import DIMSIM_SCENES, STATE
 from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
+from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.sim import compose_world
-from dimos.sim2.world_observations import REFUSED, WorldMirror
+from dimos.sim2.usd_layer import layer_file
+from dimos.sim2.world_observations import REFUSED, WorldMirror, geometry
 
 pytest.importorskip("pxr")
 
@@ -116,3 +119,31 @@ def test_every_action_in_the_scene_runs(apartment: _Apartment) -> None:
                 untried.remove(action)
             _act(apartment, name, action["id"])
             assert _cbor(mirror, name)[STATE] == names[action["to"]], (name, action)
+
+
+def _rays_around(usd: str, mirror: WorldMirror, name: str) -> np.ndarray:
+    """How far a sensor's view of the world ``usd`` sees, out from the object ``name``, all ways round."""
+    entity = mirror.entity(name)
+    assert entity is not None and entity.pose is not None
+    view = open_view(layer_file(usd, "world"), robot_ids(mirror))
+    try:
+        turns = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+        directions = np.stack([np.cos(turns), np.sin(turns), np.zeros_like(turns)], axis=1)
+        raycaster = view.raycaster(range(6))
+        return np.array(
+            [
+                raycaster.cast(entity.pose[:3] + np.array([0, 0, height]), directions, 10.0)[0]
+                for height in (0.3, 0.8, 1.3)
+            ]
+        )
+    finally:
+        view.close()
+
+
+def test_the_sensors_see_the_fridge_open(apartment: _Apartment) -> None:
+    backend, mirror = apartment
+    shapes, seen = geometry(mirror), _rays_around(backend.usd, mirror, "refrigerator")
+    state = _cbor(mirror, "refrigerator")[STATE]
+    _act(apartment, "refrigerator", "to Open" if state == "closed" else "to closed")
+    assert geometry(mirror) == shapes + 1, "a sensor's view would never learn to rebuild"
+    assert not np.allclose(_rays_around(backend.usd, mirror, "refrigerator"), seen)

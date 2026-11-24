@@ -25,6 +25,7 @@ from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sensor_usd import camera_usd
 from dimos.sim2.sim import until_it_stops
+from dimos.sim2.world_observations import geometry
 
 
 class SimCameraConfig(HardwareModuleConfig):
@@ -53,10 +54,14 @@ class SimCamera(SimSensor):
         self._capturing.cancel()
 
     async def _capture(self) -> None:
-        site, view = self.frame_id, None
+        site, view, built = self.frame_id, None, 0
         try:
             async for _ in self._world.ticks(self.config.rate_hz):
+                if view is not None and geometry(self._world) != built:
+                    view.close()
+                    view = None
                 if view is None:
+                    built = geometry(self._world)
                     layer = await asyncio.to_thread(self.world_layer)
                     view = open_view(
                         layer,

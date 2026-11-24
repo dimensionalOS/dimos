@@ -29,6 +29,7 @@ from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.sim import until_it_stops
+from dimos.sim2.world_observations import geometry
 from dimos.simulation.sensors.lidar import Raycaster
 
 _KEY_BITS = 21
@@ -70,11 +71,16 @@ class SimL1(SimSensor):
         view: WorldView | None = None
         raycaster: Raycaster | None = None
         rider: str | None = None
+        built = 0
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
         cells = np.zeros(0, dtype=np.int64)
         async for _ in self._world.ticks(1 / config.period):
+            if view is not None and geometry(self._world) != built:
+                view.close()
+                view = None
             if view is None:
+                built = geometry(self._world)
                 view = await asyncio.to_thread(self._open)
                 raycaster = view.raycaster(config.geom_groups)
                 rider = view.owner(site)

@@ -29,6 +29,9 @@ WORLD = 0
 PATH = "path"
 ACT = "act"
 REFUSED = "refused"
+# The world entity's count of changes to the world's shapes (an object swapping its geometry):
+# a view built from get_world_usd() at another count is out of date, so it rebuilds from it.
+GEOMETRY = "geometry"
 _POSE = "_pose"
 _JOINT = "_joint"
 
@@ -46,6 +49,12 @@ def joint_state(entity: int, position: float, velocity: float, effort: float) ->
     return JointState(
         entity_id=entity, position=float(position), velocity=float(velocity), effort=float(effort)
     )
+
+
+def geometry(world: "WorldMirror") -> int:
+    """Which of the world's shapes it has now; see GEOMETRY."""
+    entity = world.entity("world")
+    return 0 if entity is None else int(entity.cbor.get(GEOMETRY, 0))
 
 
 def _resolve(future: "asyncio.Future[None]") -> None:
