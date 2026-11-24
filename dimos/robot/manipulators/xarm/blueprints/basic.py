@@ -46,7 +46,6 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.simulation.engines.mujoco_arm_connection import MujocoArmConnection
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 SIMULATED = bool(global_config.simulation)
 
@@ -101,6 +100,9 @@ XARM_SIM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 def _xarm7_sim() -> MetaBlueprint:
     """The xArm7 in MuJoCo, behind the same ports and joint names as ``XArmConnection``."""
+    # mujoco is optional; import it only when a blueprint runs the sim.
+    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+
     return autoconnect(
         MujocoArmConnection.blueprint(
             model=xarm_model("xarm7", gripper="xarm"), gripper_joint="drive_joint"
