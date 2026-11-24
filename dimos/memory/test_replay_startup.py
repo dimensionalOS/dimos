@@ -28,13 +28,16 @@ from dimos.memory import replay_progress
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.localize.demo_blueprints.xarm_feed import DepthCameraFeed
+from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 
 
@@ -229,6 +232,82 @@ def test_only_the_static_tf_channel_makes_one_row_calibration(play):
     # Elsewhere one row is a sample: an event stream and an ordinary tf edge keep their time.
     assert received["depth_image"] == [(0.5, 1000.5)]
     assert (0.25, "tool", 1000.25) in received["tf"]
+
+
+def test_corrected_static_mount_is_effective_at_the_first_sensor_frame(sqlite_store, scheduler):
+    mounts = sqlite_store.stream("tf_static", TFMessage)
+    for row_ts, x in [(10.0, 0), (12.0, 1), (11.0, 0)]:
+        mount = Transform(
+            frame_id="base", child_frame_id="camera", ts=10, translation=Vector3(x, 0, 0)
+        )
+        mounts.append(TFMessage(mount), ts=row_ts)
+    lidar = sqlite_store.stream("lidar", int)
+    for ts in (1000.0, 1002.0):
+        lidar.append(7, ts=ts)
+
+    replay = sqlite_store.replay(seek=0, duration=2.5)
+    progress = replay_progress.ReplayProgress("recording")
+    progress.start(replay, [replay.streams.tf_static, replay.streams.lidar])
+    tree = TF()
+    received = []
+    with (
+        progress.play(replay.streams.tf_static).subscribe(
+            tree.receive_tfmessage, scheduler=scheduler
+        ),
+        progress.play(replay.streams.lidar).subscribe(
+            lambda _: received.append((scheduler.clock, tree.get("base", "camera").translation.x)),
+            scheduler=scheduler,
+        ),
+    ):
+        progress.seal()
+        scheduler.advance_by(2.5)
+    assert received == [(0, 1), (2, 1)]
+
+
+@pytest.mark.parametrize("name", ["camera_info", "intrinsics", "tf"])
+def test_samples_at_one_timestamp_keep_their_clip(sqlite_store, scheduler, name):
+    if name == "camera_info":
+        # A topic name alone cannot turn duplicate sensor samples into calibration.
+        samples = [PoseStamped(ts=10.0), PoseStamped(ts=10.0)]
+    elif name == "intrinsics":
+        samples = [CameraInfo(ts=10.0, width=width) for width in (1, 2)]
+    else:
+        samples = [TFMessage(Transform(ts=10.0, translation=Vector3(x, 0, 0))) for x in (0, 1, 0)]
+    for sample in samples:
+        sqlite_store.stream(name, type(sample)).append(sample, ts=10.0)
+    sqlite_store.stream("lidar", int).append(7, ts=11.0)
+
+    replay = sqlite_store.replay(seek=0, duration=0.5)
+    stream = replay.stream(name)
+    progress = replay_progress.ReplayProgress("recording")
+    progress.start(replay, [stream, replay.streams.lidar])
+    received = []
+    with progress.play(stream).subscribe(received.append, scheduler=scheduler):
+        progress.seal()
+        scheduler.advance_by(0.5)
+
+    assert [m.lcm_encode() for m in received] == [m.lcm_encode() for m in samples]
+    assert replay.first_ts() == 10.0
+    assert list(replay.streams.lidar.iterate()) == []
+
+
+def test_mounts_recorded_once_at_one_timestamp_do_not_delay_odometry(sqlite_store, scheduler):
+    mounts = sqlite_store.stream("tf", TFMessage)
+    for child in ("camera", "lidar"):
+        mount = Transform(frame_id="base", child_frame_id=child, ts=10.0)
+        mounts.append(TFMessage(mount), ts=10.0)
+    sqlite_store.stream("odometry", Odometry).append(Odometry(ts=11.0), ts=11.0)
+
+    received = []
+    with ExitStack() as cleanup:
+        module = ReplayModule(dataset=sqlite_store.config.path, seek=0, duration=0.5)
+        cleanup.callback(module.stop)
+        cleanup.callback(
+            module.odometry.subscribe(lambda msg: received.append((scheduler.clock, msg.ts)))
+        )
+        module.start()
+        scheduler.advance_by(0.5)
+    assert received == [(0, 11.0)]
 
 
 def test_looped_spot_replay_repeats_without_the_static_lead(play):

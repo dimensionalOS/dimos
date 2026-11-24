@@ -123,10 +123,13 @@ dimos --replay --replay-db recordings/<run-id>/memory.mcap run unitree-go2
 
 Sensor replay opens all selected streams before starting the playback clock at their earliest timed row.
 Initial subscriptions include the first recorded rows even when opening another sensor takes time.
-Setup metadata stays off that clock: a stream whose rows all share one stamp, TF edges whose
-stamp never changes, and every edge on the static channel of a TF stream (`tf_static`, where one
-row is enough) are republished every second. They are often stamped long before the run, so
-`seek` and `duration` are measured from the first timed row.
+Replay republishes camera calibration when every row of a `CameraInfo` stream repeats the same
+message at one timestamp. On ordinary TF, replay holds an edge when its transform stamp and pose
+repeat unchanged. If the entire stream has multiple rows at one recording timestamp, replay
+also holds edges that appear just once.
+On a declared static channel such as `tf_static`, replay publishes the last recorded mount for
+each edge at startup and repeats it every second. Raw stream iteration retains all mount revisions.
+Other samples play in order even at the same timestamp. Relative `seek` and `duration` start at the first timed row.
 
 An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
 

@@ -34,6 +34,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
@@ -188,9 +189,9 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    info = store.stream("camera_info", PoseStamped)
+    info = store.stream("camera_info", CameraInfo)
     for _ in range(3):
-        info.append(PoseStamped(ts=1.0), ts=1.0)
+        info.append(CameraInfo(ts=1.0), ts=1.0)
     store.stream("odom", PoseStamped).append(PoseStamped(ts=40.0), ts=40.0)
     store.stop()
     module = replay_module(str(path))(dataset=str(path))
@@ -472,9 +473,9 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
     # Static metadata must not extend the reported duration or prevent completion.
     with SqliteStore(path=recording) as store:
         if static:
-            info = store.stream("camera_info", PoseStamped)
+            info = store.stream("camera_info", CameraInfo)
             for _ in range(2):
-                info.append(PoseStamped(ts=0.0), ts=0.0)
+                info.append(CameraInfo(ts=0.0), ts=0.0)
     scheduler = TestScheduler()
     mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
     log = mocker.patch("dimos.memory.replay_progress.logger")
@@ -500,7 +501,7 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
 def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
     with SqliteStore(path=recording) as store:
         for _ in range(2):
-            store.stream("camera_info", PoseStamped).append(PoseStamped(ts=0.0), ts=0.0)
+            store.stream("camera_info", CameraInfo).append(CameraInfo(ts=0.0), ts=0.0)
     scheduler = TestScheduler()
     mocker.patch(
         "dimos.memory.replay_progress.interval",

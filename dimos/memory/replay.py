@@ -47,6 +47,7 @@ from reactivex.subject import AsyncSubject
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.memory.tf import STATIC_SUFFIX
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
@@ -224,15 +225,13 @@ class ReplayStream(Generic[T]):
         """Separate setup metadata from the rows that play on the recording clock.
 
         Returns the message to republish and the stream to schedule; either can be
-        missing. A stream whose rows all carry one timestamp (camera_info stamped at
-        import) and TF edges whose stamp never changes describe the setup, not the
-        run. They are often stamped long before it: scheduled like sensor data, they
-        would start the clock early and leave every sensor silent until its own
-        first row. A stream given its own source or cast plays as given.
+        missing. Repeated copies of one stamped camera calibration and unchanged
+        TF edges can predate the run. Other sensor samples keep their recorded
+        timing, even when they share a stamp or a value. A stream given its own
+        source or cast plays as given.
 
-        One row decides nothing by itself, with one exception: the static channel
-        of a TF stream (``tf_static``) holds edges that are published once and
-        valid at every time, as :class:`~dimos.memory.tf.StreamTF` reads them.
+        A declared static TF channel (``tf_static``) holds the last recorded mount
+        for each edge throughout the clip.
         """
         if self._source is not None or self._autocast is not None:
             return None, self
@@ -266,8 +265,12 @@ class ReplayStream(Generic[T]):
                 autocast=partial(_dynamic_tf, edges),
                 source=dynamic.time_range(start, float("inf")),
             )
-        if rows.count() > 1 and (first := rows.order_by("ts").first()).ts == rows.last().ts:
-            return first.data, None
+        if payload_type is not None and issubclass(payload_type, CameraInfo) and rows.count() > 1:
+            first = rows.order_by("ts").first()
+            if first.ts == rows.last().ts:
+                encoded = first.data.lcm_encode()
+                if all(row.data.lcm_encode() == encoded for row in rows):
+                    return first.data, None
         return None, self
 
     def first_ts(self) -> float | None:
@@ -501,26 +504,27 @@ def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
 
 
 def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
-    """Find fixed edges in a finite recording, independent of playback bounds."""
-    all_static = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
-    # A changing stamp disqualifies the edge. Only the last stamp and count
-    # are kept for each edge, irrespective of the length of the recording.
-    stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
+    """Hold unchanged edges that repeat or belong to several rows at a single timestamp."""
+    one_timestamp = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
+    candidates: dict[tuple[str, str], Transform | None] = {}
+    repeated: set[tuple[str, str]] = set()
     for row in rows:
         for transform in row.data.transforms:
             edge = (transform.frame_id, transform.child_frame_id)
-            previous = stamps.get(edge, (transform.ts, 0))
-            if previous is not None:
-                stamps[edge] = (
-                    (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
-                )
-    edges = {
-        edge for edge, stamp in stamps.items() if stamp is not None and (all_static or stamp[1] > 1)
+            if edge not in candidates:
+                candidates[edge] = transform
+            elif (previous := candidates[edge]) is not None:
+                if (
+                    previous.ts == transform.ts
+                    and previous.translation.to_tuple() == transform.translation.to_tuple()
+                    and previous.rotation.to_tuple() == transform.rotation.to_tuple()
+                ):
+                    repeated.add(edge)
+                else:
+                    candidates[edge] = None
+    fixed = {
+        edge: t
+        for edge, t in candidates.items()
+        if t is not None and (one_timestamp or edge in repeated)
     }
-    transforms: dict[bytes, Transform] = {}
-    if edges:
-        for row in rows:
-            for transform in row.data.transforms:
-                if (transform.frame_id, transform.child_frame_id) in edges:
-                    transforms[transform.lcm_encode()] = transform
-    return TFMessage(*transforms.values()), edges
+    return TFMessage(*fixed.values()), set(fixed)
