@@ -35,7 +35,7 @@ region_bounds = "geometry_msgs.PoseStamped"
 map_regions = "sensor_msgs.PointCloud2"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "60fac317bdba06cdec17b0c8db6945a7c4ba0cf9" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
