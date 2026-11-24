@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import Field, field_validator
 import requests
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.wifi.desktop_metrics import DesktopMetrics
@@ -56,6 +57,34 @@ class NetworkSurvey(Module):
     config: NetworkSurveyConfig
     survey_metrics: Out[SurveyMetrics]
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._poll_task: asyncio.Task[None] | None = None
+        self._last_published: float | None = None
+
+    @rpc
+    def get_status(self) -> dict[str, Any]:
+        """Report sampler health independently of whether the archive file is open."""
+        task = self._poll_task
+        age = None if self._last_published is None else time.time() - self._last_published
+        error = None
+        if task is None or task.cancelled():
+            state = "stopped"
+        elif task.done():
+            failure = task.exception()
+            state = "failed" if failure else "stopped"
+            error = repr(failure) if failure else None
+        elif age is None:
+            state = "starting"
+        else:
+            state = "stalled" if age > max(10, 3 * self.config.poll_interval_s) else "running"
+        return {
+            "state": state,
+            "last_published": self._last_published,
+            "sample_age_s": age,
+            "error": error,
+        }
+
     @classmethod
     def check_dependencies(cls, **kwargs: Any) -> None:
         if kwargs.get("targets") and shutil.which("ping") is None:
@@ -63,7 +92,7 @@ class NetworkSurvey(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self.check_dependencies(targets=self.config.targets)
-        task = asyncio.create_task(self._poll())
+        task = self._poll_task = asyncio.create_task(self._poll())
         try:
             yield
         finally:
@@ -74,10 +103,14 @@ class NetworkSurvey(Module):
     async def _probe(self, name: str, target: str) -> SurveySample:
         try:
             return await probe(self.config.interface, name, target)
-        except (OSError, TimeoutError) as exc:
+        # asyncio.TimeoutError is a distinct exception on the robot's Python 3.10.
+        except (OSError, asyncio.TimeoutError) as exc:
             logger.warning("Survey probe failed", target=target, error=str(exc))
             return SurveySample(
-                time.time(), f"ping/{name}", {}, labels={"error": str(exc), "target": target}
+                time.time(),
+                f"ping/{name}",
+                {},
+                labels={"error": type(exc).__name__ + ": " + str(exc), "target": target},
             )
 
     def _desktop(self) -> dict[str, Any]:
@@ -120,4 +153,5 @@ class NetworkSurvey(Module):
                         SurveySample(time.time(), "desktop", {}, labels={"error": str(exc)})
                     )
             self.survey_metrics.publish(SurveyMetrics(time.time(), self.config.interface, samples))
+            self._last_published = time.time()
             await asyncio.sleep(max(0, self.config.poll_interval_s - (time.monotonic() - started)))
