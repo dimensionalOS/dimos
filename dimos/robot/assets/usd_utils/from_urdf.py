@@ -238,7 +238,11 @@ def _write_geometry(
     gprim = _define_gprim(pxr, stage, path, geometry, base_dir)
     if gprim is None:
         return
+    # The origin goes before the scale: ops apply right to left, so a scale authored first would
+    # scale the URDF offset along with the shape and move it off where the URDF places it.
     gprim.AddTransformOp().Set(usd_matrix(pxr, geometry.origin))
+    if (scale := _scale_of(geometry)) is not None:
+        gprim.AddScaleOp().Set(pxr.Gf.Vec3f(*scale))
     if geometry.color is not None:
         gprim.CreateDisplayColorAttr([pxr.Gf.Vec3f(*geometry.color)])
     if geometry.collision:
@@ -252,7 +256,6 @@ def _define_gprim(
     if geometry.kind == "box":
         cube = pxr.UsdGeom.Cube.Define(stage, path)
         cube.CreateSizeAttr(1.0)
-        cube.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.size))
         return cube
     if geometry.kind == "cylinder":
         cylinder = pxr.UsdGeom.Cylinder.Define(stage, path)
@@ -270,12 +273,20 @@ def _define_gprim(
     return None
 
 
+def _scale_of(geometry: _Geometry) -> tuple[float, ...] | None:
+    """The scale op a shape needs: a unit cube stretched to the box, or the mesh's own scale."""
+    if geometry.kind == "box":
+        return geometry.size
+    if geometry.kind == "mesh":
+        return geometry.mesh_scale
+    return None
+
+
 def _define_mesh(
     pxr: Pxr, stage: Stage, path: str, geometry: _Geometry, base_dir: Path | None
 ) -> Prim:
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
-    mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
     write_asset_info(pxr, mesh.GetPrim(), geometry.filename, base_dir)
     return mesh
 
@@ -382,15 +393,19 @@ def _children_by_parent(
 
 
 def _urdf_links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geometry]]:
+    root = ET.fromstring(xml)
+    colors = _named_colors(root)
     links: dict[str, list[_Geometry]] = {}
-    for link in ET.fromstring(xml).iter("link"):
+    for link in root.iter("link"):
         name = link.get("name")
         if name is None:
             continue
-        geometries = [_geometry_of(element, collision=False) for element in link.iter("visual")]
+        geometries = [
+            _geometry_of(element, colors, collision=False) for element in link.iter("visual")
+        ]
         if include_collision:
             geometries += [
-                _geometry_of(element, collision=True) for element in link.iter("collision")
+                _geometry_of(element, colors, collision=True) for element in link.iter("collision")
             ]
         links[name] = [geometry for geometry in geometries if geometry is not None]
     return links
@@ -432,12 +447,17 @@ def _set_passthrough(pxr: Pxr, prim: Prim, xml: Sequence[str] | None) -> None:
         prim.SetCustomDataByKey(PASSTHROUGH_KEY, pxr.Vt.StringArray(list(xml)))
 
 
-def _geometry_of(element: ET.Element, *, collision: bool) -> _Geometry | None:
+def _geometry_of(
+    element: ET.Element,
+    colors: Mapping[str, tuple[float, float, float]],
+    *,
+    collision: bool,
+) -> _Geometry | None:
     shape = element.find("geometry")
     if shape is None:
         return None
     origin = _origin_of(element.find("origin"))
-    color = _color_of(element.find("material"))
+    color = _material_color(element.find("material"), colors)
     if (box := shape.find("box")) is not None:
         size = _floats(box.get("size"), 3, (1.0, 1.0, 1.0))
         return _Geometry("box", origin, size, None, (1.0, 1.0, 1.0), color, collision)
@@ -470,9 +490,24 @@ def _origin_of(element: ET.Element | None) -> NDArray[np.float64]:
     return transform
 
 
-def _color_of(element: ET.Element | None) -> tuple[float, float, float] | None:
+def _named_colors(root: ET.Element) -> dict[str, tuple[float, float, float]]:
+    """The robot-scope materials a visual can name instead of spelling its color out."""
+    return {
+        name: color
+        for material in root.findall("material")
+        if (name := material.get("name")) is not None and (color := _color_of(material)) is not None
+    }
+
+
+def _material_color(
+    element: ET.Element | None, colors: Mapping[str, tuple[float, float, float]]
+) -> tuple[float, float, float] | None:
     if element is None:
         return None
+    return _color_of(element) or colors.get(element.get("name", ""))
+
+
+def _color_of(element: ET.Element) -> tuple[float, float, float] | None:
     color = element.find("color")
     if color is None:
         return None
