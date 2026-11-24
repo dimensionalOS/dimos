@@ -28,11 +28,11 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.control.calibration._calibration_test_helpers import (
+from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration._offline_models import (
     offline_robot_assets,
     require_model,
 )
-from dimos.control.calibration._inertial import LinkInertial
 from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
