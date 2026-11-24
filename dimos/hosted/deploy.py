@@ -55,19 +55,26 @@ def wait_for_hosts(
     tag_sets = tuple(tag_sets)
     deadline = time.monotonic() + timeout
     descriptors: tuple[HostDescriptor, ...] = ()
+    missing_names = names
+    missing_tag_sets = tag_sets
     while time.monotonic() < deadline:
         try:
             descriptors = describe_all(rpc, timeout=1.0, rpc_timeout=DESCRIBE_TIMEOUT)
         except TimeoutError:
             descriptors = ()
-        named = names <= {d.name for d in descriptors} | {d.host_id for d in descriptors}
-        tagged = all(any(not missing(d.tags, tags) for d in descriptors) for tags in tag_sets)
-        if named and tagged:
+        missing_names = names - ({d.name for d in descriptors} | {d.host_id for d in descriptors})
+        missing_tag_sets = tuple(
+            tags for tags in tag_sets if not any(not missing(d.tags, tags) for d in descriptors)
+        )
+        if not missing_names and not missing_tag_sets:
             return descriptors
         time.sleep(poll)
     found = ", ".join(sorted(f"{d.name}[{format_tags(d.tags)}]" for d in descriptors)) or "none"
-    wanted = [*sorted(names), *(missing({}, tags) for tags in tag_sets)]
-    raise TimeoutError(f"Hosts {wanted} not all live; found: {found}")
+    unmatched = [f"no live Host named or identified by {name!r}" for name in sorted(missing_names)]
+    unmatched.extend(
+        f"no live Host matches tags ({', '.join(missing({}, tags))})" for tags in missing_tag_sets
+    )
+    raise TimeoutError(f"Timed out waiting for Hosts: {'; '.join(unmatched)}; found: {found}")
 
 
 def log_printer() -> Callable[[str, str], None]:
