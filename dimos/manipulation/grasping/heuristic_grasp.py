@@ -112,17 +112,20 @@ class HeuristicGraspModule(GraspGeneratorModule):
     def _tip_height(self, low_z: float, high_z: float) -> float:
         """Tool tip height (metres) that puts the closed pads at the object's mid-height.
 
-        Raised if needed so the fingertips stay above the object's low end (what it
-        stands on) and the palm above its high end.
+        Prefer clearance above the lowest visible points only when the fingertips
+        can still reach the observed surface. A top-only cloud does not locate
+        the supporting surface. The contact check validates actual scene clearance.
 
         Args:
-            low_z: Height of the object's low end, metres.
-            high_z: Height of the object's high end, metres.
+            low_z: Lower height quantile of the visible object points, metres.
+            high_z: Upper height quantile of the visible object points, metres.
         """
         config = self.config
         # Straight down: the pads and palm sit above the tool tip, the fingertips below.
         heights = [float(low_z + high_z) / 2.0 - config.pad_behind_tcp]
-        if config.fingertip_reach is not None:
+        if config.fingertip_reach is not None and low_z + _CLEARANCE < high_z:
+            # Otherwise even the farthest-reaching fingertips would stay above
+            # every observed point. Aim the pads at the visible surface instead.
             heights.append(float(low_z) + _CLEARANCE + config.fingertip_reach)
         if config.palm_behind_tcp is not None:
             heights.append(float(high_z) + _CLEARANCE - config.palm_behind_tcp)

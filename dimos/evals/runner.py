@@ -66,12 +66,19 @@ class RunSummary:
 
 
 def summarize(results: Sequence[EvalResult]) -> RunSummary:
+    """Score the cases that ran. ``n`` and ``errors`` still count the whole suite.
+
+    Preflight and other ``error`` rows are infrastructure, not a model judgment, so
+    they stay out of ``mean_score`` / ``pass_rate``. A run of only errors scores 0.
+    """
     n = len(results)
+    judged = [r for r in results if not r.error]
+    k = len(judged)
     return RunSummary(
         n=n,
-        mean_score=sum(r.score for r in results) / n if n else 0.0,
-        pass_rate=sum(r.passed for r in results) / n if n else 0.0,
-        errors=sum(1 for r in results if r.error),
+        mean_score=sum(r.score for r in judged) / k if k else 0.0,
+        pass_rate=sum(r.passed for r in judged) / k if k else 0.0,
+        errors=n - k,
         duration_s=sum(r.duration_s for r in results),
         cost_usd=total_cost(r.cost_usd for r in results),
     )
