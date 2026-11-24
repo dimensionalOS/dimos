@@ -65,14 +65,14 @@ def projected_gravity(quat: np.ndarray) -> np.ndarray:
 
 
 def joint_limits(robot: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    """Policy target clamp: the joint range, hipx narrowed to mid +- fraction * half range."""
-    lo = np.array(robot["joint_lower"], np.float64)
-    hi = np.array(robot["joint_upper"], np.float64)
-    mid, half = (lo + hi) / 2, (hi - lo) / 2
-    frac = robot["hipx_limit_fraction"]
-    lo = np.where(IS_HIPX, mid - frac * half, lo)
-    hi = np.where(IS_HIPX, mid + frac * half, hi)
-    return lo, hi
+    """rl_deploy's policy target clamp (limit_goal_pos_vel): the configured ranges (wheel entries: velocity), hipx
+    widened by policy_hipx_widen of its width at each end."""
+    lo = np.array(robot["policy_limit_lower"], np.float64)
+    hi = np.array(robot["policy_limit_upper"], np.float64)
+    w = robot["policy_hipx_widen"]
+    return np.where(IS_HIPX, lo * (1 + w) - hi * w, lo), np.where(
+        IS_HIPX, hi * (1 + w) - lo * w, hi
+    )
 
 
 @dataclass
@@ -86,7 +86,8 @@ class Targets:
 
 
 class GaitClock:
-    """The stand / StepMove runners' gait clock: counter per policy step, frequency re-picked each half period."""
+    """The stand / StepMove runners' gait clock (rl_deploy get_gait_phase / update_gait_freq): a counter per policy
+    step; the frequency is re-picked from the command when a full period wraps."""
 
     def __init__(self, spec: dict[str, Any]) -> None:
         self.spec = spec
@@ -96,22 +97,41 @@ class GaitClock:
     def fields(self, dt: float) -> dict[str, float]:
         t = self.counter * dt
         half = 0.5 / self.frequency
-        sign = 1.0 if math.sin(2 * math.pi * self.frequency * t) >= 0 else -1.0
+        sign = -1.0 if math.sin(2 * math.pi * self.frequency * t) < 0 else 1.0
         r = math.fmod(t, half)
         return {"half_period": half, "sign": sign, "remaining": half - r if r > 1e-6 else 0.0}
 
     def advance(self, dt: float, command: np.ndarray) -> None:
-        half = 0.5 / self.frequency
-        before = math.floor(self.counter * dt / half + 1e-9)
-        self.counter += 1
-        if math.floor(self.counter * dt / half + 1e-9) != before:
+        period = 1.0 / self.frequency
+        nxt = math.fmod((self.counter + 1) * dt, period)
+        if nxt < math.fmod(self.counter * dt, period):
             g = self.spec
             f = (1 + abs(command[2]) / g["wz_gain"]) * max(
                 1 + command[0] / g["vx_gain"], 1 + abs(command[1]) / g["vy_gain"]
             )
             f = min(max(f, g["min_frequency"]), g["max_frequency"])
-            self.counter *= self.frequency / f
-            self.frequency = f
+            if f != self.frequency:
+                self.counter = (1.0 / f) * (nxt / period) / dt
+                self.frequency = f
+        self.counter += 1
+
+
+class StandMode:
+    """SixAxisStand's mode input (rl_deploy cal_command): -mode_byte, but 0 while armed and upright; the arming
+    lasts 100 upright steps; on gait 0xf001 it re-arms whenever it is off."""
+
+    def __init__(self) -> None:
+        self.armed, self.count, self.mode = False, 0, -1
+
+    def step(self, mode_byte: bool, gait: int, gravity_z: float) -> None:
+        self.mode = -int(mode_byte)
+        if gait == 0xF001 and not self.armed:
+            self.armed, self.count, self.mode = True, 0, 0
+        if gravity_z < -0.9 and self.armed:
+            self.mode = 0
+            self.count += 1
+            if self.count > 99:
+                self.armed, self.count, self.mode = False, 0, -1
 
 
 class Runner:
@@ -130,9 +150,7 @@ class Runner:
         self.command_max = np.array(spec["command_max"], np.float64)
         self.command_slew = np.array(spec.get("command_slew", [0.0, 0.0, 0.0]), np.float64)
         self.limits = joint_limits(robot)
-        # rl_deploy does not clamp the policies' leg targets (robot 2026-11-20); policy_target_clamp keeps the clamp
-        self.clamp_targets = bool(robot.get("policy_target_clamp", False))
-        self.wheel_limit = robot["wheel_velocity_limit"]
+        self.clamp_targets = bool(robot.get("policy_target_clamp", True))
         self.params: dict[str, float] = dict(spec.get("command_params", {}))
         self.policy_dt = 0.0
         self.reset()
@@ -148,6 +166,8 @@ class Runner:
         self.collected = 0
         self.params = dict(self.spec.get("command_params", {}))
         self.clock = GaitClock(self.spec["gait_clock"]) if "gait_clock" in self.spec else None
+        self.stand_mode = StandMode()
+        self.gravity_z = -1.0
 
     def activate(self) -> None:
         """The runner becomes the active one (a gait switch): its start-up gains count from here."""
@@ -196,7 +216,7 @@ class Runner:
             elif kind == "gravity":
                 v = projected_gravity(s.quat)
             elif kind == "accel":
-                v = s.accel
+                v = s.accel / block["divisor"] if "divisor" in block else s.accel
             elif kind == "command":
                 v = self.command
             elif kind == "constant":
@@ -236,22 +256,31 @@ class Runner:
         n = self.spec["history"]
         if self.spec["kind"] == "frames":
             self.history = (
-                np.tile(frame, (n, 1))
+                np.vstack([np.zeros((n - 1, len(frame)), np.float32), frame[None]])
                 if self.history is None
                 else np.vstack([self.history[1:], frame])
             )
             return {self.input_names[0]: np.concatenate([frame, self.history.ravel()])[None]}
         self.history = (
-            np.tile(frame, (n, 1)) if self.history is None else np.vstack([self.history[1:], frame])
+            np.vstack([np.zeros((n - 1, len(frame)), np.float32), frame[None]])
+            if self.history is None
+            else np.vstack([self.history[1:], frame])
         )
-        command = [self.command_entry(e) for e in self.spec["command_vector"]]
-        if self.clock is not None:
-            self.clock.advance(self.policy_dt, self.command)
+        command = self.sequence_command(s_gravity_z=self.gravity_z)
         return {
             "state": self.history[None].astype(np.float32),
             "command": np.array([command], np.float32),
             "uncertain": np.zeros((1, 1), np.float32),
         }
+
+    def sequence_command(self, s_gravity_z: float) -> list[float]:
+        """The command input; the gait clock and stand mode advance (every step, warm-up included)."""
+        p = self.params
+        self.stand_mode.step(bool(p.get("mode_byte", 0.0)), int(p.get("gait", 0xF001)), s_gravity_z)
+        command = [self.command_entry(e) for e in self.spec["command_vector"]]
+        if self.clock is not None:
+            self.clock.advance(self.policy_dt, self.command)
+        return command
 
     def command_entry(self, e: Any) -> float:
         if not isinstance(e, dict):
@@ -260,13 +289,18 @@ class Runner:
         if src in ("vx", "vy", "wz"):
             return float(self.command[("vx", "vy", "wz").index(src)])
         if src == "param":
-            return self.params.get(e["name"], 0.0) * e.get("scale", 1.0) + e.get("offset", 0.0)
+            k = math.radians(e["scale_deg"]) if "scale_deg" in e else e.get("scale", 1.0)
+            return self.params.get(e["name"], 0.0) * k + e.get("offset", 0.0)
+        if src == "stand_mode":
+            return float(self.stand_mode.mode)
         if src == "gait":
             return self.clock.fields(self.policy_dt)[e["field"]] * e.get("scale", 1.0)
         if src == "foot":
             f = self.spec["feet"]
-            th = f["yaw_scale"] * self.params.get("yaw", 0.0)
             nx, ny = f["nominal"][e["leg"]]
+            if self.params.get("feet_fixed", 0.0):
+                return nx if e["axis"] == "x" else f["fixed_y"][e["leg"]]
+            th = math.radians(f["yaw_deg"]) * self.params.get("yaw", 0.0)
             x = math.cos(th) * nx - math.sin(th) * ny + f["dx_scale"] * self.params.get("dx", 0.0)
             y = math.sin(th) * nx + math.cos(th) * ny + f["dy_scale"] * self.params.get("dy", 0.0)
             return x if e["axis"] == "x" else y
@@ -278,8 +312,7 @@ class Runner:
         n = self.spec["history"]
         f = self.last_frame[None]
         self.history = f if self.history is None else np.vstack([self.history, f])[-n:]
-        if self.clock is not None:
-            self.clock.advance(self.policy_dt, self.command)
+        self.sequence_command(s_gravity_z=self.gravity_z)
         act = self.spec["action"]
         a = np.zeros(JOINTS)
         if act["leg_mode"] == "absolute":
@@ -293,7 +326,9 @@ class Runner:
 
     def step(self, s: RobotState, axes: np.ndarray) -> Targets:
         self.update_command(np.asarray(axes, np.float64))
-        if self.collected < self.spec.get("warmup_steps", 0):
+        self.gravity_z = float(projected_gravity(s.quat)[2])
+        gate = "warmup_param" not in self.spec or self.params.get(self.spec["warmup_param"], 0.0)
+        if gate and self.collected < self.spec.get("warmup_steps", 0):
             return self.warmup(s)
         # the gait phase advances before it is observed (rl_deploy: the first frame after a reset sees one step)
         for block in self.spec["obs"]:
@@ -305,6 +340,7 @@ class Runner:
         a = np.clip(outputs[0][0].astype(np.float64), -act["clip"], act["clip"])
         self.steps += 1
         self.active_steps += 1
+        self.collected += 1
         self.last_action = a
         if act["layout"] == "per_leg":
             leg_a, leg_idx, wheel_a = a[LEGS_PER_LEG], LEGS_PER_LEG, a[WHEELS]
@@ -313,8 +349,9 @@ class Runner:
         q = self.default.copy()
         scale = tile(act["leg_scale"], 12)
         q[leg_idx] = scale * leg_a + (self.default[leg_idx] if act["leg_mode"] == "offset" else 0.0)
+        wheel = act["wheel_scale"] * wheel_a
         if self.clamp_targets:
-            q = np.clip(q, *self.limits)
-        wheel = np.clip(act["wheel_scale"] * wheel_a, -self.wheel_limit, self.wheel_limit)
+            q[leg_idx] = np.clip(q[leg_idx], self.limits[0][leg_idx], self.limits[1][leg_idx])
+            wheel = np.clip(wheel, self.limits[0][WHEELS], self.limits[1][WHEELS])
         vel = outputs[1][0].astype(np.float64) if len(outputs) > 1 else None
         return Targets(q=q, wheel_velocity=wheel, action=a, velocity_estimate=vel)

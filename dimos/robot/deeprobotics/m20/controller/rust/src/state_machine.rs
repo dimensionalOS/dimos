@@ -241,6 +241,8 @@ pub struct Controller {
     stand_ins_run: std::collections::BTreeSet<u32>,
     rl_entries: u64,
     stand_in: Option<ActiveStandIn>,
+    /// rl_deploy's accelerometer mean over the last 20 rl_control ticks (kept across rl_control entries)
+    accel_average: crate::types::AccelAverage,
     gait: u32,
     entry_raw_gait: u32,
     runner: Option<String>,
@@ -249,7 +251,10 @@ pub struct Controller {
     /// the runner whose step the targets (and gains) are from
     targets_runner: Option<String>,
     gain_scale: f64,
-    reset_pending: bool,
+    /// rl_control was just entered: the next step runs rl_deploy's entry OnEnter first
+    entry_pending: bool,
+    /// a runner switch the next step runs OnExit / OnEnter for first
+    switch_pending: bool,
     activate_pending: bool,
     since_offer: u64,
     seq: u64,
@@ -285,12 +290,14 @@ impl Controller {
             stand_in: None,
             gait: 0,
             entry_raw_gait: 0,
+            accel_average: Default::default(),
             runner: None,
             runner_gains,
             targets: None,
             targets_runner: None,
             gain_scale: 1.0,
-            reset_pending: false,
+            entry_pending: false,
+            switch_pending: false,
             activate_pending: false,
             since_offer: 0,
             seq: 0,
@@ -455,6 +462,7 @@ impl Controller {
                 rl.entry_fallback_gait
             };
             self.runner = None;
+            self.entry_pending = true;
             self.targets = None;
             self.targets_runner = None;
             self.start_stand_in(self.gait, true);
@@ -737,11 +745,12 @@ impl Controller {
         cmd: &UserCommand,
         policy: &mut dyn PolicyService,
     ) -> JointCommand {
-        // the stand-in runs its runner without rl_deploy's gait switch (update_policy_ptr: no OnEnter)
-        let via_stand_in = self.stand_in.is_some();
         let (wanted, params) = match &mut self.stand_in {
             Some(si) => {
-                let out = (si.spec.runner.clone(), si.params().clone());
+                // a stand-in runs as rl_deploy's gait 0xf001
+                let mut params = si.params().clone();
+                params.insert("gait".into(), 0xf001 as f64);
+                let out = (si.spec.runner.clone(), params);
                 si.elapsed += self.dt;
                 if si.done() {
                     self.stand_in = None;
@@ -767,7 +776,9 @@ impl Controller {
                     .clone()
                     .filter(|r| self.cfg.runners.contains_key(r))
                     .unwrap_or_else(|| self.cfg.runner_for_gait(self.gait).to_string());
-                (name, cmd.params.clone())
+                let mut params = cmd.params.clone();
+                params.insert("gait".into(), self.gait as f64);
+                (name, params)
             }
         };
         if self.runner.as_deref() != Some(wanted.as_str()) {
@@ -777,14 +788,9 @@ impl Controller {
                 self.since_offer = self.cfg.timing.policy_decimation;
                 self.gain_scale = 1.0;
             }
-            // rl_deploy keeps one object per runner: its history and last action carry over to the next use, except
-            // for the runners whose OnEnter starts them fresh on a gait switch
-            self.reset_pending = !via_stand_in
-                && self
-                    .cfg
-                    .runners
-                    .get(&wanted)
-                    .is_some_and(|r| r.fresh_on_enter);
+            // rl_deploy hands the last runner's action over to the new one (OnExit / OnEnter) and starts its history
+            // and command slew over
+            self.switch_pending = true;
             self.runner = Some(wanted.clone());
             self.activate_pending = true;
         }
@@ -804,22 +810,26 @@ impl Controller {
                 }
             }
         }
+        let accel = self.accel_average.push(s.accel);
         // offer every policy_decimation ticks; a refused offer (busy worker) is retried next tick
         self.since_offer += 1;
         if self.since_offer >= self.cfg.timing.policy_decimation {
             self.seq += 1;
             let req = PolicyRequest {
                 runner: wanted.clone(),
-                reset: self.reset_pending,
+                reset: false,
+                entry: self.entry_pending,
+                switch: self.switch_pending,
                 activate: self.activate_pending,
-                state: s.clone(),
+                state: RobotState { accel, ..s.clone() },
                 axes: self.axes_for(&wanted, cmd),
                 params,
                 seq: self.seq,
             };
             if policy.offer(req) {
                 self.since_offer = 0;
-                self.reset_pending = false;
+                self.entry_pending = false;
+                self.switch_pending = false;
                 self.activate_pending = false;
             } else {
                 self.counters.policy_offers_refused += 1;

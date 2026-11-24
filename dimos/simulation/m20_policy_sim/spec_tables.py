@@ -19,7 +19,6 @@ python -m dimos.simulation.m20_policy_sim.spec_tables
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any
 
@@ -107,16 +106,20 @@ def command_rows(spec: dict[str, Any]) -> list[str]:
         src = e["src"]
         if src in ("vx", "vy", "wz"):
             text = f"command {src}"
+        elif src == "param" and "scale_deg" in e:
+            text = f"param `{e['name']}` x {fmt(e['scale_deg'])} deg (rad)"
         elif src == "param":
             text = f"param `{e['name']}` x {fmt(e.get('scale', 1.0))}" + (
                 f" + {fmt(e['offset'])}" if e.get("offset") else ""
             )
-            if e["name"] in ("roll", "pitch") and e.get("scale"):
-                text += f" (max {math.degrees(e['scale']):.1f} deg)"
+        elif src == "stand_mode":
+            text = (
+                "stand mode: -mode_byte, 0 while armed and upright (100 steps, re-armed on 0xf001)"
+            )
         elif src == "gait":
             text = f"gait clock {e['field']} x {fmt(e.get('scale', 1.0))}"
         else:
-            text = f"foot {('FL', 'FR', 'HL', 'HR')[e['leg']]} {e['axis']}: Rz(yaw_scale x yaw) nominal + (dx_scale dx, dy_scale dy)"
+            text = f"foot {('FL', 'FR', 'HL', 'HR')[e['leg']]} {e['axis']}: Rz(yaw_deg x yaw) nominal + (dx_scale dx, dy_scale dy), or (nominal x, fixed_y) with feet_fixed"
         rows.append(f"| {k} | {text} |")
     return rows
 
@@ -166,7 +169,7 @@ def runner_section(name: str, spec: dict[str, Any], cfg: dict[str, Any]) -> str:
             if act["leg_mode"] == "offset"
             else "leg target = output (the ONNX applies 0.25 and the joint clip itself)"
         )
-        + f"; wheel velocity target = {fmt(act['wheel_scale'])} a (rad/s); then clamp to the joint range (hipx mid +- {fmt(cfg['robot']['hipx_limit_fraction'])} half range), wheels +-{fmt(cfg['robot']['wheel_velocity_limit'])}",
+        + f"; wheel velocity target = {fmt(act['wheel_scale'])} a (rad/s); then rl_deploy's limit_goal_pos_vel clamp (policy_limit_lower / upper, hipx widened by {fmt(cfg['robot']['policy_hipx_widen'])} of its width per end)",
         "",
         f"Frame ({spec['frame']} values):",
         "",
@@ -187,8 +190,8 @@ def runner_section(name: str, spec: dict[str, Any], cfg: dict[str, Any]) -> str:
             f = spec["feet"]
             lines += [
                 "",
-                f"Feet: nominal (x, y) FL, FR, HL, HR = {f['nominal']} m, yaw_scale {fmt(f['yaw_scale'])} rad "
-                f"({math.degrees(f['yaw_scale']):.1f} deg), dx_scale {fmt(f['dx_scale'])} m, dy_scale {fmt(f['dy_scale'])} m. "
+                f"Feet: nominal (x, y) FL, FR, HL, HR = {f['nominal']} m, yaw_deg {fmt(f['yaw_deg'])} "
+                f"(fixed_y {f['fixed_y']}), dx_scale {fmt(f['dx_scale'])} m, dy_scale {fmt(f['dy_scale'])} m. "
                 f"Params (operator inputs): {', '.join(f'{k} = {fmt(v)}' for k, v in spec['command_params'].items())}.",
             ]
         if "wz_speed_limit" in spec:

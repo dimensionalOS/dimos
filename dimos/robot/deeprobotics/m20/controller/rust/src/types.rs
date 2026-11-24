@@ -178,3 +178,35 @@ pub fn roll_pitch(q: &[f64; 4]) -> (f64, f64) {
 pub fn tilt(q: &[f64; 4]) -> f64 {
     (-projected_gravity(q)[2]).clamp(-1.0, 1.0).acos()
 }
+
+/// rl_deploy's accelerometer filter (RLControlState::UpdateRobotObservation, every rl_control tick): each tick's
+/// sample into a 20-slot ring (zeros at start), the observation is the ring's mean, in f32: Eigen's sum over the slots
+/// in ring order (four lanes, two accumulators, then the lanes pairwise) / 20.
+#[derive(Debug, Clone, Default)]
+pub struct AccelAverage {
+    ring: [[f32; 20]; 3],
+    next: usize,
+}
+
+impl AccelAverage {
+    /// Add this tick's sample; the mean.
+    pub fn push(&mut self, accel: [f64; 3]) -> [f64; 3] {
+        for (c, ring) in self.ring.iter_mut().enumerate() {
+            ring[self.next] = accel[c] as f32;
+        }
+        self.next = (self.next + 1) % 20;
+        let mut out = [0.0; 3];
+        for (c, v) in self.ring.iter().enumerate() {
+            let lanes = |a: usize| [v[a], v[a + 1], v[a + 2], v[a + 3]];
+            let add = |p: [f32; 4], q: [f32; 4]| std::array::from_fn::<f32, 4, _>(|i| p[i] + q[i]);
+            let mut p0 = lanes(0);
+            let mut p1 = lanes(4);
+            p0 = add(p0, lanes(8));
+            p1 = add(p1, lanes(12));
+            p0 = add(p0, p1);
+            p0 = add(p0, lanes(16));
+            out[c] = (((p0[0] + p0[1]) + (p0[2] + p0[3])) / 20.0) as f64;
+        }
+        out
+    }
+}

@@ -72,9 +72,13 @@ Transitions (any state: fault mask != 0 -> JointDamping):
 
 Faults (SafeController, 1 kHz, 1 s start-up grace): joint position beyond its range by > 0.1 rad; tilt |roll| or
 |pitch| > 20 deg in Idle, > 45 deg in StandUp, in RLControl roll > 45 deg or pitch > 65 deg (BasicPlat pitch 90 deg;
-Extre and 0xf003 skip it); IMU stale > 20 ms; battery and motor temperature flags. The re-implementations recompute
-faults every tick like SafeController and, after a fault, ignore the operator's standing request until a different one
-arrives (rl_deploy resets the target to damping).
+Extre and 0xf003 skip it; SafeController::Run 0x183980, thresholds at 0x1e1bf8 / 0x1e1c00 / 0x1e1c08 / 0x1e1c10);
+IMU stale > 20 ms; battery and motor temperature flags. The joint check (SafeController::IsJointDataNormal 0x1773a8)
+counts: a joint beyond its range by more than 0.1 + 0.14 rad for 31 checks in a row, or a joint whose position,
+velocity and torque repeat exactly for 51 checks (a frozen motor), or 31 NaN readings. The re-implementations do not
+check tilt (removed on purpose); they recompute the other faults every tick like SafeController (the joint range one at
+once, 0.1 rad past the range) and, after a fault, ignore the operator's standing request until a different one arrives
+(rl_deploy resets the target to damping).
 
 ### RLControl entry and gait handling [C]
 
@@ -117,9 +121,10 @@ For 0xf001 the axes become pose inputs (yaw, -x, -y, roll, pitch, height = max(-
 2. Build the frame (tables below), update the history, run the network.
 3. Clip the output (+-100, HeightGap +-50); the clipped output is next step's last action.
 4. Map to joints: leg target = default + 0.25 a (or the absolute output for the 36-frame runners), wheel velocity =
-   scale x a, in f32. rl_deploy does not clamp the leg targets (robot 2026-11-20: fl hipx at 0.628 rad, past its
-   0.611 range; `policy_target_clamp` keeps the old clamp to the range, hipx narrowed to mid +- 0.75 half range);
-   wheels to +-79.3 rad/s.
+   scale x a, in f32; then PolicyRunnerBase::limit_goal_pos_vel (every runner, after every step) clamps each target
+   to its compiled-in f32 range: hipy / knee to the joint range, hipx to the range widened by a quarter of its width
+   at each end (fl hipx -0.698 .. 0.873: rl_deploy sent 0.628 there on 2026-11-20, past the joint range), wheel
+   velocities to +-79.3 rad/s.
 5. `vel` (six-frame runners) is the body-frame base linear velocity estimate (vx, vy, vz).
 
 Joint limits (rad, also the MJCF ranges): hipx FL/HL [-0.436, 0.611], FR/HR [-0.611, 0.436]; hipy front
@@ -586,13 +591,28 @@ policies match to float precision once their state lines up. Rules this settled 
   seconds since the bus opened) with rl_deploy's f32 arithmetic and FMAs (aarch64 disassembly): the cubic's
   coefficients, the IK, the 1 ms difference of phase 2, the joint / motor angle conversions
   (tests/ecan_dock_rec_20261124.rs).
-- Runners keep their history, last action and phase across gait switches and rl_control entries; start-up gains
-  (NaviCharge x1.3, 29 steps, legs only) restart on every switch to the runner. The four 36-frame runners (extre,
-  finetune_stand, six_axis_stand, step_move) start fresh on every gait switch to them: their classes' OnEnter, which
-  update_policy_ptr calls on a gait switch, clears the history and re-arms the warm-up (0x154 = 1, 0x1d8 = 0); a
-  stand-in runs its runner without that (robot 2026-11-24: FinetuneStand held the default pose 0.74 s on 0x3004).
-- The gait phase advances before it is observed. 36-frame runners, when fresh, hold the default pose for 37 steps
-  (0.74 s) while their history fills, with that pose as the last action.
+- A gait switch (update_policy_ptr, only while |vx| + |vy| + |wz| < 0.01) runs the old runner's OnExit and the new
+  one's OnEnter; rl_control's entry runs OnEnter(false) on the runner OnExit left current (the fallback, BasicFlat).
+  OnExit writes the last action to two globals (last_leg_action_mid: leg positions, default + 0.25 a with an FMA, the
+  absolute runners their output as is; last_wheel_action: 10 or 20 x a); OnEnter turns them back into the new
+  runner's last action ((q - default) / 0.25, wheels / scale; laid out per leg for per_leg runners and on entry, by
+  joint type otherwise) and zeroes its history, command slew and step counter. The phase and a gait clock's frequency
+  carry on (the clock's counter restarts). Start-up gains (NaviCharge x1.3, 29 steps, legs only) restart with it.
+- The history starts as zeros (constructor and OnEnter), not as copies of the first frame. The gait phase advances
+  before it is observed.
+- The 36-frame runners hold the default pose (as their output and last action) for their first 37 steps after
+  OnEnter while still running the network; SixAxisStand only while UserCommand byte 0x1c is set (rl_control's entry
+  stand-in, first phase), so the 0x3001 stand-in infers from its first step. Their command (cal_command, f32): height
+  0.51 - 0.25 h (fused), roll / pitch x f32(f64(f32(deg / 180)) x pi) with 14.5 / 24.5 deg, the gait clock in f32
+  (t = counter x 0.02, sign of sinf(t x 2 pi f), fmodf(t, 1 / 2f) above 1e-6, the frequency re-picked when a full
+  period wraps), the feet Rz(yaw x 24.5 deg) nominal + (0.145 dx, 0.1 dy) with its FMAs, or nominal x and y = +-0.1
+  while UserCommand byte 0x6e is set (update_policy_ptr sets it on a switch to 0xf001 during rl_control's entry
+  stand-in). SixAxisStand's mode is -(UserCommand 0x6c), but 0 while its flag is armed and the body upright
+  (gravity z < -0.9), the flag counting 100 upright steps and re-arming on gait 0xf001; FinetuneStand's is -1. Their
+  accelerometer input is accel / 9.81 in f32 (a division). update_policy_ptr sets 0x6c to 0 on the entry stand-in's
+  first phase and the 0x3001 stand-in, and Run sets it to 1 when the entry stand-in's second phase starts.
+- The accelerometer the runners see is the mean of the last 20 rl_control ticks' samples (UpdateRobotObservation's
+  ring, f32, kept across entries).
 - Entering rl_control on 0x3001 runs no stand-in; switching to 0x3001 does (1.5 s). The 0x1001 stand-in ran 6.14 s:
   mode 0 for 3 s, then mode -1 (what makes it 6.14 s rather than 3.5 s is unknown).
 - /NAV_CMD is metric (m/s, rad/s) and divided per gait (BasicFlat (2, 1, 2), not the decoded (2, 0.8, 1.5)); the

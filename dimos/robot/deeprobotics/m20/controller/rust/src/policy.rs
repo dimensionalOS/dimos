@@ -31,8 +31,13 @@ use crate::types::RobotState;
 #[derive(Debug, Clone)]
 pub struct PolicyRequest {
     pub runner: String,
-    /// clear history / last action / phase first (fresh runner state)
+    /// clear history / last action / phase first (a freshly constructed runner: tests and sims)
     pub reset: bool,
+    /// the first step since rl_control's entry: rl_deploy's RLControlState::OnEnter runs OnEnter(false) on the runner
+    /// its OnExit left current (the fallback runner) before anything else
+    pub entry: bool,
+    /// a gait switch to this runner before this step (update_policy_ptr): OnExit of the current runner, OnEnter of this
+    pub switch: bool,
     /// the runner just became the active one (a gait switch): restart its start-up gains
     pub activate: bool,
     pub state: RobotState,
@@ -61,12 +66,26 @@ pub trait PolicyService: Send {
 /// Every configured runner, loaded once at startup so a gait switch never loads a model on the hot path.
 pub struct RunnerSet {
     runners: HashMap<String, Runner>,
+    /// rl_deploy's runner globals a gait switch hands over through
+    pub handover: crate::runner::Handover,
+    /// the runner rl_deploy's policy pointer is on (None before the first entry)
+    pub current: Option<String>,
+    /// the runner RLControlState::OnExit leaves the pointer on, whose OnEnter the next entry runs
+    entry_runner: String,
 }
 
 impl RunnerSet {
     pub fn load(cfg: &Config, policy_dir: &Path) -> Result<RunnerSet> {
         let dt = cfg.timing.policy_decimation as f64 / cfg.timing.control_hz;
         let ort = crate::runner::onnxruntime_library(&cfg.inference.onnxruntime);
+        let which = match &ort {
+            Some(lib) => format!("policy inference: ONNX Runtime ({lib})"),
+            None => "policy inference: tract (no ONNX Runtime library)".to_string(),
+        };
+        #[cfg(feature = "module")]
+        tracing::info!("{which}");
+        #[cfg(not(feature = "module"))]
+        eprintln!("{which}");
         let mut runners = HashMap::new();
         for (name, spec) in &cfg.runners {
             runners.insert(
@@ -74,7 +93,19 @@ impl RunnerSet {
                 Runner::with_inference(name, spec, &cfg.robot, policy_dir, dt, ort.as_deref())?,
             );
         }
-        Ok(RunnerSet { runners })
+        Ok(RunnerSet {
+            runners,
+            handover: Default::default(),
+            current: None,
+            entry_runner: cfg.states.rl_control.fallback_runner.clone(),
+        })
+    }
+
+    /// Keep every runner's last network inputs (offline comparisons).
+    pub fn keep_inputs(&mut self) {
+        for r in self.runners.values_mut() {
+            r.keep_inputs = true;
+        }
     }
 
     /// One runner by name (replays set its state).
@@ -86,6 +117,9 @@ impl RunnerSet {
     pub fn empty() -> RunnerSet {
         RunnerSet {
             runners: HashMap::new(),
+            handover: Default::default(),
+            current: None,
+            entry_runner: String::new(),
         }
     }
 
@@ -107,6 +141,21 @@ impl RunnerSet {
     fn serve_inner(&mut self, req: &PolicyRequest) -> PolicyResult {
         let started = Instant::now();
         let mut gain_scale = 1.0;
+        if req.entry {
+            if let Some(r) = self.runners.get_mut(&self.entry_runner) {
+                r.pipeline.on_enter(&mut self.handover, false);
+                self.current = Some(self.entry_runner.clone());
+            }
+        }
+        if req.switch && self.runners.contains_key(&req.runner) {
+            if let Some(r) = self.current.as_ref().and_then(|c| self.runners.get(c)) {
+                r.pipeline.on_exit(&mut self.handover);
+            }
+            let r = self.runners.get_mut(&req.runner).expect("checked");
+            let per_leg = r.pipeline.spec.action.layout == crate::config::ActionLayout::PerLeg;
+            r.pipeline.on_enter(&mut self.handover, per_leg);
+            self.current = Some(req.runner.clone());
+        }
         let targets = match self.runners.get_mut(&req.runner) {
             None => Err(format!("no runner {}", req.runner)),
             Some(r) => {

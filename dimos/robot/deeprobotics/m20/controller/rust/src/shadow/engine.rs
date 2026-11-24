@@ -512,6 +512,8 @@ impl Engine {
         let req = PolicyRequest {
             runner: runner.clone(),
             reset,
+            entry: false,
+            switch: false,
             activate,
             state: s.clone(),
             axes,

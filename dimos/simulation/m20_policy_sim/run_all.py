@@ -76,12 +76,13 @@ def climbed(world: World, log: list[dict[str, Any]]) -> dict[str, tuple[float, b
 def pose_checks(cfg: dict[str, Any], runner: str):
     """The stand policies follow the decoded pose inputs: height lowers the body, pitch / roll tilt it."""
     params = cfg["runners"][runner]["command_vector"]
-    roll_gain = math.degrees(
-        next(e["scale"] for e in params if isinstance(e, dict) and e.get("name") == "roll")
-    )
-    pitch_gain = math.degrees(
-        next(e["scale"] for e in params if isinstance(e, dict) and e.get("name") == "pitch")
-    )
+
+    def gain_deg(name: str) -> float:
+        e = next(e for e in params if isinstance(e, dict) and e.get("name") == name)
+        return e["scale_deg"] if "scale_deg" in e else math.degrees(e["scale"])
+
+    roll_gain = gain_deg("roll")
+    pitch_gain = gain_deg("pitch")
 
     def checks(world: World, log: list[dict[str, Any]]) -> dict[str, tuple[float, bool]]:
         def mean(seg: str, key: str, index: int | None = None) -> float:

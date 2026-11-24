@@ -23,13 +23,26 @@ joint_upper = [
     0.611, 2.286, 2.809, 1e9,
     0.436, 2.286, 2.809, 1e9,
 ]
-# policy hipx targets are clamped to mid +- this fraction of the half range, when policy_target_clamp is on
-hipx_limit_fraction = 0.75
-# robot 2026-11-20 14:16: rl_deploy sent hipx targets past even the joint range (fl hipx 0.628 rad on basic_stair at
-# vy -0.9): it does not clamp the policies' targets, so neither do we (true clamps them as before)
-policy_target_clamp = false
-# wheel velocity target clamp (rad/s)
-wheel_velocity_limit = 79.3
+# rl_deploy's policy target clamp (PolicyRunnerBase::limit_goal_pos_vel, after every runner's step; its compiled-in
+# f32 ranges, which hold for every runner): hipx and wheel-velocity targets to [policy_limit_lower,
+# policy_limit_upper], hipx's widened by policy_hipx_widen of its width at each end (f32(1.25 lo - 0.25 hi) ..
+# f32(1.25 hi - 0.25 lo)): fl hipx -0.698 .. 0.873 rad (robot 2026-11-20: rl_deploy sent fl hipx 0.628, past the joint
+# range and within this); hipy and knee to the range as is; wheels +-79.3 rad/s
+policy_limit_lower = [
+    -0.43633198738098145, -2.286400079727173, -2.809999942779541, -79.30000305175781,
+    -0.6108649969100952, -2.286400079727173, -2.809999942779541, -79.30000305175781,
+    -0.43633198738098145, -2.5829999446868896, -2.7929999828338623, -79.30000305175781,
+    -0.6108649969100952, -2.5829999446868896, -2.7929999828338623, -79.30000305175781,
+]
+policy_limit_upper = [
+    0.6108649969100952, 2.5829999446868896, 2.7929999828338623, 79.30000305175781,
+    0.43633198738098145, 2.5829999446868896, 2.7929999828338623, 79.30000305175781,
+    0.6108649969100952, 2.286400079727173, 2.809999942779541, 79.30000305175781,
+    0.43633198738098145, 2.286400079727173, 2.809999942779541, 79.30000305175781,
+]
+policy_hipx_widen = 0.25
+# false: no clamp at all (not rl_deploy's)
+policy_target_clamp = true
 # motor torque limit (N m)
 torque_limit = [76.4, 76.4, 76.4, 21.6]
 # front-leg (hipx, hipy, knee) range the stand-up / lie-down IK clamps to before mirroring (rl_deploy ControlParameters;
@@ -133,9 +146,10 @@ on_entry = true
 on_switch = false
 first_s = 3.0
 later_s = 1.5
-params = { mode = 0.0 }
+# rl_deploy's first phase (0x144 = 1) clears the mode byte at the switch; the second sets it; both fix the feet
+params = { mode_byte = 0.0, feet_fixed = 1.0, warm_hold = 1.0 }
 settle_s = 0.5
-settle_params = { mode = -1.0 }
+settle_params = { mode_byte = 1.0, feet_fixed = 1.0, warm_hold = 0.0 }
 
 # switching to NaviCharge runs the stand policy 1.5 s first; entering rl_control on NaviCharge does not (robot, 2026-11-20)
 [[states.rl_control.stand_in]]
@@ -145,7 +159,8 @@ on_entry = false
 on_switch = true
 first_s = 1.5
 later_s = 1.5
-params = { mode = -1.0 }
+# the switch clears the mode byte (0x148 = 1) and the feet move freely
+params = { mode_byte = 0.0, feet_fixed = 0.0, warm_hold = 0.0 }
 settle_s = 0.0
 settle_params = {}
 
@@ -386,8 +401,6 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
-# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
-fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -397,7 +410,7 @@ real_steer_divisor = [3.0, 1.0, 2.0]
 command_params = { mode = 0.0 }
 command_vector = [{ src = "vx" }, { src = "vy" }, { src = "wz" }, 0.0, { src = "param", name = "mode" }]
 obs = [
-    { kind = "accel", scale = [0.10193679918] },
+    { kind = "accel", divisor = 9.81 },
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
     { kind = "last_action" },
@@ -415,8 +428,6 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
-# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
-fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -0.65, 1.3, 0.0, 0.0, -0.65, 1.3, 0.0, 0.0, 0.65, -1.3, 0.0, 0.0, 0.65, -1.3, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -427,12 +438,14 @@ real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
-feet = { nominal = [[0.3141, 0.2], [0.3141, -0.2], [-0.3141, 0.2], [-0.3141, -0.2]], yaw_scale = 0.42760566, dx_scale = 0.145, dy_scale = 0.1 }
+# feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x
+# and fixed_y (bin cal_command, UserCommand 0x6e)
+feet = { nominal = [[0.3141, 0.2], [0.3141, -0.2], [-0.3141, 0.2], [-0.3141, -0.2]], yaw_deg = 24.5, dx_scale = 0.145, dy_scale = 0.1, fixed_y = [0.1, -0.1, 0.1, -0.1] }
 command_vector = [
     0.0, 0.0, 0.0,
     { src = "param", name = "height", scale = -0.25, offset = 0.51 },
-    { src = "param", name = "roll", scale = 0.25307274 },
-    { src = "param", name = "pitch", scale = 0.42760566 },
+    { src = "param", name = "roll", scale_deg = 14.5 },
+    { src = "param", name = "pitch", scale_deg = 24.5 },
     { src = "param", name = "mode" },
     { src = "gait", field = "half_period", scale = 5.0 },
     { src = "gait", field = "sign", scale = 1.0 },
@@ -450,7 +463,7 @@ command_vector = [
     { src = "foot", leg = 3, axis = "y" },
 ]
 obs = [
-    { kind = "accel", scale = [0.10193679918] },
+    { kind = "accel", divisor = 9.81 },
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
     { kind = "last_action" },
@@ -468,8 +481,9 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
-# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
-fresh_on_enter = true
+# the hold only while warm_hold (rl_deploy: UserCommand 0x1c, set in rl_control's entry stand-in's first phase); otherwise
+# its output from the first step
+warmup_param = "warm_hold"
 frame = 53
 default_pose = [0.0, -0.7, 1.4, 0.0, 0.0, -0.7, 1.4, 0.0, 0.0, 0.7, -1.4, 0.0, 0.0, 0.7, -1.4, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -478,15 +492,20 @@ kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [0.0, 0.0, 0.0]
 real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
-command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
+# mode_byte / feet_fixed: rl_deploy's UserCommand bytes 0x6c / 0x6e (update_policy_ptr sets them on a switch to the
+# stand gaits: mode_byte unless the 0x3001 stand-in or rl_control's first stand-in phase runs, feet_fixed in rl_control's
+# stand-in); gait: the commanded gait (0xf001 re-arms the stand mode)
+command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode_byte = 1.0, feet_fixed = 0.0, warm_hold = 0.0, gait = 61441.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
-feet = { nominal = [[0.3141, 0.2], [0.3141, -0.2], [-0.3141, 0.2], [-0.3141, -0.2]], yaw_scale = 0.42760566, dx_scale = 0.145, dy_scale = 0.1 }
+# feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x
+# and fixed_y (bin cal_command, UserCommand 0x6e)
+feet = { nominal = [[0.3141, 0.2], [0.3141, -0.2], [-0.3141, 0.2], [-0.3141, -0.2]], yaw_deg = 24.5, dx_scale = 0.145, dy_scale = 0.1, fixed_y = [0.1, -0.1, 0.1, -0.1] }
 command_vector = [
     0.0, 0.0, 0.0,
     { src = "param", name = "height", scale = -0.25, offset = 0.51 },
-    { src = "param", name = "roll", scale = 0.25307274 },
-    { src = "param", name = "pitch", scale = 0.42760566 },
-    { src = "param", name = "mode" },
+    { src = "param", name = "roll", scale_deg = 14.5 },
+    { src = "param", name = "pitch", scale_deg = 24.5 },
+    { src = "stand_mode" },
     { src = "gait", field = "half_period", scale = 5.0 },
     { src = "gait", field = "sign", scale = 1.0 },
     { src = "gait", field = "sign", scale = -1.0 },
@@ -503,7 +522,7 @@ command_vector = [
     { src = "foot", leg = 3, axis = "y" },
 ]
 obs = [
-    { kind = "accel", scale = [0.10193679918] },
+    { kind = "accel", divisor = 9.81 },
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
     { kind = "last_action" },
@@ -520,8 +539,6 @@ history = 36
 # a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
 # then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
 warmup_steps = 37
-# bin: its runner class's OnEnter clears the history and re-arms the warmup (0x154 = 1, 0x1d8 = 0) on every gait switch to it (update_policy_ptr; a stand-in calls none)
-fresh_on_enter = true
 frame = 53
 default_pose = [0.0, -1.0, 1.6, 0.0, 0.0, -1.0, 1.6, 0.0, 0.0, 1.0, -1.6, 0.0, 0.0, 1.0, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
@@ -547,7 +564,7 @@ command_vector = [
     { src = "gait", field = "remaining", scale = 5.0 },
 ]
 obs = [
-    { kind = "accel", scale = [0.10193679918] },
+    { kind = "accel", divisor = 9.81 },
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
     { kind = "last_action" },
@@ -749,8 +766,9 @@ transition_limit_s = 21.0
 
 [inference]
 # rl_deploy runs the policies on ONNX Runtime 1.20 (one intra-op thread, all graph optimizations): its library on AOS
-# gives its outputs to the bit (tract's differ by up to 5e-5). Empty: tract. $M20_ONNXRUNTIME overrides.
-onnxruntime = ""
+# gives its outputs to the bit (tract's differ by up to 5e-5). Used when the file is there, else tract (the log says
+# which). $M20_ONNXRUNTIME overrides; empty: tract.
+onnxruntime = "/opt/robot/share/rl_deploy/lib/onnxruntime/libonnxruntime.so.1.20.0"
 
 # The eth1 motor bus (backends "ecan" and "bus"); everything not set here takes the values seen on the robot.
 [ecan]

@@ -44,8 +44,8 @@ pub struct Config {
 /// How the policies are evaluated.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Inference {
-    /// an ONNX Runtime library (libonnxruntime.so) to run them with, as rl_deploy does (its numerics to the bit);
-    /// empty: tract. $M20_ONNXRUNTIME overrides.
+    /// the ONNX Runtime library (libonnxruntime.so) to run them with, as rl_deploy does (its numerics to the bit),
+    /// when it is there (rl_deploy's own on AOS); missing or empty: tract. $M20_ONNXRUNTIME overrides.
     #[serde(default)]
     pub onnxruntime: String,
 }
@@ -55,11 +55,15 @@ pub struct Robot {
     pub joint_names: Vec<String>,
     pub joint_lower: Vec<f64>,
     pub joint_upper: Vec<f64>,
-    pub hipx_limit_fraction: f64,
-    /// clamp the policies' leg targets to the joint ranges (hipx narrowed by hipx_limit_fraction); rl_deploy does not
-    #[serde(default)]
+    /// rl_deploy's PolicyRunnerBase::limit_goal_pos_vel ranges (f32, per joint, robot order): hip / knee position
+    /// targets and wheel velocity targets
+    pub policy_limit_lower: Vec<f64>,
+    pub policy_limit_upper: Vec<f64>,
+    /// limit_goal_pos_vel widens the hipx range by this fraction of its width at each end
+    pub policy_hipx_widen: f64,
+    /// clamp every policy target as limit_goal_pos_vel does (rl_deploy does, after every step); off: unclamped
+    #[serde(default = "yes")]
     pub policy_target_clamp: bool,
-    pub wheel_velocity_limit: f64,
     /// the sim's actuator clip only: the motor drivers compute the PD torque, rl_deploy sends no torque limit
     pub torque_limit: Vec<f64>,
     pub thigh_length: f64,
@@ -208,6 +212,9 @@ pub enum ObsBlock {
     Accel {
         #[serde(default)]
         scale: Vec<f64>,
+        /// divided by this in f32 instead of scaled (the stand runners' accel / 9.81)
+        #[serde(default)]
+        divisor: Option<f64>,
     },
     Command {
         #[serde(default)]
@@ -282,7 +289,7 @@ pub enum CommandEntry {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommandSource {
-    /// vx | vy | wz | param | gait | foot
+    /// vx | vy | wz | param | gait | foot | stand_mode
     pub src: String,
     #[serde(default)]
     pub name: Option<String>,
@@ -293,6 +300,9 @@ pub struct CommandSource {
     pub scale: f64,
     #[serde(default)]
     pub offset: f64,
+    /// param: times this angle as rl_deploy's f32(f64(f32(deg / 180)) x pi), instead of scale
+    #[serde(default)]
+    pub scale_deg: Option<f64>,
     #[serde(default)]
     pub leg: usize,
     #[serde(default)]
@@ -316,9 +326,12 @@ pub struct GaitClockSpec {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Feet {
     pub nominal: [[f64; 2]; 4],
-    pub yaw_scale: f64,
+    /// the yaw param's full-scale angle (deg)
+    pub yaw_deg: f64,
     pub dx_scale: f64,
     pub dy_scale: f64,
+    /// the feet's y while the feet_fixed param is set (rl_deploy's rl_control stand-in), x nominal and no shift
+    pub fixed_y: [f64; 4],
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -365,9 +378,9 @@ pub struct RunnerSpec {
     pub start_gain_steps: u64,
     #[serde(default)]
     pub warmup_steps: u64,
-    /// rl_deploy's runner OnEnter clears it and re-arms warmup_steps every time it becomes the active runner
+    /// warm up only while this param is set (rl_deploy's SixAxisStand: UserCommand 0x1c, rl_control's entry stand-in)
     #[serde(default)]
-    pub fresh_on_enter: bool,
+    pub warmup_param: Option<String>,
     #[serde(default)]
     pub command_vector: Vec<CommandEntry>,
     #[serde(default)]
@@ -557,6 +570,8 @@ impl Config {
         let lens = [
             ("joint_names", self.robot.joint_names.len()),
             ("joint_lower", self.robot.joint_lower.len()),
+            ("policy_limit_lower", self.robot.policy_limit_lower.len()),
+            ("policy_limit_upper", self.robot.policy_limit_upper.len()),
             ("joint_upper", self.robot.joint_upper.len()),
         ];
         for (name, len) in lens {

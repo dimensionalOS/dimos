@@ -196,6 +196,8 @@ fn main() -> Result<()> {
         let req = PolicyRequest {
             runner: step.runner.clone(),
             reset: step.reset,
+            entry: false,
+            switch: false,
             activate: step.activate,
             state: ticks.state(step.state_row),
             axes: step.axes,

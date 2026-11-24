@@ -385,6 +385,8 @@ fn policies(cfg: &Config) -> Option<RunnerSet> {
             runners.serve(&m20_controller::policy::PolicyRequest {
                 runner: name.clone(),
                 reset: false,
+                entry: false,
+                switch: false,
                 activate: false,
                 state: s.clone(),
                 axes: [0.0; 3],
