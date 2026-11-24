@@ -18,6 +18,9 @@ from dataclasses import dataclass
 
 from dimos.robot.assets.model import UsdModel
 
+# The key a world announces a robot's ``odom_frame`` under, on the robot's entity.
+ODOM_FRAME = "odom_frame"
+
 
 @dataclass(frozen=True)
 class SimulatedRobot:
@@ -28,6 +31,8 @@ class SimulatedRobot:
     floating: bool = True
     # The world holds still until this robot is commanded: a robot held up by a policy falls before it is driven.
     held_until_commanded: bool = False
+    # The tf frame the robot reports its odometry in, which sensors riding it map in.
+    odom_frame: str | None = None
 
     @property
     def root_body(self) -> str:
