@@ -70,13 +70,21 @@ pub fn motor_commands(
         .collect()
 }
 
-/// The controller's view of a joint-state reply.
-pub fn robot_state(joints: &[m20_ecan::JointState], calibration: &Calibration) -> RobotState {
-    let mut s = RobotState::default();
-    let mut drivers = crate::types::Drivers::default();
+/// The controller's view of a joint-state reply on top of the one before: a reply carries a record per joint it has,
+/// and a joint missing from it keeps its last position, rates, temperatures and status word (rl_deploy's joint data
+/// are persistent arrays, overwritten per joint, 0x167720); none before it and not every joint: no state yet.
+pub fn robot_state(
+    joints: &[m20_ecan::JointState],
+    calibration: &Calibration,
+    previous: Option<&RobotState>,
+) -> Option<RobotState> {
+    let mut s = previous.cloned().unwrap_or_default();
+    let mut drivers = s.drivers.unwrap_or_default();
+    let mut seen = 0u32;
     for j in joints {
         let i = j.joint.index();
         if i < JOINTS {
+            seen |= 1 << i;
             drivers.status_word[i] = j.status_word;
             drivers.motor_temperature_c[i] = j.motor_temperature_c;
             drivers.driver_temperature_c[i] = j.driver_temperature_c;
@@ -91,8 +99,11 @@ pub fn robot_state(joints: &[m20_ecan::JointState], calibration: &Calibration) -
             s.tau[i] = calibration.urdf_rate(j.joint, j.torque) as f64;
         }
     }
+    if previous.is_none() && seen != (1 << JOINTS) - 1 {
+        return None;
+    }
     s.drivers = Some(drivers);
-    s
+    Some(s)
 }
 
 #[cfg(target_os = "linux")]
@@ -169,7 +180,9 @@ impl BusHardware {
         }
         match decode_ethernet(frame, direction) {
             Ok((_, Message::JointStates { joints, .. })) => {
-                Some(robot_state(&joints, &self.calibration))
+                let s = robot_state(&joints, &self.calibration, self.last.as_ref())?;
+                self.last = Some(s.clone());
+                Some(s)
             }
             _ => None,
         }
@@ -284,7 +297,21 @@ mod tests {
                 data_id: 0,
             })
             .collect();
-        let back = robot_state(&states, &calibration);
+        let back = robot_state(&states, &calibration, None).unwrap();
+        // a reply without some joints: they keep their last values and status word (no fault from a missing record)
+        let mut first = back.clone();
+        first.drivers.as_mut().unwrap().motor_temperature_c[0] = 40.0;
+        let partial = robot_state(&states[4..], &calibration, Some(&first)).unwrap();
+        assert_eq!(partial.drivers.as_ref().unwrap().status_word, [1; JOINTS]);
+        assert_eq!(
+            partial.drivers.as_ref().unwrap().motor_temperature_c[0],
+            40.0
+        );
+        assert_eq!(partial.q[0], first.q[0]);
+        let none = robot_state(&[], &calibration, Some(&first)).unwrap();
+        assert_eq!(none.drivers.unwrap().status_word, [1; JOINTS]);
+        // nothing before and not every joint: no state yet
+        assert!(robot_state(&states[4..], &calibration, None).is_none());
         for i in 0..JOINTS {
             assert!((back.q[i] - cmd.q[i]).abs() < 1e-5, "{i}");
         }
