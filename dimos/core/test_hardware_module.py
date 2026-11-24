@@ -157,6 +157,23 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
         camera.stop()
 
 
+def test_a_frame_id_prefix_names_the_usd_and_its_tf_alike() -> None:
+    pytest.importorskip("pxr")
+    from dimos.robot.assets.usd_utils.frames import usd_frame_names
+
+    arm = Arm(instance_name="left/arm", frame_id_prefix="spare")
+    try:
+        edges = {(t.frame_id, t.child_frame_id) for t in arm.usd_transforms()}
+        frames = usd_frame_names(arm.get_usd())
+    finally:
+        arm.stop()
+    assert edges == {
+        ("left/spare/base", "left/spare/forearm"),
+        ("left/spare/forearm", "left/spare/wrist"),
+    }
+    assert {frame for edge in edges for frame in edge} <= frames
+
+
 class SharedCamera(WristCamera):
     mount_shared = frozenset({"color_image"})
     color_image: Out[Image]
