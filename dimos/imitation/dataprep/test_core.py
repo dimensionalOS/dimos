@@ -29,6 +29,7 @@ import subprocess
 import sys
 from typing import Any
 
+import h5py
 import numpy as np
 import pytest
 
@@ -489,6 +490,65 @@ def test_fill_quality_accepts_gap_and_reports_filled_slot() -> None:
     assert sum(bool(sample.complementary_info["is_filled"][0]) for sample in samples) == (
         report.filled_frames
     )
+
+
+@pytest.mark.parametrize("camera_hz,gap_ms", [(30, 70.6), (60, 47.2)])
+def test_prepare_camera_gap_can_be_recovered_with_fill(camera_hz, gap_ms, tmp_path, mocker):
+    # Center the reported camera gap on a 30 Hz target inside a two-second episode.
+    times = [i / camera_hz for i in range(2 * camera_hz + 1)]
+    half_gap = gap_ms / 2000
+    times = sorted([ts for ts in times if abs(ts - 1) > half_gap] + [1 - half_gap, 1 + half_gap])
+    store = _FakeStore(
+        {
+            "camera": [
+                _Obs(ts, {"data": np.full((2, 2, 3), i, dtype=np.uint8)})
+                for i, ts in enumerate(times)
+            ],
+            "status": _status([(0, "start", "pick"), (2, "save", "pick")]),
+        }
+    )
+    config = DataPrepConfig(
+        source="recording.db",
+        recording_schema=RecordingSchema(
+            observation={
+                "image": FeatureSpec(
+                    stream="camera",
+                    field="data",
+                    dtype="video",
+                    shape=(2, 2, 3),
+                    names=["height", "width", "channels"],
+                )
+            },
+            sync=SyncConfig(anchor="image", rate_hz=30, tolerance_ms=20),
+        ),
+        output=OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
+    )
+    mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
+
+    with pytest.raises(RuntimeError, match="no complete aligned sample") as error:
+        run_dataprep(config)
+
+    assert "--quality-mode fill" in str(error.value)
+    assert "source rate" not in str(error.value)
+    assert "maximum source gap" not in str(error.value)
+    assert not config.output.path.exists()
+
+    config.recording_schema.quality.mode = "fill"
+    result = run_dataprep(config)
+
+    with h5py.File(result, "r") as dataset:
+        episode = dataset["episodes/episode_000000"]
+        frames = episode["observation/image"][:]
+        assert len(frames) == 61
+        np.testing.assert_array_equal(
+            frames[30], np.full((2, 2, 3), times.index(1 - half_gap), dtype=np.uint8)
+        )
+        np.testing.assert_array_equal(
+            np.flatnonzero(episode["complementary_info/is_filled"][:]), [30]
+        )
+    meta = json.loads(result.with_suffix(".dimos_meta.json").read_text())
+    assert meta["quality"]["mode"] == "fill"
+    assert meta["quality_reports"][0]["filled_frames"] == 1
 
 
 def test_sync_missing_anchor_raises() -> None:

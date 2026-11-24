@@ -18,6 +18,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from typing import Literal
 
 from rich.console import Console
 import typer
@@ -72,6 +73,11 @@ def control() -> None:
 def prepare(
     recording: Path = typer.Argument(..., help="Collection directory containing schema.json"),
     output: Path | None = typer.Option(None, "--output", help="New LeRobot dataset directory"),
+    quality_mode: Literal["strict", "fill"] | None = typer.Option(
+        None,
+        "--quality-mode",
+        help="Override the saved quality mode. Fill holds earlier samples across alignment gaps.",
+    ),
 ) -> None:
     """Prepare a dataset using the schema saved with its recording."""
     source = recording.expanduser().resolve()
@@ -89,6 +95,8 @@ def prepare(
     target = _require_new_path(output or _default_dataset(source))
     try:
         schema = RecordingSchema.read(source)
+        if quality_mode is not None:
+            schema.quality.mode = quality_mode
         config = schema.dataprep_config(source, OutputConfig(format="lerobot", path=target))
         result = run_lerobot_dataprep(config)
     except Exception as exc:

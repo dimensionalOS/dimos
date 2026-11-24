@@ -89,15 +89,44 @@ def recording(tmp_path):
     return directory
 
 
-def test_prepare_uses_saved_schema_not_robot_lookup(recording, tmp_path, mocker):
+@pytest.mark.parametrize("saved_mode", ["strict", "fill"])
+@pytest.mark.parametrize("override", [None, "strict", "fill"])
+def test_prepare_uses_saved_schema_with_optional_quality_override(
+    recording, tmp_path, mocker, saved_mode, override
+):
+    schema = RecordingSchema.read(recording)
+    schema.quality.mode = saved_mode
+    schema.quality.max_camera_gap_ms = 80.0
+    original = schema.model_dump_json()
+    (recording / "schema.json").write_text(original)
     output = tmp_path / "dataset"
     prepare = mocker.patch("dimos.cli.commands.imitation.run_lerobot_dataprep", return_value=output)
-    result = CliRunner().invoke(imitation_app, ["prepare", str(recording), "--output", str(output)])
+    flags = ["--quality-mode", override] if override is not None else []
+    result = CliRunner().invoke(
+        imitation_app, ["prepare", str(recording), "--output", str(output), *flags]
+    )
     assert result.exit_code == 0, result.output
     config = prepare.call_args.args[0]
     assert config.source == str(recording / "recording.mcap")
     assert config.recording_schema.observation == RecordingSchema.read(recording).observation
     assert config.output.path == output
+    expected = schema.model_dump()
+    expected["quality"]["mode"] = override or saved_mode
+    assert config.recording_schema.model_dump() == expected
+    assert (recording / "schema.json").read_text() == original
+
+
+def test_prepare_rejects_unknown_quality_mode(recording, mocker):
+    prepare = mocker.patch("dimos.cli.commands.imitation.run_lerobot_dataprep")
+
+    result = CliRunner().invoke(
+        imitation_app, ["prepare", str(recording), "--quality-mode", "relaxed"]
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--quality-mode'" in unstyle(result.output)
+    assert "'relaxed' is not one of" in unstyle(result.output)
+    prepare.assert_not_called()
 
 
 def test_prepare_failure_summary_omits_install_log_and_traceback(recording, tmp_path, mocker):

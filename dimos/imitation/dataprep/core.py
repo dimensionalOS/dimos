@@ -544,7 +544,10 @@ def inspect_episode_quality(
     report.max_alignment_error_ms = plan.max_error_s * 1000.0
     if quality.mode == "strict" and plan.first_incomplete is not None:
         report.rejection_reasons.append(
-            f"fixed-rate target at {plan.first_incomplete:.6f} has no complete aligned sample"
+            f"fixed-rate target at {plan.first_incomplete:.6f} has no complete aligned sample. "
+            "Inspect the recording's gaps. If holding earlier samples is acceptable, "
+            "rerun dimos imitation prepare with --quality-mode fill "
+            "(held samples are marked is_filled)."
         )
     if not plan.targets:
         report.rejection_reasons.append("anchor stream has no episode data")

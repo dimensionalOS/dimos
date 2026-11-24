@@ -59,6 +59,22 @@ shapes and joint names match the saved schema and that required source samples
 exist. Command streams need an initial target for every declared joint. Do not
 substitute measured state for missing commands.
 
+The saved quality mode defaults to `strict`: one target without a sample inside
+the alignment tolerance rejects the entire episode, even if the camera's average
+rate and maximum gap pass validation. If holding earlier samples across gaps is
+acceptable for your dataset, retry with an explicit override:
+
+```bash skip
+dimos imitation prepare recordings/session-001 --output datasets/session-001 --quality-mode fill
+```
+
+`fill` reuses the latest earlier snapshot when no sample is within tolerance and
+marks the output frame as `complementary_info.is_filled`. It also relaxes camera
+rate and gap rejection, so inspect the resulting dataset's filled-frame counts
+before training. The override is recorded in dataset metadata and does not edit
+the recording's `schema.json`. Without `--quality-mode`, preparation uses the
+saved mode. Use `--quality-mode strict` to explicitly request strict validation.
+
 Use a new output path when the target directory already exists. For source
 semantics, alignment defaults, and export keys, see
 [Recordings and profiles](/docs/capabilities/manipulation/learning/reference/recordings-and-profiles.md).

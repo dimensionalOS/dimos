@@ -109,8 +109,9 @@ dataset with `dimos imitation prepare ~/recordings/leader_001 --output
 Preparation runs the schema saved with the recording. Its default quality mode
 is `strict`, which rejects an episode on a single dropped camera frame; the
 three D405s on shared USB hubs do drop frames. If `dimos imitation inspect`
-shows rejected episodes, set `quality.mode` to `fill` in the recording's
-`schema.json` and prepare again.
+shows rejected episodes and holding earlier camera samples is acceptable,
+prepare again with `--quality-mode fill`. This leaves the recording's
+`schema.json` unchanged and marks held frames as `complementary_info.is_filled`.
 
 ## Tuning, measured on Anvil
 
