@@ -320,6 +320,29 @@ pub struct Docking {
     /// detector service replies still to come, and what follows them
     calls_pending: u32,
     calls_then: Option<AfterCalls>,
+    /// charge_manager's PowerOnSelfTest, run once charge_manager.toml is read
+    startup: Option<Startup>,
+    /// charge_manager's idle loop: its next 3 s wake (it then takes a charge it sees: state 0 -> 2)
+    idle_check_at: u64,
+    /// the charging loop writes Open12vPower(1) (its command is 1: a dock, or idle taking a charge; not the start-up
+    /// self test's charging, whose command is still -1)
+    charge_cmd: bool,
+    /// charge_manager's error state with NOCHARGEPLUG (0x1007) from the self test: DoExcepHandlingProcess writes
+    /// Open12vPower(3) every 3 s and takes a charge it sees
+    no_plug: bool,
+    /// Open12vPower(n) under way: its start, n and the writes so far (it writes 1 and sleeps 2 s, n times)
+    open12v: Option<(u64, u32, u32)>,
+}
+
+/// charge_manager's PowerOnSelfTest (0x181c40), as ticks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Startup {
+    /// Open12vPower(3) (6 s), sleep 1 s, DetectionCharge(5): the charge flag by 12 s ends the test (idle)
+    Detect { started: u64 },
+    /// OpenMarkerProcess + FindTarget: a dock pose within tag_receive_timeout
+    FindPose { until: u64 },
+    /// near the dock: DetectionCharge(first_detection_current_timeout), up to 3 times
+    Confirm { tries: u32, until: u64, x: f32 },
 }
 
 impl Docking {
@@ -365,6 +388,11 @@ impl Docking {
             charge_sleep_until: 0,
             stand_at: None,
             calls_pending: 0,
+            startup: None,
+            idle_check_at: 0,
+            charge_cmd: false,
+            no_plug: false,
+            open12v: None,
             calls_then: None,
             status: Status {
                 phase: Phase::Idle,
@@ -395,13 +423,189 @@ impl Docking {
             return false;
         }
         let start = self.core.as_ref().map(|c| c.start_point());
+        let first = self.core.is_none();
         let mut core = ChargeCore::new(ChargeParams::from_toml(t), &self.seq);
         if let Some(p) = start {
             core.set_start_point(p);
         }
         self.core = Some(core);
         self.status.vendor_config = true;
+        if first {
+            // charge_manager starts with PowerOnSelfTest: "Open dog 12v power switch." (Open12vPower(3))
+            self.startup = Some(Startup::Detect { started: self.tick });
+            self.open12v = Some((self.tick, 3, 0));
+        }
         true
+    }
+
+    /// charge_manager's charge flag (BatteryStatusCallback, 0x17e9f8) from the newest reading: with
+    /// all_battery_charge, every pack with a level has its charge MOS on (none: true); else any has.
+    fn charge_flag(&self) -> bool {
+        self.charge.is_some_and(|r| self.charged(&r))
+    }
+
+    /// Into charge_manager's charging state (2) without a dock: `cmd` 1 runs the charging loop's writes.
+    fn take_charge(&mut self, view: &View, result: &str, cmd: bool) {
+        // the charging phase holds the robot as it lies (it never moves it)
+        self.target = if view.is(State::Passive) {
+            Target::Passive
+        } else {
+            Target::LieDown
+        };
+        self.set_phase(Phase::Charging);
+        self.charge_cmd = cmd;
+        self.no_plug = false;
+        self.failed = false;
+        self.status.result = result.into();
+        self.status.error = false;
+        self.status.charging = self.charge_flag();
+        self.charge_sleep_until = self.tick;
+        self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
+    }
+
+    /// Open12vPower(n) under way: its due writes of 1 this tick; true once its last 2 s sleep is over.
+    fn pump_open12v(&mut self) -> bool {
+        let Some((start, n, written)) = self.open12v else {
+            return true;
+        };
+        let elapsed = self.ms(self.tick - start);
+        if written < n && elapsed >= written as u64 * 2000 {
+            self.write(Write::ChargeEnable(1));
+            self.open12v = Some((start, n, written + 1));
+        }
+        if elapsed >= n as u64 * 2000 {
+            self.open12v = None;
+            return true;
+        }
+        false
+    }
+
+    /// While no sequence runs: the self test (PowerOnSelfTest, 0x181c40), then the idle loop's 3 s wakes or the
+    /// NOCHARGEPLUG error's Open12vPower(3) cycles (DoExcepHandlingProcess, 0x17fdb0).
+    fn idle_step(&mut self, view: &View) {
+        if self.phase != Phase::Idle {
+            // a sequence (or a charge resumed across a restart) ends the self test
+            self.startup = None;
+            self.open12v = None;
+            return;
+        }
+        if self.core.is_none() {
+            return;
+        }
+        let p = self.params().cloned().expect("core");
+        let powered = self.pump_open12v();
+        match self.startup {
+            Some(Startup::Detect { started }) => {
+                let elapsed = self.ms(self.tick - started);
+                // DetectionCharge(5) starts after Open12vPower(3) and sleep(1)
+                if powered && elapsed >= 7000 {
+                    if self.charge_flag() {
+                        // "Detection charge success...": idle; the idle loop takes the charge at its first wake
+                        self.startup = None;
+                        self.status.result = "Detection charge success...".into();
+                        self.idle_check_at = self.tick + self.ticks(3000);
+                    } else if elapsed >= 12000 {
+                        self.startup = Some(Startup::FindPose { until: u64::MAX });
+                    }
+                }
+                return;
+            }
+            Some(Startup::FindPose { until }) => {
+                if until == u64::MAX {
+                    // OpenMarkerProcess: the detector's first pose after its restart
+                    self.filter.restart();
+                    self.published = None;
+                    self.startup = Some(Startup::FindPose {
+                        until: self.tick + self.ticks(p.find_target_ms),
+                    });
+                } else if let Some(pose) = self.published {
+                    if pose.x.abs() >= p.delta[0] || pose.y.abs() >= p.delta[1] {
+                        self.end_self_test(format!(
+                            "Init charge status is [idle] because of the distance from the charging pile is a bit \
+                             far. target x is {:.6}, target y is {:.6}",
+                            pose.x, pose.y
+                        ));
+                    } else {
+                        self.startup = Some(Startup::Confirm {
+                            tries: 1,
+                            until: self.tick + self.ticks(p.charge_confirm_ms),
+                            x: pose.x,
+                        });
+                    }
+                } else if self.tick >= until {
+                    self.end_self_test(
+                        "Init charge status is [idle] because did not see the charging pile."
+                            .into(),
+                    );
+                }
+                return;
+            }
+            Some(Startup::Confirm { tries, until, x }) => {
+                if self.charge_flag() {
+                    if view.lying() {
+                        self.startup = None;
+                        // CloseMarkProcess, Close24vPower; the command stays -1 (no charging-loop writes)
+                        self.write(Write::ChargeEnable(0));
+                        self.take_charge(view, "Init charge status is [charging]", false);
+                    } else {
+                        // standing, charge_manager's first command-1 pass would return it to idle: ours stays idle
+                        self.end_self_test("Init charge status is [charging]".into());
+                    }
+                } else if self.tick >= until {
+                    if tries < 3 {
+                        self.startup = Some(Startup::Confirm {
+                            tries: tries + 1,
+                            until: self.tick + self.ticks(p.charge_confirm_ms),
+                            x,
+                        });
+                    } else {
+                        self.end_self_test(format!(
+                            "Init charge status is [error] because of [NOCHARGEPLUG], target x is {x:.6}"
+                        ));
+                        self.failed = true;
+                        self.no_plug = true;
+                        self.status.error = true;
+                    }
+                }
+                return;
+            }
+            None => {}
+        }
+        if self.no_plug {
+            // error 0x1007: Open12vPower(3) whenever 3 s passed since the last one began (it takes 6 s), then the
+            // charge if it came
+            if self.open12v.is_none() {
+                if powered && self.tick > self.idle_check_at && self.charge_flag() && view.lying() {
+                    self.take_charge(
+                        view,
+                        "My status is [error], begin to transtion to [charging]",
+                        true,
+                    );
+                    return;
+                }
+                self.idle_check_at = self.tick;
+                self.open12v = Some((self.tick, 3, 0));
+                self.pump_open12v();
+            }
+            return;
+        }
+        if self.tick < self.idle_check_at {
+            return;
+        }
+        self.idle_check_at = self.tick + self.ticks(3000);
+        if self.charge_flag() && !self.failed && view.lying() {
+            // the idle loop's wake (0x182390): a charge it sees takes it to [charging] with command 1 (standing, its
+            // charging loop's command 2 returns it to idle at once, so ours stays idle)
+            self.take_charge(view, "空闲状态直接进入充电状态", true);
+        }
+    }
+
+    fn end_self_test(&mut self, result: String) {
+        self.startup = None;
+        // CloseMarkProcess, Close24vPower
+        self.write(Write::ChargeEnable(0));
+        self.status.result = result;
+        self.idle_check_at = self.tick + self.ticks(3000);
     }
 
     pub fn has_vendor(&self) -> bool {
@@ -534,6 +738,7 @@ impl Docking {
             }
             AfterCalls::Charging => {
                 self.set_phase(Phase::Charging);
+                self.charge_cmd = true;
                 self.charge_sleep_until = self.tick;
                 self.charge_next_write = self.tick + self.ticks(self.seq.charge_wait_ms);
             }
@@ -559,14 +764,15 @@ impl Docking {
         self.core.as_ref().map(|c| &c.params)
     }
 
+    /// BatteryStatusCallback's flag (mos_detection; current_detection off): over the packs reporting a level, all
+    /// with their charge MOS on (all_battery_charge; vacuously true for none), else any.
     fn charged(&self, r: &ChargeReading) -> bool {
         let all = self.params().map_or(true, |p| p.all_battery_charge);
-        r.packs_present > 0
-            && if all {
-                r.packs_charge_mos_on >= r.packs_present
-            } else {
-                r.packs_charge_mos_on > 0
-            }
+        if all {
+            r.packs_charge_mos_on >= r.packs_present
+        } else {
+            r.packs_charge_mos_on > 0
+        }
     }
 
     /// Open the obstacle check (when charge_manager.toml has it on); true when it was closed (Open then sleeps).
@@ -600,6 +806,7 @@ impl Docking {
             c.end();
         }
         self.set_phase(Phase::Idle);
+        self.idle_check_at = self.tick + self.ticks(3000);
         self.status.result = result.into();
         self.status.error = error;
         self.failed = error;
@@ -904,6 +1111,7 @@ impl Docking {
         {
             self.start_undock();
         }
+        self.idle_step(view);
         self.status.phase = self.phase;
         self.status.active = self.active();
         self.status.obstacle = if self.obstacle_open {
@@ -1088,7 +1296,7 @@ impl Docking {
                     return self.finish(self.target, "stood up while on the dock", false);
                 }
                 // charge_manager's charging loop: wait charge_wait_ms, Open12vPower(1) (write, sleep charge_sleep_ms)
-                if self.status.charging && self.tick >= self.charge_next_write {
+                if self.charge_cmd && self.status.charging && self.tick >= self.charge_next_write {
                     self.write(Write::ChargeEnable(1));
                     self.charge_sleep_until = self.tick + self.ticks(self.seq.charge_sleep_ms);
                     self.charge_next_write =
@@ -1208,6 +1416,8 @@ pub struct DockFeed {
     pub obstacle: Mutex<Option<(Option<f32>, u64)>>,
     /// charge_manager.toml, once read (taken when docking is idle)
     pub vendor: Mutex<Option<ChargeManagerToml>>,
+    /// charge-enables (1) written while no sequence drives (the self test, the NOCHARGEPLUG error's retries)
+    pub idle_charge_enables: std::sync::atomic::AtomicU64,
 }
 
 /// The docking sequence in front of the operator's command source. While it drives, the operator's velocity-only
@@ -1320,6 +1530,11 @@ impl<C: CommandSource> CommandSource for DockingCommands<C> {
         }
         let was_active = self.docking.active();
         let out = self.docking.advance(&self.view);
+        if out.is_none() && self.docking.charge_enable_now == Some(1) {
+            self.feed
+                .idle_charge_enables
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if self.last_status.as_ref() != Some(self.docking.status()) {
             (self.on_status)(self.docking.status());
             self.last_status = Some(self.docking.status().clone());
@@ -1346,251 +1561,4 @@ impl<C: CommandSource> CommandSource for DockingCommands<C> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::f64::consts::PI;
-
-    fn cfg() -> Config {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
-        Config::load(&path).unwrap()
-    }
-
-    fn vendor() -> ChargeManagerToml {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/charge_manager.toml");
-        ChargeManagerToml::load(path.to_str().unwrap()).unwrap().0
-    }
-
-    fn standing(runner: &str) -> View {
-        View {
-            state: Some(State::RlControl),
-            fault: false,
-            runner: Some(runner.into()),
-            stand_in: false,
-            gait: 0x3003,
-            state_ticks: 10_000,
-        }
-    }
-
-    fn facing(d: f64) -> DockPose {
-        DockPose {
-            x: d,
-            y: 0.05,
-            yaw: PI,
-        }
-    }
-
-    /// Sweeps every 100 ticks until `phase` (or `ticks` pass).
-    fn run_until(
-        k: &mut Docking,
-        view: &View,
-        d: f64,
-        seq: &mut u64,
-        phase: Phase,
-        ticks: u64,
-    ) -> Option<Output> {
-        let mut last = None;
-        for t in 0..ticks {
-            if t % 100 == 0 {
-                *seq += 1;
-            }
-            last = k.step(view, Some((facing(d), *seq)), None).or(last);
-            if k.phase() == phase {
-                break;
-            }
-        }
-        last
-    }
-
-    #[test]
-    fn refuses_without_the_vendor_config_charge_enable_or_standing() {
-        let cfg = cfg();
-        let v = vendor();
-        assert!(Docking::new(&cfg, true, None)
-            .request(Request::Dock, &standing("navi_charge"))
-            .is_err());
-        assert!(Docking::new(&cfg, false, Some(&v))
-            .request(Request::Dock, &standing("navi_charge"))
-            .is_err());
-        let mut lying = standing("navi_charge");
-        lying.state = Some(State::LieDown);
-        assert!(Docking::new(&cfg, true, Some(&v))
-            .request(Request::Dock, &lying)
-            .is_err());
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        assert!(k.request(Request::Dock, &standing("navi_charge")).is_ok());
-        assert_eq!(k.phase(), Phase::FindTarget);
-        // undock only while charging or after a failure
-        assert!(Docking::new(&cfg, true, Some(&v))
-            .request(Request::Undock, &lying)
-            .is_err());
-    }
-
-    #[test]
-    fn find_target_waits_for_the_detectors_sixteenth_sweep_and_fails_without() {
-        let cfg = cfg();
-        let v = vendor();
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        let view = standing("navi_charge");
-        k.request(Request::Dock, &view).unwrap();
-        let mut seq = 0;
-        // 15 sweeps held back: still finding at 1.5 s, through on the 16th
-        run_until(&mut k, &view, 2.0, &mut seq, Phase::EnterGait, 1550);
-        assert_eq!(k.phase(), Phase::EnterGait);
-        assert_eq!(seq, 16);
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        k.request(Request::Dock, &view).unwrap();
-        for _ in 0..2001 {
-            k.step(&view, None, None);
-        }
-        assert_eq!(k.phase(), Phase::Idle);
-        assert!(k.status().error && k.status().result.contains("not in sight"));
-    }
-
-    #[test]
-    fn a_missing_pose_stops_the_robot_and_resumes() {
-        let cfg = cfg();
-        let v = vendor();
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        let view = standing("navi_charge");
-        k.request(Request::Dock, &view).unwrap();
-        let mut seq = 0;
-        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
-        // steering toward the staging point after the six start samples
-        let out = run_until(&mut k, &view, 2.0, &mut seq, Phase::Idle, 1000).unwrap();
-        assert!(out.axes[0] > 0.0, "{:?}", out.axes);
-        // no pose for 150 ms: rl_deploy zeroes the steer; 200 ms: charge_manager stops; still docking
-        let mut out = None;
-        for _ in 0..250 {
-            out = k.step(&view, Some((facing(2.0), seq)), None);
-        }
-        assert_eq!(out.unwrap().axes, [0.0; 3]);
-        assert_eq!(k.phase(), Phase::Approach);
-    }
-
-    #[test]
-    fn a_fault_or_leaving_rl_control_ends_it() {
-        let cfg = cfg();
-        let v = vendor();
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        let view = standing("navi_charge");
-        k.request(Request::Dock, &view).unwrap();
-        let mut seq = 0;
-        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
-        let mut v2 = view.clone();
-        v2.fault = true;
-        let out = k.step(&v2, Some((facing(2.0), seq)), None).unwrap();
-        assert_eq!((out.target, out.axes), (Target::LieDown, [0.0; 3]));
-        assert!(!k.active() && k.status().error);
-        // a pose while not on NaviCharge in rl_control: charge_manager's 0x1008
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        k.request(Request::Dock, &view).unwrap();
-        let mut seq = 0;
-        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
-        let mut v3 = view.clone();
-        v3.state = Some(State::JointDamping);
-        for t in 0..200u64 {
-            if t % 100 == 0 {
-                seq += 1;
-            }
-            k.step(&v3, Some((facing(2.0), seq)), None);
-        }
-        assert!(!k.active() && k.status().error);
-    }
-
-    #[test]
-    fn an_obstacle_stops_the_approach_and_ends_it_on_basic_flat_after_ten_seconds() {
-        let cfg = cfg();
-        let v = vendor();
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        let view = standing("navi_charge");
-        k.request(Request::Dock, &view).unwrap();
-        let mut seq = 0;
-        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
-        assert_eq!(k.status().obstacle, Some(Direction::Front));
-        let mut last = None;
-        for t in 0..11_000u64 {
-            if t % 100 == 0 {
-                seq += 1;
-            }
-            k.ingest(Some((facing(2.0), seq)), None, Some((Some(0.15), seq)));
-            last = k.advance(&view).or(last);
-            if t == 1000 {
-                assert_eq!(k.status().obstacle_stop, Some(0.15));
-                assert_eq!(last.as_ref().unwrap().axes, [0.0; 3]);
-            }
-        }
-        let last = last.unwrap();
-        assert_eq!(k.phase(), Phase::Idle);
-        assert_eq!((last.target, last.gait), (Target::RlControl, 0x1001));
-        assert!(k.status().error);
-        // a cell at 0.335 (the posts) is no obstacle
-        let mut k = Docking::new(&cfg, true, Some(&v));
-        k.request(Request::Dock, &view).unwrap();
-        let mut seq = 0;
-        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
-        for t in 0..2000u64 {
-            if t % 100 == 0 {
-                seq += 1;
-            }
-            k.ingest(Some((facing(2.0), seq)), None, Some((Some(0.335), seq)));
-            k.advance(&view);
-        }
-        assert_eq!(k.status().obstacle_stop, None);
-    }
-
-    /// An inner source that replays a list, one per poll.
-    struct Replay(Vec<UserCommand>);
-    impl CommandSource for Replay {
-        fn poll(&mut self, _now: f64) -> Option<UserCommand> {
-            if self.0.is_empty() {
-                None
-            } else {
-                Some(self.0.remove(0))
-            }
-        }
-    }
-
-    #[test]
-    fn velocity_is_ignored_while_docking_and_a_motion_command_cancels_it() {
-        let cfg = cfg();
-        let feed = Arc::new(DockFeed::default());
-        let walk = UserCommand {
-            target: Target::RlControl,
-            gait: 0x3003,
-            velocity: Some([0.5, 0.0, 0.0]),
-            motion_seq: 3,
-            ..Default::default()
-        };
-        let lie = UserCommand {
-            target: Target::LieDown,
-            motion_seq: 4,
-            ..walk.clone()
-        };
-        let mut c = DockingCommands::new(
-            Replay(vec![walk.clone()]),
-            Docking::new(&cfg, true, None),
-            feed.clone(),
-            Box::new(|_| {}),
-        );
-        c.view = standing("navi_charge");
-        // the operator's walk passes while idle; charge_manager.toml arrives through the feed
-        assert_eq!(c.poll(0.0).map(|u| u.velocity), Some(walk.velocity));
-        *feed.vendor.lock().unwrap() = Some(vendor());
-        c.poll(0.0);
-        assert!(c.docking.has_vendor());
-        *feed.request.lock().unwrap() = Some(Request::Dock);
-        let out = c.poll(0.0).unwrap();
-        assert_eq!(out.velocity, None);
-        // navigation's velocity keeps arriving: ignored
-        c.inner.0.push(walk.clone());
-        let out = c.poll(0.0).unwrap();
-        assert_eq!(out.velocity, None);
-        assert!(c.docking.active() && !c.expires());
-        // the operator lies it down: docking ends, the command goes through
-        c.inner.0.push(lie.clone());
-        let out = c.poll(0.0).unwrap();
-        assert_eq!(out.target, Target::LieDown);
-        assert!(!c.docking.active());
-    }
-}
+mod tests;

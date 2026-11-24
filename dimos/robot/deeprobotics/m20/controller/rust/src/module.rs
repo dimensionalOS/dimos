@@ -650,6 +650,8 @@ fn run_policy(
     let mut last: Option<Status> = None;
     let mut last_height = f64::NAN;
     let mut charge_enable_seq = 0.0;
+    let idle_dock = shared.dock.clone();
+    let mut idle_charge_enables = 0;
     let result = rt::run(
         &cfg,
         &mut hardware,
@@ -659,6 +661,13 @@ fn run_policy(
         Pacing::Realtime,
         &shared.stop,
         |hw, tick| {
+            let idle = idle_dock
+                .idle_charge_enables
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if idle != idle_charge_enables {
+                idle_charge_enables = idle;
+                hw.request_charge_enable();
+            }
             let p = &tick.user.params;
             if let (Some(&v), Some(&seq)) = (
                 p.get(crate::dock::docking::CHARGE_ENABLE_PARAM),
@@ -710,7 +719,8 @@ pub fn charge_reading(direction: Direction, frame: &[u8], seq: u64) -> Option<Ch
     }
     let report = m20_battery::BatteryReport::from_message(&message).ok()?;
     let packs = report.packs();
-    let present: Vec<_> = packs.iter().filter(|p| p.voltage_v > 0.0).collect();
+    // charge_manager counts the packs reporting a level (BatteryDataValue::battery_level != 0)
+    let present: Vec<_> = packs.iter().filter(|p| p.level_percent > 0).collect();
     Some(ChargeReading {
         seq,
         packs_present: present.len() as u8,
@@ -936,6 +946,8 @@ mod tests {
         for _ in 0..2 {
             let mut record = [0u8; m20_ecan::message::BATTERY_PACK_LEN];
             record[0..2].copy_from_slice(&8300u16.to_le_bytes());
+            // battery_level (charge_manager counts the packs reporting one)
+            record[19] = 90;
             record[20] = mos;
             record[112..114].copy_from_slice(&8400u16.to_le_bytes());
             record[114] = detect;

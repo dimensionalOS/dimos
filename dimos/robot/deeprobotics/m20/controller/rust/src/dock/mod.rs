@@ -97,7 +97,7 @@ impl DockPose {
 pub struct ChargeReading {
     /// counts reports, so a reading is known to be newer than another
     pub seq: u64,
-    /// packs reporting a voltage
+    /// packs reporting a level (charge_manager counts battery_level != 0)
     pub packs_present: u8,
     /// of those, packs whose charge MOS is on (m20-battery `charge_mos_on`)
     pub packs_charge_mos_on: u8,
