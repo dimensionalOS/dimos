@@ -25,7 +25,8 @@ masses. A file that does not load or fit the robot makes connect raise.
 ``get_config`` reports how each arm is driven; with ``config_writes`` on
 (calibration blueprints only) ``set_config`` changes gains live or saves them,
 with fitted masses, to each arm's file. Every halt (the deadman, a failed
-write, stop) undoes the live changes and holds the arm where it is.
+write or live change, stop) undoes the live changes and holds the arm where
+it is.
 """
 
 from __future__ import annotations
@@ -345,7 +346,8 @@ class DamiaoConnection(ConnectionModule):
         friction, checks and notes are merged into each arm's calibration
         file, which is then applied, dropping every live change. Any bad
         entry raises ``ValueError`` naming every bad entry, and nothing
-        changes.
+        changes. A save that fails puts back the files already written; a
+        live change that fails halts, undoing every live change; both raise.
         """
         if not self.config.config_writes:
             raise RuntimeError(
@@ -417,18 +419,35 @@ class DamiaoConnection(ConnectionModule):
             if errors:
                 raise ValueError("set_config changed nothing: " + "; ".join(errors))
             if save:
-                for arm_id in patches:
-                    item = files[arm_id]
-                    assert item is not None
-                    save_calibration(item.path, item.calibration)
+                replaced: dict[Path, bytes | None] = {}
+                try:
+                    for arm_id in patches:
+                        item = files[arm_id]
+                        assert item is not None
+                        old = item.path.read_bytes() if item.path.exists() else None
+                        save_calibration(item.path, item.calibration)
+                        replaced[item.path] = old
+                except BaseException:
+                    for path, old in replaced.items():
+                        if old is None:
+                            path.unlink()
+                        else:
+                            path.write_bytes(old)
+                    raise
                 self._apply(arm, files)
             else:
-                for arm_patch in patches.values():
-                    for joint, gains in (arm_patch.gains or {}).items():
-                        if gains.kp == 0.0:
-                            arm.set_float(joint, gains.kd)
-                        else:
-                            arm.set_gains(joint, gains.kp, gains.kd)
+                try:
+                    for arm_patch in patches.values():
+                        for joint, gains in (arm_patch.gains or {}).items():
+                            if gains.kp == 0.0:
+                                arm.set_float(joint, gains.kd)
+                            else:
+                                arm.set_gains(joint, gains.kp, gains.kd)
+                except Exception as error:
+                    self._report(f"set_config failed: {type(error).__name__}: {error}")
+                    self._on_loop(self._disarm_deadman)
+                    self._call_halt()
+                    raise
                 # Live changes last only while commands stream: the deadman undoes them.
                 with self._lock:
                     self._command_seq += 1
