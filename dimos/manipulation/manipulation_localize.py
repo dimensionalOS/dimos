@@ -16,21 +16,36 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.manipulation.surfaces import MAX_TILT_DEG, find_surfaces
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.module import PerceptionLocalize, PerceptionLocalizeConfig
+from dimos.perception.localize.rig import TF_TOLERANCE
+from dimos.perception.localize.support_plane import window_points
 from dimos.perception.localize.types import Localization
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+# find_surface reports a surface tilted less than this as level.
+LEVEL_BELOW_DEG = 0.5
 
 
 class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     # scene_cloud: cell size of the merged cloud, and the farthest depth it keeps, metres
     scene_voxel_m: float = 0.01
     scene_depth_trunc_m: float = 2.0
+    # find_surface: keyframes merged per camera
+    surface_frames: int = 10
+    # find_surface: surfaces parallel to the reporting frame's xy plane; False fits tilt
+    surface_parallel_to_frame: bool = True
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -39,7 +54,7 @@ class ManipulationLocalize(PerceptionLocalize):
     A ``localize`` or ``scan`` answer replaces the objects of the labels it was
     asked for and keeps the others. Pick and place reads them by id, or by a
     label only one object has. A forgotten object's older sightings are left out
-    of later answers.
+    of later answers. ``find_surface`` measures the table.
     """
 
     config: ManipulationLocalizeConfig
@@ -125,8 +140,7 @@ class ManipulationLocalize(PerceptionLocalize):
         """
         if not self._ready.is_set() or self.config.geometry != "depth":
             return None
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
+        lo, _ = self._window_start(start)
         views = []
         for obs in self.index.time_range(lo, lo + duration):
             for frame in self.rig.cameras:
@@ -140,6 +154,101 @@ class ManipulationLocalize(PerceptionLocalize):
             frame_id=self.rig.world_frame,
             timestamp=max((view.ts or 0.0) for view in views),
         ).voxel_downsample(self.config.scene_voxel_m)
+
+    @rpc
+    def surfaces(
+        self,
+        start: float = -10.0,
+        duration: float = 10.0,
+        frame: str = "",
+        max_tilt_deg: float = MAX_TILT_DEG,
+    ) -> list[dict[str, Any]]:
+        """``find_surface``'s surfaces as dicts, with each plane's ``coefficients`` and ``normal``.
+
+        Empty when localize is not ready, nothing in the window has geometry, or
+        ``frame`` has no transform.
+        """
+        if not self._ready.is_set():
+            return []
+        lo, head = self._window_start(start)
+        keyframes = list(self.index.time_range(lo, lo + duration))
+        rig = self.rig
+        if rig.lidar is not None:
+            # The window's scans only, as in _localize, not the whole feed.
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
+        views = (
+            window_points(rig, keyframes, camera, self.config.surface_frames)
+            for camera in rig.cameras
+        )
+        clouds = [cloud for cloud in views if cloud is not None]
+        if not clouds:
+            return []
+        to_frame = None
+        if frame and frame != self.rig.world_frame:
+            transform = self.rig.tf.get(frame, self.rig.world_frame, head, TF_TOLERANCE)
+            if transform is None:
+                logger.warning(
+                    "find_surface: no transform", parent=frame, child=self.rig.world_frame
+                )
+                return []
+            to_frame = transform.to_matrix()
+        return [
+            surface.as_dict()
+            for surface in find_surfaces(
+                np.concatenate(clouds),
+                max_tilt_deg,
+                to_frame,
+                level=self.config.surface_parallel_to_frame,
+            )
+        ]
+
+    @skill
+    def find_surface(
+        self,
+        start: float = -10.0,
+        duration: float = 10.0,
+        frame: str = "",
+        max_tilt_deg: float = MAX_TILT_DEG,
+    ) -> str:
+        """Find flat surfaces, such as the table top or the floor, in a window of memory.
+
+        Gives each one's height under the origin of ``frame`` (empty: the world
+        frame), its centre, size, heading and tilt, and how many points stand on
+        it, the biggest first. ``start`` and ``duration`` name the window as in
+        ``localize``; only what the camera saw in it counts. Surfaces are taken as
+        parallel to the frame's xy plane unless ``surface_parallel_to_frame`` is off.
+        """
+        if not self._ready.is_set():
+            return (
+                f"find_surface cannot answer yet: {self._stage}. Poll state() until it reads ready."
+            )
+        name = frame or self.rig.world_frame
+        found = self.surfaces(start, duration, frame, max_tilt_deg)
+        if not found:
+            return f"no flat surface in the window, in {name}"
+        lines = []
+        for i, surface in enumerate(found, 1):
+            x, y, z = surface["center"]
+            length, width = surface["size"]
+            tilt = surface["tilt_deg"]
+            slope = (
+                f"tilted {tilt:.1f} deg, down towards {round(surface['downhill_deg'])} deg"
+                if tilt >= LEVEL_BELOW_DEG
+                else "level"
+            )
+            lines.append(
+                f"surface {i}: height {surface['height']:.3f} m under the origin of {name}, "
+                f"centre ({x:.3f}, {y:.3f}, {z:.3f}), {length:.2f} x {width:.2f} m, "
+                f"long side at {round(surface['yaw_deg'])} deg, {slope}, "
+                f"{surface['points']} points, rms {surface['rms_m'] * 1000:.1f} mm, "
+                f"{surface['points_above']} points standing on it"
+            )
+        return "\n".join(lines)
+
+    def _window_start(self, start: float) -> tuple[float, float]:
+        """Where a window named by ``start``, as in ``localize``, begins, and the newest frame."""
+        first, head = self.index.get_time_range()
+        return max(first, head + start if start < 0 else first + start), head
 
     def _localize(
         self,

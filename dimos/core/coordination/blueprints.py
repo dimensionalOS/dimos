@@ -222,7 +222,13 @@ class BlueprintProtocol(Protocol):
         ],
     ) -> Self: ...
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self: ...
+    def namespace(
+        self,
+        prefix: str,
+        *,
+        shared: Iterable[str] = (),
+        share_tf: bool = True,
+    ) -> Self: ...
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
 
@@ -369,21 +375,29 @@ class Blueprint(BlueprintProtocol):
             )
         return names[0] if names else module.name
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self:
+    def namespace(
+        self,
+        prefix: str,
+        *,
+        shared: Iterable[str] = (),
+        share_tf: bool = True,
+    ) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
-        Instance names, stream names (and so their topics), TF frame ids, and RPC
-        topics all get the `{prefix}/` prefix, which disconnects the namespaced
-        modules from everything outside.
+        Instance names, stream names (and so their topics), and RPC topics all get
+        the `{prefix}/` prefix, which disconnects the namespaced modules from
+        everything outside. TF frame ids follow the instance name
+        (``ModuleBase.frame_id_prefix``).
 
-        Stream names listed in *expose* are left unprefixed, so they connect
+        Stream names listed in *shared* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary:
+        namespace boundary. ``tf`` is shared too unless ``share_tf=False``, so every
+        robot's transforms land in one tf tree (their frame ids are namespaced instead):
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
                 *[
-                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", shared={"pointcloud"})
                     for i, ip in enumerate(ips)
                 ],
             )
@@ -394,7 +408,10 @@ class Blueprint(BlueprintProtocol):
                 f"(nest namespaces by composition, not with '/')."
             )
 
-        expose_set = frozenset(expose)
+        listed = frozenset(shared)
+        if "tf" in listed and not share_tf:
+            raise ValueError("shared lists 'tf' but share_tf=False")
+        shared_set = listed | {"tf"} if share_tf else listed
 
         effective_names = set()
         for atom in self.blueprints:
@@ -403,10 +420,11 @@ class Blueprint(BlueprintProtocol):
                 if isinstance(effective, str):
                     effective_names.add(effective)
 
-        unknown = expose_set - effective_names
+        # tf may be absent; a name the caller listed must exist.
+        unknown = listed - effective_names
         if unknown:
             raise ValueError(
-                f"expose names {sorted(unknown)} do not match any stream in the "
+                f"shared names {sorted(unknown)} do not match any stream in the "
                 f"namespaced blueprint (available: {sorted(effective_names)})"
             )
 
@@ -415,22 +433,14 @@ class Blueprint(BlueprintProtocol):
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"
-            kwargs = dict(atom.kwargs)
-            kwargs["instance_name"] = new_name
-            old_namespace = atom.name.rsplit("/", 1)[0] if "/" in atom.name else ""
-            frame_id_prefix = kwargs.get("frame_id_prefix")
-            if frame_id_prefix is None:
-                kwargs["frame_id_prefix"] = prefix
-            elif old_namespace and frame_id_prefix == old_namespace:
-                # Auto-set by an inner .namespace(); extend it. User-set values are kept.
-                kwargs["frame_id_prefix"] = f"{prefix}/{frame_id_prefix}"
+            kwargs = {**atom.kwargs, "instance_name": new_name}
             new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
 
             for stream in atom.streams:
                 effective = self.remapping_map.get((atom.name, stream.name), stream.name)
                 if not isinstance(effective, str):
                     continue
-                if effective in expose_set:
+                if effective in shared_set:
                     if (atom.name, stream.name) in self.remapping_map:
                         new_remap[new_name, stream.name] = effective
                 else:
@@ -443,7 +453,7 @@ class Blueprint(BlueprintProtocol):
 
         new_transports = {}
         for (name, type_), transport in self.transport_map.items():
-            if name in expose_set:
+            if name in shared_set:
                 new_transports[name, type_] = transport
             else:
                 new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)
@@ -474,6 +484,19 @@ class Blueprint(BlueprintProtocol):
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
+
+
+def config_defaults(module: type[ModuleBase]) -> dict[str, Any]:
+    """Every config field that has a default, as the module's own config would fill it in.
+
+    Defaults computed from other fields (``default_factory=lambda m: m["g"]...``) are left out.
+    """
+    fields = get_type_hints(module)["config"].model_fields
+    return {
+        name: field.get_default(call_default_factory=True)
+        for name, field in fields.items()
+        if not field.is_required() and not field.default_factory_takes_validated_data
+    }
 
 
 def transport_config_name(cls: type) -> str:
@@ -569,8 +592,19 @@ class MetaBlueprint(BlueprintProtocol):
     ) -> Self:
         return self._defer(Blueprint.remappings, tuple(remappings))
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self:
-        return self._defer(Blueprint.namespace, prefix, expose=tuple(expose))
+    def namespace(
+        self,
+        prefix: str,
+        *,
+        shared: Iterable[str] = (),
+        share_tf: bool = True,
+    ) -> Self:
+        return self._defer(
+            Blueprint.namespace,
+            prefix,
+            shared=tuple(shared),
+            share_tf=share_tf,
+        )
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self:
         return self._defer(Blueprint.requirements, *checks)

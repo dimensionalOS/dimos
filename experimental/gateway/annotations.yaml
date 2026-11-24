@@ -125,7 +125,6 @@ modules:
   g1-collection-recorder: {abilities: [data-collection]}
   g1-manipulation-module: {abilities: [motion-planning]}
   g1-recorder: {abilities: [recording]}
-  g1-sim-connection: {abilities: [simulation]}
   go2-audio-bridge-module: {abilities: [remote-teleop]}
   go2-command-module: {abilities: [remote-teleop]}
   go2-l1-lidar: {abilities: [lidar-odometry]}
@@ -438,43 +437,10 @@ robots:
           required: true
           docs: https://docs.dimensional.org/platforms/humanoid/g1/#1-get-ssh-access
       blueprints:
-        unitree-g1-basic:
-          title: G1 basic
-          description: A G1's camera, a voxel map and a costmap, with frontier exploration. Needs the robot on this network.
-          starter: 7
-        unitree-g1-basic-sim:
-          title: G1 in simulation
-          description: 'The basic G1 stack against a simulated G1: no robot needed.'
-          starter: 8
-          recommended_config: []
         unitree-g1:
-          title: G1 with perception + memory
-          description: The basic G1 stack plus spatial memory and object tracking.
-          starter: 9
-        unitree-g1-agentic:
-          title: G1 with an agent
-          description: G1 with perception and memory, plus an AI agent with G1 skills (move, observe, speak).
-          starter: 10
-        unitree-g1-agentic-sim:
-          title: G1 agent in simulation
-          description: 'The G1 agent against a simulated G1: no robot needed.'
-          recommended_config: []
-        unitree-g1-sim:
-          title: G1 perception in simulation
-          description: G1 perception and memory against a simulated G1.
-          recommended_config: []
-        unitree-g1-coordinator:
-          title: G1 control coordinator
-          description: The G1's whole-body connection behind a ControlCoordinator servo task.
-        unitree-g1-detection:
-          title: G1 with 3D detection
-          description: The basic G1 stack plus person tracking and 3D detection.
-        unitree-g1-full:
-          title: G1 full
-          description: 'Everything: perception, memory, the agent with G1 skills, and keyboard driving.'
-        unitree-g1-groot-wbc:
-          title: G1 GR00T whole-body control
-          description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
+          title: G1
+          description: 'The default G1 stack: onboard sensors, the locomotion SDK and navigation, or GR00T whole-body control under --simulation mujoco.'
+          starter: 7
           recommended_config:
           - &robot_or_simulator
             label: Run it on
@@ -483,16 +449,21 @@ robots:
             - {label: Simulator, set: {simulation: mujoco}}
           - global: robot_ip
             when: {simulation: ''}
-        unitree-g1-joystick:
-          title: G1 keyboard driving
-          description: The basic G1 stack plus keyboard driving.
-        unitree-g1-nav-simple:
-          title: G1 simple navigation
-          description: Onboard sensors, a ray-traced costmap and A* replanning (needs the Unitree SDK).
-        unitree-g1-primitive-no-nav:
-          title: G1 primitive (building block)
-          description: The minimal G1 stack without navigation that bigger G1 blueprints build on.
-          hidden: true
+        unitree-g1-groot:
+          title: G1 GR00T + navigation
+          description: GR00T whole-body control plus Mid-360 Point-LIO and ray-traced A* navigation; on the robot or in MuJoCo.
+          starter: 8
+          recommended_config:
+          - *robot_or_simulator
+          - global: robot_ip
+            when: {simulation: ''}
+        unitree-g1-groot-wbc:
+          title: G1 GR00T whole-body control
+          description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
+          recommended_config:
+          - *robot_or_simulator
+          - global: robot_ip
+            when: {simulation: ''}
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
@@ -618,7 +589,7 @@ robots:
       dirs: [dimos/robot/diy/alfred]
       defaults:
         recommended_config:
-        - module: alfredhighlevel
+        - module: flowbaseconnection
           field: address
           label: Alfred address
       blueprints:

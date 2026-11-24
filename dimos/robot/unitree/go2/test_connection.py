@@ -68,6 +68,7 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
         "192.168.123.161",
         aes_128_key="cafe" * 8,
         velocity_api=False,
+        timed_move_resend_period_s=cfg.timed_move_resend_period_s,
     )
 
 
@@ -522,7 +523,7 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
 
 
 def test_odom_to_tf_prefixed() -> None:
-    """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
+    """A namespaced instance name gives frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
     odom = PoseStamped(ts=1.0, frame_id="world")
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")

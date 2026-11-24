@@ -23,8 +23,8 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
-| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
-| `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
+| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop` also accept `--transport`. |
+| `--dtop` / `--no-dtop` | bool | `False` | Publish live resource stats for `dtop` |
 | `--robot-model` | TEXT | `None` | Robot model identifier |
 | `--robot-width` | FLOAT | `0.3` | Robot width in meters, shared by the navigation and patrol modules |
 | `--robot-rotation-diameter` | FLOAT | `0.6` | Robot rotation diameter in meters |
@@ -488,17 +488,19 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. For the TUI, start the run with `--dtop` so that it publishes the stats:
 
 ```bash
 dimos --dtop run unitree-go2
 ```
 
-Or run standalone:
+Then open the monitor in another terminal (`dimos top` is the same command, `q` quits):
 
 ```bash
 dtop
 ```
+
+Without `--dtop` on the run, the monitor only shows a hint to add it. A stack started with `--transport lcm` needs `dtop --transport lcm`.
 
 ### `dimos rerun-bridge`
 

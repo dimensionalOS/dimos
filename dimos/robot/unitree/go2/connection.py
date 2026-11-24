@@ -131,6 +131,8 @@ class ConnectionConfig(JointConnectionConfig):
     lidar: bool = True
     camera: bool = True
     velocity_api: bool = False
+    # Seconds between resends of the command during a timed move.
+    timed_move_resend_period_s: float = Field(default=0.01, gt=0.0, allow_inf_nan=False)
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
     motion_mode: str | None = None
     # Per-device AES-128 key (Go2 fw >=1.1.15).
@@ -202,7 +204,7 @@ def _camera_info_static() -> CameraInfo:
 
 
 def _prefixed(prefix: str | None, name: str) -> str:
-    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
+    """Apply a TF namespace prefix (ModuleBase.frame_id_prefix) to a frame name."""
     if not prefix or not name:
         return name
     return f"{prefix}/{name}"
@@ -252,6 +254,7 @@ def make_connection(
             ip,
             aes_128_key=aes_128_key,
             velocity_api=velocity_api,
+            timed_move_resend_period_s=cfg.timed_move_resend_period_s,
         )
     else:
         raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
@@ -456,11 +459,11 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
-        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+        if self.frame_id_prefix and self.camera_info_static.frame_id:
             # Copy so the class-level default is not mutated.
             self.camera_info_static = copy.copy(self.camera_info_static)
             self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
+                self.frame_id_prefix, self.camera_info_static.frame_id
             )
 
     @rpc
@@ -471,7 +474,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
             return
 
         def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+            image.frame_id = _prefixed(self.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
 
         if self.config.lidar:
@@ -623,7 +626,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                 )
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
-            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            transforms = self._odom_to_tf(msg, prefix=self.frame_id_prefix)
             self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)

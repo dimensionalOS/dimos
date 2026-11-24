@@ -327,7 +327,9 @@ def test_factory_resolves_canonical_connection_and_preserves_sim_imu(patched_ort
     from dimos.control.coordinator import TaskConfig
     from dimos.control.tasks.registry import control_task_registry
     from dimos.hardware.whole_body.spec import IMUState
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
+    from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
+        G1WholeBodyConnectionConfig,
+    )
 
     source = ConnectionSource(
         G1WholeBodyConnectionConfig(), ["position_command"], ["joint_state", "imu"], 0.2
