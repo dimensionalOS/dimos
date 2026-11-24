@@ -228,14 +228,16 @@ pub fn centroid(cloud: &[Point]) -> Point {
 pub fn voxel_grid(cloud: &[Point], leaf: [f32; 3]) -> Vec<Point> {
     let inv = [1.0 / leaf[0], 1.0 / leaf[1], 1.0 / leaf[2]];
     let (lo, hi) = min_max(cloud);
-    let span = |k: usize| ((hi[k] - lo[k]) * inv[k]) as i64 + 1;
+    // PCL's int64 / int arithmetic as aarch64 runs it: float -> int saturates (NaN -> 0), + and * wrap (an empty cloud's
+    // FLT_MAX / -FLT_MAX bounds pass the check and index nothing)
+    let span = |k: usize| (((hi[k] - lo[k]) * inv[k]) as i64).wrapping_add(1);
     // "Leaf size is too small for the input dataset. Integer indices would overflow": the cloud as it is
-    if span(0).saturating_mul(span(1)).saturating_mul(span(2)) > i32::MAX as i64 {
+    if span(0).wrapping_mul(span(1)).wrapping_mul(span(2)) > i32::MAX as i64 {
         return cloud.to_vec();
     }
     let min_b = [0, 1, 2].map(|k| (lo[k] * inv[k]).floor() as i32);
     let max_b = [0, 1, 2].map(|k| (hi[k] * inv[k]).floor() as i32);
-    let div = [0, 1, 2].map(|k| max_b[k] - min_b[k] + 1);
+    let div = [0, 1, 2].map(|k| max_b[k].wrapping_sub(min_b[k]).wrapping_add(1));
     let mul = [1, div[0], div[0].wrapping_mul(div[1])];
     // (voxel index, point index): cloud_point_index_idx, compared by the voxel index only
     let mut index: Vec<(u32, u32)> = cloud
@@ -432,6 +434,21 @@ mod tests {
         make_heap(&mut v, 0, n, &|a: &u32, b: &u32| a < b);
         sort_heap(&mut v, 0, n, &|a: &u32, b: &u32| a < b);
         assert_eq!(v, want);
+    }
+
+    #[test]
+    fn voxel_grid_wraps_as_pcl_does() {
+        // empty: FLT_MAX / -FLT_MAX bounds, spans of INT64_MIN + 1 whose wrapped product (INT64_MIN + 1) passes the
+        // overflow check, then nothing to index
+        assert!(voxel_grid(&[], [0.01; 3]).is_empty());
+        // one point: one voxel
+        assert_eq!(
+            voxel_grid(&[[1.0, 2.0, 3.0, 1.0]], [0.01; 3]),
+            vec![[1.0, 2.0, 3.0, 1.0]]
+        );
+        // spans whose product overflows int32: the cloud as it is
+        let far = [[0.0, 0.0, 0.0, 1.0], [1000.0, 1000.0, 1000.0, 1.0]];
+        assert_eq!(voxel_grid(&far, [0.01; 3]), far.to_vec());
     }
 
     #[test]
