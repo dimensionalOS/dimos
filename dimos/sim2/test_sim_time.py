@@ -170,6 +170,7 @@ def _per_sim_second(stamps: list[float], start: float) -> float:
     return (len(steady) - 1) / (steady[-1] - steady[0])
 
 
+@pytest.mark.self_hosted  # its camera renders: GitHub-hosted runners have no OpenGL context
 @pytest.mark.parametrize("speed", [0.5, 4.0], ids=["half_speed", "four_times_speed"])
 def test_sensors_keep_their_rates_per_sim_second(speed: float) -> None:
     readings = _run(seconds=8.0, speed=speed)
