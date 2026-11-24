@@ -79,20 +79,33 @@ def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
     self._state = TrajectoryState.PREEMPTED
 ```
 
-### Whole-group connection commands (opt-in)
+### Indivisible native connection inputs (opt-in)
 
-Map each indivisible command's local name to its movable model joints in
-`ConnectionConfig.group_commands`. A task returns `GroupCommandOutput("source/name", payload)`;
-its ordinary claim supplies priority. The handler validates the opaque payload.
+Declare `pose: In[PoseStamped]` on the connection and map `"pose"` to its
+movable model joints in `ConnectionConfig.group_commands`. Give the coordinator
+an `arm_pose: Out[PoseStamped]` and remap it to that input. Apply
+`wire_native_commands(blueprint, coordinator_name, connection_name, declaration)`
+to the solidified, remapped blueprint. It derives the type from the `In` and
+checks that the `Out` matches. Only use this for indivisible inputs; scalar
+command ports and direct inputs are unchanged.
 
-A group wins all its axes or reserves none. Scalars still win per joint.
-Group-owned joints skip scalar commands and resume holds from feedback.
+A task returns `GroupCommandOutput("arm/pose", pose)`. Its claim gives the
+priority, not a duplicate joint list. The group wins every joint or reserves
+none. Uncovered axes keep ordinary per-joint arbitration and holds.
 
-Use `bind_group_handler` before start. The local `(payload, lease)` handler may
-enqueue; the worker must call `lease.try_write` around the final bounded synchronous
-write, which must not reenter the coordinator. The single-use lease is fenced by
-ownership, feedback freshness, cancellation and stop. It is not a device watchdog.
-A mixed consumer must use one device writer and prevent replay of queued scalars.
+Use `subscribe_native` to get the unchanged message and a transport ticket.
+Do any work outside `write_native`, then use it to admit the final bounded
+write. The ticket carries sequencing, revocation epoch and an expiry bounded
+by feedback freshness and the receiver's deadman. No payload timestamp is
+used for authorization. These private Zenoh streams require a single
+coordinator and workers sharing the host's monotonic clock.
+
+Once a receiver observes a revoke, late packets and not-yet-admitted writes
+from that epoch are rejected. Cancel, E-stop and coordinator stop do not wait
+for a remote acknowledgement or preempt a write already admitted. If a revoke
+is not observed, old tickets still expire. The existing connection deadman
+handles total command silence; a mixed consumer still owns native limits,
+one device writer, and the safe transition between scalar and native modes.
 
 ## Files
 

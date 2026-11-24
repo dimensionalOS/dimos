@@ -42,11 +42,9 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
 from dimos.control.contract.limits import Limits, limits as limits_of, movable_joints
-from dimos.control.group_command import (
-    GroupCommandHandler,
-    GroupCommandLease,
-)
+from dimos.control.native_command import native_transport
 from dimos.control.task import JointStateSnapshot
+from dimos.core.stream import Out
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -125,14 +123,6 @@ class _Joint:
     position_limit: Limits = Limits()
 
 
-@dataclass(slots=True)
-class _GroupOwner:
-    task: str
-    feedback_epoch: int
-    issued: int = 0
-    written: int = 0
-
-
 class ConnectionSource:
     """One robot behind a connection module, as the coordinator's tick loop sees it.
 
@@ -165,8 +155,7 @@ class ConnectionSource:
         reading_timeout_s: float,
         *,
         zero_stiffness_joints: Collection[str] = (),
-        group_handlers: Mapping[str, GroupCommandHandler] | None = None,
-        group_lock: threading.RLock | None = None,
+        group_ports: Mapping[str, Out[Any]] | None = None,
     ) -> None:
         robot = config.source
         if commands and not readings:
@@ -201,13 +190,10 @@ class ConnectionSource:
                 if any(not j.startswith(f"{robot}/") for j in joints):
                     raise ValueError(f"{interface!r}: covered joint belongs to another source")
                 self.group_joints[interface] = joints
-        self._group_handlers = dict(group_handlers or {})
-        if self._group_handlers.keys() != self.group_joints.keys():
-            raise ValueError(f"{robot!r}: bind one local handler per group")
-        # Share the coordinator write/stop boundary. A local handler can
-        # use its lease synchronously while the tick holds this lock.
-        self._group_lock = group_lock if group_lock is not None else threading.RLock()
-        self._group_owners: dict[str, _GroupOwner] = {}
+        self._group_ports = dict(group_ports or {})
+        if self._group_ports.keys() != self.group_joints.keys():
+            raise ValueError(f"{robot!r}: each declared command needs a typed Out")
+        self._group_owners: dict[str, tuple[str, int]] = {}
         self._reading_epoch = 0
         self._group_joint_by_key: dict[str, str] = {}
         self._joint_receipts: dict[str, tuple[float, int]] = {}
@@ -231,7 +217,7 @@ class ConnectionSource:
             key = Key(raw_key)
             keys.setdefault(key.joint, {})[key.interface] = key
         if self.group_joints:
-            covered = set().union(*self.group_joints.values())
+            covered = frozenset().union(*self.group_joints.values())
             for name in movable.values():
                 if name in covered:
                     keys.setdefault(name, {})
@@ -423,70 +409,58 @@ class ConnectionSource:
             self._restart = True
             self._reading_epoch += 1
 
+    def accepts_group(self, interface: str, payload: object) -> bool:
+        port = self._group_ports.get(interface)
+        return port is not None and type(payload) is port.type
+
     def retain_group_owners(self, winners: Mapping[str, str]) -> None:
-        for interface, owner in list(self._group_owners.items()):
-            if winners.get(interface) != owner.task:
-                del self._group_owners[interface]
+        for interface, (task, _) in list(self._group_owners.items()):
+            if winners.get(interface) != task:
+                self._revoke_group(interface)
 
     def revoke_group_owners(self, task: str | None) -> None:
-        for interface, owner in list(self._group_owners.items()):
-            if task is None or owner.task == task:
-                del self._group_owners[interface]
+        for interface, (owner, _) in list(self._group_owners.items()):
+            if task is None or owner == task:
+                self._revoke_group(interface)
+
+    def _revoke_group(self, interface: str) -> None:
+        del self._group_owners[interface]
+        try:
+            native_transport(self._group_ports[interface], interface).revoke()
+        except Exception:
+            logger.exception(f"Failed to send revoke for {interface}; commands still expire")
 
     def group_feedback_epoch(self, interface: str) -> int | None:
-        """Return the group's continuity token only while its feedback is fresh."""
         with self._lock:
-            return self._group_feedback_epoch(interface, time.monotonic())
+            return self._group_feedback(interface, time.monotonic())[0]
 
-    def _group_feedback_epoch(self, interface: str, now: float) -> int | None:
+    def _group_feedback(self, interface: str, now: float) -> tuple[int | None, float]:
         if not self._ready(now):
-            return None
+            return None, 0.0
         epoch = self._reading_epoch
+        receipt = min(self._port_receipts.values())
         for joint in self.group_joints[interface]:
             received, gaps = self._joint_receipts.get(joint, (float("-inf"), 0))
-            if now - received > self._timeout:
-                return None
+            receipt = min(receipt, received)
             epoch += gaps
-        return epoch
+        deadline = receipt + self._timeout
+        return (epoch if now < deadline else None), deadline
 
     def route_group(self, interface: str, task: str, payload: object, feedback_epoch: int) -> None:
-        """Offer a winning payload while the caller holds the shared write/stop lock."""
+        """Offer a winning payload while the caller holds the coordinator write lock."""
         with self._lock:
-            now = time.monotonic()
-            if feedback_epoch != self._group_feedback_epoch(interface, now):
-                self._group_owners.pop(interface, None)
-                return
-            owner = self._group_owners.get(interface)
-            if owner is None or owner.task != task or owner.feedback_epoch != feedback_epoch:
-                owner = self._group_owners[interface] = _GroupOwner(task, feedback_epoch)
-            expires_at = now + self._timeout
-            owner.issued += 1
-            sequence = owner.issued
-            # Ownership changed independently of whether the legacy batch
-            # on other joints passes validation this tick.
+            epoch, deadline = self._group_feedback(interface, time.monotonic())
+        owner = self._group_owners.get(interface)
+        if owner is not None and (owner != (task, feedback_epoch) or epoch != feedback_epoch):
+            self._revoke_group(interface)
+        if epoch != feedback_epoch:
+            return
+        port = self._group_ports[interface]
+        self._group_owners[interface] = task, feedback_epoch
+        native_transport(port, interface).offer(port, payload, int(deadline * 1e9))
+        with self._lock:
             for joint in self.group_joints[interface]:
                 self._holds.pop(joint, None)
-
-        def guard(write: Callable[[], None]) -> bool:
-            with self._group_lock:
-                with self._lock:
-                    now = time.monotonic()
-                    if (
-                        self._group_owners.get(interface) is not owner
-                        or sequence <= owner.written
-                        or now >= expires_at
-                        or owner.feedback_epoch != self._group_feedback_epoch(interface, now)
-                    ):
-                        return False
-                    owner.written = sequence
-                write()
-                return True
-
-        try:
-            self._group_handlers[interface](payload, GroupCommandLease(expires_at, guard))
-        except Exception:
-            self.revoke_group_owners(task)
-            raise
 
     def ready_for_control(self, now: float | None = None) -> bool:
         """Whether every required reading port has reported and is fresh.

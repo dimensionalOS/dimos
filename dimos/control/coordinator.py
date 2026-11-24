@@ -44,12 +44,12 @@ from dimos.control.components import (
 )
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
-from dimos.control.group_command import GroupCommandHandler
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
     ConnectedWholeBody,
 )
+from dimos.control.native_command import native_transport
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -248,7 +248,6 @@ class ControlCoordinator(Module):
         # command ports by kind. Filled on start; guarded by _hardware_lock.
         self._connections: dict[str, ConnectionSource] = {}
         self._command_ports: dict[str, dict[str, Out[Any]]] = {}
-        self._group_handlers: dict[str, dict[str, GroupCommandHandler]] = {}
         # While set, robots behind connection modules are sent nothing.
         # Guarded by _hardware_lock.
         self._estopped = False
@@ -419,23 +418,6 @@ class ControlCoordinator(Module):
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
         self._robot_joint_port(hardware_id).publish(msg)
 
-    def bind_group_handler(self, interface: str, handler: GroupCommandHandler) -> None:
-        """Bind a local consumer for ``source/interface`` before starting.
-
-        The consumer must return promptly (e.g. enqueue for a worker). Its
-        final write must use the lease guard. This is not a stream or RPC.
-        """
-        source, sep, name = interface.partition("/")
-        if not sep or not source or not name or "/" in name or not callable(handler):
-            raise ValueError("expected a qualified source/interface and a callable handler")
-        with self._hardware_lock:
-            if self._connections or self._tick_loop is not None:
-                raise RuntimeError("bind group handlers before starting the coordinator")
-            handlers = self._group_handlers.setdefault(source, {})
-            if interface in handlers:
-                raise ValueError(f"handler already bound for {interface!r}")
-            handlers[interface] = handler
-
     def _connect_robots(self) -> None:
         """Set up each robot this coordinator's ports name, and listen on its reading ports.
 
@@ -447,8 +429,6 @@ class ControlCoordinator(Module):
         commands = _robot_ports(self.outputs, COMMAND_PORTS)
         readings = _robot_ports(self.inputs, READING_PORTS)
         robots = list(dict.fromkeys((*commands, *readings)))
-        if self._group_handlers.keys() - set(robots):
-            raise ValueError("group handlers require matching robot ports")
         if not robots:
             if self.config.connections:
                 raise ValueError("connection declarations require matching robot ports")
@@ -465,13 +445,20 @@ class ControlCoordinator(Module):
             )
         with self._hardware_lock:
             for robot in robots:
+                groups = {}
+                for name in declarations[robot].group_commands:
+                    interface = f"{robot}/{name}"
+                    output_port = self.outputs.get(f"{robot}_{name}")
+                    if output_port is None or name in COMMAND_PORTS:
+                        raise ValueError(f"{interface}: expected an additional typed Out")
+                    native_transport(output_port, interface)
+                    groups[interface] = output_port
                 source = ConnectionSource(
                     declarations[robot],
                     commands.get(robot, []),
                     readings.get(robot, []),
                     self.config.reading_timeout_s,
-                    group_handlers=self._group_handlers.get(robot),
-                    group_lock=self._hardware_lock,
+                    group_ports=groups,
                     zero_stiffness_joints=[
                         joint
                         for joint in self.config.zero_stiffness_joints

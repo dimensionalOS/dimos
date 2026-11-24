@@ -173,11 +173,11 @@ class TickLoop:
     @property
     def is_running(self) -> bool:
         """Whether the tick loop is currently running."""
-        return self._tick_thread is not None and self._tick_thread.is_alive()
+        return not self._stop_event.is_set()
 
     def start(self) -> None:
         """Start the tick loop in a daemon thread."""
-        if self.is_running:
+        if not self._stop_event.is_set():
             logger.warning("TickLoop already running")
             return
 
@@ -204,7 +204,7 @@ class TickLoop:
     def revoke_group_commands(
         self, task: str | None = None, *, enabled: bool | None = None
     ) -> None:
-        """Fence computed-but-unrouted output and drain authorized writes before returning."""
+        """Fence unrouted output and send revokes; this is not a receiver acknowledgement."""
         if not self._group_sources:
             return
         with self._hardware_lock:
@@ -426,26 +426,40 @@ class TickLoop:
             if epoch is None:
                 continue
             source, joints = self._group_interfaces[output.interface]
-            if epoch == source.group_feedback_epoch(output.interface):
+            if source.accepts_group(output.interface, output.payload) and (
+                epoch == source.group_feedback_epoch(output.interface)
+            ):
                 eligible[output.interface] = epoch
                 contested.update(dict.fromkeys(joints, source))
-        ordered = sorted(commands, key=lambda entry: -entry[1].priority) if eligible else commands
+        preemptions: dict[str, dict[str, str]] = {}
         groups: dict[str, tuple[str, object]] = {}
         covered: dict[str, str] = {}
-        winners: dict[str, JointWinner] = {}  # joint_name -> current winner
-        preemptions: dict[str, dict[str, str]] = {}  # loser_task -> {joint: winner_task}
-
-        for task, claim, output in ordered:
-            if isinstance(output, GroupCommandOutput):
-                if output.interface in eligible:
-                    _, joints = self._group_interfaces[output.interface]
-                    blocked = {j: covered[j] for j in joints & covered.keys()}
-                    blocked.update((j, winners[j].task_name) for j in joints & winners.keys())
+        if eligible:
+            reserved: dict[str, str] = {}
+            for task, _, output in sorted(commands, key=lambda entry: -entry[1].priority):
+                if isinstance(output, GroupCommandOutput):
+                    if output.interface not in eligible:
+                        continue
+                    source, joints = self._group_interfaces[output.interface]
+                    if not source.accepts_group(output.interface, output.payload):
+                        continue
+                    blocked = {joint: reserved[joint] for joint in joints & reserved.keys()}
                     if blocked:
                         preemptions.setdefault(task.name, {}).update(blocked)
                     else:
                         groups[output.interface] = task.name, output.payload
                         covered.update(dict.fromkeys(joints, task.name))
+                        reserved.update(dict.fromkeys(joints, task.name))
+                elif output is not None and output.get_values() is not None:
+                    for joint in output.joint_names:
+                        if (
+                            joint_source := contested.get(joint)
+                        ) and joint_source.supports_joint_mode(joint, output.mode):
+                            reserved.setdefault(joint, task.name)
+
+        winners: dict[str, JointWinner] = {}
+        for task, claim, output in commands:
+            if isinstance(output, GroupCommandOutput):
                 continue
             if output is None:
                 continue
@@ -457,10 +471,6 @@ class TickLoop:
             for i, joint_name in enumerate(output.joint_names):
                 if joint_name in covered:
                     preemptions.setdefault(task.name, {})[joint_name] = covered[joint_name]
-                    continue
-                if (source := contested.get(joint_name)) and not source.supports_joint_mode(
-                    joint_name, output.mode
-                ):
                     continue
                 candidate = JointWinner(claim.priority, values[i], output.mode, task.name)
 
@@ -496,26 +506,15 @@ class TickLoop:
             owners = {interface: task for interface, (task, _) in groups.items()}
             for source in self._group_sources:
                 source.retain_group_owners(owners)
-            for interface, (task, payload) in groups.items():
+            for interface, (task_name, payload) in groups.items():
                 source, _ = self._group_interfaces[interface]
                 try:
-                    source.route_group(interface, task, payload, eligible[interface])
+                    source.route_group(interface, task_name, payload, eligible[interface])
                 except Exception:
                     logger.exception(f"Failed to route group {interface}")
 
-        # Keep scalar routing's original first-seen order despite sorting the mixed candidates.
-        order = (
-            dict.fromkeys(
-                j
-                for _, _, output in commands
-                if isinstance(output, JointCommandOutput) and output.get_values() is not None
-                for j in output.joint_names
-            )
-            if eligible
-            else winners
-        )
         return (
-            {j: (w.value, w.mode, w.task_name) for j in order if (w := winners.get(j))},
+            {j: (w.value, w.mode, w.task_name) for j, w in winners.items()},
             preemptions,
             set(covered),
         )

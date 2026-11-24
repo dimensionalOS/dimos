@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Local, whole-group command contract (no transport or device semantics)."""
+"""An indivisible output addressed to a declared connection input."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 
@@ -26,19 +25,3 @@ class GroupCommandOutput:
 
     interface: str
     payload: object
-
-
-@dataclass(frozen=True, slots=True)
-class GroupCommandLease:
-    """Local authority for one payload. Not serializable or renewable.
-
-    Compute outside the guard. Pass the final synchronous, bounded write to
-    ``try_write``; revocation and writes share a lock. A false result means
-    the write did not run. The write must not reenter the coordinator.
-    """
-
-    expires_at: float  # time.monotonic()
-    try_write: Callable[[Callable[[], None]], bool]
-
-
-GroupCommandHandler = Callable[[object, GroupCommandLease], None]
