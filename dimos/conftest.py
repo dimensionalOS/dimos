@@ -93,6 +93,12 @@ if (
 ):
     os.environ["MUJOCO_GL"] = "egl"
 
+# Load Drake before MuJoCo can be. On Linux, mujoco 4 loaded first breaks Drake's URDF parsing
+# (`free(): invalid pointer` in libstdc++'s std::regex, under GeometryInstance::set_name); Drake
+# first, both work. Every test shares this one process, so whichever loads first is up to here.
+with suppress(ImportError):
+    import pydrake.multibody.parsing  # noqa: F401
+
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
 # the macOS default soft cap (~256) gets exhausted and tests fail with
