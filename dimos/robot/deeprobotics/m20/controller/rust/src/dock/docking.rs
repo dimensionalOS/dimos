@@ -1014,8 +1014,15 @@ impl Docking {
     }
 
     /// The undock starts (DoOverChargeTask): Close24vPower, then the detector restarts.
-    fn start_undock(&mut self) {
+    fn start_undock(&mut self, view: &View) {
         self.undock_pending = false;
+        if view.is(State::JointDamping) {
+            // DoOverChargeTask (0x203908): in soft e-stop (motion state 2) it writes nothing and returns 0x1008, which
+            // DoExcepHandlingProcess takes to idle (the charge stays: the idle loop takes it again)
+            let target = self.target;
+            self.finish(target, "软急停，退出退桩操作 (0x1008)", false);
+            return;
+        }
         self.status.charging = false;
         self.write(Write::ChargeEnable(0));
         // OpenMarkerProcess: close and open the detector, then FindTarget
@@ -1126,7 +1133,7 @@ impl Docking {
         if self.undock_pending
             && (self.phase != Phase::Charging || self.tick >= self.charge_sleep_until)
         {
-            self.start_undock();
+            self.start_undock(view);
         }
         self.idle_step(view);
         self.status.phase = self.phase;

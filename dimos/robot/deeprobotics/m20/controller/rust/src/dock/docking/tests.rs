@@ -539,3 +539,70 @@ fn a_controller_fault_while_charging_keeps_the_charge() {
     assert!(b.k.status().charging && !b.k.status().error);
     assert!(b.k.request(Request::Undock, &damping).is_ok());
 }
+
+#[test]
+fn an_undock_in_soft_e_stop_writes_nothing_and_idles() {
+    // DoOverChargeTask (0x203908): motion state 2 -> 0x1008, no write; the idle loop then takes the charge again
+    let mut b = Boot::new();
+    b.run(10_000, None, 0);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    let mut damping = lying();
+    damping.state = Some(State::JointDamping);
+    b.k.record_writes();
+    b.k.request(Request::Undock, &damping).unwrap();
+    b.run_as(&damping, 16_000, None, 0, u64::MAX);
+    let writes = b.k.take_writes();
+    assert!(
+        writes
+            .iter()
+            .all(|(_, w)| matches!(w, Write::ChargeEnable(1))),
+        "{writes:?}"
+    );
+    assert_eq!(b.k.phase(), Phase::Charging);
+}
+
+#[test]
+fn an_undock_no_dock_this_run_set_restores_robot_commander_s_initial_gait() {
+    // mInitRobotGaitStatus_ is RobotCommander's 0x1001 (0x1f5990) until a goToPileAction (0x180bc0) records the
+    // gait it starts on; restoreInitRobotGaitStatus (0x1f4218) writes it after the undock
+    let mut b = Boot::new();
+    b.run(10_000, None, 0);
+    assert_eq!(b.k.phase(), Phase::Charging);
+    b.k.record_writes();
+    b.k.request(Request::Undock, &lying()).unwrap();
+    // the undock's own stand-up and back-off as charge_manager writes them, on a robot that follows
+    let mut view = lying();
+    let mut seq = b.seq;
+    let mut gaits = vec![];
+    // the robot backs straight out at 0.3 m/s once the back-off starts
+    let mut out_m = 0.0;
+    for t in 0..30_000u64 {
+        if t % 100 == 0 {
+            seq += 1;
+        }
+        if b.k.phase() == Phase::BackOff {
+            out_m += 0.0003;
+        }
+        let out = b.k.step(&view, Some((docked(-out_m, 0.0), seq)), None);
+        if let Some(o) = &out {
+            view.state = Some(match o.target {
+                Target::Stand => State::StandUp,
+                Target::RlControl => State::RlControl,
+                Target::LieDown => State::LieDown,
+                _ => State::Passive,
+            });
+            view.gait = o.gait;
+            view.runner = Some(cfg().runner_for_gait(o.gait).to_string());
+        }
+        if b.k.phase() == Phase::Idle {
+            break;
+        }
+    }
+    for (_, w) in b.k.take_writes() {
+        if let Write::Gait(g) = w {
+            gaits.push(g);
+        }
+    }
+    assert_eq!(b.k.status().result, "undocked");
+    assert_eq!(gaits.last(), Some(&0x1001), "{gaits:#x?}");
+}
