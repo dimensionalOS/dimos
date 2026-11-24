@@ -143,3 +143,69 @@ def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
     cast_at = [1.0 + tick for tick in range(TICKS)]
     assert [cloud.ts for cloud in run["published"]] == cast_at
     assert run["transforms"] == cast_at
+
+
+def _toy_world(sensor: Any, mount: str) -> Any:
+    """A real MuJoCo view of the toy dog standing in a scene, with ``sensor`` grafted on at ``mount``."""
+    from pathlib import Path
+
+    from dimos.robot.assets.model import UsdModel
+    from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+    from dimos.sim2.assets.toy import toy_robot
+    from dimos.sim2.sim import compose_world
+    from dimos.sim2.usd_layer import layer_file
+    from dimos.sim2.world_observations import WorldMirror, WorldWriter
+
+    class _Part:
+        def __init__(self, usd: str, mounted_on: str | None) -> None:
+            self.usd, self.on = usd, mounted_on
+
+        def get_usd(self) -> str:
+            return self.usd
+
+        def mounted_on(self) -> str | None:
+            return self.on
+
+    scene = Path(__file__).parent / "mujoco" / "assets" / "scene.usda"
+    room = UsdModel.from_file(scene).with_frames(
+        {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
+    )
+    dog = toy_robot().with_frames({"lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    world_usd = compose_world(
+        [
+            _Part(room.usd, None),
+            _Part(prefix_usd_frames(dog.usd, "dog"), "dog"),
+            _Part(sensor.get_usd(), mount),
+        ]
+    ).usd
+    writer, mirror = WorldWriter(), WorldMirror()
+    writer.start_ns = 0
+    writer.add("world")
+    writer.add("dog", model="dog.usda")
+    writer.position("dog", [0.0, 0.0, 1.0, 0, 0, 0, 1])
+    mirror.apply(writer.end_frame(1.0))
+
+    async def ticks(rate_hz: float) -> AsyncIterator[float]:
+        for _ in range(TICKS):
+            yield mirror.time
+
+    mirror.ticks = ticks
+    sensor._world = mirror
+    sensor.world_layer = lambda: layer_file(world_usd, "toy-world")
+    return mirror
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+def test_a_livox_in_its_housing_sees_past_the_housing() -> None:
+    from dimos.sim2.livox import LivoxSim
+
+    livox = LivoxSim(instance_name="dog/lidar/livox", mount="dog/lidar")
+    published: list[Any] = []
+    try:
+        _toy_world(livox, "dog/lidar")
+        livox.lidar.publish = published.append
+        livox.publish_usd_tf = lambda ts=None: None
+        asyncio.run(livox._scan())
+    finally:
+        livox.stop()
+    assert published and all(len(cloud.as_numpy()[0]) > 0 for cloud in published)
