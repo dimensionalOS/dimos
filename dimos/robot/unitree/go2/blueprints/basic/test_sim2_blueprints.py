@@ -58,6 +58,7 @@ def test_each_namespace_has_one_unmounted_hardware(name: str) -> None:
     )
 
 
+@pytest.mark.self_hosted  # the composed world reads the Go2 meshes and occlusion map from Git LFS
 @pytest.mark.parametrize("name", _BLUEPRINTS)
 def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
     with _hardware(name) as hardware:

@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from dimos.robot.unitree.go2.sim2 import Go2Sim
 
 pytest.importorskip("pxr")
+# Go2Sim loads its policy and meshes from Git LFS data, which GitHub-hosted runners do not fetch.
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture
