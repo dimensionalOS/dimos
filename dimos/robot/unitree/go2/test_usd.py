@@ -18,6 +18,7 @@ import pytest
 pytest.importorskip("pxr")
 
 
+@pytest.mark.self_hosted  # the bundled policy is Git LFS data
 def test_the_layer_carries_the_gains_the_policy_runs_on() -> None:
     from dimos.robot.unitree.go2.sim2 import GO2_USD
     from dimos.sim2.mujoco.drives import usd_drives

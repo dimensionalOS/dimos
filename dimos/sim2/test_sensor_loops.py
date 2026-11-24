@@ -111,6 +111,7 @@ def l1() -> Iterator[Any]:
     sensor.stop()
 
 
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
 def test_a_livox_cloud_is_stamped_with_the_world_it_was_cast_in(
     livox: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
