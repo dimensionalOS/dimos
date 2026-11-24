@@ -109,7 +109,7 @@ def _reference(pxr: Any, stage: Any, path: str, layer: Path) -> None:
 
 
 def _mesh_file(pxr: Any, glb: Path, scene: str) -> Path:
-    """The GLB's meshes as a cached USD layer, one Mesh per GLB mesh node, each in the GLB's own frame."""
+    """The GLB's meshes as a cached USD layer, one Mesh per GLB mesh node, each in the GLB's own frame and material."""
     data = glb.read_bytes()
     if data.startswith(_LFS_POINTER):
         raise FileNotFoundError(
@@ -119,11 +119,13 @@ def _mesh_file(pxr: Any, glb: Path, scene: str) -> Path:
     out = _private(_MESHES) / f"{hashlib.sha256(data).hexdigest()[:16]}.usdc"
     if out.exists():
         return out
+    from pxr import UsdShade
     import trimesh
 
     loaded = trimesh.load_scene(io.BytesIO(data), file_type="glb")
     stage = pxr.Usd.Stage.CreateInMemory()
     stage.SetDefaultPrim(pxr.UsdGeom.Xform.Define(stage, "/geometry").GetPrim())
+    materials: dict[int, Any] = {}
     for index, node in enumerate(loaded.graph.nodes_geometry):
         transform, geometry = loaded.graph.get(node)
         mesh = loaded.geometry[geometry]
@@ -137,9 +139,68 @@ def _mesh_file(pxr: Any, glb: Path, scene: str) -> Path:
             pxr.Vt.IntArray.FromNumpy(mesh.faces.astype(np.int32).ravel())
         )
         _shell(pxr, part.GetPrim())
+        visual = mesh.visual
+        # A GLB's mesh has a glTF material: trimesh reads it as a PBRMaterial on TextureVisuals.
+        if isinstance(visual, trimesh.visual.TextureVisuals) and visual.material is not None:
+            if visual.uv is not None:
+                uv = pxr.UsdGeom.PrimvarsAPI(part).CreatePrimvar(
+                    "st", pxr.Sdf.ValueTypeNames.TexCoord2fArray, pxr.UsdGeom.Tokens.vertex
+                )
+                uv.Set(pxr.Vt.Vec2fArray.FromNumpy(visual.uv.astype(np.float32)))
+            source = visual.material
+            if id(source) not in materials:
+                materials[id(source)] = _material(
+                    pxr, stage, f"/geometry/material_{len(materials)}", source
+                )
+            UsdShade.MaterialBindingAPI.Apply(part.GetPrim()).Bind(materials[id(source)])
     partial = out.with_suffix(f".{os.getpid()}.usdc")
     stage.GetRootLayer().Export(str(partial))
     partial.replace(out)
+    return out
+
+
+def _material(pxr: Any, stage: Any, path: str, pbr: Any) -> Any:
+    """The GLB's PBR material as a UsdPreviewSurface: its base color (by factor, or texture times factor) and alpha."""
+    from pxr import UsdShade
+
+    Shader, Types = UsdShade.Shader, pxr.Sdf.ValueTypeNames
+    material = UsdShade.Material.Define(stage, path)
+    surface = Shader.Define(stage, f"{path}/surface")
+    surface.CreateIdAttr("UsdPreviewSurface")
+    # glTF's defaults, for what the GLB leaves out.
+    factor = np.ones(4) if pbr.baseColorFactor is None else np.asarray(pbr.baseColorFactor) / 255
+    metallic = 1.0 if pbr.metallicFactor is None else float(pbr.metallicFactor)
+    roughness = 1.0 if pbr.roughnessFactor is None else float(pbr.roughnessFactor)
+    surface.CreateInput("metallic", Types.Float).Set(metallic)
+    surface.CreateInput("roughness", Types.Float).Set(roughness)
+    surface.CreateInput("opacity", Types.Float).Set(float(factor[3]))
+    color = surface.CreateInput("diffuseColor", Types.Color3f)
+    if pbr.baseColorTexture is None:
+        color.Set(pxr.Gf.Vec3f(*factor[:3].tolist()))
+    else:
+        reader = Shader.Define(stage, f"{path}/st")
+        reader.CreateIdAttr("UsdPrimvarReader_float2")
+        reader.CreateInput("varname", Types.Token).Set("st")
+        texture = Shader.Define(stage, f"{path}/texture")
+        texture.CreateIdAttr("UsdUVTexture")
+        texture.CreateInput("file", Types.Asset).Set(_image_file(pbr.baseColorTexture).name)
+        texture.CreateInput("scale", Types.Float4).Set(pxr.Gf.Vec4f(*factor.tolist()))
+        texture.CreateInput("st", Types.Float2).ConnectToSource(reader.ConnectableAPI(), "result")
+        color.ConnectToSource(texture.ConnectableAPI(), "rgb")
+    material.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), "surface")
+    return material
+
+
+def _image_file(image: Any) -> Path:
+    """The texture as a PNG beside the mesh layers, which name it relative to themselves."""
+    pixels = io.BytesIO()
+    image.save(pixels, format="PNG")
+    data = pixels.getvalue()
+    out = _MESHES / f"{hashlib.sha256(data).hexdigest()[:16]}.png"
+    if not out.exists():
+        partial = out.with_suffix(f".{os.getpid()}.png")
+        partial.write_bytes(data)
+        partial.replace(out)
     return out
 
 

@@ -15,6 +15,7 @@
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.sim2.dimsim import dimsim_scene
@@ -66,3 +67,42 @@ def test_the_mesh_cache_is_not_in_the_shared_temporary_directory() -> None:
 
     assert dimsim_scene._MESHES.is_relative_to(CACHE_DIR)
     assert not dimsim_scene._MESHES.is_relative_to(tempfile.gettempdir())
+
+
+def _compiled(pxr: Any, mesh_layer: Path, tmp_path: Path) -> Any:
+    """The mesh layer referenced from a scene elsewhere, as the sensors' MuJoCo compiles it."""
+    import mujoco
+
+    from dimos.sim2.mujoco.world import compile_world
+
+    stage = pxr.Usd.Stage.CreateNew(str(tmp_path / "scene" / "scene.usda"))
+    stage.SetDefaultPrim(pxr.UsdGeom.Xform.Define(stage, "/scene").GetPrim())
+    dimsim_scene._reference(pxr, stage, "/scene/box", mesh_layer)
+    stage.Save()
+    model = compile_world(tmp_path / "scene" / "scene.usda").compile()
+    assert isinstance(model, mujoco.MjModel)
+    return model
+
+
+def test_a_glb_keeps_its_base_color(pxr: Any, meshes: Path, tmp_path: Path) -> None:
+    red = trimesh.visual.material.PBRMaterial(baseColorFactor=[255, 0, 0, 255])
+    glb = _glb(tmp_path / "red.glb", trimesh.visual.TextureVisuals(material=red))
+    model = _compiled(pxr, dimsim_scene._mesh_file(pxr, glb, "test"), tmp_path)
+    (geom,) = np.flatnonzero(model.geom_matid >= 0)
+    assert model.mat_rgba[model.geom_matid[geom]] == pytest.approx([1.0, 0.0, 0.0, 1.0])
+
+
+def test_a_glb_keeps_its_texture(pxr: Any, meshes: Path, tmp_path: Path) -> None:
+    from PIL import Image
+
+    blue = Image.fromarray(np.full((4, 4, 3), [0, 0, 255], np.uint8))
+    box = trimesh.creation.box()
+    textured = trimesh.visual.TextureVisuals(
+        uv=np.zeros((len(box.vertices), 2)),
+        material=trimesh.visual.material.PBRMaterial(baseColorTexture=blue),
+    )
+    glb = _glb(tmp_path / "blue.glb", textured)
+    model = _compiled(pxr, dimsim_scene._mesh_file(pxr, glb, "test"), tmp_path)
+    assert model.ntex == 1
+    pixels = model.tex_data[: model.tex_width[0] * model.tex_height[0] * 3].reshape(-1, 3)
+    assert (pixels == [0, 0, 255]).all()
