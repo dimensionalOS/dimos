@@ -30,7 +30,8 @@ def test_the_office_camera_sees_the_room_as_its_lighting_notes_describe_it(rende
     view = MujocoView(
         usd_layer(Office555Config().usd), (), SensorMount("camera", "overview", "cam")
     )
-    brightness = view.render("cam", 640, 480).astype(float).mean(axis=2) / 255
+    image = view.render("cam", 640, 480)
+    brightness = image.astype(float).mean(axis=2) / 255
     model, data = view.model, view.data
     renderer = mujoco.Renderer(model, 480, 640)
     renderer.enable_segmentation_rendering()
@@ -45,3 +46,5 @@ def test_the_office_camera_sees_the_room_as_its_lighting_notes_describe_it(rende
     black = (model.geom_rgba[:, :3].max(axis=1) == 0) & (model.geom_matid < 0)
     painted = (geom >= 0) & ~black[geom]
     assert brightness[painted].min() > 0.02, "only a surface authored black renders black"
+    # The stage's neutral tone curve rolls bright walls off below white rather than clipping them.
+    assert (image[geom >= 0] >= 254).any(axis=-1).mean() == 0
