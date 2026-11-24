@@ -192,14 +192,17 @@ def _shapes(
         message = deployed.streams[value.stream]
         shape = shape_of(message)
         for part in value.field.split("."):
-            if isinstance(shape, dict) and part not in shape:
+            # An unknown shape may hold anything. A value that is not a message holds no fields.
+            if shape is UNKNOWN:
+                break
+            if not isinstance(shape, dict) or part not in shape:
                 problems.append(
                     f"stream value `{value.name}`: `field` names `{value.field}`, "
                     f"which is not a field of `{message.__name__}`"
                 )
                 shape = UNKNOWN
                 break
-            shape = shape[part] if isinstance(shape, dict) else UNKNOWN
+            shape = shape[part]
         shapes[value.name] = shape
 
     starts = {activity.name: activity.start for activity in definition.activities}
