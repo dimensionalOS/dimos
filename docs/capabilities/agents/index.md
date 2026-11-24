@@ -63,7 +63,7 @@ Agent.accepts(HumanMessage("walk to the door"))  # True
 app.get_module("Agent").infer(HumanMessage("what do you see?")).text
 ```
 
-`infer` blocks until the agent is done, background skills included, and shares its history with messages that arrive on the input stream.
+`infer` runs one turn and returns its answer. It shares its history with messages that arrive on the input stream. A background skill the turn starts keeps running after `infer` returns.
 
 `BaseAgent` declares no input or output stream. An agent declares the streams it reads and writes and passes what arrives to `infer`; `Agent` declares `agent_input: In[HumanMessage]` and `agent_output: Out[AIMessage]`. A module sends to it by declaring `agent_input: Out[HumanMessage]`. Outside the blueprint, `dimos.agents.client.agent_transports()` returns the transports of the running agent's streams.
 
