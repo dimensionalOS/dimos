@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -682,9 +683,45 @@ def test_a_given_grasp_that_does_not_hold_says_where_it_came_from(
 
 def _generator_client(name: str) -> MagicMock:
     """A running grasp generator as on_system_modules hands it over."""
-    client = MagicMock(remote_name=name, rpcs=frozenset({"propose_grasps_for"}))
+    client = MagicMock(
+        instance_name=name,
+        remote_name=f"runs/test/modules/{name}",
+        rpcs=frozenset({"propose_grasps_for"}),
+    )
     client.propose_grasps_for.return_value = {"generator": name, "grasps": []}
     return client
+
+
+@pytest.mark.parametrize(
+    "names",
+    [[], ["HeuristicGraspModule"], ["HeuristicGraspModule", "GraspGenXModule"], ["custom"]],
+)
+def test_grasp_generator_discovery_lists_only_running_generators(
+    module: PickAndPlaceModule, names: list[str]
+) -> None:
+    generators = [_generator_client(name) for name in names]
+    planner = MagicMock(instance_name="planner", rpcs=frozenset({"plan_to_pose"}))
+    module.on_system_modules([*generators, planner])
+
+    assert module.list_grasp_generators() == sorted(names)
+
+    for name in module.list_grasp_generators():
+        assert module.propose_grasps("cup", name) == {
+            "object_id": "cup-1",
+            "generator": name,
+            "grasps": [],
+        }
+
+
+def test_propose_grasps_schema_directs_agent_to_generator_discovery(
+    module: PickAndPlaceModule,
+) -> None:
+    schemas = {skill.func_name: json.loads(skill.args_schema) for skill in module.get_skills()}
+
+    assert "list_grasp_generators" in schemas
+    description = schemas["propose_grasps"]["description"]
+    assert "First call list_grasp_generators" in description
+    assert "generator: A name returned by list_grasp_generators." in description
 
 
 def test_propose_grasps_asks_the_generator_the_agent_names(module: PickAndPlaceModule) -> None:

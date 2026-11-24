@@ -51,17 +51,11 @@ EXPECTED_NAMES = {
         "xarm",
     },
     "drive_trains": {
-        "flowbase",
         "mock_twist_base",
-        "transport_lcm",
-        "transport_ros",
-        "unitree_go2",
     },
     "whole_body": {
         "mock_whole_body",
         "sim_mujoco_g1",
-        "transport_lcm",
-        "transport_ros",
     },
 }
 

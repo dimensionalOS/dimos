@@ -319,6 +319,21 @@ def test_build_stops_the_coordinator_when_deploy_fails(mocker) -> None:
     stop.assert_called_once()
 
 
+def test_duplicate_run_is_rejected_before_workers_start(mocker) -> None:
+    blueprint = ModuleA.blueprint().global_config(serve_coordinator_rpc=True)
+    worker_start = mocker.patch.object(WorkerManagerPython, "start")
+    owner = CoordinatorRPC.reserve(CoordinatorRPC.NAME)
+    try:
+        # Clients waiting for a fully built stack must not attach during deployment.
+        with pytest.raises(TimeoutError):
+            CoordinatorRPC.connect(timeout=0.2)
+        with pytest.raises(RuntimeError, match="another Coordinator service is already running"):
+            ModuleCoordinator.build(blueprint, reserve_rpc_name=CoordinatorRPC.NAME)
+        worker_start.assert_not_called()
+    finally:
+        owner.stop()
+
+
 def test_build_rejects_config_parsed_for_another_blueprint() -> None:
     source = ModuleA.blueprint()
     parsed = BlueprintConfigParser(source).parse(environ={})
@@ -863,7 +878,9 @@ def test_build_calls_remote_module_reference_over_zenoh() -> None:
         overrides={"g": {"n_workers": 1, "transport": "zenoh", "viewer": "none"}},
     )
 
-    provider = ModuleCoordinator.build(provider_blueprint, provider_config)
+    provider = ModuleCoordinator.build(
+        provider_blueprint, provider_config, module_rpc_namespace="runs/run-1/hosts/host-a/modules"
+    )
     consumer = ModuleCoordinator.build(
         consumer_blueprint,
         consumer_config,
@@ -1182,7 +1199,7 @@ class SystemModulesRecorder(Module):
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
-        self._lists.append(sorted(module.remote_name for module in modules))
+        self._lists.append(sorted(module.instance_name for module in modules))
 
     @rpc
     def module_lists(self) -> list[list[str]]:
@@ -1243,6 +1260,24 @@ def test_start_rpc_service_responds_to_ping(dynamic_coordinator) -> None:
         client.stop()
 
 
+def test_builds_in_one_process_keep_their_own_rpc_service_setting(build_coordinator) -> None:
+    owner = build_coordinator(ModuleA.blueprint().global_config(serve_coordinator_rpc=True))
+    companion = build_coordinator(ModuleC.blueprint().global_config(serve_coordinator_rpc=False))
+
+    owner.start_rpc_service()
+    companion.start_rpc_service()
+    client = CoordinatorRPC.connect(timeout=2.0)
+    try:
+        assert [module.class_name for module in client.call("list_modules")] == ["ModuleA"]
+    finally:
+        client.stop()
+
+    # An explicit update to this coordinator still takes effect.
+    companion.load_blueprint(Calculator1.blueprint().global_config(serve_coordinator_rpc=True))
+    with pytest.raises(RuntimeError, match="another Coordinator service is already running"):
+        companion.start_rpc_service()
+
+
 def test_start_rpc_service_is_idempotent(dynamic_coordinator) -> None:
     dynamic_coordinator.start_rpc_service()
     first_service = dynamic_coordinator._coordinator_rpc
@@ -1270,6 +1305,18 @@ def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, moc
     start_rpc.assert_called_once_with()
     wait.assert_called_once_with()
     stop.assert_called_once_with()
+
+
+def test_loop_cleans_up_when_a_python_stack_cannot_serve(dynamic_coordinator, mocker) -> None:
+    mocker.patch.object(
+        dynamic_coordinator, "start_rpc_service", side_effect=RuntimeError("already running")
+    )
+    stop = mocker.spy(dynamic_coordinator, "stop")
+
+    with pytest.raises(RuntimeError, match="already running"):
+        dynamic_coordinator.loop()
+
+    stop.assert_called_once()
 
 
 def test_list_module_names(dynamic_coordinator) -> None:
@@ -1313,8 +1360,7 @@ def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
     with pytest.raises(ValueError, match="Multiple instances"):
         dynamic_coordinator.get_instance(NamedModule)
 
-    # Each proxy reaches its own instance over the instance-name RPC topic.
-    assert p0.remote_name == "robot0/namedmodule"
+    assert p0.instance_name == "robot0/namedmodule"
     assert p0.whoami() == "robot0/namedmodule"
     assert p1.whoami() == "robot1/namedmodule"
 
@@ -1322,7 +1368,8 @@ def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
         "robot0/namedmodule",
         "robot1/namedmodule",
     }
-    descriptors = {d.rpc_name: d for d in dynamic_coordinator.list_modules()}
+    descriptors = {d.display_name: d for d in dynamic_coordinator.list_modules()}
+    assert descriptors["robot0/namedmodule"].rpc_name == p0.remote_name
     assert descriptors["robot0/namedmodule"].class_name == "NamedModule"
 
 
@@ -1332,7 +1379,8 @@ def test_rpc_client_roundtrip_preserves_remote_name(dynamic_coordinator) -> None
     restored = decode(encode(proxy))
     try:
         assert restored.actor_instance is None
-        assert restored.remote_name == "robot0/namedmodule"
+        assert restored.remote_name == proxy.remote_name
+        assert restored.instance_name == "robot0/namedmodule"
         assert restored.whoami() == "robot0/namedmodule"
     finally:
         restored.stop_rpc_client()
@@ -1463,6 +1511,16 @@ def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
         wait_until(lambda: "from_echo" in echo.seen(), timeout=10.0)
     finally:
         coordinator.stop()
+
+
+def test_module_shutdown_only_stops_its_own_coordinator(dynamic_coordinator) -> None:
+    module = dynamic_coordinator.deploy(ModuleA)
+    with pytest.raises(ValueError, match="different coordinator"):
+        dynamic_coordinator.shutdown(requesting_module="runs/other/modules/ModuleA")
+    assert not dynamic_coordinator._shutdown_event.is_set()
+
+    dynamic_coordinator.shutdown(requesting_module=module.remote_name)
+    assert dynamic_coordinator._shutdown_event.is_set()
 
 
 def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:

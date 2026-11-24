@@ -23,8 +23,8 @@ import numpy as np
 from openai import OpenAI
 from pydantic import Field
 import soundfile as sf  # type: ignore[import-untyped]
-from unitree_webrtc_connect.constants import RTC_TOPIC
 
+from dimos.robot.unitree.webrtc_connect import RTC_TOPIC
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
 

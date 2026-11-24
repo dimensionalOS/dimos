@@ -38,8 +38,8 @@ function panelFor(view: RenderedView, changed: () => void): ViewPanel<RenderedVi
  */
 export class Gallery implements Component {
   readonly details: RenderDetails;
+  readonly openPanel: (index: number) => void;
   private readonly changed: () => void;
-  private readonly openPanel: (index: number) => void;
   private overview: TerminalImage | null = null;
   private overviewError: string | null = null;
   private focused: ViewPanel<RenderedView["kind"]> | null = null;

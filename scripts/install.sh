@@ -641,8 +641,8 @@ prompt_install_mode() {
     [[ -n "$INSTALL_MODE" ]] && return
     local choice
     prompt_select "How do you want to use DimOS?" \
-        "Library — pip install into your project (recommended)" \
-        "Developer — git clone + editable install (contributors)"
+        "Library — install the published package (recommended for most setups)" \
+        "Developer — install a source checkout for development or headless Unitree on Ubuntu 26.04"
     choice="$PROMPT_RESULT"
     case "$choice" in *Library*) INSTALL_MODE="library";; *) INSTALL_MODE="dev";; esac
 }
