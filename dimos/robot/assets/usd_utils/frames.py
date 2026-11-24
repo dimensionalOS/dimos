@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.usd_utils.pxr import (
@@ -120,6 +121,16 @@ def usd_frame_names(usd: str, root: Path | str | None = None) -> set[str]:
     if default:
         names.add(default.GetDisplayName() or default.GetName())
     return names
+
+
+def usd_frame_pose(usd: str, frame: str, root: Path | str | None = None) -> NDArray[np.float64]:
+    """Where ``frame`` sits in the frame this USD is mounted on (its default prim's parent), as a 4x4."""
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
+    prim = stage.GetPrimAtPath(link_prim_paths(stage)[frame])
+    pose = pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
+    # Gf matrices are row-vector, so transposed.
+    return np.array(pose, dtype=np.float64).T
 
 
 def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | None = None) -> str:

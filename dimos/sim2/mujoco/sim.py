@@ -17,7 +17,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -32,6 +32,7 @@ from dimos.sim2.actions import JointCommand, read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.sim import SimulatedRobotSpec, compose_world, until_it_stops
 from dimos.sim2.spec import validate
+from dimos.sim2.world_observations import merged
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -154,21 +155,21 @@ class MujocoSim(Module):
 
 
 class _LatestPublisher:
+    """Publishes on its own thread; frames offered while one is in flight merge into the next."""
+
     def __init__(self, publish: Any) -> None:
         self._publish = publish
         self._pending: WorldObservations | None = None
+        self._lock = Lock()
         self._wake = Event()
         self._closed = False
         self._thread = Thread(target=self._loop, name="world_observations", daemon=True)
         self._thread.start()
 
-    @property
-    def busy(self) -> bool:
-        return self._wake.is_set()
-
     def offer(self, frame: WorldObservations) -> None:
-        if not self.busy:
-            self._pending = frame
+        # A frame carries only what changed, so a later one cannot stand in for it.
+        with self._lock:
+            self._pending = frame if self._pending is None else merged(self._pending, frame)
             self._wake.set()
 
     def close(self) -> None:
@@ -179,12 +180,14 @@ class _LatestPublisher:
     def _loop(self) -> None:
         while True:
             self._wake.wait()
+            with self._lock:
+                self._wake.clear()
+                frame, self._pending = self._pending, None
             if self._closed:
                 return
+            if frame is None:
+                continue
             try:
-                self._publish(self._pending)
+                self._publish(frame)
             except Exception:
                 logger.exception("sim2: publishing a frame failed")
-            self._wake.clear()
-            if self._closed:
-                return

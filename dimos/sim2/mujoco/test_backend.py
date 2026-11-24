@@ -38,7 +38,7 @@ from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import sim
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
 # linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
 pytest.importorskip("pxr")
@@ -203,8 +203,6 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
 
 
 class _Collect:
-    busy = False
-
     def __init__(self) -> None:
         self.world = WorldMirror()
 
@@ -232,20 +230,25 @@ async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
         sim_module.stop()
 
 
+async def _ran_for(backend: MujocoBackend, published: _Collect, seconds: float) -> None:
+    """Until the published world has run ``seconds`` of sim time, however long that takes on the wall."""
+    assert backend.world.start_ns is not None
+    await published.world.reached(backend.world.start_ns / 1e9 + seconds)
+
+
 def test_backend_steps_physics_and_takes_commands(world, robot_model):
     backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
     published = _Collect()
 
     async def run_briefly() -> None:
         async with _looping(backend, published):
-            await asyncio.sleep(0.05)
+            await _ran_for(backend, published, 0.05)
             # The head is light: a bigger torque spins it up until the solver diverges.
             backend.apply([JointCommand("dog", ("neck",), effort=(0.01,))])
-            await asyncio.sleep(0.5)
+            await _ran_for(backend, published, 0.55)
 
     asyncio.run(run_briefly())
     world_seen = published.world
-    assert world_seen.time > 0.3
     assert world_seen.entity("dog").pose[2] < 0.3
     names, joints = world_seen.joints("dog")
     assert names == ["neck"]
@@ -305,11 +308,11 @@ def test_a_motor_command_drives_a_servo_with_its_own_gains(robot_model):
 
     async def run_briefly() -> None:
         async with _looping(backend, published):
-            await asyncio.sleep(0.05)
+            await _ran_for(backend, published, 0.05)
             backend.apply(
                 [JointCommand("dog", ("neck",), position=(0.5,), kp=(0.05,), kd=(0.005,))]
             )
-            await asyncio.sleep(1.0)
+            await _ran_for(backend, published, 1.05)
 
     asyncio.run(run_briefly())
     actuator = backend.model.actuator("dog/neck").id
@@ -339,3 +342,41 @@ def test_closing_the_publisher_while_a_frame_is_in_flight_does_not_wedge_it():
     closer.join(5)
 
     assert not closer.is_alive(), "close() never returned: the publishing thread is wedged"
+
+
+def test_frames_offered_while_one_is_in_flight_are_merged_not_lost() -> None:
+    from threading import Event as ThreadEvent
+
+    from dimos.sim2.mujoco.sim import _LatestPublisher
+
+    writer = WorldWriter()
+    writer.add("crate")
+    published: list[Any] = []
+    in_flight, release, followed = ThreadEvent(), ThreadEvent(), ThreadEvent()
+
+    def publish(frame: Any) -> None:
+        published.append(frame)
+        if len(published) == 1:
+            in_flight.set()
+            release.wait(5)
+        else:
+            followed.set()
+
+    publisher = _LatestPublisher(publish)
+    publisher.offer(writer.end_frame(0.0))
+    assert in_flight.wait(5), "the publisher thread never picked the frame up"
+    writer.set("crate", "note", {"a": 1})
+    publisher.offer(writer.end_frame(0.1))
+    writer.position("crate", [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    publisher.offer(writer.end_frame(0.2))
+    release.set()
+    assert followed.wait(5), "the frames offered mid-publish were dropped"
+    publisher.close()
+
+    mirror = WorldMirror()
+    for frame in published:
+        mirror.apply(frame)
+    crate = mirror.entity("crate")
+    assert len(published) == 2
+    assert crate is not None and crate.cbor["note"] == {"a": 1}
+    assert crate.pose is not None and crate.pose[:3] == pytest.approx([1.0, 0.0, 0.0])

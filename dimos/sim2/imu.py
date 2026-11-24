@@ -52,7 +52,7 @@ class SimImu(SimSensor):
                 view = open_view(layer, robot_ids(self._world), SensorMount("imu", site, site))
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)
-            stamp = self._world.stamp()
+            stamp = view.time
             self.imu.publish(
                 Imu(
                     angular_velocity=Vector3(*gyro),

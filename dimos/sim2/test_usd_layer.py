@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -86,3 +88,18 @@ def test_a_hashed_asset_already_on_disk_is_not_fetched_again() -> None:
     scene_as_files(scene, fetch)
 
     assert "/dimos/assets/rug.obj" not in names
+
+
+def test_threads_writing_the_same_layer_at_once_all_get_it() -> None:
+    writers, turns = 8, 50
+    start = threading.Barrier(writers)
+
+    def write(turn: int) -> Path:
+        start.wait()
+        return usd_layer.layer_file(f"#usda 1.0\n# {turn}\n", called="race")
+
+    with ThreadPoolExecutor(writers) as pool:
+        for turn in range(turns):
+            layers = list(pool.map(write, [turn] * writers))
+            assert len(set(layers)) == 1
+            assert layers[0].read_text() == f"#usda 1.0\n# {turn}\n"
