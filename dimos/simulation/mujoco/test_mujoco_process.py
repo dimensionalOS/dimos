@@ -13,10 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from pytest_mock import MockerFixture
 from structlog.testing import capture_logs
@@ -24,6 +26,74 @@ from structlog.testing import capture_logs
 from dimos.simulation.mujoco import mujoco_process, policy
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
+
+
+@pytest.mark.parametrize(
+    ("frame_seconds", "steps_per_frame", "frames", "warnings"),
+    [(0.14, 7, 108, 3), (5.0, 7, 3, 3), (0.07, 35, 216, 0), (0.07, 70, 216, 0), (0.14, 7, 10, 0)],
+    ids=["slow", "very-slow", "real-time", "fast", "short-sample"],
+)
+def test_rendering_reports_sustained_slow_simulation_pace(
+    mocker: MockerFixture, frame_seconds: float, steps_per_frame: int, frames: int, warnings: int
+) -> None:
+    model = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody>
+          <camera name="head_camera"/><camera name="lidar_front_camera"/>
+          <camera name="lidar_left_camera"/><camera name="lidar_right_camera"/>
+          <body><freejoint/><geom type="sphere" size=".1"/></body>
+        </worldbody><keyframe><key name="home"/></keyframe></mujoco>"""
+    )
+    data = mujoco.MjData(model)
+    mocker.patch.object(mujoco_process, "load_scene_xml", return_value="unused")
+    mocker.patch.object(mujoco_process, "load_model", return_value=(model, data, mocker.Mock()))
+    mocker.patch.object(mujoco_process, "PersonPositionController")
+    clock = SimpleNamespace(now=100.0)
+
+    def advance(seconds: float) -> None:
+        clock.now += seconds
+
+    def render() -> NDArray[np.uint8]:
+        advance(frame_seconds)
+        return np.zeros((1, 1, 3), dtype=np.uint8)
+
+    mock_time = mocker.patch.object(mujoco_process, "time")
+    mock_time.monotonic.side_effect = lambda: clock.now
+    mock_time.time.side_effect = lambda: clock.now
+    mock_time.sleep.side_effect = advance
+    renderer = mocker.patch.object(mujoco_process.mujoco, "Renderer")
+    rgb = mocker.Mock()
+    rgb.render.side_effect = render
+    depth = mocker.Mock()
+    depth.render.return_value = np.zeros((1, 1), dtype=np.float32)
+    renderer.side_effect = [rgb, depth, depth, depth]
+    shm = mocker.Mock()
+    shm.read_command.return_value = None
+
+    # Exclude deployment time from the pace calculation.
+    def should_run() -> bool:
+        advance(60.0)
+        return True
+
+    shm.should_run.side_effect = should_run
+    shm.should_stop.side_effect = lambda: rgb.render.call_count >= frames
+
+    with capture_logs() as records:
+        mujoco_process._run_simulation(
+            MujocoConfig(headless=True, shadows="on", steps_per_frame=steps_per_frame),
+            shm,
+            robot_model="unitree_g1",
+        )
+
+    assert len(records) == warnings
+    for record in records:
+        assert record["log_level"] == "warning"
+        assert "below real time" in record["event"]
+        assert "Wall-time motion commands may travel less than expected" in record["event"]
+        assert record["wall_seconds"] >= 5.0
+        assert record["real_time_factor"] == pytest.approx(0.014 / frame_seconds)
+        assert record["simulation_seconds"] / record["wall_seconds"] == pytest.approx(
+            record["real_time_factor"]
+        )
 
 
 @pytest.mark.parametrize("robot", ["unitree_go2", "unitree_go1", "unitree_g1", None])

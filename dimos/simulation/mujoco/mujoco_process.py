@@ -47,6 +47,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_PACE_SAMPLE_SECONDS = 5.0
+_MIN_REAL_TIME_FACTOR = 0.9
+
 
 class MockController:
     """Controller that reads commands from shared memory."""
@@ -257,12 +260,18 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
                 m_viewer.sync()
             time.sleep(0.05)
 
+        # Measure active simulation only, excluding model loading and deployment.
+        pace_wall_start = time.monotonic()
+        pace_sim_start = data.time
         while alive():
             step_start = time.time()
 
             # Step simulation
             for _ in range(config.steps_per_frame):
                 if _step_simulation(model, data, policy, controller, start_pos):
+                    # A physics reset rewinds data.time, so start a fresh sample.
+                    pace_wall_start = time.monotonic()
+                    pace_sim_start = data.time
                     break
 
             person_position_controller.tick(data)
@@ -339,6 +348,23 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
             time_until_next_step = model.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
+
+            wall_now = time.monotonic()
+            wall_seconds = wall_now - pace_wall_start
+            if wall_seconds >= _PACE_SAMPLE_SECONDS:
+                simulation_seconds = data.time - pace_sim_start
+                real_time_factor = simulation_seconds / wall_seconds
+                if real_time_factor < _MIN_REAL_TIME_FACTOR:
+                    logger.warning(
+                        "MuJoCo simulation is running below real time. "
+                        "Wall-time motion commands may travel less than expected. "
+                        "Check rendering/GPU performance.",
+                        real_time_factor=real_time_factor,
+                        simulation_seconds=simulation_seconds,
+                        wall_seconds=wall_seconds,
+                    )
+                pace_wall_start = wall_now
+                pace_sim_start = data.time
 
         person_position_controller.stop()
 
