@@ -380,6 +380,21 @@ def test_add_surface_without_a_planner_says_so(localizer, mocker):
     assert "needs a motion planner" in localizer.add_surface()
 
 
+def test_add_surface_without_a_voxel_map_puts_the_box_in_the_planner(localizer, mocker):
+    _ready(localizer, mocker, [])
+    mocker.patch.object(localizer, "surfaces", return_value=[_surface()])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = SURFACE
+
+    answer = localizer.add_surface()
+
+    assert answer.startswith("surface added") and "cut" not in answer
+    localizer._obstacles.add_obstacle.assert_called_once()
+    assert localizer.clear_surface() == "1 surface(s) removed"
+    localizer._obstacles.remove_obstacle.assert_called_once_with(f"{SURFACE}/1")
+
+
 def test_add_surface_with_no_surface_in_view_adds_nothing(localizer, mocker):
     _ready(localizer, mocker, [])
     mocker.patch.object(localizer, "surfaces", return_value=[])

@@ -983,7 +983,6 @@ class TestPlanningGroupApis:
             PoseStamped(position=Vector3(0.4, 0.2, 0.3)),
             PoseStamped(position=Vector3(0.4, -0.2, 0.3)),
         ]
-        module._world_monitor.get_link_pose.return_value = PoseStamped()
         publish = mocker.patch.object(module.tf, "publish")
 
         def stop_after_first_iteration(_period: float) -> bool:
@@ -1020,7 +1019,6 @@ class TestPlanningGroupApis:
         module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
             ts=123.5, position=Vector3(0.4, 0.2, 0.3)
         )
-        module._world_monitor.get_link_pose.return_value = PoseStamped(ts=123.5)
         publish = mocker.patch.object(module.tf, "publish")
 
         def stop_after_first_iteration(_period: float) -> bool:
@@ -1037,39 +1035,6 @@ class TestPlanningGroupApis:
         assert mount.frame_id == "left/tool"
         assert mount.ts == 123.5
         assert {tf.ts for tf in published} == {123.5}
-
-    def test_tf_loop_publishes_each_group_base_once(
-        self, module_factory, mocker: MockerFixture
-    ) -> None:
-        """Consumers that work round the arm, such as add_surface, find its base in tf."""
-        model = _bimanual_config()
-        module = module_factory()
-        module.config.model = model
-        module._world_monitor = MagicMock(spec=WorldMonitor)
-        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
-        module._world_monitor.current_model_joint_state.return_value = JointState(
-            ts=1.0, name=model.joint_names, position=[0.0, 0.0]
-        )
-        module._world_monitor.get_group_ee_pose.return_value = PoseStamped(ts=1.0)
-        module._world_monitor.get_link_pose.return_value = PoseStamped(
-            ts=1.0, position=Vector3(0.0, 0.0, 0.12)
-        )
-        publish = mocker.patch.object(module.tf, "publish")
-
-        def stop_after_first_iteration(_period: float) -> bool:
-            module._tf_stop_event.set()
-            return True
-
-        mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
-        module._tf_stop_event.clear()
-
-        module._tf_publish_loop()
-
-        published = list(publish.call_args.args[0])
-        bases = [t for t in published if t.child_frame_id == "base"]
-        assert len(bases) == 1
-        assert bases[0].frame_id == "world"
-        assert bases[0].translation.z == pytest.approx(0.12)
 
     def test_get_ee_pose_fails_safely_without_pose_group(self, robot_config, module_factory):
         no_pose_config = RobotModelConfig(

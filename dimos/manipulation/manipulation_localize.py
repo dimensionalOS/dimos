@@ -297,8 +297,8 @@ class ManipulationLocalize(PerceptionLocalize):
             return (
                 f"add_surface cannot answer yet: {self._stage}. Poll state() until it reads ready."
             )
-        if self._obstacles is None or self._box_filter is None:
-            return "add_surface needs a motion planner and a voxel map box filter in the blueprint"
+        if self._obstacles is None:
+            return "add_surface needs a motion planner in the blueprint"
         surfaces = self.surfaces(start, duration)
         if not surfaces:
             return "no surface: none flat in the window. Look at it and try again."
@@ -324,14 +324,17 @@ class ManipulationLocalize(PerceptionLocalize):
             return "the planner refused the surface box; the surfaces in it are kept"
         # Only now that the new box is in, the old one at this height goes.
         self._remove_surfaces(self._surfaces_at(platform["height"]))
-        self._box_filter.set_box(name, cut_pose, Vector3(*cut_size))
+        # Without a voxel map there are no cells to cut.
+        if self._box_filter is not None:
+            self._box_filter.set_box(name, cut_pose, Vector3(*cut_size))
         self._surfaces[name] = platform["height"]
         planned = ", ".join(f"{h:.3f} m" for h in sorted(self._surfaces.values()))
+        cut = "; its own voxel map cells are cut" if self._box_filter is not None else ""
         return (
             f"surface added: top at z={platform['height']:.3f} m in {self.rig.world_frame}, "
             f"{box_size[0]:.2f} x {box_size[1]:.2f} m, its outline "
-            f"{self.config.surface_margin_m:.2f} m wider on each side; its own voxel map "
-            f"cells are cut. In the planner: {planned}. Surfaces seen: {heights}; to add "
+            f"{self.config.surface_margin_m:.2f} m wider on each side{cut}. "
+            f"In the planner: {planned}. Surfaces seen: {heights}; to add "
             f"another, call add_surface(height=...)"
         )
 
@@ -339,8 +342,8 @@ class ManipulationLocalize(PerceptionLocalize):
     def clear_surface(self, height: float | None = None) -> str:
         """Remove ``add_surface``'s boxes, or only the one at ``height``, and let their
         voxel map cells back."""
-        if self._obstacles is None or self._box_filter is None:
-            return "no surface: the blueprint has no motion planner or voxel map box filter"
+        if self._obstacles is None:
+            return "no surface: the blueprint has no motion planner"
         names = list(self._surfaces) if height is None else self._surfaces_at(height)
         self._remove_surfaces(names)
         return f"{len(names)} surface(s) removed" if names else "no surface to remove"
@@ -354,10 +357,11 @@ class ManipulationLocalize(PerceptionLocalize):
         ]
 
     def _remove_surfaces(self, names: list[str]) -> None:
-        assert self._obstacles is not None and self._box_filter is not None
+        assert self._obstacles is not None
         for name in names:
             self._obstacles.remove_obstacle(name)
-            self._box_filter.clear_box(name)
+            if self._box_filter is not None:
+                self._box_filter.clear_box(name)
             del self._surfaces[name]
 
     def _line_of_sight(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
