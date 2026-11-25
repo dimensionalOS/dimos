@@ -428,6 +428,18 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         """Run one turn on message and return every message the turn added to the history."""
         self.agent_idle.publish(False)
         turn_start = len(self._history)
+        self._call_model(state_graph, message)
+        # The model sees an image a tool returned as the next message, before the turn ends.
+        while self._artifacts:
+            self._call_model(state_graph, self._artifacts.pop(0))
+        if self._message_queue.empty():
+            self.agent_idle.publish(True)
+        return self._history[turn_start:]
+
+    def _call_model(
+        self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
+    ) -> None:
+        turn_start = len(self._history)
         self._record(message)
 
         try:
@@ -460,14 +472,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
                     additional_kwargs={TURN_FAILED_KEY: True},
                 )
             )
-
-        # The model sees an image a tool returned as the next message, before the turn ends.
-        while self._artifacts:
-            self._process_message(state_graph, self._artifacts.pop(0))
-
-        if self._message_queue.empty():
-            self.agent_idle.publish(True)
-        return self._history[turn_start:]
 
     def _record(self, message: BaseMessage) -> None:
         self._history.append(message)
