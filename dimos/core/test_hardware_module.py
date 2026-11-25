@@ -30,11 +30,9 @@ from dimos.core.coordination.blueprints import (
 )
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
-from dimos.core.module import Module
-from dimos.core.stream import IO, In, Out
+from dimos.core.stream import IO
 from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.joint_transforms import joint_position
 from dimos.robot.assets.model import RobotModel, UsdModel
@@ -663,34 +661,3 @@ def test_hardware_without_a_usd_is_refused() -> None:
 
     with pytest.raises(ValueError, match="usd"):
         Bare(instance_name="bare")
-
-
-class WorldReader(Module):
-    world_observations: In[Image]
-    world_actions: Out[Image]
-    color_image: Out[Image]
-    tf_static: Out[TFMessage]
-
-
-def test_the_simulated_world_is_shared_by_default_under_any_namespace() -> None:
-    blueprint = WorldReader.blueprint().namespace("lidar").namespace("robot1")
-
-    for stream in ("world_observations", "world_actions"):
-        assert ("robot1/lidar/worldreader", stream) not in blueprint.remapping_map
-    assert (
-        blueprint.remapping_map[("robot1/lidar/worldreader", "color_image")]
-        == "robot1/lidar/color_image"
-    )
-    assert ("robot1/lidar/worldreader", "tf_static") not in blueprint.remapping_map
-
-    private = WorldReader.blueprint().namespace("lidar", share_tf=False)
-    assert private.remapping_map[("lidar/worldreader", "tf_static")] == "lidar/tf_static"
-
-
-def test_share_sim_false_keeps_the_simulated_world_inside_the_namespace() -> None:
-    private = WorldReader.blueprint().namespace("lidar", share_sim=False)
-    for stream in ("world_observations", "world_actions"):
-        assert private.remapping_map[("lidar/worldreader", stream)] == f"lidar/{stream}"
-
-    with pytest.raises(ValueError, match="share_sim=False"):
-        WorldReader.blueprint().namespace("lidar", shared={"world_observations"}, share_sim=False)

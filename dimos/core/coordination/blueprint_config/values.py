@@ -57,8 +57,7 @@ def plain(value: Any, *, exclude_unset: bool = False) -> Any:
             for key, item in value
             if not exclude_unset or key in value.model_fields_set
         }
-    # A type with its own pydantic validation (a UsdModel) reads back from itself, so it stays whole.
-    if is_dataclass(value) and not hasattr(type(value), "__get_pydantic_core_schema__"):
+    if is_dataclass(value):
         return {
             info.name: plain(getattr(value, info.name), exclude_unset=exclude_unset)
             for info in fields(value)
