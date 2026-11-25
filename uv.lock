@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-11-17T05:21:28.418866Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -51,6 +51,7 @@ md-babel-py = false
 dim-odom = false
 mujoco-usd = false
 mujoco-studio = false
+cel-expr-python = false
 
 [manifest]
 constraints = [
@@ -764,6 +765,28 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5f/e3/74fddce015b171ee087a6e0185a233f3d29c7fda80cfa3041c796a67d100/cbor2-6.1.5-cp312-cp312-win32.whl", hash = "sha256:789ef813f416d353aecd5c8824860ee4be94e0f1179a385eb2beccfbeb615e4f", size = 281010, upload-time = "2026-10-01T18:08:23.614Z" },
     { url = "https://files.pythonhosted.org/packages/5e/f5/ecc8d6a9ff9322405b23a4d3226504e7d7a44424e0d831a02b49bac8e605/cbor2-6.1.5-cp312-cp312-win_amd64.whl", hash = "sha256:9677ce1c3c0cb1fa5a4f721a127fc2cc06e8efc43ee8e5f94e292186d6b51953", size = 304308, upload-time = "2026-10-01T18:08:25.077Z" },
     { url = "https://files.pythonhosted.org/packages/a8/90/23b702147b0858dbbc8a3136f288248118bb32f2785cc35c470a3b3f5571/cbor2-6.1.5-cp312-cp312-win_arm64.whl", hash = "sha256:b73d982e35a60e602a200feb2a9d272e850efdc9ff767b0f4887bdbc16d23e52", size = 293958, upload-time = "2026-10-01T18:08:26.493Z" },
+]
+
+[[package]]
+name = "cel-expr-python"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/5a/a13f6b58c7f5f03f27bdeb43fddb7681f5593c2a5adfadf6456be1fd5d1b/cel_expr_python-0.1.4-cp310-cp310-macosx_10_13_x86_64.whl", hash = "sha256:6cffe4d2665d9a6a0822394f4c51dfa2aac1c84a5e6f3ce2d22a2f98958adb6c", size = 15251108, upload-time = "2026-11-06T23:05:30.759Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/ad/479f8b5510d35f22704727bdd7a72844780d478b446f92ca4f5bb38136a9/cel_expr_python-0.1.4-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e214057b6d1b4847be477e3bce2e1133e8de77dbed185ac85a04df4348a815e6", size = 14486435, upload-time = "2026-11-06T23:05:33.247Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/41/27e41cdaad302f145df60ceeb0aca0dac02b32375c8a379a19915907434c/cel_expr_python-0.1.4-cp310-cp310-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d576d971a8fe06eef6231a753874e5e190041acc1480179ea7c05c73414d828f", size = 18365015, upload-time = "2026-11-06T23:05:36.818Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/95/eebe4d9be98320959f30b6ad9abb38490d13a62c65e63a20da6306bf58cb/cel_expr_python-0.1.4-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d2a23654af69c2be63478fbeecd85290c6d6e10d06f9e907b23195dcfde309e9", size = 19457098, upload-time = "2026-11-06T23:05:40.747Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/71/5fe761657686032c4314d3258920290493c040b1f756ddcfc4919b3c8989/cel_expr_python-0.1.4-cp310-cp310-win_amd64.whl", hash = "sha256:2d88d3386ec0609c16ac41c33c417cb301e01e5c1eab74f4b642f54c2d36346f", size = 9443495, upload-time = "2026-11-06T23:05:43.532Z" },
+    { url = "https://files.pythonhosted.org/packages/00/cb/9fd31f26f2047adcf95b8e6689fbfd6487f0a1edc6287e8440ee652ff7e3/cel_expr_python-0.1.4-cp311-cp311-macosx_10_13_x86_64.whl", hash = "sha256:6f44c54c86ce82bdd6377dc7c3b8f696aac789933f23d49123f4f24e7b1742e9", size = 15261162, upload-time = "2026-11-06T23:05:46.48Z" },
+    { url = "https://files.pythonhosted.org/packages/60/53/5547aec9df78c7432ec0b64a427d1525292d33fe9f4893acde1d578ca5df/cel_expr_python-0.1.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:c76c67afec346b555b9642a9338d0d788b76dd17f17e6f4af42f975001c4ae26", size = 14494431, upload-time = "2026-11-06T23:05:49.394Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/05/97c940a108d321df59847a01f31938471cd1c595db4de52a9158e229815b/cel_expr_python-0.1.4-cp311-cp311-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:14a5e27772c081fe8083e7dc9d84b87d7429a78d8781e7ef70e369158da3f779", size = 18371100, upload-time = "2026-11-06T23:05:52.644Z" },
+    { url = "https://files.pythonhosted.org/packages/83/62/8c475452086e10f1886bbc64f03ec34a8087c08fb0a784580e203832a424/cel_expr_python-0.1.4-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b11cea744dcb797f333ff57ffaafe3bd7ed6ca824e5dbadaf200ccd3df978d61", size = 19462175, upload-time = "2026-11-06T23:05:56.083Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/18/c4cb472a1bde07da3bf36fafc800163fba33d1396c6eb340f38536369797/cel_expr_python-0.1.4-cp311-cp311-win_amd64.whl", hash = "sha256:9683899b47f5a31c797e684ce4a656c9da5261b0333530d90dfe36eb79512eac", size = 9449375, upload-time = "2026-11-06T23:05:58.649Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/89/9e76c9a1200d48b5a9c75c4cc3cf7da5a3cc10b3377834389b9bb28e9370/cel_expr_python-0.1.4-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:814fd3faad83ea0cc0d0dc9dbe4b99293b031976b5ffb8cc57e034fc02cbf47c", size = 15271895, upload-time = "2026-11-06T23:06:01.242Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/d0/8e946b1b5941a0a6ce7eea504ea4779f7b424f7fd4c0b3a7388931606acb/cel_expr_python-0.1.4-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:42319e038e1360c780177702ba62edee928a0244f42f57f760d4d376bea833ca", size = 14497013, upload-time = "2026-11-06T23:06:03.952Z" },
+    { url = "https://files.pythonhosted.org/packages/de/e0/f56ec9e90993cdf25df554019c29f3ee9ea133f1f59e653ad918fc614d1a/cel_expr_python-0.1.4-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a2b8a9392682272f01dde7645501b7b707944bc1aa4221001b2bdc74c834e4eb", size = 18375336, upload-time = "2026-11-06T23:06:07.534Z" },
+    { url = "https://files.pythonhosted.org/packages/07/9c/3e1373e9f3844c30bf17c02e2d7247c1da6cfb518d50ae84feea511e1d89/cel_expr_python-0.1.4-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a90817c3cd7897398ece71615fb228e3f37061e6a3da100d9fae0c07d4ac4b37", size = 19468407, upload-time = "2026-11-06T23:06:11.424Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/be/dcf6827f963b935fd11b96ce2ae7d902981cd6f052bbe5b4a3fb4671f071/cel_expr_python-0.1.4-cp312-cp312-win_amd64.whl", hash = "sha256:05074dc5d83012db45b0caefeb216981c3875af9f7c412e37b3706d2a711089b", size = 9456704, upload-time = "2026-11-06T23:06:15.353Z" },
 ]
 
 [[package]]
@@ -1868,6 +1891,7 @@ dependencies = [
     { name = "attrs" },
     { name = "bleak" },
     { name = "cbor2" },
+    { name = "cel-expr-python" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
     { name = "dimos-lcm" },
@@ -2591,6 +2615,7 @@ requires-dist = [
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "can-motor-control", marker = "extra == 'control'", specifier = "==0.0.12" },
     { name = "cbor2", specifier = ">=6.1.5,<7" },
+    { name = "cel-expr-python", specifier = "==0.1.4" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },

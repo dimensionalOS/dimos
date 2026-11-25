@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm Mini leader teleop for the bimanual OpenArm follower."""
+"""OpenArm Mini leader teleop for the bimanual OpenArm follower.
+
+In the impedance variant a ``joint_impedance`` task follows the leaders, so the
+follower arms give way on contact.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +40,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
+    DamiaoMotorCommandCoordinator,
     arm_connection,
     arm_declaration,
     arm_remaps,
@@ -46,10 +51,12 @@ from dimos.robot.manipulators.feetech.connection import (
     FeetechConnectionConfig,
 )
 from dimos.robot.manipulators.openarm.config import (
+    OPENARM_KD,
     OPENARM_MINI_ARM_LEADERS,
     OPENARM_MINI_LEADERS,
     OPENARM_SIDES,
     openarm_bimanual_model_config,
+    openarm_urdf_joints,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.utils.logging_config import setup_logger
@@ -76,6 +83,16 @@ _VELOCITY_LIMITS = {
     for motor, limit in zip(bus.motors, _ARM_VELOCITY_PROFILE_RAD_S, strict=True)
 }
 
+# Impedance teleop settings for joints 1 to 7 of each arm, first-try values for the bench.
+# Spring strength, in Nm/rad: about a third of the configured kp, so the arm gives on contact.
+_IMPEDANCE_STIFFNESS = (30.0, 30.0, 25.0, 25.0, 20.0, 20.0, 20.0)
+# Damper strength, in Nm·s/rad: the configured kd, so the arm does not swing about its target.
+_IMPEDANCE_DAMPING = tuple(OPENARM_KD)
+# The most each spring pushes, in Nm: under a third of the motor's peak (DM8009 40 Nm for
+# joints 1-2, DM4340 27 Nm for 3-4, DM4310 7 Nm for 5-7), and more than the joint needs to
+# move freely while the robot cancels gravity.
+_IMPEDANCE_MAX_TORQUE_NM = (12.0, 12.0, 8.0, 8.0, 1.5, 1.5, 1.5)
+
 
 class OpenArmLeaderCoordinator(DamiaoCoordinator):
     """The OpenArm coordinator, plus the port the leader arms' joint targets arrive on."""
@@ -86,6 +103,39 @@ class OpenArmLeaderCoordinator(DamiaoCoordinator):
     dedicated_worker: ClassVar[bool] = True
 
     leader_joint_command: In[JointState]
+
+
+class OpenArmImpedanceLeaderCoordinator(DamiaoMotorCommandCoordinator):
+    """Like ``OpenArmLeaderCoordinator``, but it also sends the arms stiffness and damping."""
+
+    # Its own process, for the same reason as OpenArmLeaderCoordinator.
+    dedicated_worker: ClassVar[bool] = True
+
+    leader_joint_command: In[JointState]
+
+
+def _impedance_task() -> TaskConfig:
+    """A ``joint_impedance`` task that follows the leaders softly, on the leader port."""
+
+    def per_joint(values: tuple[float, ...]) -> dict[str, float]:
+        return {
+            f"arm/{joint}": value
+            for side in OPENARM_SIDES
+            for joint, value in zip(openarm_urdf_joints(side), values, strict=True)
+        }
+
+    return TaskConfig(
+        name="leader_impedance",
+        type="joint_impedance",
+        joint_names=list(_MODEL.joint_names),
+        params={
+            "stiffness": per_joint(_IMPEDANCE_STIFFNESS),
+            "damping": per_joint(_IMPEDANCE_DAMPING),
+            "max_torque": per_joint(_IMPEDANCE_MAX_TORQUE_NM),
+            "velocity_limits": _VELOCITY_LIMITS,
+        },
+        stream_bind={"joint_command": "leader_joint_command"},
+    )
 
 
 class OpenArmMiniConnectionConfig(FeetechConnectionConfig):
@@ -181,18 +231,33 @@ def _joycon_leader() -> MetaBlueprint:
     return autoconnect(_leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint())
 
 
-def _follower(visualization: ViserVisualizationConfig | None = None) -> MetaBlueprint:
-    """The leader's targets over the OpenArm connection; --simulation swaps in a mock."""
+def _follower(
+    visualization: ViserVisualizationConfig | None = None, *, impedance: bool = False
+) -> MetaBlueprint:
+    """The leader's targets over the OpenArm connection; --simulation swaps in a mock.
+
+    Args:
+        visualization: Where the Viser view is served; None for its defaults.
+        impedance: Follow the leaders with ``_impedance_task`` instead of the
+            trajectory task, so the follower arms give way on contact.
+    """
+    coordinator: type[DamiaoCoordinator | DamiaoMotorCommandCoordinator]
+    if impedance:
+        coordinator = OpenArmImpedanceLeaderCoordinator
+        arm_task = _impedance_task()
+    else:
+        coordinator = OpenArmLeaderCoordinator
+        # The trajectory task follows the leader's targets instead of joint_command.
+        arm_task = replace(
+            joint_trajectory_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
+            stream_bind={"joint_command": "leader_joint_command"},
+        )
     return autoconnect(
-        OpenArmLeaderCoordinator.blueprint(
+        coordinator.blueprint(
             instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenArmConnection)],
+            connections=[arm_declaration(OpenArmConnection, motor_command=impedance)],
             tasks=[
-                # The trajectory task follows the leader's targets instead of joint_command.
-                replace(
-                    joint_trajectory_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
-                    stream_bind={"joint_command": "leader_joint_command"},
-                ),
+                arm_task,
                 *[
                     TaskConfig(
                         name=f"{side}_arm_gripper",
@@ -207,16 +272,19 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> MetaBlue
             ],
             zero_stiffness_joints=[],
         ),
-        arm_connection(OpenArmConnection),
+        arm_connection(OpenArmConnection, motor_command=impedance),
         ManipulationModule.blueprint(
             model=_MODEL,
             visualization=visualization if visualization is not None else {"backend": "viser"},
             gripper_tasks={f"{side}_arm": f"{side}_arm_gripper" for side in OPENARM_SIDES},
         ),
-    ).remappings(arm_remaps(OpenArmConnection, OpenArmLeaderCoordinator))
+    ).remappings(arm_remaps(OpenArmConnection, coordinator, motor_command=impedance))
 
 
 teleop_openarm_mini = autoconnect(_leader(), _follower())
+
+# The same, but the follower arms give way on contact; see _IMPEDANCE_*.
+teleop_openarm_mini_impedance = autoconnect(_leader(), _follower(impedance=True))
 
 # Split deployment: leaders on an operator machine, follower on the robot.
 # The robot stack owns the Coordinator name, so the leader half does not claim it.

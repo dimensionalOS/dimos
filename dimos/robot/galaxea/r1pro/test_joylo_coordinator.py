@@ -24,9 +24,9 @@ from dimos.robot.galaxea.r1pro.joylo_coordinator import joylo_tasks
 
 def test_desktop_drive_wins_over_continuous_joylo_zero_until_it_expires():
     configs = {cfg.name: cfg for cfg in joylo_tasks() if cfg.type == "twist_velocity"}
-    joylo = create_task(configs["vel_chassis"], None)
-    desktop = create_task(configs["desktop_chassis"], None)
-    loop = TickLoop(100, {}, threading.Lock(), {}, threading.Lock(), {})
+    joylo = create_task(configs["vel_chassis"])
+    desktop = create_task(configs["desktop_chassis"])
+    loop = TickLoop(100, threading.Lock(), {}, threading.Lock(), {})
     desktop.on_twist_command(Twist(linear=[0.4, 0, 0]), 1.0)
     joylo.on_twist_command(Twist.zero(), 1.1)
 

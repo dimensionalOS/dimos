@@ -170,7 +170,7 @@ class R1ProTorsoHeightTask(BaseControlTask):
             self._rate, self._target = 0.0, None
 
 
-def create_task(cfg: Any, hardware: Any, connections: Any) -> R1ProTorsoHeightTask:
+def create_task(cfg: Any, connections: Any) -> R1ProTorsoHeightTask:
     if tuple(cfg.joint_names) != TORSO_LIFT_JOINTS:
         raise ValueError("R1Pro height task must own only torso_joint1/2, in that order")
     source = connections["r1pro"]

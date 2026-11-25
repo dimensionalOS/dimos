@@ -25,8 +25,6 @@ KNOWN = {
     "sensor_msgs.RobotState",
     "trajectory_msgs.TrajectoryPoint",
     "trajectory_msgs.TrajectoryStatus",
-    # Mustafa Bhadsorawala, https://github.com/dimensionalOS/dimos/pull/1954
-    "sensor_msgs.MotorCommandArray",
     # pomichterstash, https://github.com/dimensionalOS/dimos/pull/1511
     "visualization_msgs.EntityMarkers",
     # Jeff Hykin, https://github.com/dimensionalOS/dimos/pull/1791

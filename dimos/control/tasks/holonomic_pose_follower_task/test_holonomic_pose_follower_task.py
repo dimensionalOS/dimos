@@ -84,7 +84,6 @@ def _task(**params):
         SimpleNamespace(
             name="holo", joint_names=_JOINTS, priority=10, params={"speed": 0.5, **params}
         ),
-        None,
     )
 
 

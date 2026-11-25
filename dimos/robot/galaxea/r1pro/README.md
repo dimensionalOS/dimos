@@ -96,8 +96,7 @@ coordinator going down, `R1ProConnection` halts within
 `deadman_timeout_s` (0.1 s): the chassis is told zero speed once and the
 arms are held where they were last measured. Stale feedback
 (`reading_timeout_s`, 0.2 s) also stops commands until fresh readings
-return. This replaces the old adapter path, where an estopped robot simply
-kept its last position command with no deadman. After clearing software E-stop,
+return. After clearing software E-stop,
 fresh operator velocity input is required; pre-stop intent is not replayed.
 
 **Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`) is an

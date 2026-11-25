@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+from collections.abc import Generator
 from contextlib import suppress
 import faulthandler
 import hashlib
@@ -20,6 +21,7 @@ import importlib.util
 import os
 import pathlib
 import platform
+import re
 import tempfile
 import threading
 import time
@@ -84,6 +86,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
+from _pytest.mark.expression import Expression
 from dotenv import dotenv_values
 import pytest
 import tqdm
@@ -183,6 +186,37 @@ def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
         return True
     return None
+
+
+def _markexpr_selects_skipped_module(collector: pytest.Collector) -> bool:
+    # A module that skips at import has no tests for -m to filter. Match the
+    # expression against the markers its source names instead, so a run that
+    # selects one marker ignores the missing dependencies of the other modules.
+    markexpr = collector.config.option.markexpr
+    if not markexpr:
+        return True
+    source = collector.path.read_text(encoding="utf-8")
+
+    def names_marker(name: str, /, **kwargs: str | int | bool | None) -> bool:
+        return re.search(rf"pytest\.mark\.{re.escape(name)}\b", source) is not None
+
+    return Expression.compile(markexpr).evaluate(names_marker)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    report = yield
+    # pytest-error-for-skips only handles runtest reports, not importorskip at module level.
+    if (
+        report.skipped
+        and collector.config.getoption("--error-for-skips", default=False)
+        and _markexpr_selects_skipped_module(collector)
+    ):
+        report.outcome = "failed"
+        report.longrepr = f"Forbidden skipped collection: {report.longrepr}"
+    return report
 
 
 def pytest_configure(config):

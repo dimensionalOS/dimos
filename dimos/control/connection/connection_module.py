@@ -53,6 +53,12 @@ class ConnectionConfig(ModuleConfig):
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
             listed joints are commanded; planar axes are ordinary joints.
+        max_stiffness: Model joint name to the most stiffness it may be told,
+            in Nm/rad. Needed for every joint that accepts stiffness; a higher
+            value is lowered to it.
+        max_damping: Model joint name to the most damping it may be told, in
+            Nm·s/rad. Needed for every joint that accepts damping; a higher
+            value is lowered to it.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
     """
@@ -60,6 +66,8 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
+    max_stiffness: dict[str, float] = {}
+    max_damping: dict[str, float] = {}
     deadman_timeout_s: float = 0.1
 
 
@@ -250,10 +258,9 @@ class ConnectionModule(Module, ABC):
                 self._call_halt()
 
     def frame(self, name: str) -> str:
-        """The frame to stamp a reading with: ``name`` behind the config's
-        ``frame_id_prefix``, e.g. "go2b/odom", or just "odom" without one."""
-        prefix = self.config.frame_id_prefix
-        return f"{prefix}/{name}" if prefix else name
+        """The frame to stamp a reading with: ``name`` behind ``frame_id_prefix``,
+        e.g. "go2b/odom", or just "odom" without one."""
+        return f"{self.frame_id_prefix}/{name}" if self.frame_id_prefix else name
 
     def _on_loop(self, step: Any) -> None:
         """Run a deadman step on the module's event loop, from any thread, in order."""

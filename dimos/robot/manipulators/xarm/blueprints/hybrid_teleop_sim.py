@@ -37,12 +37,13 @@ from datetime import datetime
 
 from dimos.agents.skills.teleop_skills import TeleopSkills
 from dimos.constants import RECORDINGS_DIR
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import ControlTask
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OperatorHoldTask,
     operator_hold_task,
 )
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.stream import Out
@@ -59,20 +60,20 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.robot.manipulators.common.blueprints import (
-    coordinator,
-    eef_twist_task,
-    trajectory_task,
-)
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
+from dimos.robot.manipulators.xarm.blueprints.basic import (
+    XArmCoordinator,
+    xarm_coordinator,
+    xarm_gripper_task,
+)
 from dimos.robot.manipulators.xarm.blueprints.grasp import (
     XARM_GRASP_FRAME_TO_TCP,
     XARM_GRIPPER_SWEEP_VOLUME,
 )
+from dimos.robot.manipulators.xarm.blueprints.teleop import xarm_jog_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     XARM_HEURISTIC_AIM,
-    make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
@@ -142,8 +143,9 @@ class OperatorHoldCoordinator(ControlCoordinator):
             logger.exception("Publishing e-stop status failed")
 
 
-class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
-    """OperatorHoldCoordinator plus the ``ee_twist_command`` input the jog task reads.
+class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator, XArmCoordinator):
+    """OperatorHoldCoordinator plus the ``ee_twist_command`` input the jog task reads,
+    driving one xArm named "arm".
 
     A TwistStamped on ``ee_twist_command`` moves the gripper tip at that
     velocity (m/s, rad/s, world frame); a zero twist, or none for 0.3 s, stops it.
@@ -153,8 +155,8 @@ class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
 # The planner publishes these links on tf at the arm's real mount; the Desktop
 # draws each URDF link at its tf frame.
 _ARM_LINKS = ["link_base", *(f"link{i}" for i in range(1, 8))]
-_xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=_ARM_LINKS)
-_xarm7_sim_hw = make_xarm7_sim_hardware()
+_xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=_ARM_LINKS, robot="arm")
+_xarm7_sim_joints = [*_xarm7_sim_model.joint_names, "arm/drive_joint"]
 
 # The wrist camera's image size in pixels. The recording's profile states it,
 # so both take it from here.
@@ -168,8 +170,8 @@ _arm_state = FeatureSpec(
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(_xarm7_sim_hw.joints),),
-    names=list(_xarm7_sim_hw.joints),
+    shape=(len(_xarm7_sim_joints),),
+    names=_xarm7_sim_joints,
 )
 # The xarm7 profile of dimos/imitation/collection/blueprint.py, with the sim
 # camera's size instead of the RealSense's 848 x 480.
@@ -206,45 +208,40 @@ hybrid_teleop_sim = autoconnect(
         max_candidates=500,
     ),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
-    # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
-    # world-frame points at 5 Hz, renamed for the Desktop page's scene view.
-    MujocoSimModule.blueprint(
-        **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
-        width=_CAMERA_WIDTH,
-        height=_CAMERA_HEIGHT,
-        fps=_CAMERA_FPS,
-        enable_pointcloud=True,
-        enable_mujoco_lidar=True,
-        mujoco_lidar_raycast_width=80,
-        mujoco_lidar_raycast_height=60,
-        mujoco_lidar_voxel_size=0.01,
-    ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
     ManipulationLocalize.blueprint(world_frame="world"),
-    coordinator(
-        hardware=[_xarm7_sim_hw],
+    xarm_coordinator(
+        "xarm7",
+        cls=HybridTeleopCoordinator,
         tasks=[
-            trajectory_task(_xarm7_sim_hw),
-            eef_twist_task(
-                _xarm7_sim_hw,
-                robot_model=_xarm7_sim_model,
-                target_frame="link_tcp",
-                priority=20,
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
+            joint_trajectory_task([*_xarm7_sim_model.joint_names, "arm/drive_joint"]),
+            xarm_jog_task(_xarm7_sim_model, "link_tcp", priority=20),
+            xarm_gripper_task(),
             operator_hold_task(),
         ],
-        cls=HybridTeleopCoordinator,
-        instance_name="ControlCoordinator",
+        simulated=True,
+        # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
+        # world-frame points at 5 Hz, renamed for the Desktop page's scene view.
+        sim_module_kwargs={
+            **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
+            "width": _CAMERA_WIDTH,
+            "height": _CAMERA_HEIGHT,
+            "fps": _CAMERA_FPS,
+            "enable_pointcloud": True,
+            "enable_mujoco_lidar": True,
+            "mujoco_lidar_raycast_width": 80,
+            "mujoco_lidar_raycast_height": 60,
+            "mujoco_lidar_voxel_size": 0.01,
+        },
     ),
     # Serves the USD and its meshes; the planner already puts the links on tf.
     UsdManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
-).remappings([(PickAndPlaceModule, "_grasp_generator", GraspGenXModule)])
+).remappings(
+    [
+        (PickAndPlaceModule, "_grasp_generator", GraspGenXModule),
+        (MujocoSimModule, "pointcloud", "scene_pointcloud"),
+    ]
+)
 
 hybrid_teleop_sim_collect = autoconnect(
     # First, so the recorder and the episode monitor stop after what they record.

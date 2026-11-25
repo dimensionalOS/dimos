@@ -17,71 +17,108 @@
 from __future__ import annotations
 
 from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
-from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators._modeling import joint_names
-from dimos.robot.manipulators.common.blueprints import (
-    cartesian_ik_task,
-    eef_twist_task,
-    teleop_ik_task,
-    trajectory_task,
-)
 from dimos.robot.manipulators.common.coordinators import (
     ArmPoseCoordinator,
     ArmTwistCoordinator,
 )
-from dimos.robot.manipulators.common.sim import mujoco_if_sim
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.robot.manipulators.common.topics import CARTESIAN_IK_TASK_NAME, EEF_TWIST_TASK_NAME
+from dimos.robot.manipulators.piper.blueprints.basic import (
+    PIPER_ARM_JOINTS,
+    PIPER_JOINTS,
+    SIMULATED,
+    piper_arm,
+    piper_declaration,
+    piper_remaps,
+)
 from dimos.robot.manipulators.piper.config import (
     PIPER_DOF,
-    PIPER_SIM_PATH,
-    make_piper_hardware,
     make_piper_model_config,
-    piper_hardware,
     piper_model,
 )
 from dimos.robot.manipulators.piper.connection import PiperConnection
 from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_piper_keyboard_hw = make_piper_hardware(
-    "arm",
-    adapter_type="piper",
-    gripper=True,
-    mock_without_address=True,
-)
-_piper_model = make_piper_model_config()
+# The Piper named "arm", for planning and IK: joints arm/joint1 ... arm/joint6.
+_piper_model = make_piper_model_config(robot="arm")
 
+
+def _gripper_task(stream: str | None = None) -> TaskConfig:
+    """Open and close arm/gripper, open at its upper end (the task's default),
+    from the gripper openings on ``stream`` (0 closed, 1 open)."""
+    return TaskConfig(
+        name="arm_gripper",
+        type="gripper",
+        joint_names=["arm/gripper"],
+        priority=20,
+        stream_bind={"gripper_command": stream} if stream else {},
+    )
+
+
+class PiperKeyboardCoordinator(ArmTwistCoordinator):
+    """End-effector twists and gripper openings in, from the keyboard; one Piper
+    named "arm" out, driven by joint targets."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+class PiperPoseCoordinator(ArmPoseCoordinator):
+    """End-effector poses in; one Piper named "arm" out, driven by joint targets."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+class PiperWebXRCoordinator(TeleopControlCoordinator):
+    """VR controller poses and gripper openings in, from WebXR; one Piper named
+    "arm" out, driven by joint targets."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
+# With --simulation the Piper runs in MuJoCo; otherwise the CAN port is given at
+# run time (--piperconnection.can-port can0), or --choice arm=mock runs without one.
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
+    PiperKeyboardCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[_piper_keyboard_hw],
+        connections=[piper_declaration()],
         tasks=[
-            eef_twist_task(
-                _piper_keyboard_hw,
-                robot_model=_piper_model,
-                target_frame="gripper_base",
-            ),
             TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
+                name=EEF_TWIST_TASK_NAME,
+                type="eef_twist",
+                joint_names=PIPER_ARM_JOINTS,
+                priority=10,
+                params={
+                    "robot_model": _piper_model,
+                    "target_frame": "gripper_base",
+                    "timeout": 0.3,
+                    "max_joint_velocity_rad_s": 5.0,
+                    "max_command_tracking_error_deg": 10.0,
+                },
             ),
-            trajectory_task(_piper_keyboard_hw),
+            _gripper_task(),
+            joint_trajectory_task(PIPER_JOINTS),
         ],
     ),
     ManipulationModule.blueprint(
@@ -89,52 +126,66 @@ keyboard_teleop_piper = autoconnect(
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
-)
-
-_piper_mock_cartesian_hw = make_piper_hardware(
-    "arm",
-    gripper=False,
-)
-
-coordinator_cartesian_ik_mock = ArmPoseCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    hardware=[_piper_mock_cartesian_hw],
-    tasks=[
-        cartesian_ik_task(
-            _piper_mock_cartesian_hw,
-            robot_model=_piper_model,
-            target_frame="gripper_base",
-        )
-    ],
-)
-
-_piper_teleop_hw = piper_hardware("arm")
+    piper_arm(simulated=SIMULATED),
+).remappings(piper_remaps(PiperKeyboardCoordinator))
 
 
-coordinator_teleop_piper = autoconnect(
-    TeleopControlCoordinator.blueprint(
+def _cartesian_ik_task() -> TaskConfig:
+    """Move the Piper's gripper base to the poses that come in on ``cartesian_command``."""
+    return TaskConfig(
+        name=CARTESIAN_IK_TASK_NAME,
+        type="cartesian_ik",
+        joint_names=PIPER_ARM_JOINTS,
+        priority=10,
+        params={"robot_model": _piper_model, "target_frame": "gripper_base"},
+    )
+
+
+_mock_arm_model = piper_model(robot="arm")
+
+# A Piper without its gripper on MockJointConnection: every joint target comes straight back.
+coordinator_cartesian_ik_mock = autoconnect(
+    PiperPoseCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        hardware=[_piper_teleop_hw],
+        connections=[
+            ConnectionConfig(
+                source="arm",
+                model=_mock_arm_model,
+                joint_commands={
+                    joint.name: (Interface.POSITION,) for joint in movable_joints(_mock_arm_model)
+                },
+            )
+        ],
+        tasks=[_cartesian_ik_task()],
+    ),
+    MockJointConnection.blueprint(source="arm", model=_mock_arm_model),
+).remappings(
+    [
+        (MockJointConnection, "position_command", "arm_position_command"),
+        (PiperPoseCoordinator, "arm_joint_state", "joint_state"),
+    ]
+)
+
+# With --simulation the Piper runs in MuJoCo; otherwise the CAN port is given at
+# run time (--piperconnection.can-port can0), or --choice arm=mock runs without one.
+coordinator_teleop_piper = autoconnect(
+    PiperWebXRCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[piper_declaration()],
         tasks=[
-            teleop_ik_task(
-                _piper_teleop_hw,
-                robot_model=_piper_model,
-                bindings=[
-                    {
-                        "hand": "left",
-                        "target_frame": "gripper_base",
-                    }
-                ],
-                name="teleop_piper",
-            ),
             TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
+                name="teleop_piper",
+                type="teleop_ik",
+                joint_names=PIPER_ARM_JOINTS,
+                priority=10,
+                params={
+                    "robot_model": _piper_model,
+                    "bindings": [{"hand": "left", "target_frame": "gripper_base"}],
+                    "solver_type": PinkPoseTargetSolver,
+                },
             ),
-            trajectory_task(_piper_teleop_hw),
+            _gripper_task("left_gripper_command"),
+            joint_trajectory_task(PIPER_JOINTS),
         ],
     ),
     ManipulationModule.blueprint(
@@ -142,26 +193,22 @@ coordinator_teleop_piper = autoconnect(
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
-)
+    piper_arm(simulated=SIMULATED),
+).remappings(piper_remaps(PiperWebXRCoordinator))
 
-_piper_cartesian_hw = make_piper_hardware(
-    "arm",
-    adapter_type="piper",
-    address="can0",
-    gripper=True,
-)
-
-coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    hardware=[_piper_cartesian_hw],
-    tasks=[
-        cartesian_ik_task(
-            _piper_cartesian_hw,
-            robot_model=_piper_model,
-            target_frame="gripper_base",
-        )
-    ],
+# On the Piper at CAN port can0, unless given another (--piperconnection.can-port).
+coordinator_cartesian_ik_piper = autoconnect(
+    PiperPoseCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[piper_declaration()],
+        tasks=[_cartesian_ik_task()],
+    ),
+    PiperConnection.blueprint(gripper=True, can_port="can0"),
+).remappings(
+    [
+        (PiperConnection, "position_command", "arm_position_command"),
+        *piper_remaps(PiperPoseCoordinator),
+    ]
 )
 
 
@@ -174,11 +221,8 @@ class PiperTwistCoordinator(ArmTwistCoordinator):
     arm_joint_state: In[JointState]
 
 
-# The connection module's ports, onto the coordinator's ports for the robot named "arm".
-_ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
-    (PiperConnection, "position_command", "arm_position_command"),
-    (PiperTwistCoordinator, "arm_joint_state", "joint_state"),
-]
+# The coordinator's readings of the robot named "arm", from the connection.
+_ARM_REMAPS = piper_remaps(PiperTwistCoordinator)
 
 
 def _teleop() -> MetaBlueprint:
@@ -198,13 +242,7 @@ def _teleop() -> MetaBlueprint:
     return autoconnect(
         PiperTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            connections=[
-                ConnectionConfig(
-                    source="arm",
-                    model=model,
-                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
-                )
-            ],
+            connections=[piper_declaration()],
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,
@@ -219,17 +257,10 @@ def _teleop() -> MetaBlueprint:
                         "timeout": 0.3,
                     },
                 ),
-                # arm/gripper is open at its upper end, the task's default.
-                TaskConfig(
-                    name="arm_gripper",
-                    type="gripper",
-                    joint_names=["arm/gripper"],
-                    priority=20,
-                    stream_bind={"gripper_command": "right_gripper_command"},
-                ),
+                _gripper_task("right_gripper_command"),
             ],
         ),
-        PiperConnection.blueprint(gripper=True),
+        piper_arm(simulated=False),
         UsdManager.blueprint(model=model),
     )
 

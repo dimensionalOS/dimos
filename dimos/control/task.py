@@ -28,18 +28,29 @@ Use the t_now passed in CoordinatorState.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from enum import Enum
+from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
-from dimos.hardware.manipulators.spec import ControlMode as ControlMode
-from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.teleop.webxr.controller_types import Buttons
+
+
+class ControlMode(Enum):
+    """How a task's command values are meant: as positions, speeds or torques."""
+
+    POSITION = "position"  # Planned position control (slower, smoother)
+    SERVO_POSITION = "servo_position"  # High-freq joint position streaming (100Hz+)
+    VELOCITY = "velocity"
+    TORQUE = "torque"
+    CARTESIAN = "cartesian"
+    CARTESIAN_VELOCITY = "cartesian_velocity"
+    IMPEDANCE = "impedance"
 
 
 @dataclass(frozen=True)
@@ -124,9 +135,7 @@ class CoordinatorState:
     CRITICAL: Tasks should use t_now for timing, never time.time()!
 
     Attributes:
-        joints: Aggregated joint states from all hardware
-        imu: Per-whole-body IMU readings, keyed by hardware_id.
-            Empty dict when no whole-body hardware exposes IMU this tick.
+        joints: Aggregated joint states from all robots
         t_now: Current tick time (time.perf_counter())
         dt: Time since last tick (seconds)
         sensors: Sensor readings from robots driven through connection
@@ -134,13 +143,36 @@ class CoordinatorState:
     """
 
     joints: JointStateSnapshot
-    imu: dict[str, IMUState] = field(default_factory=dict)
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
     sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
     # Presence delegates position slew to the coordinator. Values are previously
     # dispatched commands, not task intent; None means no command has been sent.
     commanded_positions: dict[str, float | None] = field(default_factory=dict)
+
+
+class JointImpedance(NamedTuple):
+    """One joint pulled toward a target by a spring and slowed by a damper, plus extra torque.
+
+    A field left as None means the same on every robot:
+
+    - position: hold where the joint is measured, so the spring adds no force.
+    - velocity: 0.
+    - effort: no extra torque.
+    - stiffness, damping: the robot's own configured values.
+
+    Effort is torque added on top of whatever the robot already applies to
+    hold up its own weight.
+    """
+
+    # Same order as contract.limits.PD_INTERFACES. The motor applies
+    # torque = stiffness * (position - measured position)
+    #        + damping * (velocity - measured velocity) + effort
+    position: float | None  # target angle, rad
+    velocity: float | None  # target speed, rad/s
+    effort: float | None  # extra torque, Nm
+    stiffness: float | None  # spring strength, Nm/rad
+    damping: float | None  # damper strength, Nm·s/rad
 
 
 @dataclass
@@ -160,7 +192,10 @@ class JointCommandOutput:
         positions: Position commands (radians), or None
         velocities: Velocity commands (rad/s), or None
         efforts: Effort commands (Nm), or None
-        mode: Control mode - must match which field is populated
+        mode: Control mode - must match which field is populated. IMPEDANCE
+            takes any of the five arrays; see JointImpedance for an unset one.
+        stiffness: Spring strength per joint (Nm/rad), or None. IMPEDANCE only.
+        damping: Damper strength per joint (Nm·s/rad), or None. IMPEDANCE only.
     """
 
     joint_names: list[JointName]
@@ -168,9 +203,12 @@ class JointCommandOutput:
     velocities: list[float] | None = None
     efforts: list[float] | None = None
     mode: ControlMode = ControlMode.POSITION
+    stiffness: list[float] | None = None
+    damping: list[float] | None = None
 
     def __post_init__(self) -> None:
-        """Validate that lengths match and at least one value field is set."""
+        """Validate that lengths match, an IMPEDANCE output sets at least one
+        array, and only an IMPEDANCE output sets stiffness or damping."""
         n = len(self.joint_names)
 
         if self.positions is not None and len(self.positions) != n:
@@ -179,6 +217,31 @@ class JointCommandOutput:
             raise ValueError(f"velocities length {len(self.velocities)} != joint_names length {n}")
         if self.efforts is not None and len(self.efforts) != n:
             raise ValueError(f"efforts length {len(self.efforts)} != joint_names length {n}")
+        if self.stiffness is not None and len(self.stiffness) != n:
+            raise ValueError(f"stiffness length {len(self.stiffness)} != joint_names length {n}")
+        if self.damping is not None and len(self.damping) != n:
+            raise ValueError(f"damping length {len(self.damping)} != joint_names length {n}")
+        if self.mode is ControlMode.IMPEDANCE:
+            if (
+                self.positions is None
+                and self.velocities is None
+                and self.efforts is None
+                and self.stiffness is None
+                and self.damping is None
+            ):
+                raise ValueError("an IMPEDANCE output must set at least one array")
+        elif self.stiffness is not None or self.damping is not None:
+            raise ValueError(f"stiffness and damping are for IMPEDANCE, not {self.mode.name}")
+
+    def impedance(self, i: int) -> JointImpedance:
+        """The five numbers for ``joint_names[i]``, None where that array is unset."""
+        return JointImpedance(
+            self.positions[i] if self.positions is not None else None,
+            self.velocities[i] if self.velocities is not None else None,
+            self.efforts[i] if self.efforts is not None else None,
+            self.stiffness[i] if self.stiffness is not None else None,
+            self.damping[i] if self.damping is not None else None,
+        )
 
     def get_values(self) -> list[float] | None:
         """Get the active values based on mode."""

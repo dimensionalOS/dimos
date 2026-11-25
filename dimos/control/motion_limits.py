@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 import threading
 from typing import Any, Literal, Protocol
 
 from pydantic import Field, model_validator
 
-from dimos.control.task import ControlMode
+from dimos.control.task import ControlMode, JointImpedance
 from dimos.protocol.service.spec import BaseConfig
 from dimos.spec.utils import Spec
 
@@ -96,21 +97,22 @@ class MotionLimiter:
 
     def apply(
         self,
-        commands: dict[str, tuple[float, ControlMode, str]],
+        commands: Mapping[str, tuple[float | JointImpedance, ControlMode, str]],
         measured: dict[str, float],
         dt: float,
-    ) -> dict[str, tuple[float, ControlMode, str]]:
+    ) -> dict[str, tuple[float | JointImpedance, ControlMode, str]]:
         with self._lock:
-            result = commands.copy()
+            result = dict(commands)
             active = set()
             scales = {}
             for name, group in self._groups.items():
                 if group.coordinated:
                     distances = [
-                        abs(commands[j][0] - self._positions.get(j, measured[j]))
+                        abs(scalar - self._positions.get(j, measured[j]))
                         for j in group.joints
                         if j in commands
                         and j in measured
+                        and isinstance((scalar := commands[j][0]), float | int)
                         and commands[j][1] in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
                     ]
                     scales[name] = min(1.0, group.rate * max(0.0, dt) / max([1e-12, *distances]))
@@ -118,9 +120,29 @@ class MotionLimiter:
                 group_name = self._by_joint.get(joint)
                 if group_name is None:
                     continue
+                rate = self._groups[group_name].rate
+                if isinstance(desired, JointImpedance):
+                    reading = measured.get(joint)
+                    if reading is None or not math.isfinite(reading):
+                        result.pop(joint)
+                        continue
+                    target, speed = desired.position, desired.velocity
+                    if target is not None:
+                        start = self._positions.get(joint, reading)
+                        step = rate * max(0.0, dt)
+                        limited = max(start - step, min(start + step, target))
+                        # After external deflection, slew must never enlarge the
+                        # spring error bounded by the impedance task.
+                        if abs(limited - reading) > abs(target - reading):
+                            limited, speed = reading, 0.0 if speed is not None else None
+                        target = limited
+                        active.add(joint)
+                    if speed is not None:
+                        speed = max(-rate, min(rate, speed))
+                    result[joint] = (desired._replace(position=target, velocity=speed), mode, owner)
+                    continue
                 if not math.isfinite(desired):
                     raise ValueError(f"non-finite target for {joint}")
-                rate = self._groups[group_name].rate
                 if mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
                     reading = measured.get(joint)
                     if reading is None or not math.isfinite(reading):
