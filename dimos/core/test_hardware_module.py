@@ -26,7 +26,7 @@ from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, confi
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -204,14 +204,18 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
     arm = Arm(instance_name="left/arm")
     try:
         edges = {
-            (t.frame_id, t.child_frame_id): t for t in arm.usd_transforms({"elbow": math.pi / 2})
+            (t.frame_id, t.child_frame_id): t for t in arm.moving_transforms({"elbow": math.pi / 2})
         }
+        edges |= {(t.frame_id, t.child_frame_id): t for t in arm.static_transforms()}
         assert set(edges) == {("left/base", "left/forearm"), ("left/forearm", "left/wrist")}
         elbow = edges["left/base", "left/forearm"].to_matrix()
         np.testing.assert_allclose(elbow[:3, 3], [0.0, 0.0, 0.5], atol=1e-9)
         np.testing.assert_allclose(elbow[:3, 0], [0.0, 1.0, 0.0], atol=1e-9)
 
-        camera_edges = {(t.frame_id, t.child_frame_id) for t in camera.usd_transforms(ts=1.0)}
+        camera_edges = {
+            (t.frame_id, t.child_frame_id)
+            for t in [*camera.static_transforms(ts=1.0), *camera.moving_transforms(ts=1.0)]
+        }
         assert camera_edges == {
             ("left/wrist/camera_link", "left/wrist/optical"),
             ("left/wrist", "left/wrist/camera_link"),
@@ -300,21 +304,21 @@ def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> 
     assert camera.slept == []
 
 
-def test_publish_usd_tf_publishes_only_the_edges_that_move() -> None:
+def test_a_subclass_publishes_its_moving_edges_through_the_checked_tf_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[TFMessage] = []
+    monkeypatch.setattr(IO, "publish", lambda _port, msg: sent.append(msg))
     arm = Arm(instance_name="left/arm")
-    camera = WristCamera(attached_to="wrist", instance_name="left/wrist/wristcamera")
     try:
-        _, arm_tf = _listening(arm)
-        _, camera_tf = _listening(camera)
-        arm.publish_usd_tf({"elbow": 1.0}, ts=2.0)
-        camera.publish_usd_tf(ts=2.0)
+        arm.tf.publish(TFMessage(*arm.moving_transforms({"elbow": 1.0}, ts=2.0)))
+        with pytest.raises(ValueError, match="undeclared tf edge"):
+            arm.tf.publish(TFMessage(Transform(frame_id="left/base", child_frame_id="elsewhere")))
     finally:
         arm.stop()
-        camera.stop()
 
-    ((elbow,),) = arm_tf
+    ((elbow,),) = [message.transforms for message in sent]
     assert (elbow.frame_id, elbow.child_frame_id, elbow.ts) == ("left/base", "left/forearm", 2.0)
-    assert camera_tf == []
 
 
 _LINKAGE_URDF = """<robot name="linkage">
@@ -353,7 +357,10 @@ def test_every_edge_is_where_its_joint_puts_it_at_any_position() -> None:
     linkage = Linkage(instance_name="linkage")
     try:
         for positions in ({}, {"hinge": 2.9, "slide": -0.7}, {"hinge": -1.3, "slide": 0.4}):
-            edges = {t.child_frame_id: t.to_matrix() for t in linkage.usd_transforms(positions)}
+            edges = {
+                t.child_frame_id: t.to_matrix()
+                for t in [*linkage.static_transforms(), *linkage.moving_transforms(positions)]
+            }
             for joint in linkage._posable_joints:
                 expected = joint.parent_from_child(joint_position(joint, positions))
                 np.testing.assert_allclose(edges[joint.child_link], expected, atol=1e-9)
@@ -367,7 +374,10 @@ def test_a_frame_id_prefix_names_the_usd_and_its_tf_alike() -> None:
 
     arm = Arm(instance_name="left/arm", frame_id_prefix="spare")
     try:
-        edges = {(t.frame_id, t.child_frame_id) for t in arm.usd_transforms()}
+        edges = {
+            (t.frame_id, t.child_frame_id)
+            for t in [*arm.static_transforms(), *arm.moving_transforms()]
+        }
         frames = usd_frame_names(arm.get_usd())
     finally:
         arm.stop()

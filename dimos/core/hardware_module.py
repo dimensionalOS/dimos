@@ -44,7 +44,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.joint_transforms import JointTransforms
 from dimos.robot.assets.model import JointDescription, UsdModel
 from dimos.spec.utils import Spec
@@ -218,12 +217,6 @@ class HardwareModule(TfModule):
         """The frame the mount holds this hardware by; a mobile robot holds by its odometry frame instead."""
         return self.usd_frame(self.config.usd.root_link)
 
-    def usd_transforms(
-        self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
-    ) -> list[Transform]:
-        """Every edge of this hardware's own tf at ``joint_positions`` (missing joints sit at zero), plus its mount."""
-        return [*self.static_transforms(ts), *self.moving_transforms(joint_positions, ts)]
-
     def static_transforms(self, ts: float | None = None) -> list[Transform]:
         """The edges that never move (fixed joints and the mount), stamped ``ts``."""
         return [
@@ -242,14 +235,6 @@ class HardwareModule(TfModule):
     ) -> list[Transform]:
         """The edges of joints that move, at ``joint_positions`` (missing joints sit at zero)."""
         return self._edge_transforms(self._moving_edges, joint_positions or {}, ts)
-
-    def publish_usd_tf(
-        self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
-    ) -> None:
-        """Publish the edges that move at ``joint_positions``; the static ones go out on their own."""
-        transforms = self.moving_transforms(joint_positions, ts)
-        if transforms:
-            self.tfbuffer.publish(*transforms)
 
     def _edge_transforms(
         self, edges: JointTransforms, positions: Mapping[str, float], ts: float | None
@@ -292,17 +277,11 @@ class HardwareModule(TfModule):
             )
         return transforms
 
-    def _create_tfbuffer(self, port: Any) -> TF:
-        if self.config.skip_tf_checks:
-            return super()._create_tfbuffer(port)
-        frames = self.tf_frames
-        declared = {(frames[parent], frames[child]) for parent, child in self.config.tf_edges}
-        own = {(t.frame_id, t.child_frame_id) for t in self.usd_transforms()}
-        return TF(
-            port,
-            edges=declared | own,
-            module_name=self.config.instance_name or type(self).__name__,
-        )
+    @cached_property
+    def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
+        """The declared edges plus this hardware's own USD edges, static and moving."""
+        own = [*self.static_transforms(), *self.moving_transforms()]
+        return super().tf_edge_ids | {(t.frame_id, t.child_frame_id) for t in own}
 
 
 def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
