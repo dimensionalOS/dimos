@@ -324,15 +324,14 @@ def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
     finally:
         camera.stop()
 
+    # On the wire the camera's own frames and its mount carry a leading "/".
+    wire = {(f"/{parent}", f"/{child}") for parent, child in _CAMERA_STATIC_EDGES}
     (static,) = on_static
-    assert {(t.frame_id, t.child_frame_id) for t in static.transforms} == _CAMERA_STATIC_EDGES
+    assert {(t.frame_id, t.child_frame_id) for t in static.transforms} == wire
     assert {t.ts for t in static.transforms} == {100.0}
     assert camera.slept == [0.25, 0.25, 0.25]
     assert [{t.ts for t in published} for published in on_tf] == [{100.0}, {100.25}, {100.5}]
-    assert all(
-        {(t.frame_id, t.child_frame_id) for t in published} == _CAMERA_STATIC_EDGES
-        for published in on_tf
-    )
+    assert all({(t.frame_id, t.child_frame_id) for t in published} == wire for published in on_tf)
 
 
 def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> None:
@@ -368,9 +367,10 @@ def test_a_subclass_publishes_its_moving_edges_through_the_checked_tf_port(
         arm.stop()
 
     ((elbow,),) = [message.transforms for message in sent]
+    # Its own frames go on the wire with a leading "/"; code (moving_transforms, the check) never sees it.
     assert (elbow.frame_id, elbow.child_frame_id, elbow.ts) == (
-        "left/arm/base",
-        "left/arm/base/forearm",
+        "/left/arm/base",
+        "/left/arm/base/forearm",
         2.0,
     )
 
@@ -451,6 +451,15 @@ class LocalizedArmConfig(ArmConfig):
 
 class LocalizedArm(HardwareModule):
     config: LocalizedArmConfig
+
+
+def test_only_its_own_frames_go_on_the_wire_with_a_slash() -> None:
+    arm = LocalizedArm(instance_name="left/arm")
+    try:
+        (wire,) = arm.on_wire([Transform(frame_id="map", child_frame_id="left/arm/base")])
+        assert (wire.frame_id, wire.child_frame_id) == ("map", "/left/arm/base")
+    finally:
+        arm.stop()
 
 
 def test_a_subclass_adds_only_the_edges_its_usd_does_not_have() -> None:

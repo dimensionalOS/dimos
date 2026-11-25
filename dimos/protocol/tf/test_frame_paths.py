@@ -45,10 +45,44 @@ def test_a_frame_path_is_prim_names_joined_by_slashes(path: str, complaint: str 
             check_frame_path(path, "the frame")
 
 
-def test_a_hardware_edge_is_a_frame_on_its_path_parent() -> None:
-    assert is_hardware_edge("go2_A/go2", "go2_A/go2/base")
-    assert not is_hardware_edge("odom", "go2_A/go2/base")
-    assert not is_hardware_edge("go2_A", "go2_A/go2/base")
+def test_a_hardware_edge_is_one_whose_both_ends_arrived_with_a_slash() -> None:
+    assert is_hardware_edge("/go2_A/go2", "/go2_A/go2/base")
+    assert not is_hardware_edge("odom", "/go2_A/go2/base")
+    assert not is_hardware_edge("go2_A/go2", "go2_A/go2/base")
+
+
+def test_a_buffer_looks_a_slashed_wire_frame_up_without_its_slash() -> None:
+    buffer = MultiTBuffer()
+    wire = Transform(
+        translation=Vector3(1.0, 0.0, 0.0), frame_id="/a", child_frame_id="/a/b", ts=1.0
+    )
+    buffer.receive_transform(wire)
+
+    found = buffer.get("a", "a/b", time_tolerance=10.0)
+    assert found is not None and found.translation.x == pytest.approx(1.0)
+    assert buffer.get_frames() == {"a", "a/b"}
+    assert (wire.frame_id, wire.child_frame_id) == ("/a", "/a/b"), (
+        "what other subscribers got is untouched"
+    )
+
+
+def test_an_odometry_edge_without_slashes_resolves_through_to_hardware_frames() -> None:
+    buffer = MultiTBuffer()
+    buffer.receive_transform(
+        Transform(
+            translation=Vector3(2.0, 0.0, 0.0), frame_id="odom", child_frame_id="go2/base", ts=1.0
+        ),
+        Transform(
+            translation=Vector3(0.0, 0.0, 0.1),
+            frame_id="/go2/base",
+            child_frame_id="/go2/base/lidar",
+            ts=1.0,
+        ),
+    )
+
+    lidar = buffer.get("odom", "go2/base/lidar", time_tolerance=10.0)
+    assert lidar is not None
+    assert (lidar.translation.x, lidar.translation.z) == pytest.approx((2.0, 0.1))
 
 
 def test_a_frame_with_a_hardware_and_an_imaginary_parent_is_found_both_ways() -> None:
@@ -84,12 +118,24 @@ class _Edged(TfModule):
     config: _Edges
 
 
-def _atoms(*declared: tuple[dict[str, str], list[tuple[str, str]]]) -> list[Any]:
+class _Slashed(_Edged):
+    """Puts its "top" and "base" frames on the wire with a slash, as a HardwareModule does its own."""
+
+    @classmethod
+    def blueprint_wire_roles(cls, atom: Any) -> set[str]:
+        return {"top", "base"}
+
+
+def _atoms(
+    *declared: tuple[dict[str, str], list[tuple[str, str]]], slashed: tuple[int, ...] = ()
+) -> list[Any]:
     from dimos.core.coordination.blueprints import autoconnect, config_defaults
 
     blueprint = autoconnect(
         *(
-            _Edged.blueprint(tf_frames_global=frames, tf_edges=edges).namespace(f"m{index}")
+            (_Slashed if index in slashed else _Edged)
+            .blueprint(tf_frames_global=frames, tf_edges=edges)
+            .namespace(f"m{index}")
             for index, (frames, edges) in enumerate(declared)
         )
     )
@@ -106,6 +152,7 @@ def test_a_hardware_and_an_imaginary_parent_are_allowed() -> None:
         _atoms(
             ({"top": "go2", "base": "go2/base"}, [("top", "base")]),
             ({"odom": "odom", "base": "go2/base"}, [("odom", "base")]),
+            slashed=(0,),
         )
     )
 
