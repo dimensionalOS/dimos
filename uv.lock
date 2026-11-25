@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T05:21:28.418866Z"
+exclude-newer = "2026-11-18T14:26:19.925856958Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1822,6 +1822,22 @@ wheels = [
 ]
 
 [[package]]
+name = "depthai"
+version = "3.12.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/05/99cd24cd1189ebd10a638cf2118da77e29dd7bf8ca840b93cac63dda7e87/depthai-3.12.1-cp39.cp310.cp311.cp312.cp313.cp314.cp315-cp39.cp310.cp311.cp312.cp313.cp314.cp315-macosx_11_0_arm64.whl", hash = "sha256:1bf55a4d40d0e7c452496754baef6e236ce29cdc8ff76fc9aa00bb616f13cb23", size = 70735565, upload-time = "2026-11-11T13:09:12.896Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/fc/8a3ac8ccdf9857e001d44b6a9a94c2d4af9b96784dfc2c28591cf43c7974/depthai-3.12.1-cp39.cp310.cp311.cp312.cp313.cp314.cp315-cp39.cp310.cp311.cp312.cp313.cp314.cp315-macosx_11_0_x86_64.whl", hash = "sha256:4440e4a7df8962ab38760945ac78e7fec584b03fb81ddb7eeff11c6ca2f50c4f", size = 76299777, upload-time = "2026-11-11T13:09:17.655Z" },
+    { url = "https://files.pythonhosted.org/packages/46/a3/e38c8fab5999599b8aa354babffbf44d751fb037c9d7bbbb9860e51810cb/depthai-3.12.1-cp39.cp310.cp311.cp312.cp313.cp314.cp315-cp39.cp310.cp311.cp312.cp313.cp314.cp315-manylinux_2_28_aarch64.whl", hash = "sha256:d2c81106ac94ed4e722ab558e464b7d41712cfe6ec51344f7585eeeeb711602e", size = 89688900, upload-time = "2026-11-11T13:09:22.473Z" },
+    { url = "https://files.pythonhosted.org/packages/00/71/2d700d2519f2372ad34ed772ed097cbe8dcc8efeb208b9dc453ef9364449/depthai-3.12.1-cp39.cp310.cp311.cp312.cp313.cp314.cp315-cp39.cp310.cp311.cp312.cp313.cp314.cp315-manylinux_2_28_x86_64.whl", hash = "sha256:c534be8e0be5864f8ea9140a93b859ead9082636020c810d2b3e1bcff06c29d5", size = 96163858, upload-time = "2026-11-11T13:09:27.856Z" },
+    { url = "https://files.pythonhosted.org/packages/96/df/d70dd0ca4a9e5bb04dfd091706ad7f60a1478f0b37cb99e94c5fba999360/depthai-3.12.1-cp39.cp310.cp311.cp312.cp313.cp314.cp315-cp39.cp310.cp311.cp312.cp313.cp314.cp315-win_amd64.whl", hash = "sha256:3163bbe4579717642963eee199ffdb46874c24b0eeff43bfe1c682397de08c92", size = 78935921, upload-time = "2026-11-11T13:09:32.967Z" },
+]
+
+[[package]]
 name = "deptry"
 version = "0.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2192,6 +2208,9 @@ misc = [
     { name = "googlemaps" },
     { name = "ipykernel" },
     { name = "portal" },
+]
+oak = [
+    { name = "depthai" },
 ]
 perception = [
     { name = "chromadb" },
@@ -2587,6 +2606,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
+    { name = "depthai", marker = "extra == 'oak'", specifier = ">=3.11,<4" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
@@ -2722,7 +2742,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "leader-teleop", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "leader-teleop", "cpu", "cuda", "sim", "mapping", "drone", "oak", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]

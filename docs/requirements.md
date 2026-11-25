@@ -50,6 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
+| `oak` | Luxonis OAK depth cameras | depthai | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
 | `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
