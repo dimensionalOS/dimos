@@ -28,9 +28,9 @@ unitree_go2_sim2_l1 = autoconnect(
     sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
     Logistics.blueprint(),
     autoconnect(
-        Go2Sim.blueprint(mount=Logistics.mounts.go2),
-        SimL1.mount(Go2Sim.mounts.l1),
-        SimCamera.mount(Go2Sim.mounts.camera),
+        Go2Sim.blueprint(attached_to=Logistics.mounts.go2),
+        SimL1.attach(Go2Sim.mounts.l1),
+        SimCamera.attach(Go2Sim.mounts.camera),
     ).namespace("go2", shared={"cmd_vel"}),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")

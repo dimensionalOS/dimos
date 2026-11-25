@@ -89,13 +89,13 @@ def test_mounts_are_named_on_the_class() -> None:
 
 
 def test_mount_namespaces_under_the_mount_name() -> None:
-    (atom,) = WristCamera.mount(Arm.mounts.wrist).active_blueprints
+    (atom,) = WristCamera.attach(Arm.mounts.wrist).active_blueprints
     assert atom.name == "wrist/wristcamera"
-    assert atom.kwargs["mount"] == "wrist"
+    assert atom.kwargs["attached_to"] == "wrist"
 
 
 def test_one_unmounted_with_mounted_hardware_passes() -> None:
-    _verify(autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist)))
+    _verify(autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist)))
 
 
 def test_two_unmounted_in_one_namespace_is_refused() -> None:
@@ -104,7 +104,7 @@ def test_two_unmounted_in_one_namespace_is_refused() -> None:
 
 
 def test_each_namespace_gets_its_own_unmounted_hardware() -> None:
-    robot = autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist))
+    robot = autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist))
     _verify(autoconnect(robot.namespace("left"), robot.namespace("right")))
     with pytest.raises(ValueError, match=r"left: left/arm, left/wristcamera"):
         _verify(autoconnect(Arm.blueprint(), WristCamera.blueprint()).namespace("left"))
@@ -114,7 +114,7 @@ def test_a_mount_no_hardware_offers_is_refused() -> None:
     with pytest.raises(
         ValueError, match=r"wrist/wristcamera is mounted on 'wrist', which no other"
     ):
-        _verify(autoconnect(WristCamera.mount(Arm.mounts.wrist)))
+        _verify(autoconnect(WristCamera.attach(Arm.mounts.wrist)))
 
 
 def test_a_sensor_namespaced_without_its_parent_is_refused() -> None:
@@ -122,7 +122,9 @@ def test_a_sensor_namespaced_without_its_parent_is_refused() -> None:
     with pytest.raises(
         ValueError, match=r"(?s)offered: 'wrist'.*left/wrist/wristcamera is mounted on 'left/wrist'"
     ):
-        _verify(autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist).namespace("left")))
+        _verify(
+            autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist).namespace("left"))
+        )
 
 
 class Gripper(HardwareModule):
@@ -141,7 +143,7 @@ def test_hardware_mounted_on_each_other_in_a_loop_is_refused() -> None:
         ValueError,
         match=r"(?s)finger/gripper is mounted on 'finger'.*palm/palm is mounted on 'palm'",
     ):
-        _verify(autoconnect(Gripper.mount(Palm.mounts.finger), Palm.mount(Gripper.mounts.palm)))
+        _verify(autoconnect(Gripper.attach(Palm.mounts.finger), Palm.attach(Gripper.mounts.palm)))
 
 
 def test_two_hardware_on_one_mount_is_refused() -> None:
@@ -149,8 +151,8 @@ def test_two_hardware_on_one_mount_is_refused() -> None:
         _verify(
             autoconnect(
                 Arm.blueprint(),
-                WristCamera.mount(Arm.mounts.wrist),
-                Gripper.mount(Arm.mounts.wrist),
+                WristCamera.attach(Arm.mounts.wrist),
+                Gripper.attach(Arm.mounts.wrist),
             )
         )
 
@@ -158,9 +160,9 @@ def test_two_hardware_on_one_mount_is_refused() -> None:
 def test_a_chain_of_mounts_under_a_namespace_passes() -> None:
     robot = autoconnect(
         Arm.blueprint(),
-        Gripper.mount(Arm.mounts.wrist),
+        Gripper.attach(Arm.mounts.wrist),
         # The camera mounts on the gripper, so it goes under the gripper's namespace.
-        WristCamera.mount(Gripper.mounts.palm).namespace(Arm.mounts.wrist),
+        WristCamera.attach(Gripper.mounts.palm).namespace(Arm.mounts.wrist),
     )
     _verify(robot.namespace("left"))
 
@@ -181,13 +183,13 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
     coordinator = _build(
-        autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist)).namespace("left")
+        autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist)).namespace("left")
     )
     try:
         arm = coordinator.get_instance("left/arm")
         camera = coordinator.get_instance("left/wrist/wristcamera")
-        assert arm.mounted_on() is None
-        assert camera.mounted_on() == "left/wrist"
+        assert arm.attached_to() is None
+        assert camera.attached_to() == "left/wrist"
         arm_frames = usd_frame_names(arm.get_usd())
         assert {"left/base", "left/forearm", "left/wrist"} <= arm_frames
         assert not any("camera" in frame for frame in arm_frames)
@@ -197,7 +199,7 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
 
 
 def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
-    camera = WristCamera(mount="wrist", instance_name="left/wrist/wristcamera")
+    camera = WristCamera(attached_to="wrist", instance_name="left/wrist/wristcamera")
     arm = Arm(instance_name="left/arm")
     try:
         edges = {
@@ -262,7 +264,7 @@ _CAMERA_STATIC_EDGES = {
 
 def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
     camera = _ClockedCamera(
-        mount="wrist", instance_name="left/wrist/wristcamera", static_tf_rate_hz=4.0
+        attached_to="wrist", instance_name="left/wrist/wristcamera", static_tf_rate_hz=4.0
     )
     try:
         on_static, on_tf = _listening(camera)
@@ -284,7 +286,7 @@ def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
 
 def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> None:
     camera = _ClockedCamera(
-        mount="wrist", instance_name="left/wrist/wristcamera", static_tf_rate_hz=0.0
+        attached_to="wrist", instance_name="left/wrist/wristcamera", static_tf_rate_hz=0.0
     )
     try:
         on_static, on_tf = _listening(camera)
@@ -299,7 +301,7 @@ def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> 
 
 def test_publish_usd_tf_publishes_only_the_edges_that_move() -> None:
     arm = Arm(instance_name="left/arm")
-    camera = WristCamera(mount="wrist", instance_name="left/wrist/wristcamera")
+    camera = WristCamera(attached_to="wrist", instance_name="left/wrist/wristcamera")
     try:
         _, arm_tf = _listening(arm)
         _, camera_tf = _listening(camera)

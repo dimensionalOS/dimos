@@ -17,14 +17,14 @@
 A robot's USD holds the robot alone. A sensor on it is its own HardwareModule with its own USD,
 mounted onto one of the robot's mount frames::
 
-    autoconnect(Robot.blueprint(), Lidar.mount(Robot.mounts.lidar))
+    autoconnect(Robot.blueprint(), Lidar.attach(Robot.mounts.lidar))
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
 the mount frame it sits on to its own frames. The edges that never move (fixed joints and the
 mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
 USD and every file it reaches on ``hardware_file_request``/``hardware_file_response``, named
 relative to itself, so whatever needs the whole assembly (a simulator, on this machine or another)
-fetches them with ``fetch_hardware_files`` and grafts them where ``mounted_on()`` says.
+fetches them with ``fetch_hardware_files`` and grafts them where ``attached_to()`` says.
 """
 
 from collections import defaultdict
@@ -79,8 +79,8 @@ class HardwareModuleConfig(TfModuleConfig):
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
     # Required: hardware without a USD is not a HardwareModule.
     usd: UsdModel
-    # The mount frame of the hardware this sits on (set by HardwareModule.mount); None for the hardware everything mounts to.
-    mount: str | None = None
+    # The mount frame of the hardware this sits on (set by HardwareModule.attach); None for the hardware everything mounts to.
+    attached_to: str | None = None
     # The edges that never move go out once on tf_static at start, then on tf this often (0: never on tf), for whatever joins later.
     static_tf_rate_hz: float = 10.0
 
@@ -89,7 +89,7 @@ class HardwareModuleConfig(TfModuleConfig):
 class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     # possible to have a namespace without being mounted, this differentiates that
-    def mounted_on(self) -> str | None: ...
+    def attached_to(self) -> str | None: ...
     def get_namespace(self) -> str: ...
 
 
@@ -107,9 +107,9 @@ class HardwareModule(TfModule):
     tf_static: Out[TFMessage]
 
     @classmethod
-    def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
+    def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same name."""
-        return cls.blueprint(mount=mount_frame, **kwargs).namespace(mount_frame)
+        return cls.blueprint(attached_to=mount_frame, **kwargs).namespace(mount_frame)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -117,7 +117,7 @@ class HardwareModule(TfModule):
         hardware = [atom for atom in atoms if issubclass(atom.module, HardwareModule)]
         unmounted: dict[str, list[str]] = defaultdict(list)
         for atom in hardware:
-            if atom.kwargs.get("mount") is None:
+            if atom.kwargs.get("attached_to") is None:
                 unmounted[atom.name.rpartition("/")[0]].append(atom.name)
         errors = [
             f"    - {namespace or 'the top level'}: {', '.join(sorted(names))}"
@@ -129,7 +129,7 @@ class HardwareModule(TfModule):
                 "\n".join(
                     [
                         "Blueprint cannot start: a namespace has more than one unmounted "
-                        "HardwareModule (mount all but one with .mount(name)).",
+                        "HardwareModule (attach all but one with .attach(mount)).",
                         *errors,
                     ]
                 )
@@ -174,9 +174,9 @@ class HardwareModule(TfModule):
         return self._hardware_files.usd
 
     @rpc
-    def mounted_on(self) -> str | None:
+    def attached_to(self) -> str | None:
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
-        return self.namespace if self.config.mount is not None else None
+        return self.namespace if self.config.attached_to is not None else None
 
     def local_usd(self) -> str:
         """This hardware's USD for its own use: frames named as on tf, files as paths on this machine."""
@@ -213,7 +213,7 @@ class HardwareModule(TfModule):
         return f"{self.frame_id_prefix}/{name}" if self.frame_id_prefix else name
 
     @property
-    def mounted_frame(self) -> str:
+    def attach_frame(self) -> str:
         """The frame the mount holds this hardware by; a mobile robot holds by its odometry frame instead."""
         return self.usd_frame(self.config.usd.root_link)
 
@@ -283,11 +283,11 @@ class HardwareModule(TfModule):
         """The fixed joints and the mount, worked out once and only restamped; a subclass may narrow them."""
         fixed = _JointEdges(tuple(j for j in self._posable_joints if j.type == "fixed"))
         transforms = self._edge_transforms(fixed, {}, None)
-        mounted_on = self.mounted_on()
-        if mounted_on is not None:
+        attached_to = self.attached_to()
+        if attached_to is not None:
             transforms.append(
                 Transform.from_matrix(
-                    np.eye(4), frame_id=mounted_on, child_frame_id=self.mounted_frame
+                    np.eye(4), frame_id=attached_to, child_frame_id=self.attach_frame
                 )
             )
         return transforms
@@ -327,9 +327,9 @@ def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
         if len(names) > 1
     ]
     for atom in sorted(hardware, key=lambda atom: atom.name):
-        if atom.kwargs.get("mount") is None:
+        if atom.kwargs.get("attached_to") is None:
             continue
-        # A mounted module sits on the frame named by its namespace (mounted_on).
+        # A mounted module sits on the frame named by its namespace (attached_to).
         frame = atom.name.rpartition("/")[0]
         if frame not in offered_by:
             errors.append(

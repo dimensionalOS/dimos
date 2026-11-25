@@ -140,7 +140,7 @@ class Go2Sim(OnWorldTime, HardwareModule):
         self._odometry: MountOdometry | None = None
 
     @property
-    def mounted_frame(self) -> str:
+    def attach_frame(self) -> str:
         return str(self.frame.odom)
 
     @rpc
