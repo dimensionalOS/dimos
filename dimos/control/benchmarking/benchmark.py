@@ -21,6 +21,7 @@ follows paths purely over the transport:
     OUT  speed  (std_msgs/Float32, m/s) -- the target/cruise speed for one run
     IN   odometry   (nav_msgs/Odometry) -- the robot's executed pose
     IN   cmd_vel(geometry_msgs/Twist)       -- the command sent to the robot
+    IN   twist_command (geometry_msgs/Twist) -- operator input that preempts the path
     IN   operator_command (std_msgs/Int8)      -- operator advance/skip/quit (hw)
 
 For each (path, speed) in a fixed battery it: waits for an operator gate (so the
@@ -31,6 +32,9 @@ last pose AND near-zero velocity for a short dwell, or a per-run timeout), and
 writes the run (reference path + executed trace + metadata) to disk as one flat
 JSON. It does NOT score inline — scoring is a separate offline step (see
 :mod:`dimos.control.benchmarking.score`).
+
+Operator Twist input ends the current run as ``operator_stopped``. These
+recordings are retained for inspection but excluded from offline scores.
 
 The Benchmarker is controller-agnostic (it talks only over the transport), but
 it runs in the SAME process as the controller: the benchmark blueprint composes
@@ -84,6 +88,7 @@ DEFAULT_OUT_DIR = STATE_DIR / "benchmark"
 
 # Recording schema version — bump if the on-disk JSON shape changes.
 RECORDING_SCHEMA = 1
+OPERATOR_STOPPED = "operator_stopped"
 
 
 def path_set() -> dict[str, NavPath]:
@@ -395,6 +400,7 @@ class Benchmarker(Module):
     speed: Out[Float32]
     odometry: In[Odometry]
     cmd_vel: In[Twist]
+    twist_command: In[Twist]
     operator_command: In[Int8]
 
     _gate_queue: queue.Queue[int]
@@ -404,6 +410,7 @@ class Benchmarker(Module):
         self._gate_queue = queue.Queue()
         self._recorder = OdomRecorder()
         self._stop_event = threading.Event()
+        self._operator_stopped = threading.Event()
         self._thread: threading.Thread | None = None
 
     @rpc
@@ -415,6 +422,7 @@ class Benchmarker(Module):
             )
         )
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._recorder.on_cmd_vel)))
+        self.register_disposable(Disposable(self.twist_command.subscribe(self._on_operator_twist)))
         if self.config.gate_source == "stream":
             self.register_disposable(
                 Disposable(self.operator_command.subscribe(self._on_gate_event))
@@ -436,6 +444,11 @@ class Benchmarker(Module):
 
     def _on_gate_event(self, msg: Int8) -> None:
         self._gate_queue.put(int(msg.data))
+
+    def _on_operator_twist(self, _msg: Twist) -> None:
+        # Any operator Twist, including the emergency-stop zero, preempts the
+        # follower. Keep this separate from cmd_vel, which records robot output.
+        self._operator_stopped.set()
 
     def _drain_gate(self) -> int:
         """Discard queued gate events; return how many were dropped.
@@ -506,8 +519,11 @@ class Benchmarker(Module):
 
     def _run_one(self, robot: str, path_name: str, path: NavPath, speed: float) -> RunRecording:
         """Publish one (path, speed), record odom until odom-based completion or
-        timeout, and return the recording."""
+        timeout or operator override, and return the recording."""
         cfg = self.config
+        # Ignore positioning commands from before this run, but retain any
+        # operator stop received while preparing its path and speed.
+        self._operator_stopped.clear()
         pose0 = self._recorder.wait_first_pose(cfg.odom_warmup_s)
         path_w = shift_path_to_start_at_pose(path, pose0)
 
@@ -526,7 +542,8 @@ class Benchmarker(Module):
         self._recorder.reset()
         self.speed.publish(Float32(data=float(speed)))
         time.sleep(cfg.speed_settle_s)
-        self.path.publish(path_w)
+        if not self._operator_stopped.is_set():
+            self.path.publish(path_w)
 
         monitor = CompletionMonitor(
             path_w,
@@ -546,6 +563,8 @@ class Benchmarker(Module):
         while time.perf_counter() < deadline:
             if self._stop_event.is_set():
                 return False, "stopped"
+            if self._operator_stopped.is_set():
+                return False, OPERATOR_STOPPED
             pose = self._recorder.latest_pose()
             if pose is not None:
                 lin, ang = self._recorder.body_speed()
