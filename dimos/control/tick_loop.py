@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
 from dimos.control.contract.keys import Interface
+from dimos.control.group_command import GroupCommandOutput
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -49,7 +50,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.connection_source import ConnectionSource
@@ -58,6 +59,8 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
+
+TaskOutput = tuple[ControlTask, ResourceClaim, JointCommandOutput | GroupCommandOutput | None]
 
 
 class JointWinner(NamedTuple):
@@ -119,6 +122,7 @@ class TickLoop:
         publish_command_callback: Callable[[JointState], None] | None = None,
         connections: dict[str, ConnectionSource] | None = None,
         connection_command_callback: Callable[[str, dict[str, float]], None] | None = None,
+        group_commands_allowed: Callable[[], bool] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
@@ -126,6 +130,13 @@ class TickLoop:
             connections if connections is not None else {}
         )
         self._connection_command_callback = connection_command_callback
+        self._group_interfaces = {
+            interface: (source, joints)
+            for source in self._connections.values()
+            for interface, joints in source.group_joints.items()
+        }
+        self._group_commands_allowed = group_commands_allowed
+        self._group_generation = 0  # guarded by task_lock
         # Robots already told off for never reporting, so each is told off once.
         self._silence_logged: set[str] = set()
         self._started_at = time.monotonic()
@@ -189,6 +200,10 @@ class TickLoop:
             self._tick_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         logger.info("TickLoop stopped")
 
+    def invalidate_group_results(self) -> None:
+        """Fence computed native results locally. Caller holds the task lock."""
+        self._group_generation += 1
+
     def _loop(self) -> None:
         """Main control loop - deterministic read → compute → arbitrate → write."""
         period_ns = round(1_000_000_000 / self._tick_rate)
@@ -227,9 +242,10 @@ class TickLoop:
             sensors=self._read_all_sensors(),
         )
 
-        commands = self._compute_all_tasks(state)
-
-        joint_commands, preemptions = self._arbitrate(commands)
+        generation, commands = self._compute_all_tasks(state)
+        preemptions: dict[str, dict[str, str]] = {}
+        covered = self._publish_groups(commands, generation, preemptions)
+        joint_commands = self._arbitrate(commands, covered, preemptions)
 
         self._notify_preemptions(preemptions)
 
@@ -237,7 +253,7 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
-        self._write_all_connections(joint_commands)
+        self._write_all_connections(joint_commands, covered.keys())
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -337,13 +353,12 @@ class TickLoop:
                 readings.update(source.read_sensors())
         return SensorStateSnapshot(readings=readings)
 
-    def _compute_all_tasks(
-        self, state: CoordinatorState
-    ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
+    def _compute_all_tasks(self, state: CoordinatorState) -> tuple[int, list[TaskOutput]]:
         """Compute outputs from all active tasks."""
-        results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
+        results: list[TaskOutput] = []
 
         with self._task_lock:
+            generation = self._group_generation
             self._joint_positions = state.joints.joint_positions.copy()
             for task in self._tasks.values():
                 if not task.is_active():
@@ -361,26 +376,74 @@ class TickLoop:
                 except Exception as e:
                     logger.error(f"Task {task.name} compute error: {e}")
 
-        return results
+        return generation, results
+
+    def _publish_groups(
+        self,
+        commands: list[TaskOutput],
+        generation: int,
+        preemptions: dict[str, dict[str, str]],
+    ) -> dict[str, str]:
+        """Visit contenders in priority order (stable on ties). Reserve only whole wins."""
+        covered: dict[str, str] = {}
+        if not self._group_interfaces or not any(
+            isinstance(output, GroupCommandOutput) for _, _, output in commands
+        ):
+            return covered
+        # Match the hardware → task lock order used by remove_hardware.
+        # Hold both through publish so cancel and E-stop cannot race the send.
+        with self._hardware_lock, self._task_lock:
+            if (
+                generation != self._group_generation
+                or self._stop_event.is_set()
+                or (self._group_commands_allowed is not None and not self._group_commands_allowed())
+            ):
+                return covered
+            reserved: dict[str, str] = {}
+            for task, _, output in sorted(commands, key=lambda entry: -entry[1].priority):
+                if isinstance(output, GroupCommandOutput):
+                    target = self._group_interfaces.get(output.interface)
+                    if target is None:
+                        continue
+                    source, joints = target
+                    blocked = {joint: reserved[joint] for joint in joints & reserved.keys()}
+                    if blocked:
+                        preemptions.setdefault(task.name, {}).update(blocked)
+                        continue
+                    try:
+                        if not source.publish_group(output.interface, output.payload):
+                            continue
+                    except Exception:
+                        # Delivery may already have happened; do not drive the same axes twice.
+                        logger.exception(f"Failed to publish {output.interface}")
+                    owned = dict.fromkeys(joints, task.name)
+                    reserved.update(owned)
+                    covered.update(owned)
+                elif output is not None and (values := output.get_values()) is not None:
+                    for joint, value in zip(output.joint_names, values, strict=True):
+                        robot = self._joint_to_hardware.get(joint)
+                        scalar_source = self._connections.get(robot) if robot is not None else None
+                        if (
+                            self._connection_command_callback is not None
+                            and scalar_source is not None
+                            and scalar_source.group_joints
+                            and scalar_source.accepts_joint_command(joint, output.mode, value)
+                            and scalar_source.ready_for_control()
+                        ):
+                            reserved.setdefault(joint, task.name)
+        return covered
 
     def _arbitrate(
         self,
-        commands: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]],
-    ) -> tuple[
-        dict[str, tuple[float, ControlMode, str]],
-        dict[str, dict[str, str]],
-    ]:
-        """Per-joint arbitration with mode conflict detection.
-
-        Returns:
-            Tuple of:
-            - joint_commands: {joint_name: (value, mode, task_name)}
-            - preemptions: {preempted_task: {joint: winning_task}}
-        """
-        winners: dict[str, JointWinner] = {}  # joint_name -> current winner
-        preemptions: dict[str, dict[str, str]] = {}  # loser_task -> {joint: winner_task}
-
+        commands: list[TaskOutput],
+        covered: dict[str, str],
+        preemptions: dict[str, dict[str, str]],
+    ) -> dict[str, tuple[float, ControlMode, str]]:
+        """Per-joint arbitration with mode conflict detection on uncovered joints."""
+        winners: dict[str, JointWinner] = {}
         for task, claim, output in commands:
+            if isinstance(output, GroupCommandOutput):
+                continue
             if output is None:
                 continue
 
@@ -389,6 +452,20 @@ class TickLoop:
                 continue
 
             for i, joint_name in enumerate(output.joint_names):
+                # Use the same scalar eligibility as group arbitration on mixed
+                # sources; leave legacy-only batch rejection unchanged.
+                if self._group_interfaces:
+                    robot = self._joint_to_hardware.get(joint_name)
+                    source = self._connections.get(robot) if robot is not None else None
+                    if (
+                        source is not None
+                        and source.group_joints
+                        and not source.accepts_joint_command(joint_name, output.mode, values[i])
+                    ):
+                        continue
+                if joint_name in covered:
+                    preemptions.setdefault(task.name, {})[joint_name] = covered[joint_name]
+                    continue
                 candidate = JointWinner(claim.priority, values[i], output.mode, task.name)
 
                 # First claim on this joint
@@ -419,10 +496,7 @@ class TickLoop:
                     preemptions.setdefault(task.name, {})[joint_name] = current.task_name
                 # Same priority + same mode: first wins (keep current)
 
-        # Convert to output format: joint -> (value, mode, task_name)
-        joint_commands = {joint: (w.value, w.mode, w.task_name) for joint, w in winners.items()}
-
-        return joint_commands, preemptions
+        return {joint: (w.value, w.mode, w.task_name) for joint, w in winners.items()}
 
     def _notify_preemptions(self, preemptions: dict[str, dict[str, str]]) -> None:
         """Notify each preempted task with affected joints, grouped by winning task."""
@@ -537,6 +611,7 @@ class TickLoop:
     def _write_all_connections(
         self,
         joint_commands: dict[str, tuple[float, ControlMode, str]],
+        group_joints: Collection[str] = (),
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -559,7 +634,7 @@ class TickLoop:
                     if self._joint_to_hardware.get(joint) == name
                 }
                 try:
-                    publish(name, source.command(winners))
+                    publish(name, source.command(winners, group_joints=group_joints))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 
@@ -585,18 +660,18 @@ class TickLoop:
         )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
-        """Publish an aggregate only after every connection's initial readings are complete."""
-        if any(source.unreported() for source in self._connections.values()):
-            return
+        """Keep legacy startup gates; include group-only axes once observed."""
         reported = (
             snapshot.joint_positions.keys()
             | snapshot.joint_velocities.keys()
             | snapshot.joint_efforts.keys()
         )
-        if any(
-            not reported.issuperset(source.joint_names) for source in self._connections.values()
-        ):
+        if self._connections and not reported:
             return
+        for source in self._connections.values():
+            scalar_joints = source.scalar_joint_names
+            if scalar_joints and (source.unreported() or not reported.issuperset(scalar_joints)):
+                return
         names = list(snapshot.joint_positions.keys())
         msg = JointState(
             ts=snapshot.timestamp,

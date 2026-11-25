@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
+from dimos.control.group_command import GroupCommandOutput
 from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
@@ -275,7 +276,7 @@ class ControlTask(Protocol):
 
     def compute(
         self, state: CoordinatorState
-    ) -> JointCommandOutput | list[JointCommandOutput] | None:
+    ) -> JointCommandOutput | list[JointCommandOutput] | GroupCommandOutput | None:
         """Compute output command(s) given current state.
 
         Called by coordinator for active tasks each tick.
@@ -290,10 +291,10 @@ class ControlTask(Protocol):
                    - dt: Time since last tick
 
         Returns:
-            One JointCommandOutput, a list of outputs for distinct joint groups
-            using different modes, or None to send no command this tick.
-            Every output shares this task's claim priority; arbitration uses
-            each output's mode, not ResourceClaim.mode.
+            A GroupCommandOutput for one indivisible payload; otherwise a
+            JointCommandOutput, a list of outputs in different modes, or None.
+            Every output shares this task's claim priority; scalar arbitration
+            uses each output's mode, not ResourceClaim.mode.
         """
         ...
 

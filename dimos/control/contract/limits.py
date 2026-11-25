@@ -89,6 +89,8 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
     """
     source = config.source
     if not config.joint_commands:
+        if config.group_commands:
+            return {}
         raise ValueError(f"{source!r} is told nothing: set joint_commands")
     if config.model is None:
         raise ValueError(f"{source!r} commands joints but has no model: set `model`")

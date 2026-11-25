@@ -52,7 +52,8 @@ class ConnectionConfig(ModuleConfig):
         model: The robot's model (its URDF): its joints, their order and their
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
-            listed joints are commanded; planar axes are ordinary joints.
+            listed joints accept per-axis commands; planar axes are ordinary joints.
+        group_commands: Native input port names mapped to their indivisible model joints.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
     """
@@ -60,6 +61,7 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
+    group_commands: dict[str, frozenset[str]] = {}
     deadman_timeout_s: float = 0.1
 
 
@@ -182,6 +184,9 @@ class ConnectionModule(Module, ABC):
         self._session_id = uuid.uuid4().hex
         # A bad config fails here, before the hardware is touched.
         self._limits = limits_of(self.config)
+        for name in self.config.group_commands:
+            if name not in self.inputs:
+                raise ValueError(f"{self.config.source}/{name}: expected a native In")
         self.connect()
         with self._hardware_lock:
             self._connected = True
