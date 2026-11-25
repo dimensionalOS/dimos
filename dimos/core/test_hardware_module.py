@@ -389,6 +389,7 @@ class WorldReader(Module):
     world_observations: In[Image]
     world_actions: Out[Image]
     color_image: Out[Image]
+    tf_static: Out[TFMessage]
 
 
 def test_the_simulated_world_stays_global_under_any_namespace() -> None:
@@ -400,6 +401,10 @@ def test_the_simulated_world_stays_global_under_any_namespace() -> None:
         blueprint.remapping_map[("robot1/lidar/worldreader", "color_image")]
         == "robot1/lidar/color_image"
     )
+    assert ("robot1/lidar/worldreader", "tf_static") not in blueprint.remapping_map
+
+    private = WorldReader.blueprint().namespace("lidar", share_tf=False)
+    assert private.remapping_map[("lidar/worldreader", "tf_static")] == "lidar/tf_static"
 
 
 def test_a_module_names_its_namespace_over_rpc() -> None:
