@@ -14,6 +14,7 @@
 
 """MuJoCo renders here or from an exec'd process: on macOS Metal compiles no shader in a forked worker, so a first shadow aborts it."""
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from multiprocessing.connection import Connection
 import socket
@@ -104,6 +105,17 @@ class Renders:
             model.mat_emission[:] = emission
             renderer.scene.flags[sky] = shown
 
+    def render_each(
+        self,
+        data: mujoco.MjData,
+        camera: str,
+        width: int,
+        height: int,
+        lightings: Sequence[tuple[float, bool]],
+    ) -> list[NDArray[np.uint8]]:
+        """`camera`'s image of `data` under each (dimmer, direct) of `lightings`, as `render` takes them."""
+        return [self.render(data, camera, width, height, *lighting) for lighting in lightings]
+
     def close(self) -> None:
         for renderer in self._renderers.values():
             renderer.close()
@@ -135,14 +147,25 @@ class RenderProcess:
         direct: bool = True,
     ) -> NDArray[np.uint8]:
         """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight); `dimmer` and `direct` as Renders takes them."""
+        return self.render_each(data, camera, width, height, [(dimmer, direct)])[0]
+
+    def render_each(
+        self,
+        data: mujoco.MjData,
+        camera: str,
+        width: int,
+        height: int,
+        lightings: Sequence[tuple[float, bool]],
+    ) -> list[NDArray[np.uint8]]:
+        """`camera`'s image of `data` under each of `lightings`, in one exchange with the process."""
         self._connection.send(
-            (data.qpos, data.mocap_pos, data.mocap_quat, camera, width, height, dimmer, direct)
+            (data.qpos, data.mocap_pos, data.mocap_quat, camera, width, height, list(lightings))
         )
         reply = self._connection.recv()
         if isinstance(reply, BaseException):
             raise reply
-        image: NDArray[np.uint8] = reply
-        return image
+        images: list[NDArray[np.uint8]] = reply
+        return images
 
     def close(self) -> None:
         self._connection.close()
@@ -157,9 +180,7 @@ def _serve(descriptor: int) -> None:
     try:
         while True:
             try:
-                qpos, mocap_pos, mocap_quat, camera, width, height, dimmer, direct = (
-                    connection.recv()
-                )
+                qpos, mocap_pos, mocap_quat, camera, width, height, lightings = connection.recv()
             except EOFError:
                 return
             data.qpos[:], data.mocap_pos[:], data.mocap_quat[:] = qpos, mocap_pos, mocap_quat
@@ -167,7 +188,7 @@ def _serve(descriptor: int) -> None:
             mujoco.mj_comPos(renders.model, data)
             mujoco.mj_camlight(renders.model, data)
             try:
-                connection.send(renders.render(data, camera, width, height, dimmer, direct))
+                connection.send(renders.render_each(data, camera, width, height, lightings))
             except Exception as error:
                 connection.send(error)
     finally:

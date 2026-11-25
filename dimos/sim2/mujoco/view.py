@@ -181,9 +181,10 @@ class MujocoView:
             rgb = self._renders.render(self.data, camera, width, height)
             return rgb if self._tone_map is None else display(rgb, self._headroom, self._tone_map)
         # MuJoCo clips each light's color at 1, so the shade renders alone at its own scale and the direct light at the full one.
-        shade = self._renders.render(self.data, camera, width, height, direct=False)
         dimmer = self._headroom / self._full_headroom
-        lit = self._renders.render(self.data, camera, width, height, dimmer)
+        shade, lit = self._renders.render_each(
+            self.data, camera, width, height, [(1.0, False), (dimmer, True)]
+        )
         linear = merged_light(shade, self._headroom, lit, self._full_headroom)
         return tone_mapped(linear, self._tone_map)
 
