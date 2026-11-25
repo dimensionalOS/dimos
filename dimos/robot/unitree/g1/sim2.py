@@ -42,6 +42,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.robot.unitree.g1.config import G1_JOINT_MODEL, G1_JOINT_NAMES
 from dimos.robot.unitree.g1.g1_tf_publisher import (
     _TORSO_MID360_XYZ,
@@ -49,12 +50,11 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
     G1TfPublisherConfig,
 )
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.lfs import pull_model_assets
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, until_it_stops
+from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, fetched_usd, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror
@@ -232,7 +232,10 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         """A view of this G1 alone, mounted as in the world: its IMU reads its own body, and compiling the room for it costs seconds."""
         mount = self.mounted_on()
         assert mount is not None
-        alone = compose_usds([(frame_usd(mount, name="world").usd, None), (self.get_usd(), mount)])
+        # Its own files over its own hardware_file streams, as the world fetches them.
+        alone = compose_usds(
+            [(frame_usd(mount, name="world").usd, None), (fetched_usd(self), mount)]
+        )
         return open_view(
             layer_file(alone.usd, "g1"),
             robot_ids(self._world),
