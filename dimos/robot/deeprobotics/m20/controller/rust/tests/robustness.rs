@@ -20,8 +20,8 @@
 //! `cargo test --release --test robustness -- --ignored matrix --nocapture` writes ROBUSTNESS.tsv.gz (one row per case).
 //! M20_ROBUSTNESS_FILTER (comma-separated substrings of the case name) narrows it; M20_ROBUSTNESS_FULL=1 starts every
 //! case from lying (stand-up, the 0x1001 stand-in, basic_flat) instead of standing on navi_charge, for validation;
-//! M20_ROBUSTNESS_WORKERS sets the parallel sims; M20_ROBUSTNESS_OUT the table's path. The regression tests below run
-//! the cases the controller once failed. Needs the extracted policies and a sim Python (M20_SIM_PYTHON); skips
+//! M20_ROBUSTNESS_VENDOR=1 runs rl_deploy's behavior (Config::rl_deploy); M20_ROBUSTNESS_WORKERS sets the parallel
+//! sims; M20_ROBUSTNESS_OUT the table's path. The regression tests below run the cases the controller once failed. Needs the extracted policies and a sim Python (M20_SIM_PYTHON); skips
 //! otherwise.
 
 mod common;
@@ -171,6 +171,8 @@ struct Case {
     end: f64,
     /// the event asks the robot to go limp or lie (joint damping, lie-down): the body may touch down
     collapse_ok: bool,
+    /// server.py's terrain (flat when empty)
+    terrain: serde_json::Value,
 }
 
 /// A command script built up step by step; each step sends the whole current command.
@@ -276,6 +278,7 @@ fn case(
         event_at: EVENT + offset,
         end: END + offset,
         collapse_ok,
+        terrain: serde_json::json!({}),
     }
 }
 
@@ -513,16 +516,10 @@ fn all_cases(cfg: &Config) -> Vec<Case> {
                 start_state(cfg, &mut s.0, start, a, 0x1001);
                 motion_event(&mut s.0, m);
                 let collapse = matches!(m, "damping" | "lie_down");
-                out.push(case(
-                    "motion",
-                    start,
-                    a,
-                    m.into(),
-                    s,
-                    vec![],
-                    false,
-                    collapse,
-                ));
+                let mut c = case("motion", start, a, m.into(), s, vec![], false, collapse);
+                // a stop, the 2 s lie-down, then damping
+                c.end += 3.0;
+                out.push(c);
             }
         }
     }
@@ -604,6 +601,19 @@ fn all_cases(cfg: &Config) -> Vec<Case> {
             }
         }
     }
+    // each pose input alone at either end, on the pose runners
+    for a in [0x3004, 0xf001, 0xf002] {
+        for k in ["height", "roll", "pitch", "yaw", "dx", "dy"] {
+            for v in [1.0, -1.0] {
+                let mut s = standing(a);
+                s.0.edit(EVENT, |c| {
+                    c.params.insert(k.to_string(), v);
+                });
+                let e = format!("pose_{k}_{v:+.0}");
+                out.push(case("extreme", "still", a, e, s, vec![], false, false));
+            }
+        }
+    }
     // the operator falls silent while moving
     for &a in &REPS {
         for start in ["fwd_fast", "turn", "strafe"] {
@@ -619,6 +629,34 @@ fn all_cases(cfg: &Config) -> Vec<Case> {
                 true,
                 false,
             ));
+        }
+    }
+    // on a 10 / 15 deg slope, facing uphill and across: standing, lie-down, damping, a switch
+    for deg in [10.0, 15.0] {
+        for yaw in [0.0, 90.0] {
+            let start = format!("slope{deg:.0}_{yaw:.0}");
+            for &a in &REPS {
+                let switch_to = if a == 0x1003 { 0x1001 } else { 0x1003 };
+                let events: [(&str, Option<Target>, Option<u32>); 4] = [
+                    ("none", None, None),
+                    ("lie_down", Some(Target::LieDown), None),
+                    ("damping", Some(Target::JointDamping), None),
+                    ("gait", None, Some(switch_to)),
+                ];
+                for (e, t, g) in events {
+                    let mut s = standing(a);
+                    if let Some(t) = t {
+                        s.0.target(EVENT, t);
+                    }
+                    if let Some(g) = g {
+                        s.0.gait(EVENT, g);
+                    }
+                    let mut c = case("slope", &start, a, e.into(), s, vec![], false, t.is_some());
+                    c.terrain = serde_json::json!({"kind": "slope", "slope_deg": deg, "slope_yaw_deg": yaw});
+                    c.end += 3.0;
+                    out.push(c);
+                }
+            }
         }
     }
     // usage mode (basic_server's layer): navigation from 0.5 s, then regular / assist (both SwitchGait(0x1001))
@@ -704,6 +742,11 @@ impl Outcome {
         }
         if m.nonfinite {
             v.push("nonfinite command".into());
+        }
+        // a lie-down or damping that never lies down (a stop that never ends)
+        let lies = matches!(self.case.event.as_str(), "lie_down" | "damping");
+        if lies && self.error.is_none() && self.final_state == State::RlControl {
+            v.push("never lay down".into());
         }
         if m.max_tilt_deg > STUMBLE_TILT_DEG && m.fell_at.is_none() {
             v.push(format!("tilt {:.0}deg", m.max_tilt_deg));
@@ -865,8 +908,9 @@ fn try_run(sim: &mut MujocoSim, cfg: &Config, dir: &Path, case: &Case) -> anyhow
         Setup::Standing => serde_json::json!(standing_pose(cfg)),
         Setup::Lying => serde_json::json!("lie"),
     };
-    let mut state =
-        sim.reset(&serde_json::json!({"pose": pose, "height_map": {"rows": 41, "cols": 11}}))?;
+    let mut state = sim.reset(&serde_json::json!({
+        "pose": pose, "height_map": {"rows": 41, "cols": 11}, "terrain": case.terrain,
+    }))?;
     let mut policy = InlinePolicy::new(RunnerSet::load(cfg, dir)?);
     let mut controller = Controller::new(cfg.clone());
     let scripted = ScriptedCommands::new(case.steps.clone());
@@ -991,7 +1035,12 @@ fn try_run(sim: &mut MujocoSim, cfg: &Config, dir: &Path, case: &Case) -> anyhow
 fn run_all(cases: Vec<Case>) -> Option<Vec<Outcome>> {
     let dir = common::policy_dir()?;
     let python = sim_python()?;
-    let cfg = common::config();
+    // M20_ROBUSTNESS_VENDOR=1: rl_deploy's behavior (every difference of ours off)
+    let cfg = if std::env::var("M20_ROBUSTNESS_VENDOR").is_ok_and(|v| v == "1") {
+        common::config().rl_deploy()
+    } else {
+        common::config()
+    };
     let workers = std::env::var("M20_ROBUSTNESS_WORKERS")
         .ok()
         .and_then(|w| w.parse().ok())
@@ -1108,7 +1157,10 @@ fn matrix() {
     let out = std::env::var("M20_ROBUSTNESS_OUT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(if full_mode() {
+            let vendor = std::env::var("M20_ROBUSTNESS_VENDOR").is_ok_and(|v| v == "1");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(if vendor {
+                "ROBUSTNESS_vendor.tsv.gz"
+            } else if full_mode() {
                 "ROBUSTNESS_full.tsv.gz"
             } else {
                 "ROBUSTNESS.tsv.gz"
@@ -1132,8 +1184,7 @@ fn matrix() {
     eprintln!("wrote {}", out.display());
 }
 
-/// The cases rl_deploy's behavior freaks out on in the sim (ROBUSTNESS.md), calm with safe_switch, finite_commands,
-/// default_command_slew and the runners' param_limits; each gait case's gait takes over.
+/// Cases rl_deploy's behavior freaks out on in the sim (ROBUSTNESS.md), calm with ours; each gait case's gait takes over.
 #[test]
 fn fixed_cases_stay_calm() {
     let cfg = common::config();
@@ -1152,6 +1203,17 @@ fn fixed_cases_stay_calm() {
         "extreme/still/0xf001/pose_nan",
         "extreme/still/0x2001/mode_over",
         "extreme/still/0x1002/reverse",
+        "motion/strafe/0x1001/damping",
+        "motion/fwd_fast/0xf002/lie_down",
+        "toggle/still/0xf002/motion_spam",
+        "extreme/still/0xf001/pose_over",
+        "extreme/still/0x2001/axes_over",
+        "extreme/still/0xf002/axes_full_neg",
+        "baseline/fwd_fast/0x5001/none",
+        "extreme/still/0x5001/reverse",
+        "motion/backward/0x5001/lie_down",
+        "slope/slope15_0/0x1001/lie_down",
+        "slope/slope15_90/0xf002/damping",
     ];
     let cases: Vec<Case> = all_cases(&cfg)
         .into_iter()
