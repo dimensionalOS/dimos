@@ -818,11 +818,13 @@ impl Controller {
         self.time = time;
     }
 
-    /// Seconds in the state for the stand-up / lie-down splines and limits: rl_deploy's f32(stamp) - f32(entry
-    /// stamp) with f32_state_clock, else control ticks.
+    /// Seconds in the state for the stand-up / lie-down splines and limits: with f32_state_clock an f32, rl_deploy's
+    /// f32(stamp) - f32(entry stamp) (f32_state_clock_from_start) or f32(stamp - entry stamp); else control ticks.
     fn spline_time(&self) -> f64 {
-        if self.cfg.timing.f32_state_clock {
+        if self.cfg.timing.f32_state_clock && self.cfg.timing.f32_state_clock_from_start {
             (self.stamp as f32 - self.enter_stamp as f32) as f64
+        } else if self.cfg.timing.f32_state_clock {
+            (self.stamp - self.enter_stamp) as f32 as f64
         } else {
             self.state_time
         }
@@ -1255,6 +1257,53 @@ mod tests {
             s.tau = [s.stamp; JOINTS];
             c.tick(s, cmd, p);
         }
+    }
+
+    /// The longest run of ticks a stand-up and a lie-down hold one target, the bus clock starting at `uptime_s`.
+    fn longest_hold(from_start: bool, uptime_s: f64) -> usize {
+        let mut cfg = config();
+        cfg.timing.f32_state_clock_from_start = from_start;
+        let mut s = standing_state(&cfg);
+        s.stamp = uptime_s;
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let mut p = HoldPolicy(None);
+        let mut longest = 0;
+        for (state, target, ticks) in [
+            (State::StandUp, Target::Stand, 2900),
+            (State::LieDown, Target::LieDown, 1900),
+        ] {
+            let cmd = UserCommand {
+                target,
+                ..Default::default()
+            };
+            c.force(state, &s, &cmd, false);
+            let (mut last, mut run) = (None, 0);
+            for k in 0..ticks {
+                s.stamp += 0.001;
+                // a torque that changes each tick (no frozen-motor fault)
+                s.tau = [k as f64 * 1e-3; JOINTS];
+                let q = c.tick(&s, &cmd, &mut p).q;
+                assert_eq!(c.state, state, "{:?}", c.fault);
+                run = if Some(q) == last { run + 1 } else { 1 };
+                longest = longest.max(run);
+                last = Some(q);
+            }
+        }
+        longest
+    }
+
+    #[test]
+    fn the_splines_do_not_coarsen_with_uptime() {
+        // rl_deploy up 11.2 days (2026-11-17): its f32 seconds-since-start step every 1/16 s
+        let uptime = 11.2 * 86400.0;
+        assert!(
+            longest_hold(true, uptime) >= 60,
+            "the vendor clock's 62.5 ms steps"
+        );
+        // ours counts from the state's entry: a new target every tick, as fresh
+        assert_eq!(longest_hold(false, uptime), longest_hold(false, 0.0));
+        assert!(longest_hold(false, uptime) <= 2);
     }
 
     #[test]

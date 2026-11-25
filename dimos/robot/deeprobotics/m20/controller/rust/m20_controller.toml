@@ -66,6 +66,9 @@ policy_decimation = 20
 # stamp being seconds since the bus opened (rl_deploy: since it started), so the targets step at that f32's resolution
 # (under 1 ms for 4.5 h, 15.6 ms from 1.5 days; robot 2026-11-24). false: control ticks
 f32_state_clock = true
+# rl_deploy's f32 is seconds since it started, so its splines step 1/64 s after 1.5 days and 1/16 s after 6 (its
+# stand-up / lie-down stutter until a restart; up 11.2 days on 2026-11-17). false: the f32 counts from the state's entry
+f32_state_clock_from_start = false
 
 # the 1 kHz loop and the policy thread each own an isolated A76 core (AOS isolcpus 0,4-7) at SCHED_FIFO; the
 # controller refuses to run unless both are placed and confirmed (a 20 ms bus gap off a shared core faults the stand)

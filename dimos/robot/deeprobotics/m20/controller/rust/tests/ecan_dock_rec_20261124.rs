@@ -683,7 +683,9 @@ fn fit_phase(ticks: &[Tick], first: u64, windows: &[(u64, u64)]) -> f64 {
 }
 
 fn setup() -> (Replay, Vec<Tick>, bool) {
-    let cfg = common::config();
+    let mut cfg = common::config();
+    // rl_deploy's own clock, from its start, to replay its 1/64 s steps
+    cfg.timing.f32_state_clock_from_start = true;
     let (frames, whole) = capture();
     let ticks = load(&frames, &cfg);
     let first = ticks[0].t;

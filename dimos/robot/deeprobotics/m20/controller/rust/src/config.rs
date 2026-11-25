@@ -147,6 +147,10 @@ pub struct Timing {
     /// minus entry (its splines step at the f32 resolution of that stamp); false: control ticks
     #[serde(default)]
     pub f32_state_clock: bool,
+    /// true: that f32 is rl_deploy's seconds since start, so the splines coarsen with uptime (1/16 s steps after 6 days,
+    /// its stand-up / lie-down stutter); false: seconds since the state's entry, the same arithmetic without the steps
+    #[serde(default)]
+    pub f32_state_clock_from_start: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
