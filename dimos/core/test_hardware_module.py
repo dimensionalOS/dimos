@@ -324,14 +324,15 @@ def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
     finally:
         camera.stop()
 
-    # On the wire the camera's own frames and its mount carry a leading "/".
-    wire = {(f"/{parent}", f"/{child}") for parent, child in _CAMERA_STATIC_EDGES}
     (static,) = on_static
-    assert {(t.frame_id, t.child_frame_id) for t in static.transforms} == wire
+    assert {(t.frame_id, t.child_frame_id) for t in static.transforms} == _CAMERA_STATIC_EDGES
     assert {t.ts for t in static.transforms} == {100.0}
     assert camera.slept == [0.25, 0.25, 0.25]
     assert [{t.ts for t in published} for published in on_tf] == [{100.0}, {100.25}, {100.5}]
-    assert all({(t.frame_id, t.child_frame_id) for t in published} == wire for published in on_tf)
+    assert all(
+        {(t.frame_id, t.child_frame_id) for t in published} == _CAMERA_STATIC_EDGES
+        for published in on_tf
+    )
 
 
 def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> None:
@@ -367,10 +368,9 @@ def test_a_subclass_publishes_its_moving_edges_through_the_checked_tf_port(
         arm.stop()
 
     ((elbow,),) = [message.transforms for message in sent]
-    # Its own frames go on the wire with a leading "/"; code (moving_transforms, the check) never sees it.
     assert (elbow.frame_id, elbow.child_frame_id, elbow.ts) == (
-        "/left/arm/base",
-        "/left/arm/base/forearm",
+        "left/arm/base",
+        "left/arm/base/forearm",
         2.0,
     )
 
@@ -443,22 +443,31 @@ def test_the_usd_fills_the_tf_config_so_every_edge_is_declared() -> None:
         camera.stop()
 
 
-def test_every_frame_a_hardware_module_publishes_goes_on_the_wire_with_a_slash(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sent: list[TFMessage] = []
-    monkeypatch.setattr(IO, "publish", lambda _port, msg: sent.append(msg))
+def test_the_hardware_transform_ids_are_exactly_what_it_publishes_on_tf_and_tf_static() -> None:
     arm = Arm(instance_name="left/arm")
+    camera = _ClockedCamera(
+        attached_to="arm/base/forearm/wrist",
+        instance_name=f"{_WRIST}/wristcamera",
+        static_tf_rate_hz=4.0,
+    )
     try:
-        arm.tf.publish(TFMessage(Transform(frame_id="left/arm", child_frame_id="left/arm/base")))
-        with pytest.raises(ValueError, match="exactly one leading '/'"):
-            arm.tf.publish(
-                TFMessage(Transform(frame_id="/left/arm", child_frame_id="left/arm/base"))
-            )
+        on_static, on_tf = _listening(camera)
+        camera.publish_static_tf()
+        assert camera.stopped.wait(5.0)
+        static_edges = {(t.frame_id, t.child_frame_id) for m in on_static for t in m.transforms}
+        static_edges |= {(t.frame_id, t.child_frame_id) for ts in on_tf for t in ts}
+        moving = camera.moving_transforms()
+        published = static_edges | {(t.frame_id, t.child_frame_id) for t in moving}
+        assert set(camera.get_hardware_transform_ids()) == published == _CAMERA_STATIC_EDGES
+
+        arm_edges = {
+            (t.frame_id, t.child_frame_id)
+            for t in [*arm.static_transforms(), *arm.moving_transforms()]
+        }
+        assert set(arm.get_hardware_transform_ids()) == arm_edges
     finally:
         arm.stop()
-    ((wire,),) = [message.transforms for message in sent]
-    assert (wire.frame_id, wire.child_frame_id) == ("/left/arm", "/left/arm/base")
+        camera.stop()
 
 
 class AliasedArmConfig(ArmConfig):
@@ -507,7 +516,7 @@ def test_a_hardware_module_publishes_no_edge_but_its_usd_s_and_its_mount(
         with pytest.raises(ValueError, match="undeclared tf edge"):
             arm.tf.publish(TFMessage(estimate))
         with pytest.raises(ValueError, match="undeclared tf edge"):
-            arm._create_tfbuffer(None).publish(*arm.on_wire([estimate]))
+            arm._create_tfbuffer(None).publish(estimate)
     finally:
         arm.stop()
 

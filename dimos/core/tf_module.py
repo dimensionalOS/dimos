@@ -26,7 +26,7 @@ from dimos.core.stream import IO
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.frame_paths import is_hardware_edge
-from dimos.protocol.tf.tf import TF, refuse_off_wire_format, refuse_undeclared_edges
+from dimos.protocol.tf.tf import TF, refuse_undeclared_edges
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -69,10 +69,6 @@ class TfIO(IO[TFMessage]):
     owner: "TfModule"
 
     def publish(self, msg: TFMessage) -> None:
-        # A wire-format rule, not an edge check: skip_tf_checks does not lift it.
-        refuse_off_wire_format(
-            self.owner.tf_owner_name, msg.transforms, self.owner.tf_slashes_frames
-        )
         if not self.owner.config.skip_tf_checks:
             refuse_undeclared_edges(
                 self.owner.tf_edge_ids, self.owner.tf_owner_name, msg.transforms
@@ -112,8 +108,8 @@ class TfModule(Module):
     """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-    # Whether every frame it publishes goes on the wire with a leading "/" (a HardwareModule's edge).
-    tf_slashes_frames: ClassVar[bool] = False
+    # Whether every edge it declares is hardware (a HardwareModule's: its USD's and its mount).
+    tf_edges_are_hardware: ClassVar[bool] = False
     if TYPE_CHECKING:
         tf: TfIO
     else:
@@ -161,13 +157,12 @@ class TfModule(Module):
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
         """Refuse declared edges that close a loop, or a frame with two parents of one kind; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
 
-        A frame may have one hardware parent (both ends are HardwareModule frames) and one imaginary
+        A frame may have one hardware parent (an edge a HardwareModule declares) and one imaginary
         parent (an estimate, a localization): lookups search the tree both ways. Two imaginary parents
         are refused, since each says where the frame is and nothing says which wins.
         """
         owners: dict[tuple[str, str], list[str]] = defaultdict(list)
-        # Each edge with whether its owner puts it on the wire slashed (a HardwareModule).
-        slashed: dict[tuple[str, str], bool] = defaultdict(bool)
+        hardware_ids: set[tuple[str, str]] = set()
         for atom in atoms:
             if not _is_checked(atom):
                 continue
@@ -177,10 +172,8 @@ class TfModule(Module):
             for parent_role, child_role in edges:
                 edge = frames[parent_role], frames[child_role]
                 owners[edge].append(atom.name)
-                slashed[edge] |= module.tf_slashes_frames
-
-        def wire(frame: str, edge: tuple[str, str]) -> str:
-            return f"/{frame}" if slashed[edge] else frame
+                if module.tf_edges_are_hardware:
+                    hardware_ids.add(edge)
 
         if not owners:
             return
@@ -188,9 +181,9 @@ class TfModule(Module):
         errors = []
         parents: dict[tuple[str, bool], list[str]] = defaultdict(list)
         for (parent, child), names in sorted(owners.items()):
-            parents[
-                child, is_hardware_edge(wire(parent, (parent, child)), wire(child, (parent, child)))
-            ].append(f"{parent} (from {', '.join(names)})")
+            parents[child, is_hardware_edge(parent, child, hardware_ids)].append(
+                f"{parent} (from {', '.join(names)})"
+            )
             if len(names) > 1:
                 logger.warning(
                     f"tf edge '{parent}' -> '{child}' is declared by several modules "
@@ -257,7 +250,6 @@ class TfModule(Module):
             port,
             edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
             module_name=self.tf_owner_name,
-            slashes_frames=self.tf_slashes_frames,
         )
 
 

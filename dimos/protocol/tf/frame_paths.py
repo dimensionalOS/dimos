@@ -15,10 +15,9 @@
 """tf frame ids as paths: ``go2_A/go2/base`` is the prim ``/go2/base`` under the namespace ``go2_A``.
 
 Each "/"-separated segment is a USD prim name, so a frame id is a prim path without its leading "/".
-On the wire every frame a HardwareModule publishes has a leading "/" (``/go2_A/go2/base``), which
-the tf buffer drops.
 """
 
+from collections.abc import Collection
 import re
 
 # A USD prim name (Tf identifier): an ASCII letter or underscore, then letters, digits or underscores.
@@ -56,7 +55,7 @@ def check_frame_path(path: str, what: str) -> None:
         raise ValueError(f"{what} {path!r} cannot be a tf frame / USD prim path: {error}")
 
 
-def is_hardware_edge(parent: str, child: str) -> bool:
-    """Whether a wire edge (raw frame ids) is a hardware edge, not an imaginary one (an estimate, a localization)."""
-    # A HardwareModule puts one leading "/" on every frame it publishes; no other module puts one on any.
-    return parent.startswith("/") and child.startswith("/")
+def is_hardware_edge(parent: str, child: str, hardware_ids: "Collection[tuple[str, str]]") -> bool:
+    """Whether ``parent -> child`` is a hardware edge, not an imaginary one (an estimate, a localization)."""
+    # hardware_ids: what every HardwareModule's get_hardware_transform_ids() returns; nothing else is hardware.
+    return (parent, child) in hardware_ids

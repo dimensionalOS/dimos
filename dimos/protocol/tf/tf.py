@@ -100,7 +100,7 @@ class MultiTBuffer:
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
-            for transform in map(normalized, args):
+            for transform in args:
                 key = (transform.frame_id, transform.child_frame_id)
                 if key not in self.buffers:
                     self.buffers[key] = TBuffer(self.buffer_size)
@@ -345,19 +345,16 @@ class TF(MultiTBuffer):
         *,
         edges: "Collection[tuple[str, str]] | None" = None,
         module_name: str = "TF",
-        slashes_frames: bool = False,
     ) -> None:
         super().__init__(buffer_size)
         self._stream = stream
         self._edges = None if edges is None else frozenset(edges)
-        self._slashes_frames = slashes_frames
         self._module_name = module_name
         self._unsubscribe: Callable[[], None] | None = None
         if stream is not None:
             self._unsubscribe = stream.subscribe(self.receive_tfmessage)
 
     def publish(self, *transforms: Transform) -> None:
-        refuse_off_wire_format(self._module_name, transforms, self._slashes_frames)
         if self._edges is not None:
             refuse_undeclared_edges(self._edges, self._module_name, transforms)
         self.receive_transform(*transforms)
@@ -370,53 +367,12 @@ class TF(MultiTBuffer):
             self._unsubscribe = None
 
 
-def normalize_frame_id(frame_id: str) -> str:
-    """The frame id code uses: one leading "/" (a HardwareModule's frame on the wire) dropped, like Foxglove's normalizeFrameId."""
-    return frame_id[1:] if frame_id.startswith("/") else frame_id
-
-
-def normalized(transform: Transform) -> Transform:
-    """``transform`` with normalized frame ids; a copy, so other subscribers still see the wire's."""
-    frame_id, child_frame_id = (
-        normalize_frame_id(transform.frame_id),
-        normalize_frame_id(transform.child_frame_id),
-    )
-    if (frame_id, child_frame_id) == (transform.frame_id, transform.child_frame_id):
-        return transform
-    return Transform(
-        translation=transform.translation,
-        rotation=transform.rotation,
-        frame_id=frame_id,
-        child_frame_id=child_frame_id,
-        ts=transform.ts,
-    )
-
-
-def refuse_off_wire_format(
-    module_name: str, transforms: "Iterable[Transform]", slashes_frames: bool
-) -> None:
-    """Raise unless every frame id has one leading "/" (a HardwareModule publishing) or none (anything else)."""
-    for t in transforms:
-        for frame in (t.frame_id, t.child_frame_id):
-            # The leading "/" marks a hardware edge, so only a HardwareModule adds it, and to every frame.
-            if slashes_frames and (not frame.startswith("/") or frame.startswith("//")):
-                raise ValueError(
-                    f"{module_name} is a HardwareModule, so its tf frame {frame!r} goes on the wire "
-                    f"with exactly one leading '/'"
-                )
-            if not slashes_frames and frame.startswith("/"):
-                raise ValueError(
-                    f"{module_name} publishes the tf frame {frame!r} with a leading '/', which marks a "
-                    f"HardwareModule's edge; publish it as {frame[1:]!r}"
-                )
-
-
 def refuse_undeclared_edges(
     edges: "Collection[tuple[str, str]]", module_name: str, transforms: "Iterable[Transform]"
 ) -> None:
-    """Raise if any transform's (parent, child), leading "/" dropped, is not in *edges*."""
+    """Raise if any transform's (parent, child) is not in *edges*."""
     for t in transforms:
-        if (normalize_frame_id(t.frame_id), normalize_frame_id(t.child_frame_id)) not in edges:
+        if (t.frame_id, t.child_frame_id) not in edges:
             raise ValueError(
                 f"{module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
             )

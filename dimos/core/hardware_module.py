@@ -34,7 +34,7 @@ fetches them with ``fetch_hardware_files`` and composes them (each already sits 
 """
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
@@ -45,7 +45,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles
 from dimos.core.stream import In, Out
-from dimos.core.tf_module import TfIO, TfModule, TfModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -199,20 +199,11 @@ class HardwareSpec(Spec, Protocol):
     def get_namespace(self) -> str: ...
 
 
-class _HardwareTfIO(TfIO):
-    """A HardwareModule's tf port: every frame it publishes goes on the wire with a leading "/"."""
-
-    owner: "HardwareModule"
-
-    def publish(self, msg: TFMessage) -> None:
-        super().publish(TFMessage(*self.owner.on_wire(msg.transforms)))
-
-
 class HardwareModule(TfModule):
     """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted.
 
-    On the wire every frame it publishes carries one leading "/" (``/go2_A/go2/base``), which says the
-    edge is hardware; the tf buffer drops it, so code never sees it.
+    It publishes only its USD's edges and its mount, never an estimate; ``get_hardware_transform_ids()``
+    names them, which is how a recorder tells hardware edges from imaginary ones.
     """
 
     config: HardwareModuleConfig
@@ -224,11 +215,7 @@ class HardwareModule(TfModule):
     hardware_file_response: Out[FileInfo]
     # The edges that never move, once at start (not latched: only what listens then gets them).
     tf_static: Out[TFMessage]
-    tf_slashes_frames: ClassVar[bool] = True
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.tf = _HardwareTfIO(TFMessage, "tf", self)
+    tf_edges_are_hardware: ClassVar[bool] = True
 
     @classmethod
     def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
@@ -247,18 +234,10 @@ class HardwareModule(TfModule):
         """The tf this hardware's USD and config declare, as its config would fill it in."""
         return usd_tf(atom.kwargs, atom.name.rpartition("/")[0], cls.mounts)
 
-    def on_wire(self, transforms: "Iterable[Transform]") -> list[Transform]:
-        """``transforms`` as they go on the wire: every frame with a leading "/"."""
-        return [
-            Transform(
-                translation=t.translation,
-                rotation=t.rotation,
-                frame_id=f"/{t.frame_id}",
-                child_frame_id=f"/{t.child_frame_id}",
-                ts=t.ts,
-            )
-            for t in transforms
-        ]
+    @rpc
+    def get_hardware_transform_ids(self) -> list[tuple[str, str]]:
+        """Every (parent, child) frame id pair this hardware publishes on tf and tf_static: its USD's edges and its mount."""
+        return sorted(self.tf_edge_ids)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -295,14 +274,14 @@ class HardwareModule(TfModule):
         """Publish the edges that never move once on tf_static, then on tf at static_tf_rate_hz; start() does this."""
         if not self._static_edges:
             return
-        self.tf_static.publish(TFMessage(*self.on_wire(self.static_transforms(ts=self.time()))))
+        self.tf_static.publish(TFMessage(*self.static_transforms(ts=self.time())))
         if self.config.static_tf_rate_hz > 0:
             republishing = self.spawn(self._republish_static_tf())
             self.register_disposable(Disposable(republishing.cancel))
 
     async def _republish_static_tf(self) -> None:
         while True:
-            self.tfbuffer.publish(*self.on_wire(self.static_transforms(ts=self.time())))
+            self.tfbuffer.publish(*self.static_transforms(ts=self.time()))
             await self.sleep(1 / self.config.static_tf_rate_hz)
 
     def serve_hardware_files(self) -> None:
