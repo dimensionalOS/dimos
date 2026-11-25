@@ -62,6 +62,7 @@ fn server() -> (AppServer, Arc<Operator>, AppServerConfig, FakeLoop) {
         dock: Arc::default(),
         snapshots: snapshots.clone(),
         velocity_limits: [2.0, 1.0, 2.0],
+        joint_zero: Arc::default(),
     };
     let server = AppServer::start(&cfg, links).unwrap();
     let stop = Arc::new(AtomicBool::new(false));

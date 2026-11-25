@@ -14,6 +14,7 @@
 
 //! The operator's command, changed by the module's inputs and the app server alike, and the slot the loop polls.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tracing::info;
@@ -26,6 +27,8 @@ pub struct Operator {
     current: Mutex<UserCommand>,
     /// the newest change, until the loop takes it
     pub(crate) slot: Mutex<Option<UserCommand>>,
+    /// a joint zeroing runs: every change is dropped
+    held: AtomicBool,
 }
 
 impl Operator {
@@ -34,7 +37,20 @@ impl Operator {
         self.change(|c| c.gait = gait, false);
     }
 
+    /// Drop every change (velocity, steer, motion, gait) until released.
+    pub fn hold(&self, on: bool) {
+        info!(on, "operator commands held for a joint zeroing");
+        self.held.store(on, Ordering::Relaxed);
+    }
+
+    pub fn held(&self) -> bool {
+        self.held.load(Ordering::Relaxed)
+    }
+
     fn change(&self, f: impl FnOnce(&mut UserCommand), send: bool) {
+        if self.held() {
+            return;
+        }
         let mut current = self.current.lock().unwrap_or_else(|p| p.into_inner());
         f(&mut current);
         if send {
@@ -133,6 +149,21 @@ mod tests {
         let c = o.take().unwrap();
         assert_eq!(c.velocity, Some([1.0, -0.5, 0.0]));
         assert!(c.steer);
+    }
+
+    #[test]
+    fn a_held_operator_drops_every_change() {
+        let o = Operator::default();
+        o.hold(true);
+        o.motion(Target::Stand);
+        o.velocity([1.0, 0.0, 0.0], [2.0, 1.0, 2.0]);
+        o.steer([1.0, 0.0, 0.0]);
+        o.gait(0x3002);
+        assert!(o.take().is_none());
+        assert_eq!(o.current().target, Target::Passive);
+        o.hold(false);
+        o.motion(Target::Stand);
+        assert_eq!(o.take().unwrap().target, Target::Stand);
     }
 
     #[test]

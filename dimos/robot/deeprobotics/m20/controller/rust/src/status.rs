@@ -67,6 +67,8 @@ pub struct ControllerStatus {
     pub charging: bool,
     /// rl_deploy's battery level (normal, warning under 21 %, error under 6 % or at 54 V); none before a report
     pub battery: Option<crate::battery::BatteryLevel>,
+    /// the app's joint zeroing (ResetJointsZero): running, how many ended, the last one's code
+    pub joint_zero: crate::joint_zero::Report,
 }
 
 /// Each leg's hip-to-axle depth from its joints, as obstacle::body_height averages it.
@@ -122,6 +124,7 @@ impl ControllerStatus {
             dock_active: dock.is_some_and(|d| d.active),
             charging: dock.is_some_and(|d| d.charging),
             battery: tick.state.battery,
+            joint_zero: Default::default(),
         }
     }
 
@@ -143,6 +146,7 @@ impl ControllerStatus {
             ),
             self.hard_stop,
             self.battery,
+            self.joint_zero,
         )
     }
 }
@@ -284,6 +288,7 @@ mod tests {
             dock_active: false,
             charging: false,
             battery: None,
+            joint_zero: Default::default(),
         };
         let mut log = StatusLog::new(0.01);
         assert!(log.changed(&base));

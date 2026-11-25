@@ -199,6 +199,8 @@ pub struct Shared {
     usage: Arc<crate::basic_server::UsageMode>,
     /// the newest hard-stop byte off the bus (the bridge's /HES_STATUS gate)
     hard_stop: Arc<crate::commands::HardStop>,
+    /// joint zeroing requests (the app's ResetJointsZero, motion_cmd reset_joint_zero) to the 1 kHz loop
+    joint_zero: Arc<crate::joint_zero::Requests>,
 }
 
 /// The body IMU as the loop reads it: the newest sample that arrived, however old (rl_deploy's, which never ages one
@@ -468,6 +470,20 @@ impl M20Controller {
     }
 
     async fn on_motion_cmd(&mut self, msg: std_msgs::String) {
+        if msg.data.trim() == "reset_joint_zero" {
+            self.reset_joint_zero();
+            return;
+        }
+        if self.shared.operator.held() {
+            // ours: during a joint zeroing only joint_damping (the soft e-stop) is taken, and it ends the zeroing
+            if parse_target(&msg.data) == Some(Target::JointDamping) {
+                warn!("joint damping during the joint zeroing: aborting it");
+                self.shared.joint_zero.abort();
+            } else {
+                warn!(motion = %msg.data, "motion command during the joint zeroing; ignored");
+            }
+            return;
+        }
         if msg.data.trim() == "align_body_posture" {
             info!("align body posture command");
             self.shared.usage.align.store(true, Ordering::Relaxed);
@@ -478,6 +494,24 @@ impl M20Controller {
             None => {
                 warn!(motion = %msg.data, "unknown motion command (passive, stand, rl_control, lie_down, joint_damping)")
             }
+        }
+    }
+
+    /// AutoSetHome -1 in the 1 kHz loop (crate::joint_zero); its code lands in controller_report's joint_zero.
+    fn reset_joint_zero(&self) {
+        if !(self.config.mode == "owner" && self.config.policy) {
+            warn!("joint zeroing needs mode = owner with the policy on; ignored");
+            return;
+        }
+        match self.shared.joint_zero.request() {
+            Ok(result) => {
+                info!("joint zeroing requested");
+                tokio::task::spawn_blocking(move || match result.recv() {
+                    Ok(code) => info!(code, "joint zeroing over"),
+                    Err(_) => warn!("joint zeroing: the loop stopped without an answer"),
+                });
+            }
+            Err(code) => warn!(code, "joint zeroing already asked or running; ignored"),
         }
     }
 
@@ -550,6 +584,9 @@ impl M20Controller {
 
     async fn on_dock_cmd(&mut self, msg: std_msgs::String) {
         match Request::parse(&msg.data) {
+            Some(_) if self.shared.operator.held() => {
+                warn!(command = %msg.data, "dock command during the joint zeroing; ignored")
+            }
             Some(request) => {
                 info!(?request, "dock command");
                 if !(self.config.mode == "owner" && self.config.policy) {
@@ -624,6 +661,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     use crate::dock::docking::{Docking, DockingCommands};
     use crate::dock::obstacle;
     use crate::hardware::bus::{BusHardware, Sink};
+    use crate::hardware::Hardware;
     use crate::policy::{RunnerSet, ThreadedPolicy};
     use crate::rt::{self, Pacing};
     use crate::state_machine::{Controller, State};
@@ -773,6 +811,10 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     let mut charge_enable_seq = 0.0;
     let idle_dock = shared.dock.clone();
     let mut idle_charge_enables = 0;
+    let zero_requests = shared.joint_zero.clone();
+    let zero_operator = shared.operator.clone();
+    // the asker of the zeroing running, answered when the hardware is done
+    let mut zero_asker: Option<std::sync::mpsc::Sender<i32>> = None;
     let result = rt::run(
         &cfg,
         &mut hardware,
@@ -830,6 +872,57 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             let hard_stop_clear = imu_seen.hard_stop.clear();
             full.hard_stop = imu_seen.hard_stop.get();
             full.ready &= hard_stop_clear;
+            if let Some(asker) = zero_requests.take() {
+                let c = tick.controller;
+                let charger_connected =
+                    crate::rt::try_read(&idle_dock.charge, &crate::rt::LOCK_SKIPS, |r| {
+                        r.as_ref().is_some_and(|r| r.charger_connected)
+                    })
+                    .unwrap_or(true);
+                let conditions = crate::joint_zero::Conditions {
+                    state: c.state,
+                    at_rest: c.at_rest(),
+                    target: tick.user.target,
+                    charger_state: dock
+                        .as_ref()
+                        .map_or(0, crate::basic_server::charger_state_of),
+                    charger_connected,
+                    hard_stop: !hard_stop_clear,
+                    allow_gains: cfg.ecan.allow_gains,
+                };
+                let refused = match &cfg.joint_zero {
+                    None => Some(crate::app_commands::error::UNSUPPORTED_FUNCTION),
+                    Some(z) => crate::joint_zero::refusal(&conditions)
+                        .or_else(|| hw.start_joint_zero(z).err()),
+                };
+                match refused {
+                    Some(code) => {
+                        warn!(code, ?conditions, "joint zeroing refused");
+                        zero_requests.finish(&asker, code);
+                    }
+                    None => {
+                        info!("joint zeroing: AutoSetHome -1's frames on the bus; operator commands held");
+                        zero_operator.hold(true);
+                        zero_requests.set_running(true);
+                        zero_asker = Some(asker);
+                    }
+                }
+            }
+            if zero_requests.take_abort() {
+                hw.abort_joint_zero();
+            }
+            if let Some(code) = hw.joint_zero_result() {
+                info!(
+                    code,
+                    "joint zeroing over (0 done, else the failed joint + 1)"
+                );
+                if let Some(asker) = zero_asker.take() {
+                    zero_requests.finish(&asker, code);
+                }
+                zero_requests.set_running(false);
+                zero_operator.hold(false);
+            }
+            full.joint_zero = zero_requests.report();
             full.imu_age_ms = crate::rt::try_read(&imu_seen.imu, &crate::rt::LOCK_SKIPS, |i| {
                 i.as_ref()
                     .map(|(_, at)| (at.elapsed().as_secs_f64() * 1e4).round() / 10.0)
@@ -895,6 +988,7 @@ fn start_app_server(
         dock: shared.dock.clone(),
         snapshots: shared.app.clone(),
         velocity_limits: config.cmd_vel_limits,
+        joint_zero: shared.joint_zero.clone(),
     };
     match crate::app_server::AppServer::start(&cfg.app_server, links) {
         Ok(server) => Some(server),

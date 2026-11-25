@@ -140,6 +140,30 @@ pub struct BusHardware {
     last: Option<RobotState>,
     lag: ReplyLag<RobotState>,
     battery: Option<crate::battery::BatteryFeed>,
+    /// charge-enable frames queued in the owner and not sent yet (it swaps them in for a passive frame)
+    charge_pending: usize,
+    zero: Option<ZeroRun>,
+    zero_result: Option<i32>,
+}
+
+/// A joint zeroing on the bus: AutoSetHome's frames, then rl_deploy's startup again.
+#[cfg(target_os = "linux")]
+struct ZeroRun {
+    sequence: crate::joint_zero::Sequence,
+    /// the joint state the controller sees meanwhile (the start's)
+    held: RobotState,
+    /// the zeroing's code once its frames are over (the owner is in its startup)
+    restart: Option<i32>,
+}
+
+/// What a zeroing tick does on the bus.
+#[cfg(target_os = "linux")]
+enum ZeroTick {
+    Send(Vec<m20_ecan::JointCommand>),
+    Quiet,
+    Restart(i32),
+    Startup,
+    Over(i32),
 }
 
 #[cfg(target_os = "linux")]
@@ -166,6 +190,9 @@ impl BusHardware {
             last: None,
             lag: ReplyLag::default(),
             battery: None,
+            charge_pending: 0,
+            zero: None,
+            zero_result: None,
         })
     }
 
@@ -178,8 +205,10 @@ impl BusHardware {
     /// it: 3 frames on the next 3 ticks in place of whatever command they had (stand, lie-down or enable frames).
     /// Nothing unless built with charge_enable.
     pub fn request_charge_enable(&mut self) {
-        if self.charge.is_some() {
+        // none during a joint zeroing: the owner would send it in place of a Disable frame
+        if self.charge.is_some() && self.zero.is_none() {
             self.bus.owner.queue_charge_enable();
+            self.charge_pending += m20_ecan::owner::CHARGE_ENABLE_FRAMES;
             self.charge_ticks = m20_battery::charge::FRAMES_PER_REQUEST;
         }
     }
@@ -204,12 +233,16 @@ impl BusHardware {
             b.on_frame(frame);
         }
         if let Some(charge) = self.charge.as_mut() {
-            if charge.on_frame(direction, frame) && self.charge_rule {
+            if charge.on_frame(direction, frame) && self.charge_rule && self.zero.is_none() {
                 self.bus.owner.queue_charge_enable();
+                self.charge_pending += m20_ecan::owner::CHARGE_ENABLE_FRAMES;
             }
         }
         match decode_ethernet(frame, direction) {
             Ok((_, Message::JointStates { joints, .. })) => {
+                if let Some(z) = self.zero.as_mut() {
+                    z.sequence.reply(&joints);
+                }
                 if joints.len() != JOINTS || joints.iter().any(|j| j.status_word != 1) {
                     // diagnostic: the whole reply, for a status word other than 1 or a missing record
                     let hex: String = frame.iter().map(|b| format!("{b:02x}")).collect();
@@ -247,10 +280,17 @@ impl BusHardware {
     ) -> Result<(Option<RobotState>, bool)> {
         let mut wait_reply = true;
         if let Some(sent) = self.bus.tick(commands)? {
-            wait_reply = !matches!(
-                decode_ethernet(&sent.frame, sent.direction),
-                Ok((_, Message::ChargeEnable))
-            );
+            match decode_ethernet(&sent.frame, sent.direction) {
+                Ok((_, Message::ChargeEnable)) => {
+                    wait_reply = false;
+                    self.charge_pending = self.charge_pending.saturating_sub(1);
+                }
+                // the owner drops what it had queued when it sends a frame that holds a joint
+                Ok((_, Message::JointCommands(c))) if m20_ecan::startup::is_active(&c) => {
+                    self.charge_pending = 0
+                }
+                _ => {}
+            }
             self.see(sent.timestamp_ns, sent.direction, &sent.frame);
         }
         let mut state = None;
@@ -263,6 +303,50 @@ impl BusHardware {
             }
         }
         Ok((state, !wait_reply))
+    }
+
+    /// One tick of a joint zeroing: its frame or nothing, then rl_deploy's startup; the controller sees the held state.
+    fn zero_tick(&mut self) -> Result<RobotState> {
+        let tick = match self.zero.as_mut() {
+            None => bail!("no joint zeroing"),
+            Some(z) => match z.restart {
+                Some(code) if !self.bus.owner.in_startup() => ZeroTick::Over(code),
+                Some(_) => ZeroTick::Startup,
+                None => match z.sequence.step() {
+                    crate::joint_zero::Step::Send(c) => ZeroTick::Send(c),
+                    crate::joint_zero::Step::Quiet => ZeroTick::Quiet,
+                    crate::joint_zero::Step::Done(code) => ZeroTick::Restart(code),
+                },
+            },
+        };
+        let held = self
+            .zero
+            .as_ref()
+            .map(|z| z.held.clone())
+            .unwrap_or_default();
+        match tick {
+            ZeroTick::Send(c) => {
+                self.step(Some(&c))?;
+            }
+            ZeroTick::Startup => {
+                self.step(None)?;
+            }
+            ZeroTick::Quiet | ZeroTick::Restart(_) => {
+                for f in self.bus.drain() {
+                    self.see(f.timestamp_ns, f.direction, &f.frame);
+                }
+                if let (ZeroTick::Restart(code), Some(z)) = (&tick, self.zero.as_mut()) {
+                    // AutoSetHome's `systemctl restart rl_deploy`: the owner runs rl_deploy's startup again
+                    self.bus.owner = m20_ecan::owner::Owner::new(self.bus.owner.config());
+                    z.restart = Some(*code);
+                }
+            }
+            ZeroTick::Over(code) => {
+                self.zero = None;
+                self.zero_result = Some(code);
+            }
+        }
+        self.with_imu(held)
     }
 
     fn with_imu(&mut self, mut s: RobotState) -> Result<RobotState> {
@@ -297,6 +381,9 @@ impl Hardware for BusHardware {
     }
 
     fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {
+        if self.zero.is_some() {
+            return self.zero_tick();
+        }
         // a requested charge-enable frame goes out in place of this tick's command (the owner swaps it in only for a
         // command that holds nothing)
         let cmd = if self.charge_ticks > 0 {
@@ -322,6 +409,37 @@ impl Hardware for BusHardware {
                 self.with_imu(s)
             }
             (None, _) => bail!("no joint-state reply within {:?}", self.reply_timeout),
+        }
+    }
+
+    fn start_joint_zero(&mut self, cfg: &crate::config::JointZero) -> Result<(), i32> {
+        use crate::app_commands::error;
+        let busy = self.zero.is_some()
+            || self.bus.owner.in_startup()
+            || self.charge_pending > 0
+            || self.charge_ticks > 0;
+        // the press torque goes out only with gains allowed
+        if busy || !self.bus.owner.config().allow_gains {
+            return Err(error::NOT_ALLOWED);
+        }
+        let Some(held) = self.last.clone() else {
+            return Err(error::NOT_ALLOWED);
+        };
+        self.zero = Some(ZeroRun {
+            sequence: crate::joint_zero::Sequence::all(cfg),
+            held,
+            restart: None,
+        });
+        Ok(())
+    }
+
+    fn joint_zero_result(&mut self) -> Option<i32> {
+        self.zero_result.take()
+    }
+
+    fn abort_joint_zero(&mut self) {
+        if let Some(z) = self.zero.as_mut() {
+            z.sequence.abort();
         }
     }
 }

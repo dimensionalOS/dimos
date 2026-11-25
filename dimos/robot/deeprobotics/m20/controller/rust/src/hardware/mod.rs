@@ -29,4 +29,14 @@ pub trait Hardware: Send {
     fn read_state(&mut self) -> Result<RobotState>;
     /// Send one control tick's command and return the state the bus replies with.
     fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState>;
+    /// Run AutoSetHome's joint zeroing in place of the next ticks' commands; Err: the app's code (default unsupported).
+    fn start_joint_zero(&mut self, _cfg: &crate::config::JointZero) -> Result<(), i32> {
+        Err(crate::app_commands::error::UNSUPPORTED_FUNCTION)
+    }
+    /// The zeroing's code once it is over (taken once).
+    fn joint_zero_result(&mut self) -> Option<i32> {
+        None
+    }
+    /// End a running zeroing now (its last Disable frame).
+    fn abort_joint_zero(&mut self) {}
 }

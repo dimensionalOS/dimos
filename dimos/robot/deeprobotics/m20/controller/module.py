@@ -113,6 +113,7 @@ _PYTHON_ONLY = frozenset(
         "undock_timeout_s",
         "report_max_age_s",
         "busy_goal_cancel_period_s",
+        "joint_zero_timeout_s",
     }
 )
 
@@ -177,6 +178,8 @@ class M20ControllerConfig(NativeModuleConfig):
     undock_timeout_s: float = Field(default=45.0, gt=0.0)
     report_max_age_s: float = Field(default=3.0, gt=0.0)
     busy_goal_cancel_period_s: float = Field(default=1.0, gt=0.0)
+    # reset_joint_zero(): AutoSetHome's ~12 s of frames and rl_deploy's ~5 s startup after them
+    joint_zero_timeout_s: float = Field(default=30.0, gt=0.0)
 
     def to_config_dict(self) -> dict[str, Any]:
         # the Python RPCs' fields; the native struct rejects unknown fields
@@ -644,6 +647,31 @@ class M20ControllerApi(CompositeResource):
                     return None
             if elapsed >= self.config.undock_timeout_s:
                 return f"Undocking failed: not off the dock after {elapsed:.0f} s."
+
+    @rpc
+    def reset_joint_zero(self) -> int:
+        """AutoSetHome -1 (joints pressed into their stops become zero): 0 done, joint + 1 off zero, 0xe008 refused, 0xe009 aborted."""
+        if not self._can_sequence("reset_joint_zero"):
+            raise RuntimeError(
+                "Joint zeroing needs the controller in owner mode with the policy on."
+            )
+        with self._state_lock:
+            before = self._status.get("joint_zero", {}).get("finished")
+        if before is None:
+            raise RuntimeError("Joint zeroing failed: the controller is not reporting its status.")
+        self._send("motion_cmd", String("reset_joint_zero"))
+
+        def over(s: dict[str, Any]) -> bool:
+            return bool(s.get("joint_zero", {}).get("finished", before) > before)
+
+        if not self._wait_status(over, self.config.joint_zero_timeout_s):
+            raise RuntimeError(
+                f"Joint zeroing: no result after {self.config.joint_zero_timeout_s:.0f} s."
+            )
+        with self._state_lock:
+            code = int(self._status["joint_zero"]["last_code"])
+        logger.info(f"M20 joint zeroing over: code {code:#x}")
+        return code
 
     @rpc
     def cancel_dock(self) -> bool:

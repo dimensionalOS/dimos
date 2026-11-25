@@ -94,6 +94,7 @@ class M20ControllerClientConfig(ModuleConfig):
     undock_timeout_s: float = Field(default=45.0, gt=0.0)
     report_max_age_s: float = Field(default=3.0, gt=0.0)
     busy_goal_cancel_period_s: float = Field(default=1.0, gt=0.0)
+    joint_zero_timeout_s: float = Field(default=30.0, gt=0.0)
 
 
 class M20ControllerClient(M20ControllerApi, Module):

@@ -936,6 +936,30 @@ release_note_path = "/var/opt/robot/release_note.json"
 # BasicStatus.Version: basic_server's version the app is told
 version = "1.2.43"
 
+# The app's ResetJointsZero (1101/8): basic_server's cmdHandle_ResetJointsZero (0x18e930) runs `sudo AutoSetHome -1`
+# (AOS /opt/robot/bin/AutoSetHome, 420000 bytes, BuildID 54384759, main 0x1058f0); ours sends its frames on the bus we
+# own (crate::joint_zero), one per 1 ms tick where it sends one, nothing where it sleeps. Missing, it is unsupported.
+# The zero lands in the drivers (AutoSetHome writes no file; rl_deploy's offsets are constants). Ours also holds the
+# operator's commands for the duration, aborts on joint_damping, and reruns rl_deploy's startup after a failure too.
+[joint_zero]
+# 0x105d80 usleep(10000) after stopping rl_deploy and ecan_master, then 0x105efc sleep(5) ("stay away"): nothing sent
+quiet_ticks = 5010
+# the usleep(5000) after each frame (0x106134 ...)
+frame_spacing_ticks = 5
+# 0x106850: the MotorControl frame pressing each joint into its stop, sent 1000 times
+press_frames = 1000
+# 0x106ad0 usleep(100000) after the SetHome frame
+set_home_wait_ticks = 100
+# 0x106d40: the MotorControl frame sent 200 more times after SetHome
+hold_frames = 200
+# 0x106f90 sleep(1) after the last Disable frame, while its receiver (0x108c70) checks the replies
+check_ticks = 1000
+# 0x108c70 DAT_00158e30 / 38: a zeroed joint must read under 0.001 rad (motor side) after the last Disable frame
+home_tolerance_rad = 0.001
+# DAT_00176010 (taken when robot_hardware_info.toml's model is "CA9B", 0x1059f0): the press torque (N m, motor side,
+# robot order fl fr hl hr x hipx hipy knee wheel), each toward its URDF offset (m20-ecan Calibration::m20), wheels 0
+press_torque = [-5.0, -10.0, -10.0, 0.0, 5.0, 10.0, 10.0, 0.0, 5.0, 10.0, 10.0, 0.0, -5.0, -10.0, -10.0, 0.0]
+
 # rl_deploy's battery levels (SafeController::IsBatteryNormal 0x174e30, every pack): a pack at or under 54 V is in
 # voltage error until back at 58 V; under 21 % a warning, under 6 % (or every pack in voltage error) an error. rl_deploy
 # only reports them; ours (act_on_error, rl_deploy: false): at the error level stand-ups are refused and a standing robot

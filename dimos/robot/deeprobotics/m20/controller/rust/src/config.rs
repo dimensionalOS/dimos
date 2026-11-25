@@ -49,6 +49,9 @@ pub struct Config {
     /// the vendor phone app's server (basic_server's CmdHandle on UDP / TCP); a config without it serves no app
     #[serde(default)]
     pub app_server: AppServerConfig,
+    /// AutoSetHome's joint zeroing (the app's ResetJointsZero); a config without it refuses it as unsupported
+    #[serde(default)]
+    pub joint_zero: Option<JointZero>,
     /// the runners safety.default_command_slew gave a slew (rl_deploy's have none)
     #[serde(skip)]
     pub slew_defaulted: Vec<String>,
@@ -360,6 +363,19 @@ pub struct SafeSwitch {
     pub lie_bridge_from: Vec<String>,
     /// a gait written during a stand-in is kept and switched to after it (rl_deploy: lost)
     pub keep_gait_during_stand_in: bool,
+}
+
+/// AutoSetHome -1's schedule in 1 ms ticks and numbers (crate::joint_zero).
+#[derive(Debug, Clone, Deserialize)]
+pub struct JointZero {
+    pub quiet_ticks: u64,
+    pub frame_spacing_ticks: u64,
+    pub press_frames: u64,
+    pub set_home_wait_ticks: u64,
+    pub hold_frames: u64,
+    pub check_ticks: u64,
+    pub home_tolerance_rad: f64,
+    pub press_torque: [f32; JOINTS],
 }
 
 /// rl_deploy's IsBatteryNormal thresholds; `act_on_error` is ours.
@@ -825,6 +841,15 @@ impl Config {
                 && every.iter().all(|&n| n > 0))
         {
             bail!("app_server: report_period_s and the *_every counts must be positive");
+        }
+        if let Some(z) = &self.joint_zero {
+            if z.frame_spacing_ticks == 0
+                || z.press_frames == 0
+                || !(z.home_tolerance_rad.is_finite() && z.home_tolerance_rad > 0.0)
+                || !z.press_torque.iter().all(|t| t.is_finite())
+            {
+                bail!("joint_zero: frame_spacing_ticks and press_frames must be positive, home_tolerance_rad positive, press_torque finite");
+            }
         }
         if self.timing.policy_decimation == 0 {
             bail!("timing.policy_decimation must be at least 1");

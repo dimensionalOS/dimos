@@ -33,6 +33,7 @@ pub mod config;
 pub mod dock;
 pub mod frames;
 pub mod hardware;
+pub mod joint_zero;
 #[cfg(feature = "module")]
 pub mod module;
 pub mod operator;

@@ -293,6 +293,8 @@ pub fn run<H: Hardware + ?Sized>(
             }
         }
     }
+    // a joint zeroing under way ends with its last Disable frame before the shutdown's commands
+    hardware.abort_joint_zero();
     let damping = UserCommand {
         target: crate::types::Target::JointDamping,
         ..Default::default()

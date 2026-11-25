@@ -65,12 +65,11 @@ pub mod error {
 }
 
 /// TODO(jeff): decide each; until then basic_server's "Unsupported function" (0xe00a).
-pub const UNSUPPORTED: [(i64, i64); 12] = [
+pub const UNSUPPORTED: [(i64, i64); 11] = [
     (1101, 2), // LED: the m20-ctrlmcu crate could drive it
     (1101, 3), // SetDevice power rails: m20-ctrlmcu
     (1101, 6), // SetSleep: ctrlmcu power rails plus a lie-down / wake in the controller
     (1101, 7), // GetSleepConfig
-    (1101, 8), // ResetJointsZero: AutoSetHome needs the motor bus the controller owns
     (1003, 1), // NavTasks: dimos navigation instead (0xe00a is basic_server's own no-nav answer)
     (1003, 2), // NavTasks
     (1004, 1), // CancelNavTask
@@ -89,6 +88,8 @@ pub struct Links {
     pub snapshots: Arc<Snapshots>,
     /// the module's cmd_vel_limits (|vx|, |vy|, |wz|): RealSteer meets cmd_vel's clamp (basic_server has none)
     pub velocity_limits: [f64; 3],
+    /// ResetJointsZero's requests to the 1 kHz loop
+    pub joint_zero: Arc<crate::joint_zero::Requests>,
 }
 
 pub struct App {
@@ -226,6 +227,7 @@ impl App {
             (2, 24) => code(self.charge(items)),
             (1101, 4) => code(self.direction(items, restricted)),
             (1101, 5) => code(self.usage_mode(items, restricted)),
+            (1101, 8) => self.reset_joints_zero(),
             (1101, 9) => code(self.align()),
             // GetInfo answers only its ErrorCode
             (1002, 2) => Answer::Code(error::OK),
@@ -287,12 +289,34 @@ impl App {
             17 => Target::RlControl,
             _ => return Err(error::NOT_ALLOWED),
         };
+        // ours: during a joint zeroing only the soft e-stop is taken, and it ends the zeroing
+        if self.links.operator.held() {
+            if target != Target::JointDamping {
+                return Err(error::NOT_ALLOWED);
+            }
+            self.links.joint_zero.abort();
+        }
         self.links.operator.motion(target);
         Ok(())
     }
 
+    /// cmdHandle_ResetJointsZero 0x18e930: AutoSetHome -1 in the 1 kHz loop, answered with its code once over.
+    fn reset_joints_zero(&self) -> Answer {
+        info!("app joint zeroing");
+        let code = match self.links.joint_zero.request() {
+            // the loop gone without an answer: basic_server's system() failure
+            Ok(result) => result.recv().unwrap_or(error::INTERNAL),
+            Err(code) => code,
+        };
+        info!(code, "app joint zeroing over");
+        Answer::Code(code)
+    }
+
     /// cmdHandle_Gait 0x18b430: Extre is 0xe007 (empty authority_code.toml); an unknown code is dropped, answered 0.
     fn gait(&self, items: &Value) -> Result<(), i32> {
+        if self.links.operator.held() {
+            return Err(error::NOT_ALLOWED);
+        }
         let gait = u32::try_from(integer(items, "GaitParam")?).unwrap_or(0);
         if extre_gait(gait) {
             return Err(error::NO_PERMISSION);
@@ -310,6 +334,9 @@ impl App {
 
     /// cmdHandle_Charge 0x18b870: 1 dock, 0 undock into docking's request slot; any value is answered 0.
     fn charge(&self, items: &Value) -> Result<(), i32> {
+        if self.links.operator.held() {
+            return Err(error::NOT_ALLOWED);
+        }
         let request = match integer(items, "Charge")? {
             1 => Request::Dock,
             0 => Request::Undock,
@@ -361,6 +388,9 @@ impl App {
 
     /// cmdHandle_AligningBodyPosture 0x18e630: 0xe009 unless idle; crate::basic_server runs the recovery.
     fn align(&self) -> Result<(), i32> {
+        if self.links.operator.held() {
+            return Err(error::NOT_ALLOWED);
+        }
         if self.robot().state != Some(crate::state_machine::State::Passive) {
             return Err(error::FAILED);
         }
@@ -424,6 +454,7 @@ mod tests {
             dock: Arc::default(),
             snapshots: Arc::default(),
             velocity_limits: [2.0, 1.0, 2.0],
+            joint_zero: Arc::default(),
         };
         (App::new(cfg, links.clone()), links)
     }
@@ -662,6 +693,89 @@ mod tests {
         );
         let d = send(&app, 2003, 1, serde_json::json!({}));
         assert_eq!(d["Items"]["ErrorMessage"], "Can not open file");
+    }
+
+    #[test]
+    fn reset_joints_zero_waits_for_the_loop_s_code_and_motion_is_refused_while_it_runs() {
+        let (app, links) = app();
+        let app = Arc::new(app);
+        // the 1 kHz loop: take the request, hold the operator, answer joint 5's failure (AutoSetHome's exit code 6)
+        let loop_side = links.clone();
+        let zeroing = std::thread::spawn(move || {
+            let tx = loop {
+                if let Some(tx) = loop_side.joint_zero.take() {
+                    break tx;
+                }
+                std::thread::yield_now();
+            };
+            loop_side.joint_zero.set_running(true);
+            loop_side.operator.hold(true);
+            tx
+        });
+        let asker = {
+            let app = app.clone();
+            std::thread::spawn(move || code(&send(&app, 1101, 8, serde_json::json!({}))))
+        };
+        let tx = zeroing.join().unwrap();
+        // a second request, a stand, a gait, a dock and the fall recovery are refused; the soft e-stop aborts
+        assert_eq!(
+            code(&send(&app, 1101, 8, serde_json::json!({}))),
+            error::NOT_ALLOWED
+        );
+        assert_eq!(
+            code(&send(&app, 2, 22, serde_json::json!({"MotionParam": 1}))),
+            error::NOT_ALLOWED
+        );
+        assert_eq!(
+            code(&send(&app, 2, 23, serde_json::json!({"GaitParam": 0x3002}))),
+            error::NOT_ALLOWED
+        );
+        assert_eq!(
+            code(&send(&app, 2, 24, serde_json::json!({"Charge": 1}))),
+            error::NOT_ALLOWED
+        );
+        assert_eq!(
+            code(&send(&app, 1101, 9, serde_json::json!({}))),
+            error::NOT_ALLOWED
+        );
+        assert!(links.dock.request.lock().unwrap().is_none());
+        assert_eq!(
+            code(&send(&app, 2, 22, serde_json::json!({"MotionParam": 2}))),
+            error::OK
+        );
+        assert!(links.joint_zero.take_abort());
+        assert!(links.operator.take().is_none());
+        links.joint_zero.finish(&tx, 6);
+        links.joint_zero.set_running(false);
+        links.operator.hold(false);
+        assert_eq!(asker.join().unwrap(), 6);
+        // refused at once by the loop's gate
+        let asker = {
+            let app = app.clone();
+            std::thread::spawn(move || code(&send(&app, 1101, 8, serde_json::json!({}))))
+        };
+        let tx = loop {
+            if let Some(tx) = links.joint_zero.take() {
+                break tx;
+            }
+            std::thread::yield_now();
+        };
+        links.joint_zero.finish(&tx, error::NOT_ALLOWED);
+        assert_eq!(asker.join().unwrap(), error::NOT_ALLOWED);
+        // no loop to answer: basic_server's system() failure
+        let asker = {
+            let app = app.clone();
+            std::thread::spawn(move || code(&send(&app, 1101, 8, serde_json::json!({}))))
+        };
+        let tx = loop {
+            if let Some(tx) = links.joint_zero.take() {
+                break tx;
+            }
+            std::thread::yield_now();
+        };
+        drop(tx);
+        assert_eq!(asker.join().unwrap(), error::INTERNAL);
+        assert_eq!(links.joint_zero.report().finished, 2);
     }
 
     #[test]
