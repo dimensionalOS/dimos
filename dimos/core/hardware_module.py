@@ -94,8 +94,6 @@ class HardwareModule(TfModule):
     config: HardwareModuleConfig
     # Frames of this hardware's USD that other hardware can mount onto.
     mounts: ClassVar[Mounts] = Mounts()
-    # Streams a mounted copy keeps unprefixed, so they still reach whatever is outside its mount's namespace.
-    mount_shared: ClassVar[frozenset[str]] = frozenset()
     # A FileInfo naming a file this hardware serves, with the sha256 the asker already has.
     hardware_file_request: In[FileInfo]
     # The reply (header only when the asker's sha256 is current), and the hardware.usda header announced at start.
@@ -104,9 +102,7 @@ class HardwareModule(TfModule):
     @classmethod
     def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same name."""
-        return cls.blueprint(mount=mount_frame, **kwargs).namespace(
-            mount_frame, shared=cls.mount_shared
-        )
+        return cls.blueprint(mount=mount_frame, **kwargs).namespace(mount_frame)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
