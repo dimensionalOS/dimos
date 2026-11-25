@@ -102,6 +102,17 @@ class FlowBaseConfig(ConnectionConfig):
     joint_commands: dict[str, tuple[Interface, ...]] = FLOWBASE_JOINT_COMMANDS
 
 
+def flowbase_joint_connection() -> ConnectionConfig:
+    """The FlowBase as a coordinator sees it: robot name, model and velocity-only body joints.
+
+    For a coordinator's ``connections``, which take only these fields, not the
+    address or odometry frame in ``FlowBaseConfig``.
+    """
+    return ConnectionConfig(
+        source="base", model=FLOWBASE_MODEL, joint_commands=FLOWBASE_JOINT_COMMANDS
+    )
+
+
 class FlowBaseConnection(ConnectionModule):
     """A FlowBase driven over Portal RPC at ``config.address``.
 

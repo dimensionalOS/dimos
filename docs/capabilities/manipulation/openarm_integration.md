@@ -23,8 +23,7 @@ ControlCoordinator (100 Hz)
 
 The connection owns native activation, feedback, position targets, gravity
 compensation, command timeout holds, and shutdown. The coordinator uses standard
-streams and has no hardware adapters. The `openarm_hardware` factory and
-`OpenArmDamiaoAdapter` have been removed.
+streams.
 
 Deployed blueprints use source `arm`. Their command and feedback vectors contain
 `arm/openarm_left_joint1..7`, `arm/openarm_right_joint1..7`,

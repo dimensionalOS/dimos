@@ -25,18 +25,13 @@ effects are observed on the tasks.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-import threading
 import time
 from typing import Any
 
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareType,
-    make_twist_base_joints,
-)
+from dimos.control.components import make_twist_base_joints
 import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
@@ -47,7 +42,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In
-from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -317,15 +311,6 @@ class TestButtonsRouting:
         assert len(coordinator.get_task("teleop1").buttons_calls) == 1
 
 
-def _base_component() -> HardwareComponent:
-    return HardwareComponent(
-        hardware_id="base",
-        hardware_type=HardwareType.BASE,
-        joints=make_twist_base_joints("base"),
-        adapter_type="mock_twist_base",
-    )
-
-
 class TestTwistRouting:
     """Only task cards consume input; joint names and hardware types grant no routes."""
 
@@ -366,9 +351,8 @@ class TestTwistRouting:
         assert out.velocities == expected
         assert len(capable.velocity_commands) == 1
 
-    def test_base_and_unregistered_velocity_tasks_do_not_subscribe(self, make_coordinator):
+    def test_unregistered_velocity_tasks_do_not_subscribe(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            hardware=[_base_component()],
             tasks=[
                 TaskConfig(
                     name="velocity", type="velocity", joint_names=make_twist_base_joints("base")
@@ -405,7 +389,7 @@ class TestTwistCardContract:
 
     def test_bare_set_velocity_command_stub_gets_nothing(self, make_coordinator):
         # Intentional delta: the fan-out narrowed to card-declared consumers.
-        coordinator, taps = make_coordinator(hardware=[_base_component()])
+        coordinator, taps = make_coordinator()
         bare = VelocityCapableTask("bare")
         coordinator.add_task(bare)
         coordinator.start()
@@ -415,47 +399,6 @@ class TestTwistCardContract:
             Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
         )
         assert bare.velocity_commands == []
-
-    def test_runtime_base_add_remove_does_not_subscribe_twist(self, make_coordinator):
-        coordinator, taps = make_coordinator()
-        coordinator.start()
-        component = _base_component()
-        adapter = twist_base_adapter_registry.create(
-            "mock_twist_base", dof=len(component.joints), hardware_id="base"
-        )
-        assert adapter.connect()
-        assert coordinator.add_hardware(adapter, component)
-        assert not taps["twist_command"].subscribed
-        assert coordinator.remove_hardware("base")
-        assert not taps["twist_command"].subscribed
-
-    def test_twist_delivery_concurrent_with_remove_hardware(self, make_coordinator):
-        coordinator, taps = make_coordinator(hardware=[_base_component()])
-        coordinator.add_task(G1ShapedVelocityTask("g1"), task_type="g1_groot_wbc")
-        coordinator.start()
-        assert taps["twist_command"].subscribed
-
-        msg = Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.5])
-        stop = threading.Event()
-
-        def pump() -> None:
-            while not stop.is_set():
-                taps["twist_command"].emit(msg)
-
-        removed: list[bool] = []
-        pumper = threading.Thread(target=pump, daemon=True)
-        remover = threading.Thread(
-            target=lambda: removed.append(coordinator.remove_hardware("base")), daemon=True
-        )
-        pumper.start()
-        remover.start()
-        remover.join(timeout=5.0)
-        stop.set()
-        pumper.join(timeout=5.0)
-
-        assert not remover.is_alive(), "remove_hardware deadlocked against twist delivery"
-        assert not pumper.is_alive(), "twist delivery deadlocked against remove_hardware"
-        assert removed == [True]
 
 
 class TestSubscriptionLifecycle:
@@ -494,7 +437,6 @@ class TestSubscriptionLifecycle:
 
     def test_stop_unsubscribes_all_streams(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            hardware=[_base_component()],
             tasks=[
                 TaskConfig(
                     name=JOINT_TRAJECTORY_TASK_NAME,
@@ -811,7 +753,7 @@ class TestSubclassDeclaredStreams:
 
 
 class ActiveProbeTask(ProbeTask):
-    """Probe that claims its joints for real, so remove_hardware can refuse it."""
+    """Probe that is active, so it claims its joints."""
 
     def is_active(self) -> bool:
         return True
@@ -881,7 +823,6 @@ class TestStreamBind:
         base_joints = make_twist_base_joints("base")
         coordinator, _ = make_coordinator(
             coordinator_cls=FanoutCoordinator,
-            hardware=[_base_component()],
             tasks=[
                 TaskConfig(
                     name="good",
@@ -899,9 +840,7 @@ class TestStreamBind:
         with pytest.raises(ValueError, match="no_such_port"):
             coordinator.start()
 
-        # Tasks go first, or "good" is active on the base joints and pins the hardware.
         assert coordinator.list_tasks() == []
-        assert coordinator.list_hardware() == []
 
     def test_unknown_stream_bind_key_is_loud(self, make_coordinator, register_card):
         card = register_card(

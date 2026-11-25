@@ -38,10 +38,8 @@ again to disengage. Pinch the thumb and middle finger to close the gripper;
 release it to open the gripper. Hand tracking must be enabled in the headset
 browser.
 
-`teleop-webxr-openarm` is safe by default: it always uses the in-memory
-`mock_whole_body` adapter, regardless of the global simulation setting. It does
-not select physical OpenArm hardware implicitly. The mock and bimanual model
-start at the canonical all-zero pose. Since that pose places both joint-4
+`teleop-webxr-openarm` drives the OpenArm through `OpenArmConnection`. The
+bimanual model starts at the canonical all-zero pose. Since that pose places both joint-4
 coordinates at their lower limits, the OpenArm planner and teleoperation task
 share a Pink joint-limit posture margin that supplies a deterministic inward
 direction without changing the measured seed. No random retry runs in the
@@ -140,4 +138,4 @@ webxr/
 └── web/static/index.html # WebXR client
 ```
 
-Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
+An xArm's address is `--xarmconnection.ip`; `--choice arm=mock` runs the xArm and Piper blueprints on a mock arm instead. Each arm's connection takes its own address; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

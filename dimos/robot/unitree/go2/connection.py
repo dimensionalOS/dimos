@@ -22,7 +22,7 @@ import time
 from typing import Any, Protocol
 
 from pydantic import Field, model_validator
-from reactivex import empty
+from reactivex import empty, timer
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from scipy.spatial.transform import Rotation
@@ -69,6 +69,8 @@ else:
     from typing import Self, TypeVar
 
 logger = setup_logger()
+
+_LIDAR_STARTUP_TIMEOUT_S = 10.0
 
 _ROBOT_IP_GUIDANCE = (
     "Set ROBOT_IP or --robot-ip (or --go2connection.ip), "
@@ -474,7 +476,27 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
             self.color_image.publish(image)
 
         if self.config.lidar:
-            self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+            lidar_received = Event()
+
+            def on_lidar(message: PointCloud2) -> None:
+                lidar_received.set()
+                self.lidar.publish(message)
+
+            def warn_missing_lidar(_: int) -> None:
+                if not lidar_received.is_set():
+                    logger.warning(
+                        "No lidar message received. Mapping and navigation need lidar data. "
+                        "Check the lidar stream.",
+                        timeout_s=_LIDAR_STARTUP_TIMEOUT_S,
+                    )
+
+            self.register_disposable(self.connection.lidar_stream().subscribe(on_lidar))
+            # Diagnose the physical robot. DimSim sends lidar directly over LCM,
+            # and replay/simulation timing need not match hardware startup.
+            if isinstance(self.connection, UnitreeWebRTCConnection):
+                self.register_disposable(
+                    timer(_LIDAR_STARTUP_TIMEOUT_S).subscribe(warn_missing_lidar)
+                )
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))

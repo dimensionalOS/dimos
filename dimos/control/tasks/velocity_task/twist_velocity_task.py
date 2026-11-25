@@ -70,7 +70,7 @@ class TwistVelocityTaskParams(JointVelocityTaskParams):
     axes: list[Axis]
 
 
-def create_task(cfg: Any, hardware: Any) -> TwistVelocityTask:
+def create_task(cfg: Any) -> TwistVelocityTask:
     params = TwistVelocityTaskParams.model_validate(cfg.params)
     return TwistVelocityTask(
         cfg.name,

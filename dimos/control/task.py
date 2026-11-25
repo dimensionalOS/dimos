@@ -28,18 +28,29 @@ Use the t_now passed in CoordinatorState.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
-from dimos.hardware.manipulators.spec import ControlMode as ControlMode
-from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.teleop.webxr.controller_types import Buttons
+
+
+class ControlMode(Enum):
+    """How a task's command values are meant: as positions, speeds or torques."""
+
+    POSITION = "position"  # Planned position control (slower, smoother)
+    SERVO_POSITION = "servo_position"  # High-freq joint position streaming (100Hz+)
+    VELOCITY = "velocity"
+    TORQUE = "torque"
+    CARTESIAN = "cartesian"
+    CARTESIAN_VELOCITY = "cartesian_velocity"
+    IMPEDANCE = "impedance"
 
 
 @dataclass(frozen=True)
@@ -124,9 +135,7 @@ class CoordinatorState:
     CRITICAL: Tasks should use t_now for timing, never time.time()!
 
     Attributes:
-        joints: Aggregated joint states from all hardware
-        imu: Per-whole-body IMU readings, keyed by hardware_id.
-            Empty dict when no whole-body hardware exposes IMU this tick.
+        joints: Aggregated joint states from all robots
         t_now: Current tick time (time.perf_counter())
         dt: Time since last tick (seconds)
         sensors: Sensor readings from robots driven through connection
@@ -134,7 +143,6 @@ class CoordinatorState:
     """
 
     joints: JointStateSnapshot
-    imu: dict[str, IMUState] = field(default_factory=dict)
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
     sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
