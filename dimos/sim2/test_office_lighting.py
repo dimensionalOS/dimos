@@ -48,3 +48,32 @@ def test_the_office_camera_sees_the_room_as_its_lighting_notes_describe_it(rende
     assert brightness[painted].min() > 0.02, "only a surface authored black renders black"
     # The stage's neutral tone curve rolls bright walls off below white rather than clipping them.
     assert (image[geom >= 0] >= 254).any(axis=-1).mean() == 0
+
+
+@pytest.mark.self_hosted
+def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
+    import mujoco
+
+    from dimos.robot.unitree.g1.blueprints.basic.three_g1_office_555 import Office555Config
+    from dimos.sim2.mujoco.look import display
+    from dimos.sim2.mujoco.view import MujocoView
+    from dimos.sim2.usd_layer import usd_layer
+
+    view = MujocoView(usd_layer(Office555Config().usd))
+    model, data = view.model, view.data
+    camera = mujoco.MjvCamera()
+    # From the floor below skylight_1, looking up through it.
+    camera.lookat = data.xpos[model.body("skylight_1").id]
+    camera.azimuth, camera.elevation, camera.distance = 90, 70, 5
+    renderer = mujoco.Renderer(model, 120, 160)
+    renderer.update_scene(data, camera=camera)
+    image = display(renderer.render(), view._headroom, "neutral")
+    renderer.enable_segmentation_rendering()
+    renderer.update_scene(data, camera=camera)
+    sky = renderer.render()[..., 0] < 0
+    renderer.close()
+    view.close()
+
+    assert sky.mean() > 0.05, "the skylight is in frame"
+    # scene.usda's dome: color (1, 0.955, 0.895) at 1.9, which the neutral curve shows near white.
+    assert image[sky].min() > 200

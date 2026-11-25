@@ -170,6 +170,7 @@ def test_a_latlong_dome_is_the_sky_as_hydra_maps_it(renders: None, tmp_path: Pat
     model = spec.compile()
     data = mujoco.MjData(model)
     mujoco.mj_kinematics(model, data)
+    mujoco.mj_camlight(model, data)
     draws = Renders(model)
     try:
         for name, (_, u_seen, v_seen) in seen.items():
