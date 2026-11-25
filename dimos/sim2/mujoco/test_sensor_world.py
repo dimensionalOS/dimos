@@ -240,3 +240,29 @@ def test_a_sensor_named_for_a_site_the_world_has_is_mounted_without_compiling(
 
     assert sites == ["dog/imu"]
     assert [site.name for site in spec.sites] == sites
+
+
+_TEXTURED = """<mujoco>
+  <asset>
+    <texture name="checker" type="2d" builtin="checker" width="64" height="64"/>
+    <material name="checkered" texture="checker"/>
+  </asset>
+  <worldbody>
+    <geom type="box" size="1 1 1" pos="3 0 0" material="checkered"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_only_a_camera_view_loads_the_textures_and_a_lidar_still_sees_the_textured_box(tmp_path):
+    scene = tmp_path / "textured.xml"
+    scene.write_text(_TEXTURED)
+    lidar = open_view(scene, mount=SensorMount("lidar", "world", "lidar"))
+    camera = open_view(scene, mount=SensorMount("camera", "world", "eye"))
+
+    distance, _ = lidar.raycaster((0,)).cast(np.zeros(3), np.array([[1.0, 0.0, 0.0]]), 10.0)
+
+    assert lidar.model.tex_data.size < camera.model.tex_data.size
+    assert distance[0] == pytest.approx(2.0)
+    with pytest.raises(ValueError, match="open a camera view"):
+        lidar.render("eye", 32, 24)
