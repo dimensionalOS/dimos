@@ -81,8 +81,8 @@ test("stopBackground of a call that is not moved is refused not_running", () => 
   assert.equal(CONVERSATION_ACTIONS.stopBackground.rule({ call: "call_2" as CallId }, BUSY), null);
 });
 
-test("the viewer variant carries only the actions open to any client; the owner carries all actions", () => {
-  assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "viewer")), ["submission", "image"]);
+test("the viewer variant carries only the actions open to any client; the owner carries all ten", () => {
+  assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "viewer")), ["image"]);
   assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "owner")), [
     "send",
     "withdraw",
@@ -93,7 +93,6 @@ test("the viewer variant carries only the actions open to any client; the owner 
     "summarizeFrom",
     "background",
     "stopBackground",
-    "submission",
     "image",
   ]);
 });

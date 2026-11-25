@@ -61,7 +61,7 @@ async function invoke(ctx: Ctx, operation: string, id: string | undefined): Prom
     );
     if (operation === "conversation") return done({ transcript: room.transcript.value, turn: turn(room.live.value) });
     if (needsOwner) return call(CONVERSATION_ACTIONS, owner(room), operation);
-    if (operation === "image" || operation === "submission") return call(CONVERSATION_ACTIONS, room, operation);
+    if (operation === "image") return call(CONVERSATION_ACTIONS, room, operation);
   } else {
     const list = operation === "conversations" || operation === "jobs";
     const gateway = await ctx.get(GatewayContract, {}, { state: list });

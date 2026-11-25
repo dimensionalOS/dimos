@@ -412,21 +412,6 @@ test(
     assert(recovered.variant === "owner");
     assert.deepEqual(recovered.jobs.value, [savedJob], "the store initializes its cells from durable state");
     assert.equal(recovered.conversations.value.find((row) => row.id === conversation)?.title, "hello");
-    const room = await c.host.get(ConversationContract, { conversation, role: "viewer" });
-    const stored = await room.submission({ id: first.value.submission });
-    assert(stored.ok);
-    assert.equal(stored.value.record.id, first.value.submission);
-    assert.deepEqual(stored.value.answer, answer);
-    const other = await recovered.createConversation({ request: newActionRequest(), cwd: root });
-    assert(other.ok);
-    const otherRoom = await c.host.get(ConversationContract, {
-      conversation: other.value.conversation,
-      role: "viewer",
-    });
-    assert.deepEqual(await otherRoom.submission({ id: first.value.submission }), {
-      ok: false,
-      refusal: { code: "not_found", what: "submission", name: String(first.value.submission) },
-    });
     assert.deepEqual(await recovered.deleteJob({ name: job.name }), { ok: true, value: null });
     await until(recovered.jobs, (rows) => (rows.length === 0 ? true : undefined));
     const stop = await c.host.get(LifecycleContract, {});
