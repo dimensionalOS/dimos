@@ -150,8 +150,11 @@ software e-stop revokes policy and requests a measured hold, not a hardware
 power cut. Support the arm before foreground shutdown, which disables torque.
 
 Valid reference deadlines are monotonic and at most 100 ms ahead of issuance.
-Jaw traffic never renews arm authority or resends arm MIT rows. Revocation is
-acknowledged in the connection worker; a completed native send already in
+Normal jaw traffic never renews arm authority or resends arm MIT rows. The stock
+command deadman and write-failure halt still revoke arm authority and request a
+measured arm and jaw hold, even before the first policy write. If the hold
+cannot be sampled or sent, the connection attempts to disable the device.
+Revocation is acknowledged in the connection worker; a native send already in
 progress cannot be undone. On arm expiry/cancel/stop following a successful or
 uncertain submission, the live worker requests measured hold, not replay of the
 last actor action. This host-side protection is **not** an independent firmware

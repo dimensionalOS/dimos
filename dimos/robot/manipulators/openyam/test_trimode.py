@@ -49,6 +49,7 @@ from dimos.robot.manipulators.openyam.joints import OPENYAM_ARM_JOINTS
 from dimos.robot.manipulators.openyam.trimode_connection import (
     TrimodeArm,
     TrimodeConnection,
+    arm_bounds,
     declaration,
 )
 from dimos.robot.manipulators.openyam.trimode_coordinator import TrimodeCoordinator
@@ -66,6 +67,7 @@ from dimos.robot.manipulators.openyam.trimode_tracker import (
     Actor,
     ArmSample,
     JointGoal,
+    Tracker,
     Vector,
     load_actor,
     tcp_pose,
@@ -113,7 +115,7 @@ class Plant(TrimodeArm):
         self.jaw = values["joint7"]
         self.jaw_writes.append(self.jaw)
 
-    def hold(self) -> None:
+    def hold_jaw(self, position: float) -> None:
         pass
 
 
@@ -219,6 +221,98 @@ def model() -> RobotModel:
         )
         parent = f"l{i}"
     return RobotModel.from_urdf_string(xml + "</robot>")
+
+
+@pytest.fixture
+def recording_sdk() -> Iterator[tuple[TrimodeConnection, Mock, Mock, Mock]]:
+    robot = model()
+    connection = TrimodeConnection(can_port="fake", model_path=Path("unused"), model=robot)
+    arm = connection._make_arm()
+    native, motors, jaw = Mock(), Mock(), Mock(opening=0.4)
+    arm._native = native
+    arm._arms["arm"] = motors
+    arm._grippers["gripper"] = jaw
+    arm._travel["joint7"] = (0.06, 0.01)
+    arm._active = True
+    arm._physical = Mock()
+    arm._physical.gravity.return_value = np.asarray([0.1] * 6)
+    motors.positions.return_value = np.asarray(HOME)
+    motors.velocities.return_value = motors.torques.return_value = np.zeros(6)
+    connection._arm = arm
+    connection._bounds = arm_bounds(robot)
+    connection._connected = True
+    try:
+        yield connection, native, motors, jaw
+    finally:
+        connection.stop()
+
+
+def assert_stock_hold(motors: Mock) -> None:
+    motors.mit_control.assert_called_once()
+    (bus,) = TrimodeConnection.robot.buses
+    rows = motors.mit_control.call_args.args[0]
+    np.testing.assert_allclose(rows, np.column_stack((bus.kp, bus.kd, HOME, [0] * 6, [0.1] * 6)))
+
+
+@pytest.mark.parametrize("hold_fails", [False, True])
+def test_stock_deadman_holds_arm_without_policy_write(
+    recording_sdk: tuple[TrimodeConnection, Mock, Mock, Mock], hold_fails: bool
+) -> None:
+    connection, native, motors, jaw = recording_sdk
+    if hold_fails:
+        motors.mit_control.side_effect = OSError("hold send failed")
+    connection.command({"arm/joint7/position": 0.035})
+    wait(lambda: connection.status().deadman_fired)
+    assert_stock_hold(motors)
+    if hold_fails:
+        native.disable.assert_called_once()
+        assert "hold send failed" in (connection.status().last_error or "")
+        assert jaw.set_opening.call_count == 1
+    else:
+        native.disable.assert_not_called()
+        assert jaw.set_opening.call_count == 2
+        assert jaw.set_opening.call_args.args[0] == pytest.approx(0.4)
+
+
+def test_stock_jaw_write_failure_revokes_inflight_policy(
+    recording_sdk: tuple[TrimodeConnection, Mock, Mock, Mock],
+) -> None:
+    connection, native, motors, jaw = recording_sdk
+    entered, release = threading.Event(), threading.Event()
+    submit = Mock(wraps=connection._submit)
+
+    def blocked_actor(_: np.ndarray) -> np.ndarray:
+        entered.set()
+        assert release.wait(2.0)
+        return np.asarray([HOME], dtype=np.float32)
+
+    connection._read_state()
+    tracker = connection._tracker = Tracker(
+        blocked_actor, connection._bounds, connection._prepare, submit, connection._failed
+    )
+    try:
+        session = connection.open_reference("joint_reference", time.monotonic() + 0.09)
+        assert session is not None
+        now = time.monotonic()
+        goal = JointGoal(session, now, now + 0.09, HOME)
+        connection._offer("joint_reference", goal)
+        assert entered.wait(1.0)
+        # One failed normal SDK write, then allow the stock measured jaw hold.
+        jaw.set_opening.side_effect = [OSError("jaw send failed"), None]
+        connection.command({"arm/joint7/position": 0.035})
+        assert "jaw send failed" in (connection.status().last_error or "")
+        assert connection._token is None
+        assert_stock_hold(motors)
+        native.disable.assert_not_called()
+        assert jaw.set_opening.call_count == 2
+        assert jaw.set_opening.call_args.args[0] == pytest.approx(0.4)
+        release.set()
+        wait(lambda: submit.call_count == 1)
+    finally:
+        release.set()
+        tracker.close()
+        connection._tracker = None
+    assert_stock_hold(motors)
 
 
 def plan(end: Vector, duration: float = 0.12) -> GeneratedPlan:

@@ -92,7 +92,7 @@ class TrimodeArm(DamiaoArm):
     """Keep stock connect, enable/calibration, read and disable; split native writes."""
 
     def _send(self) -> None:
-        # Stock command/hold still updates the calibrated jaw cache and resends
+        # Stock commands still update the calibrated jaw cache and resend
         # it via the same SDK call. It can never resend cached arm targets.
         native = self._native
         if native is None or not self.active:
@@ -104,6 +104,9 @@ class TrimodeArm(DamiaoArm):
             raise ValueError("gripper target is outside its URDF travel")
         self._grippers[jaw.name].set_opening(opening)
         native.tick(1_000)
+
+    def hold_jaw(self, position: float) -> None:
+        self.command({JAW: position})
 
     def hold_arm(self, q: Vector) -> None:
         # Preserve the stock measured-hold law, without touching the jaw cache.
@@ -152,6 +155,13 @@ class TrimodeConnection(OpenYamConnection):
     def write(self, values: Values) -> None:
         if not self._inhibited and not self._stopping:
             super().write(values)
+
+    def halt(self) -> None:
+        # The inherited deadman, write-failure and stop paths call this with
+        # the device lock held. Revoke before I/O so in-flight inference cannot
+        # publish after a halt, even if that halt cannot be sent.
+        self._revoke_locked("stock connection halted")
+        self._hold_locked(hold_jaw=True)
 
     def _actor(self) -> Actor:
         return load_actor(self.config.model_path.expanduser())
@@ -224,10 +234,10 @@ class TrimodeConnection(OpenYamConnection):
             ):
                 return None
             self._end_locked()
+            if self._fault is not None:
+                return None
             self._token, self._port = uuid.uuid4().hex, port
             self._last_issued, self._deadline = now, until
-            self._terminal_at = None
-            self._reference_fault = None
             return self._token
 
     @rpc
@@ -308,19 +318,31 @@ class TrimodeConnection(OpenYamConnection):
             self._end_locked("arm reference expired")
 
     def _end_locked(self, fault: str | None = None) -> None:
+        had_write = self._last_write is not None
+        self._revoke_locked(fault)
+        if had_write:
+            self._hold_locked(hold_jaw=False)
+
+    def _revoke_locked(self, fault: str | None) -> None:
         self._token = self._port = None
         self._reference_fault = fault
-        had_write, self._last_write = self._last_write is not None, None
-        if not had_write or self._fault is not None or not isinstance(self._arm, TrimodeArm):
+        self._last_write = None
+        self._terminal_at = None
+
+    def _hold_locked(self, *, hold_jaw: bool) -> None:
+        arm = self._arm
+        if self._fault is not None or not isinstance(arm, TrimodeArm) or not arm.active:
             return
         # Explicit stock-style measured hold, never a cached policy action.
         # On bad feedback/send failure fail closed via the stock disable path.
         try:
-            reading = self._arm.read()
+            reading = arm.read()
             q = tuple(reading.position[:6])
             if not bounded(q, self._bounds):
                 raise ValueError("cannot safely hold invalid arm position")
-            self._arm.hold_arm(q)
+            arm.hold_arm(q)
+            if hold_jaw:
+                arm.hold_jaw(reading.position[6])
         except Exception as error:
             self._feedback_failed(error)
 
