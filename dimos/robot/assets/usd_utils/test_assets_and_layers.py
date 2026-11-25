@@ -275,3 +275,34 @@ def Material "paint"
     assert looks != root
     assert stage.GetPrimAtPath(looks).GetAttribute("dimos_owner").Get() == "looks"
     assert stage.GetPrimAtPath(root).GetAttribute("dimos_owner").Get() == "root"
+
+
+def test_resolving_assets_already_in_place_opens_no_list_editor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pxr import Sdf
+
+    resolved = resolve_usd_assets(_EVERY_KIND_OF_ASSET, _ROOT)
+
+    def opened(spec: Any) -> None:
+        pytest.fail(f"opened a list editor on {spec.path}, which a scene does per arc")
+
+    for name in ("referenceList", "payloadList"):
+        monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
+    assert resolve_usd_assets(resolved, _ROOT) == resolved
+
+
+def test_grafting_a_subtree_with_no_arcs_opens_no_list_editor_for_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pxr import Sdf
+
+    def opened(spec: Any) -> None:
+        pytest.fail(f"opened a list editor on {spec.path}, which a scene does per prim")
+
+    for name in ("referenceList", "payloadList"):
+        monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
+    monkeypatch.setattr(Sdf.AttributeSpec, "connectionPathList", property(opened))
+    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
+
+    assert stage.GetPrimAtPath("/room/arm/shell")
