@@ -69,6 +69,8 @@ class SimCamera(SimSensor):
                         robot_ids(self._world),
                         SensorMount("camera", site, site, self.config.fovy),
                     )
+                    # Opening took this tick's sim time, so the next tick is the first read on time.
+                    continue
                 view.update(self._world)
                 rgb = view.render(site, self.config.width, self.config.height)
                 stamp = view.time
