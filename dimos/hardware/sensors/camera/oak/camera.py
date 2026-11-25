@@ -21,6 +21,7 @@ link. ``dimos run oak-camera-vis`` shows the camera in Rerun; README.md says wha
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -79,6 +80,13 @@ _DEVICE_ID_MISSES = 3
 _CLOSE_WAIT_S = 8.0
 _POINTCLOUD_VOXEL_M = 0.005
 _UDEV_HINT = "Linux needs the Luxonis udev rule (dimos/hardware/sensors/camera/oak/README.md)"
+# What DepthAI says when this user may not open the OAK it was asked for.
+_PERMISSION_ERROR = "Insufficient permissions"
+# A cloud pairs a depth frame with the colour picture closest in capture time, up to half a
+# colour period apart: the two sensors are not synchronised, so that is the closest there is.
+_PAIR_COLOUR_PERIODS = 0.5
+# Colour pictures kept for that pairing; depth comes at most a few colour periods later.
+_RECENT_COLOURS = 8
 
 
 class OakCameraConfig(ModuleConfig, DepthCameraConfig):
@@ -157,15 +165,16 @@ def oak_usb_products(devices: Path = SYS_USB_DEVICES) -> list[str]:
 
 
 def usb_permission_problem(devices: list[OakUsbDevice]) -> str | None:
-    """Why this user cannot open the OAKs on the bus, or None when it can."""
-    blocked = [
-        str(device.node)
-        for device in devices
-        if device.node.exists() and not os.access(device.node, os.R_OK | os.W_OK)
-    ]
-    if not blocked:
+    """Why this user can open none of the OAKs on the bus, or None when it can open one.
+
+    One that belongs to another user does not stop this user's: which OAK DepthAI opens, and
+    whether it may, is DepthAI's to say (see `_PERMISSION_ERROR`).
+    """
+    present = [device for device in devices if device.node.exists()]
+    if not present or any(os.access(device.node, os.R_OK | os.W_OK) for device in present):
         return None
-    return f"no permission to open the OAK at {', '.join(blocked)}: {_UDEV_HINT}, then replug it"
+    nodes = ", ".join(str(device.node) for device in present)
+    return f"no permission to open the OAK at {nodes}: {_UDEV_HINT}, then replug it"
 
 
 def wait_for_unbooted_oak(
@@ -388,7 +397,7 @@ class OakCamera(Module, perception.DepthCamera):
         self._capture_thread: threading.Thread | None = None
         self._color_info: CameraInfo | None = None
         self._depth_info: CameraInfo | None = None
-        self._latest_color: Image | None = None
+        self._recent_colors: deque[Image] = deque(maxlen=_RECENT_COLOURS)
         self._latest_depth: Image | None = None
 
     @property
@@ -438,10 +447,14 @@ class OakCamera(Module, perception.DepthCamera):
 
         # A PoE OAK (device_id an IP address) is not on the USB bus.
         usb = SYS_USB_DEVICES.is_dir() and not _is_ip_address(self.config.device_id)
+        unbooted = partial(oak_usb_products, SYS_USB_DEVICES)
         attempt = misses = 0
         while not stop.is_set():
             attempt += 1
-            if usb and not wait_for_unbooted_oak(stop) and not stop.is_set():
+            settled = usb and wait_for_unbooted_oak(
+                stop, USB_SETTLE_S, USB_SETTLE_TIMEOUT_S, unbooted
+            )
+            if usb and not settled and not stop.is_set():
                 logger.warning(
                     "No idle OAK on the USB bus (unplugged, or held by another process?); "
                     "opening anyway",
@@ -497,13 +510,19 @@ class OakCamera(Module, perception.DepthCamera):
         """Open the OAK, check it, build the pipeline and start it, recording each step in
         ``session``."""
         config = self.config
-        if usb and (problem := usb_permission_problem(oak_usb_devices())):
+        if usb and (problem := usb_permission_problem(oak_usb_devices(SYS_USB_DEVICES, DEV_USB))):
             raise OakSetupError(problem)
-        if config.device_id:
-            _check_device_id(dai, config.device_id)
-            device = dai.Device(dai.DeviceInfo(config.device_id))
-        else:
-            device = dai.Device()
+        try:
+            if config.device_id:
+                _check_device_id(dai, config.device_id)
+                device = dai.Device(dai.DeviceInfo(config.device_id))
+            else:
+                device = dai.Device()
+        except RuntimeError as error:
+            if _PERMISSION_ERROR in str(error):
+                hint = "" if config.device_id else "; with several OAKs, set device_id to yours"
+                raise OakSetupError(f"{error}: {_UDEV_HINT}{hint}") from error
+            raise
         session.advance("checking the camera", device=device)
         # Reconnecting is ours: DepthAI's own would keep the pipeline running with idle
         # streams while it retries, without the USB wait and the time limit used here.
@@ -603,7 +622,8 @@ class OakCamera(Module, perception.DepthCamera):
         """Drop what the last session saw: a camera brought up again may be another OAK."""
         with self._lock:
             self._color_info = self._depth_info = None
-            self._latest_color = self._latest_depth = None
+            self._recent_colors.clear()
+            self._latest_depth = None
 
     def _on_color(self, frame: Any, ts: float) -> None:
         # A heavy native library: imported where it is used, as DimOS keeps cv2 off module level.
@@ -628,7 +648,7 @@ class OakCamera(Module, perception.DepthCamera):
                     frame.getTransformation(), self._color_optical_frame
                 )
             if self.config.enable_pointcloud:
-                self._latest_color = image
+                self._recent_colors.append(image)
         self.color_image.publish(image)
         self._publish_tf(ts)
 
@@ -679,12 +699,20 @@ class OakCamera(Module, perception.DepthCamera):
             self.depth_camera_info.publish(depth_info.with_ts(ts))
 
     def _publish_pointcloud(self) -> None:
-        # Each new depth frame with the newest colour (at most one colour period apart); none
-        # once the camera stops.
+        """One cloud per depth frame, painted with the colour picture taken closest to it."""
         with self._lock:
-            color, depth, info = self._latest_color, self._latest_depth, self._color_info
-            self._latest_depth = None
-        if color is None or depth is None or info is None:
+            depth, info, colors = self._latest_depth, self._color_info, list(self._recent_colors)
+        if depth is None or info is None or not colors:
+            return
+        color = min(colors, key=lambda image: abs(image.ts - depth.ts))
+        paired = abs(color.ts - depth.ts) <= _PAIR_COLOUR_PERIODS / self.config.fps
+        if not paired and colors[-1].ts < depth.ts:
+            # Its picture may still be on the way: colour comes through its own queue.
+            return
+        with self._lock:
+            if self._latest_depth is depth:
+                self._latest_depth = None
+        if not paired:
             return
         cloud = PointCloud2.from_rgbd(
             color_image=color, depth_image=depth, camera_info=info, depth_scale=DEPTH_SCALE

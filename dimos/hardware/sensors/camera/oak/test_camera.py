@@ -70,12 +70,15 @@ class FakeTransformation:
 
 
 class FakeFrame:
-    def __init__(self, data: np.ndarray, k: list[list[float]] = K) -> None:
+    def __init__(
+        self, data: np.ndarray, k: list[list[float]] = K, age_s: float = FRAME_AGE_S
+    ) -> None:
         self._data = data
         self._k = k
+        self._age_s = age_s
 
     def getTimestamp(self) -> timedelta:
-        return timedelta(seconds=DEVICE_CLOCK_S - FRAME_AGE_S)
+        return timedelta(seconds=DEVICE_CLOCK_S - self._age_s)
 
     def getTransformation(self) -> FakeTransformation:
         return FakeTransformation(self._k)
@@ -94,8 +97,10 @@ def jpeg_frame(k: list[list[float]] = K) -> FakeFrame:
     return FakeFrame(encoded.reshape(-1), k)
 
 
-def depth_frame(k: list[list[float]] = K) -> FakeFrame:
-    return FakeFrame(np.full((HEIGHT, WIDTH), DEPTH_MM, dtype=np.uint16), k)
+def depth_frame(
+    k: list[list[float]] = K, mm: int = DEPTH_MM, age_s: float = FRAME_AGE_S
+) -> FakeFrame:
+    return FakeFrame(np.full((HEIGHT, WIDTH), mm, dtype=np.uint16), k, age_s)
 
 
 class FakeQueue:
@@ -122,7 +127,8 @@ class FakeQueue:
 
 class FakeOak:
     """A fake ``depthai`` module. Each bring-up follows the next entry of ``attempts``:
-    "ok", "not-found" (Device() raises), "hang-open" (Device() does not return),
+    "ok", "not-found" (Device() raises), "no-permission" (DepthAI may not open it),
+    "hang-open" (Device() does not return),
     "no-pipeline" (the device opens, Pipeline() raises), "odd-error" (Pipeline() raises
     something that is not a DepthAI error), "hang-start" (pipeline.start() does not return),
     or a camera that cannot run the pipeline: "no-stereo", "rvc4", "small-sensor".
@@ -151,6 +157,10 @@ class FakeOak:
         behaviour = self.attempts.pop(0) if self.attempts else "ok"
         if behaviour == "not-found":
             raise RuntimeError("X_LINK_DEVICE_NOT_FOUND")
+        if behaviour == "no-permission":
+            raise RuntimeError(
+                'Insufficient permissions to communicate with X_LINK_UNBOOTED device with name "3.1"'
+            )
         if behaviour == "hang-open":
             self.release.wait()
         device = MagicMock(name=f"device{len(self.devices)}")
@@ -277,8 +287,11 @@ def feed(fake_oak: FakeOak, k: list[list[float]] = K) -> None:
     fake_oak.depth.put(depth_frame(k))
 
 
-def fake_sysfs(tmp_path: Path, mode: int = 0o666) -> tuple[Path, Path]:
-    """A sysfs USB tree with two OAKs and an Intel device, and their device nodes."""
+def fake_sysfs(
+    tmp_path: Path, mode: int = 0o666, other_mode: int | None = None
+) -> tuple[Path, Path]:
+    """A sysfs USB tree with two OAKs and an Intel device, and their device nodes. The second
+    OAK's node gets ``other_mode`` when given: another user's camera."""
     sysfs, dev = tmp_path / "sys", tmp_path / "dev"
     for name, vendor, product, bus, number in (
         ("1-1", "03e7", "2485", 1, 5),
@@ -296,7 +309,7 @@ def fake_sysfs(tmp_path: Path, mode: int = 0o666) -> tuple[Path, Path]:
             (folder / key).write_text(f"{value}\n")
         node = dev / f"{bus:03d}" / f"{number:03d}"
         node.parent.mkdir(parents=True, exist_ok=True)
-        node.touch(mode=mode)
+        node.touch(mode=other_mode if other_mode is not None and name == "3-1" else mode)
     return sysfs, dev
 
 
@@ -312,7 +325,7 @@ def test_usb_devices_are_read_from_sysfs(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.getuid() == 0, reason="root opens any device node")
-def test_a_device_node_this_user_cannot_open_names_the_udev_rule(tmp_path: Path) -> None:
+def test_no_oak_this_user_can_open_names_the_udev_rule(tmp_path: Path) -> None:
     sysfs, dev = fake_sysfs(tmp_path, mode=0o444)
     open_sysfs, open_dev = fake_sysfs(tmp_path / "open")
 
@@ -320,6 +333,13 @@ def test_a_device_node_this_user_cannot_open_names_the_udev_rule(tmp_path: Path)
 
     assert problem is not None and "udev rule" in problem and str(dev / "001" / "005") in problem
     assert usb_permission_problem(oak_usb_devices(open_sysfs, open_dev)) is None
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root opens any device node")
+def test_another_users_oak_does_not_stop_this_users(tmp_path: Path) -> None:
+    sysfs, dev = fake_sysfs(tmp_path, other_mode=0o400)
+
+    assert usb_permission_problem(oak_usb_devices(sysfs, dev)) is None
 
 
 class FakeClock:
@@ -706,3 +726,62 @@ def test_color_only_without_depth(
     assert created.count(fake_oak.dai.node.Camera) == 1
     assert received.messages["depth_image"] == []
     assert received.messages["depth_camera_info"] == []
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root opens any device node")
+def test_this_users_oak_streams_beside_another_users(
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sysfs, dev = fake_sysfs(tmp_path, other_mode=0o400)
+    monkeypatch.setattr(oak, "SYS_USB_DEVICES", sysfs)
+    monkeypatch.setattr(oak, "DEV_USB", dev)
+    monkeypatch.setattr(oak, "USB_SETTLE_S", 0.0)
+    feed(fake_oak)
+
+    _, received = start_camera()
+
+    received.wait("color_image")
+
+
+@pytest.mark.parametrize("fake_oak", [["no-permission"]], indirect=True)
+def test_an_oak_depthai_may_not_open_names_the_udev_rule_and_is_not_retried(
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+    mocker: Any,
+) -> None:
+    error = mocker.patch.object(oak.logger, "error")
+
+    start_camera(device_id="1844301021EA631200")
+
+    wait_until(capture_ended, timeout=10.0)
+    assert fake_oak.dai.Device.call_count == 1
+    assert "udev rule" in error.call_args.kwargs["reason"]
+
+
+def test_a_cloud_pairs_depth_with_the_picture_taken_closest_to_it(
+    pool: ThreadPoolScheduler,
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+) -> None:
+    # A depth frame taken a second before any colour picture there is: no cloud from it.
+    fake_oak.color.put(jpeg_frame())
+    fake_oak.depth.put(depth_frame(mm=3000, age_s=FRAME_AGE_S + 1.0))
+    _, received = start_camera(enable_pointcloud=True, pointcloud_fps=50.0)
+    received.wait("depth_image")
+    infos = len(received.messages["camera_info"])
+    wait_until(lambda: len(received.messages["camera_info"]) >= infos + 10, timeout=10.0)
+    assert received.messages["pointcloud"] == []
+
+    # A depth frame taken with a picture: its cloud.
+    fake_oak.color.put(jpeg_frame())
+    fake_oak.depth.put(depth_frame(mm=2000))
+    received.wait("pointcloud")
+
+    assert len(received.messages["pointcloud"]) == 1
+    points, _ = received.messages["pointcloud"][0].as_numpy()
+    assert np.allclose(points[:, 2], 2.0)

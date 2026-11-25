@@ -23,20 +23,28 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.oak.camera import OakCamera
+from dimos.hardware.sensors.camera.oak.camera import OakCamera, OakCameraConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.visualization.vis_module import vis_module
 
 
+class OakMountTfConfig(StaticTfPublisherConfig):
+    # The camera's link, named as OakCamera names it: the same default, and the same
+    # namespace and frame_id_prefix applied by Module.frame_id.
+    frame_id: str | None = OakCameraConfig.model_fields["frame_id"].default
+
+
 class OakMountTf(StaticTfPublisher):
-    """The standalone viewer's mount: camera_link sits at the world origin.
+    """The standalone viewer's mount: the camera's link sits at the world origin.
 
     The camera publishes only its own frames; without this edge Rerun has no path from
     world to them and draws nothing in 3D.
     """
+
+    config: OakMountTfConfig
 
     def transforms(self) -> list[Transform]:
         return [
@@ -44,7 +52,7 @@ class OakMountTf(StaticTfPublisher):
                 translation=Vector3(0.0, 0.0, 0.0),
                 rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
                 frame_id="world",
-                child_frame_id="camera_link",
+                child_frame_id=self.frame_id,
             )
         ]
 

@@ -14,4 +14,4 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 Supported: RVC2 cameras (the OAK-D family). The defaults (1280x720 colour at 15 Hz, depth at 5 Hz, colour MJPEG-encoded on the camera) fit a USB 2 link.
 
-A camera that is still re-enumerating after a relaunch, fails to open, or hangs while it starts is given up after `open_timeout` and brought up again; so is one that is lost or sends no picture for `stall_timeout`. A camera or machine that cannot run the pipeline (no stereo pair with depth on, a size larger than the colour sensor, not an RVC2 OAK, no permission to open the USB device, an unknown `device_id`) is reported once in the log and not retried.
+A camera that is still re-enumerating after a relaunch, fails to open, or hangs while it starts is given up after `open_timeout` and brought up again; so is one that is lost or sends no picture for `stall_timeout`. A camera or machine that cannot run the pipeline (no stereo pair with depth on, a size larger than the colour sensor, not an RVC2 OAK, no permission to open any OAK on the bus, or DepthAI refusing the selected one, an unknown `device_id`) is reported once in the log and not retried.
