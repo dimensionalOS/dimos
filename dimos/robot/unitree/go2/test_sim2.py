@@ -92,3 +92,12 @@ def test_odom_is_in_the_frame_a_real_go2_reports_it_in(go2_sim: Go2Sim) -> None:
     odom = go2_sim._odom(np.array([0.0, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]), 1.0)
 
     assert odom.frame_id == ConnectionConfig.model_fields["odom_frame_id"].default
+
+
+def test_the_simulated_body_is_the_root_link_of_a_real_go2() -> None:
+    from dimos.robot.unitree.go2.connection import GO2_MODEL
+    from dimos.robot.unitree.go2.sim2 import GO2_TF_FRAMES, GO2_USD
+
+    assert (
+        GO2_USD.root_link == GO2_MODEL.load().root_link == GO2_TF_FRAMES["tf_frames_local"]["body"]
+    )
