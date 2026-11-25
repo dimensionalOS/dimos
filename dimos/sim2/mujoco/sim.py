@@ -57,6 +57,8 @@ class MujocoSim(Module):
         self._backend: MujocoBackend | None = None
         self._files: WorldFiles | None = None
         self._publisher: _LatestPublisher | None = None
+        self._composed = Event()
+        self._world_usd = ""
         self._built = Event()
         self._commanded: set[str] = set()
         self._held: set[str] = set()
@@ -74,8 +76,12 @@ class MujocoSim(Module):
         simulated = [robot.simulated_robot() for robot in meeting(SimulatedRobotSpec, modules)]
         validate(simulated)
         self._held = {robot.robot_id for robot in simulated if robot.held_until_commanded}
+        world = compose_world(meeting(HardwareSpec, modules))
+        # Sensors build their views from the composed world alone, so they start on it while physics compiles.
+        self._world_usd = world.usd
+        self._composed.set()
         self._backend = MujocoBackend(
-            compose_world(meeting(HardwareSpec, modules)),
+            world,
             simulated,
             speed=self.config.speed,
             max_burst_seconds=self.config.max_burst_seconds,
@@ -86,9 +92,8 @@ class MujocoSim(Module):
 
     @rpc
     def get_world_usd(self) -> str:
-        self._built.wait()
-        assert self._backend is not None
-        return self._backend.usd
+        self._composed.wait()
+        return self._world_usd
 
     @rpc
     def snapshot(self) -> dict[str, Any]:
@@ -143,6 +148,7 @@ class MujocoSim(Module):
     def stop(self) -> None:
         super().stop()
         # Releases a get_world_usd() caller blocked on a world that is never going to be built.
+        self._composed.set()
         self._built.set()
         if self._publisher is not None:
             self._publisher.close()

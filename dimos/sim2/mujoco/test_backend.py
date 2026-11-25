@@ -15,6 +15,7 @@
 import asyncio
 import contextlib
 from pathlib import Path
+import threading
 import time
 from typing import Any, cast
 import uuid
@@ -199,6 +200,33 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
         assert mirror.entity("dog") is not None
     finally:
         coordinator.stop()
+
+
+def test_the_world_usd_is_served_while_physics_is_still_compiling(world, monkeypatch):
+    import dimos.sim2.mujoco.sim as mujoco_sim
+
+    compiling, compiled = threading.Event(), threading.Event()
+
+    class _StillCompiling:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            compiling.set()
+            compiled.wait()
+
+        def frame(self) -> None:
+            return None
+
+    monkeypatch.setattr(mujoco_sim, "compose_world", lambda _hardware: world)
+    monkeypatch.setattr(mujoco_sim, "MujocoBackend", _StillCompiling)
+    sim_module = MujocoSim()
+    building = threading.Thread(target=sim_module.on_system_modules, args=([],))
+    building.start()
+    try:
+        compiling.wait()
+        assert sim_module.get_world_usd() == world.usd
+    finally:
+        compiled.set()
+        building.join()
+        sim_module.stop()
 
 
 class _Collect:

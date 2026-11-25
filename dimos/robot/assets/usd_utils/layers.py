@@ -164,9 +164,15 @@ def _carry_outside_references(
     while pending:
         copy, original = (pxr.Sdf.Path(path) for path in pending.pop())
         for spec in _specs_under(root_layer, str(copy)):
-            for arcs in (spec.referenceList, spec.payloadList):
+            for has_arcs, key, list_name in (
+                (spec.hasReferences, "references", "referenceList"),
+                (spec.hasPayloads, "payload", "payloadList"),
+            ):
+                if not has_arcs:
+                    continue
+                stated = spec.GetInfo(key)
                 for field in _REFERENCE_FIELDS:
-                    items = list(getattr(arcs, field))
+                    items = list(getattr(stated, field))
                     moved = [
                         _moved_reference(
                             pxr, arc, sub_layer, root_layer, inside, landed, carried, pending
@@ -174,7 +180,7 @@ def _carry_outside_references(
                         for arc in items
                     ]
                     if moved != items:
-                        setattr(arcs, field, moved)
+                        setattr(getattr(spec, list_name), field, moved)
             source_spec = sub_layer.GetObjectAtPath(spec.path.ReplacePrefix(copy, original))
             _carry_outside_targets(
                 pxr, spec, source_spec, sub_layer, root_layer, inside, carried, pending
@@ -200,12 +206,15 @@ def _carry_outside_targets(
     graft wears the room's materials, or none.
     """
     for prop in spec.properties:
-        targets_of = _target_list(pxr, prop)
-        if targets_of is None:
+        key = _target_key(pxr, prop)
+        if key is None:
             continue
+        targets_of = prop.GetInfo(key)
         # Decide by the source's own target: a path inside a copy may name a different source prim.
         source_prop = source_spec.properties.get(prop.name) if source_spec else None
-        source_targets_of = _target_list(pxr, source_prop) if source_prop else targets_of
+        source_targets_of = (
+            source_prop.GetInfo(key) if source_prop and source_prop.HasInfo(key) else targets_of
+        )
         for field in _REFERENCE_FIELDS + _MATCHING_FIELDS:
             targets = list(getattr(targets_of, field))
             originals = list(getattr(source_targets_of, field))
@@ -224,14 +233,16 @@ def _carry_outside_targets(
                 for original, current in zip(originals, targets, strict=True)
             ]
             if moved != targets:
-                setattr(targets_of, field, moved)
+                list_name = "connectionPathList" if key == "connectionPaths" else "targetPathList"
+                setattr(getattr(prop, list_name), field, moved)
 
 
-def _target_list(pxr: Pxr, prop: Any) -> Any:
-    if isinstance(prop, pxr.Sdf.AttributeSpec):
-        return prop.connectionPathList
-    if isinstance(prop, pxr.Sdf.RelationshipSpec):
-        return prop.targetPathList
+def _target_key(pxr: Pxr, prop: Any) -> str | None:
+    """The field a property states its targets in, or None when it states none (read as a list op value, not through its list editor)."""
+    if isinstance(prop, pxr.Sdf.AttributeSpec) and prop.HasInfo("connectionPaths"):
+        return "connectionPaths"
+    if isinstance(prop, pxr.Sdf.RelationshipSpec) and prop.HasInfo("targetPaths"):
+        return "targetPaths"
     return None
 
 

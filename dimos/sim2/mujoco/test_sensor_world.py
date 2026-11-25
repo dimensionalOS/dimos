@@ -14,6 +14,7 @@
 
 from pathlib import Path
 
+import mujoco
 import numpy as np
 import pytest
 
@@ -207,3 +208,35 @@ def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(compose
     view.update(world.at(1.5, 0.5, 0.0))
     _, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([2.0, 0.0, 9.81])
+
+
+def test_a_view_reads_its_scene_from_one_parse(composed, monkeypatch):
+    from dimos.robot.assets.usd_utils.pxr import load_pxr
+
+    pxr = load_pxr()
+    open_stage, already_parsed = pxr.Usd.Stage.Open, []
+
+    def spied(path, *args):
+        already_parsed.append(bool(pxr.Sdf.Layer.Find(str(path))))
+        return open_stage(path, *args)
+
+    monkeypatch.setattr(pxr.Usd.Stage, "Open", spied)
+    _view(composed, "camera", "dog/eye")
+
+    assert len(already_parsed) > 1
+    assert already_parsed[1:] == [True] * (len(already_parsed) - 1)
+
+
+def test_a_sensor_named_for_a_site_the_world_has_is_mounted_without_compiling(
+    composed, monkeypatch
+):
+    from dimos.sim2.mujoco.world import compile_world, mount_sensor
+
+    spec = compile_world(composed, ids=["dog"])
+    mount_sensor(spec, SensorMount("imu", "dog/imu", "dog/imu"))
+    sites = [site.name for site in spec.sites]
+    monkeypatch.setattr(mujoco.MjSpec, "copy", lambda self: pytest.fail("compiled a copy"))
+    mount_sensor(spec, SensorMount("imu", "dog/imu", "dog/imu"))
+
+    assert sites == ["dog/imu"]
+    assert [site.name for site in spec.sites] == sites

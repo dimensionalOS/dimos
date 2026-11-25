@@ -47,3 +47,21 @@ def test_a_scene_publishes_only_the_path_to_its_mounts() -> None:
         room.stop()
 
     assert edges == {("room", "aisle"), ("aisle", "spot")}
+
+
+def test_a_scene_works_its_edges_out_once_and_restamps_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    room = _Room()
+    try:
+        worked_out = []
+        usd_transforms = room.usd_transforms
+        monkeypatch.setattr(
+            room, "usd_transforms", lambda **kw: worked_out.append(1) or usd_transforms(**kw)
+        )
+        stamps = [room.mount_transforms(ts=float(tick)) for tick in range(3)]
+    finally:
+        room.stop()
+
+    assert len(worked_out) == 1
+    assert [{t.ts for t in edges} for edges in stamps] == [{0.0}, {1.0}, {2.0}]
