@@ -119,3 +119,36 @@ def test_a_urdf_model_refuses_a_frame_hung_off_a_frame_it_lacks(tmp_path: Path) 
         model.with_frames({"tool": ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}).frame_names()
     with pytest.raises(ValueError, match="has no '/'"):
         model.with_frames({"a/tool": ("arm/base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+
+
+_LEG_URDF = (
+    '<robot name="leg"><link name="world"/><link name="hip"/><link name="knee"/><link name="foot"/>'
+    '<joint name="float" type="floating"><parent link="world"/><child link="hip"/></joint>'
+    '<joint name="bend" type="revolute"><parent link="hip"/><child link="knee"/>'
+    '<origin xyz="0 0 -0.3"/><axis xyz="0 1 0"/><limit lower="-2" upper="2" effort="1" velocity="1"/></joint>'
+    '<joint name="ankle" type="fixed"><parent link="knee"/><child link="foot"/>'
+    '<origin xyz="0 0 -0.3"/></joint></robot>'
+)
+
+
+def test_a_usd_model_says_which_tf_edges_are_static_and_where_the_moving_ones_sit(
+    tmp_path: Path,
+) -> None:
+    """Fixed joints and prim edges never move, other single-position joints do, a floating joint is no edge."""
+    import numpy as np
+
+    source = tmp_path / "leg.urdf"
+    source.write_text(_LEG_URDF)
+    model = RobotModel.from_file(source).to_usd()
+
+    static = {(edge.parent, edge.child): edge for edge in model.static_transforms()}
+    assert set(static) == {("leg", "leg/world"), ("leg/world/hip/knee", "leg/world/hip/knee/foot")}
+    np.testing.assert_allclose(
+        static["leg/world/hip/knee", "leg/world/hip/knee/foot"].translation, [0, 0, -0.3]
+    )
+
+    (bend,) = model.moving_transforms({"bend": np.pi / 2})
+    assert (bend.parent, bend.child) == ("leg/world/hip", "leg/world/hip/knee")
+    np.testing.assert_allclose(bend.rotation, [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)], atol=1e-9)
+    assert set(model.tf_edges) == {*static, (bend.parent, bend.child)}
+    assert "leg/world/hip" in model.tf_frames

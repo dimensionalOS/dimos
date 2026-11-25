@@ -23,7 +23,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -39,6 +39,18 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 Vector = tuple[float, float, float]
+
+if TYPE_CHECKING:
+    from dimos.robot.assets.joint_transforms import JointTransforms
+
+
+class TfEdge(NamedTuple):
+    """One parent -> child edge of a description's tf: frame paths, translation and x, y, z, w rotation."""
+
+    parent: str
+    child: str
+    translation: Vector
+    rotation: tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -268,6 +280,61 @@ class UsdModel:
             for parent, child, transform in usd_frame_edges(self.usd, self._asset_root())
             if child not in jointed
         )
+
+    @cached_property
+    def tf_edges(self) -> tuple[tuple[str, str], ...]:
+        """Every (parent, child) edge of this description's tf, static and moving."""
+        return tuple(
+            (edge.parent_link, edge.child_link)
+            for edge in (*self._static_joints.joints, *self._moving_joints.joints)
+        )
+
+    @cached_property
+    def tf_frames(self) -> frozenset[str]:
+        """Every frame of this description's tf: its frame prims, and any frame an edge names."""
+        # A joint may name a frame no prim carries: the anchor usd_to_urdf adds off a child's origin.
+        return frozenset(
+            {*self.frame_names(), *(frame for edge in self.tf_edges for frame in edge)}
+        )
+
+    def static_transforms(self) -> list[TfEdge]:
+        """The edges that never move: fixed joints, and each frame on its path-parent where no joint holds it."""
+        return self._edges_at(self._static_joints, {})
+
+    def moving_transforms(self, positions: Mapping[str, float] | None = None) -> list[TfEdge]:
+        """The edges of joints that move, at ``positions`` (by joint name; one not named sits at zero)."""
+        return self._edges_at(self._moving_joints, positions or {})
+
+    @cached_property
+    def _single_position_joints(self) -> tuple[JointDescription, ...]:
+        # A floating joint has no single position: what moves its child (odometry) is another parent.
+        return tuple(joint for joint in self.joints if joint.type != "floating")
+
+    @cached_property
+    def _static_joints(self) -> JointTransforms:
+        from dimos.robot.assets.joint_transforms import JointTransforms
+
+        fixed = tuple(joint for joint in self._single_position_joints if joint.type == "fixed")
+        return JointTransforms((*fixed, *self.prim_edges))
+
+    @cached_property
+    def _moving_joints(self) -> JointTransforms:
+        from dimos.robot.assets.joint_transforms import JointTransforms
+
+        # Worked out once: a robot asks for these at every tick, and only the positions change.
+        return JointTransforms(
+            tuple(joint for joint in self._single_position_joints if joint.type != "fixed")
+        )
+
+    @staticmethod
+    def _edges_at(joints: JointTransforms, positions: Mapping[str, float]) -> list[TfEdge]:
+        translations, rotations = joints.at(positions)
+        return [
+            TfEdge(parent, child, (x, y, z), (qx, qy, qz, qw))
+            for (parent, child), (x, y, z), (qx, qy, qz, qw) in zip(
+                joints.links, translations.tolist(), rotations.tolist(), strict=True
+            )
+        ]
 
     @cached_property
     def _urdf_link_paths(self) -> dict[str, str]:
