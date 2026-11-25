@@ -969,22 +969,11 @@ impl Controller {
         c
     }
 
-    /// The normalized axes: cmd.axes, or a metric cmd.velocity over the runner's real_steer_divisor.
-    fn axes_for(&self, runner: &str, cmd: &UserCommand) -> [f64; 3] {
-        let divisor = self
-            .cfg
-            .runners
-            .get(runner)
-            .and_then(|r| r.real_steer_divisor);
-        match (cmd.velocity, divisor) {
-            (Some(v), Some(d)) => {
-                let mut a = [0.0; 3];
-                for i in 0..3 {
-                    a[i] = if d[i] > 0.0 { v[i] / d[i] } else { 0.0 };
-                }
-                a
-            }
-            _ => cmd.axes,
+    /// The normalized axes: cmd.axes, or a metric cmd.velocity as HandlerVel normalizes it for the commanded gait.
+    fn axes_for(&self, _runner: &str, cmd: &UserCommand) -> [f64; 3] {
+        match cmd.velocity {
+            Some(v) => self.cfg.real_steer.axes(cmd.gait, v),
+            None => cmd.axes,
         }
     }
 

@@ -170,9 +170,7 @@ settle_s = 0.0
 settle_params = {}
 
 # ---------------------------------------------------------------------------------------------------------------
-# Policy runners. real_steer_divisor: a metric velocity command (/REAL_STEER, /NAV_CMD; m/s, rad/s) becomes the
-# normalized axes by dividing by it, per gait as rl_deploy's HandlerVel does (Extre uses 0x2001 Move's; 0x2002-0x2004
-# divide by (2, 1, 2); the stand runners and "other" gaits (2, 0.4, 0.6)).
+# Policy runners (a metric velocity command becomes the normalized axes by [real_steer], per commanded gait).
 # kind "frames": network input [current frame, `history` past frames oldest->newest]; kind
 # "sequence": state [1, 36, frame] (oldest first), plus `command` and `uncertain` inputs.
 # obs blocks (in order): gyro, gravity, accel, command, constant, phase, joint_pos, joint_vel, last_action,
@@ -191,7 +189,6 @@ kp = [80.0, 80.0, 80.0, 0.0]
 kd = [6.0, 6.0, 6.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
 # the decoded HandlerVel table says (2, 0.8, 1.5) for 0x1001, but /NAV_CMD replays against the robot match (2, 1, 2)
-real_steer_divisor = [2.0, 1.0, 2.0]
 # bin M20BasicFlatRunner ctor (0x54..0x5c): limit_cmd_vel's per-step slew in normalized axes, before command_max
 command_slew = [0.025, 0.025, 0.04]
 # |wz| clamped to this while vx > wz_clamp_above_vx
@@ -218,7 +215,6 @@ default_pose = [0.1, -0.6, 1.05, 0.0, -0.1, -0.6, 1.05, 0.0, 0.1, 0.6, -1.05, 0.
 kp = [80.0, 100.0, 100.0, 0.0]
 kd = [2.5, 2.5, 2.5, 2.0]
 command_max = [1.5, 0.5, 1.5]
-real_steer_divisor = [1.5, 0.5, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -240,7 +236,6 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
-real_steer_divisor = [2.0, 1.0, 2.0]
 # bin M20BasicStairRunner ctor (0x54..0x5c): limit_cmd_vel's per-step slew in normalized axes, before command_max
 command_slew = [0.04, 0.04, 0.08]
 obs = [
@@ -264,7 +259,6 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, -0.8, 1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 0.8, 1.5]
-real_steer_divisor = [2.0, 0.8, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -289,7 +283,6 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 0.6]
 command_max = [0.5, 0.3, 0.5]
-real_steer_divisor = [0.5, 0.3, 0.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -313,7 +306,6 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 0.6]
 command_max = [2.0, 1.0, 1.5]
-real_steer_divisor = [2.0, 1.0, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -336,7 +328,6 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 0.6]
 command_max = [1.5, 1.0, 1.5]
-real_steer_divisor = [1.5, 1.0, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -359,7 +350,6 @@ default_pose = [0.1, -0.75, 1.5, 0.0, -0.1, -0.75, 1.5, 0.0, 0.1, 0.75, -1.5, 0.
 kp = [80.0, 100.0, 100.0, 0.0]
 kd = [2.5, 2.5, 2.5, 2.0]
 command_max = [1.0, 1.0, 1.0]
-real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -384,7 +374,6 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [80.0, 80.0, 120.0, 0.0]
 kd = [3.0, 3.0, 4.0, 0.6]
 command_max = [2.0, 0.5, 1.5]
-real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -411,7 +400,6 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [3.0, 1.0, 2.0]
-real_steer_divisor = [3.0, 1.0, 2.0]
 command_params = { mode = 0.0 }
 command_vector = [{ src = "vx" }, { src = "vy" }, { src = "wz" }, 0.0, { src = "param", name = "mode" }]
 obs = [
@@ -439,7 +427,6 @@ kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # velocity is not an input: the operator's axes and params drive the body pose
 command_max = [0.0, 0.0, 0.0]
-real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
@@ -495,7 +482,6 @@ kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # velocity is not an input: the operator's axes and params drive the body pose
 command_max = [0.0, 0.0, 0.0]
-real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 # mode_byte / feet_fixed: rl_deploy's UserCommand bytes 0x6c / 0x6e (update_policy_ptr sets them on a switch to the
 # stand gaits: mode_byte unless the 0x3001 stand-in or rl_control's first stand-in phase runs, feet_fixed in rl_control's
@@ -550,7 +536,6 @@ kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # wz max follows the speed: clamp(min(a / (vx + b) - c, d / (1 + e |vy|)), lo, hi); |axis| below deadband -> 0
 command_max = [3.9, 0.9, 1.0]
-real_steer_divisor = [3.9, 0.9, 3.0]
 axis_deadband = [0.0, 0.0, 0.1]
 wz_speed_limit = { a = 10.8, b = 2.4, c = 0.15, d = 2.85, e = 0.5, lo = 1.0, hi = 3.0 }
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0 }
@@ -589,7 +574,6 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [6.0, 6.0, 6.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
-real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -611,7 +595,6 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
-real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -798,3 +781,22 @@ checks = 7
 check_period_s = 1.0
 accel_z = 9.0
 height_m = 0.4
+
+# DdsInterface::HandlerVel 0x163710: /REAL_STEER (m/s, m/s, rad/s) over these by the commanded gait (UC+0x10) on receipt
+[real_steer]
+by_gait = [
+    { gaits = [0x1001, 0x1004], divisor = [2.0, 0.8, 1.5] },
+    { gaits = [0x1002], divisor = [1.5, 0.5, 1.5] },
+    { gaits = [0x1003, 0x3003], divisor = [2.0, 1.0, 2.0] },
+    { gaits = [0x2001], divisor = [3.0, 1.0, 2.0] },
+    { gaits = [0x2002, 0x2003, 0x2004], divisor = [2.0, 1.0, 2.0] },
+    { gaits = [0x3001], divisor = [0.5, 0.3, 0.5] },
+    { gaits = [0x3002], divisor = [2.0, 1.0, 1.5] },
+    { gaits = [0x3005], divisor = [1.5, 1.0, 1.5] },
+    { gaits = [0xf002], divisor = [3.9, 0.9, 3.0] },
+]
+default = [2.0, 0.4, 0.6]
+# 0x1003 / 0x3003 / 0x3005: |vx|, |vy| both under DAT_001e1b50 (0.2), one at DAT_001e1b58 (0.1) or more, scaled up to 0.2
+rescale_gaits = [0x1003, 0x3003, 0x3005]
+rescale_to = 0.2
+rescale_from = 0.1

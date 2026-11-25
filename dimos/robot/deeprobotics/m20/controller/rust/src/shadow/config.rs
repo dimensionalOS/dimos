@@ -33,7 +33,7 @@ pub struct CommandWriter {
     pub roll: Option<usize>,
     #[serde(default)]
     pub pitch: Option<usize>,
-    /// true: m/s and rad/s (divided by the runner's real_steer_divisor); false: normalized axes
+    /// true: m/s and rad/s (normalized by [real_steer] for the commanded gait); false: normalized axes
     pub metric: bool,
 }
 

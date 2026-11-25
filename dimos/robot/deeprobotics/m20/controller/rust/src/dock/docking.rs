@@ -175,6 +175,13 @@ pub const CHARGE_ENABLE_SEQ_PARAM: &str = "charge_enable_seq";
 pub const MOTION_STAND: i32 = 1;
 pub const MOTION_LIE_DOWN: i32 = 4;
 pub const MOTION_RL_CONTROL: i32 = 17;
+/// charge_manager's ChargeTaskStatus codes (DoExcepHandlingProcess 0x17fdb0 acts on them)
+pub const RESTART_LOCATION_FAILED: u32 = 0x1002;
+pub const GO_TO_PILE_FAILED: u32 = 0x1005;
+pub const STAND_UP_FAILED: u32 = 0x1006;
+pub const NO_CHARGE_PLUG: u32 = 0x1007;
+pub const OBSTACLE_TIMEOUT: u32 = 0x1009;
+pub const EXIT_PILE_TIMEOUT: u32 = 0x100a;
 
 /// What charge_manager writes to rl_deploy (DDS /MOTION_STATE, /GAIT, /CHARGE_CMD, /BATTERY_CHARGE_ENABLE), written by
 /// this sequence where and in the order charge_manager writes it; the commands it sends the controller follow from
@@ -241,6 +248,8 @@ pub struct Status {
     pub vendor_config: bool,
     /// charge_manager's error state with NOCHARGEPLUG (0x1007)
     pub no_plug: bool,
+    /// charge_manager's error state (4) and its code
+    pub error_code: Option<u32>,
     /// an undock (exitPile) is under way, not a dock
     pub undocking: bool,
 }
@@ -290,8 +299,6 @@ pub struct Docking {
     next: Next,
     resume: Phase,
     giving_up: bool,
-    /// the last sequence failed (charge_manager's error state: an undock is allowed)
-    failed: bool,
     /// the phase's runner is up (ticks_in_phase counts from then)
     on_runner: bool,
     pose_seq: Option<u64>,
@@ -336,8 +343,8 @@ pub struct Docking {
     idle_check_at: u64,
     /// charge_manager's command is 1 (a dock, or idle taking a charge): the charging loop writes Open12vPower(1)
     charge_cmd: bool,
-    /// charge_manager's NOCHARGEPLUG (0x1007) error: DoExcepHandlingProcess retries Open12vPower(3), takes a charge
-    no_plug: bool,
+    /// charge_manager's error state's code (DoExcepHandlingProcess 0x17fdb0; 0x1007 retries Open12vPower(3), takes a charge)
+    error_code: Option<u32>,
     /// the charging loop checked the charge flag this pass
     charge_checked: bool,
     /// the charging loop's last check found no charge (charge_manager's state 4 until the pass ends)
@@ -380,7 +387,6 @@ impl Docking {
             next: Next::Dock,
             resume: Phase::Approach,
             giving_up: false,
-            failed: false,
             on_runner: false,
             pose_seq: None,
             published: None,
@@ -406,7 +412,7 @@ impl Docking {
             startup: None,
             idle_check_at: 0,
             charge_cmd: false,
-            no_plug: false,
+            error_code: None,
             charge_checked: false,
             charge_lost: false,
             open12v: None,
@@ -428,6 +434,7 @@ impl Docking {
                 obstacle_stop: None,
                 vendor_config: false,
                 no_plug: false,
+                error_code: None,
                 undocking: false,
             },
             seq,
@@ -474,8 +481,7 @@ impl Docking {
         };
         self.set_phase(Phase::Charging);
         self.charge_cmd = cmd;
-        self.no_plug = false;
-        self.failed = false;
+        self.error_code = None;
         self.status.result = result.into();
         self.status.error = false;
         self.status.charging = self.charge_flag();
@@ -503,16 +509,17 @@ impl Docking {
     }
 
     /// Idle: PowerOnSelfTest (0x181c40), then the idle loop's 3 s wakes or DoExcepHandlingProcess (0x17fdb0)
-    fn idle_step(&mut self, view: &View) {
+    /// Returns whether it wrote a motion command (the error state's SitDown) that must reach the controller.
+    fn idle_step(&mut self, view: &View) -> bool {
         if self.phase != Phase::Idle {
             // a sequence (or a charge resumed across a restart) ends the self test and the error's retries
             self.startup = None;
-            self.no_plug = false;
+            self.error_code = None;
             self.open12v = None;
-            return;
+            return false;
         }
         if self.core.is_none() {
-            return;
+            return false;
         }
         let p = self.params().cloned().expect("core");
         let powered = self.pump_open12v();
@@ -530,7 +537,7 @@ impl Docking {
                         self.startup = Some(Startup::FindPose { until: u64::MAX });
                     }
                 }
-                return;
+                return false;
             }
             Some(Startup::FindPose { until }) => {
                 if until == u64::MAX {
@@ -560,7 +567,7 @@ impl Docking {
                             .into(),
                     );
                 }
-                return;
+                return false;
             }
             Some(Startup::Confirm { tries, until, x }) => {
                 if self.charge_flag() {
@@ -584,16 +591,26 @@ impl Docking {
                         self.end_self_test(format!(
                             "Init charge status is [error] because of [NOCHARGEPLUG], target x is {x:.6}"
                         ));
-                        self.failed = true;
-                        self.no_plug = true;
+                        self.error_code = Some(NO_CHARGE_PLUG);
                         self.status.error = true;
                     }
                 }
-                return;
+                return false;
             }
             None => {}
         }
-        if self.no_plug {
+        if self.error_code == Some(RESTART_LOCATION_FAILED) {
+            // DoExcepHandlingProcess on 0x1002: "My status is [error], sit down" each 3 s pass (SitDown writes 4 unless lying)
+            if self.tick >= self.idle_check_at {
+                self.idle_check_at = self.tick + self.ticks(3000);
+                if !view.is(State::LieDown) {
+                    self.write(Write::MotionState(MOTION_LIE_DOWN));
+                    return true;
+                }
+            }
+            return false;
+        }
+        if self.error_code == Some(NO_CHARGE_PLUG) {
             // error 0x1007: Open12vPower(3) back to back (each takes 6 s > its 3 s gap), then the charge if it came
             if self.open12v.is_none() {
                 if powered && self.tick > self.idle_check_at && self.charge_flag() && view.lying() {
@@ -602,22 +619,31 @@ impl Docking {
                         "My status is [error], begin to transtion to [charging]",
                         true,
                     );
-                    return;
+                    return false;
                 }
                 self.idle_check_at = self.tick;
                 self.open12v = Some((self.tick, 3, 0));
                 self.pump_open12v();
             }
-            return;
+            return false;
         }
         if self.tick < self.idle_check_at {
-            return;
+            return false;
         }
         self.idle_check_at = self.tick + self.ticks(3000);
-        if self.charge_flag() && !self.failed && view.lying() {
+        if self.charge_flag() && self.error_code.is_none() && view.lying() {
             // the idle loop's wake (0x182390) takes a charge with command 1 (standing, its command 2 idles at once)
             self.take_charge(view, "空闲状态直接进入充电状态", true);
         }
+        false
+    }
+
+    /// DoExcepHandlingProcess on 0x1005: command 0, state 3, an exitPile from where the robot is.
+    fn exit_pile_after(&mut self, code: u32) {
+        let why = std::mem::take(&mut self.status.result);
+        self.status.result =
+            format!("{why} (0x{code:x}): My status is [error], begin to transtion to [exitPile]");
+        self.undock_pending = true;
     }
 
     fn end_self_test(&mut self, result: String) {
@@ -690,12 +716,6 @@ impl Docking {
         match motion_code(t) {
             Some(code) if t != self.target => self.write(Write::MotionState(code)),
             _ => self.target = t,
-        }
-    }
-
-    fn set_gait(&mut self, g: u32) {
-        if g != self.gait {
-            self.write(Write::Gait(g));
         }
     }
 
@@ -842,7 +862,7 @@ impl Docking {
         self.idle_check_at = self.tick + self.ticks(3000);
         self.status.result = result.into();
         self.status.error = error;
-        self.failed = error;
+        self.error_code = None;
         self.giving_up = false;
         Some(self.output(None))
     }
@@ -909,10 +929,9 @@ impl Docking {
                         "cancelled",
                         false,
                     );
-                } else if self.no_plug {
+                } else if self.error_code.is_some() {
                     // the error state with command 2
-                    self.no_plug = false;
-                    self.failed = false;
+                    self.error_code = None;
                     self.status.error = false;
                     self.status.result =
                         "My status is [error], begin to transtion to [idle]".into();
@@ -922,6 +941,10 @@ impl Docking {
             Request::Dock => {
                 if self.active() {
                     return Err(format!("busy ({:?})", self.phase));
+                }
+                if let Some(code) = self.error_code {
+                    // in its error state charge_manager only leaves on an undock (0) or a stop (2)
+                    return Err(format!("charge_manager is in its error state ({code:#x})"));
                 }
                 if self.core.is_none() {
                     return Err("charge_manager.toml is not read yet".into());
@@ -945,7 +968,7 @@ impl Docking {
                 self.status.fine_point = None;
                 self.status.result.clear();
                 self.status.error = false;
-                self.failed = false;
+                self.error_code = None;
                 self.status.retries = 0;
                 self.charge_seq_at_start = self.charge.map_or(0, |r| r.seq);
                 self.target = Target::RlControl;
@@ -975,9 +998,8 @@ impl Docking {
                     self.finish(target, "DoChargeTaskRet status to INITNULL", false);
                     return Ok(());
                 }
-                let charging_now = self.charge.is_some_and(|r| self.charged(&r));
-                let allowed = self.phase == Phase::Charging
-                    || (!self.active() && (self.failed || charging_now));
+                let allowed =
+                    self.phase == Phase::Charging || (!self.active() && self.error_code.is_some());
                 if !allowed {
                     return Err(format!(
                         "charge_manager undocks only while charging or after a failed sequence ({:?})",
@@ -986,7 +1008,7 @@ impl Docking {
                 }
                 self.status.result.clear();
                 self.status.error = false;
-                self.failed = false;
+                self.error_code = None;
                 self.giving_up = false;
                 // charge_manager's main loop takes it at its next wake (charging: once the loop's sleep ends)
                 self.undock_pending = true;
@@ -1174,9 +1196,21 @@ impl Docking {
                 "not on NaviCharge / FinetuneStand in rl_control",
                 true,
             ),
-            Failure::ApproachTimeout => self.finish_basic_flat("not at the dock in time"),
-            Failure::ObstacleTimeout => self.finish_basic_flat("stopped for an obstacle too long"),
-            Failure::ExitTimeout => self.finish_basic_flat("not undocked in time"),
+            Failure::ApproachTimeout => {
+                let out = self.finish_basic_flat("not at the dock in time");
+                self.exit_pile_after(GO_TO_PILE_FAILED);
+                out
+            }
+            Failure::ObstacleTimeout => {
+                let out = self.finish_basic_flat("stopped for an obstacle too long");
+                self.error_code = Some(OBSTACLE_TIMEOUT);
+                out
+            }
+            Failure::ExitTimeout => {
+                let out = self.finish_basic_flat("not undocked in time");
+                self.error_code = Some(EXIT_PILE_TIMEOUT);
+                out
+            }
             Failure::BadSteer => self.finish(self.target, "non-finite steer", true),
         }
     }
@@ -1191,9 +1225,10 @@ impl Docking {
         {
             self.start_undock(view);
         }
-        self.idle_step(view);
+        let sit = self.idle_step(view);
         self.status.phase = self.phase;
-        self.status.no_plug = self.no_plug;
+        self.status.no_plug = self.error_code == Some(NO_CHARGE_PLUG);
+        self.status.error_code = self.error_code;
         self.status.undocking = self.undocking();
         self.status.active = self.active();
         self.status.obstacle = if self.obstacle_open {
@@ -1202,7 +1237,7 @@ impl Docking {
             None
         };
         if !self.active() {
-            return None;
+            return sit.then(|| self.output(None));
         }
         self.ticks_in_phase += 1;
         // charge_manager has no fault input: a fault reaches it only as /MOTION_INFO's state (JointDamping 2)
@@ -1219,7 +1254,13 @@ impl Docking {
                     }
                 } else if self.phase_ms() > self.params()?.find_target_ms {
                     let target = self.target;
-                    return self.finish(target, "the dock is not in sight", true);
+                    // FindTarget failed: 0x1004 on the way in (idle), 0x1006 on the way out (error)
+                    let undock = self.next != Next::Dock;
+                    let out = self.finish(target, "the dock is not in sight", true);
+                    if undock {
+                        self.error_code = Some(STAND_UP_FAILED);
+                    }
+                    return out;
                 }
                 Some(self.output(None))
             }
@@ -1239,11 +1280,13 @@ impl Docking {
             }
             Phase::EnterGait | Phase::StandForRetry => {
                 if !view.is(State::RlControl) && self.phase == Phase::EnterGait {
-                    return self.finish(
+                    let out = self.finish(
                         Target::RlControl,
                         format!("left rl_control ({:?})", view.state),
                         true,
                     );
+                    self.exit_pile_after(GO_TO_PILE_FAILED);
+                    return out;
                 }
                 if self.phase == Phase::StandForRetry {
                     // the retry's sleep(2) from StandUp2WideWalk's return, whatever the robot did
@@ -1289,11 +1332,14 @@ impl Docking {
                         }
                     }
                 } else if self.ticks_in_phase > limit {
-                    return self.finish(
+                    // WideWalk failed: 0x1005, an automatic exitPile
+                    let out = self.finish(
                         Target::RlControl,
                         format!("no {}", self.approach_runner),
                         true,
                     );
+                    self.exit_pile_after(GO_TO_PILE_FAILED);
+                    return out;
                 }
                 Some(self.output(None))
             }
@@ -1407,7 +1453,7 @@ impl Docking {
                             "My status is [charging], begin transtion status to [error] error code:0x1007",
                             true,
                         );
-                        self.no_plug = true;
+                        self.error_code = Some(NO_CHARGE_PLUG);
                         return out;
                     }
                     self.charge_lost = !self.charge_flag();
@@ -1438,7 +1484,14 @@ impl Docking {
                     self.set_phase(resume);
                     self.on_runner = true;
                 } else if self.phase_ms() > self.params()?.find_target_ms {
-                    return self.finish(Target::LieDown, "lost the dock", true);
+                    // the location restart failed: 0x1002, SitDown repeated in the error state
+                    let undock = self.resume == Phase::BackOff;
+                    let out = self.finish(Target::LieDown, "lost the dock", true);
+                    if !undock {
+                        self.error_code = Some(RESTART_LOCATION_FAILED);
+                        self.idle_check_at = self.tick;
+                    }
+                    return out;
                 }
                 Some(self.output(None))
             }
@@ -1468,11 +1521,14 @@ impl Docking {
                 } else if view.is(State::RlControl) && view.on(&self.approach_runner) {
                     self.stood();
                 } else if self.ticks_in_phase > limit {
-                    return self.finish(
+                    // StandUp2WideWalk failed in exitPileAction: 0x1006, the error state
+                    let out = self.finish(
                         self.target,
                         format!("did not stand ({:?})", view.state),
                         true,
                     );
+                    self.error_code = Some(STAND_UP_FAILED);
+                    return out;
                 }
                 Some(self.output(None))
             }

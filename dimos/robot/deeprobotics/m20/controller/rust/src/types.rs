@@ -84,7 +84,7 @@ pub struct UserCommand {
     pub gait: u32,
     #[serde(default)]
     pub axes: [f64; 3],
-    /// metric velocity (m/s, m/s, rad/s) in place of axes: divided by the active runner's real_steer_divisor
+    /// metric velocity (m/s, m/s, rad/s) in place of axes: normalized by [real_steer] for the commanded gait
     #[serde(default)]
     pub velocity: Option<[f64; 3]>,
     #[serde(default)]

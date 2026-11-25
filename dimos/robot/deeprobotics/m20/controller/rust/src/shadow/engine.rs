@@ -470,10 +470,11 @@ impl Engine {
         let mut axes = [0.0; 3];
         if let Some(st) = fresh {
             let v = [st.axes[0], st.axes[1], st.axes[2]];
-            axes = match (st.metric, spec.real_steer_divisor) {
-                (true, Some(d)) => [0, 1, 2].map(|i| if d[i] > 0.0 { v[i] / d[i] } else { 0.0 }),
-                (true, None) => v,
-                (false, _) => v,
+            // HandlerVel normalizes /REAL_STEER by the commanded gait
+            axes = if st.metric {
+                self.cfg.real_steer.axes(gait, v)
+            } else {
+                v
             };
         }
         let pose_inputs: Vec<_> = self

@@ -41,6 +41,50 @@ pub struct Config {
     pub inference: Inference,
     /// basic_server's numbers the controller's basic_server layer uses
     pub basic_server: BasicServerConfig,
+    /// rl_deploy's metric velocity command to normalized axes (DdsInterface::HandlerVel)
+    pub real_steer: RealSteer,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RealSteerGaits {
+    pub gaits: Vec<u32>,
+    pub divisor: [f64; 3],
+}
+
+/// DdsInterface::HandlerVel: /REAL_STEER (m/s, m/s, rad/s) over a divisor chosen by the commanded gait.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RealSteer {
+    pub by_gait: Vec<RealSteerGaits>,
+    pub default: [f64; 3],
+    pub rescale_gaits: Vec<u32>,
+    pub rescale_to: f64,
+    pub rescale_from: f64,
+}
+
+impl RealSteer {
+    /// The normalized axes rl_deploy stores for velocity `v` received while `gait` is commanded (f32 as it).
+    pub fn axes(&self, gait: u32, v: [f64; 3]) -> [f64; 3] {
+        let d = self
+            .by_gait
+            .iter()
+            .find(|g| g.gaits.contains(&gait))
+            .map_or(self.default, |g| g.divisor);
+        let (mut x, mut y) = (v[0] as f32, v[1] as f32);
+        if self.rescale_gaits.contains(&gait) {
+            let (ax, ay) = ((x.abs()) as f64, (y.abs()) as f64);
+            if ax < self.rescale_to
+                && ay < self.rescale_to
+                && (ax >= self.rescale_from || ay >= self.rescale_from)
+            {
+                let m = if y.abs() <= x.abs() { ax } else { ay };
+                let k = (self.rescale_to / m) as f32;
+                x *= k;
+                y *= k;
+            }
+        }
+        let div = |a: f32, d: f64| (a as f64 / d) as f32 as f64;
+        [div(x, d[0]), div(y, d[1]), div(v[2] as f32, d[2])]
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -390,8 +434,6 @@ pub struct RunnerSpec {
     pub kp: Vec<f64>,
     pub kd: Vec<f64>,
     pub command_max: [f64; 3],
-    #[serde(default)]
-    pub real_steer_divisor: Option<[f64; 3]>,
     #[serde(default)]
     pub command_slew: Option<[f64; 3]>,
     #[serde(default)]

@@ -54,8 +54,8 @@ pub fn charger_state_of(status: &DockStatus) -> i32 {
         Phase::Charging if status.charging => 2,
         Phase::Charging => 5,
         _ if status.active && status.undocking => 3,
-        // charge_manager's error state (NOCHARGEPLUG): an undock (command 0) leaves it, where idle ignores one
-        Phase::Idle if status.no_plug => 4,
+        // charge_manager's error state: an undock (command 0) leaves it, where idle ignores one
+        Phase::Idle if status.error_code.is_some() => 4,
         Phase::Idle => 0,
         _ if status.active => 1,
         _ => 0,
@@ -103,14 +103,21 @@ pub struct BasicServer<C> {
     pub extre_authorized: bool,
     /// MotionInfo's height from the joints (base_link above the wheels' contact)
     cfg: crate::config::BasicServerConfig,
+    real_steer: crate::config::RealSteer,
 }
 
 impl<C: CommandSource + ChargerState> BasicServer<C> {
-    pub fn new(inner: C, usage: Arc<UsageMode>, cfg: crate::config::BasicServerConfig) -> Self {
+    pub fn new(
+        inner: C,
+        usage: Arc<UsageMode>,
+        cfg: crate::config::BasicServerConfig,
+        real_steer: crate::config::RealSteer,
+    ) -> Self {
         BasicServer {
             inner,
             usage,
             cfg,
+            real_steer,
             mode: MODE_REGULAR,
             charger: 0,
             last: UserCommand::default(),
@@ -157,7 +164,6 @@ impl<C: CommandSource + ChargerState> BasicServer<C> {
         // NavCmd / RealSteer and charge_manager's steer reach rl_deploy only in modes 1 and 2
         if !matches!(self.mode, MODE_NAVIGATION | MODE_ASSIST) {
             c.axes = [0.0; 3];
-            c.velocity = c.velocity.map(|_| [0.0; 3]);
         }
         c
     }
@@ -190,6 +196,11 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
                 .is_some_and(|(_, at)| at != (c.gait, c.gait_seq))
             {
                 self.gait_override = None;
+            }
+            // HandlerVel normalizes a twist once, on receipt, by the gait then commanded; a later gait change keeps it
+            if let Some(v) = c.velocity.take() {
+                let gait = self.gait_override.map_or(c.gait, |(g, _)| g);
+                c.axes = self.real_steer.axes(gait, v);
             }
             self.last = c;
             self.dirty = true;
@@ -301,6 +312,11 @@ mod tests {
         crate::config::Config::load(&path).unwrap().basic_server
     }
 
+    fn real_steer_config() -> crate::config::RealSteer {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        crate::config::Config::load(&path).unwrap().real_steer
+    }
+
     fn server() -> (BasicServer<Script>, Arc<UsageMode>) {
         let usage = Arc::new(UsageMode::default());
         let s = BasicServer::new(
@@ -310,6 +326,7 @@ mod tests {
             },
             usage.clone(),
             basic_server_config(),
+            real_steer_config(),
         );
         (s, usage)
     }
@@ -328,12 +345,13 @@ mod tests {
             velocity: Some([0.5, 0.0, 0.2]),
             ..Default::default()
         };
-        assert_eq!(send(&mut s, walk.clone()).velocity, Some([0.0; 3]));
+        assert_eq!(send(&mut s, walk.clone()).axes, [0.0; 3]);
         *usage.request.lock().unwrap() = Some(MODE_ASSIST);
         let out = s.poll(0.0).unwrap();
         // mode 2 also switched to the basic gait
         assert_eq!(out.gait, GAIT_BASIC);
-        assert_eq!(out.velocity, Some([0.5, 0.0, 0.2]));
+        // HandlerVel on 0x3003: (x / 2, y, yaw / 2), in f32
+        assert_eq!(out.axes, [0.25, 0.0, 0.1f32 as f64]);
     }
 
     #[test]
@@ -355,7 +373,8 @@ mod tests {
             out.gait, 0x3003,
             "the operator's gait after the mode change wins"
         );
-        assert_eq!(out.velocity, Some([0.5, 0.0, 0.2]));
+        // HandlerVel on 0x3003: (x / 2, y, yaw / 2), in f32
+        assert_eq!(out.axes, [0.25, 0.0, 0.1f32 as f64]);
         assert_eq!(usage.current.load(Ordering::Relaxed), MODE_ASSIST);
         // the same mode again does nothing (no gait reset)
         *usage.request.lock().unwrap() = Some(MODE_ASSIST);
@@ -410,7 +429,7 @@ mod tests {
             },
         );
         assert_eq!(out.gait, GAIT_BASIC);
-        assert_eq!(out.velocity, Some([0.0; 3]));
+        assert_eq!(out.axes, [0.0; 3]);
     }
 
     #[test]
@@ -552,6 +571,50 @@ mod tests {
         assert_eq!(send(&mut s, jump.clone()).gait, 0x3003);
         s.extre_authorized = true;
         assert_eq!(send(&mut s, jump).gait, 0x2002);
+    }
+
+    /// DdsInterface::HandlerVel's table and its slow-speed boost on the stair gaits.
+    #[test]
+    fn a_twist_is_normalized_by_the_commanded_gait_on_receipt() {
+        let r = real_steer_config();
+        let close = |a: [f64; 3], b: [f64; 3]| a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6);
+        assert!(close(r.axes(0x1001, [1.0, 0.4, 0.75]), [0.5, 0.5, 0.5]));
+        assert!(close(r.axes(0x3001, [0.25, 0.15, 0.25]), [0.5, 0.5, 0.5]));
+        assert!(close(r.axes(0x3002, [1.0, 0.5, 0.75]), [0.5, 0.5, 0.5]));
+        assert!(
+            close(r.axes(0xf001, [1.0, 0.2, 0.3]), [0.5, 0.5, 0.5]),
+            "default"
+        );
+        // stairs: 0.1 m/s forward is boosted to 0.2, below 0.1 not, 0.2 and up not
+        assert!(close(r.axes(0x3003, [0.1, 0.05, 0.0]), [0.1, 0.1, 0.0]));
+        assert!(close(r.axes(0x3003, [0.09, 0.0, 0.0]), [0.045, 0.0, 0.0]));
+        assert!(close(r.axes(0x3003, [0.3, 0.0, 0.0]), [0.15, 0.0, 0.0]));
+        assert!(
+            close(r.axes(0x1002, [0.15, 0.0, 0.0]), [0.1, 0.0, 0.0]),
+            "no boost off the stair gaits"
+        );
+        // the gait at receipt counts: a twist sent on 0x1001 keeps 0x1001's scaling after a switch to 0x3003
+        let (mut s, usage) = server();
+        *usage.request.lock().unwrap() = Some(MODE_NAVIGATION);
+        let out = send(
+            &mut s,
+            UserCommand {
+                gait: 0x1001,
+                velocity: Some([1.0, 0.0, 0.0]),
+                ..Default::default()
+            },
+        );
+        assert!(close(out.axes, [0.5, 0.0, 0.0]));
+        let out = send(
+            &mut s,
+            UserCommand {
+                gait: 0x3003,
+                gait_seq: 1,
+                axes: out.axes,
+                ..Default::default()
+            },
+        );
+        assert!(close(out.axes, [0.5, 0.0, 0.0]));
     }
 
     #[test]

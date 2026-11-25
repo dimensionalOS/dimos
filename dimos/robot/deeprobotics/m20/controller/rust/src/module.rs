@@ -744,6 +744,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
         docking_commands,
         shared.usage.clone(),
         cfg.basic_server.clone(),
+        cfg.real_steer.clone(),
     );
     let usage = shared.usage.clone();
     let imu_seen = shared.clone();
