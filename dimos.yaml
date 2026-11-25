@@ -18,6 +18,86 @@ provides:
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
       carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
+    /diagnostics/capabilities:
+      get:
+        summary: Instrumentation capabilities and qualification coverage
+    /diagnostics/{run_id}/status:
+      get:
+        summary: Read captured diagnostics status for an explicitly instrumented run
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+    /diagnostics/{run_id}/metrics:
+      get:
+        summary: Read captured diagnostics metrics for an explicitly instrumented run
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+    /diagnostics/{run_id}/topology:
+      get:
+        summary: Read captured diagnostics topology for an explicitly instrumented run
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+    /diagnostics/{run_id}/incidents:
+      get:
+        summary: Read captured diagnostics incidents for an explicitly instrumented run
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+    /diagnostics/clock:
+      get:
+        summary: Return monotonic timestamps for bounded application RTT probes
+    /diagnostics/{run_id}/incidents/{process}/{incident}:
+      get:
+        summary: Read a bounded incident from the configured diagnostics directory
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: process
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: incident
+            in: path
+            required: true
+            schema:
+              type: string
+    /diagnostics/{run_id}/incidents/{process}/{incident}/analysis:
+      get:
+        summary: Read a bounded incident from the configured diagnostics directory
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: process
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: incident
+            in: path
+            required: true
+            schema:
+              type: string
     /info:
       get:
         description: >-

@@ -234,7 +234,7 @@ impl ZenohTransport {
         let session = ::zenoh::open(::zenoh::Config::default())
             .await
             .map_err(to_io)?;
-        Ok(Self::wrap(session))
+        Ok(Self::from_session(session))
     }
 
     async fn open(settings: &SessionSettings) -> io::Result<Self> {
@@ -262,10 +262,11 @@ impl ZenohTransport {
             settings.connect_timeout(),
         )
         .await;
-        Ok(Self::wrap(session))
+        Ok(Self::from_session(session))
     }
 
-    fn wrap(session: Session) -> Self {
+    /// Wrap an explicitly configured session (useful for isolated deployments and tests).
+    pub fn from_session(session: Session) -> Self {
         Self {
             session,
             qos: OnceLock::new(),
@@ -298,8 +299,20 @@ impl ZenohTransport {
 
 impl Transport for ZenohTransport {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
+        let context = crate::diagnostics::current_context()
+            .or_else(|| crate::diagnostics::publication(channel));
+        let _trace = crate::diagnostics::Span::with_context(
+            "native.transport_publish",
+            channel,
+            context.clone(),
+        );
         // Release the lock before `put` so a stalled channel can't block others.
         let publisher = {
+            let _lock_trace = crate::diagnostics::Span::with_context(
+                "native.zenoh_publisher_lock",
+                channel,
+                context.clone(),
+            );
             let mut publishers = self.publishers.lock().await;
             match publishers.get(channel) {
                 Some(publisher) => Arc::clone(publisher),
@@ -310,13 +323,33 @@ impl Transport for ZenohTransport {
                 }
             }
         };
-        publisher.put(data).await.map_err(to_io)
+        let _put_trace =
+            crate::diagnostics::Span::with_context("native.zenoh_put", channel, context.clone());
+        let put = publisher.put(data);
+        if let Some(attachment) = context.and_then(|value| value.attachment()) {
+            put.attachment(attachment).await.map_err(to_io)
+        } else {
+            put.await.map_err(to_io)
+        }
     }
 
     async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {
+        let diagnostic_channel = channel.to_string();
         self.session
             .declare_subscriber(zenoh_key(channel).to_string())
-            .callback(move |sample| on_msg.deliver(&sample.payload().to_bytes()))
+            .callback(move |sample| {
+                let context = sample.attachment().and_then(|attachment| {
+                    crate::diagnostics::TraceContext::from_attachment(&attachment.to_bytes())
+                });
+                let _trace = crate::diagnostics::Span::with_context(
+                    "native.delivery",
+                    &diagnostic_channel,
+                    context.clone(),
+                );
+                crate::diagnostics::with_context(context, || {
+                    on_msg.deliver(&sample.payload().to_bytes())
+                });
+            })
             .background()
             .await
             .map_err(to_io)

@@ -19,6 +19,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
+from dimos.diagnostics.runtime import span
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.encode import cbor
 from dimos.utils.logging_config import setup_logger
@@ -67,7 +68,8 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
 
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Encode the message and publish it."""
-        encoded_message = self.encode(message, topic)
+        with span("serialization.encode"):
+            encoded_message = self.encode(message, topic)
         if encoded_message is None:
             return
         super().publish(topic, encoded_message)  # type: ignore[misc]
@@ -79,7 +81,8 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
 
         def wrapper_cb(encoded_data: EncodingT, topic: TopicT) -> None:
             try:
-                decoded_message = self.decode(encoded_data, topic)
+                with span("serialization.decode"):
+                    decoded_message = self.decode(encoded_data, topic)
             except DecodingError:
                 return
             callback(decoded_message, topic)

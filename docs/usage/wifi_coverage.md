@@ -5,6 +5,11 @@ observations to timestamped robot odometry and publishes a coloured point cloud
 at the **receiver's locations**. It does not estimate access-point positions.
 The two modules are independent of any robot, SLAM implementation, or viewer.
 
+With runtime diagnostics enabled, the existing radio and performance samples are
+also retained in that run's bounded incident bundle. This reuses the measurements;
+it does not start another sampler. The map and its survey archive work independently
+when diagnostics is off. See [runtime diagnostics](/docs/usage/diagnostics.md).
+
 For a **performance survey**, add `NetworkSurvey` through the composition helper.
 This is the same coverage tool: one point-cloud output with selectable radio,
 network, host and optional viewer metrics, plus a local evidence file.

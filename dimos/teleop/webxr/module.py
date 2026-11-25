@@ -43,6 +43,8 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.diagnostics.model import TraceContext, context_scope, current_context
+from dimos.diagnostics.runtime import get_runtime, span
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
@@ -132,6 +134,7 @@ class WebXRTeleopModule(Module):
         # Engage state (per-hand)
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._pose_contexts: dict[Hand, TraceContext | None] = {}
         self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._controllers: dict[Hand, WebXRControllerState | None] = {
             Hand.LEFT: None,
@@ -405,6 +408,7 @@ class WebXRTeleopModule(Module):
                 self._is_engaged[hand] = False
                 self._initial_poses[hand] = None
                 self._current_poses[hand] = None
+                self._pose_contexts.pop(hand, None)
                 self._controllers[hand] = None
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
@@ -430,6 +434,7 @@ class WebXRTeleopModule(Module):
             )
             if pose_stale:
                 self._current_poses[hand] = None
+                self._pose_contexts.pop(hand, None)
                 self._last_pose_update[hand] = None
             if controller_stale:
                 self._controllers[hand] = None
@@ -453,6 +458,8 @@ class WebXRTeleopModule(Module):
                 return False
             self._initial_poses[h] = pose
             self._is_engaged[h] = True
+            if runtime := get_runtime():
+                runtime.event("control.transition", hand=h.name, state="enabled")
             logger.info(f"{h.name} engaged.")
         return True
 
@@ -461,6 +468,9 @@ class WebXRTeleopModule(Module):
         hands = [hand] if hand is not None else list(Hand)
         for h in hands:
             self._is_engaged[h] = False
+            if runtime := get_runtime():
+                runtime.event("control.transition", hand=h.name, state="disabled")
+                runtime.watch(f"operator/{h.name}", 250, active=False)
             logger.info(f"{h.name} disengaged.")
 
     def get_status(self) -> WebXRTeleopStatus:
@@ -493,6 +503,14 @@ class WebXRTeleopModule(Module):
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
+            self._pose_contexts[hand] = current_context()
+            if runtime := get_runtime():
+                runtime.event("control.input_selected", hand=hand.name)
+                runtime.watch(
+                    f"operator/{hand.name}",
+                    self.config.input_timeout_s * 1000,
+                    active=self._is_engaged[hand],
+                )
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
@@ -587,9 +605,19 @@ class WebXRTeleopModule(Module):
                     for hand in Hand:
                         if not self._should_publish(hand):
                             continue
-                        output_pose = self._get_output_pose(hand)
-                        if output_pose is not None:
-                            self._publish_msg(hand, output_pose)
+                        with (
+                            context_scope(self._pose_contexts.get(hand)),
+                            span("control.retarget", hand=hand.name),
+                        ):
+                            output_pose = self._get_output_pose(hand)
+                            if output_pose is not None:
+                                self._publish_msg(hand, output_pose)
+                            elif runtime := get_runtime():
+                                runtime.event(
+                                    "control.no_output",
+                                    hand=hand.name,
+                                    reason="retarget_unavailable",
+                                )
 
                     # Always publish buttons regardless of engage state,
                     # so UI/listeners can react to button presses (e.g., trigger engage).

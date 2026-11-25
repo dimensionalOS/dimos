@@ -92,6 +92,7 @@ import tqdm
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import spawn_watchdog
+from dimos.diagnostics.runtime import get_runtime as diagnostics_runtime
 from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
 
 # The first tqdm bar constructed in the process spawns a TMonitor daemon thread that lives until
@@ -290,6 +291,15 @@ def _restore_global_config_class():
 @pytest.fixture(autouse=True, scope="module")
 def _restore_global_config_module():
     yield from _global_config_guard()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def diagnostics_session():
+    """Own the opt-in process-wide observer before per-test thread accounting."""
+    runtime = diagnostics_runtime()
+    yield runtime
+    if runtime:
+        runtime.close()
 
 
 @pytest.fixture(scope="session")

@@ -24,6 +24,11 @@ from dimos.hardware.sensors.wifi.survey import NetworkSurvey
 from dimos.msgs.sensor_msgs.SurveyMetrics import SurveySample
 
 
+@pytest.fixture(autouse=True)
+def linux_probe_platform(mocker):
+    mocker.patch("dimos.hardware.sensors.wifi.probes.platform.system", return_value="Linux")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "code,stdout,stderr,values",
@@ -193,5 +198,57 @@ async def test_sampler_keeps_publishing_host_and_probes_after_ping_timeout(mocke
         assert [sample.source for sample in first.samples] == ["ping/router", "host"]
         assert recovered.samples[0].values == {"rtt_ms": 5}
         assert module.get_status()["state"] == "stopped"
+    finally:
+        module.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,stderr,status", [(2, b"", "no_reply"), (1, b"socket failure", "error")]
+)
+async def test_darwin_default_route_probe_uses_millisecond_timeout(mocker, code, stderr, status):
+    mocker.patch("dimos.hardware.sensors.wifi.probes.platform.system", return_value="Darwin")
+    process = mocker.Mock(returncode=code)
+    process.communicate = AsyncMock(return_value=(b"", stderr))
+    spawn = mocker.patch(
+        "dimos.hardware.sensors.wifi.probes.asyncio.create_subprocess_exec", return_value=process
+    )
+    sample = await probe(None, "router", "192.0.2.1")
+    assert sample.labels["status"] == status
+    assert spawn.call_args.args == ("ping", "-n", "-c", "1", "-W", "1000", "192.0.2.1")
+    assert ("probe_loss_pct" in sample.values) == (status == "no_reply")
+
+
+@pytest.mark.asyncio
+async def test_survey_recovers_from_missing_interface_without_fabricating_rates(mocker):
+    module = NetworkSurvey(interface="wifi", poll_interval_s=0.2)
+    mocker.patch.object(module, "check_dependencies")
+    mocker.patch(
+        "dimos.hardware.sensors.wifi.survey.HostCounters.read",
+        side_effect=[
+            KeyError("wifi"),
+            KeyError("wifi"),
+            HostCounters(11, 11, 11, 22, 1000000, 0),
+            HostCounters(12, 12, 12, 24, 2000000, 0),
+        ],
+    )
+    received = asyncio.Event()
+    batches = []
+
+    def collect(batch):
+        batches.append(batch)
+        if len(batches) == 3:
+            received.set()
+
+    mocker.patch.object(module.survey_metrics, "publish", side_effect=collect)
+    try:
+        async with aclosing(module.main()) as lifecycle:
+            await anext(lifecycle)
+            await asyncio.wait_for(received.wait(), timeout=2)
+            assert module.get_status()["state"] == "running"
+        missing, baseline, recovered = [batch.samples[0] for batch in batches]
+        assert missing.labels["error"] == "interface_unavailable"
+        assert missing.values == baseline.values == {}
+        assert recovered.values == {"tx_mbps": 8, "rx_mbps": 0, "cpu_pct": 50}
     finally:
         module.stop()

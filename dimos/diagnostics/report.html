@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teleoperation evidence report</title>
+<style>
+:root{color-scheme:light;font:14px/1.5 system-ui,sans-serif;color:#182d40;background:#f2f5f8}*{box-sizing:border-box}body{margin:0}header{background:#142e45;color:white;padding:28px 36px}h1{margin:0;font-size:26px}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0}.meta{color:#b7cbdc}main{padding:24px 36px;max-width:1800px;margin:auto}section{background:white;border:1px solid #d8e0e7;border-radius:6px;padding:20px;margin-bottom:20px}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}button,select,input{font:inherit;padding:7px 10px;border:1px solid #bac9d5;border-radius:4px;background:white;color:#182d40}button.active{background:#183f61;color:white}.split{display:grid;grid-template-columns:minmax(0,3fr) minmax(260px,1fr);gap:18px;margin-top:16px}.diagram{overflow:auto;border:1px solid #dbe3ea;min-height:250px;max-height:660px}aside{padding:12px;background:#f7f9fb;overflow:auto;max-height:660px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:9px;border-bottom:1px solid #e3e9ee;vertical-align:top}th{background:#f3f6f9;position:sticky;top:0}td{overflow-wrap:anywhere}.scroll{overflow:auto;max-height:420px}.muted{color:#596f81}.warn{color:#945700}.bad{color:#b42323}.good{color:#176c4d}.pill{display:inline-block;background:#e8edf3;padding:3px 8px;border-radius:3px;font-size:12px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stat{background:#f3f6fa;padding:12px}.stat strong{display:block;font-size:22px}svg text{font:12px system-ui;fill:#18364e}.node rect{fill:#f3f7fb;stroke:#6a91af;stroke-width:1.5}.node:hover rect{fill:#dcecf9}.node.failed rect{stroke:#b42323;fill:#fff0ef}.node.incomplete rect{stroke:#a96a12;fill:#fff7e8}.node{cursor:pointer}.link{stroke:#8ca2b2;stroke-width:1.5;fill:none;cursor:pointer}.link:hover{stroke:#d46a14;stroke-width:3}.edge-label{fill:#5b6e7d;font-size:10px}.timeline-bar{display:block;height:12px;background:#347ca9;min-width:2px}@media(max-width:900px){main,header{padding:16px}.split{grid-template-columns:1fr}}
+</style>
+<header><h1>Teleoperation evidence report</h1><p class="meta" id="summary"></p></header>
+<main>
+<section><h2>Evidence coverage</h2><div class="grid" id="counts"></div><p id="evaluation"></p><div class="scroll" id="coverage"></div></section>
+<section><div class="toolbar"><h2 style="margin-right:auto">Observed system</h2><button id="physical" class="active">Network</button><button id="software">Processes & streams</button><input id="filter" aria-label="Filter nodes" placeholder="Filter host, process or stream"><button id="reset">Reset focus</button></div><p class="muted">Solid associations and stream links are backed by recorded evidence. Dashed paths show endpoint probes or shared sample provenance; they do not establish an individual physical hop or direct sender. Red processes have recorded faults or a supplied budget breach; amber indicates incomplete capture. Click a node or link to inspect its evidence.</p><div class="split"><div class="diagram" id="graph"></div><aside><strong>Selected evidence</strong><pre id="details">Select a node or connection.</pre></aside></div></section>
+<section><h2>Wireless and network measurements</h2><p class="muted" id="network-note"></p><div class="scroll" id="radios"></div><h3>Concurrent endpoint probes</h3><div class="scroll" id="paths"></div></section>
+<section><h2>Matched application paths</h2><p class="muted">These paths connect identified inputs to outputs across process boundaries. They are not individual physical network hops. An uncorrelated hold command is not counted as an operator input.</p><div class="scroll" id="matched"></div></section>
+<section><h2>Processing duration by owner</h2><p class="muted">These are measured stage durations, not sums of percentiles or physical robot response. Missing stages have no implied healthy value.</p><div class="scroll" id="stages"></div></section>
+<section><h2>Message sequence and causal inputs</h2><p class="muted" id="excerpt"></p><select id="sample" style="max-width:100%" aria-label="Select message"></select><p id="lineage"></p><div class="scroll" id="timeline"></div></section>
+</main><script type="application/json" id="report-data">__REPORT_DATA__</script>
+<script>
+const d=JSON.parse(document.getElementById('report-data').textContent),$=id=>document.getElementById(id),esc=x=>String(x??'unavailable').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),num=x=>Number.isFinite(x)?x.toFixed(2):'unavailable';
+const table=(id,heads,rows)=>$(id).innerHTML='<table><thead><tr>'+heads.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+$('summary').textContent=`${d.processes.length} captured processes · ${d.event_count.toLocaleString()} events · ${d.graph.edges.length} evidenced connections`;
+const incomplete=d.processes.filter(p=>p.health?.capture_window_complete===false);
+$('counts').innerHTML=[['Evaluation',d.evaluation.status],['Incomplete windows',incomplete.length],['Observer drops',d.analysis.observer_drops],['Unmatched spans',d.analysis.unmatched_spans]].map(([k,v])=>'<div class="stat">'+esc(k)+'<strong>'+esc(v)+'</strong></div>').join('');
+$('evaluation').textContent=d.evaluation.reason??'Budget results are scoped to the supplied profile. Click evidence below for the measured boundaries.';
+table('coverage',['Host / process','Build / clock','Retained history','Capture / loss'],d.processes.map(p=>[`${p.host??'unknown'} / ${p.process??'unknown'}`,`${p.build??p.revision??'not recorded'} / ${p.clock_domain??'unknown'}`,num(p.health?.retained_seconds)+' s',`${p.health?.capture_window_complete===true?'complete':p.health?.capture_window_complete===false?'INCOMPLETE':'coverage not supplied'}; ${p.health?.observer_drops??0} drops; ${p.health?.ring_evictions??0} evictions` ]));
+$('network-note').textContent=d.network.attribution;
+table('radios',['Host / interface','Association','Radio','Interval traffic','Coverage'],d.network.radios.map(r=>[`${r.host} / ${r.interface}`,`${r.latest.bssid??'BSSID unavailable'}; ${r.association_changes??'unmeasured'} observed changes`,`${num(r.latest.signal_dbm)} dBm; ${num(r.latest.tx_rate_mbps)} Mbps TX; ${r.latest.channel??r.latest.frequency_mhz??'channel unavailable'}`,`TX ${num(r.latest.tx_bytes_per_s)} B/s; retries/packet ${num(r.latest.tx_retries_per_packet)}; busy ${num(r.latest.channel_busy_fraction)}`,JSON.stringify(r.latest.coverage)]));
+table('paths',['Host → target','Role','Replies / probes','No reply / probe errors','RTT p50 / p95 / max (ms)'],d.network.paths.map(p=>[`${p.host} → ${p.target}`,p.role,`${p.replies} / ${p.samples}`,`${p.missing_replies} / ${p.probe_errors}`,`${num(p.p50_ms)} / ${num(p.p95_ms)} / ${num(p.max_ms)}`]));
+table('stages',['Process','Stage / labels','Count','p50 ms','p95 ms','p99 ms','max ms'],d.analysis.stage_groups.map(s=>[s.process,s.stage+' '+JSON.stringify(s.labels),s.n,num(s.p50_ms),num(s.p95_ms),num(s.p99_ms),num(s.max_ms)]));
+const matchedRows=[];
+for (const [name, paths] of Object.entries(d.matched_paths??{})) {
+ const channels=[...new Set(paths.map(p=>p.channel??'no matched source'))];
+ for (const channel of channels) {
+  const all=paths.filter(p=>(p.channel??'no matched source')===channel), good=all.filter(p=>p.status==='bounded');
+  const q=i=>good.length?[...good].sort((a,b)=>a.bounds_ms[i]-b.bounds_ms[i])[Math.ceil(good.length*.95)-1].bounds_ms[i]:null;
+  matchedRows.push([name,channel,`${good.length} / ${all.length}`,good.length?`${num(q(0))}–${num(q(1))}`:'unavailable',[...new Set(all.map(p=>p.status))].join(', ')]);
+ }
+}
+table('matched',['Path','Source channel','Bounded / observed outputs','p95 bounds (ms)','Coverage'],matchedRows);
+let mode='physical',focus=null;
+function draw(){
+ const physical=new Set(['host','network_endpoint','access_point','ice_endpoint']);
+ let nodes=d.graph.nodes.filter(n=>mode==='physical'?physical.has(n.kind):!physical.has(n.kind)||n.kind==='host');
+ const q=$('filter').value.toLowerCase();if(q)nodes=nodes.filter(n=>JSON.stringify(n).toLowerCase().includes(q));
+ if(focus){const near=new Set([focus]);for(const e of d.graph.edges)if(e.source===focus||e.target===focus){near.add(e.source);near.add(e.target)}nodes=nodes.filter(n=>near.has(n.id))}
+ if(!nodes.length){$('graph').textContent='No observations for this view. Collect the network observer on participating hosts; missing data cannot establish a route.';return}
+ const kinds=mode==='physical'?['host','network_endpoint','access_point','ice_endpoint']:['host','process','module','stream','channel','declared_module','declared_channel'];
+ const positions=new Map(),groups=kinds.map(k=>nodes.filter(n=>n.kind===k)).filter(g=>g.length),width=Math.max(840,groups.length*245),height=Math.max(280,...groups.map(g=>g.length*86+60));
+ groups.forEach((group,col)=>group.forEach((node,row)=>positions.set(node.id,{x:col*245+20,y:row*86+40})));
+ const edges=d.graph.edges.filter(e=>positions.has(e.source)&&positions.has(e.target));
+ let svg=`<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Observed ${mode} topology"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#8ca2b2"/></marker></defs>`;
+ edges.forEach((e,i)=>{const a=positions.get(e.source),b=positions.get(e.target),same=a.x===b.x,forward=b.x>=a.x,x=a.x+(forward?210:0),y=a.y+27,x2=b.x+(same||!forward?210:0),y2=b.y+27,c1=x+(forward?65:-65),c2=x2+(same?65:forward?-65:65);
+ const label=e.kind==='round_trip_probe'?`${e.measurement.role} RTT ${num(e.measurement.rtt_ms)} ms`:e.kind==='wireless_association'?`${num(e.radio.signal_dbm)} dBm · ${num(e.radio.tx_rate_mbps)} Mbps`:e.kind === 'sample_provenance' ? 'shared sample · route unknown' : e.kind.replaceAll('_',' ');
+ svg+=`<path class="link" data-edge="${i}" d="M${x} ${y} C${c1} ${y},${c2} ${y2},${x2} ${y2}" marker-end="url(#arrow)" ${/route|probe|provenance/.test(e.kind)?'stroke-dasharray="6 4"':''}><title>${esc(e.kind+' · '+(e.evidence??'unknown'))}</title></path><text class="edge-label" x="${same?x+20:(x+x2)/2}" y="${(y+y2)/2-8-(i%2)*10}" text-anchor="middle">${esc(label)}</text>`});
+ nodes.forEach((n,i)=>{const p=positions.get(n.id);svg+=`<g class="node ${n.budget_breaches?.length||n.faults?.length?'failed':n.coverage?.capture_window_complete===false?'incomplete':''}" data-node="${i}" transform="translate(${p.x},${p.y})"><rect width="210" height="55" rx="4"/><text x="9" y="18">${esc(n.kind)}</text><text x="9" y="39">${esc(String(n.label??n.id).slice(0,28))}</text><title>${esc(n.label??n.id)}</title></g>`});
+ $('graph').innerHTML=svg+'</svg>';
+ $('graph').querySelectorAll('[data-edge]').forEach(el=>el.onclick=()=>{$('details').textContent=JSON.stringify(edges[+el.dataset.edge],null,2)});
+ $('graph').querySelectorAll('[data-node]').forEach(el=>el.onclick=()=>{const node=nodes[+el.dataset.node];$('details').textContent=JSON.stringify(node,null,2);focus=node.id;draw()});
+}
+for(const id of ['physical','software'])$(id).onclick=()=>{mode=id;focus=null;for(const b of ['physical','software'])$(b).classList.toggle('active',b===id);draw()};
+$('filter').oninput=draw;$('reset').onclick=()=>{focus=null;$('filter').value='';draw()};draw();
+const samples=new Map(d.samples.map(s=>[s.id,s]));$('excerpt').textContent=d.timeline_excerpt;
+$('sample').innerHTML=d.samples.slice(-1000).reverse().map(s=>`<option value="${esc(s.id)}">${esc(s.stream)} · sequence ${esc(s.sequence)} · ${s.events.length} events</option>`).join('');
+function timeline(){const selected=samples.get($('sample').value);if(!selected){$('timeline').textContent='No correlated samples captured.';return}const seen=new Set(),pending=[selected],rows=[],missing=[];
+ while(pending.length&&seen.size<256){const s=pending.pop();if(seen.has(s.id))continue;seen.add(s.id);rows.push(...s.events.map(e=>({...e,sample:s.id})));for(const id of s.parents){if(samples.has(id))pending.push(samples.get(id));else missing.push(id)}}
+ $('lineage').textContent=`${selected.lineage} lineage · ${seen.size} causal samples · ${missing.length} parents outside this excerpt. Different clock domains are not subtracted.`;
+ const bases={};for(const e of rows)if(Number.isFinite(e.mono_ns))bases[e.clock_domain]=Math.min(bases[e.clock_domain]??Infinity,e.mono_ns);
+ rows.sort((a,b)=>String(a.clock_domain).localeCompare(String(b.clock_domain))||a.mono_ns-b.mono_ns);
+ table('timeline',['Clock domain','t from first event (ms)','Process','Boundary','Outcome / reason','Sample'],rows.map(e=>[e.clock_domain,num((e.mono_ns-bases[e.clock_domain])/1e6),e.process,e.event,[e.outcome,e.reason].filter(Boolean).join(' / '),e.sample.slice(0,12)]));
+}
+$('sample').onchange=timeline;timeline();
+</script></html>

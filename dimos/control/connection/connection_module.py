@@ -36,6 +36,7 @@ from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.diagnostics.runtime import get_runtime, span
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -229,8 +230,13 @@ class ConnectionModule(Module, ABC):
         own = {key: value for key, value in values.items() if key.startswith(prefix)}
         if not own:
             return
-        result = validate_command(own, self.limits)
+        with span("control.limit_validation", source=self.config.source):
+            result = validate_command(own, self.limits)
         if isinstance(result, Rejected):
+            if runtime := get_runtime():
+                runtime.event(
+                    "control.rejected", source=self.config.source, reason=str(result.reason)
+                )
             self._report(f"{result.reason}: {result.detail}", rejection=True)
             return
         with self._hardware_lock:
@@ -243,7 +249,15 @@ class ConnectionModule(Module, ABC):
                 seq = self._command_seq
             self._on_loop(lambda: self._arm_deadman(seq))
             try:
-                self.write(result.values)
+                with span("control.connection_write", source=self.config.source):
+                    self.write(result.values)
+                if runtime := get_runtime():
+                    runtime.event(
+                        "control.dispatch",
+                        hardware=self.config.source,
+                        result="adapter_returned",
+                        hardware_acknowledged=False,
+                    )
             except Exception as error:
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)

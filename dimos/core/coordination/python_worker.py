@@ -37,6 +37,7 @@ from dimos.core.coordination.worker_messages import (
     WorkerResponse,
 )
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.diagnostics.runtime import configure as configure_diagnostics
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
@@ -475,6 +476,11 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             host_config = kwargs.get("g")
             if host_config is not None:
                 global_config.update(**host_config.model_dump())
+                configure_diagnostics(
+                    global_config.diagnostics,
+                    global_config.diagnostics_run,
+                    global_config.diagnostics_dir,
+                )
 
             instance = module_class(**kwargs)
             state.instances[module_id] = instance

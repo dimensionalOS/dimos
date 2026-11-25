@@ -25,7 +25,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events
 from experimental.gateway.errors import StatusError
-from experimental.gateway.routes import active, catalog, cloud, history, jobs, server, web
+from experimental.gateway.routes import (
+    active,
+    catalog,
+    cloud,
+    diagnostics,
+    history,
+    jobs,
+    server,
+    web,
+)
 from experimental.gateway.state import API_VERSION, State, site_dirs
 
 
@@ -83,6 +92,6 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     async def failed(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"error": str(error) or type(error).__name__}, status_code=500)
 
-    for module in (server, catalog, active, history, cloud, jobs, web):
+    for module in (server, catalog, active, history, cloud, jobs, web, diagnostics):
         app.include_router(module.router)
     return app

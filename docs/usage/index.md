@@ -8,6 +8,7 @@ This page explains general dimOS concepts that you'd use to build applications: 
 - [Streams](/docs/usage/data_streams/index.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/docs/usage/blueprints.md): a way to group modules together and define their connections to each other.
 - [Distributed runs](/docs/usage/distributed/index.md): one blueprint across several machines.
+- [Runtime diagnostics](/docs/usage/diagnostics.md): trace message lineage, queues, control stages and bounded network measurements.
 - [RPC](/docs/usage/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
 - [Skills](/docs/usage/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
 - [Agents](/docs/usage/agent.md): AI that has an objective, access to stream data, and is capable of calling skills as tools.

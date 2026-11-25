@@ -362,8 +362,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     } else {
         let handle_arms = handled_fields.iter().map(|(name, handler)| {
             quote!(
-                ::core::option::Option::Some(msg) = self.#name.recv() => {
-                    self.#handler(msg).await
+                ::core::option::Option::Some(sample) = self.#name.recv_traced() => {
+                    sample.handle(|msg| self.#handler(msg)).await
                 }
             )
         });

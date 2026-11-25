@@ -23,6 +23,9 @@ from typing import Any, Literal
 
 import zenoh
 
+from dimos.diagnostics.model import TraceContext, context_scope, current_context
+from dimos.diagnostics.queue import QueuedSample, capture, delivery, discard
+from dimos.diagnostics.runtime import get_runtime, span
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.encoders import CborEncoderMixin, LCMEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
@@ -174,9 +177,27 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         try:
             # put() releases the GIL while borrowing the native publisher. Keep
             # stop() from undeclaring it until that borrow has been released.
-            with self._publisher_lock:
+            runtime = get_runtime()
+            context = current_context() if runtime is not None and runtime.mode == "trace" else None
+            attachment = None
+            if context:
+                try:
+                    attachment = b"DIMOS_TRACE_V1\0" + context.encode()
+                except ValueError:
+                    runtime = get_runtime()
+                    if runtime:
+                        runtime.event("trace.invalid_context", reason="outgoing_context_too_large")
+            with span("zenoh.publisher_lock"):
+                self._publisher_lock.acquire()
+            try:
                 publisher = self._get_publisher(key_expr, qos)
-                publisher.put(message)
+                with span("zenoh.put"):
+                    if attachment is None:
+                        publisher.put(message)
+                    else:
+                        publisher.put(message, attachment=attachment)
+            finally:
+                self._publisher_lock.release()
         except Exception:
             logger.error(f"Error publishing to {key_expr}", exc_info=True)
 
@@ -199,7 +220,18 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 recv_topic = topic
             else:
                 recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
-            callback(data, recv_topic)
+            context = None
+            if get_runtime() is not None and sample.attachment is not None:
+                attachment = sample.attachment.to_bytes()
+                if attachment.startswith(b"DIMOS_TRACE_V1\0"):
+                    try:
+                        context = TraceContext.decode(attachment[15:])
+                    except (ValueError, TypeError):
+                        runtime = get_runtime()
+                        if runtime:
+                            runtime.event("trace.invalid_context")
+            with context_scope(context):
+                callback(data, recv_topic)
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
         with self._subscriber_lock:
@@ -228,8 +260,8 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         A channel in `keyed` delivers the latest message per key instead, in the order
         each key first arrived, so a burst of distinct keys loses none of them.
         """
-        latest: dict[str, tuple[bytes, Topic]] = {}
-        pending: dict[tuple[str, Hashable], tuple[bytes, Topic]] = {}
+        latest: dict[str, tuple[bytes, Topic] | QueuedSample] = {}
+        pending: dict[tuple[str, Hashable], tuple[bytes, Topic] | QueuedSample] = {}
         key_of = {name.strip("/"): key for name, key in (keyed or {}).items()}
         lock = threading.Lock()
         wake = threading.Event()
@@ -242,9 +274,12 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             key = key_of.get(KEY_PREFIX.sub("", name)) if isinstance(name, str) else None
             with lock:
                 if key is None:
-                    latest[str(topic)] = (msg, topic)
+                    discard(latest.get(str(topic)), "zenoh.subscribe_all")
+                    latest[str(topic)] = capture((msg, topic))
                 else:
-                    pending[(str(topic), key(msg))] = (msg, topic)
+                    identity = (str(topic), key(msg))
+                    discard(pending.get(identity), "zenoh.subscribe_all")
+                    pending[identity] = capture((msg, topic))
             wake.set()
 
         def drain() -> None:
@@ -256,11 +291,12 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                     pending.clear()
                     batch.extend(latest.values())
                     latest.clear()
-                for msg, topic in batch:
+                for queued in batch:
                     if stop.is_set():
                         return
                     try:
-                        callback(msg, topic)
+                        with delivery(queued, "zenoh.subscribe_all") as (msg, topic):
+                            callback(msg, topic)
                     except Exception:
                         logger.error("Error in subscribe_all callback", exc_info=True)
 

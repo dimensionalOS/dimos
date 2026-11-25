@@ -28,6 +28,7 @@ import requests
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.diagnostics.observations import record_survey
 from dimos.hardware.sensors.wifi.desktop_metrics import DesktopMetrics
 from dimos.hardware.sensors.wifi.probes import HostCounters, probe
 from dimos.msgs.sensor_msgs.SurveyMetrics import SurveyMetrics, SurveySample
@@ -123,7 +124,10 @@ class NetworkSurvey(Module):
         return document
 
     async def _poll(self) -> None:
-        previous = HostCounters.read(self.config.interface)
+        try:
+            previous: HostCounters | None = HostCounters.read(self.config.interface)
+        except (OSError, KeyError):
+            previous = None
         desktop = DesktopMetrics()
         while True:
             started = time.monotonic()
@@ -134,9 +138,15 @@ class NetworkSurvey(Module):
             )
             try:
                 current = HostCounters.read(self.config.interface)
-                samples.append(current.since(previous, self.config.interface))
+                if previous is not None:
+                    samples.append(current.since(previous, self.config.interface))
+                else:
+                    samples.append(
+                        SurveySample(current.ts, "host", {}, labels={"status": "baseline"})
+                    )
                 previous = current
             except (OSError, KeyError) as exc:
+                previous = None
                 logger.warning(
                     "Survey interface unavailable", interface=self.config.interface, error=str(exc)
                 )
@@ -152,6 +162,8 @@ class NetworkSurvey(Module):
                     samples.append(
                         SurveySample(time.time(), "desktop", {}, labels={"error": str(exc)})
                     )
-            self.survey_metrics.publish(SurveyMetrics(time.time(), self.config.interface, samples))
+            batch = SurveyMetrics(time.time(), self.config.interface, samples)
+            self.survey_metrics.publish(batch)
+            record_survey(batch)
             self._last_published = time.time()
             await asyncio.sleep(max(0, self.config.poll_interval_s - (time.monotonic() - started)))

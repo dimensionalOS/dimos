@@ -49,6 +49,17 @@ class GlobalConfig(BaseSettings):
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
+    diagnostics: Literal["off", "metrics", "trace"] = Field(
+        default="off", validation_alias=AliasChoices("DIMOS_DIAGNOSTICS", "diagnostics")
+    )
+    diagnostics_run: str = Field(
+        default="", validation_alias=AliasChoices("DIMOS_DIAGNOSTICS_RUN", "diagnostics_run")
+    )
+    diagnostics_dir: str = Field(
+        default="",
+        validation_alias=AliasChoices("DIMOS_DIAGNOSTICS_DIR", "diagnostics_dir"),
+        description="Capture root; empty uses each host's DimOS state directory.",
+    )
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.

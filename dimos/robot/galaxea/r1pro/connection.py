@@ -72,6 +72,8 @@ from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.diagnostics.queue import capture, delivery, discard
+from dimos.diagnostics.runtime import get_runtime, publication, span
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -447,6 +449,20 @@ class R1ProConnection(ConnectionModule):
 
         self._write_grippers(values, stamp)
 
+    @rpc
+    def diagnostic_capabilities(self) -> dict[str, Any]:
+        """Actual vendor visibility; joint feedback does not acknowledge a command."""
+        return {
+            "schema": "dimos.adapter.capabilities/v1",
+            "adapter": "galaxea_ros",
+            "command_boundary": "ros_publish",
+            "controller_acceptance": False,
+            "applied_command_identity": False,
+            "joint_feedback": True,
+            "camera_timestamp": "vendor_ros_header",
+            "camera_clock_mapping": False,
+        }
+
     def _write_grippers(self, values: Values, stamp: Any) -> None:
         now = time.monotonic()
         sends: list[tuple[str, float]] = []
@@ -518,7 +534,16 @@ class R1ProConnection(ConnectionModule):
             cmd.position = segment
             cmd.velocity = [speed] * len(segment)
             cmd.effort = [0.0]
-            ros.publish(topic, cmd)
+            with span("hardware.vendor_publish", channel=topic):
+                ros.publish(topic, cmd)
+            if runtime := get_runtime():
+                runtime.event(
+                    "hardware.dispatch",
+                    channel=topic,
+                    result="ros_published",
+                    hardware_acknowledged=False,
+                    applied_command_identity_available=False,
+                )
 
     def _send_chassis_speed(self, vx: float, vy: float, wz: float, stamp: Any) -> None:
         from geometry_msgs.msg import TwistStamped
@@ -674,7 +699,23 @@ class R1ProConnection(ConnectionModule):
         def cb(msg: Any, _topic: Any) -> None:
             data = getattr(msg, "data", None)
             nbytes = len(data) if data is not None else 0
-            dropped = _enqueue_drop_oldest(q, msg)
+            with publication(f"sensor/{stream}", parents=[], lineage="partial"):
+                runtime = get_runtime()
+                if runtime:
+                    runtime.watch(f"sensor/{stream}", 250)
+                    stamp = getattr(getattr(msg, "header", None), "stamp", None)
+                    runtime.event(
+                        "camera.acquired"
+                        if stream in _COLOR_CAMERAS or "depth" in stream
+                        else "sensor.received",
+                        channel=stream,
+                        timestamp_provenance="vendor_ros_header_unmapped",
+                        driver_timestamp_ns=(
+                            getattr(stamp, "sec", 0) * 1_000_000_000 + getattr(stamp, "nanosec", 0)
+                        ),
+                        exposure_identity_available=False,
+                    )
+                dropped = _enqueue_drop_oldest(q, capture(msg))
             with self._stats_lock:
                 st = self._stats.setdefault(stream, _StreamStat())
                 st.received += 1
@@ -963,13 +1004,14 @@ class R1ProConnection(ConnectionModule):
                 continue
             if msg is None:
                 break
-            t0 = time.perf_counter()
-            try:
-                out.publish(ros_to_dimos(msg, dimos_type))
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
-            except Exception:
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                logger.exception(f"R1Pro {stream} decode error")
+            with delivery(msg, f"sensor/{stream}") as msg:
+                t0 = time.perf_counter()
+                try:
+                    out.publish(ros_to_dimos(msg, dimos_type))
+                    self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
+                except Exception:
+                    self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
+                    logger.exception(f"R1Pro {stream} decode error")
 
     def _imu_loop(self, stream: str, q: queue.Queue[Any]) -> None:
         """Store the latest converted IMU; re-emitted by the publish loop."""
@@ -983,12 +1025,13 @@ class R1ProConnection(ConnectionModule):
                 continue
             if msg is None:
                 break
-            try:
-                imu = ros_to_dimos(msg, Imu)
-                with self._lock:
-                    setattr(self, target_attr, imu)
-            except Exception:
-                logger.exception(f"R1Pro {stream} decode error")
+            with delivery(msg, f"sensor/{stream}") as msg:
+                try:
+                    imu = ros_to_dimos(msg, Imu)
+                    with self._lock:
+                        setattr(self, target_attr, imu)
+                except Exception:
+                    logger.exception(f"R1Pro {stream} decode error")
 
 
 def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
@@ -1001,7 +1044,7 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         return False
     except queue.Full:
         try:
-            q.get_nowait()
+            discard(q.get_nowait(), "sensor", "superseded")
         except queue.Empty:
             pass
         try:

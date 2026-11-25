@@ -35,6 +35,7 @@ from dimos.control.components import JointName
 from dimos.control.contract.keys import Interface
 
 if TYPE_CHECKING:
+    from dimos.diagnostics.model import TraceContext
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -173,6 +174,8 @@ class JointCommandOutput:
     velocities: list[float] | None = None
     efforts: list[float] | None = None
     mode: ControlMode = ControlMode.POSITION
+    # Process-local provenance; never sent to a hardware command interface.
+    trace_context: TraceContext | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate that lengths match and at least one value field is set."""

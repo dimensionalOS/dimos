@@ -16,27 +16,34 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from ipaddress import ip_address
 import os
+import platform
 import re
 import time
+from typing import Any
 
 import psutil
 
 from dimos.msgs.sensor_msgs.SurveyMetrics import SurveySample
 
 
-async def probe(interface: str, name: str, target: str) -> SurveySample:
-    """One Linux ICMP probe, bound to the surveyed interface; no throughput load."""
+async def probe(interface: str | None, name: str, target: str) -> SurveySample:
+    """One ICMP probe; an explicitly selected interface is supported on Linux."""
+    ip_address(target)
     started, monotonic = time.time(), time.monotonic()
+    system = platform.system()
+    if interface and system != "Linux":
+        raise OSError("Interface-bound survey probes require Linux")
+    binding = ["-I", interface] if interface else []
     process = await asyncio.create_subprocess_exec(
         "ping",
         "-n",
-        "-I",
-        interface,
+        *binding,
         "-c",
         "1",
         "-W",
-        "1",
+        "1000" if system == "Darwin" else "1",
         target,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -49,16 +56,57 @@ async def probe(interface: str, name: str, target: str) -> SurveySample:
             process.kill()
             await process.wait()
     elapsed = time.monotonic() - monotonic
-    labels = {"target": target, "interface": interface}
+    labels = {"target": target, "interface": interface or "default_route"}
     values: dict[str, float] = {}
     match = re.search(rb"time[=<]([\d.]+)\s*ms", stdout)
     if process.returncode == 0 and match:
         values = {"rtt_ms": float(match[1]), "probe_loss_pct": 0.0}
-    elif process.returncode == 1:
+        labels["status"] = "ok"
+    elif process.returncode == (2 if system == "Darwin" else 1):
         values = {"probe_loss_pct": 100.0}
+        labels["status"] = "no_reply"
     else:
+        labels["status"] = "error"
         labels["error"] = (stderr or stdout).decode(errors="replace")[-300:]
     return SurveySample(started + elapsed, f"ping/{name}", values, elapsed, labels=labels)
+
+
+async def _path_probe(address: str, role: str) -> dict[str, Any]:
+    measured: dict[str, Any] = {
+        "address": address,
+        "role": role,
+        "mono_ns": time.monotonic_ns(),
+        "scope": "ICMP round trip including scheduling; not isolated radio airtime",
+    }
+    try:
+        sample = await probe(None, role, address)
+    except FileNotFoundError:
+        return {**measured, "status": "unavailable", "reason": "ping executable unavailable"}
+    except asyncio.TimeoutError:
+        return {**measured, "status": "timeout"}
+    except OSError as error:
+        return {**measured, "status": "error", "reason": str(error)}
+    measured.update(status=sample.labels["status"], duration_s=sample.duration_s)
+    if "rtt_ms" in sample.values:
+        measured["rtt_ms"] = sample.values["rtt_ms"]
+    if "error" in sample.labels:
+        measured["reason"] = sample.labels["error"]
+    return measured
+
+
+async def _probe_paths(targets: dict[str, str]) -> list[dict[str, Any]]:
+    return list(
+        await asyncio.gather(*(_path_probe(address, role) for address, role in targets.items()))
+    )
+
+
+def probe_paths(targets: dict[str, str]) -> list[dict[str, Any]]:
+    """Synchronous CLI entry to the same bounded probes used by NetworkSurvey."""
+    if len(targets) > 4:
+        raise ValueError("at most four path probe targets are supported")
+    for address in targets:
+        ip_address(address)
+    return asyncio.run(_probe_paths(targets)) if targets else []
 
 
 @dataclass(frozen=True)

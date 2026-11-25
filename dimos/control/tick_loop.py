@@ -41,13 +41,15 @@ from dimos.control.task import (
     ResourceClaim,
     SensorStateSnapshot,
 )
+from dimos.diagnostics.model import TraceContext
+from dimos.diagnostics.runtime import get_runtime, measured, publication, span
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from dimos.control.components import HardwareId, JointName, TaskName
     from dimos.control.connection_source import ConnectionSource
@@ -137,6 +139,7 @@ class TickLoop:
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
         self._joint_positions: dict[str, float] = {}
+        self._joint_traces: dict[str, TraceContext | None] = {}
 
     @property
     def joint_positions(self) -> dict[str, float]:
@@ -185,6 +188,11 @@ class TickLoop:
 
         while not self._stop_event.is_set():
             try:
+                if runtime := get_runtime():
+                    runtime.event(
+                        "control.tick_release",
+                        lateness_ns=max(0, time.perf_counter_ns() - next_tick_time),
+                    )
                 self._tick()
             except Exception as e:
                 logger.error(f"TickLoop tick error: {e}")
@@ -199,6 +207,7 @@ class TickLoop:
                 # Over a full period behind, reset the timer.
                 next_tick_time = time.perf_counter_ns()
 
+    @measured("control.tick")
     def _tick(self) -> None:
         """Single tick: read → compute → arbitrate → route → write."""
         t_now = time.perf_counter()
@@ -241,6 +250,7 @@ class TickLoop:
                 f"{active} active tasks"
             )
 
+    @measured("control.read_all_joints")
     def _read_all_joints(self) -> JointStateSnapshot:
         """Merge every robot's latest joint readings into one snapshot.
 
@@ -256,6 +266,7 @@ class TickLoop:
                 snapshot.joint_command_interfaces.update(joints.joint_command_interfaces)
         return snapshot
 
+    @measured("control.read_all_sensors")
     def _read_all_sensors(self) -> SensorStateSnapshot:
         """Collect the latest sensor readings from every connection."""
         readings: dict[str, dict[str, float]] = {}
@@ -264,6 +275,7 @@ class TickLoop:
                 readings.update(source.read_sensors())
         return SensorStateSnapshot(readings=readings)
 
+    @measured("control.compute_all_tasks")
     def _compute_all_tasks(
         self, state: CoordinatorState
     ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
@@ -278,7 +290,12 @@ class TickLoop:
 
                 try:
                     claim = task.claim()
-                    output = task.compute(state)
+                    with span("control.task_compute", task=task.name):
+                        output = task.compute(state)
+                    if output is None and (runtime := get_runtime()):
+                        runtime.event(
+                            "control.no_output", task=task.name, reason="task_returned_none"
+                        )
                     # One task may command disjoint joint groups in different modes.
                     # Normalize here so arbitration and preemption stay per task/joint.
                     if isinstance(output, list):
@@ -290,6 +307,7 @@ class TickLoop:
 
         return results
 
+    @measured("control.arbitrate")
     def _arbitrate(
         self,
         commands: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]],
@@ -304,6 +322,7 @@ class TickLoop:
             - joint_commands: {joint_name: (value, mode, task_name)}
             - preemptions: {preempted_task: {joint: winning_task}}
         """
+        self._joint_traces = {}
         winners: dict[str, JointWinner] = {}  # joint_name -> current winner
         preemptions: dict[str, dict[str, str]] = {}  # loser_task -> {joint: winner_task}
 
@@ -321,6 +340,7 @@ class TickLoop:
                 # First claim on this joint
                 if joint_name not in winners:
                     winners[joint_name] = candidate
+                    self._joint_traces[joint_name] = output.trace_context
                     continue
 
                 current = winners[joint_name]
@@ -334,6 +354,7 @@ class TickLoop:
                 if candidate.priority > current.priority:
                     preemptions.setdefault(current.task_name, {})[joint_name] = task.name
                     winners[joint_name] = candidate
+                    self._joint_traces[joint_name] = output.trace_context
                     continue
 
                 # Same priority - check for mode conflict
@@ -399,6 +420,7 @@ class TickLoop:
         except Exception:
             logger.exception("Failed to publish joint commands")
 
+    @measured("control.write_all_connections")
     def _write_all_connections(
         self,
         joint_commands: dict[str, tuple[float, ControlMode, str]],
@@ -417,6 +439,7 @@ class TickLoop:
         with self._hardware_lock:
             for name, source in self._connections.items():
                 if not source.ready_for_control(now):
+                    self._diagnose_dispatch(name, "feedback_not_ready")
                     self._note_silence(name, source, now)
                     continue
                 winners = {
@@ -430,10 +453,37 @@ class TickLoop:
                     if joint in winners and winners[joint][1] in _POSITION_MODES
                 )
                 try:
-                    publish(name, source.command(winners))
+                    with (
+                        publication(
+                            f"control/{name}/dispatch",
+                            parents=self._command_parents(winners),
+                            lineage="partial",
+                        ),
+                        span("control.connection_enqueue", hardware=name),
+                    ):
+                        publish(name, source.command(winners))
+                        self._diagnose_dispatch(name, "enqueued")
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
         self._publish_joint_commands(positions)
+
+    def _command_parents(self, joints: Iterable[str]) -> list[TraceContext]:
+        return list(
+            {
+                context.sample_id: context
+                for joint in joints
+                if (context := self._joint_traces.get(joint)) is not None
+            }.values()
+        )
+
+    @staticmethod
+    def _diagnose_dispatch(hardware: str, result: str) -> None:
+        runtime = get_runtime()
+        if runtime:
+            # An API return/enqueue is not an acknowledgement from an actuator.
+            runtime.event(
+                "control.dispatch", hardware=hardware, result=result, hardware_acknowledged=False
+            )
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:
         """Log once that a robot has never reported, naming its silent ports and the likely cause.

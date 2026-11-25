@@ -37,6 +37,8 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.diagnostics.model import TraceContext
+from dimos.diagnostics.runtime import get_runtime, publication, span
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.pink_solver import (
     _get_frame_id,
@@ -243,6 +245,7 @@ class FrameTargetSnapshot:
     targets: Mapping[str, PoseStamped]
     last_update_time: float
     extra_joint_positions: Mapping[str, float] = field(default_factory=dict)
+    trace_contexts: tuple[TraceContext, ...] = ()
 
 
 @dataclass
@@ -691,20 +694,47 @@ class PoseTargetIKTask(BaseControlTask):
         snapshot = self._frame_target_snapshot(state)
         if snapshot is None:
             return None
+        with publication(
+            f"control/{self._name}/ik", parents=snapshot.trace_contexts, lineage="partial"
+        ) as context:
+            result = self._compute_snapshot(state, snapshot)
+            if result is not None:
+                result.trace_context = context
+            return result
+
+    def _diagnose_no_output(self, reason: str, **details: str | float) -> None:
+        runtime = get_runtime()
+        if runtime:
+            runtime.event("control.ik_no_output", task=self._name, reason=reason, **details)
+            runtime.collector.trigger(f"ik:{reason}")
+
+    def _compute_snapshot(
+        self, state: CoordinatorState, snapshot: FrameTargetSnapshot
+    ) -> JointCommandOutput | None:
         if self._config.timeout > 0.0:
             age = state.t_now - snapshot.last_update_time
             if age > self._config.timeout:
+                self._diagnose_no_output("target_timeout", age_s=age)
                 self._reset_command_state()
                 self._on_target_timeout()
                 return None
 
         measured_state = self._measured_joint_state(state)
         if measured_state is None:
+            self._diagnose_no_output("missing_joint_feedback")
             self._reset_command_state()
             return None
         try:
-            result = self._solver.step(snapshot.targets, measured_state, state.dt)
+            with span("control.ik_step", task=self._name):
+                result = self._solver.step(snapshot.targets, measured_state, state.dt)
         except PinkJointLimitError as exc:
+            self._diagnose_no_output(
+                "feedback_joint_limit",
+                joint=exc.joint_name,
+                value=exc.value,
+                lower=exc.lower,
+                upper=exc.upper,
+            )
             warning_key = (exc.joint_name, exc.boundary)
             last_warning = self._feedback_limit_warning_times.get(warning_key)
             if (
@@ -726,16 +756,20 @@ class PoseTargetIKTask(BaseControlTask):
         # Pink/QP failures derive directly from Exception rather than a stable
         # built-in subtype. A failed streaming tick must not stop the coordinator.
         except Exception as exc:
+            self._diagnose_no_output("solver_exception", exception=type(exc).__name__)
             logger.warning("Pink control step failed", task=self._name, error=str(exc))
             return None
         if result is None:
+            self._diagnose_no_output("solver_returned_none")
             return None
         if result.name != list(self._joint_names) or len(result.position) != len(self._joint_names):
+            self._diagnose_no_output("invalid_joint_result")
             logger.warning("Pink control step returned an invalid joint result", task=self._name)
             return None
 
         positions = np.asarray(result.position, dtype=np.float64)
         if not np.all(np.isfinite(positions)):
+            self._diagnose_no_output("nonfinite_joint_result")
             logger.warning("Pink control step returned non-finite positions", task=self._name)
             return None
 
@@ -743,6 +777,7 @@ class PoseTargetIKTask(BaseControlTask):
         output_positions = positions.tolist()
         for joint_name in self._additional_claimed_joints:
             if joint_name not in snapshot.extra_joint_positions:
+                self._diagnose_no_output("missing_additional_joint", joint=joint_name)
                 logger.warning(
                     "Pose-target task snapshot omitted an additional claimed joint",
                     task=self._name,

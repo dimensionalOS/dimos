@@ -33,6 +33,7 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTaskParams,
     string_tuple_converter,
 )
+from dimos.diagnostics.model import TraceContext, current_context
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -96,6 +97,7 @@ class TeleopIKTaskConfig:
 @dataclass
 class _HandState:
     latest_pose: PoseStamped | None = None
+    trace_context: TraceContext | None = None
     last_update_time: float = 0.0
     controller_reference: PoseStamped | None = None
     robot_reference: PoseStamped | None = None
@@ -183,6 +185,7 @@ class TeleopIKTask(PoseTargetIKTask):
                 return False
             state = self._hands[hand]
             state.latest_pose = sample
+            state.trace_context = current_context()
             state.last_update_time = t_now
         return True
 
@@ -218,6 +221,7 @@ class TeleopIKTask(PoseTargetIKTask):
     def _clear_hand_session_locked(self) -> None:
         for hand_state in self._hands.values():
             hand_state.latest_pose = None
+            hand_state.trace_context = None
             hand_state.last_update_time = 0.0
             hand_state.controller_reference = None
             hand_state.robot_reference = None
@@ -276,6 +280,9 @@ class TeleopIKTask(PoseTargetIKTask):
             return FrameTargetSnapshot(
                 targets=targets,
                 last_update_time=min(update_times),
+                trace_contexts=tuple(
+                    hand.trace_context for hand in self._hands.values() if hand.trace_context
+                ),
             )
 
     def _on_target_timeout(self) -> None:

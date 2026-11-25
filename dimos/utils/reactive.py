@@ -24,6 +24,8 @@ from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
+from dimos.diagnostics.queue import capture, delivery, discard
+from dimos.diagnostics.runtime import get_runtime
 from dimos.utils.threadpool import get_scheduler
 
 T = TypeVar("T")
@@ -59,6 +61,8 @@ class _LatestBackpressureObserver(ObserverBase[Any], DisposableBase):
         with self._cond:
             if self._disposed:
                 return
+            if self._pending is not None:
+                discard(self._pending[1], "reactive.latest")
             self._pending = (kind, payload)
             if self._worker is None:
                 self._worker = threading.Thread(
@@ -131,6 +135,9 @@ def backpressure(
 ) -> Observable[T]:
     if scheduler is None:
         scheduler = get_scheduler()
+    traced = get_runtime() is not None
+    if traced:
+        observable = observable.pipe(ops.map(capture))
 
     # hot, latest-cached core (similar to replay subject)
     core = observable.pipe(
@@ -154,7 +161,22 @@ def backpressure(
         return rx.create(_subscribe)
 
     # each `.subscribe()` call gets its own async backpressure chain
-    return rx.defer(lambda *_: per_sub())  # type: ignore[no-untyped-call]
+    result = rx.defer(lambda *_: per_sub())  # type: ignore[no-untyped-call]
+    if not traced:
+        return result
+
+    def traced_subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
+        def on_next(value: Any) -> None:
+            with delivery(
+                value, "reactive.latest" if drop_unprocessed else "reactive.fifo"
+            ) as message:
+                observer.on_next(message)
+
+        return result.subscribe(
+            on_next, observer.on_error, observer.on_completed, scheduler=scheduler
+        )
+
+    return rx.create(traced_subscribe)
 
 
 class LatestReader(DisposableBase, Generic[T]):

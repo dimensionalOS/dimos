@@ -35,9 +35,19 @@ def _number(text: str, pattern: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+def link_fields(text: str) -> dict[str, float | None]:
+    """Fields shared by connection observations and diagnostic station parsing."""
+    return {
+        "signal_dbm": _number(text, r"^\s*signal:\s*(-?[\d.]+) dBm"),
+        "frequency_mhz": _number(text, r"^\s*freq:\s*(\d+)"),
+        "tx_bitrate_mbps": _number(text, r"^\s*tx bitrate:\s*([\d.]+) MBit/s"),
+        "rx_bitrate_mbps": _number(text, r"^\s*rx bitrate:\s*([\d.]+) MBit/s"),
+    }
+
+
 def _access_point(text: str, bssid: str, ts: float, connected: bool) -> WifiAccessPoint | None:
-    signal = _number(text, r"^\s*signal:\s*(-?[\d.]+) dBm")
-    frequency = _number(text, r"^\s*freq:\s*(\d+)")
+    fields = link_fields(text)
+    signal, frequency = fields["signal_dbm"], fields["frequency_mhz"]
     if signal is None or frequency is None:
         return None
     ssid = re.search(r"^\s*SSID: ?(.*)$", text, re.MULTILINE)
@@ -48,8 +58,8 @@ def _access_point(text: str, bssid: str, ts: float, connected: bool) -> WifiAcce
         frequency_mhz=int(frequency),
         signal_dbm=signal,
         connected=connected,
-        tx_bitrate_mbps=_number(text, r"^\s*tx bitrate:\s*([\d.]+) MBit/s"),
-        rx_bitrate_mbps=_number(text, r"^\s*rx bitrate:\s*([\d.]+) MBit/s"),
+        tx_bitrate_mbps=fields["tx_bitrate_mbps"],
+        rx_bitrate_mbps=fields["rx_bitrate_mbps"],
     )
 
 

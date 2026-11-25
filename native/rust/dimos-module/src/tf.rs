@@ -354,7 +354,7 @@ impl Graph {
 #[derive(Clone)]
 pub struct Tf {
     graph: Arc<Graph>,
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: mpsc::Sender<crate::diagnostics::Queued<Vec<u8>>>,
 }
 
 impl Tf {
@@ -578,7 +578,7 @@ impl Route for TfRoute {
 pub(crate) fn tf_subscription(
     topic: String,
     window_secs: f64,
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: mpsc::Sender<crate::diagnostics::Queued<Vec<u8>>>,
 ) -> (Tf, Box<dyn Route>) {
     let graph = Arc::new(Graph::new(window_secs));
     let tf = Tf {
@@ -599,7 +599,13 @@ mod tests {
         (tf, handle)
     }
 
-    fn tf_with_publish(window_secs: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
+    fn tf_with_publish(
+        window_secs: f64,
+    ) -> (
+        Tf,
+        mpsc::Receiver<crate::diagnostics::Queued<Vec<u8>>>,
+        MultiHandle,
+    ) {
         let graph = Arc::new(Graph::new(window_secs));
         let (tx, rx) = mpsc::channel(8);
         (
@@ -1140,7 +1146,7 @@ mod tests {
             .publish(&[Transform::new("a", "b", 3.25, iso)])
             .await
             .unwrap();
-        let bytes = rx.recv().await.unwrap();
+        let bytes = rx.recv().await.unwrap().value;
 
         let (tx, _rx2) = mpsc::channel(8);
         let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);

@@ -75,3 +75,7 @@ pub async fn run_with_transport<M: Module>() {
         run::<M, _>(transport, launch).await
     }
 }
+
+pub mod diagnostics;
+
+mod trace_ring;

@@ -32,6 +32,7 @@ from reactivex.disposable import Disposable
 from reactivex.scheduler import TimeoutScheduler
 
 from dimos.core.resource import Resource
+from dimos.diagnostics.runtime import instrument_transport, publication
 from dimos.utils import colors
 from dimos.utils.logging_config import setup_logger
 import dimos.utils.reactive as reactive
@@ -90,6 +91,16 @@ class State(enum.Enum):
 
 
 class Transport(Resource, ObservableMixin[T]):
+    # Opt-in contracts negotiate while wiring, before application handlers bind.
+    requires_negotiation: bool = False
+
+    def wait_ready(self, timeout: float = 5.0) -> None:
+        """Setup barrier for transports with an explicit peer compatibility contract."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        instrument_transport(cls)
+
     # Transports that expose a pydantic config override surface set this to the
     # config class; the blueprint config flow picks them up automatically. None
     # means "no overridable config" (LCM transports).
@@ -204,6 +215,8 @@ class Out(Stream[T], ObservableMixin[T]):
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*argv, **kwargs)
         self._subscribers = []
+        identity = self.owner if self.owner is not None else self
+        self._diagnostic_stream = f"{type(identity).__name__}:{id(identity):x}.{self.name}"
 
     @property
     def transport(self) -> Transport[T]:
@@ -225,12 +238,11 @@ class Out(Stream[T], ObservableMixin[T]):
         return RemoteOut(**data)
 
     def publish(self, msg: T) -> None:
-        if hasattr(self, "_transport") and self._transport is not None:
-            self._transport.broadcast(self, msg)
-        # Snapshot: a callback may unsubscribe during delivery (a peek completes on
-        # its first value), and removing from the live list would skip the next one.
-        for cb in list(self._subscribers):
-            cb(msg)
+        with publication(self._diagnostic_stream):
+            if self._transport is not None:
+                self._transport.broadcast(self, msg)
+            for cb in list(self._subscribers):
+                cb(msg)
 
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
         self._subscribers.append(cb)

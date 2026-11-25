@@ -50,6 +50,7 @@ from dimos.core.resource import CompositeResource
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
+from dimos.diagnostics.queue import capture, delivery, discard
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import TF
@@ -230,6 +231,12 @@ class ModuleBase(Configurable, CompositeResource):
 
     @rpc
     def start(self) -> None:
+        # Every link was started during set_transport, so this is a bounded
+        # compatibility barrier before callbacks or producer tasks can run.
+        for stream in {**self.inputs, **self.outputs, **self.ios}.values():
+            transport = stream.transport
+            if transport is not None and getattr(transport, "requires_negotiation", False):
+                transport.wait_ready()
         self._start_main()
         self._auto_bind_handlers()
 
@@ -757,6 +764,8 @@ class ModuleBase(Configurable, CompositeResource):
         if loop is None or not loop.is_running():
             raise RuntimeError(f"{type(self).__name__}._loop is not running")
 
+        queue_label = getattr(async_handler, "__qualname__", type(async_handler).__name__)
+
         async def _bootstrap() -> tuple[asyncio.Event, dict[str, Any], asyncio.Task[None]]:
             event = asyncio.Event()
             slot: dict[str, Any] = {"value": None, "has_value": False}
@@ -772,7 +781,8 @@ class ModuleBase(Configurable, CompositeResource):
                         slot["value"] = None
                         slot["has_value"] = False
                         try:
-                            await async_handler(msg)
+                            with delivery(msg, queue_label) as value:
+                                await async_handler(value)
                         except asyncio.CancelledError:
                             raise
                         except BaseException as e:
@@ -788,9 +798,12 @@ class ModuleBase(Configurable, CompositeResource):
             loop_now = self._loop
             if loop_now is None or not loop_now.is_running():
                 return
+            queued = capture(msg)
 
             def _set() -> None:
-                slot["value"] = msg
+                if slot["has_value"]:
+                    discard(slot["value"], queue_label)
+                slot["value"] = queued
                 slot["has_value"] = True
                 event.set()
 
@@ -892,6 +905,8 @@ class Module(ModuleBase):
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
         stream._transport = transport
+        if getattr(transport, "requires_negotiation", False):
+            transport.start()
         return True
 
     @rpc

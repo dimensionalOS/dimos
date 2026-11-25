@@ -38,6 +38,8 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.diagnostics.model import TraceContext, current_context
+from dimos.diagnostics.runtime import publication
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -159,6 +161,7 @@ class JointTrajectoryTaskConfig:
 class _TrajectoryRun:
     trajectory: JointTrajectory
     start_time: float | None = None
+    trace_context: TraceContext | None = None
 
 
 class JointTrajectoryTask(BaseControlTask):
@@ -282,6 +285,7 @@ class JointTrajectoryTask(BaseControlTask):
             return None
 
         output_names = [name for name in self._joint_names_list if name in self._motions]
+        traces = {name: run.trace_context for name, (run, _) in self._motions.items()}
         all_complete = bool(self._motions)
         for joint_name, (run, index) in list(self._motions.items()):
             deadline = self._stream_deadlines.get(joint_name)
@@ -335,6 +339,18 @@ class JointTrajectoryTask(BaseControlTask):
             positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
+        with publication(
+            f"control/{self._name}/trajectory",
+            parents=list(
+                {
+                    context.sample_id: context
+                    for name in emitted_names
+                    if (context := traces.get(name)) is not None
+                }.values()
+            ),
+            lineage="partial",
+        ) as context:
+            output.trace_context = context
         # Emit the final command, then forget joints we no longer control.
         # Another task may move them before the next execution.
         self._commanded_positions = {
@@ -492,7 +508,7 @@ class JointTrajectoryTask(BaseControlTask):
                 timestamp=trajectory.timestamp,
             )
 
-        run = _TrajectoryRun(trajectory)
+        run = _TrajectoryRun(trajectory, trace_context=current_context())
         for index, joint_name in enumerate(trajectory.joint_names):
             self._stream_deadlines.pop(joint_name, None)
             self._motions[joint_name] = (run, index)

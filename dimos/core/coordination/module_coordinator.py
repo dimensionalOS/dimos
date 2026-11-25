@@ -26,6 +26,7 @@ import threading
 import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from uuid import uuid4
 
 from dimos.constants import RUNTIME_MODULES_DIR
 from dimos.core.coordination.blueprint_config.fields import (
@@ -54,6 +55,8 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport, zenoh_prefix
+from dimos.diagnostics.deployment import record_deployment
+from dimos.diagnostics.runtime import configure as configure_diagnostics
 from dimos.spec.utils import (
     is_spec,
     spec_annotation_compliance,
@@ -101,6 +104,12 @@ class ModuleCoordinator(Resource):
         self._global_config = g
         # The process config may later be updated by another embedded coordinator.
         self._serve_coordinator_rpc = g.serve_coordinator_rpc
+        if g.diagnostics != "off":
+            # Hosted fragments share their run namespace; ordinary workers receive
+            # the resulting explicit run ID with the rest of GlobalConfig.
+            if not g.diagnostics_run:
+                g.diagnostics_run = g.zenoh_domain or f"diagnostics-{uuid4().hex}"
+        configure_diagnostics(g.diagnostics, g.diagnostics_run, g.diagnostics_dir)
         manager_types: list[type[WorkerManager]] = [WorkerManagerPython]
         self._managers = {
             cls.deployment_identifier: cls(g=g, module_rpc_namespace=module_rpc_namespace)
@@ -523,6 +532,7 @@ class ModuleCoordinator(Resource):
                 coordinator.stop()
             raise
 
+        record_deployment(blueprint, coordinator._transport_registry, module_kwargs)
         _log_blueprint_graph(blueprint, coordinator)
 
         slowest = sorted(start_durations.items(), key=lambda item: item[1], reverse=True)[:5]

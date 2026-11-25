@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 import threading
 from typing import Any, Protocol, runtime_checkable
 
@@ -27,6 +28,7 @@ try:
         QoSProfile,
         QoSReliabilityPolicy,
     )
+    from rclpy.subscription import Subscription
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -38,6 +40,8 @@ except ImportError:
 import uuid
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.diagnostics.model import context_scope
+from dimos.diagnostics.runtime import get_runtime, span
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.rospubsub_conversion import (
     derive_ros_type,
@@ -172,7 +176,10 @@ class RawROS(PubSub[RawROSTopic, Any]):
                 break
             try:
                 executor.spin_once(timeout_sec=0.01)
-            except Exception:
+            except Exception as error:
+                logging.getLogger(__name__).exception("ROS executor stopped unexpectedly")
+                if runtime := get_runtime():
+                    runtime.event("ros.executor_failed", reason=type(error).__name__)
                 break
 
     def _get_or_create_publisher(self, topic: RawROSTopic) -> Any:
@@ -199,7 +206,8 @@ class RawROS(PubSub[RawROSTopic, Any]):
             return
 
         publisher = self._get_or_create_publisher(topic)
-        publisher.publish(message)
+        with span("ros.publish", channel=topic.topic):
+            publisher.publish(message)
 
     def subscribe(
         self, topic: RawROSTopic, callback: Callable[[Any, RawROSTopic], None]
@@ -218,12 +226,44 @@ class RawROS(PubSub[RawROSTopic, Any]):
 
         with self._lock:
 
-            def ros_callback(msg: Any) -> None:
-                callback(msg, topic)
+            def ros_callback(msg: Any, info: Any) -> None:
+                # MessageInfo fields depend on RMW support. A missing sequence
+                # is unknown, never a timestamp-based substitute for identity.
+                with context_scope(None):
+                    runtime = get_runtime()
+                    if runtime:
+                        field = (
+                            info.get
+                            if isinstance(info, dict)
+                            else lambda name, default=None: getattr(info, name, default)
+                        )
+                        gid = field("publisher_gid")
+                        if isinstance(gid, dict):
+                            gid = gid.get("data")
+                        runtime.event(
+                            "ros.received",
+                            channel=topic.topic,
+                            writer_gid=bytes(gid).hex() if gid is not None else None,
+                            publication_sequence=field("publication_sequence_number"),
+                            source_timestamp=field("source_timestamp"),
+                            received_timestamp=field("received_timestamp"),
+                            timestamp_provenance="RMW; clock mapping required",
+                            identity_scope="native RMW writer and sequence when supported",
+                        )
+                    with span("ros.callback", channel=topic.topic):
+                        callback(msg, topic)
 
             qos = topic.qos if topic.qos is not None else self._qos
+            # Humble's executor only passes the message. Newer rclpy exposes
+            # CallbackType and detects a two-required-argument callback. Keep
+            # legacy delivery operational and report unavailable native identity.
+            receiver = (
+                ros_callback
+                if hasattr(Subscription, "CallbackType")
+                else lambda msg: ros_callback(msg, None)
+            )
             subscription = self._node.create_subscription(
-                topic.ros_type, topic.topic, ros_callback, qos
+                topic.ros_type, topic.topic, receiver, qos
             )
 
             if topic.topic not in self._subscriptions:
@@ -282,7 +322,8 @@ class DimosROS(PubSub[ROSTopic, DimosMsg]):
             message: Dimos message to publish
         """
         raw_topic = self._to_raw_topic(topic)
-        ros_message = dimos_to_ros(message, raw_topic.ros_type)
+        with span("ros.encode", channel=topic.topic):
+            ros_message = dimos_to_ros(message, raw_topic.ros_type)
         self._raw.publish(raw_topic, ros_message)
 
     def subscribe(
@@ -300,7 +341,8 @@ class DimosROS(PubSub[ROSTopic, DimosMsg]):
         raw_topic = self._to_raw_topic(topic)
 
         def wrapped_callback(ros_msg: Any, _raw_topic: RawROSTopic) -> None:
-            dimos_msg = ros_to_dimos(ros_msg, topic.msg_type)
+            with span("ros.decode", channel=topic.topic):
+                dimos_msg = ros_to_dimos(ros_msg, topic.msg_type)
             callback(dimos_msg, topic)
 
         return self._raw.subscribe(raw_topic, wrapped_callback)

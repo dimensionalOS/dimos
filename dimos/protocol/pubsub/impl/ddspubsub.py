@@ -25,6 +25,8 @@ from cyclonedds.qos import Qos
 from cyclonedds.sub import DataReader as DDSDataReader
 from cyclonedds.topic import Topic as DDSTopic
 
+from dimos.diagnostics.model import context_scope
+from dimos.diagnostics.runtime import get_runtime, span
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.ddsservice import DDSService
 from dimos.utils.logging_config import setup_logger
@@ -73,7 +75,8 @@ class _DDSMessageListener(Listener):  # type: ignore[misc]
     def on_data_available(self, reader: DDSDataReader[Any]) -> None:
         """Called when data is available on the reader."""
         try:
-            samples = reader.take()
+            with span("dds.take", channel=str(self._topic)):
+                samples = reader.take()
         except Exception as e:
             logger.error(f"Error reading from topic {self._topic}: {e}", exc_info=True)
             return
@@ -81,7 +84,20 @@ class _DDSMessageListener(Listener):  # type: ignore[misc]
             if sample is not None:
                 for callback in self._callbacks:
                     try:
-                        callback(sample, self._topic)
+                        with context_scope(None):
+                            runtime = get_runtime()
+                            if runtime:
+                                info = getattr(sample, "sample_info", None)
+                                runtime.event(
+                                    "dds.received",
+                                    channel=str(self._topic),
+                                    publication_handle=getattr(info, "publication_handle", None),
+                                    source_timestamp=getattr(info, "source_timestamp", None),
+                                    timestamp_provenance="DDS Unix nanoseconds; mapping required",
+                                    identity_scope="reader-local writer handle; sample sequence unavailable",
+                                )
+                            with span("dds.callback", channel=str(self._topic)):
+                                callback(sample, self._topic)
                     except Exception as e:
                         logger.error(f"Callback error on topic {self._topic}: {e}", exc_info=True)
 
@@ -113,7 +129,8 @@ class DDS(DDSService, PubSub[Topic, Any]):
         """Publish a message to a DDS topic."""
         writer = self._get_writer(topic)
         try:
-            writer.write(message)
+            with span("dds.write", channel=str(topic)):
+                writer.write(message)
         except Exception as e:
             logger.error(f"Error publishing to topic {topic}: {e}", exc_info=True)
 

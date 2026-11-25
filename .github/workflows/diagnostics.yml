@@ -1,0 +1,80 @@
+name: diagnostics qualification
+on:
+  workflow_dispatch:
+    inputs:
+      hosted:
+        description: Exercise the dedicated test robot account through the hosted broker
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.pin.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - id: pin
+        run: python -c 'import re; print("digest=" + re.search(r"sha256:[a-f0-9]{64}", open("docker/ros-dev-pin/Dockerfile").read())[0])' >> "$GITHUB_OUTPUT"
+  transports:
+    needs: image
+    runs-on: ubuntu-latest
+    container:
+      image: dimensional/ros-dev@${{ needs.image.outputs.digest }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [zenoh, lcm, ros, dds]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install transport test dependencies
+        run: uv sync --group tests --extra dds --frozen
+      - name: Exercise real separate processes; missing coverage is a failure
+        shell: bash
+        env:
+          DIAGNOSTICS_BACKEND: ${{ matrix.backend }}
+          ROS_LOCALHOST_ONLY: '1'
+          ROS_DOMAIN_ID: '173'
+        run: |
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          uv run --no-sync dimos diagnostics conformance result.json --backend "$DIAGNOSTICS_BACKEND"
+          uv run --no-sync pytest dimos/diagnostics/test_socket_probe.py dimos/diagnostics/test_ros_trace.py
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: diagnostics-${{ matrix.backend }}
+          path: result.json
+  hosted:
+    if: inputs.hosted
+    needs: image
+    runs-on: ubuntu-latest
+    container:
+      image: dimensional/ros-dev@${{ needs.image.outputs.digest }}
+    timeout-minutes: 20
+    # These are credentials for a dedicated synthetic robot. The fixture creates
+    # its own session; it never lists, joins, stops or commands an existing robot.
+    env:
+      DIMOS_TEST_BROKER_URL: ${{ vars.DIAGNOSTICS_TEST_BROKER_URL }}
+      DIMOS_TEST_ROBOT_API_KEY: ${{ secrets.DIAGNOSTICS_TEST_ROBOT_API_KEY }}
+      DIMOS_TEST_OPERATOR_TOKEN: ${{ secrets.DIAGNOSTICS_TEST_OPERATOR_TOKEN }}
+      DIMOS_TEST_DEDICATED_ROBOT: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --group tests --extra webrtc --frozen
+      - name: Bidirectional broker/SFU identity, fan-out and session restart
+        run: uv run --no-sync dimos diagnostics conformance hosted.json --backend cloudflare
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: diagnostics-hosted
+          path: hosted.json

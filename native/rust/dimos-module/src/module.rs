@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
+use crate::diagnostics::{self, Queued};
 use crate::transport::{Deliver, Dispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
@@ -85,11 +86,12 @@ pub(crate) trait Route: Send + Sync {
 struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
-    sender: async_channel::Sender<T>,
+    sender: async_channel::Sender<Queued<T>>,
 }
 
 impl<T: Send + 'static> TypedRoute<T> {
     fn parse(&self, data: &[u8]) -> Option<T> {
+        let _span = diagnostics::Span::new("native.decode", &self.topic);
         match (self.decode)(data) {
             Ok(msg) => Some(msg),
             Err(e) => {
@@ -104,7 +106,11 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
     fn dispatch(&self, data: &[u8]) {
         if let Some(msg) = self.parse(data) {
             // A closed channel means the module is stopping.
-            let _ = self.sender.send_blocking(msg);
+            let _ = self.sender.send_blocking(Queued::capture(
+                msg,
+                &self.topic,
+                diagnostics::current_context(),
+            ));
         }
     }
 
@@ -112,7 +118,11 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
         let Some(msg) = self.parse(data) else {
             return true;
         };
-        match self.sender.try_send(msg) {
+        match self.sender.try_send(Queued::capture(
+            msg,
+            &self.topic,
+            diagnostics::current_context(),
+        )) {
             Err(async_channel::TrySendError::Full(_)) => false,
             Ok(()) | Err(async_channel::TrySendError::Closed(_)) => true,
         }
@@ -120,12 +130,17 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
 }
 pub struct Input<T> {
     pub topic: String,
-    receiver: async_channel::Receiver<T>,
+    receiver: async_channel::Receiver<Queued<T>>,
 }
 
 impl<T> Input<T> {
     pub async fn recv(&mut self) -> Option<T> {
-        self.receiver.recv().await.ok()
+        self.recv_traced().await.map(|sample| sample.value)
+    }
+
+    /// Receive with provenance for custom async handlers and cached inputs.
+    pub async fn recv_traced(&mut self) -> Option<Queued<T>> {
+        self.receiver.recv().await.ok().map(Queued::received)
     }
 }
 
@@ -133,12 +148,21 @@ impl<T> Input<T> {
 pub struct Output<T> {
     pub topic: String,
     encode: fn(&T) -> Vec<u8>,
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: mpsc::Sender<Queued<Vec<u8>>>,
 }
 
 impl<T> Output<T> {
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
-        publish_encoded(&self.sender, (self.encode)(msg)).await
+        let context = diagnostics::publication(&self.topic);
+        diagnostics::scope(context, async {
+            let data = {
+                let _trace = crate::diagnostics::Span::new("native.encode", &self.topic);
+                (self.encode)(msg)
+            };
+            let _trace = crate::diagnostics::Span::new("native.queue_enqueue", &self.topic);
+            publish_encoded(&self.sender, data).await
+        })
+        .await
     }
 }
 
@@ -148,27 +172,45 @@ impl<T> Output<T> {
 /// sees the whole topic including its own publishes.
 pub struct Io<T> {
     pub topic: String,
-    receiver: async_channel::Receiver<T>,
+    receiver: async_channel::Receiver<Queued<T>>,
     encode: fn(&T) -> Vec<u8>,
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: mpsc::Sender<Queued<Vec<u8>>>,
 }
 
 impl<T> Io<T> {
     pub async fn recv(&mut self) -> Option<T> {
-        self.receiver.recv().await.ok()
+        self.recv_traced().await.map(|sample| sample.value)
+    }
+
+    /// Receive with provenance for custom async handlers and cached inputs.
+    pub async fn recv_traced(&mut self) -> Option<Queued<T>> {
+        self.receiver.recv().await.ok().map(Queued::received)
     }
 
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
-        publish_encoded(&self.sender, (self.encode)(msg)).await
+        let context = diagnostics::publication(&self.topic);
+        diagnostics::scope(context, async {
+            let data = {
+                let _trace = crate::diagnostics::Span::new("native.encode", &self.topic);
+                (self.encode)(msg)
+            };
+            let _trace = crate::diagnostics::Span::new("native.queue_enqueue", &self.topic);
+            publish_encoded(&self.sender, data).await
+        })
+        .await
     }
 }
 
 pub(crate) async fn publish_encoded(
-    sender: &mpsc::Sender<Vec<u8>>,
+    sender: &mpsc::Sender<Queued<Vec<u8>>>,
     data: Vec<u8>,
 ) -> io::Result<()> {
     sender
-        .send(data)
+        .send(Queued::capture(
+            data,
+            "output",
+            diagnostics::current_context(),
+        ))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
 }
@@ -319,7 +361,7 @@ pub struct Builder {
     requested: BTreeSet<String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
     // One publish queue per output channel, drained by its own worker.
-    outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
+    outputs: Vec<(String, mpsc::Receiver<Queued<Vec<u8>>>)>,
     tf: Option<crate::tf::Tf>,
 }
 
@@ -364,7 +406,7 @@ impl Builder {
         &mut self,
         topic: &str,
         decode: fn(&[u8]) -> io::Result<T>,
-    ) -> async_channel::Receiver<T> {
+    ) -> async_channel::Receiver<Queued<T>> {
         let (tx, rx) = async_channel::bounded(INPUT_BUFFER_LEN);
         self.routes
             .entry(topic.to_string())
@@ -377,7 +419,7 @@ impl Builder {
         rx
     }
 
-    fn add_publisher(&mut self, topic: &str) -> mpsc::Sender<Vec<u8>> {
+    fn add_publisher(&mut self, topic: &str) -> mpsc::Sender<Queued<Vec<u8>>> {
         let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
         self.outputs.push((topic.to_string(), rx));
         tx
@@ -486,16 +528,20 @@ impl Deliver for TopicRoutes {
 /// Spawn one worker per output channel so they don't block each other
 pub(crate) fn spawn_publish_tasks<T: Transport>(
     transport: Arc<T>,
-    outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
+    outputs: Vec<(String, mpsc::Receiver<Queued<Vec<u8>>>)>,
 ) -> tokio::task::JoinSet<()> {
     let mut tasks = tokio::task::JoinSet::new();
     for (topic, mut rx) in outputs {
         let transport = Arc::clone(&transport);
         tasks.spawn(async move {
             while let Some(data) = rx.recv().await {
-                if let Err(e) = transport.publish(&topic, data).await {
-                    error!(topic = %topic, error = %e, "publish error");
-                }
+                let sample = data.received();
+                diagnostics::scope(sample.context, async {
+                    if let Err(e) = transport.publish(&topic, sample.value).await {
+                        error!(topic = %topic, error = %e, "publish error");
+                    }
+                })
+                .await;
             }
         });
     }
@@ -530,7 +576,9 @@ where
     M: Module,
     T: Transport,
 {
-    if let Err(e) = run_fallible::<M, T>(transport, launch).await {
+    let result = run_fallible::<M, T>(transport, launch).await;
+    crate::diagnostics::shutdown();
+    if let Err(e) = result {
         error!("{e}");
         std::process::exit(1);
     }
@@ -1039,7 +1087,7 @@ mod tests {
 
         io.publish(&b"outbound".to_vec()).await.expect("publish");
         let (_, rx) = &mut builder.outputs[0];
-        assert_eq!(rx.recv().await.expect("published bytes"), b"outbound");
+        assert_eq!(rx.recv().await.expect("published bytes").value, b"outbound");
     }
 
     #[tokio::test]
@@ -1403,7 +1451,7 @@ mod tests {
 
             let (topic, rx) = &mut builder.outputs[0];
             assert_eq!(topic, "/robot/cmd");
-            assert_eq!(rx.recv().await.expect("handler reply"), b"pong");
+            assert_eq!(rx.recv().await.expect("handler reply").value, b"pong");
         }
     }
 }

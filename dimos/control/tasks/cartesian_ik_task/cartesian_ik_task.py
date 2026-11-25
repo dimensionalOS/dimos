@@ -30,6 +30,7 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTaskParams,
     string_tuple_converter,
 )
+from dimos.diagnostics.model import TraceContext, current_context
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -60,6 +61,7 @@ class CartesianIKTask(PoseTargetIKTask):
     ) -> None:
         self._lock = threading.Lock()
         self._target_pose: PoseStamped | None = None
+        self._target_trace: TraceContext | None = None
         self._last_update_time = 0.0
         self._active = False
         super().__init__(name, config, solver=solver)
@@ -78,6 +80,7 @@ class CartesianIKTask(PoseTargetIKTask):
         )
         with self._lock:
             self._target_pose = target
+            self._target_trace = current_context()
             self._last_update_time = t_now
             self._active = True
         return True
@@ -94,6 +97,7 @@ class CartesianIKTask(PoseTargetIKTask):
     def clear(self) -> None:
         with self._lock:
             self._target_pose = None
+            self._target_trace = None
             self._active = False
         self._reset_command_state()
 
@@ -107,6 +111,7 @@ class CartesianIKTask(PoseTargetIKTask):
             return FrameTargetSnapshot(
                 targets={self._config.target_frames[0]: self._target_pose},
                 last_update_time=self._last_update_time,
+                trace_contexts=(self._target_trace,) if self._target_trace else (),
             )
 
     def _on_target_timeout(self) -> None:

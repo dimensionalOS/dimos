@@ -136,6 +136,7 @@ impl LcmTransport {
 
 impl Transport for LcmTransport {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
+        let _trace = crate::diagnostics::Span::new("native.transport_publish", channel);
         self.inner.publish(channel, &data).await
     }
 

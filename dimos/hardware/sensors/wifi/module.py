@@ -26,6 +26,7 @@ from pydantic import Field
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.diagnostics.observations import record_wifi
 from dimos.hardware.sensors.wifi.iw import read_scan, run_iw
 from dimos.msgs.sensor_msgs.WifiScan import WifiScan
 from dimos.utils.logging_config import setup_logger
@@ -78,6 +79,7 @@ class WifiMonitor(Module):
             try:
                 sample = await read_scan(self.config.interface, self.config.max_scan_age_s)
                 self.wifi_scan.publish(sample)
+                record_wifi(sample)
             except (OSError, subprocess.SubprocessError, asyncio.TimeoutError) as exc:
                 logger.warning(
                     "Wi-Fi observation failed", interface=self.config.interface, error=str(exc)

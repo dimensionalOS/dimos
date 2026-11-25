@@ -8,7 +8,10 @@ license = "Apache-2.0"
 [workspace]
 
 [dependencies]
+zstd = "0.13"
 async-channel = "2"
+libc = "0.2"
+sha2 = "0.10"
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
