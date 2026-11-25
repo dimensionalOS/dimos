@@ -1,8 +1,9 @@
 import type { Command } from "#dimos/agents/cli/commands/base.ts";
 import type { ConversationId, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ConversationRow } from "#dimos/agents/shared/protocol/conversation/summary.ts";
 import type { Transcript } from "#dimos/agents/shared/protocol/conversation/state.ts";
-import type { Ctx } from "@earendil-works/chord";
+import type { Ctx, Ref } from "@earendil-works/chord";
 import { isChordError } from "@earendil-works/chord";
 import type { Static } from "typebox";
 import type { ActionGroup } from "#dimos/agents/shared/protocol/actions/base.ts";
@@ -62,108 +63,113 @@ function turn(live: LiveState) {
   return { run: live.run, messageTimestamp: message?.timestamp ?? null, text: message ? assistantText(message) : "" };
 }
 
+type WatchedChat = { id: ConversationId; lastEntry?: EntryId; following: boolean };
+
+/** Stream list changes and attach one passive viewer to each running chat. */
 async function watch(client: Client): Promise<never> {
   const gateway = await client.host.get(GatewayContract, {});
-  const active = new Set<ConversationId>();
-  const lastEntry = new Map<ConversationId, EntryId>();
-  const follow = async (conversation: ConversationId) => {
-    const address = { conversation, role: "viewer", markSeen: false } as const;
-    const room = await client.host.get(ConversationContract, address);
-    const chat = (update: object) => write({ type: "agent/chat", conversation, ...update });
-    const partials = new Map<number, string>();
-    const publishText = (message: Pick<AssistantMessage, "timestamp" | "content">) => {
-      const text = assistantText(message);
-      const before = partials.get(message.timestamp) ?? "";
-      if (before === text) return;
-      if (text.startsWith(before)) {
-        chat({ messageTimestamp: message.timestamp, offset: before.length, delta: text.slice(before.length) });
-      } else {
-        chat({ messageTimestamp: message.timestamp, reset: true, offset: 0, delta: text });
-      }
-      partials.set(message.timestamp, text);
-    };
-    let lastAssistant: EntryId | undefined;
-    let initial = true;
-    const publishHistory = ({ items }: Transcript) => {
-      // Replay the available window on first attach or when its bounded history no longer contains our cursor.
-      const last = lastEntry.get(conversation);
-      const entries = last === undefined ? items : items.slice(items.findIndex((item) => item.entry === last) + 1);
-      // The harness throttles live text. Its last few characters may first arrive in the saved entry.
-      for (const item of entries) {
-        if (item.kind !== "assistant" || (lastAssistant !== undefined && item.entry <= lastAssistant)) continue;
-        if (!initial) publishText(item.message);
-        partials.delete(item.message.timestamp);
-        lastAssistant = item.entry;
-      }
-      const newest = entries.at(-1);
-      if (newest) {
-        chat({ entries });
-        lastEntry.set(conversation, newest.entry);
-      }
-      initial = false;
-    };
-    const history = room.transcript.subscribe(publishHistory);
-    let previousRun: LiveState["run"];
-    let previousMessage: number | null = null;
-    const live = room.live.subscribe((state) => {
-      if (state.run) {
-        const message = state.generation?.message;
-        const messageTimestamp = message?.timestamp ?? null;
-        if (messageTimestamp !== previousMessage || !isDeepStrictEqual(previousRun, state.run)) {
-          chat({ turn: { run: state.run, messageTimestamp } });
-          previousRun = state.run;
-          previousMessage = messageTimestamp;
-        }
-        if (message) publishText(message);
-      }
-    });
-    try {
-      await until(gateway.conversations, (rows) =>
-        rows.find((row) => row.id === conversation)?.running ? undefined : true,
-      );
-      await until(room.live, (state) => (state.run ? undefined : true));
-    } finally {
-      live();
-      history();
-      room.release();
-    }
-    // The idle notification can arrive ahead of the last transcript update. Read the
-    // conversation once more before telling clients the turn has finished.
-    await client.host.root(async (ctx) => {
-      const final = await ctx.get(ConversationContract, address);
-      publishHistory(final.transcript.value);
-      if (!final.live.value.run && !gateway.conversations.value.find((row) => row.id === conversation)?.running)
-        chat({ turn: null });
-    });
-  };
-  const start = (id: ConversationId) => {
-    active.add(id);
-    void follow(id).then(
-      () => {
-        active.delete(id);
-        if (gateway.conversations.value.find((row) => row.id === id)?.running) start(id);
-      },
-      (error: unknown) => {
-        active.delete(id);
-        console.error(error);
-      },
-    );
-  };
-  const jobs = gateway.jobs.subscribe(publishRowChanges("agent/jobs", "name"));
+  const chats = new Map<ConversationId, WatchedChat>();
   const publishConversations = publishRowChanges("agent/conversations", "id");
-  const conversations = gateway.conversations.subscribe((rows) => {
-    publishConversations(rows);
-    for (const row of rows) {
-      if (row.running && !active.has(row.id)) start(row.id);
-    }
-  });
   try {
+    gateway.jobs.subscribe(publishRowChanges("agent/jobs", "name"));
+    gateway.conversations.subscribe((rows) => {
+      publishConversations(rows);
+      for (const { id, running } of rows) {
+        if (!running) continue;
+        const chat = chats.get(id) ?? { id, following: false };
+        if (chat.following) continue;
+        chats.set(id, chat);
+        void followChat(client, gateway, chat).catch(console.error);
+      }
+    });
     return await client.ended;
   } finally {
-    jobs();
-    conversations();
     gateway.release();
   }
+}
+
+async function followChat(client: Client, gateway: Ref<typeof GatewayContract>, chat: WatchedChat): Promise<void> {
+  const address = { conversation: chat.id, role: "viewer", markSeen: false } as const;
+  const running = (rows: readonly ConversationRow[]) => rows.some((row) => row.id === chat.id && row.running);
+  chat.following = true;
+  try {
+    do {
+      const publisher = chatPublisher(chat);
+      const room = await client.host.get(ConversationContract, address);
+      try {
+        room.transcript.subscribe(publisher.publishTranscript);
+        room.live.subscribe(publisher.publishLiveTurn);
+        // The list can announce a run before the room sees it. Wait for both to reach idle.
+        await until(gateway.conversations, (rows) => (running(rows) ? undefined : true));
+        await until(room.live, (live) => (live.run ? undefined : true));
+      } finally {
+        room.release();
+      }
+      // The idle signal can arrive before the final saved reply. Fetch it before announcing the end.
+      await client.host.root(async (ctx) => {
+        const final = await ctx.get(ConversationContract, address);
+        publisher.publishTranscript(final.transcript.value);
+        if (!final.live.value.run && !running(gateway.conversations.value)) publisher.endTurn();
+      });
+    } while (running(gateway.conversations.value));
+  } finally {
+    chat.following = false;
+  }
+}
+
+/** One attachment starts with transcript history, then streams live text and newly saved entries. */
+function chatPublisher(chat: WatchedChat) {
+  const send = (event: object) => write({ type: "agent/chat", conversation: chat.id, ...event });
+  const sentText = new Map<number, string>();
+  let previousTurn: { run: NonNullable<LiveState["run"]>; messageTimestamp: number | null } | undefined;
+  let newestAssistantEntry: EntryId | undefined;
+  let firstTranscript = true;
+
+  function publishTextDelta(message: Pick<AssistantMessage, "timestamp" | "content">): void {
+    const messageTimestamp = message.timestamp;
+    const text = assistantText(message);
+    const previous = sentText.get(messageTimestamp) ?? "";
+    if (text === previous) return;
+    if (text.startsWith(previous)) {
+      send({ messageTimestamp, offset: previous.length, delta: text.slice(previous.length) });
+    } else {
+      send({ messageTimestamp, reset: true, offset: 0, delta: text });
+    }
+    sentText.set(messageTimestamp, text);
+  }
+
+  function publishLiveTurn({ run, generation }: LiveState): void {
+    if (!run) return;
+    const message = generation?.message;
+    const turn = { run, messageTimestamp: message?.timestamp ?? null };
+    if (!isDeepStrictEqual(turn, previousTurn)) {
+      send({ turn });
+      previousTurn = turn;
+    }
+    if (message) publishTextDelta(message);
+  }
+
+  function publishTranscript({ items }: Transcript): void {
+    // A missing cursor replays the whole available window, including after an edit or truncation.
+    const cursor = items.findLastIndex((item) => item.entry === chat.lastEntry);
+    const entries = items.slice(cursor + 1);
+    for (const item of entries) {
+      if (item.kind !== "assistant") continue;
+      if (newestAssistantEntry !== undefined && item.entry <= newestAssistantEntry) continue;
+      // The saved reply can include text that never appeared in the live draft.
+      if (!firstTranscript) publishTextDelta(item.message);
+      sentText.delete(item.message.timestamp);
+      newestAssistantEntry = item.entry;
+    }
+    firstTranscript = false;
+    const newest = entries.at(-1);
+    if (newest) {
+      send({ entries });
+      chat.lastEntry = newest.entry;
+    }
+  }
+
+  return { publishLiveTurn, publishTranscript, endTurn: () => send({ turn: null }) };
 }
 
 const gatewayActions = ["createConversation", "createJob", "updateJob", "deleteJob", "runJob"] as const;
