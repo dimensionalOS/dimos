@@ -425,7 +425,10 @@ def test_materialized_cartesian_plan_respects_reduced_joint_speeds(
     velocities = np.asarray([point.velocities for point in plan.trajectory.points])
     times = np.asarray([point.time_from_start for point in plan.trajectory.points])
     positions = np.asarray([point.positions for point in plan.trajectory.points])
-    limits = np.asarray([0.2, 0.2, 0.2, 0.8, 0.8, 0.8])
+    joint_space = world.get_prepared_model().joint_space
+    limits = np.asarray(
+        [joint_space.coordinate(name).max_velocity for name in selection.joint_names]
+    )
     assert np.max(np.abs(velocities) / limits) <= 1.01
     assert np.max(np.abs(np.diff(positions, axis=0) / np.diff(times)[:, None]) / limits) <= 1.01
     assert np.linalg.norm(positions[-1] - positions[0]) > 0.01
