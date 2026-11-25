@@ -15,6 +15,8 @@
 //! Operator commands: JSON [UserCommand](crate::types::UserCommand) datagrams over UDP, or a timed script.
 
 use std::net::UdpSocket;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -109,9 +111,35 @@ impl CommandSource for ScriptedCommands {
     }
 }
 
-/// The vendor drdds-zenoh bridge (main.cpp publish_cycle): the latest twist resent each cycle, zero past the timeout.
+/// /HES_STATUS: the 0x8a frame's hard-stop byte (rl_deploy handlEcanStatus 0x197c78), none until one arrives.
+#[derive(Debug)]
+pub struct HardStop(AtomicI32);
+
+impl Default for HardStop {
+    fn default() -> Self {
+        HardStop(AtomicI32::new(-1))
+    }
+}
+
+impl HardStop {
+    pub fn set(&self, value: u8) {
+        self.0.store(value as i32, Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> Option<u8> {
+        u8::try_from(self.0.load(Ordering::Relaxed)).ok()
+    }
+
+    /// The bridge's robot_ready term: 0, or not heard yet.
+    pub fn clear(&self) -> bool {
+        self.get().is_none_or(|v| v == 0)
+    }
+}
+
+/// The drdds-zenoh bridge (main.cpp publish_cycle): the latest twist each cycle, zero past the timeout or on a hard stop.
 pub struct NavBridge<C> {
     inner: C,
+    hard_stop: Arc<HardStop>,
     period_s: f64,
     timeout_s: f64,
     command: Option<UserCommand>,
@@ -122,9 +150,10 @@ pub struct NavBridge<C> {
 }
 
 impl<C: CommandSource> NavBridge<C> {
-    pub fn new(inner: C, rate_hz: f64, timeout_s: f64) -> Self {
+    pub fn new(inner: C, hard_stop: Arc<HardStop>, rate_hz: f64, timeout_s: f64) -> Self {
         NavBridge {
             inner,
+            hard_stop,
             period_s: 1.0 / rate_hz,
             timeout_s,
             command: None,
@@ -171,8 +200,10 @@ impl<C: CommandSource> CommandSource for NavBridge<C> {
                 c.velocity = Some(if now - self.received_at > self.timeout_s {
                     self.active = false;
                     [0.0; 3]
-                } else {
+                } else if self.hard_stop.clear() {
                     self.latest
+                } else {
+                    [0.0; 3]
                 });
                 out = Some(c.clone());
             }
@@ -229,18 +260,32 @@ mod nav_bridge_tests {
 
     /// The bridge's output each 1 ms over a twist sequence: (time, velocity sent, the latest twist received).
     fn run(twists: &[(f64, [f64; 3])], end: f64) -> Vec<(f64, [f64; 3], [f64; 3])> {
+        run_with_hard_stop(twists, end, &[])
+    }
+
+    /// The same, with the hard-stop byte set to each value at its time.
+    fn run_with_hard_stop(
+        twists: &[(f64, [f64; 3])],
+        end: f64,
+        hard_stops: &[(f64, u8)],
+    ) -> Vec<(f64, [f64; 3], [f64; 3])> {
         let (dt, mut out, mut sent, mut latest) = (0.001, Vec::new(), [0.0; 3], [0.0; 3]);
+        let hard_stop = Arc::new(HardStop::default());
         let mut bridge = NavBridge::new(
             Replay {
                 twists: twists.to_vec(),
                 at: 0,
             },
+            hard_stop.clone(),
             10.0,
             0.4,
         );
         let mut k = 0;
         while (k as f64) * dt < end {
             let now = k as f64 * dt;
+            if let Some(&(_, v)) = hard_stops.iter().take_while(|h| h.0 <= now).last() {
+                hard_stop.set(v);
+            }
             if let Some(t) = twists.iter().take_while(|t| t.0 <= now).last() {
                 latest = t.1;
             }
@@ -288,6 +333,32 @@ mod nav_bridge_tests {
             .all(|(_, sent, _)| *sent == [0.5, 0.0, 0.3]));
     }
 
+    #[test]
+    fn the_hard_stop_zeroes_each_cycle_while_set_and_the_twist_resumes_on_release() {
+        let twists: Vec<_> = (0..20).map(|k| (k as f64 * 0.1, [0.5, 0.0, 0.3])).collect();
+        // pressed at 0.55 s, released at 1.25 s (the board's byte: 1, then 0)
+        let trace = run_with_hard_stop(&twists, 2.0, &[(0.55, 1), (1.25, 0)]);
+        let sent_at = |t: f64| trace.iter().find(|(at, ..)| *at >= t).unwrap().1;
+        assert_eq!(sent_at(0.5), [0.5, 0.0, 0.3]);
+        // the first cycle after the press, 0.6 s, sends zero; so does every cycle until the release
+        assert_eq!(sent_at(0.6), [0.0; 3]);
+        assert_eq!(sent_at(1.25), [0.0; 3]);
+        // the cycle after the release, 1.3 s, sends the latest twist again (no new stand: the bridge only gates)
+        assert_eq!(sent_at(1.3), [0.5, 0.0, 0.3]);
+    }
+
+    #[test]
+    fn the_hard_stop_is_clear_until_heard_and_only_at_zero() {
+        let hard_stop = HardStop::default();
+        assert_eq!(hard_stop.get(), None);
+        assert!(hard_stop.clear());
+        hard_stop.set(1);
+        assert!(!hard_stop.clear());
+        hard_stop.set(0);
+        assert!(hard_stop.clear());
+        assert_eq!(hard_stop.get(), Some(0));
+    }
+
     /// One scripted command per poll.
     struct Script(Vec<UserCommand>);
 
@@ -308,7 +379,12 @@ mod nav_bridge_tests {
             motion_seq: 1,
             ..Default::default()
         };
-        let mut bridge = NavBridge::new(Script(vec![walk.clone(), walk, lie]), 10.0, 0.4);
+        let mut bridge = NavBridge::new(
+            Script(vec![walk.clone(), walk, lie]),
+            Arc::default(),
+            10.0,
+            0.4,
+        );
         // the first command (and cycle) at 0
         assert!(bridge.poll(0.0).is_some());
         // a twist between cycles waits
