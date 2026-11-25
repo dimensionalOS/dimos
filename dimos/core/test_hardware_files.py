@@ -280,3 +280,39 @@ def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_fi
         module.stop()
     # Only hardware.usda comes whole again; each mesh is kept by the sha256 in its assetInfo.
     assert set(fetched) <= {HARDWARE_USD}
+
+
+def test_a_client_fetches_a_binary_layer_the_robot_references(tmp_path: Path) -> None:
+    from pxr import Sdf, Usd
+
+    root = tmp_path / "robot"
+    root.mkdir()
+    crate = Sdf.Layer.CreateNew(str(root / "base.usdc"))
+    Sdf.CreatePrimInLayer(crate, "/base").specifier = Sdf.SpecifierDef
+    crate.defaultPrim = "base"
+    crate.Save()
+    robot = root / "robot.usda"
+    robot.write_text(
+        """#usda 1.0
+(
+    defaultPrim = "robot"
+)
+
+def Xform "robot"
+{
+    def Xform "base" (
+        prepend references = @base.usdc@
+    )
+    {
+    }
+}
+"""
+    )
+    namespace = f"files_{uuid.uuid4().hex[:8]}"
+    module = _serving(robot, namespace)
+    try:
+        module.start()
+        usd = fetch_hardware_files(namespace, tmp_path / "cache")
+        assert Usd.Stage.Open(str(usd)).GetPrimAtPath("/robot/base")
+    finally:
+        module.stop()
