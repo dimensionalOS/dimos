@@ -62,10 +62,14 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | Non
                 f"and not prims -- so grafting both would keep only the last, silently. Give "
                 f"the scene a frame per copy."
             )
-        if not pxr.Sdf.CopySpec(sub_layer, source.GetPath(), root_layer, target):
-            raise ValueError(f"could not copy the subtree USD for {frame_id!r} into the scene")
-        _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
-        _carry_outside_references(pxr, sub_layer, str(source.GetPath()), root_layer, str(target))
+        # One recomposition, once its references are carried: copied alone, they would compose against the scene's prims of the same name.
+        with pxr.Sdf.ChangeBlock():
+            if not pxr.Sdf.CopySpec(sub_layer, source.GetPath(), root_layer, target):
+                raise ValueError(f"could not copy the subtree USD for {frame_id!r} into the scene")
+            _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
+            _carry_outside_references(
+                pxr, sub_layer, str(source.GetPath()), root_layer, str(target)
+            )
         _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
 
     return str(root_layer.ExportToString())

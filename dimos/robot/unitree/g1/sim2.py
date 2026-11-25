@@ -49,6 +49,7 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
     G1TfPublisherConfig,
 )
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.lfs import pull_model_assets
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
@@ -131,6 +132,8 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
 
     @rpc
     def start(self) -> None:
+        # Before the world asks for its USD, which opens a stage of every mesh layer it references.
+        pull_model_assets(self.config.usd)
         super().start()
         self.register_disposable(
             Disposable(
@@ -227,18 +230,9 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
 
     def _own_view(self, imu_frame: str) -> WorldView:
         """A view of this G1 alone, mounted as in the world: its IMU reads its own body, and compiling the room for it costs seconds."""
-        from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
-
         mount = self.mounted_on()
         assert mount is not None
-        usd, pxr = self.get_usd(), load_pxr()
-        room = layer_from(pxr, frame_usd(mount, name="world").usd, "a G1's room", None)
-        own = layer_from(pxr, usd, "a G1", None)
-        # The material prototypes it references are in the room first, as the office has its own: a graft composes before carrying them.
-        for prim in own.rootPrims:
-            if prim.specifier == pxr.Sdf.SpecifierOver:
-                pxr.Sdf.CopySpec(own, prim.path, room, prim.path)
-        alone = compose_usds([(str(room.ExportToString()), None), (usd, mount)])
+        alone = compose_usds([(frame_usd(mount, name="world").usd, None), (self.get_usd(), mount)])
         return open_view(
             layer_file(alone.usd, "g1"),
             robot_ids(self._world),

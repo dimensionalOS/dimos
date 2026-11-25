@@ -18,10 +18,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from functools import cached_property
 
-from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.sim2.lfs import pull_model_assets
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sim import until_it_stops
 
@@ -35,12 +33,6 @@ class SimScene(SimSensor):
     """Static hardware: a room whose mounts are where robots start. Its tf goes out stamped with the world's time."""
 
     config: SimSceneConfig
-
-    @rpc
-    def start(self) -> None:
-        # Before anything opens the room's stage, which opens every mesh layer it references.
-        pull_model_assets(self.config.usd)
-        super().start()
 
     async def main(self) -> AsyncIterator[None]:
         self._world = self.mirror_world()
