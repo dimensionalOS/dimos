@@ -26,11 +26,16 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.control_msgs import DynamicJointState
 from dimos_lcm.sim_msgs import WorldState
 from scipy.spatial.transform import Rotation
 
 from dimos.control.connection.connection_module import ConnectionModule, Values
-from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.convert import (
+    dynamic_joint_state_from_values,
+    dynamic_joint_state_to_values,
+    joint_state_to_values,
+)
 from dimos.control.contract.keys import Interface
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -45,12 +50,10 @@ from dimos.robot.galaxea.r1pro.sim.model import FINGER_TRAVEL_M
 OPENING_M = R1PRO_GRIPPER_OPENING_RANGE[1]
 
 
-class R1ProSimConnection(ConnectionModule):
+class _R1ProSimConnection(ConnectionModule):
     config: R1ProConnectionConfig
     observations: In[WorldState]
     encoder: In[JointState]
-    position_command: In[JointState]
-    velocity_command: In[JointState]
     joint_state: Out[JointState]
     upper_command: Out[JointState]
     servo_left_gripper: Out[Float32]
@@ -64,12 +67,6 @@ class R1ProSimConnection(ConnectionModule):
 
     def connect(self) -> None:
         """The simulation is owned by SimModule, not this command connection."""
-
-    async def handle_position_command(self, sample: JointState) -> None:
-        self.command(joint_state_to_values(sample, (Interface.POSITION,)))
-
-    async def handle_velocity_command(self, sample: JointState) -> None:
-        self.command(joint_state_to_values(sample, (Interface.VELOCITY,)))
 
     def write(self, values: Values) -> None:
         positions = {
@@ -141,3 +138,31 @@ class R1ProSimConnection(ConnectionModule):
                 position=list(positions.values()),
             )
         )
+
+
+class R1ProSimConnection(_R1ProSimConnection):
+    position_command: In[JointState]
+    velocity_command: In[JointState]
+
+    async def handle_position_command(self, sample: JointState) -> None:
+        self.command(joint_state_to_values(sample, (Interface.POSITION,)))
+
+    async def handle_velocity_command(self, sample: JointState) -> None:
+        self.command(joint_state_to_values(sample, (Interface.VELOCITY,)))
+
+
+class R1ProSimMotorConnection(_R1ProSimConnection):
+    """Send each simulated upper-body joint its own position and optional gains."""
+
+    motor_command: In[DynamicJointState]
+    upper_motor_command: Out[DynamicJointState]
+
+    async def handle_motor_command(self, sample: DynamicJointState) -> None:
+        self.command(dynamic_joint_state_to_values(sample))
+
+    def write(self, values: Values) -> None:
+        upper = {k: v for k, v in values.items() if k.rsplit("/", 1)[0] in UPPER}
+        if upper:
+            joints = list(dict.fromkeys(k.rsplit("/", 1)[0] for k in upper))
+            self.upper_motor_command.publish(dynamic_joint_state_from_values(upper, joints))
+        super().write({k: v for k, v in values.items() if k not in upper})

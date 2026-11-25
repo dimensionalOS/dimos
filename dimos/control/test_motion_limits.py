@@ -84,8 +84,9 @@ def test_coordinated_group_preserves_relative_joint_step():
     assert out["b"][0] == pytest.approx(-0.01)
 
 
-def test_external_deflection_does_not_amplify_the_limited_spring(limiter):
-    limiter.commit({"joint": 0.0})
+@pytest.mark.parametrize("previous", [0.0, 0.89, 0.93])
+def test_external_deflection_does_not_reverse_or_amplify_the_limited_spring(limiter, previous):
+    limiter.commit({"joint": previous})
     spring = JointImpedance(0.91, 0.7, None, 45.0, 6.0)
     ((command, _, _),) = limiter.apply(
         {"joint": (spring, ControlMode.IMPEDANCE, "leader")}, {"joint": 0.9}, 0.01

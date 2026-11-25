@@ -136,3 +136,25 @@ is free and our Mid-360 driver competes with the vendor's for the sensor.
 The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
 `R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
 `--mid360.host_ip` override them).
+
+### Offline JoyLo arm comparison
+
+From the DimOS checkout, run the following with the R1 Pro simulation dependencies installed.
+The replay reads the 2025 URDF, uses MuJoCo arm inertias with the torso fixed,
+and runs the JoyLo leader logic, selected control task, command transport encoding
+and simulated servo in one process. Supply `--urdf PATH` to use a local copy.
+
+```bash
+python -m dimos.robot.galaxea.r1pro.sim.compare_joylo --plot joylo-comparison.pdf
+```
+
+Both elbows follow a scripted 0.5 Hz motion before a 1 Nm external torque is
+applied for one second. The position runs use the same trajectory tracker with
+spring/damper settings of 180/12 and 45/6 in SI units. The impedance run uses
+45/6, a 2 Nm spring cap and the task's signed target velocity. Its arm commands
+go directly to the simulated motor. Reported lag is the phase delay at 0.5 Hz;
+a negative value means the simulated elbow leads at that frequency.
+The test uses simulated gravity compensation, no payload and no contact geometry.
+
+With the scene from the R1 Pro sim2 setup, `r1pro-joylo-impedance-sim2`
+accepts scripted input on `JoyloSimInput.send` in its own Zenoh domain.

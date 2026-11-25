@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
+from dimos.control.contract.convert import dynamic_joint_state_from_values
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -237,3 +238,20 @@ async def test_coordinator_owns_torso_without_the_old_height_servo_overwriting_i
     assert action is not None
     positions = next(c.values for c in action.joint_commands if c.interface_name == "position")
     np.testing.assert_allclose(positions[:4], targets, atol=1e-9)
+
+
+async def test_motor_command_reaches_simulated_arm_and_expiry_restores_hold(controller, mocker):
+    clock = mocker.patch("dimos.robot.galaxea.r1pro.sim.control.time.monotonic", return_value=0.0)
+    joint = UPPER_JOINTS[4]
+    fields = {
+        f"{joint}/{k}": v
+        for k, v in {"position": 0.02, "velocity": 0.1, "stiffness": 45, "damping": 6}.items()
+    }
+    await controller.handle_upper_motor_command(dynamic_joint_state_from_values(fields, [joint]))
+    sample = JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0.0)
+    action = controller.compute(sample)
+    assert [row.values[4] for row in action.joint_commands[:4]] == pytest.approx([0.02, 0.1, 45, 6])
+    clock.return_value = 0.2
+    sample.ts = 0.004
+    hold = controller.compute(sample)
+    assert [row.values[4] for row in hold.joint_commands[:4]] == pytest.approx([0, 0, 180, 12])

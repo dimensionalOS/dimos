@@ -57,6 +57,8 @@ class JoyloConfig(ModuleConfig):
     torso_link_lengths: tuple[float, float] = (0.35, 0.35)
     enabled_sides: tuple[JoyConSide, ...] = ("left", "right")
     arm_only: bool = False
+    # Release the impedance task to the simulated servo's measured-position hold on pause.
+    release_arm_impedance_on_pause: bool = False
     input_timeout_s: float = Field(default=0.25, gt=0, allow_inf_nan=False)
     # Stop motion at input_timeout_s, but retain enable intent across a brief
     # transport gap. Fresh inputs are required before any motion resumes.

@@ -24,18 +24,23 @@ of the hardware run, so an app or a dataset tool cannot tell the two apart.
 import math
 from pathlib import Path
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.control.contract.limits import PD_INTERFACES
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.transport import ZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_CONTROL, Topic
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
     _camera_transports,
     _control_blueprint,
     _operator_blueprint,
+    _transports,
     _webxr_blueprint,
     _webxr_joystick_blueprint,
 )
 from dimos.robot.galaxea.r1pro.collection import r1pro_collection
 from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.head_cameras import HEAD_JPEG_QUALITY
+from dimos.robot.galaxea.r1pro.joylo import ARMS
 from dimos.robot.galaxea.r1pro.motion import motion_groups
 from dimos.robot.galaxea.r1pro.sim.cameras import (
     WRIST_JPEG_QUALITY,
@@ -52,9 +57,15 @@ from dimos.robot.galaxea.r1pro.sim.config import (
     TORSO_RATE,
     UPPER_JOINTS,
     UPPER_RATES,
+    joylo_impedance_task,
 )
-from dimos.robot.galaxea.r1pro.sim.connection import R1ProSimConnection
+from dimos.robot.galaxea.r1pro.sim.connection import (
+    R1ProSimConnection,
+    R1ProSimMotorConnection,
+    _R1ProSimConnection,
+)
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
+from dimos.robot.galaxea.r1pro.sim.joylo_input import JoyloSimInput
 from dimos.robot.galaxea.r1pro.sim.model import TORSO_LINK_LENGTHS
 from dimos.robot.galaxea.r1pro.sim.office import SCENE
 from dimos.robot.usd_manager import UsdManager
@@ -70,7 +81,12 @@ from dimos.sim2.sensors.tf import SimTfModule
 _declaration = R1ProConnectionConfig(model=CONTROL_MODEL)
 
 
-def _world_blueprint(scene: Path = SCENE) -> Blueprint:
+def _world_blueprint(
+    scene: Path = SCENE,
+    *,
+    connection: type[_R1ProSimConnection] = R1ProSimConnection,
+    declaration: R1ProConnectionConfig = _declaration,
+) -> MetaBlueprint:
     """The simulated robot behind the connection: scene, physics, encoders and servo."""
     return autoconnect(
         UsdManager.blueprint(
@@ -86,7 +102,7 @@ def _world_blueprint(scene: Path = SCENE) -> Blueprint:
         ),
         SimJointEncoderModule.blueprint(sensor=EncoderConfig(JOINTS, hz=250)),
         R1ProSimControl.blueprint(coordinator_torso=True),
-        R1ProSimConnection.blueprint(model=CONTROL_MODEL),
+        connection.blueprint(**declaration.model_dump()),
     ).remappings(
         [
             (SimJointEncoderModule, "joint_state", "encoder"),
@@ -147,7 +163,7 @@ def _depth_camera(camera: str, sensor: CameraConfig) -> Blueprint:
     )
 
 
-def _camera_blueprint() -> Blueprint:
+def _camera_blueprint() -> MetaBlueprint:
     """Each camera's own color, and its depth as R1SpatialSensors publishes it."""
     return autoconnect(
         *(_video_camera(stream, *camera) for stream, camera in _VIDEO_CAMERAS.items()),
@@ -168,14 +184,32 @@ def _camera_blueprint() -> Blueprint:
     ).transports(_camera_transports)
 
 
-def _robot_blueprint(scene: Path = SCENE) -> Blueprint:
+def _robot_blueprint(scene: Path = SCENE, *, impedance: bool = False) -> MetaBlueprint:
     """The simulated robot under JoyLo and the coordinator: no devices, cameras or recorder."""
+    task = joylo_impedance_task() if impedance else None
+    declaration = _declaration
+    connection: type[_R1ProSimConnection] = R1ProSimConnection
+    if task is not None:
+        declaration = _declaration.model_copy(
+            update={
+                "joint_commands": {
+                    **_declaration.joint_commands,
+                    **dict.fromkeys(ARMS, PD_INTERFACES),
+                },
+                "max_stiffness": task.params["stiffness"],
+                "max_damping": task.params["damping"],
+            }
+        )
+        connection = R1ProSimMotorConnection
     return _control_blueprint(
-        _world_blueprint(scene),
-        R1ProSimConnection,
-        _declaration,
+        _world_blueprint(scene, connection=connection, declaration=declaration),
+        connection,
+        declaration,
+        arm_impedance=task,
+        webxr=not impedance,
         joylo={
             "model": MODEL,
+            "release_arm_impedance_on_pause": impedance,
             "leader_angle_period": math.tau,
             "torso_link_lengths": TORSO_LINK_LENGTHS,
         },
@@ -204,3 +238,23 @@ r1pro_openarm_joylo_sim2 = autoconnect(
     _operator_blueprint(require_leaders=False),
     _webxr_blueprint(),
 ).global_config(viewer="none", transport="zenoh", n_workers=10)
+
+
+# Scripted leaders drive a simulated follower on a dedicated Zenoh domain.
+r1pro_joylo_impedance_sim2 = (
+    autoconnect(_robot_blueprint(SCENE, impedance=True), JoyloSimInput.blueprint())
+    .transports(
+        {
+            (name, kind): ZenohTransport.spec(
+                Topic(f"dimos-domains/r1pro-impedance-sim/{name}", kind, qos=QOS_CONTROL)
+            )
+            for name, kind in _transports
+        }
+    )
+    .global_config(
+        viewer="none",
+        transport="zenoh",
+        zenoh_domain="r1pro-impedance-sim",
+        serve_coordinator_rpc=False,
+    )
+)

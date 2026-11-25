@@ -23,11 +23,13 @@ frontend or a recorder meets one contract.
 import math
 from typing import Any
 
+from dimos_lcm.control_msgs import DynamicJointState
 import numpy as np
 
 from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.motion_limits import MotionGroup
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import ZenohTransport
@@ -39,7 +41,12 @@ from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_CONTROL, QOS_LATEST_WINS, Topic
 from dimos.robot.galaxea.r1pro.joylo import UPPER
-from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
+from dimos.robot.galaxea.r1pro.joylo_coordinator import (
+    JoyloInputs,
+    R1ProJoyloCoordinator,
+    R1ProJoyloMotorCoordinator,
+    joylo_tasks,
+)
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 from dimos.robot.galaxea.r1pro.teleop_coordinator import R1ProTeleopCoordinator, shared_teleop_tasks
@@ -56,6 +63,7 @@ _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
         ("robot_feedback", JointState),
         ("r1pro_position_command", JointState),
         ("r1pro_velocity_command", JointState),
+        ("r1pro_motor_command", DynamicJointState),
         ("left_gripper_command", Float32),
         ("right_gripper_command", Float32),
         ("cmd_vel", Twist),
@@ -85,7 +93,7 @@ def _operator_blueprint(
     *,
     require_leaders: bool = True,
     filter_cutoff_hz: float | None = None,
-) -> Blueprint:
+) -> MetaBlueprint:
     """The leader arms and Joy-Cons on the operator's machine.
 
     Args:
@@ -167,7 +175,7 @@ def _webxr_joystick_blueprint() -> Blueprint:
 
 
 def _control_blueprint(
-    connection: Blueprint,
+    connection: Blueprint | MetaBlueprint,
     connection_module: type[ModuleBase],
     declaration: ConnectionConfig,
     *,
@@ -175,7 +183,8 @@ def _control_blueprint(
     motion_limits: dict[str, MotionGroup],
     velocity_limits: dict[str, float],
     webxr: bool = True,
-) -> Blueprint:
+    arm_impedance: TaskConfig | None = None,
+) -> MetaBlueprint:
     """JoyLo and the one coordinator on a robot connection, hardware or simulated.
 
     Args:
@@ -186,10 +195,16 @@ def _control_blueprint(
         joylo: R1ProJoylo's settings.
         motion_limits: The coordinator's named speed groups.
         velocity_limits: Per-joint trajectory speeds, in rad/s.
+        arm_impedance: Optional arm task for the simulated motor-command connection.
         webxr: Add the headset tasks and the leader/headset handover; without it
             the coordinator takes the leaders only.
     """
-    coordinator = R1ProTeleopCoordinator if webxr else R1ProJoyloCoordinator
+    coordinator: type[JoyloInputs] = R1ProTeleopCoordinator if webxr else R1ProJoyloCoordinator
+    command_ports: tuple[str, ...] = ("position_command", "velocity_command")
+    if arm_impedance is not None:
+        if webxr:
+            raise ValueError("The impedance comparison requires leader input")
+        coordinator, command_ports = R1ProJoyloMotorCoordinator, ("motor_command",)
     return (
         autoconnect(
             connection,
@@ -202,20 +217,21 @@ def _control_blueprint(
                         model=declaration.model,
                         joint_commands=declaration.joint_commands,
                         deadman_timeout_s=declaration.deadman_timeout_s,
+                        max_stiffness=declaration.max_stiffness,
+                        max_damping=declaration.max_damping,
                     )
                 ],
                 motion_limits=motion_limits,
                 tasks=shared_teleop_tasks(velocity_limits, command_model=declaration.model)
                 if webxr
-                else joylo_tasks(velocity_limits),
+                else joylo_tasks(velocity_limits, arm_impedance=arm_impedance),
             ),
         )
         .remappings(
             [
                 (connection_module, "joint_state", "robot_feedback"),
                 (coordinator, "r1pro_joint_state", "robot_feedback"),
-                (connection_module, "position_command", "r1pro_position_command"),
-                (connection_module, "velocity_command", "r1pro_velocity_command"),
+                *((connection_module, port, f"r1pro_{port}") for port in command_ports),
                 (coordinator, "twist_command", "cmd_vel"),
                 (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
                 (coordinator, "joylo_twist_command", "joylo_cmd_vel"),

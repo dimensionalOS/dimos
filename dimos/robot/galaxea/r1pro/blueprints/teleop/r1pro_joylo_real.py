@@ -20,7 +20,7 @@ Starts paused. The existing vendor stack must be started and checked explicitly.
 
 import math
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import _wrist_cameras
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
     _camera_transports,
@@ -51,7 +51,7 @@ def make_joylo_real(
     arm_rate: float = 0.75,
     arm_ceiling: float = 1.0,
     tracking_speed: float = 1.0,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Compose hardware control with an explicit owner for odometry and wrist video.
 
     Args:
@@ -62,7 +62,7 @@ def make_joylo_real(
     declaration = _declaration.model_copy(
         update={"publish_odom_tf": publish_odom_tf, "tracking_speed": tracking_speed}
     )
-    connection = R1ProConnection.blueprint(**declaration.model_dump())
+    connection: Blueprint | MetaBlueprint = R1ProConnection.blueprint(**declaration.model_dump())
     if enable_wrist_color:
         # The connection no longer carries wrist video: each D405's colour comes
         # straight off V4L2 (640x480 JPEG at 30 fps), on the same stream names.

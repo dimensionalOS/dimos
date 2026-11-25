@@ -131,9 +131,8 @@ class MotionLimiter:
                         start = self._positions.get(joint, reading)
                         step = rate * max(0.0, dt)
                         limited = max(start - step, min(start + step, target))
-                        # After external deflection, slew must never enlarge the
-                        # spring error bounded by the impedance task.
-                        if abs(limited - reading) > abs(target - reading):
+                        # Re-anchor if the slew would reverse or amplify the requested spring.
+                        if not min(reading, target) <= limited <= max(reading, target):
                             limited, speed = reading, 0.0 if speed is not None else None
                         target = limited
                         active.add(joint)

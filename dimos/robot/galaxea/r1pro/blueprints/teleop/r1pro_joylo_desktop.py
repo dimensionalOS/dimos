@@ -22,7 +22,7 @@ The added opening links are invisible measurement frames, not physical bodies.
 """
 
 from dimos.constants import CACHE_DIR
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
@@ -105,7 +105,7 @@ def _external_camera() -> Blueprint:
     )
 
 
-def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
+def make_joylo_desktop(*, recording: bool = False) -> MetaBlueprint:
     """Hardware teleop: control and cameras on the robot, leaders and Joy-Cons here.
 
     Args:

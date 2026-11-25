@@ -18,6 +18,7 @@ Reference: recovered WIM d2594a1, robots/r1pro/r1pro.yaml and control/loop.cpp.
 This models its outer position controller, not the unidentified motor firmware.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -26,7 +27,13 @@ import pinocchio as pin
 from ruckig import InputParameter, OutputParameter, Result, Ruckig  # type: ignore[import-not-found]
 
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.galaxea.r1pro.sim.config import CONTROL_PERIOD_NS, UPPER_JOINTS, UPPER_RATES
+from dimos.robot.galaxea.r1pro.sim.config import (
+    CONTROL_PERIOD_NS,
+    KD,
+    KP,
+    UPPER_JOINTS,
+    UPPER_RATES,
+)
 
 
 def coupled_wrist_bounds(joint6: float, *, right: bool) -> tuple[float, float]:
@@ -84,6 +91,7 @@ class UpperBodyServo:
                 (group, Ruckig(count, CONTROL_PERIOD_NS / 1e9), inp, OutputParameter(count))
             )
         self.initialized = False
+        self._motor_joints: set[str] = set()
 
     def bound(self, positions: NDArray[np.float64]) -> NDArray[np.float64]:
         result = np.clip(positions, self.lower, self.upper)
@@ -142,6 +150,48 @@ class UpperBodyServo:
                 inp.current_velocity = velocities[group].tolist()
                 inp.current_acceleration = [0.0] * len(inp.current_position)
         return bounded, velocities
+
+    def motor_targets(
+        self,
+        target: NDArray[np.float64],
+        measured: NDArray[np.float64],
+        drive: Mapping[str, float],
+        dt: float,
+    ) -> tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+    ]:
+        """Return upper-body angle, speed, spring, damper and feedforward for a simulation tick.
+
+        target and measured contain the 18 joint angles in radians. drive is the latest
+        motor command in SI units. dt is elapsed simulation time in seconds.
+        """
+        motor_joints = {key.rsplit("/", 1)[0] for key in drive if not key.endswith("/position")}
+        released = self._motor_joints - motor_joints
+        for group, otg, params, _ in self.groups:
+            if released.intersection(UPPER_JOINTS[group]):
+                # Resume the position tracker at the arm's measured pose after a soft hold.
+                params.current_position = measured[group].tolist()
+                params.current_velocity = params.current_acceleration = [0.0] * len(
+                    UPPER_JOINTS[group]
+                )
+                otg.reset()
+        self._motor_joints = motor_joints
+        positions, speeds = self.step(target, measured, dt=dt)
+        kp, kd = np.array(KP[:18]), np.array(KD[:18])
+        feedforward = np.zeros(18)
+        for i, joint in enumerate(UPPER_JOINTS[4:], 4):
+            if joint in motor_joints:
+                positions[i] = target[i]
+                speeds[i] = drive.get(f"{joint}/velocity", 0.0)
+                kp[i] = drive.get(f"{joint}/stiffness", KP[i])
+                kd[i] = drive.get(f"{joint}/damping", KD[i])
+                feedforward[i] = drive.get(f"{joint}/effort", 0.0)
+        positions = self.bound(positions)
+        return positions, speeds, kp, kd, self.gravity(positions, measured) + feedforward
 
     def gravity(
         self, commanded: NDArray[np.float64], measured: NDArray[np.float64]

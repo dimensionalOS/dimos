@@ -16,12 +16,14 @@
 
 from pathlib import Path
 
+from dimos.control.coordinator import TaskConfig
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_BODY_AXES,
     R1PRO_PLANAR_BASE,
 )
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.joylo import ARMS
 from dimos.robot.galaxea.r1pro.sim.model import (
     FINGER_JOINTS,
     MODEL_PATH,
@@ -77,3 +79,20 @@ CONTROL_MODEL = CONTROL_MODEL.with_added_joints(
 )
 # Prepared explicitly with python -m dimos.robot.galaxea.r1pro.sim.prepare_usd.
 SCENE = Path.home() / ".cache/dimos/r1pro-joylo/scene.usda"
+
+
+def joylo_impedance_task() -> TaskConfig:
+    """Simulation trial with a softer arm spring and a 2 Nm spring torque cap."""
+    return TaskConfig(
+        name="leader_impedance",
+        type="joint_impedance",
+        joint_names=list(ARMS),
+        priority=10,
+        stream_bind={"joint_command": "leader_joint_command"},
+        params={
+            "stiffness": dict.fromkeys(ARMS, 45.0),
+            "damping": dict.fromkeys(ARMS, 6.0),
+            "max_torque": dict.fromkeys(ARMS, 2.0),
+            "velocity_limits": dict.fromkeys(ARMS, ARM_RATE),
+        },
+    )

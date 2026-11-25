@@ -24,9 +24,10 @@ import time
 from typing import Any
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import ActionCommand, JointCommand
+from dimos_lcm.control_msgs import ActionCommand, DynamicJointState, JointCommand
 import numpy as np
 
+from dimos.control.contract.convert import dynamic_joint_state_to_values
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
@@ -89,6 +90,7 @@ class R1ProSimControl(Module):
     cmd_vel: In[Twist]
     torso_height_command: In[Float32]
     upper_command: In[JointState]
+    upper_motor_command: In[DynamicJointState]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
     actions: Out[ActionCommand]
@@ -109,6 +111,8 @@ class R1ProSimControl(Module):
         self._ramped_targets = self._targets.copy()
         self._target_rates = np.array(UPPER_RATES + (FINGER_SPEED_M_S,) * 4)
         self._limits: dict[str, tuple[float, float]] = {}
+        self._arm_drive: dict[str, float] = {}
+        self._drive_deadline = 0.0
         self._servo: UpperBodyServo | None = None
         self._height_config = JoyloConfig(torso_link_lengths=TORSO_LINK_LENGTHS)
         self._wheel_positions: list[tuple[float, float]] = []
@@ -146,7 +150,7 @@ class R1ProSimControl(Module):
         if not np.isfinite((*values, duration)).all() or not 0 < duration <= 10:
             raise ValueError("finite velocity and duration in (0, 10] seconds required")
         with self._lock:
-            self._velocity = np.clip(values, [-0.4, -0.4, -0.5], [0.4, 0.4, 0.5])
+            self._velocity[:] = np.clip(values, [-0.4, -0.4, -0.5], [0.4, 0.4, 0.5])
             self._until = time.monotonic() + duration
 
     @rpc
@@ -198,20 +202,29 @@ class R1ProSimControl(Module):
         self._set_gripper("right", command.data)
 
     async def handle_upper_command(self, command: JointState) -> None:
-        if len(command.name) != len(command.position):
-            raise ValueError("joint names and positions must match")
         with self._lock:
-            for name, position in zip(command.name, command.position, strict=True):
-                if (
-                    name not in self._limits
-                    or not self._limits[name][0] <= position <= self._limits[name][1]
-                ):
-                    raise ValueError("upper-body joint target outside model limits")
-            for name, position in zip(command.name, command.position, strict=True):
-                # The arm coordinator also emits passive torso holds. The demo
-                # keeps torso ownership here so re-clutching cannot accumulate sag.
-                if name in self.config.upper_command_joints and name not in FINGER_JOINTS:
-                    self._targets[SERVO_JOINTS.index(name)] = position
+            self._set_upper_positions(dict(zip(command.name, command.position, strict=True)))
+
+    def _set_upper_positions(self, positions: dict[str, float]) -> None:
+        for name, position in positions.items():
+            if (
+                name not in self._limits
+                or not self._limits[name][0] <= position <= self._limits[name][1]
+            ):
+                raise ValueError("upper-body joint target outside model limits")
+        for name, position in positions.items():
+            if name in self.config.upper_command_joints and name not in FINGER_JOINTS:
+                self._targets[SERVO_JOINTS.index(name)] = position
+
+    async def handle_upper_motor_command(self, command: DynamicJointState) -> None:
+        values = dynamic_joint_state_to_values(command)
+        if not all(map(math.isfinite, values.values())):
+            raise ValueError("Upper-body motor command must be finite")
+        positions = {n: values[f"{n}/position"] for n in UPPER_JOINTS if f"{n}/position" in values}
+        with self._lock:
+            self._set_upper_positions(positions)
+            self._arm_drive = values
+            self._drive_deadline = time.monotonic() + COMMAND_TTL_NS * 1e-9
 
     def compute(self, sample: JointState) -> ActionCommand | None:
         period = CONTROL_PERIOD_NS
@@ -249,8 +262,12 @@ class R1ProSimControl(Module):
             self._ramped_velocity += np.clip(desired - self._ramped_velocity, -0.4 * dt, 0.4 * dt)
             assert self._servo is not None
             measured_upper = np.array([measured[name] for name in UPPER_JOINTS])
-            upper_positions, upper_velocity = self._servo.step(
-                self._targets[:18], measured_upper, dt=dt
+            if self._arm_drive and time.monotonic() >= self._drive_deadline:
+                self._targets[4:18] = measured_upper[4:]
+                self._arm_drive.clear()
+                self._servo.initialized = False
+            upper_positions, upper_velocity, kp, kd, effort = self._servo.motor_targets(
+                self._targets[:18], measured_upper, self._arm_drive, dt
             )
             self._ramped_targets[:18] = upper_positions
             self._ramped_targets[18:] += np.clip(
@@ -258,7 +275,6 @@ class R1ProSimControl(Module):
                 -self._target_rates[18:] * dt,
                 self._target_rates[18:] * dt,
             )
-            gravity = self._servo.gravity(upper_positions, measured_upper)
             steering, wheels = [], []
             for name, (x, y) in zip(STEER_JOINTS, self._wheel_positions, strict=True):
                 target, velocity = steer_targets(
@@ -279,9 +295,9 @@ class R1ProSimControl(Module):
             rows = [
                 ("position", positions),
                 ("velocity", velocities),
-                ("kp", KP),
-                ("kd", KD),
-                ("effort", [*gravity, *([0.0] * (len(JOINTS) - 18))]),
+                ("kp", [*kp, *KP[18:]]),
+                ("kd", [*kd, *KD[18:]]),
+                ("effort", [*effort, *([0.0] * (len(JOINTS) - 18))]),
             ]
             action = ActionCommand(
                 header=SampleHeader(

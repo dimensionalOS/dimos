@@ -35,6 +35,7 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.galaxea.r1pro.headset_gamepad import joycon_readings
 from dimos.robot.galaxea.r1pro.joylo import (
+    ARMS,
     BASE_FRAME,
     JAWS,
     TORSO,
@@ -475,6 +476,15 @@ class R1ProJoylo(Module):
                     ],
                 )
                 self._logged_pause_count = c.pause_count
+            release_arms = self.config.release_arm_impedance_on_pause and (
+                c is None or not c.active
+            )
+            if release_arms:
+                self.leader_joint_command.publish(
+                    JointState(
+                        name=list(ARMS), velocity=[0.0] * len(ARMS), frame_id=GUARDED_JOINT_FRAME_ID
+                    )
+                )
             if output is None:
                 self.cmd_vel.publish(Twist.zero())
                 if c is not None and c.arm_source == "hands":
@@ -483,6 +493,7 @@ class R1ProJoylo(Module):
             positions = output.positions
             if output.hands is not None:
                 self._publish_hands(output.hands)
+            if release_arms or output.hands is not None:
                 positions = {name: value for name, value in positions.items() if name in TORSO}
             self.leader_joint_command.publish(
                 JointState(

@@ -17,6 +17,8 @@
 from dataclasses import replace
 from typing import ClassVar
 
+from dimos_lcm.control_msgs import DynamicJointState
+
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.stream import In, Out
@@ -24,29 +26,42 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES
-from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER
+from dimos.robot.galaxea.r1pro.joylo import JAWS, TORSO, UPPER
 
 
-class R1ProJoyloCoordinator(ControlCoordinator):
+class JoyloInputs(ControlCoordinator):
     dedicated_worker: ClassVar[bool] = True
     joylo_twist_command: In[Twist]
     leader_joint_command: In[JointState]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
-    r1pro_position_command: Out[JointState]
-    r1pro_velocity_command: Out[JointState]
     r1pro_joint_state: In[JointState]
 
 
-def joylo_tasks(velocity_limits: dict[str, float] | None = None) -> list[TaskConfig]:
-    # One canonical trajectory owner: the profile composes the arms and torso.
+class R1ProJoyloCoordinator(JoyloInputs):
+    r1pro_position_command: Out[JointState]
+    r1pro_velocity_command: Out[JointState]
+
+
+class R1ProJoyloMotorCoordinator(JoyloInputs):
+    r1pro_motor_command: Out[DynamicJointState]
+
+
+def joylo_tasks(
+    velocity_limits: dict[str, float] | None = None, *, arm_impedance: TaskConfig | None = None
+) -> list[TaskConfig]:
+    """Assign leader arm targets to the selected follower and torso targets to trajectory control."""
+    trajectory_joints = UPPER if arm_impedance is None else TORSO
+    rates = velocity_limits or dict.fromkeys(UPPER, 0.3)
     return [
         replace(
             joint_trajectory_task(
-                UPPER, velocity_limits=velocity_limits or dict.fromkeys(UPPER, 0.3)
+                trajectory_joints,
+                velocity_limits={joint: rates[joint] for joint in trajectory_joints},
             ),
             stream_bind={"joint_command": "leader_joint_command"},
         ),
+        *([arm_impedance] if arm_impedance else []),
         TaskConfig(
             name="vel_chassis",
             type="twist_velocity",
