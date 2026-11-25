@@ -24,7 +24,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.usd_utils.from_urdf import OUT_OF_PLANE, PASSTHROUGH_KEY
-from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, frame_path, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -114,17 +114,13 @@ def _usd_links_of(pxr: Pxr, stage: Stage) -> dict[str, Any]:
     for prim in stage.Traverse():
         if not prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
             continue
-        link_name = prim.GetDisplayName() or prim.GetName()
-        if link_name in links:
-            logger.warning(f"two prims claim the link name {link_name!r}; keeping the first")
-            continue
-        links[link_name] = prim
+        links[frame_path(prim)] = prim
     return links
 
 
 def _world_body(stage: Stage) -> str | None:
     root = stage.GetDefaultPrim()
-    return str(root.GetDisplayName() or root.GetName()) if root else None
+    return frame_path(root) if root else None
 
 
 def _static_bodies_of(
@@ -136,8 +132,8 @@ def _static_bodies_of(
         return {}
     found: dict[str, Any] = {}
     for prim in stage.Traverse():
-        name = prim.GetDisplayName() or prim.GetName()
-        if name in wanted and name not in found:
+        name = frame_path(prim)
+        if name in wanted:
             found[name] = prim
     return found
 
@@ -284,7 +280,7 @@ def _body_name(prim: Prim, relationship: str) -> str | None:
     if not body:
         logger.warning(f"{prim.GetPath()} {relationship} points at {targets[0]}, which is absent")
         return None
-    return str(body.GetDisplayName() or body.GetName())
+    return frame_path(body)
 
 
 def _limits_of(prim: Prim, kind: str) -> tuple[float | None, float | None]:
@@ -563,8 +559,8 @@ def _welds_of(
             continue
         xyz, rotation, _ = _decompose(pxr, _pose_in(pxr, prim, ancestor))
         rpy = _rpy_of(rotation)
-        parent = str(ancestor.GetDisplayName() or ancestor.GetName())
-        joint_name = _unused_name(f"{name}_weld", taken)
+        parent = frame_path(ancestor)
+        joint_name = _unused_name(f"{prim.GetName()}_weld", taken)
         kind = "fixed"
         logger.debug(f"{name} is nested with no joint prim; reading it as welded to {parent}")
         welds.append(

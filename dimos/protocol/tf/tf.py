@@ -28,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection
+    from collections.abc import Callable, Collection, Iterable
 
 logger = setup_logger()
 
@@ -356,11 +356,7 @@ class TF(MultiTBuffer):
 
     def publish(self, *transforms: Transform) -> None:
         if self._edges is not None:
-            for t in transforms:
-                if (t.frame_id, t.child_frame_id) not in self._edges:
-                    raise ValueError(
-                        f"{self._module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
-                    )
+            refuse_undeclared_edges(self._edges, self._module_name, transforms)
         self.receive_transform(*transforms)
         if self._stream is not None:
             self._stream.publish(TFMessage(*transforms))
@@ -369,6 +365,17 @@ class TF(MultiTBuffer):
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+
+
+def refuse_undeclared_edges(
+    edges: "Collection[tuple[str, str]]", module_name: str, transforms: "Iterable[Transform]"
+) -> None:
+    """Raise if any transform's (parent, child) is not in *edges*."""
+    for t in transforms:
+        if (t.frame_id, t.child_frame_id) not in edges:
+            raise ValueError(
+                f"{module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
+            )
 
 
 if TYPE_CHECKING:

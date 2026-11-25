@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
-from dimos.mapping.relocalization.module import PremapModule, map_names, resolve_map
-from dimos.mapping.relocalization.named_locations import load_locations
+from dimos.mapping.relocalization.module import PremapModule
+from dimos.mapping.relocalization.utils import load_locations, map_names, resolve_map
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -332,7 +332,7 @@ def test_a_premap_without_named_locations_starts_without_warning(make, tmp_path,
         store.stream("map_v1_cloud", PointCloud2).append(
             PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=0.0), ts=0.0
         )
-    warning = mocker.patch("dimos.mapping.relocalization.named_locations.logger.warning")
+    warning = mocker.patch("dimos.mapping.relocalization.utils.logger.warning")
     info = mocker.patch("dimos.mapping.relocalization.module.logger.info")
     module, published = make(map_file=str(path))
 

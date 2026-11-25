@@ -15,13 +15,13 @@
 """Shared-memory buffers for sim-manipulator IPC.
 
 Layout for exchanging joint state and commands between ``MujocoSimModule``
-(which owns the physics engine) and ``ShmMujocoAdapter`` (which plugs into
-ControlCoordinator). Modeled after ``dimos.simulation.mujoco.shared_memory``
+(which owns the physics engine) and ``MujocoArmConnection`` (the arm's
+connection module). Modeled after ``dimos.simulation.mujoco.shared_memory``
 (the Go2 SHM pattern).
 
 Names are deterministic: both sides derive them from the resolved MJCF path,
 so no name exchange over RPC is needed. The sim module creates the buffers
-and signals ``ready``; the adapter attaches to them by name.
+and signals ``ready``; the connection attaches to them by name.
 """
 
 from __future__ import annotations
@@ -125,7 +125,7 @@ _NAME_PREFIX = "dmjm"
 def shm_key_from_path(config_path: Path | str) -> str:
     """Derive a deterministic short key from an MJCF path.
 
-    Both sim module and adapter compute the same key from the same path,
+    Both sim module and connection compute the same key from the same path,
     so SHM buffer names can be agreed upon without an RPC round-trip.
     """
     resolved = str(Path(config_path).expanduser().resolve())
@@ -153,7 +153,7 @@ def _unregister(shm: SharedMemory) -> SharedMemory:
 
 @dataclass(frozen=True)
 class ManipShmSet:
-    """Frozen set of named SharedMemory buffers for sim <-> adapter IPC.
+    """Frozen set of named SharedMemory buffers for sim <-> connection IPC.
 
     Despite the name (kept for backward compat with existing manipulator
     consumers), the layout now also covers whole-body needs: IMU, per-joint
@@ -380,9 +380,9 @@ class ManipShmWriter:
 
 
 class ManipShmReader:
-    """Adapter-side handle: reads joint state, writes command targets.
+    """Connection-side handle: reads joint state, writes command targets.
 
-    Owned by ``ShmMujocoAdapter``. Attaches to existing buffers created by
+    Owned by ``MujocoArmConnection``. Attaches to existing buffers created by
     the sim module; does not unlink them on cleanup.
     """
 
