@@ -14,19 +14,16 @@
 
 """The scene a simulated world is built on: the one unmounted HardwareModule, with a frame per robot spot."""
 
-import asyncio
 from collections.abc import AsyncIterator
 from functools import cached_property
 
 from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.sim2.sensor import SimSensor
-from dimos.sim2.sim import until_it_stops
 
 
 class SimSceneConfig(HardwareModuleConfig):
-    # Static frames have no reading to ride on, so they go out at this rate of sim time.
-    tf_rate_hz: float = 10.0
+    """A scene's mounts have no reading to ride on: they go out on tf at static_tf_rate_hz of sim time."""
 
 
 class SimScene(SimSensor):
@@ -36,31 +33,12 @@ class SimScene(SimSensor):
 
     async def main(self) -> AsyncIterator[None]:
         self._world = self.mirror_world()
-        self._publishing = asyncio.create_task(until_it_stops("scene tf", self._publish()))
         yield
-        self._publishing.cancel()
-
-    async def _publish(self) -> None:
-        async for stamp in self._world.ticks(self.config.tf_rate_hz):
-            self.tfbuffer.publish(*self.mount_transforms(ts=stamp))
-
-    def mount_transforms(self, ts: float | None = None) -> list[Transform]:
-        """The edges from the room's root to each mount: a real room publishes no furniture, and the world USD places it."""
-        return [
-            Transform(
-                translation=edge.translation,
-                rotation=edge.rotation,
-                frame_id=edge.frame_id,
-                child_frame_id=edge.child_frame_id,
-                ts=ts,
-            )
-            for edge in self._mount_edges
-        ]
 
     @cached_property
-    def _mount_edges(self) -> list[Transform]:
-        # A room does not move: its edges are worked out once and only restamped, as working them out holds the GIL for every joint it has.
-        transforms = self.usd_transforms()
+    def _static_edges(self) -> list[Transform]:
+        """The edges from the room's root to each mount: a real room publishes no furniture, and the world USD places it."""
+        transforms = super()._static_edges
         parent_of = {t.child_frame_id: t.frame_id for t in transforms}
         needed: set[str] = set()
         for mount in self.mounts:

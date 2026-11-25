@@ -30,6 +30,8 @@ from dimos.sim2.world_observations import WorldMirror
 class SimSensor(HardwareModule):
     world: SimulatedWorldSpec
     world_observations: In[WorldObservations]
+    # The world as this sensor sees it, mirrored by its main().
+    _world: WorldMirror
 
     @rpc
     def start(self) -> None:
@@ -41,6 +43,14 @@ class SimSensor(HardwareModule):
     def frame_id(self) -> str:
         """The sensor's frame: its USD's root link, under its namespace."""
         return self.usd_frame(self.config.usd.root_link)
+
+    def time(self) -> float:
+        """The world's sim time, which a simulated sensor stamps with."""
+        return self._world.stamp()
+
+    async def sleep(self, seconds: float) -> None:
+        """Wait ``seconds`` of the world's sim time."""
+        await self._world.reached(self.time() + seconds)
 
     def mirror_world(self) -> WorldMirror:
         world = WorldMirror()
