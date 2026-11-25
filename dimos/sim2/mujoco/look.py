@@ -203,11 +203,13 @@ def _tetrahedral(lut: NDArray[np.float32], point: NDArray[np.float32]) -> NDArra
     """`lut` (N, N, N, 3) at `point` (..., 3) in [0, 1], interpolated tetrahedrally as OCIO does."""
     size = lut.shape[0]
     flat = lut.reshape(-1, 3)
-    scaled = np.clip(point, 0.0, 1.0) * (size - 1)
+    scaled = np.clip(point.reshape(-1, 3), 0.0, 1.0) * np.float32(size - 1)
     base = np.minimum(scaled.astype(np.int32), size - 2)
-    red, green, blue = (scaled - base).transpose(-1, *range(point.ndim - 1))
-    corner = (base[..., 0] * size + base[..., 1]) * size + base[..., 2]
+    fraction = scaled - base.astype(np.float32)
+    red, green, blue = fraction[:, 0], fraction[:, 1], fraction[:, 2]
+    corner = (base[:, 0] * size + base[:, 1]) * size + base[:, 2]
     step_red, step_green, step_blue = size * size, size, 1
+    across = step_red + step_green + step_blue
     # The cell's low corner to its high one, stepping first along the axis with the largest fraction, last the smallest.
     first = np.where(
         (red >= green) & (red >= blue), step_red, np.where(green >= blue, step_green, step_blue)
@@ -215,16 +217,14 @@ def _tetrahedral(lut: NDArray[np.float32], point: NDArray[np.float32]) -> NDArra
     last = np.where(
         (blue <= red) & (blue <= green), step_blue, np.where(green <= red, step_green, step_red)
     )
-    middle = step_red + step_green + step_blue - first - last
     high = np.maximum(np.maximum(red, green), blue)
     low = np.minimum(np.minimum(red, green), blue)
     mid = red + green + blue - high - low
-    return (
-        flat[corner] * (1.0 - high)[..., None]
-        + flat[corner + first] * (high - mid)[..., None]
-        + flat[corner + first + middle] * (mid - low)[..., None]
-        + flat[corner + step_red + step_green + step_blue] * low[..., None]
-    )
+    result = np.take(flat, corner, axis=0) * (1.0 - high)[:, None]
+    result += np.take(flat, corner + first, axis=0) * (high - mid)[:, None]
+    result += np.take(flat, corner + across - last, axis=0) * (mid - low)[:, None]
+    result += np.take(flat, corner + across, axis=0) * low[:, None]
+    return result.reshape(point.shape)
 
 
 def agx(color: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -234,9 +234,18 @@ def agx(color: NDArray[np.float32]) -> NDArray[np.float32]:
     egamut = color @ to_egamut.T
     stops = np.log2(np.maximum(egamut, np.float32(2.0) ** low))
     encoded = _tetrahedral(lut, (stops - low) / (high - low))
-    light = np.clip(encoded, 0.0, 1.0) ** np.float32(2.4)
-    # The sRGB transfer curve as IEC 61966-2-1 defines it.
-    return np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
+    # Rec.1886 to sRGB is one curve per channel, so it is looked up at 16 bits rather than computed per pixel.
+    steps = _rec1886_to_srgb()
+    index = np.rint(np.clip(encoded, 0.0, 1.0) * np.float32(steps.size - 1)).astype(np.int32)
+    return steps[index]
+
+
+@functools.cache
+def _rec1886_to_srgb() -> NDArray[np.float32]:
+    """Rec.1886's 2.4 power decoded and the sRGB transfer curve (IEC 61966-2-1) encoded, at every 16-bit code value."""
+    light = np.linspace(0.0, 1.0, np.iinfo(np.uint16).max + 1, dtype=np.float64) ** 2.4
+    encoded = np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
+    return encoded.astype(np.float32)
 
 
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:
