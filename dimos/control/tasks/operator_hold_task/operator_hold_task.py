@@ -369,7 +369,7 @@ class OperatorHoldTaskParams(BaseConfig):
     status_interval: float = Field(default=1.0, gt=0.0, allow_inf_nan=False)
 
 
-def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
+def create_task(cfg: Any) -> OperatorHoldTask:
     if cfg.name != OPERATOR_HOLD_TASK_NAME:
         raise ValueError(
             f"operator hold task must be named {OPERATOR_HOLD_TASK_NAME!r}, got {cfg.name!r}"

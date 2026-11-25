@@ -22,13 +22,16 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control._control_test_helpers import fake_arm_model
+from dimos.control.components import make_joints
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
-from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import BaseControlTask, CoordinatorState, ResourceClaim
 from dimos.control.tick_loop import TickLoop
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 
@@ -60,23 +63,30 @@ class _PoseTask(BaseControlTask):
 def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate(
     mocker: MockerFixture,
 ) -> None:
-    adapter = MagicMock(spec=ManipulatorAdapter)
-    adapter.read_joint_positions.return_value = [0.25, 0.5]
-    adapter.read_joint_velocities.return_value = [0.0, 0.0]
-    adapter.read_joint_efforts.return_value = [0.0, 0.0]
-    component = HardwareComponent(
-        hardware_id="arm", hardware_type=HardwareType.MANIPULATOR, joints=JOINTS
+    arm = ConnectionSource(
+        ConnectionConfig(
+            source="arm",
+            model=fake_arm_model(("joint1", "joint2")),
+            joint_commands={"joint1": (Interface.POSITION,), "joint2": (Interface.POSITION,)},
+        ),
+        commands=["position_command"],
+        readings=["joint_state"],
+        reading_timeout_s=1.0,
+    )
+    arm.on_message(
+        "joint_state",
+        JointState(name=JOINTS, position=[0.25, 0.5], velocity=[0.0, 0.0], effort=[0.0, 0.0]),
     )
     joint_states = MagicMock()
     published: list[TFMessage] = []
     loop = TickLoop(
         tick_rate=100.0,
-        hardware={"arm": ConnectedHardware(adapter, component)},
         hardware_lock=threading.Lock(),
         tasks={"ik": _PoseTask()},
         task_lock=threading.Lock(),
-        joint_to_hardware={},
+        joint_to_hardware=dict.fromkeys(JOINTS, "arm"),
         publish_callback=joint_states,
+        connections={"arm": arm},
         publish_tf_callback=published.append,
     )
     clock = mocker.patch("dimos.control.tick_loop.time.perf_counter")

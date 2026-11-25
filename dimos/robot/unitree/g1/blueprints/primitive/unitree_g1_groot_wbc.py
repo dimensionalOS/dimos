@@ -141,7 +141,6 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 
 class _G1GrootCoordinator(TeleopControlCoordinator):
-    g1_joints: Out[JointState]
     g1_position_command: Out[JointState]
     g1_joint_state: In[JointState]
     g1_imu: In[Imu]
@@ -503,7 +502,6 @@ def _viewer() -> Any:
 
 _coordinator = _G1GrootCoordinator.blueprint(
     instance_name="ControlCoordinator",
-    publish_robot_joint_states=True,
     tick_rate=_tick_rate,
     connections=[
         JointConnectionConfig(
@@ -551,7 +549,6 @@ _coordinator = _G1GrootCoordinator.blueprint(
 ).transports(
     {
         ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-        ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         ("joint_state", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
         ("imu", Imu): LCMTransport("/g1/imu", Imu),

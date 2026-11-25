@@ -319,7 +319,7 @@ def test_a_velocity_arm_rejects_position_commands_without_switching_modes(
     ]
     assert jogs[0][2] == {"is_radian": True, "duration": 2 * DEADMAN_S}
     # A single joint winner must not generate position holds for its peers.
-    from dimos.hardware.manipulators.spec import ControlMode
+    from dimos.control.task import ControlMode
 
     source = ConnectionSource(
         r.module.config, ["position_command", "velocity_command"], ["joint_state"], 1.0

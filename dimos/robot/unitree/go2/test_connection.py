@@ -438,7 +438,7 @@ def test_body_command_and_pose_derived_feedback(connection):
 
 
 def test_canonical_lifecycle_deadman_and_post_stop_no_replay(monkeypatch):
-    from dimos.control.test_coordinator_connections import LocalTransport
+    from dimos.control._control_test_helpers import LocalTransport
 
     backend = MagicMock()
     backend.odom_stream.return_value = Subject()

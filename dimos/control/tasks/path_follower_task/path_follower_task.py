@@ -627,7 +627,7 @@ class PathFollowerTaskParams(BaseConfig):
     forward_only: bool = False
 
 
-def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
+def create_task(cfg: Any) -> PathFollowerTask:
     params = PathFollowerTaskParams.model_validate(cfg.params)
     return PathFollowerTask(
         cfg.name,

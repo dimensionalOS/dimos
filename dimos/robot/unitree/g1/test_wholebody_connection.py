@@ -23,13 +23,13 @@ import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.keys import Interface
-from dimos.hardware.manipulators.spec import ControlMode
-from dimos.hardware.whole_body.spec import POS_STOP
+from dimos.control.task import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
 from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
+    POS_STOP,
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
@@ -182,7 +182,7 @@ def test_canonical_source_routes_model_order_and_keeps_limits(connection):
 
 
 def test_canonical_port_deadman_damping_and_final_firmware_stop(connection, monkeypatch):
-    from dimos.control.test_coordinator_connections import LocalTransport
+    from dimos.control._control_test_helpers import LocalTransport
 
     publisher = _wire(connection, soft_start_seconds=0.0)
     connection.config.deadman_timeout_s = 0.03
