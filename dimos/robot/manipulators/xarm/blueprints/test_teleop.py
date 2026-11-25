@@ -138,6 +138,10 @@ def _under_simulation(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> di
     monkeypatch.setattr(basic, "SIMULATED", True)
     monkeypatch.setattr(xarm_config, "XARM6_SIM_PATH", "xarm6/scene.xml")
     monkeypatch.setattr(xarm_config, "XARM7_SIM_PATH", "xarm7/scene.xml")
+    # teleop builds its connections with the imported basic, which already holds the LfsPaths.
+    monkeypatch.setattr(
+        basic, "XARM_SIM_SCENES", {"xarm6": "xarm6/scene.xml", "xarm7": "xarm7/scene.xml"}
+    )
     assert module.__file__ is not None
     return runpy.run_path(module.__file__)
 
