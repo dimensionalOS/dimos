@@ -109,32 +109,26 @@ def test_the_agx_lut_is_fetched_from_git_lfs_when_the_clone_has_its_pointer(
     assert pulled == [[look._AGX]]
 
 
-@pytest.mark.skipif(
-    not (shutil.which("git-lfs") and shutil.which("jq")), reason="needs git-lfs and jq"
-)
+@pytest.mark.skipif(not shutil.which("jq"), reason="the guard reads git-lfs's listing with jq")
 def test_hosted_cis_git_lfs_guard_lets_the_agx_lut_through(tmp_path: Path) -> None:
     from dimos.sim2.mujoco import look
     from dimos.utils.data import get_project_root
 
     root = get_project_root()
     lut = str(look._AGX.relative_to(root))
-    # The real git-lfs behind the guard, but as a clone with nothing downloaded sees it, and recording a pull rather than fetching.
+    pointer = subprocess.run(
+        ["git", "show", f"HEAD:{lut}"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
+    size = int(next(line.split()[1] for line in pointer.splitlines() if line.startswith("size ")))
+    listing = json.dumps({"files": [{"name": lut, "size": size, "downloaded": False}]})
+    # The real git-lfs behind the guard, as a clone with nothing downloaded lists the LUT, recording a pull rather than fetching; it calls no git-lfs, since on CI that is the guard, which would call this again.
     real = tmp_path / "git-lfs.orig"
     real.write_text(
         "#!/bin/bash\n"
         f'if [ "$1" = pull ]; then echo "$@" > {tmp_path}/pulled; exit 0; fi\n'
-        f"{shutil.which('git-lfs')} \"$@\" | jq '.files[].downloaded = false'\n"
+        f"echo '{listing}'\n"
     )
     real.chmod(0o755)
-    size = json.loads(
-        subprocess.run(
-            ["git-lfs", "ls-files", "--json", "--size", "--include", lut],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    )["files"][0]["size"]
 
     def pull(limit: int) -> subprocess.CompletedProcess[str]:
         guard = root / "bin" / "git-lfs-guard"
