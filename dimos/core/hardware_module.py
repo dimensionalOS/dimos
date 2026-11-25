@@ -81,6 +81,7 @@ class HardwareModuleConfig(TfModuleConfig):
     mount: str | None = None
 
 
+# needed for sims to detect hardware modules on hosted systems
 class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     def mounted_on(self) -> str | None: ...
