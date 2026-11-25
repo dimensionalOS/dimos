@@ -44,6 +44,7 @@ from dimos.robot.manipulators.openyam.trimode_tracker import (
     PositionGoal,
     Vector,
     bounded,
+    measured_bounded,
     tcp_pose,
 )
 from dimos.teleop.webxr.controller_types import Buttons
@@ -55,7 +56,7 @@ QUEST_FRAME = "trimode_right_monotonic_deadline"
 # Private to TrimodeQuest's Buttons stream; reserved bit, not a digital button.
 QUEST_FRESH = 1 << 15
 SETTLE_TIMEOUT = 2.0
-SETTLE_POSITION = 0.03  # rad
+SETTLE_POSITION = 0.10  # rad
 SETTLE_VELOCITY = 0.08  # rad/s
 
 
@@ -236,7 +237,7 @@ class PlannedReference(JointTrajectoryTask):
         return (
             reading is not None
             and 0 <= time.monotonic() - reading.at < REFERENCE_TIMEOUT
-            and bounded(reading.q, self._bounds)
+            and measured_bounded(reading.q, self._bounds)
             and len(reading.dq) == len(JOINTS)
             and all(math.isfinite(v) for v in reading.dq)
         )
@@ -341,7 +342,7 @@ class PlannedReference(JointTrajectoryTask):
             return None
         now = time.monotonic()
         return GroupCommandOutput(
-            JOINT, JointGoal(session, now, now + min(remaining, REFERENCE_TIMEOUT), ref, terminal)
+            JOINT, JointGoal(session, now, now + REFERENCE_TIMEOUT, ref, terminal)
         )
 
     def get_progress(self, t_now: float) -> float:

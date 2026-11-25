@@ -656,4 +656,8 @@ def _create_scene(
     scene = roboplan_core.Scene(name, description)
     scene.importSrdf(srdf)
     scene.importJointLimitsFromConfig(roboplan_core.loadJointLimitsConfig(joint_limits))
+    # Partial configurations inherit omitted joints from the scene. Native neutral
+    # can be outside their limits (e.g. an unplanned prismatic gripper at zero).
+    # Seed the scene once; never clamp incoming feedback or planning targets.
+    scene.setJointPositions(scene.clampToValidConfiguration(scene.getCurrentJointPositions()))
     return scene

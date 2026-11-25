@@ -209,6 +209,52 @@ def scalar_world(tmp_path, roboplan_types):
     return world
 
 
+@pytest.mark.parametrize("selected", [False, True], ids=["full", "selected"])
+def test_real_rrt_tolerates_only_bounded_measured_start_overshoot(tmp_path, roboplan_types, selected):
+    model_path = tmp_path / "stop.urdf"
+    model_path.write_text("""
+        <robot name="stop">
+          <link name="base"/><link name="arm"/>
+          <joint name="joint2" type="revolute">
+            <parent link="base"/><child link="arm"/><axis xyz="0 0 1"/>
+            <limit lower="0" upper="2" effort="1" velocity="1" acceleration="2"/>
+          </joint>
+        </robot>
+    """)
+    config = RobotModelConfig(
+        model=RobotModel.from_file(model_path),
+        joint_names=["joint2"],
+        base_link="base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="arm", joint_names=("joint2",), base_link="base", tip_link="arm"
+            )
+        ],
+    )
+    world = roboplan_types[0]()
+    world.load_model(prepare_robot_model(config))
+    world.finalize()
+    planner = roboplan_types[1](world, RoboPlanPlannerConfig())
+    selection = world._planning_groups.select(("arm",))
+
+    def state(q: float) -> JointState:
+        return JointState(name=["joint2"], position=[q])
+
+    def plan(start: JointState, goal: JointState):
+        if selected:
+            return planner.plan_selected_joint_path(world, selection, start, goal, timeout=1.0)
+        return planner.plan_joint_path(world, start, goal, timeout=1.0)
+
+    measured = state(-0.05)
+    world.sync_from_joint_state(measured)
+    result = plan(measured, state(0.1))
+    assert result.status == PlanningStatus.SUCCESS, result.message
+    assert result.path[0].position == [0.0]
+    assert measured.position == [-0.05]
+    assert plan(state(-0.2), state(0.1)).status == PlanningStatus.INVALID_START
+    assert plan(state(0.1), state(-0.00019)).status == PlanningStatus.INVALID_GOAL
+
+
 def test_real_contexts_keep_independent_state_and_refresh_geometry(scalar_world):
     world = scalar_world
     with world.scratch_context() as first, world.scratch_context() as second:

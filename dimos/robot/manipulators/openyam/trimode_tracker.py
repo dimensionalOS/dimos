@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 logger = setup_logger()
 MODEL_SHA256 = "8ac35d59dc94d04361286e7ac07679da2e623c60ea458d4ef6e0513482cea98f"
 PERIOD = 0.020
+_MEASURED_LIMIT_TOLERANCE_RAD = 0.05
+# PD targets can extend past the physical limits to produce holding torque.
+_Q_DES_LIMIT_TOLERANCE_RAD = 0.5
 Vector = tuple[float, ...]
 Bounds = tuple[tuple[float, float], ...]
 Actor = Callable[["NDArray[np.float32]"], "NDArray[np.float32]"]
@@ -74,10 +77,16 @@ def tcp_pose(q: Vector) -> Vector:
     )
 
 
-def bounded(q: Vector, bounds: Bounds) -> bool:
+def bounded(q: Vector, bounds: Bounds, *, tolerance: float = 0.0) -> bool:
     return len(q) == len(bounds) == 6 and all(
-        lo <= value <= hi for value, (lo, hi) in zip(q, bounds, strict=True)
+        lo - tolerance <= value <= hi + tolerance
+        for value, (lo, hi) in zip(q, bounds, strict=True)
     )
+
+
+def measured_bounded(q: Vector, bounds: Bounds) -> bool:
+    """Allow measured-state overshoot within the feedback tolerance."""
+    return bounded(q, bounds, tolerance=_MEASURED_LIMIT_TOLERANCE_RAD)
 
 
 def load_actor(path: Path) -> Actor:
@@ -225,7 +234,7 @@ class Tracker:
         if sample is None:
             return
         q, dq = sample.q, sample.dq
-        if not bounded(q, self._bounds) or len(dq) != 6 or not np.isfinite(dq).all():
+        if not measured_bounded(q, self._bounds) or len(dq) != 6 or not np.isfinite(dq).all():
             raise ValueError("invalid OpenYAM feedback")
         if isinstance(goal, JointGoal) and not bounded(goal.target, self._bounds):
             raise ValueError("out-of-range planned reference")
@@ -244,7 +253,7 @@ class Tracker:
         if output.dtype != np.float32 or output.shape != (1, 6):
             raise ValueError("invalid q_des shape or dtype")
         q_des = tuple(output[0].tolist())
-        if not bounded(q_des, self._bounds):
-            raise ValueError("non-finite or out-of-range q_des")
+        if not bounded(q_des, self._bounds, tolerance=_Q_DES_LIMIT_TOLERANCE_RAD):
+            raise ValueError(f"non-finite or out-of-range q_des: {q_des}")
         if self._submit(goal, sample, q_des):
             self._session, self._history, self._previous = goal.session, history, q_des

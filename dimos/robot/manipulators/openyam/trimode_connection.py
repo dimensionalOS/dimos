@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 import time
@@ -46,8 +47,8 @@ from dimos.robot.manipulators.openyam.trimode_tracker import (
     PositionGoal,
     Tracker,
     Vector,
-    bounded,
     load_actor,
+    measured_bounded,
 )
 from dimos.spec.utils import Spec
 
@@ -145,6 +146,8 @@ class TrimodeConnection(OpenYamConnection):
         self._deadline = 0.0
         self._write_until = 0.0
         self._last_write: float | None = None
+        self._last_goal: Goal | None = None
+        self._idle_goal: Goal | None = None
         self._terminal_at: float | None = None
         self._reference_fault: str | None = None
         self._inhibited = False
@@ -194,7 +197,7 @@ class TrimodeConnection(OpenYamConnection):
             raise RuntimeError("construct a fresh tri-mode connection to restart")
         self._bounds = arm_bounds(self.config.model)
         self._tracker = Tracker(
-            self._actor(), self._bounds, self._prepare, self._submit, self._failed
+            self._actor(), self._bounds, self._prepare, self._submit_policy, self._failed
         )
         try:
             super().start()
@@ -233,7 +236,13 @@ class TrimodeConnection(OpenYamConnection):
                 or not self._sample_live(now)
             ):
                 return None
-            self._end_locked()
+            self._expire_locked(now)
+            if self._idle_goal is not None:
+                # Fence pending idle work, but keep its write watchdog armed
+                # until the new reference actually submits or times out.
+                self._idle_goal = None
+            else:
+                self._end_locked()
             if self._fault is not None:
                 return None
             self._token, self._port = uuid.uuid4().hex, port
@@ -243,8 +252,28 @@ class TrimodeConnection(OpenYamConnection):
     @rpc
     def close_reference(self, session: str) -> None:
         with self._hardware_lock:
-            if session == self._token:
+            if session != self._token or self._token is None:
+                return
+            now = time.monotonic()
+            self._expire_locked(now)
+            if self._token is None:
+                return
+            goal, tracker, sample = self._last_goal, self._tracker, self._sample
+            if goal is None or tracker is None or sample is None or not self._policy_live(now):
                 self._end_locked()
+                return
+            last_write = self._last_write
+            assert last_write is not None
+            self._revoke_locked(None)
+            self._sample = replace(sample, session=None, terminal_at=None, fault=None)
+            self._last_write = last_write
+            self._write_until = last_write + self.config.deadman_timeout_s
+            # A distinct object revokes every external goal, but reusing its
+            # session inside Tracker preserves history and the previous action.
+            self._idle_goal = (
+                replace(goal, terminal=False) if isinstance(goal, JointGoal) else replace(goal)
+            )
+            tracker.offer(self._idle_goal)
 
     @rpc
     def stop_references(self, stopped: bool) -> None:
@@ -255,6 +284,17 @@ class TrimodeConnection(OpenYamConnection):
 
     def _sample_live(self, now: float) -> bool:
         return self._sample is not None and 0 <= now - self._sample.at < REFERENCE_TIMEOUT
+
+    def _policy_live(self, now: float) -> bool:
+        return (
+            self._connected
+            and not self._inhibited
+            and not self._stopping
+            and self._fault is None
+            and isinstance(self._arm, TrimodeArm)
+            and self._arm.active
+            and self._sample_live(now)
+        )
 
     def _offer(self, port: str, goal: Goal) -> None:
         with self._hardware_lock:
@@ -276,16 +316,25 @@ class TrimodeConnection(OpenYamConnection):
         with self._hardware_lock:
             now = time.monotonic()
             self._expire_locked(now)
-            if goal.session == self._token and now < goal.deadline and self._sample_live(now):
+            if goal is self._idle_goal or (
+                goal.session == self._token and now < goal.deadline and self._sample_live(now)
+            ):
                 return self._sample
             return None
 
-    def _submit(self, goal: Goal, sample: ArmSample, q_des: Vector) -> bool:
+    def _submit_policy(self, goal: Goal, sample: ArmSample, q_des: Vector) -> bool:
         with self._hardware_lock:
+            idle = goal is self._idle_goal
             now = time.monotonic()
             self._expire_locked(now)
             arm = self._arm
-            if (
+            if idle:
+                if goal is not self._idle_goal:
+                    return False
+                if not 0 <= now - sample.at < REFERENCE_TIMEOUT:
+                    self._end_locked("idle policy feedback expired")
+                    return False
+            elif (
                 goal.session != self._token
                 or self._inhibited
                 or not self._connected
@@ -295,20 +344,23 @@ class TrimodeConnection(OpenYamConnection):
                 or now >= min(goal.deadline, sample.at + REFERENCE_TIMEOUT)
             ):
                 return False
+            assert isinstance(arm, TrimodeArm)
             # Native SDK call performs synchronous host submission, not execution.
             # A failed batch may have partially reached the device. Arm the
             # safety hold before the call, not only on a successful return.
             self._last_write = now
             arm.submit_arm(q_des)
-            self._last_write = time.monotonic()
-            self._write_until = min(goal.deadline, now + self.config.deadman_timeout_s)
-            if isinstance(goal, JointGoal) and goal.terminal and self._terminal_at is None:
-                self._terminal_at = self._last_write
+            self._write_until = now + self.config.deadman_timeout_s
+            if not idle:
+                self._write_until = min(goal.deadline, self._write_until)
+                self._last_goal = goal
+                if isinstance(goal, JointGoal) and goal.terminal and self._terminal_at is None:
+                    self._terminal_at = time.monotonic()
             return True
 
     def _failed(self, goal: Goal) -> None:
         with self._hardware_lock:
-            if goal.session == self._token:
+            if goal is self._idle_goal or goal.session == self._token:
                 self._end_locked("actor or arm submission failed")
 
     def _expire_locked(self, now: float) -> None:
@@ -316,6 +368,10 @@ class TrimodeConnection(OpenYamConnection):
             now >= self._deadline or (self._last_write is not None and now >= self._write_until)
         ):
             self._end_locked("arm reference expired")
+        elif self._idle_goal is not None and (
+            not self._policy_live(now) or now >= self._write_until
+        ):
+            self._end_locked("idle policy hold expired")
 
     def _end_locked(self, fault: str | None = None) -> None:
         had_write = self._last_write is not None
@@ -328,6 +384,11 @@ class TrimodeConnection(OpenYamConnection):
         self._reference_fault = fault
         self._last_write = None
         self._terminal_at = None
+        self._last_goal = self._idle_goal = None
+
+    def _feedback_failed(self, error: Exception) -> None:
+        self._revoke_locked("arm feedback failed")
+        super()._feedback_failed(error)
 
     def _hold_locked(self, *, hold_jaw: bool) -> None:
         arm = self._arm
@@ -338,9 +399,12 @@ class TrimodeConnection(OpenYamConnection):
         try:
             reading = arm.read()
             q = tuple(reading.position[:6])
-            if not bounded(q, self._bounds):
+            if not measured_bounded(q, self._bounds):
                 raise ValueError("cannot safely hold invalid arm position")
-            arm.hold_arm(q)
+            # The measured-state tolerance is shared with the tracker; hold commands stay in bounds.
+            arm.hold_arm(
+                tuple(min(max(value, lo), hi) for value, (lo, hi) in zip(q, self._bounds, strict=True))
+            )
             if hold_jaw:
                 arm.hold_jaw(reading.position[6])
         except Exception as error:
@@ -360,6 +424,8 @@ class TrimodeConnection(OpenYamConnection):
             self._terminal_at,
             self._reference_fault,
         )
+        if self._idle_goal is not None and self._tracker is not None:
+            self._tracker.offer(self._idle_goal)
         return reading
 
     def _publish_reading(self, reading: ArmReading) -> None:

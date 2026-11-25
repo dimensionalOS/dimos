@@ -265,6 +265,23 @@ class FakeScene:
     def setJointPositions(self, q: np.ndarray) -> None:
         self.current_positions = np.asarray(q, dtype=np.float64)
 
+    def getCurrentJointPositions(self) -> np.ndarray:
+        return self.current_positions.copy()
+
+    def clampToValidConfiguration(self, q: np.ndarray) -> np.ndarray:
+        root = ET.fromstring(self.constructor_kwargs["urdf"])
+        limits = {joint.get("name"): joint.find("limit") for joint in root.findall("joint")}
+        result = q.copy()
+        for index, name in enumerate(self.native_joint_names):
+            limit = limits[name]
+            if limit is not None:
+                result[index] = np.clip(
+                    q[index],
+                    float(limit.get("lower", "-inf")),
+                    float(limit.get("upper", "inf")),
+                )
+        return result
+
     def getJointNames(self) -> list[str]:
         return list(self.native_joint_names)
 
@@ -551,6 +568,22 @@ def _make_world(
         planner_config or RoboPlanPlannerConfig(),
     )
     return world
+
+
+def test_omitted_joint_inherits_in_limit_scene_seed(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    config = robot_config.model_copy(
+        update={"model": robot_config.model.with_joint_position_limits("joint3", lower=0.1, upper=0.2)}
+    )
+    world = _make_world(fake_roboplan, config)
+
+    assert world.get_prepared_model().joint_space.names == ("joint1", "joint2")
+    with world.scratch_context() as ctx:
+        world.set_joint_state(
+            ctx, JointState(name=config.joint_names, position=[1.2, -0.25])
+        )
+        np.testing.assert_allclose(world._full_scene_q(ctx), [1.2, -0.25, 0.1])
 
 
 def test_roboplan_loads_canonical_slash_names_natively(

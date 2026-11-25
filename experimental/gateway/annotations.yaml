@@ -913,6 +913,12 @@ robots:
         - *robot_or_simulator
         - {module: openyamconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openyam-trimode:
+          title: OpenYAM tri-mode tracking
+          description: Use a local policy for planned joint trajectories or VR TCP references on a physical right OpenYAM follower.
+          recommended_config:
+          - {module: trimodeconnection, field: can_port, label: CAN port or USB serial}
+          - {module: trimodeconnection, field: model_path, label: Local ONNX model path}
         openyam-connection-control:
           title: OpenYAM connection control
           description: Direct CAN connection and joint trajectory control for an OpenYAM arm; requires a CAN selector; use simulation for a mock connection.

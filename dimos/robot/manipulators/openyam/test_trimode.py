@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -59,6 +60,7 @@ from dimos.robot.manipulators.openyam.trimode_tasks import (
     POSE,
     QUEST_FRESH,
     QUEST_TIMEOUT,
+    SETTLE_TIMEOUT,
     PlannedReference,
     QuestReference,
 )
@@ -67,6 +69,8 @@ from dimos.robot.manipulators.openyam.trimode_tracker import (
     Actor,
     ArmSample,
     JointGoal,
+    PoseGoal,
+    PositionGoal,
     Tracker,
     Vector,
     load_actor,
@@ -245,6 +249,59 @@ def recording_sdk() -> Iterator[tuple[TrimodeConnection, Mock, Mock, Mock]]:
         yield connection, native, motors, jaw
     finally:
         connection.stop()
+
+
+@pytest.mark.parametrize("j2", [-0.05, -0.2])
+def test_trimode_measured_stop_hold(recording_sdk, j2: float) -> None:
+    connection, native, motors, _ = recording_sdk
+    connection._bounds = ((-3.0, 3.0), (0.0, 3.0), *((-3.0, 3.0),) * 4)
+    motors.positions.return_value = np.asarray((HOME[0], j2, *HOME[2:]))
+    with connection._hardware_lock:
+        connection._hold_locked(hold_jaw=False)
+    if j2 == -0.05:
+        motors.mit_control.assert_called_once()
+        assert motors.mit_control.call_args.args[0][1, 2] == 0.0
+        native.disable.assert_not_called()
+    else:
+        motors.mit_control.assert_not_called()
+        native.disable.assert_called_once()
+        assert "cannot safely hold invalid arm position" in (connection.status().last_error or "")
+
+
+@pytest.mark.parametrize(
+    ("feedback", "reference", "action", "error"),
+    [
+        (-0.05, 0.0, 0.0, None),
+        (-0.2, 0.0, 0.0, "invalid OpenYAM feedback"),
+        (-0.00019, -0.00019, 0.0, "out-of-range planned reference"),
+        (-0.00019, 0.0, -0.2, None),
+        (0.0, 0.0, -0.5, None),
+        (0.0, 0.0, 3.5, None),
+        (0.0, 0.0, -0.6, "out-of-range q_des"),
+        (0.0, 0.0, 3.6, "out-of-range q_des"),
+        (0.0, 0.0, float("nan"), "non-finite"),
+    ],
+)
+def test_trimode_measured_stop_tracker(feedback, reference, action, error) -> None:
+    bounds = ((-3.0, 3.0), (0.0, 3.0), *((-3.0, 3.0),) * 4)
+    sample = ArmSample(0.0, (0.0, feedback, *HOME[2:]), (0.0,) * 6, "stop", None)
+    goal = JointGoal("stop", 0.0, 1.0, (0.0, reference, *HOME[2:]))
+    actor = Mock(return_value=np.asarray([[0.0, action, *HOME[2:]]], dtype=np.float32))
+    submit = Mock(return_value=True)
+    tracker = Tracker(actor, bounds, lambda _: sample, submit, Mock())
+    try:
+        if error is None:
+            tracker._step(goal)
+            submit.assert_called_once_with(goal, sample, tuple(actor.return_value[0].tolist()))
+            assert actor.call_args.args[0][0, 1] == np.float32(feedback)
+        else:
+            with pytest.raises(ValueError, match=error) as exc:
+                tracker._step(goal)
+            submit.assert_not_called()
+            if actor.called:
+                assert str(exc.value).endswith(f"q_des: {tuple(actor.return_value[0].tolist())}")
+    finally:
+        tracker.close()
 
 
 def assert_stock_hold(motors: Mock) -> None:
@@ -467,8 +524,9 @@ def test_real_cpu_quest_and_viser_share_single_arm_sink(
     pending = iter(outputs)
     assert all(command in pending for command in rig.plant.arm_writes)
     before = len(rig.plant.arm_writes)
-    time.sleep(0.06)
-    assert len(rig.plant.arm_writes) == before
+    wait(lambda: len(rig.plant.arm_writes) >= before + 3)
+    assert rig.plant.holds == 0
+    assert rig.control._read_sample().session is None
 
 
 @pytest.mark.parametrize("event", ["cancel", "takeover", "estop", "expired", "reset"])
@@ -515,14 +573,14 @@ def test_disconnect_neutral_is_not_physical_release(make_rig: Callable[[Actor, s
     rig.quest_input(1.0)
     wait(lambda: rig.plant.arm_writes)
     rig.quest_input(0.0, fresh=False)
-    count = len(rig.plant.arm_writes)
+    wait(lambda: rig.control._read_sample().session is None)
     for _ in range(5):
         rig.quest_input(1.0)
         time.sleep(0.02)
-    assert len(rig.plant.arm_writes) == count
+        assert rig.control._read_sample().session is None
     rig.quest_input(0.0)
     rig.quest_input(1.0)
-    wait(lambda: len(rig.plant.arm_writes) > count)
+    wait(lambda: rig.control._read_sample().session is not None)
 
 
 def test_first_held_packet_after_idle_gap_cannot_take_over() -> None:
@@ -618,6 +676,7 @@ def test_cancel_revokes_arm_during_blocked_inference_while_jaw_keeps_writing(
 ) -> None:
     entered, finish, returned = threading.Event(), threading.Event(), threading.Event()
     calls = 0
+    stale_action = (0.125, *HOME[1:])
 
     def actor(_: np.ndarray) -> np.ndarray:
         nonlocal calls
@@ -626,6 +685,7 @@ def test_cancel_revokes_arm_during_blocked_inference_while_jaw_keeps_writing(
             entered.set()
             assert finish.wait(1.0)
             returned.set()
+            return np.asarray([stale_action], dtype=np.float32)
         return np.asarray([HOME], dtype=np.float32)
 
     rig = make_rig(actor, "pose")
@@ -641,7 +701,119 @@ def test_cancel_revokes_arm_during_blocked_inference_while_jaw_keeps_writing(
     assert returned.wait(1.0)
     jaw_count = len(rig.plant.jaw_writes)
     wait(lambda: len(rig.plant.jaw_writes) > jaw_count + 3)
-    assert len(rig.plant.arm_writes) == 1
+    wait(lambda: len(rig.plant.arm_writes) >= 3)
+    assert tuple(np.float32(stale_action).tolist()) not in rig.plant.arm_writes
+    assert rig.plant.holds == 0
+
+
+@pytest.fixture
+def idle_connection(monkeypatch):
+    # Exercise connection admission and safety paths without scheduler timing.
+    clock = SimpleNamespace(now=10.0)
+    monkeypatch.setattr(
+        "dimos.robot.manipulators.openyam.trimode_connection.time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+    worker = TestConnection(can_port="fake", model_path=Path("unused"))
+    arm = Plant()
+    arm.enable()
+    worker._arm, worker._connected = arm, True
+    worker._bounds = arm_bounds(model())
+    worker.config.deadman_timeout_s = 0.2  # Distinguish feedback and write expiry.
+    tracker = Mock(spec=Tracker)
+    worker._tracker = tracker
+    worker._read_state()
+    yield worker, arm, clock, tracker
+    worker.stop()
+
+
+@pytest.mark.parametrize(
+    "port, goal_type",
+    [("tcp_pose", PoseGoal), ("tcp_position", PositionGoal), ("joint_reference", JointGoal)],
+)
+def test_clean_close_keeps_last_submitted_goal_until_preempted(idle_connection, port, goal_type):
+    worker, arm, clock, tracker = idle_connection
+    token = worker.open_reference(port, clock.now + 0.09)
+    # Closing a session that never submitted must not start policy hold.
+    assert token is not None
+    worker.close_reference(token)
+    tracker.offer.assert_not_called()
+    assert not arm.holds and not arm.arm_writes
+
+    token = worker.open_reference(port, clock.now + 0.09)
+    assert token is not None
+    target = HOME if goal_type is JointGoal else tcp_pose(HOME)
+    args = (token, clock.now, clock.now + 0.03, target)
+    goal = JointGoal(*args, terminal=True) if goal_type is JointGoal else goal_type(*args)
+    sample = worker._prepare(goal)
+    assert sample is not None and worker._submit_policy(goal, sample, HOME)
+    worker.close_reference(token)
+    idle = tracker.offer.call_args.args[0]
+    assert type(idle) is goal_type and idle.target == target and idle.session == token
+    assert not isinstance(idle, JointGoal) or not idle.terminal
+    assert worker._prepare(goal) is None
+    assert not worker._submit_policy(goal, sample, HOME)
+    assert not arm.holds
+    for _ in range(12):
+        clock.now += 0.02  # Cross the original external deadline and deadman.
+        worker._read_state()
+        tracker.offer.assert_called_with(idle)
+        sample = worker._prepare(idle)
+        assert sample is not None and sample.at == clock.now
+        assert (sample.session, sample.terminal_at, sample.fault) == (None, None, None)
+        assert worker._submit_policy(idle, sample, HOME)
+    assert len(arm.arm_writes) == 13 and not arm.holds
+
+    token2 = worker.open_reference(port, clock.now + 0.09)
+    assert token2 is not None and token2 != token
+    assert worker._prepare(idle) is None
+    assert not worker._submit_policy(idle, sample, HOME)
+    worker._failed(idle)  # Late failure cannot revoke the new session.
+    worker._read_state()
+    assert worker._sample.session == token2 and not arm.holds
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["estop", "shutdown", "actor", "submit", "write_timeout", "stale_feedback", "active_timeout"],
+)
+def test_policy_hold_falls_back_and_never_restarts(idle_connection, monkeypatch, event):
+    worker, arm, clock, tracker = idle_connection
+    token = worker.open_reference("joint_reference", clock.now + 0.09)
+    assert token is not None
+    goal = JointGoal(token, clock.now, clock.now + 0.09, HOME)
+    sample = worker._prepare(goal)
+    assert sample is not None and worker._submit_policy(goal, sample, HOME)
+    if event == "active_timeout":
+        clock.now += 0.09
+        worker.close_reference(token)  # Expiry wins even before the next reader tick.
+        tracker.offer.assert_not_called()
+        assert arm.holds == 1
+        return
+
+    worker.close_reference(token)
+    idle = tracker.offer.call_args.args[0]
+    if event == "estop":
+        worker.stop_references(True)
+        worker.stop_references(False)
+    elif event == "shutdown":
+        worker.stop()
+    elif event == "actor":
+        worker._failed(idle)
+    elif event == "submit":
+        monkeypatch.setattr(arm, "submit_arm", Mock(side_effect=RuntimeError("failed write")))
+        with pytest.raises(RuntimeError, match="failed write"):
+            worker._submit_policy(idle, sample, HOME)
+        worker._failed(idle)
+    else:
+        clock.now += 0.21 if event == "write_timeout" else 0.11
+        if event == "write_timeout":
+            worker._sample = ArmSample(clock.now, HOME, arm.dq, None, None)
+        assert worker._prepare(idle) is None
+    assert arm.holds >= 1
+    assert worker._prepare(idle) is None
+    assert not worker._submit_policy(idle, sample, HOME)
+    assert len(arm.arm_writes) == 1
 
 
 def test_delayed_and_expired_references_cannot_restart_arm(
@@ -666,7 +838,38 @@ def test_delayed_and_expired_references_cannot_restart_arm(
     assert len(rig.plant.arm_writes) == 1
 
 
-@pytest.mark.parametrize("bad", ["position", "velocity", "expired", None])
+@pytest.mark.parametrize(
+    ("j2", "waypoint_j2", "expected"),
+    [
+        (-0.00019, 0.0, "ACCEPTED"),
+        (-0.051, 0.0, "START_STATE_UNAVAILABLE"),
+        (-0.00019, -0.00019, "INVALID_TRAJECTORY"),
+    ],
+)
+def test_planned_start_at_measured_joint_limit(j2, waypoint_j2, expected) -> None:
+    lifecycle = Mock()
+    lifecycle.open_reference.return_value = "token"
+    q = (HOME[0], j2, *HOME[2:])
+    task = PlannedReference(
+        ((-3.0, 3.0), (0.0, 3.0), *((-3.0, 3.0),) * 4),
+        lambda: ArmSample(time.monotonic(), q, (0.0,) * 6, None, None),
+        lambda: False,
+        lifecycle,
+    )
+    trajectory = JointTrajectory(
+        joint_names=list(JOINTS),
+        points=[
+            TrajectoryPoint(positions=[HOME[0], waypoint_j2, *HOME[2:]], time_from_start=t)
+            for t in (0.0, 1.0)
+        ],
+    )
+    assert task.execute(trajectory, {}).status.name == expected
+    assert lifecycle.open_reference.called == (expected == "ACCEPTED")
+
+
+@pytest.mark.parametrize(
+    "bad", ["position", "velocity", "expired", "near_limit", "within_tolerance", None]
+)
 def test_planned_settle_validates_measurement_and_reports_progress(
     monkeypatch: pytest.MonkeyPatch, bad: str | None
 ) -> None:
@@ -698,14 +901,28 @@ def test_planned_settle_validates_measurement_and_reports_progress(
     terminal = now
     now += 0.02
     at = now
-    q = ((3.01 if bad == "position" else 3.0), *q[1:])
+    endpoint = {"position": 2.85, "within_tolerance": 2.95, "near_limit": 3.01}
+    q = (endpoint.get(bad, 3.0), *q[1:])
     if bad == "velocity":
         dq = (float("nan"), *dq[1:])
     if bad == "expired":
         at = now - 1
+    if bad == "position":
+        state.t_now = 1.0 + SETTLE_TIMEOUT - REFERENCE_TIMEOUT / 2
+        goal = task.compute(state)
+        assert goal is not None and isinstance(goal.payload, JointGoal)
+        assert goal.payload.deadline == now + REFERENCE_TIMEOUT
+        assert task.get_status(state.t_now).state is TrajectoryState.EXECUTING
+        state.t_now = 1.0 + SETTLE_TIMEOUT
     assert task.compute(state) is None
     status = task.get_status(state.t_now)
-    assert status.state is (TrajectoryState.FAULT if bad else TrajectoryState.COMPLETED)
+    assert status.state is (
+        TrajectoryState.FAULT
+        if bad in {"position", "velocity", "expired"}
+        else TrajectoryState.COMPLETED
+    )
+    if bad == "position":
+        assert status.error == "measured endpoint did not settle"
     assert task.get_progress(state.t_now) == status.progress
 
 
@@ -831,8 +1048,10 @@ def test_cross_worker_pinned_policy_and_actual_viser_handler(mode: str) -> None:
         time.sleep(0.025)
         quest.right(1.0, 0.004)
         wait(lambda: connection.evidence()[1])
+        before_release = len(connection.evidence()[1])
         quest.right(0.0)
-        wait(lambda: connection.evidence()[3] == 1)
+        wait(lambda: len(connection.evidence()[1]) >= before_release + 3)
+        assert connection.evidence()[3] == 0
         count = len(connection.evidence()[1])
         end = (0.04, *HOME[1:])
         generated = plan(end, 0.20)
@@ -846,9 +1065,8 @@ def test_cross_worker_pinned_policy_and_actual_viser_handler(mode: str) -> None:
         connection.move_measurement(end, (0.0,) * 6)
         assert manipulation.wait_for_execution(timeout=1.0).status == ExecutionStatus.COMPLETED
         _, actions, jaws, holds = connection.evidence()
-        assert holds == 2 and jaws
-        time.sleep(REFERENCE_TIMEOUT * 1.2)
-        assert connection.evidence()[1] == actions
+        assert holds == 0 and jaws
+        wait(lambda: len(connection.evidence()[1]) >= len(actions) + 3)
     finally:
         try:
             manipulation.stop()

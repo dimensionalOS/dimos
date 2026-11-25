@@ -41,6 +41,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import (
     CartesianTarget,
     PlanningGroupID,
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 _CARTESIAN_COLLISION_STEP_SIZE = 0.05
+_MEASURED_LIMIT_TOLERANCE_RAD = 0.05
 
 
 class RoboPlanPlanner:
@@ -116,11 +118,15 @@ class RoboPlanPlanner:
                 5000,
             )
         try:
-            q_start = self._world.ordered_joint_positions(start)
+            q_start = self._bounded_measured_start(
+                prepared.joint_space, self._world.ordered_joint_positions(start)
+            )
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
         try:
-            q_goal = self._world.ordered_joint_positions(goal)
+            q_goal = prepared.joint_space.normalize_positions(
+                self._world.ordered_joint_positions(goal)
+            )
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
         if not self._world.is_ready():
@@ -186,6 +192,9 @@ class RoboPlanPlanner:
             )
         try:
             normalized_goal = normalize_selection_target(selection, goal, "goal")
+            self._world.get_prepared_model().joint_space.select(
+                selection.joint_names
+            ).normalize_positions(normalized_goal.position)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
         try:
@@ -312,7 +321,26 @@ class RoboPlanPlanner:
             raise ValueError(
                 "RoboPlan planning scene is not ready: authoritative state is incomplete"
             )
-        return normalize_selection_target(selection, start, "start")
+        normalized = normalize_selection_target(selection, start, "start")
+        space = self._world.get_prepared_model().joint_space.select(selection.joint_names)
+        q = self._bounded_measured_start(space, normalized.position)
+        return JointState(name=normalized.name, position=q.tolist())
+
+    @staticmethod
+    def _bounded_measured_start(
+        space: JointSpace, positions: list[float] | NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        # Clamp revolute measured-state overshoot within tolerance in the planning copy.
+        q = np.array(positions, dtype=np.float64)
+        for i, joint in enumerate(space.coordinates):
+            lo, hi = joint.lower, joint.upper
+            if joint.mechanism_type != "revolute" or lo is None or hi is None:
+                continue
+            if lo - _MEASURED_LIMIT_TOLERANCE_RAD <= q[i] < lo:
+                q[i] = lo
+            elif hi < q[i] <= hi + _MEASURED_LIMIT_TOLERANCE_RAD:
+                q[i] = hi
+        return space.normalize_positions(q)
 
     def _validate_cartesian_request(
         self,
