@@ -15,18 +15,19 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-import json
+import copy
 import os
-import pickle
+import resource
 import threading
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import zenoh
+from zenoh.shm import ShmProvider
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
-from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
@@ -145,14 +146,60 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
-def test_shared_memory_is_off() -> None:
-    """Zenoh's shared-memory path is disabled: it silently lost payloads over 3 kB.
+def _memlock_limit_below(size: int) -> bool:
+    limit = resource.getrlimit(resource.RLIMIT_MEMLOCK)[0]
+    return limit != resource.RLIM_INFINITY and limit < size
 
-    A planned path reached a light subscriber but not the rerun bridge.
-    """
 
-    config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
-    assert config["transport"]["shared_memory"]["enabled"] is False
+@pytest.mark.skipif(
+    _memlock_limit_below(16 * 1024 * 1024),
+    reason="zenoh cannot lock its shared-memory segments under this limit",
+)
+def test_local_sessions_link_and_deliver_over_shared_memory(
+    zenoh_defaults: None, unused_tcp_port: int
+) -> None:
+    endpoint = f"tcp/127.0.0.1:{unused_tcp_port}"
+    payload = os.urandom(100_000)
+    links_shm: list[bool] = []
+    samples: list[tuple[bool, bytes]] = []
+    linked = threading.Event()
+    matched = threading.Event()
+    received = threading.Event()
+
+    def on_transport(event: zenoh.TransportEvent) -> None:
+        if event.kind == zenoh.SampleKind.PUT:
+            links_shm.append(event.transport.is_shm)  # type: ignore[attr-defined]
+            linked.set()
+
+    def on_matching(status: zenoh.MatchingStatus) -> None:
+        if status.matching:
+            matched.set()
+
+    def receive(sample: zenoh.Sample) -> None:
+        samples.append((sample.payload.as_shm() is not None, sample.payload.to_bytes()))
+        received.set()
+
+    listener_config = ZenohConfig(listen=[endpoint], multicast=False, gossip=False)
+    dialer_config = ZenohConfig(connect=[endpoint], multicast=False, gossip=False)
+    with zenoh.open(zenohservice._zenoh_config(listener_config)) as listener:
+        listener.info.declare_transport_events_listener(on_transport, history=True)
+        listener.declare_subscriber("shm/test", receive)
+        with zenoh.open(zenohservice._zenoh_config(dialer_config)) as dialer:
+            assert linked.wait(_THREAD_TIMEOUT)
+            publisher = dialer.declare_publisher("shm/test")
+            publisher.declare_matching_listener(on_matching)
+            if publisher.matching_status.matching:  # type: ignore[attr-defined]
+                matched.set()
+            assert matched.wait(_THREAD_TIMEOUT)
+            # The message is lost if the provider is freed before delivery.
+            provider = ShmProvider.default_backend(1024 * 1024)
+            buffer = provider.alloc(len(payload))
+            buffer[:] = payload
+            publisher.put(buffer)
+            assert received.wait(_THREAD_TIMEOUT)
+
+    assert links_shm == [True]
+    assert samples == [(True, payload)]
 
 
 def test_different_modes_produce_different_keys() -> None:
@@ -161,35 +208,35 @@ def test_different_modes_produce_different_keys() -> None:
     assert peer.session_key != client.session_key
 
 
-def test_pickle_round_trip_sheds_the_session(session_pool) -> None:
-    """A module travels to its worker by pickle and re-acquires on the far side."""
-
+def test_codec_round_trip_sheds_the_session(session_pool) -> None:
+    """A service travels to its worker over the codec and re-acquires on the far side."""
     svc = ZenohService(session_pool=session_pool)
     svc.start()
-    clone = pickle.loads(pickle.dumps(svc))
+    clone = decode(encode(svc))
 
     assert clone._session is None
     assert clone._session_pool is zenohservice.default_session_pool
     assert clone.config.session_key == svc.config.session_key
 
+    clone._session_pool = session_pool  # keep the test on its own pool
     clone.start()
     assert clone.session is not None
     clone.stop()
 
 
-def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
-    pubsub = pickle.loads(pickle.dumps(ZenohPubSubBase(session_pool=session_pool)))
+def test_deepcopy_is_a_fresh_unstarted_service(session_pool) -> None:
+    svc = ZenohService(session_pool=session_pool)
+    svc.start()
+    clone = copy.deepcopy(svc)
+    assert clone._session is None
+    assert clone.config == svc.config
+
+
+def test_pubsub_round_trip_rebuilds_its_runtime(session_pool) -> None:
+    pubsub = decode(encode(ZenohPubSubBase(session_pool=session_pool)))
     assert pubsub._publishers == {}
     assert pubsub._subscribers == []
     assert pubsub._drain_stops == []
-
-    rpc = pickle.loads(pickle.dumps(ZenohRPC(session_pool=session_pool)))
-    assert rpc._pending == {}
-    assert rpc._queryables == []
-    try:
-        assert rpc._get_call_thread_pool().submit(lambda: 42).result(timeout=2.0) == 42
-    finally:
-        rpc.stop()
 
 
 def test_start_creates_session(session_pool) -> None:

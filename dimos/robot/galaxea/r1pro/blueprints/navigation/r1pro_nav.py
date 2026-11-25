@@ -59,7 +59,7 @@ r1pro_nav = autoconnect(
         rerun_config=r1pro_nav_rerun_config(VOXEL_SIZE_M, WALL_CLEARANCE_M, PLANNER_VIZ_HZ),
     ),
     # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
-    r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
+    r1pro_control(publish_odom_tf=False, enable_imu=False),
     r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
     # Joints on tf (the head cameras ride the torso), and the robot's body cut out of both the Mid-360 and head depth.
     UrdfManagerPointClearing.blueprint(

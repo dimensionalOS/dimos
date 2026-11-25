@@ -37,7 +37,9 @@ def _host(host_id: str, tags: dict[str, str], runs: int = 0) -> HostDescriptor:
 
 
 def _place(prefer: str, hosts: list[HostDescriptor]) -> str:
-    blueprint = autoconnect(GpuWorkload.blueprint().hosted(tags={"gpu": True}, prefer=prefer))
+    blueprint = autoconnect(
+        GpuWorkload.blueprint().hosted(tags={"gpu": True}, prefer=prefer)
+    ).solidify()
     return resolve_hosted_assignments(blueprint, hosts, local_host_id="local", revision="r")[
         "gpuworkload"
     ]
@@ -55,7 +57,7 @@ def test_prefer_picks_the_highest_value_then_least_busy() -> None:
 
 
 def _place_minimum(minimum: dict[str, float], hosts: list[HostDescriptor]) -> str:
-    blueprint = autoconnect(GpuWorkload.blueprint().hosted(minimum=minimum))
+    blueprint = autoconnect(GpuWorkload.blueprint().hosted(minimum=minimum)).solidify()
     return resolve_hosted_assignments(blueprint, hosts, local_host_id="local", revision="r")[
         "gpuworkload"
     ]

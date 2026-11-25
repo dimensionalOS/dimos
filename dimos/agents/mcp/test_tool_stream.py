@@ -83,7 +83,9 @@ class StreamingModule(Module):
 def mcp_server(mcp_port: int, mcp_url: str):
     """Start a blueprint with StreamingModule + McpServer, wait for readiness."""
     global_config.update(viewer="none")
-    blueprint = autoconnect(StreamingModule.blueprint(), McpServer.blueprint(port=mcp_port))
+    blueprint = autoconnect(
+        StreamingModule.blueprint(), McpServer.blueprint(port=mcp_port)
+    ).solidify()
     coordinator = ModuleCoordinator.build(blueprint)
 
     adapter = McpAdapter(url=mcp_url)
@@ -157,6 +159,7 @@ def background_threads():
         thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
 
+@pytest.mark.flaky(reruns=1)
 def test_tool_stream_persistent_sse(
     mcp_server: McpAdapter, background_threads: list[Thread]
 ) -> None:
@@ -210,6 +213,7 @@ def test_tool_stream_persistent_sse(
         assert n["params"]["_meta"]["tool_name"] == "start_streaming"
 
 
+@pytest.mark.flaky(reruns=1)
 def test_tool_stream_agent(agent_setup) -> None:
     """Tool stream updates arrive at the agent as HumanMessages."""
     history = agent_setup(

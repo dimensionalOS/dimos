@@ -29,7 +29,7 @@ The registry is consulted in the parent process: the cockpit() blueprint
 compiler resolves encoding ids to callables at blueprint definition time and
 ships the resolved callable inside an immutable runtime channel spec, so a
 worker never depends on the user's codec module having been imported there.
-Codec functions must therefore live at module level (standard pickle ships
+Codec functions must therefore live at module level (the worker pipe sends
 them by reference); built-ins register in
 dimos/web/relay_bridge/builtin_codecs.py.
 
@@ -167,18 +167,18 @@ def _describe(func: Callable[..., Any]) -> str:
 def _check_registrable(func: Callable[..., Any], label: str) -> None:
     """Decoration-time importability gate.
 
-    The full pickle-by-reference walk (`_resolves_by_reference`) cannot run
+    The full by-reference walk (`_resolves_by_reference`) cannot run
     here: a decorator fires before the def statement binds the module
     attribute. resolve_encoder() completes the check once the module exists.
     """
     if not inspect.isfunction(func):
         raise TypeError(f"{label} must be a module-level function, got {func!r}")
     if func.__name__ == "<lambda>":
-        raise ValueError(f"{label} cannot be a lambda; standard pickle ships codecs by reference")
+        raise ValueError(f"{label} cannot be a lambda; the worker pipe sends codecs by reference")
     if "<locals>" in func.__qualname__:
         raise ValueError(
             f"{label} {_describe(func)} is defined inside a function; move it to "
-            "module level so it can be pickled by reference"
+            "module level so it can be sent by reference"
         )
     if func.__module__ == "__main__":
         raise ValueError(
@@ -188,7 +188,7 @@ def _check_registrable(func: Callable[..., Any], label: str) -> None:
 
 
 def _resolves_by_reference(func: Callable[..., Any]) -> bool:
-    """Mirror pickle's save-by-reference lookup for a function."""
+    """Mirror the CBOR codec's by-reference lookup for a function."""
     obj: Any = sys.modules.get(func.__module__)
     for part in func.__qualname__.split("."):
         obj = getattr(obj, part, None)
@@ -389,7 +389,7 @@ def decode_json_v1(value: Any) -> Any:
 def resolve_decoder(encoding: str, message_type: type[Any]) -> DecoderDef:
     """The decoder a publish channel (encoding, message type) compiles to;
     ValueError when the pair is unsupported. Runs in the parent at blueprint
-    authoring time, so this also finishes the pickle-by-reference check
+    authoring time, so this also finishes the by-reference check
     deferred from decoration (mirrors resolve_encoder)."""
     definition = _decoders.get(encoding)
     if definition is not None:
@@ -401,7 +401,7 @@ def resolve_decoder(encoding: str, message_type: type[Any]) -> DecoderDef:
         if not _resolves_by_reference(definition.decode):
             raise ValueError(
                 f"decoder {_describe(definition.decode)} for {encoding!r} cannot be "
-                "pickled by reference; it must be importable under its own module "
+                "sent by reference; it must be importable under its own module "
                 "and qualified name"
             )
         return definition
@@ -430,7 +430,7 @@ def is_generic_lcm_encoding(encoding: str) -> bool:
 def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
     """The encoder a channel (encoding, message type) compiles to; ValueError
     when the pair is unsupported. Runs in the parent at blueprint authoring
-    time, so this also finishes the pickle-by-reference check deferred from
+    time, so this also finishes the by-reference check deferred from
     decoration."""
     definition = _encoders.get(encoding)
     if definition is not None:
@@ -442,7 +442,7 @@ def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
         if not _resolves_by_reference(definition.encode):
             raise ValueError(
                 f"encoder {_describe(definition.encode)} for {encoding!r} cannot be "
-                "pickled by reference; it must be importable under its own module "
+                "sent by reference; it must be importable under its own module "
                 "and qualified name"
             )
         return definition

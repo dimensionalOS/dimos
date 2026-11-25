@@ -36,6 +36,7 @@ Rather than waste time on classifying tests, it's better to separate tests by ho
 |------------|-------------|---------------|
 | **default** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
 | **self-hosted** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
+| **e2e** | once a day on `main` (the `e2e` workflow), or by hand on a branch | the whole stack: DimSim navigation, the cockpit and the web SDK in real browsers |
 
 The purpose of running tests in a loop is to get immediate feedback. The faster the loop, the easier it is to identify a problem since the source is the tiny bit of code you changed.
 
@@ -65,7 +66,13 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 
 (Shortcut for `pytest -m 'not self_hosted_large' dimos`: runs the default suite *and* self-hosted tests, excluding only `self_hosted_large`.)
 
-Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies.
+Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies. It uses `cargo`, `npm` and `nix` when they are installed, and warns about the ones that are missing.
+
+The installer does not set up three packages that these tests need. Without `cmake` and `libsqlite3-dev` the native test builds fail, and without `ffmpeg` Firefox cannot decode the test video:
+
+```sh skip
+sudo apt-get install -y cmake libsqlite3-dev ffmpeg
+```
 
 This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
@@ -77,11 +84,11 @@ pytest -m self_hosted dimos/path/to/test_something.py
 
 ## Testing on a fresh Ubuntu install
 
-Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](#test-a-checkout-locally).
+Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04/26.04 containers on x86_64 and ARM64. On a pull request, library mode builds and installs a wheel from the PR's source distribution. Developer mode installs the checkout. Both render the Go2 graph without an audio server. To check the latest published PyPI package, run the **Test installation script** workflow manually. See [local installation checks](#test-a-checkout-locally).
 
 The application test suite uses pre-built images and cached dependencies. For additional application tests, the
 [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness runs its install and test flow inside a fresh, official,
-**unmodified** Ubuntu Desktop 24.04 VM (VirtualBox).
+**unmodified** Ubuntu Desktop 26.04 VM (VirtualBox).
 
 It's intended to be executed locally.
 
@@ -174,26 +181,21 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 | `--tb=short` | Shorter tracebacks |
 | `--durations=0` | Measure the speed of each test |
 
-## Tool files
+## Manual demos
 
-Dev-only pseudo-tests -- the kind that need human interaction or make no assertions -- live in `tool_*.py` files (e.g. `dimos/protocol/pubsub/benchmark/tool_benchmark.py`). pytest never collects them, because the filename doesn't match the `test_*.py` pattern, so a normal `pytest` run stays clean. Run one on demand by naming it directly:
-
-```bash
-pytest -s dimos/path/to/tool_file.py
-```
-
-(`-s` keeps stdout/stdin open for prints and interactive input; add `--timeout=0` for long-running or interactive ones.)
+Keep automated checks in collected `test_*.py` files with meaningful assertions.
+Use standalone `demo_*.py` scripts for maintained examples that need human interaction,
+and document their direct invocation. Do not use pytest as a manual script runner.
 
 ## Markers
 
 We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
+* `self_hosted_large`: the end-to-end tests (DimSim, the rest of `dimos/e2e_tests/`) and other tests that need the large self-hosted runner.
 * `web_browser`: the Playwright tests of the cockpit and the web SDK in `dimos/e2e_tests/` (see [Development](/docs/web/development.md#tests)).
 
-If a test needs to be skipped for some reason, please use on of these markers, or add another one.
-
-* `skipif_no_alibaba`: tests which require an `ALIBABA_API_KEY` key in the env
+`self_hosted_large` and `web_browser` tests do not run on pull requests. The `e2e` workflow runs them once a day on `main`; start it by hand on a branch (`workflow_dispatch`) to check a change before merging. Every test module under `dimos/e2e_tests/` must carry one of the two markers; `dimos/codebase_checks/test_e2e_tests_marked.py` enforces that.
 
 ## Test a checkout locally
 

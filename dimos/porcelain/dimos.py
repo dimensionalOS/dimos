@@ -21,7 +21,7 @@ import inspect
 import threading
 from typing import Any, TypeAlias, TypeVar, cast
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.global_config import global_config
 from dimos.core.introspection.module.info import (
@@ -57,6 +57,10 @@ def _load_opencv_first() -> None:
         pass
 
 
+class NoMatchingModuleError(LookupError):
+    """No deployed module implements the requested Spec."""
+
+
 class Dimos:
     def __init__(self, **config_overrides: Any) -> None:
         _load_opencv_first()
@@ -67,14 +71,14 @@ class Dimos:
         self._stopped = False
         atexit.register(self.stop)
 
-    def run(self, target: str | Blueprint | type[ModuleBase]) -> None:
+    def run(self, target: str | Blueprint | MetaBlueprint | type[ModuleBase]) -> None:
         """Start a blueprint, module, or named configuration.
 
         Args:
             target: One of:
                 - A string name from the blueprint/module registry
-                  (e.g. `"unitree-go2-basic"` or `"camera-module"`).
-                - A `Blueprint` object.
+                  (e.g. `"unitree-go2-basic"` or `"webcam-module"`).
+                - A `Blueprint` or `MetaBlueprint` object (using default choices).
                 - A `Module` class (calls `.blueprint()` automatically).
 
         The first call creates the coordinator and starts the system.
@@ -82,7 +86,7 @@ class Dimos:
 
         On a connected Dimos, `target` is sent to the daemon: strings and
         registered module classes take a name-based fast path, while Module
-        classes and Blueprint objects are pickled and unpickled on the daemon.
+        classes and Blueprint objects are encoded and rebuilt on the daemon.
         """
         with self._lock:
             if self._stopped:
@@ -196,7 +200,7 @@ class Dimos:
             matches: list[str] = []
             unavailable: list[str] = []
             for descriptor in source.list_module_descriptors():
-                deployed_name = descriptor.rpc_name or descriptor.class_name
+                deployed_name = descriptor.display_name
                 if instance_name is not None and deployed_name != instance_name:
                     continue
                 if not required.issubset(descriptor.rpc_names):
@@ -210,7 +214,8 @@ class Dimos:
                 detail = f" for instance {instance_name!r}" if instance_name is not None else ""
                 if unavailable:
                     detail += f"; cannot inspect module classes for {sorted(unavailable)}"
-                raise LookupError(
+                error_type = LookupError if unavailable else NoMatchingModuleError
+                raise error_type(
                     f"No deployed module matches {spec_class.__name__} RPC signatures{detail}"
                 )
             if len(matches) != 1:
@@ -264,7 +269,7 @@ class Dimos:
         if isinstance(target, (ModuleInfo, RpcInfo)):
             return target
         if isinstance(target, RpcCall):
-            return self._find_rpc(target.remote_name, target.rpc_name)
+            return self._find_rpc(target.instance_name, target.rpc_name)
         if not isinstance(target, str):
             return self._find_module(self._module_instance_name(target))
 
@@ -305,7 +310,7 @@ class Dimos:
 
     def _module_instance_name(self, module: str | ModuleHandle) -> str:
         proxy = self.get_module(module) if isinstance(module, str) else module
-        return proxy.remote_name
+        return proxy.instance_name
 
     def _require_source(self) -> ModuleSource:
         if self._source is None:
@@ -426,7 +431,11 @@ class Dimos:
         return base
 
 
-def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModuleSource) -> None:
+def _run_remote(
+    target: str | Blueprint | MetaBlueprint | type[ModuleBase], source: RemoteModuleSource
+) -> None:
+    if isinstance(target, MetaBlueprint):
+        target = target.solidify()
     if isinstance(target, str):
         source.load_blueprint_by_name(target)
         return
@@ -458,7 +467,7 @@ def _load_module_class(descriptor: ModuleDescriptor) -> type[ModuleBase] | None:
 
 
 def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
-    instance_name = descriptor.rpc_name or descriptor.class_name
+    instance_name = descriptor.display_name
     module_class = _load_module_class(descriptor)
 
     rpc_infos: list[RpcInfo] = []
@@ -481,11 +490,13 @@ def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
     )
 
 
-def _resolve_target(target: str | Blueprint | type[ModuleBase]) -> Blueprint:
+def _resolve_target(target: str | Blueprint | MetaBlueprint | type[ModuleBase]) -> Blueprint:
     """Convert a run() argument into a Blueprint."""
 
     if isinstance(target, str):
-        return get_by_name(target)
+        target = get_by_name(target)
+    if isinstance(target, MetaBlueprint):
+        return target.solidify()
     if isinstance(target, Blueprint):
         return target
     if inspect.isclass(target) and issubclass(target, ModuleBase):

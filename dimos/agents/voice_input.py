@@ -92,9 +92,6 @@ class VoiceInput(Module):
         # and start() waits only for whatever is left.
         self._pipeline = run_in_thread(whisper_pipeline, "whisper-pipeline")
 
-    def __reduce__(self) -> Any:
-        return (self.__class__, (), {})
-
     @rpc
     def start(self) -> None:
         super().start()

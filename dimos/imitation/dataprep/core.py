@@ -14,8 +14,7 @@
 
 """Pure dataset alignment and inspection helpers.
 
-Dataset declarations live in `schema.py` and remain re-exported here for existing
-callers. The stateless functions below walk samples — `resolve_field`, `extract_episodes`,
+Dataset declarations live in `schema.py`. The stateless functions below walk samples — `resolve_field`, `extract_episodes`,
 `iter_episode_samples`. Pure and side-effect-free; importable without
 booting a Module.
 
@@ -38,23 +37,19 @@ from numpy.typing import NDArray
 
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.schema import (
-    DEFAULT_FPS as DEFAULT_FPS,
-    DataPrepConfig as DataPrepConfig,
-    DatasetSchema as DatasetSchema,
-    Episode as Episode,
-    EpisodeExtractor as EpisodeExtractor,
-    EpisodeQualityReport as EpisodeQualityReport,
-    EpisodeReport as EpisodeReport,
-    FeatureSpec as FeatureSpec,
-    IncompleteEpisode as IncompleteEpisode,
-    Inspector as Inspector,
-    OutputConfig as OutputConfig,
-    QualityConfig as QualityConfig,
-    Sample as Sample,
-    SourceKind as SourceKind,
-    SyncConfig as SyncConfig,
-    Writer as Writer,
-    validate_source_kinds as validate_source_kinds,
+    Episode,
+    EpisodeExtractor,
+    EpisodeQualityReport,
+    EpisodeReport,
+    FeatureSpec,
+    IncompleteEpisode,
+    Inspector,
+    QualityConfig,
+    Sample,
+    SourceKind,
+    SyncConfig,
+    Writer,
+    validate_source_kinds,
 )
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -67,6 +62,9 @@ if TYPE_CHECKING:
 # ─────────────────────────────────────────────────────────────────────────────
 # Pure helpers — used by format writers and run_dataprep
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+_SOURCE_TIMESTAMP_RESOLUTION_S = 1e-9
 
 
 def _joint_values(msg: JointState, field: str) -> dict[str, float]:
@@ -238,9 +236,11 @@ def _alignment_plan(
         period = 1.0 / sync.rate_hz
         targets: list[float] = []
         target = anchor[0]
-        while target <= anchor[-1]:
+        # Stamped messages round to nanoseconds; float epoch timestamps can be coarser.
+        endpoint_tolerance = max(_SOURCE_TIMESTAMP_RESOLUTION_S, math.ulp(anchor[-1]))
+        while target <= anchor[-1] + endpoint_tolerance:
             targets.append(target)
-            target += period
+            target = anchor[0] + len(targets) * period
     else:
         targets = list(anchor)
 
@@ -557,7 +557,7 @@ def inspect_episode_quality(
 def get_writer(format_name: str) -> Writer:
     """Lazy-import the format writer's `write` function."""
     if format_name == "lerobot":
-        from dimos.imitation.dataprep.formats.lerobot.writer import write
+        raise ValueError("LeRobot export runs in the isolated runtime; use run_lerobot_dataprep")
     elif format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.writer import write
     else:
@@ -568,7 +568,9 @@ def get_writer(format_name: str) -> Writer:
 def get_inspector(format_name: str) -> Inspector:
     """Lazy-import the format reader's `inspect` function."""
     if format_name == "lerobot":
-        from dimos.imitation.dataprep.formats.lerobot.reader import inspect
+        from dimos.imitation.dataprep.formats.lerobot.adapter import (
+            inspect_lerobot_dataset as inspect,
+        )
     elif format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.reader import inspect
     else:

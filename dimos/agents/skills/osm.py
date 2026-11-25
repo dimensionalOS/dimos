@@ -18,6 +18,7 @@ from typing import Any
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.mapping.models import LatLon
@@ -40,6 +41,7 @@ class OsmSkill(Module):
         self._latest_location = None
         self._current_location_map = CurrentLocationMap(QwenVlModel())
 
+    @rpc
     def start(self) -> None:
         super().start()
         if hasattr(self.gps_location, "subscribe"):
@@ -49,6 +51,7 @@ class OsmSkill(Module):
                 "OsmSkill: gps_location stream does not support direct subscribe (RemoteIn)"
             )
 
+    @rpc
     def stop(self) -> None:
         super().stop()
 

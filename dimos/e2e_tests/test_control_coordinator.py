@@ -18,9 +18,11 @@ These tests start a real coordinator process and communicate over the active tra
 Unlike unit tests, these verify the full system integration.
 """
 
+from contextlib import closing
 import os
 import platform
 import time
+from typing import cast
 
 import pytest
 
@@ -30,13 +32,13 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationStatus,
     TrajectoryExecutionStatus,
 )
-from dimos.core.rpc_client import RPCClient
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.porcelain.remote_module_source import RemoteModuleSource
 
-pytestmark = pytest.mark.self_hosted
+pytestmark = pytest.mark.self_hosted_large
 
 
 class TestControlCoordinatorE2E:
@@ -58,8 +60,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.wait_for_saved_topic(joint_state_topic)
 
         # Create RPC client and query
-        client = RPCClient(None, ControlCoordinator)
-        try:
+        with closing(RemoteModuleSource()) as source:
+            client = cast("ControlCoordinator", source.get_module(ControlCoordinator.__name__))
             # Test list_joints RPC
             joints = client.list_joints()
             assert joints is not None
@@ -75,8 +77,6 @@ class TestControlCoordinatorE2E:
             hardware = client.list_hardware()
             assert hardware is not None
             assert "arm" in hardware
-        finally:
-            client.stop_rpc_client()
 
     def test_coordinator_executes_trajectory(
         self, lcm_spy, start_blueprint, wait_until, wait_for_system_ready
@@ -93,8 +93,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Create RPC client
-        client = RPCClient(None, ControlCoordinator)
-        try:
+        with closing(RemoteModuleSource()) as source:
+            client = cast("ControlCoordinator", source.get_module(ControlCoordinator.__name__))
             # Get initial joint positions
             initial_positions = client.get_joint_positions()
             assert initial_positions is not None
@@ -128,8 +128,6 @@ class TestControlCoordinatorE2E:
                 timeout=5.0,
                 message="Trajectory did not complete within timeout",
             )
-        finally:
-            client.stop_rpc_client()
 
     @pytest.mark.skipif(
         platform.system() == "Darwin" and bool(os.environ.get("CI")),
@@ -186,8 +184,8 @@ class TestControlCoordinatorE2E:
         wait_for_system_ready()
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
-        client = RPCClient(None, ControlCoordinator)
-        try:
+        with closing(RemoteModuleSource()) as source:
+            client = cast("ControlCoordinator", source.get_module(ControlCoordinator.__name__))
             # Create a long trajectory (5 seconds)
             trajectory = JointTrajectory(
                 joint_names=[f"arm/joint{i + 1}" for i in range(7)],
@@ -218,8 +216,6 @@ class TestControlCoordinatorE2E:
             state = client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
             assert state is not None
             assert state == TrajectoryState.ABORTED
-        finally:
-            client.stop_rpc_client()
 
     def test_dual_arm_coordinator(
         self, lcm_spy, start_blueprint, wait_until, wait_for_system_ready
@@ -232,8 +228,8 @@ class TestControlCoordinatorE2E:
         wait_for_system_ready()
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
-        client = RPCClient(None, ControlCoordinator)
-        try:
+        with closing(RemoteModuleSource()) as source:
+            client = cast("ControlCoordinator", source.get_module(ControlCoordinator.__name__))
             # Verify both arms present
             joints = client.list_joints()
             assert "left_arm/joint1" in joints
@@ -264,5 +260,3 @@ class TestControlCoordinatorE2E:
                 timeout=5.0,
                 message="Trajectory did not complete within timeout",
             )
-        finally:
-            client.stop_rpc_client()

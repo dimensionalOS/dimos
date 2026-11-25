@@ -25,7 +25,7 @@ import secrets
 import signal
 import time
 
-from dimos.constants import STATE_DIR
+from dimos.constants import RUN_SHUTDOWN_TIMEOUT, STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
 from dimos.core.coordination.process_lifecycle import (
     is_pid_alive as is_pid_alive,
@@ -76,9 +76,12 @@ class RunEntry:
         return REGISTRY_DIR / f"{self.run_id}.json"
 
     def save(self) -> None:
-        """Persist this entry to disk."""
+        """Persist this entry to disk, atomically: list_runs deletes an entry it can't parse, so it mustn't see one half written."""
         REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        self.registry_path.write_text(json.dumps(asdict(self), indent=2))
+        # not *.json, so list_runs never reads it
+        partial = self.registry_path.with_name(f"{self.registry_path.name}.{os.getpid()}.tmp")
+        partial.write_text(json.dumps(asdict(self), indent=2))
+        partial.replace(self.registry_path)
 
     def remove(self) -> None:
         """Delete this entry from disk."""
@@ -189,11 +192,13 @@ def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
         return ("Process already dead, cleaning registry", True)
 
     if not force:
-        for _ in range(50):  # 5 seconds
-            if not is_pid_alive(entry.pid):
-                break
-            time.sleep(0.1)
-        else:
+        deadline = time.monotonic() + RUN_SHUTDOWN_TIMEOUT
+        while is_pid_alive(entry.pid):
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.1, remaining))
+                continue
+
             try:
                 os.kill(entry.pid, signal.SIGKILL)
             except ProcessLookupError:

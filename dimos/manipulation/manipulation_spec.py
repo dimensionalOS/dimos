@@ -35,9 +35,8 @@ class OperationStatus(Enum):
 
     IDLE = auto()
     PLANNING = auto()
+    HAS_PLAN = auto()
     EXECUTING = auto()
-    COMPLETED = auto()
-    FAULT = auto()
 
 
 class PlanStatus(Enum):
@@ -68,7 +67,7 @@ class ExecutionStatus(Enum):
 
 # Execution outcomes where the arm's stop was never confirmed. A caller that
 # treats these as a successful stop can command its next motion into a moving
-# arm, so they leave the module in FAULT rather than IDLE.
+# arm, so the module remains EXECUTING until a confirmed outcome.
 UNCONFIRMED_STOP = frozenset({ExecutionStatus.UNCERTAIN, ExecutionStatus.FAULT})
 
 
@@ -265,8 +264,6 @@ class ManipulationSpec(Spec, Protocol):
     ) -> MoveResult: ...
 
     def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None: ...
-
-    def reset(self) -> CommandResult: ...
 
     def set_gripper_position(
         self,

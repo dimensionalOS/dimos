@@ -27,6 +27,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tick_loop import TickLoop
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs.Float32 import Float32
 
 JOINTS = make_twist_base_joints("go2")
@@ -81,6 +82,7 @@ def _emit(taps: dict[str, list], stream: str, msg: Any) -> None:
 )
 def test_published_path_arms_the_follower_through_the_tick_loop(coordinator):
     coord, taps = coordinator
+    _emit(taps, "odometry", Odometry())
     _emit(taps, "path", straight_rotate(length=2.0))
 
     # A real tick, not a hand-called compute(): the loop skips inactive tasks.
@@ -107,4 +109,6 @@ def test_follower_cards_name_the_handlers_the_tasks_implement():
         streams = {
             b.stream: b.handler for b in control_task_registry.bindings_for(task_type).consumes
         }
-        assert streams == {"path": "on_path", "speed": "on_speed"}, f"{task_type}: {streams}"
+        assert streams == {"path": "on_path", "speed": "on_speed", "odometry": "on_odometry"}, (
+            f"{task_type}: {streams}"
+        )

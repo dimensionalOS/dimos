@@ -166,6 +166,8 @@ def test_shifted_detector_scales_gate_localization(
     monkeypatch.setattr(dandetect, "_build", fake_build)
 
     with DanDetector(embedder="siglip", detector=detector_name, segmenter="none") as dan:
-        (hits,) = dan.localize(["box"], index=index, rig=rig, params=base, fields=fields)
+        (hits,) = dan.localize(
+            ["box"], index=index, window=(0.0, 3.0), head=2.0, rig=rig, params=base, fields=fields
+        )
 
     assert len(hits) == expected_hits

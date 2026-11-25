@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from pytest_mock import MockerFixture
 
@@ -51,6 +52,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.testing.cbor import roundtrip
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -109,8 +111,8 @@ class FakeCartesianPlannerOptions:
         self.max_angular_speed = 0.5
         self.max_linear_acceleration = 0.5
         self.max_angular_acceleration = 2.5
-        self.max_position_error = 0.005
-        self.max_orientation_error = 0.01
+        self.position_tolerance = 0.005
+        self.orientation_tolerance = 0.01
         self.position_cost = 1.0
         self.orientation_cost = 1.0
         self.task_gain = 1.0
@@ -263,6 +265,22 @@ class FakeScene:
 
     def setJointPositions(self, q: np.ndarray) -> None:
         self.current_positions = np.asarray(q, dtype=np.float64)
+
+    def getCurrentJointPositions(self) -> NDArray[np.float64]:
+        return self.current_positions.copy()
+
+    def clampToValidConfiguration(self, q: NDArray[np.float64]) -> NDArray[np.float64]:
+        result = q.copy()
+        root = ET.fromstring(self.constructor_kwargs["urdf"])
+        for index, name in enumerate(self.native_joint_names):
+            limit = root.find(f"joint[@name='{name}']/limit")
+            if limit is not None:
+                result[index] = np.clip(
+                    result[index],
+                    float(limit.get("lower", "-inf")),
+                    float(limit.get("upper", "inf")),
+                )
+        return result
 
     def getJointNames(self) -> list[str]:
         return list(self.native_joint_names)
@@ -775,9 +793,8 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
 ) -> None:
-    # The world snapshots obstacles with deepcopy and hands copies back out. A
-    # raw ndarray field would make that snapshot uncomparable, so the points
-    # stay plain tuples.
+    # The world snapshots obstacles with deepcopy and hands copies back out. The
+    # points are an ndarray, so Obstacle.__eq__ has to keep the snapshot comparable.
     world = _make_world(fake_roboplan, robot_config)
     obstacle = Obstacle(
         name="voxel-map",
@@ -790,8 +807,18 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
 
     stored = world.get_obstacles()[0]
     assert stored == world.get_obstacles()[0]
-    assert stored.points == ((0.0, 0.0, 0.0),)
+    assert stored == obstacle
+    assert stored != Obstacle(
+        name="voxel-map",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        points=((0.0, 0.0, 1.0),),
+        octree_resolution=0.05,
+    )
+    np.testing.assert_array_equal(stored.points, [(0.0, 0.0, 0.0)])
     assert stored.octree_resolution == 0.05
+    # The reason for the array: the map crosses worker RPC as one ndarray tag.
+    assert roundtrip(stored) == stored
 
 
 def test_octree_obstacle_rejects_geometry_it_cannot_build(
@@ -1761,8 +1788,8 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
         "max_angular_speed": 0.6,
         "max_linear_acceleration": 0.7,
         "max_angular_acceleration": 2.0,
-        "max_position_error": 0.006,
-        "max_orientation_error": 0.02,
+        "position_tolerance": 0.006,
+        "orientation_tolerance": 0.02,
         "position_cost": 2.0,
         "orientation_cost": 3.0,
         "task_gain": 0.8,

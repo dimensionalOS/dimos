@@ -28,8 +28,8 @@ URI grammar::
   ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
 
 Typed protos (``zenoh``, ``lcm``, ``jpeg_lcm``) require a message type — either from
-the ``#``-suffix or the ``msg_type`` kwarg. Pickled protos (``pzenoh``, ``plcm``)
-don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
+the ``#``-suffix or the ``msg_type`` kwarg. Untyped protos (``pzenoh``, ``plcm``)
+carry CBOR-encoded Python values and don't. Zenoh topics include the namespace, e.g. ``zenoh:dimos/color_image``;
 the typed transport appends the message type to the wire key.
 """
 
@@ -62,7 +62,7 @@ def _make_jpeg_lcm(topic: str, msg_type: type | None) -> Any:
 
 
 def _make_plcm(topic: str, msg_type: type | None) -> Any:
-    # pickled LCM: receivers unpickle Python objects, no type registration needed.
+    # untyped LCM: the CBOR payload names its own type, no type registration needed.
     from dimos.core.transport import pLCMTransport
 
     return pLCMTransport(topic)
@@ -131,7 +131,7 @@ def make_pubsub_transport(
     """Build a ``PubSubTransport`` from a URI (does not call ``start()``).
 
     The ``#``-suffix in the URI wins over the ``msg_type`` kwarg if both are
-    present. Pickled / self-describing protos ignore ``msg_type``.
+    present. Untyped (self-describing) protos ignore ``msg_type``.
     """
     proto, topic, msg_type_name = parse_pubsub_uri(uri)
     resolved = msg_type

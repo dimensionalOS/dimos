@@ -12,7 +12,7 @@ See [Setup](/docs/platforms/quadruped/go2/setup.md) for installing dimOS first.
 dimos --replay run unitree-go2
 ```
 
-Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3D visualization. Watch the Go2 map and navigate an office in real time.
+Opens Rerun 3D visualization. Watch the Go2 map and navigate an office in real time.
 
 ## MuJoCo Simulation
 
@@ -22,3 +22,16 @@ dimos --simulation run unitree-go2
 ```
 
 Full navigation stack in MuJoCo: same code, simulated robot.
+
+With the stack viewer disabled, or on Linux with neither an X11 nor a Wayland
+display, the simulator runs without its native window. Odometry, lidar and camera
+images continue publishing. On Linux the headless simulator uses EGL unless
+you set `MUJOCO_GL` to another backend.
+
+```bash
+dimos --simulation --viewer none run unitree-go2-basic
+```
+
+To select the native window independently, pass
+`--go2connection.mujoco.headless=true` or `false` after the blueprint name.
+A window requires a working display.

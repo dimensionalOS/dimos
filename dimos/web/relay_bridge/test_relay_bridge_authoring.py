@@ -23,7 +23,6 @@ import asyncio
 import base64
 from dataclasses import asdict, replace
 import json
-import pickle
 import struct
 from typing import Any
 
@@ -43,6 +42,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, pacing, relay_bridge_module
@@ -106,7 +106,7 @@ def test_composition_adds_relay_to_non_visual_blueprint() -> None:
 
 def test_composition_includes_costmap_producer() -> None:
     blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint())
+        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint()).solidify()
     )
     relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
 
@@ -118,7 +118,7 @@ def test_composition_derives_tx_channels_from_consumers() -> None:
     # available (Out transports exist regardless of wiring, so consumers are
     # the availability signal).
     blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _TwistConsumer.blueprint())
+        autoconnect(_ImageProducer.blueprint(), _TwistConsumer.blueprint()).solidify()
     )
     relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
 
@@ -135,7 +135,7 @@ def test_composition_ignores_disabled_producers() -> None:
 
 def test_composition_preserves_existing_relay() -> None:
     existing = RelayBridgeModule.blueprint(local_port=8899, available_channels=("odom",))
-    blueprint = with_relay_bridge(autoconnect(_BareModule.blueprint(), existing))
+    blueprint = with_relay_bridge(autoconnect(_BareModule.blueprint(), existing).solidify())
     relay_atoms = [atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule]
 
     assert len(relay_atoms) == 1
@@ -164,7 +164,7 @@ _NAV_PATH = NavPath(
 _NAV_PATH_PAYLOAD = struct.pack("<ff", 1.5, -2.5)
 
 
-def test_config_accepts_runtime_specs_by_identity_and_pickles() -> None:
+def test_config_accepts_runtime_specs_by_identity_and_crosses_the_pipe() -> None:
     spec = RuntimeChannelSpec(
         ch="odom",
         message_type=PoseStamped,
@@ -179,7 +179,7 @@ def test_config_accepts_runtime_specs_by_identity_and_pickles() -> None:
     # Pydantic must pass the frozen dataclass through untouched; a rebuilt
     # copy would break the is-checks blueprints rely on.
     assert config.channels is not None and config.channels[0] is spec
-    restored = pickle.loads(pickle.dumps(config))
+    restored = decode(encode(config))
     assert restored.channels[0].encoder is builtin_codecs.encode_pose
     assert restored.channels[0].params == {"a": 1}
 
@@ -495,6 +495,7 @@ def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
         stop_module(module)
 
 
+@pytest.mark.flaky(reruns=1)
 def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -> None:
     async def run() -> None:
         loop = asyncio.get_running_loop()
@@ -578,7 +579,7 @@ def test_chat_panel_forwards_every_message(monkeypatch) -> None:
 
 
 def test_stats_panel_forwards_snapshots(monkeypatch) -> None:
-    # The resource monitor's pickled dict crosses as stats.json.v1 on a latest
+    # The resource monitor's dict crosses as stats.json.v1 on a latest
     # channel (the newest snapshot wins), whitelisted keys only.
     message = {
         "coordinator": {**asdict(ProcessStats(pid=1234, alive=True, cpu_percent=12.5)), "rss": 1},

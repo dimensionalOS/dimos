@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import fcntl
@@ -36,12 +36,14 @@ import time
 from typing import Literal, cast
 
 import numpy as np
+from pydantic import TypeAdapter
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
-from dimos.navigation.bench.driver import HARNESS_REASONS, TERMINAL_FILE
+from dimos.navigation.bench.driver import HARNESS_REASONS, ROBOT_FILE, TERMINAL_FILE
 from dimos.navigation.bench.scorer import Outcome, Recording, score
 from dimos.navigation.bench.snapshot import sample, snapshot_path
 from dimos.navigation.bench.suite import Case, Manifest, Split
+from dimos.simulation.sim_world.body import BodyShape
 
 RUNS_DIR = STATE_DIR / "nav-bench"
 SLOTS_DIR = RUNS_DIR / "slots"
@@ -54,8 +56,8 @@ SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
 REPLAY_FILE = "rerun.rrd"
 RECORD_TOPICS = (
-    "ground_truth,joint_state,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,"
-    "goal_reached,reference_path,phase,lidar,local_map,surface_map"
+    "ground_truth,joint_state,coordinator_joint_state,odometry,tf,scene,contacts,goal,"
+    "planner_path,path,cmd_vel,goal_reached,reference_path,phase,lidar,local_map,surface_map"
 )
 LCM_PORT_BASE = 7800
 ZENOH_SCOUT_GROUP = "224.0.0.224"
@@ -74,6 +76,7 @@ RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
 
 Keep = Literal["all", "failures"]
 
+_BODY = TypeAdapter(BodyShape)
 _live: set[subprocess.Popen[bytes]] = set()
 _live_lock = threading.Lock()
 
@@ -87,7 +90,6 @@ class RunConfig:
     procs: int = 4
     out_dir: Path | None = None
     overrides: tuple[str, ...] = ()
-    policy: Path | None = None
     viewer: bool = False
     keep: Keep = "all"
     min_free_gb: float = 15.0
@@ -130,6 +132,10 @@ class LowDiskError(RuntimeError):
     """Free disk fell below the run's floor, so no further episode starts."""
 
 
+class UnscorableRunError(RuntimeError):
+    """Episodes hold recordings their terminal records cannot score."""
+
+
 def selects(prefix: str, case_id: str) -> bool:
     """Whether a case id is the prefix or continues it at a dash, so s1 does not take s10."""
     return case_id == prefix or case_id.startswith(prefix + "-")
@@ -161,7 +167,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     manifest.save(run_dir / SUITE_FILE)
-    _snapshot(run_dir, cases)
+    pictured = sample(cases)
     started = time.time()
     provenance = _provenance(DIMOS_PROJECT_ROOT)
     _write_run(run_dir, config, len(episodes), started, provenance, ended=None)
@@ -216,6 +222,8 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             verdict = str(result.outcome or result.error)
             outcomes[verdict] += 1
             progress((episode.dir.name, verdict))
+        if pictured is not None and episode.case.id == pictured.id:
+            _snapshot(run_dir, pictured, episode.dir / ROBOT_FILE)
         agreed = result.outcome == "success" and not result.metrics.get("mismatch")
         if config.keep == "failures" and agreed:
             _prune(episode.dir)
@@ -228,8 +236,11 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             raise RuntimeError(
                 f"the first episode produced no terminal record, see {episodes[0].dir}"
             )
-        for future in [pool.submit(one, episode) for episode in episodes[1:]]:
-            future.result()
+        pending = {pool.submit(one, episode) for episode in episodes[1:]}
+        while pending:
+            done, pending = wait(pending, timeout=POLL_S, return_when=FIRST_EXCEPTION)
+            for future in done:
+                future.result()
     except BaseException:
         stopping.set()
         pool.shutdown(wait=False, cancel_futures=True)
@@ -278,20 +289,28 @@ def stop_all() -> None:
 def rescore(run_dir: Path) -> Path:
     """Score every episode in the run again from its recording, by the suite the run saved."""
     manifest = Manifest.load(run_dir / SUITE_FILE)
+    episode_dirs = sorted(d for d in run_dir.iterdir() if d.is_dir())
+    unscorable = [
+        d.name for d in episode_dirs if (d / RECORDING_FILE).exists() and _lacks_body(_terminal(d))
+    ]
+    if unscorable:
+        raise UnscorableRunError(
+            f"{len(unscorable)} episodes of {run_dir} have no body or route length in their"
+            f" terminal record, results kept: rerun them to score them, first {unscorable[0]}"
+        )
     results = run_dir / RESULTS_FILE
     results.unlink(missing_ok=True)
     with results.open("a") as out:
-        for episode_dir in sorted(d for d in run_dir.iterdir() if d.is_dir()):
+        for episode_dir in episode_dirs:
             episode = Episode(manifest.case(episode_dir.name), episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
     return results
 
 
-def _snapshot(run_dir: Path, cases: list[Case]) -> None:
-    """Save the picture of the run's sample case, or none when no GL backend can render it."""
-    case = sample(cases)
-    if case is None:
+def _snapshot(run_dir: Path, case: Case, robot: Path) -> None:
+    """Save the picture of the run's sample case, if one can be rendered."""
+    if not robot.exists():
         return
     command = [
         sys.executable,
@@ -299,6 +318,7 @@ def _snapshot(run_dir: Path, cases: list[Case]) -> None:
         "dimos.navigation.bench.snapshot",
         str(run_dir / SUITE_FILE),
         case.id,
+        str(robot),
         str(snapshot_path(run_dir, case)),
     ]
     for backend in GL_BACKENDS:
@@ -346,7 +366,7 @@ def _write_run(
         "split": config.split,
         "cases": list(config.cases),
         "overrides": list(config.overrides),
-        "policy": str(config.policy) if config.policy else None,
+        "policy": _policy(config.overrides),
         "procs": config.procs,
         "machine": socket.gethostname(),
         "episodes": episodes,
@@ -385,6 +405,15 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
     return _score(manifest, episode, _terminal(episode.dir))
 
 
+def _policy(overrides: tuple[str, ...]) -> str | None:
+    """The body policy an override hands the sim world, if one does."""
+    for flag in reversed(overrides):
+        key, _, value = flag.partition("=")
+        if key.endswith(".policy"):
+            return value
+    return None
+
+
 def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
     """The dimos run invocation, on a private zenoh scouting group and rerun port for its slot."""
     case = episode.case
@@ -392,15 +421,14 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
         *config.command,
         "--viewer",
         "rerun",
-        "--rerun-save",
-        *(() if config.viewer else ("--rerun-open", "none")),
         "--zenoh-scout-addr",
         f"{ZENOH_SCOUT_GROUP}:{ZENOH_PORT_BASE + slot}",
-        "--rerun-websocket-server-port",
-        str(WEBSOCKET_PORT_BASE + slot),
         "run",
         config.blueprint,
         f"--rerunbridgemodule.connect-url=rerun+http://127.0.0.1:{RERUN_PORT_BASE + slot}/proxy",
+        "--rerunbridgemodule.rerun-save=true",
+        *(() if config.viewer else ("--rerunbridgemodule.rerun-open=none",)),
+        f"--rerunwebsocketserver.port={WEBSOCKET_PORT_BASE + slot}",
         "--record",
         "sqlite",
         "--record-topics",
@@ -408,12 +436,7 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
         f"--episodedriver.manifest={episode.dir.parent / SUITE_FILE}",
         f"--episodedriver.case-id={case.id}",
         f"--episodedriver.out-dir={episode.dir}",
-        f"--simgo2world.family={case.family}",
-        f"--simgo2world.seed={case.seed}",
-        f"--simgo2world.scene-params={json.dumps(case.params)}",
     ]
-    if config.policy is not None:
-        command.append(f"--simgo2world.policy={config.policy}")
     return [*command, *config.overrides]
 
 
@@ -479,6 +502,13 @@ def _terminal(episode_dir: Path) -> dict[str, object] | None:
     return record
 
 
+def _lacks_body(terminal: dict[str, object] | None) -> bool:
+    """Whether a finished episode's terminal record is missing what scoring its recording needs."""
+    if terminal is None or str(terminal["reason"]) in HARNESS_REASONS:
+        return False
+    return "body" not in terminal or "route_length" not in terminal
+
+
 def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | None) -> Result:
     case = episode.case
     result = Result(
@@ -504,6 +534,9 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         result.metrics = json.loads(kept.read_text())
         result.outcome = cast("Outcome", result.metrics["outcome"])
         return result
+    if _lacks_body(terminal):
+        result.error = "terminal record has no body or route length, rerun the case"
+        return result
     try:
         recorded = Recording.from_store(recording)
         _require_whole(recorded, terminal)
@@ -511,7 +544,8 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
             _until_verdict(recorded, terminal),
             manifest.rules,
             case.goal,
-            case.route_length,
+            _BODY.validate_python(terminal["body"]),
+            float(cast("float", terminal["route_length"])),
             case.feature,
             result.terminal,
             scene=case.scene(),

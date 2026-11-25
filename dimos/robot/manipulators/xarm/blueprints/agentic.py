@@ -16,23 +16,35 @@
 
 from __future__ import annotations
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.robot.manipulators.common.agent_prompts import (
     BASE_MANIPULATION_AGENT_SYSTEM_PROMPT,
     MANIPULATION_AGENT_SYSTEM_PROMPT,
+    MANIPULATION_SIM_SCAN_PROMPT,
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
-from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
+from dimos.robot.manipulators.xarm.blueprints.grasp import (
+    SIMULATED,
+    XARM_GRASP_PROMPTS,
+    xarm_grasp,
+    xarm_grasp_graspgenx,
+)
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
+
+_grasp_agent_prompt = MANIPULATION_AGENT_SYSTEM_PROMPT
+if SIMULATED:
+    _grasp_agent_prompt += MANIPULATION_SIM_SCAN_PROMPT.format(
+        objects=", ".join(XARM_GRASP_PROMPTS)
+    )
 
 xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
     ManipulationSkills.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 # The stack already carries a detector and a segmenter; adding the agent on top
@@ -41,17 +53,24 @@ xarm7_planner_coordinator_agent = autoconnect(
 xarm_grasp_agent = autoconnect(
     xarm_grasp,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=_grasp_agent_prompt),
 ).global_config(n_workers=6)
 
 xarm_grasp_graspgenx_agent = autoconnect(
     xarm_grasp_graspgenx,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=_grasp_agent_prompt),
 ).global_config(n_workers=6)
 
 xarm_perception_sim_agent = autoconnect(
     xarm_perception_sim,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(
+        system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT
+        + MANIPULATION_SIM_SCAN_PROMPT.format(
+            # Search labels for the default data/xarm7/scene.xml.
+            objects="red cube, blue cube, green block, yellow bar, orange cylinder, "
+            "purple ball, teal ball, basket, red bowl, blue bowl",
+        )
+    ),
 )

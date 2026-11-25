@@ -273,9 +273,11 @@ disposed
 import time
 
 import reactivex as rx
+from dimos.core.core import rpc
 from dimos.core.module import Module
 
 class MyModule(Module):
+    @rpc
     def start(self) -> None:
         super().start()
         source = rx.interval(0.05)

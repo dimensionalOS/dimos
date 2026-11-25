@@ -13,26 +13,28 @@
 # limitations under the License.
 
 from functools import partial
-import pickle
 from typing import cast
 
 import numpy as np
 import rerun as rr
 
 from dimos.mapping.ray_tracing.viz import render_map_region
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.global_planner import viz
 from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
+from dimos.navigation.spec import NO_HEADING, cancel_goal
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.visualization.rerun.bridge import RerunEntry, is_keyed_by_seq
 
 
-def test_goal_placeholder_is_not_drawn() -> None:
-    assert viz.render_goal(PointStamped(x=float("nan"), y=0.0, z=0.0)) is None
-    goal = viz.render_goal(PointStamped(x=1.0, y=2.0, z=0.0))
+def test_a_cancel_goal_is_not_drawn() -> None:
+    assert viz.render_goal(cancel_goal(frame_id="map")) is None
+    goal = viz.render_goal(
+        PoseStamped(frame_id="map", position=[1.0, 2.0, 0.0], orientation=NO_HEADING)
+    )
     assert goal is not None
     assert goal.positions.as_arrow_array().to_pylist() == [[1.0, 2.0, 0.0]]
 
@@ -47,17 +49,17 @@ def test_empty_path_keeps_the_last_one_drawn() -> None:
     )
 
 
-def test_keyed_renderers_keep_their_flag_through_the_pickle_round_trip() -> None:
-    plain = pickle.loads(pickle.dumps(render_map_region))
-    bound = pickle.loads(pickle.dumps(partial(render_map_region, voxel_size=0.1)))
+def test_keyed_renderers_keep_their_flag_through_the_round_trip() -> None:
+    plain = decode(encode(render_map_region))
+    bound = decode(encode(partial(render_map_region, voxel_size=0.1)))
     assert is_keyed_by_seq(plain) and is_keyed_by_seq(bound)
     assert not is_keyed_by_seq(viz.render_path)
-    assert not is_keyed_by_seq(pickle.loads(pickle.dumps(partial(viz.render_path))))
+    assert not is_keyed_by_seq(decode(encode(partial(viz.render_path))))
 
 
-def test_bridge_config_pickles_for_the_workers() -> None:
-    static = pickle.loads(pickle.dumps(viz.nav_static(0.7, 0.3, 0.3, 0.1)))
-    overrides = pickle.loads(pickle.dumps(viz.nav_visual_override(2.0, 0.08, 0.1)))
+def test_bridge_config_crosses_to_the_workers() -> None:
+    static = decode(encode(viz.nav_static(0.7, 0.3, 0.3, 0.1)))
+    overrides = decode(encode(viz.nav_visual_override(2.0, 0.08, 0.1)))
     assert len(static["world/robot_body"](rr)) == 2
 
     surface = overrides["world/surface_map"]

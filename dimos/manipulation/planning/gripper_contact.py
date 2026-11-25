@@ -325,7 +325,7 @@ def _octree(
         name=name,
         obstacle_type=ObstacleType.OCTREE,
         pose=PoseStamped(frame_id=frame_id),
-        points=tuple((x, y, z) for x, y, z in finite.tolist()),
+        points=finite,
         octree_resolution=cell,
         touch_links=touch_links,
     )

@@ -53,21 +53,24 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
 def _config(
     *,
     target_frames: tuple[str, ...] = ("tool",),
+    command_timeout: float = 0.3,
 ) -> EEFTwistTaskConfig:
     return EEFTwistTaskConfig(
         joint_names=("arm/joint1", "arm/joint2"),
         robot_model=_robot_model(),
         target_frames=target_frames,
         timeout=0.0,
-        command_timeout=0.3,
+        command_timeout=command_timeout,
     )
 
 
-def _task(mocker: MockerFixture) -> tuple[EEFTwistTask, PinkPoseTargetSolver]:
+def _task(
+    mocker: MockerFixture, *, command_timeout: float = 0.3
+) -> tuple[EEFTwistTask, PinkPoseTargetSolver]:
     solver = _solver(mocker)
     task = EEFTwistTask(
         "eef",
-        _config(),
+        _config(command_timeout=command_timeout),
         solver=solver,
     )
     return task, solver
@@ -112,19 +115,35 @@ def test_twist_integrates_target_and_uses_shared_persistent_command(
     assert second_target.position.x == pytest.approx(0.002)
 
 
-def test_zero_twist_holds_the_integrated_target(mocker: MockerFixture) -> None:
+def test_zero_twist_reanchors_target_at_measured_pose(mocker: MockerFixture) -> None:
     task, solver = _task(mocker)
     task.on_ee_twist_command(_twist(), t_now=1.0)
     task.compute(_state(1.01))
+    resets = solver.reset.call_count
     task.on_ee_twist_command(_twist(0.0), t_now=1.02)
 
     task.compute(_state(1.03))
 
     target = solver.step.call_args.args[0]["tool"]
-    assert target.position.x == pytest.approx(0.001)
+    assert target.position.x == pytest.approx(0.0)
+    assert solver.reset.call_count == resets + 1
 
 
-def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -> None:
+def test_twist_back_soon_after_an_unreachable_push_moves_at_once(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)  # the measured pose stays at x=0
+    for tick in range(100):
+        task.on_ee_twist_command(_twist(1.0), t_now=1.0 + tick * 0.01)
+        task.compute(_state(1.0 + tick * 0.01))
+    task.on_ee_twist_command(_twist(0.0), t_now=2.0)
+    task.on_ee_twist_command(_twist(-1.0), t_now=2.1)  # within command_timeout
+
+    task.compute(_state(2.11))
+
+    target = solver.step.call_args.args[0]["tool"]
+    assert target.position.x == pytest.approx(-0.01)
+
+
+def test_stale_twist_holds_one_tick_then_goes_idle(mocker: MockerFixture) -> None:
     task, solver = _task(mocker)
     task.on_ee_twist_command(_twist(), t_now=1.0)
     task.compute(_state(1.01))
@@ -134,6 +153,57 @@ def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -
     assert output is not None
     target = solver.step.call_args.args[0]["tool"]
     assert target.position.x == pytest.approx(0.001)
+    assert not task.is_active()
+
+
+def test_task_is_active_only_while_twists_arrive(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    assert not task.is_active()
+
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    assert task.is_active()
+    assert task.compute(_state(1.01)) is not None
+    assert task.compute(_state(1.2)) is not None
+    assert task.is_active()
+
+    task.compute(_state(1.31))
+    assert not task.is_active()
+
+    resets = solver.reset.call_count
+    task.on_ee_twist_command(_twist(), t_now=2.0)
+    assert task.is_active()
+    assert solver.reset.call_count == resets + 1
+    assert task.compute(_state(2.01)) is not None
+    # Re-anchored at the measured pose, not the target held before idling.
+    assert solver.frame_poses.call_count == 2
+    target = solver.step.call_args.args[0]["tool"]
+    assert target.position.x == pytest.approx(0.001)
+
+
+def test_zero_twist_does_not_keep_task_active(mocker: MockerFixture) -> None:
+    task, _ = _task(mocker)
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.compute(_state(1.01))
+    task.on_ee_twist_command(_twist(0.0), t_now=1.25)
+
+    task.compute(_state(1.31))
+    assert not task.is_active()
+
+    task.on_ee_twist_command(_twist(0.0), t_now=1.4)
+    assert not task.is_active()
+
+
+def test_zero_timeout_never_goes_idle(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker, command_timeout=0.0)
+    assert task.is_active()
+    assert task.compute(_state(1.0)) is not None
+
+    task.on_ee_twist_command(_twist(), t_now=1.0)
+    task.on_ee_twist_command(_twist(0.0), t_now=1.01)
+    assert task.compute(_state(1.02)) is not None
+    assert task.compute(_state(10.0)) is not None
+    assert task.is_active()
+    assert solver.frame_poses.call_count == 2  # re-anchored once, when the twist stopped
 
 
 def test_estop_rejects_input_and_reanchors_after_clear(mocker: MockerFixture) -> None:

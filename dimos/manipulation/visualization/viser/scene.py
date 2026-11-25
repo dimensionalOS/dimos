@@ -571,7 +571,9 @@ class ViserManipulationScene:
         description = self.loaded_robot_description(prepared)
         return URDF.load(
             BytesIO(description.xml.encode()),
-            mesh_dir=str(description.source_path.parent),
+            mesh_dir=(
+                str(description.source_path.parent) if description.source_path is not None else ""
+            ),
             build_scene_graph=True,
             build_collision_scene_graph=True,
             load_meshes=True,
@@ -778,12 +780,13 @@ class ViserManipulationScene:
                 self._remove_scene_handle(self._grid_handle)
                 self._grid_handle = None
             for urdf in self._urdfs.values():
-                self._remove_scene_handle(urdf)
+                self._remove_urdf(urdf)
             for frame in self._root_frames.values():
                 self._remove_scene_handle(frame)
             if self._collision_fallback_urdf is not None:
-                self._remove_scene_handle(self._collision_fallback_urdf)
-            for handle in self._obstacle_gui_handles:
+                self._remove_urdf(self._collision_fallback_urdf)
+            # Newest first, so the checkboxes go before the folder that holds them.
+            for handle in reversed(self._obstacle_gui_handles):
                 self._remove_scene_handle(handle)
             self._obstacle_gui_handles.clear()
             self._urdfs.clear()
@@ -814,7 +817,7 @@ class ViserManipulationScene:
                 # Keep both representations resident so changing the diagnostic
                 # view does not reload or replace the primary robot.
                 if self._collision_fallback_urdf is not None:
-                    self._remove_scene_handle(self._collision_fallback_urdf)
+                    self._remove_urdf(self._collision_fallback_urdf)
                     self._collision_fallback_urdf = None
                 urdf = self.viser_urdf(
                     self.server,
@@ -894,7 +897,6 @@ class ViserManipulationScene:
                 RobotDisplayMode.COLLISION,
                 RobotDisplayMode.BOTH,
             }
-            fallback.show_collision = False
             self._set_handle_visibility(
                 fallback,
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
@@ -1091,3 +1093,11 @@ class ViserManipulationScene:
         remove = getattr(handle, "remove", None)
         if callable(remove):
             remove()
+
+    def _remove_urdf(self, urdf: ViserUrdf) -> None:
+        # Depends on viser internals, like _meshes. ViserUrdf.remove() removes every
+        # frame and mesh one by one, but a frame takes its children with it and Viser
+        # warns about each child removed again: hundreds of lines for one robot. The
+        # two root frames take the whole model in one go.
+        for root in ("_visual_root_frame", "_collision_root_frame"):
+            self._remove_scene_handle(getattr(urdf, root, None))

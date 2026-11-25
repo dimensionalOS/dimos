@@ -17,6 +17,10 @@
 import json
 from typing import Any
 
+import numpy as np
+import pytest
+
+from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory, MemoryWithJSONEncoder
 
 
@@ -169,3 +173,31 @@ def test_data_actually_encoded_in_transit() -> None:
     # Verify it's actually JSON
     decoded_raw = json.loads(raw_message.decode("utf-8"))
     assert decoded_raw == original_message
+
+
+class MemoryWithCborEncoder(CborEncoderMixin, Memory):  # type: ignore[type-arg, misc]
+    pass
+
+
+def test_cbor_encoded_pubsub_keeps_python_types() -> None:
+    pubsub = MemoryWithCborEncoder()
+    received: list[Any] = []
+    pubsub.subscribe("cbor_topic", lambda message, topic: received.append(message))
+
+    pubsub.publish("cbor_topic", {"t": (1, 2), "a": np.arange(3, dtype=np.uint8)})
+
+    assert type(received[0]["t"]) is tuple
+    assert received[0]["a"].dtype == np.uint8
+
+    with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+        pubsub.publish("cbor_topic", object())
+
+
+def test_cbor_encoded_pubsub_drops_undecodable_messages() -> None:
+    pubsub = MemoryWithCborEncoder()
+    received: list[Any] = []
+    pubsub.subscribe("cbor_topic", lambda message, topic: received.append(message))
+
+    Memory.publish(pubsub, "cbor_topic", b"\xff\xff not cbor")  # bypasses the encoder
+
+    assert received == []

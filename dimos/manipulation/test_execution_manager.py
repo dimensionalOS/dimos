@@ -171,12 +171,12 @@ class _WholeBody:
             )
         return TrajectoryStatus(state=self.states[task], error=self.errors.get(task, ""))
 
-    def manager(self) -> PlanExecutionManager:
+    def manager(self, poll_interval: float = 0.01) -> PlanExecutionManager:
         return PlanExecutionManager(
             joint_names=("left/j1", *BASE),
             coordinator=self.coordinator,
             default_timeout=1.0,
-            poll_interval=0.01,
+            poll_interval=poll_interval,
             bindings={JOINT_TRAJECTORY_TASK_NAME: ["left/j1"], "base_traj": list(BASE)},
         )
 
@@ -241,7 +241,8 @@ def test_a_refused_part_is_uncertain_when_the_others_cannot_be_confirmed_stopped
 def test_a_poll_from_a_finished_run_does_not_disturb_the_next_one() -> None:
     """A task poll that outlives its run must not cancel or overwrite the next."""
     robot = _WholeBody()
-    manager = robot.manager()
+    # The next run's own watchdog never ticks here, so only the stale poll can change the status.
+    manager = robot.manager(poll_interval=60.0)
     manager.execute(_plan(("left/j1", *BASE)), blocking=False)
     manager.cancel()
 
@@ -255,3 +256,39 @@ def test_a_poll_from_a_finished_run_does_not_disturb_the_next_one() -> None:
 
     assert manager.status is ExecutionStatus.ACCEPTED
     assert set(robot.states.values()) == {TrajectoryState.EXECUTING}
+
+
+@pytest.mark.parametrize("failure", ["uncertain", "exception"])
+def test_failed_multitask_cancel_can_retry_after_close(mocker, failure):
+    robot = _WholeBody()
+    manager = robot.manager()
+    recovered = False
+    attempts = []
+    invoke = robot._task_invoke
+
+    def task_invoke(task, method, args=None):
+        if method == "cancel":
+            attempts.append(task)
+            if task == "base_traj" and not recovered:
+                if failure == "exception":
+                    raise TimeoutError("connection unavailable")
+                return TrajectoryCancellationResult(TrajectoryCancellationStatus.UNCERTAIN)
+        return invoke(task, method, args)
+
+    mocker.patch.object(robot.coordinator, "task_invoke", side_effect=task_invoke)
+    try:
+        assert (
+            manager.execute(_plan(("left/j1", *BASE)), blocking=False).status
+            is ExecutionStatus.ACCEPTED
+        )
+        manager.close()
+        assert manager.cancel().status is ExecutionStatus.UNCERTAIN
+        assert manager.cancel().status is ExecutionStatus.UNCERTAIN
+        assert robot.states["base_traj"] is TrajectoryState.EXECUTING
+        recovered = True
+        assert manager.cancel().status is ExecutionStatus.ABORTED
+        assert attempts.count("base_traj") == 3
+        assert attempts.count(JOINT_TRAJECTORY_TASK_NAME) == 1
+        assert manager.wait().status is ExecutionStatus.ABORTED
+    finally:
+        manager.close()

@@ -33,13 +33,6 @@ class CallPool:
         self._stop_calls = 0
         self._stopped = False
 
-    def __getstate__(self) -> dict[str, int]:
-        # Only configuration crosses into a worker process.
-        return {"max_workers": self._max_workers}
-
-    def __setstate__(self, state: dict[str, int]) -> None:
-        CallPool.__init__(self, state["max_workers"])
-
     def start(self) -> None:
         with self.lock:
             if self._stop_calls:

@@ -87,7 +87,7 @@ class Transform(Timestamped):
     def lcm_transform(self) -> LCMTransformStamped:
         return LCMTransformStamped(
             child_frame_id=self.child_frame_id,
-            header=Header(self.ts, self.frame_id),
+            header=Header(float(self.ts), self.frame_id),
             transform=LCMTransform(
                 translation=self.translation,
                 rotation=self.rotation,

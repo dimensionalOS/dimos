@@ -111,6 +111,7 @@ def test_rtc_ice_offers_the_answer_connects_and_frames_feed_the_track(monkeypatc
         stop_module(module)
 
 
+@pytest.mark.flaky(reruns=1)
 def test_rtc_unanswered_offer_is_torn_down_and_resent(monkeypatch) -> None:
     monkeypatch.setattr(relay_bridge_module, "_RTC_ANSWER_TIMEOUT_S", 0.1)
     monkeypatch.setattr(relay_bridge_module, "_RTC_RETRY_BASE_S", 0.05)

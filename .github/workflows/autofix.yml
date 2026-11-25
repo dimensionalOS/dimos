@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -31,13 +31,14 @@ jobs:
       - name: uv lock
         run: uv lock
 
-      - name: Did native/ or a module's flake or Cargo files change?
+      - name: Did native/ or a module's flake or Cargo files change, or does a pin miss this commit's code?
         id: shared
         run: |
           set -euo pipefail
           base=${{ github.event.pull_request.base.sha }}
           git fetch --quiet --depth 1 origin "$base"
-          if git diff --quiet "$base" HEAD -- native '*flake.nix' '*flake.lock' '*Cargo.toml' '*Cargo.lock'; then
+          if git diff --quiet "$base" HEAD -- native '*flake.nix' '*flake.lock' '*Cargo.toml' '*Cargo.lock' \
+            && python3 bin/relock-shared-flakes --check; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -50,4 +51,4 @@ jobs:
         run: python3 bin/relock-shared-flakes
 
       - name: autofix.ci
-        uses: autofix-ci/action@v1
+        uses: autofix-ci/action@v1.3.4

@@ -162,7 +162,7 @@ class HarnessRuntime(Module):
 
         An RPC is its module's Python API. A Dimos.connect() client calls it as
         app.get_module(MODULE).RPC(...); a module calls it through an attribute typed with
-        the module's Spec.
+        the module's Spec. The harness's stream_get tool reads a relay-exposed stream once.
         A module reads native messages continuously through an In port of the same name
         and type.
 
@@ -284,7 +284,16 @@ class HarnessRuntime(Module):
     def _connect(self) -> Dimos:
         with self._app_lock:
             if self._app is None or not self._app.is_running:
-                self._app = Dimos.connect(timeout=CONNECT_TIMEOUT_S)
+                app = Dimos.connect(timeout=CONNECT_TIMEOUT_S)
+                try:
+                    if self.config.rpc_name:
+                        name = self.config.instance_name or type(self).__name__
+                        if app.get_module(name).remote_name != self.config.rpc_name:
+                            raise RuntimeError("The available Coordinator belongs to another stack")
+                except BaseException:
+                    app.stop()
+                    raise
+                self._app = app
             return self._app
 
     def _reconnect(self) -> None:

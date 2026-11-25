@@ -23,8 +23,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
+    CborLCM,
     LCMPubSubBase,
-    PickleLCM,
     Topic,
 )
 from dimos.utils.testing.collector import CallbackCollector
@@ -39,8 +39,8 @@ def lcm_pub_sub_base(lcm_url: str) -> Iterator[LCMPubSubBase]:
 
 
 @pytest.fixture
-def pickle_lcm(lcm_url: str) -> Iterator[PickleLCM]:
-    lcm = PickleLCM(url=lcm_url)
+def cbor_lcm(lcm_url: str) -> Iterator[CborLCM]:
+    lcm = CborLCM(url=lcm_url)
     lcm.start()
     yield lcm
     lcm.stop()
@@ -162,10 +162,10 @@ def test_lcm_geometry_msgs_pubsub(test_message: Any, lcm: LCM) -> None:
     assert received_topic == topic
 
 
-# passes some geometry types through pickle LCM
+# passes some geometry types through CBOR LCM
 @pytest.mark.parametrize("test_message", test_msgs)
-def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: PickleLCM) -> None:
-    lcm = pickle_lcm
+def test_lcm_geometry_msgs_cbor_pubsub(test_message: Any, cbor_lcm: CborLCM) -> None:
+    lcm = cbor_lcm
     collector = CallbackCollector(1)
 
     topic = Topic(topic="/test_topic")
@@ -184,3 +184,11 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: Pick
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
+
+
+def test_lcm_cbor_rejects_values_the_codec_cannot_encode(cbor_lcm: CborLCM) -> None:
+    class Opaque:
+        pass
+
+    with pytest.raises(TypeError, match="Opaque"):
+        cbor_lcm.publish(Topic(topic="/test_topic"), Opaque())

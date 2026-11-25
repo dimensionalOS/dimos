@@ -14,7 +14,7 @@
 
 """
 Robot Web Interface wrapper for DIMOS.
-Provides a clean interface to the dimensional-interface FastAPI server.
+Provides a clean interface to the FastAPI server.
 """
 
 from collections.abc import Mapping
@@ -24,11 +24,11 @@ from reactivex import Observable
 from reactivex.subject import Subject
 
 from dimos.stream.audio.base import AudioEvent
-from dimos.web.dimos_interface.api.server import FastAPIServer
+from dimos.web.fastapi_server import FastAPIServer
 
 
 class RobotWebInterface(FastAPIServer):
-    """Wrapper class for the dimos-interface FastAPI server."""
+    """Wrapper class for the FastAPI server."""
 
     def __init__(
         self,

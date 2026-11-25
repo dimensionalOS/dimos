@@ -15,9 +15,9 @@
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import In, Out, TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.hosted.fragment import RemoteModuleReference
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
@@ -68,7 +68,7 @@ def _host(
 
 
 def _compile(assignments: dict[str, str]):
-    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint())
+    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).solidify()
     return compile_fragments(
         blueprint,
         assignments,
@@ -97,8 +97,10 @@ def test_compiler_splits_modules_and_scopes_every_fragment_to_the_run() -> None:
 
 
 def test_compiler_keeps_the_blueprints_own_transports_for_local_streams() -> None:
-    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).transports(
-        {("messages", String): ZenohTransport.spec("dimos/messages", String)}
+    blueprint = (
+        autoconnect(SourceModule.blueprint(), SinkModule.blueprint())
+        .solidify()
+        .transports({("messages", String): ZenohTransport.spec("dimos/messages", String)})
     )
     fragments = compile_fragments(
         blueprint,
@@ -115,7 +117,7 @@ def test_compiler_rejects_cross_host_ch_type_conflict_before_splitting() -> None
     blueprint = autoconnect(
         StringChannelConsumer.blueprint(),
         BoolChannelProducer.blueprint(),
-    )
+    ).solidify()
 
     with pytest.raises(ValueError, match="'ch' has conflicting types"):
         compile_fragments(
@@ -152,7 +154,7 @@ def test_compiler_rejects_incomplete_placement(
 
 
 def test_compiler_emits_cross_host_module_reference_and_provider_rpc_name() -> None:
-    blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint())
+    blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint()).solidify()
 
     fragments = compile_fragments(
         blueprint,
@@ -185,7 +187,7 @@ def test_compiler_emits_cross_host_module_reference_and_provider_rpc_name() -> N
 
 
 def test_compiler_keeps_same_host_module_reference_local_with_hosted_rpc_names() -> None:
-    blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint())
+    blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint()).solidify()
 
     fragment = compile_fragments(
         blueprint,
@@ -214,7 +216,7 @@ def test_compiler_automatically_assigns_hosted_and_local_modules() -> None:
     blueprint = autoconnect(
         SourceModule.blueprint().hosted(tags={"gpu": True}),
         SinkModule.blueprint(),
-    )
+    ).solidify()
 
     assignments = resolve_hosted_assignments(
         blueprint,
@@ -245,8 +247,10 @@ def test_compiler_automatically_assigns_hosted_and_local_modules() -> None:
 
 
 def test_hosted_fragment_is_co_located_on_least_committed_matching_host() -> None:
-    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).hosted(
-        tags={"gpu": True}
+    blueprint = (
+        autoconnect(SourceModule.blueprint(), SinkModule.blueprint())
+        .solidify()
+        .hosted(tags={"gpu": True})
     )
 
     assignments = resolve_hosted_assignments(
@@ -267,7 +271,7 @@ def test_hosted_fragment_is_co_located_on_least_committed_matching_host() -> Non
 
 def test_nested_hosted_placements_combine_constraints() -> None:
     source = SourceModule.blueprint().hosted(tags={"gpu": True})
-    blueprint = autoconnect(source, SinkModule.blueprint()).hosted(host="compute")
+    blueprint = autoconnect(source, SinkModule.blueprint()).solidify().hosted(host="compute")
 
     assignments = resolve_hosted_assignments(
         blueprint,
@@ -286,7 +290,7 @@ def test_independent_hosted_units_are_spread_deterministically() -> None:
     blueprint = autoconnect(
         SourceModule.blueprint().hosted(),
         SinkModule.blueprint().hosted(),
-    )
+    ).solidify()
 
     assignments = resolve_hosted_assignments(
         blueprint,
@@ -305,7 +309,7 @@ def test_module_references_place_each_side_by_its_own_constraints() -> None:
     blueprint = autoconnect(
         ProviderModule.blueprint(),
         ConsumerModule.blueprint().hosted(host="compute"),
-    )
+    ).solidify()
 
     assignments = resolve_hosted_assignments(
         blueprint,
@@ -324,7 +328,7 @@ def test_a_provider_and_consumer_pinned_apart_compile_into_a_remote_reference() 
     blueprint = autoconnect(
         ProviderModule.blueprint().hosted(host="a"),
         ConsumerModule.blueprint().hosted(host="b"),
-    )
+    ).solidify()
 
     assignments = resolve_hosted_assignments(
         blueprint, (_host("a"), _host("b")), local_host_id=None, revision="revision-1"
@@ -340,7 +344,9 @@ def test_a_provider_and_consumer_pinned_apart_compile_into_a_remote_reference() 
 
 
 def test_host_none_keeps_the_whole_hosted_fragment_on_the_root() -> None:
-    blueprint = autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).hosted(local=True)
+    blueprint = (
+        autoconnect(SourceModule.blueprint(), SinkModule.blueprint()).solidify().hosted(local=True)
+    )
 
     assignments = resolve_hosted_assignments(
         blueprint,

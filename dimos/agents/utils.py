@@ -51,7 +51,7 @@ def pretty_print_langchain_message(msg: BaseMessage) -> None:
     time_str = f"{GRAY}{timestamp}{RESET}  "
     type_str = f"{type_color}{msg_type:<{TYPE_WIDTH}}{RESET}"
 
-    content = _try_to_remove_url_data(d.get("content", ""))
+    content = msg.text
     tool_calls = d.get("tool_calls", [])
 
     # 12 chars for timestamp + 1 space + TYPE_WIDTH + 1 space
@@ -67,8 +67,8 @@ def pretty_print_langchain_message(msg: BaseMessage) -> None:
             print(f"{indent}{text}")
 
     if content:
-        content_str = repr(content)
-        if len(content_str) > 2000:
+        content_str: str = content
+        if len(content_str) > 5000:
             content_str = content_str[:5000] + "... [truncated]"
         print_line(f"{BOLD}{type_color}{content_str}{RESET}")
 
@@ -86,26 +86,11 @@ def pretty_print_langchain_message(msg: BaseMessage) -> None:
     _log_message(msg_type, content, tool_calls)
 
 
-def _log_message(msg_type: str, content: object, tool_calls: list[dict[str, Any]]) -> None:
+def _log_message(msg_type: str, content: str, tool_calls: list[dict[str, Any]]) -> None:
     """Write agent message to structlog (per-run JSONL)."""
     kw: dict[str, Any] = {"msg_type": msg_type}
     if content:
-        kw["content"] = str(content)[:500]
+        kw["content"] = content[:500]
     if tool_calls:
         kw["tool_calls"] = [{"name": tc.get("name"), "args": tc.get("args")} for tc in tool_calls]
     logger.info("Agent message", **kw)
-
-
-def _try_to_remove_url_data(content: Any) -> Any:
-    if not isinstance(content, list):
-        return content
-
-    ret = []
-
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "image_url":
-            ret.append({**item, "image_url": "<removed>"})
-        else:
-            ret.append(item)
-
-    return ret

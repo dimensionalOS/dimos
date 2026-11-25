@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, cast
@@ -36,6 +37,7 @@ from dimos.simulation.engines.robot_sim_binding import (
     RobotSimSpec,
     resolve_robot_sim_binding,
 )
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -170,6 +172,7 @@ class MujocoEngine(SimulationEngine):
         reset_joint_positions: list[float] | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
+        configure_mujoco_logging()
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
         self._spawn_xy = spawn_xy
@@ -449,7 +452,11 @@ class MujocoEngine(SimulationEngine):
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
                 continue
-            state.last_render_time = now
+            # Move the schedule on by one interval rather than to now, so the
+            # sim step length does not pull the camera below its fps. When a
+            # whole interval behind, restart from now instead of catching up.
+            due = state.last_render_time + state.interval
+            state.last_render_time = due if now - due < state.interval else now
 
             state.rgb_renderer.update_scene(
                 self._data, camera=state.cam_id, scene_option=state.scene_option
@@ -601,6 +608,17 @@ class MujocoEngine(SimulationEngine):
     def _sim_loop(self) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
+        headless = self._headless
+        if (
+            not headless
+            and sys.platform == "darwin"
+            and not isinstance(viewer._MJPYTHON, viewer._MjPythonBase)  # type: ignore[attr-defined]
+        ):
+            logger.warning(
+                "MuJoCo passive viewer requires mjpython on macOS; "
+                "running simulation without a MuJoCo window"
+            )
+            headless = True
 
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
@@ -640,7 +658,7 @@ class MujocoEngine(SimulationEngine):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        if self._headless:
+        if headless:
             while not self._stop_event.is_set():
                 _step_once(sync_viewer=False)
         else:

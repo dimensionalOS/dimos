@@ -71,7 +71,9 @@ class PGOConfig(BaseConfig):
     key_pose_delta_trans: float = 0.5
     key_pose_delta_deg: float = 10.0
 
-    # Loop closure
+    # Loop closure, live and against the premap. None is on; PGOVoxelMapper turns it off
+    # in simulation, where the odometry has no drift to correct.
+    loop_closure: bool | None = None
     loop_search_radius: float = 2.0
     loop_time_thresh: float = 20.0
     loop_score_thresh: float = 0.3
@@ -112,6 +114,7 @@ class PGOKwargs(TypedDict, total=False):
 
     key_pose_delta_trans: float
     key_pose_delta_deg: float
+    loop_closure: bool | None
     loop_search_radius: float
     loop_time_thresh: float
     loop_score_thresh: float
@@ -391,6 +394,7 @@ class PGOState:
         self._p = len(premap) if premap is not None else 0
         self._attached = False
         self._agreeing = 0
+        self._has_settled = False
         self._last_premap_loop_ts: float | None = None
         self.n_attaches = 0
         self.n_premap_loops = 0
@@ -479,6 +483,11 @@ class PGOState:
     def settled(self) -> bool:
         return self._attached and self._agreeing >= self._cfg.reloc_settle_after
 
+    @property
+    def has_settled(self) -> bool:
+        """Whether this run has settled at least once, even if a later fix moves it."""
+        return self._has_settled
+
     def keyframe_stamps(self) -> np.ndarray:
         return self._stamps
 
@@ -549,6 +558,7 @@ class PGOState:
             self._add_edge(join)
             self._flush(self._cfg.loop_closure_extra_iterations)
             self._agreeing += 1
+            self._has_settled |= self.settled
             if self._agreeing == self._cfg.reloc_settle_after:
                 logger.info("PGO premap: settled", agreeing_fixes=self._agreeing)
             return
@@ -571,6 +581,7 @@ class PGOState:
         self._attached = True
         self._reset(self._premap.poses, to_map @ self._optimized)
         self._agreeing = 1
+        self._has_settled |= self.settled
         self.n_attaches += 1
         logger.info("PGO premap: attached", attaches=self.n_attaches)
 
@@ -793,6 +804,8 @@ class PGOState:
         return cloud.voxel_downsample(self._cfg.submap_resolution)
 
     def _search_for_loops(self) -> _LoopPair | None:
+        if self._cfg.loop_closure is False:
+            return None
         if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
             return None
 
@@ -878,7 +891,7 @@ class PGOState:
 
     def _search_premap(self) -> bool:
         """Close a loop from the newest keyframe into the nearest premap keyframe. True if one landed."""
-        if not self._attached or self._premap is None:
+        if self._cfg.loop_closure is False or not self._attached or self._premap is None:
             return False
         cur_ts = self._key_poses[-1].timestamp
         if (

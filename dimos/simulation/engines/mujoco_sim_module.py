@@ -16,12 +16,10 @@
 
 Owns a single ``MujocoEngine`` and publishes:
 - camera streams (Out ports), replacing ``MujocoCamera``
-- joint state via shared memory, consumed by ``ShmMujocoAdapter`` inside
-  ``ControlCoordinator``
+- joint state via shared memory, consumed by ``MujocoArmConnection``
 
-This avoids the prior pattern of sharing engines via a global in-process
-registry, which was fragile when ``WorkerManager`` places the adapter and
-the camera in different worker processes.
+Shared memory lets the connection and the cameras run in different worker
+processes from the engine.
 """
 
 from __future__ import annotations
@@ -66,6 +64,7 @@ from dimos.simulation.engines.mujoco_shm import (
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
@@ -315,11 +314,10 @@ class MujocoSimModule(
     perception.DepthCamera,
 ):
     """Single Module that owns a MujocoEngine, publishes camera streams, and
-    exposes joint state/commands to a ``ShmMujocoAdapter`` via shared memory.
+    exposes joint state/commands to a ``MujocoArmConnection`` via shared memory.
 
-    The adapter attaches to the same SHM buffers using the MJCF path as the
-    discovery key - no RPC, no globals. From ControlCoordinator's perspective
-    the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
+    The connection attaches to the same SHM buffers using the MJCF path as
+    the discovery key.
     """
 
     config: MujocoSimModuleConfig
@@ -411,18 +409,20 @@ class MujocoSimModule(
 
     @rpc
     def scene_path(self) -> str:
-        """The MJCF the simulated manipulator adapters attach to (their SHM key)."""
+        """The MJCF the simulated arm connections attach to (their SHM key)."""
         return str(self.config.robot_mjcf or self.config.address)
 
     @rpc
     def start(self) -> None:
+        # Composed scenes compile before the engine is constructed.
+        configure_mujoco_logging()
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
                 "MujocoSimModule: either config.address (legacy MJCF path) "
                 "or config.robot_mjcf (composed scene path) is required"
             )
 
-        # SHM key - adapters derive the same key from the robot/control MJCF path.
+        # SHM key - connections derive the same key from the robot/control MJCF path.
         shm_key_source = self.config.robot_mjcf or self.config.address
         shm_key = shm_key_from_path(shm_key_source)
         self._shm = ManipShmWriter(shm_key)
@@ -782,7 +782,7 @@ class MujocoSimModule(
         """Post-step hook: SHM writes + LCM publishes.
 
         This stays in the module so odom/IMU continue to flow through normal
-        typed ports while the whole-body adapter consumes joint state via SHM.
+        typed ports while the whole-body connection consumes joint state via SHM.
         """
         if self._sim_hooks is not None:
             self._sim_hooks.post_step(engine)
@@ -900,8 +900,8 @@ class MujocoSimModule(
         if self._stop_event.is_set():
             return
 
+        next_read = time.monotonic()
         while not self._stop_event.is_set():
-            loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -914,7 +914,7 @@ class MujocoSimModule(
                 return
 
             if frame is None or frame.timestamp <= last_timestamp:
-                self._stop_event.wait(timeout=interval * 0.5)
+                self._stop_event.wait(timeout=interval * 0.25)
                 continue
             last_timestamp = frame.timestamp
             ts = frame.timestamp
@@ -949,10 +949,15 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.monotonic() - loop_start
-            sleep_time = interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            # Read on a fixed schedule, so a frame that comes late does not
+            # delay the ones after it. Past the next read's time, read again at
+            # once and count the schedule from now.
+            now = time.monotonic()
+            next_read += interval
+            if next_read > now:
+                time.sleep(next_read - now)
+            else:
+                next_read = now
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:

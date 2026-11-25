@@ -345,13 +345,13 @@ def test_resolve_unknown_encoding() -> None:
         resolve_encoder("nope.v1", dict)
 
 
-def test_resolve_rechecks_pickle_by_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_rechecks_by_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     # Decoration cannot verify the module binding (the def statement has not
     # bound the name yet); resolve does. Simulate a codec whose module-level
     # name was deleted after registration.
     web_encoder("t.enc.unref.v1")(_enc_ok)
     monkeypatch.delattr(sys.modules[__name__], "_enc_ok")
-    with pytest.raises(ValueError, match="cannot be pickled by reference"):
+    with pytest.raises(ValueError, match="cannot be sent by reference"):
         resolve_encoder("t.enc.unref.v1", _Point)
 
 
@@ -377,10 +377,10 @@ def test_resolve_decoder_rejections() -> None:
         resolve_decoder("json.v1", _Point)
 
 
-def test_resolve_decoder_rechecks_pickle_by_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_decoder_rechecks_by_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     web_decoder("t.dec.unref.v1")(_dec_ok)
     monkeypatch.delattr(sys.modules[__name__], "_dec_ok")
-    with pytest.raises(ValueError, match="cannot be pickled by reference"):
+    with pytest.raises(ValueError, match="cannot be sent by reference"):
         resolve_decoder("t.dec.unref.v1", _Point)
 
 

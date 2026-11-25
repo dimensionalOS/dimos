@@ -22,6 +22,7 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.msgs.sim_msgs.Contacts import Part
 from dimos.simulation.go2_legged.policy import LEGS, Go2Policy, Proprioception
 from dimos.utils.data import get_data
 
@@ -83,6 +84,8 @@ def yaw_of(quat_wxyz: NDArray[np.float64]) -> float:
 
 class LeggedGo2:
     """A Go2 in a compiled model, stepped one policy tick at a time from a velocity command."""
+
+    dt = CONTROL_DT
 
     def __init__(self, model: mujoco.MjModel, data: mujoco.MjData, policy: Go2Policy) -> None:
         self.model = model
@@ -152,6 +155,10 @@ class LeggedGo2:
     def base_pose(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         return self.data.xpos[self.trunk].copy(), self.data.xmat[self.trunk].reshape(3, 3).copy()
 
+    @property
+    def joint_names(self) -> tuple[str, ...]:
+        return self.policy.joint_names
+
     def joint_state(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Position and velocity of every leg joint, in the policy's joint order."""
         return self.data.qpos[self._qpos_adr].copy(), self.data.qvel[self._dof_adr].copy()
@@ -161,6 +168,13 @@ class LeggedGo2:
         return self.data.qvel[BASE_LINEAR_VELOCITY].copy(), self.data.qvel[
             BASE_ANGULAR_VELOCITY
         ].copy()
+
+    def part(self, geom: int) -> Part:
+        if geom in self.feet:
+            return "foot"
+        if self.model.geom_bodyid[geom] == self.trunk:
+            return "trunk"
+        return "leg"
 
     def yaw(self) -> float:
         return yaw_of(self.data.qpos[BASE_QUAT])

@@ -16,5 +16,6 @@
 
 OPENYAM_DOF = 6
 OPENYAM_ARM_JOINTS = [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-OPENYAM_GRIPPER_JOINT = "arm/gripper"
+# The jaw's URDF finger joint, named under the robot "arm".
+OPENYAM_GRIPPER_JOINT = "arm/joint7"
 OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]

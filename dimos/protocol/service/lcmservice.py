@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import copy
 import os
 import platform
+import selectors
 import threading
 import traceback
 from typing import Any, ClassVar
@@ -68,7 +70,7 @@ class LCMService(Service):
     l: lcm_mod.LCM | None
     _stop_event: threading.Event
     _startup_complete: threading.Event
-    _l_lock: threading.Lock
+    _l_lock: threading.RLock
     _pending_unsubs: list[lcm_mod.LCMSubscription]
     _thread: threading.Thread | None
 
@@ -81,35 +83,26 @@ class LCMService(Service):
         else:
             self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
-        self._l_lock = threading.Lock()
+        # Re-entrant: a dispatch callback on the loop thread may subscribe.
+        self._l_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._pending_unsubs = []
         self._startup_complete = threading.Event()
         self._thread = None
         self._call_pool = CallPool(max_workers=4)
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Exclude unpicklable runtime attributes when serializing."""
-        state = self.__dict__.copy()
-        # Remove unpicklable attributes
-        state.pop("l", None)
-        state.pop("_stop_event", None)
-        state.pop("_startup_complete", None)
-        state.pop("_thread", None)
-        state.pop("_l_lock", None)
-        state.pop("_pending_unsubs", None)
-        return state
+    # Services ride into workers as blueprint config (``pubsubs=[LCM(...)]``): only
+    # their settings cross, and a copy is a fresh, unstarted service. RPC services are
+    # never sent, so their rpc_timeouts have no place here.
+    def cbor_encode(self) -> dict[str, Any]:
+        return self.config.model_dump(exclude={"lcm"})
 
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        """Restore object from pickled state."""
-        self.__dict__.update(state)
-        # Reinitialize runtime attributes
-        self.l = None
-        self._stop_event = threading.Event()
-        self._startup_complete = threading.Event()
-        self._thread = None
-        self._l_lock = threading.Lock()
-        self._pending_unsubs = []
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> LCMService:
+        return cls(**data)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> LCMService:
+        return type(self).cbor_decode(copy.deepcopy(self.cbor_encode(), memo))
 
     def start(self) -> None:
         """Start dispatch, or raise if a previous shutdown is still in progress.
@@ -122,7 +115,7 @@ class LCMService(Service):
                 raise RuntimeError("LCM service is still stopping; cannot restart yet")
             self._call_pool.start()
             if self._thread is None or not self._thread.is_alive():
-                # Reinitialize LCM if it's None (e.g., after unpickling)
+                # Reinitialize LCM if it's None (e.g. after stop())
                 if self.l is None:
                     # Any pending unsubscribes reference the destroyed instance.
                     self._pending_unsubs.clear()
@@ -159,9 +152,18 @@ class LCMService(Service):
         self._pending_unsubs.append(subscription)
 
     def _lcm_loop(self) -> None:
-        """LCM message handling loop."""
+        """LCM message handling loop.
+
+        Dispatches under _l_lock, which subscribe() takes for its native
+        call, but waits for traffic outside it: a waiter loses every handoff
+        to a loop that re-acquires the lock the moment it releases it.
+        """
         primed = False
+        selector = selectors.DefaultSelector()
         try:
+            with self._l_lock:
+                if self.l is not None:
+                    selector.register(self.l.fileno(), selectors.EVENT_READ)
             while not self._stop_event.is_set():
                 try:
                     with self._l_lock:
@@ -169,7 +171,11 @@ class LCMService(Service):
                             break
                         while self._pending_unsubs:
                             self.l.unsubscribe(self._pending_unsubs.pop())
-                        self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
+                    if selector.select(_LCM_LOOP_TIMEOUT / 1000):
+                        with self._l_lock:
+                            if self.l is None:
+                                break
+                            self.l.handle_timeout(0)
                 except Exception as e:
                     stack_trace = traceback.format_exc()
                     print(f"Error in LCM handling: {e}\n{stack_trace}")
@@ -179,6 +185,7 @@ class LCMService(Service):
                     primed = True
                     self._startup_complete.set()
         finally:
+            selector.close()
             # A callback may request stop while handle_timeout holds _l_lock.
             # Only release the native instance after dispatch has unwound.
             self._release_lcm()

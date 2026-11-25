@@ -17,13 +17,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
 from dimos.msgs.protocol import DimosMsg
+from dimos.protocol.encode import cbor
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+logger = setup_logger()
 
 TopicT = TypeVar("TopicT")
 MsgT = TypeVar("MsgT")
@@ -84,14 +87,28 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
         return cast("Callable[[], None]", super().subscribe(topic, wrapper_cb))  # type: ignore[misc]
 
 
-class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
-    """Encoder mixin that uses pickle for serialization. Works with any Python object."""
+class CborEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
+    """Encoder mixin using the CBOR codec (dimos.protocol.encode.cbor).
+
+    Encoding an unsupported value raises TypeError out of publish(); a message
+    that does not decode is logged and dropped. RPC keeps its bodies as bytes
+    inside a primitives-only envelope (see pubsubrpc) so that a body this
+    process cannot decode is answered with the error instead of dropped here.
+    """
 
     def encode(self, msg: MsgT, _: TopicT) -> bytes:
-        return pickle.dumps(msg)
+        return cbor.encode(msg)
 
-    def decode(self, msg: bytes, _: TopicT) -> MsgT:
-        return cast("MsgT", pickle.loads(msg))
+    def decode(self, msg: bytes, topic: TopicT) -> MsgT:
+        try:
+            return cast("MsgT", cbor.decode(msg))
+        except cbor.CborDecodeError as e:
+            logger.error(
+                "Dropping undecodable CBOR message: is another dimos version on the bus?",
+                topic=str(topic),
+                error=str(e),
+            )
+            raise DecodingError(str(e)) from e
 
 
 class LCMTopicProto(Protocol):

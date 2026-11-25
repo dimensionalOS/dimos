@@ -13,15 +13,15 @@
 # limitations under the License.
 
 from pathlib import Path
-import pickle
 from typing import Any
 
 import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
-from dimos.visualization.rerun.bridge import Config, RerunBridgeModule
+from dimos.visualization.rerun.bridge import Config, RerunBridgeModule, web_viewer_url
 from dimos.visualization.rerun.scene_package import SceneVisualFactory
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
@@ -46,7 +46,7 @@ def test_parsed_bridge_config_preserves_callable_factories(tmp_path: Path) -> No
 
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
     # Worker deployment transports constructor kwargs over a multiprocessing pipe.
-    kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs(RerunBridgeModule.name)))
+    kwargs = decode(encode(parsed.module_kwargs(RerunBridgeModule.name)))
     config = Config(**kwargs)
 
     assert config.visual_override == blueprint.blueprints[0].kwargs["visual_override"]
@@ -65,3 +65,9 @@ def test_parsed_bridge_config_rejects_dictionary_callbacks(field_name: str) -> N
 
     with pytest.raises(BlueprintConfigError, match="callable"):
         BlueprintConfigParser(blueprint).parse(environ={})
+
+
+def test_web_viewer_url_names_the_grpc_server_as_its_source() -> None:
+    assert web_viewer_url("rerun+http://127.0.0.1:9877/proxy", 9878) == (
+        "http://localhost:9878/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9877%2Fproxy"
+    )

@@ -7,6 +7,7 @@ import { registerTeleopHooks } from "@dimos/sdk/internal/teleop";
 import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { App } from "./App.tsx";
+import { FakeSession } from "./testing/fakeSession.ts";
 import type { View } from "./ui/StatusBar.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -75,14 +76,13 @@ describe("App session states", () => {
     status = new StatusStore();
     channels = new ChannelStore();
     watch = vi.fn((_id: string) => new Promise<Manifest>(() => {}));
-    session = {
+    session = Object.assign(new FakeSession(), {
       status,
       store: channels,
       watch,
       subscribe: () => () => {},
       publish: () => new Promise(() => {}),
-      close: () => {},
-    };
+    });
     registerTeleopHooks(session, {
       control: () => {},
       datagram: () => {},
@@ -95,6 +95,7 @@ describe("App session states", () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    session.close();
     container.remove();
   });
 

@@ -83,6 +83,16 @@ export default function (pi) {
     if (!event.payload || typeof event.payload !== "object")
       throw new Error("Invalid provider payload");
     const payload = /** @type {Record<string, unknown>} */ (event.payload);
+    if (config.provider === "google") {
+      // @google/genai request: generation settings live under `config`.
+      const settings = /** @type {Record<string, unknown>} */ ({
+        ...(/** @type {object} */ (payload.config) ?? {}),
+      });
+      const requested = settings.maxOutputTokens;
+      settings.maxOutputTokens =
+        typeof requested === "number" ? Math.min(requested, cap) : cap;
+      return { ...payload, config: settings };
+    }
     const field = [
       "max_output_tokens",
       "max_tokens",

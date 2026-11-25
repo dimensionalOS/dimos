@@ -21,6 +21,7 @@ import httpx
 from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import (
+    last_request_unanswered,
     latest_pair,
     list_llm_trace_pairs,
     request_path,
@@ -50,7 +51,7 @@ def test_records_request_response_pair(tmp_path: Path, mocker: MockerFixture) ->
         client.post(
             "https://api.test/v1/chat/completions",
             json={"ping": 1},
-            headers={"authorization": "Bearer secret", "x-run": "7"},
+            headers={"authorization": "Bearer secret", "x-goog-api-key": "secret", "x-run": "7"},
         )
 
     request = _read(request_path(tmp_path, 0))
@@ -59,6 +60,7 @@ def test_records_request_response_pair(tmp_path: Path, mocker: MockerFixture) ->
     assert request["url"] == "https://api.test/v1/chat/completions"
     assert request["body"] == {"ping": 1}
     assert "authorization" not in request["headers"]
+    assert "x-goog-api-key" not in request["headers"]
     assert request["headers"]["x-run"] == "7"
 
     response = _read(response_path(tmp_path, 0))
@@ -103,3 +105,6 @@ def test_trace_discovery_orders_complete_calls_and_respects_sequence_boundary(
     assert list_llm_trace_pairs(tmp_path) == expected
     assert latest_pair(tmp_path, after=1000) == expected[-1]
     assert latest_pair(tmp_path, after=1001) is None
+    assert last_request_unanswered(tmp_path)
+    response_path(tmp_path, 1001).write_text("{}")
+    assert not last_request_unanswered(tmp_path)

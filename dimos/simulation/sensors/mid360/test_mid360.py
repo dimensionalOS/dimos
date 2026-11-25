@@ -18,7 +18,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.simulation.sensors.mid360.lidar import OcclusionMap, SimMid360
+from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
+from dimos.simulation.sensors.mid360.lidar import RETURNS
 from dimos.simulation.sensors.mid360.pattern import Mid360Pattern
 from dimos.utils.data import get_data
 
@@ -87,7 +88,7 @@ def test_pattern_rejects_a_coefficient_count_that_does_not_match_its_orders() ->
 
 
 def test_returns_follow_range_with_millimeter_noise(pattern: Mid360Pattern) -> None:
-    points = SimMid360(Sphere(3.0), pattern, seed=1).cast(ORIGIN, UPRIGHT, 20_000)
+    points = SimLidar(Sphere(3.0), pattern, 1, RETURNS).cast(ORIGIN, UPRIGHT, 20_000)
     r = np.linalg.norm(points, axis=1)
     assert len(r) == 20_000
     assert abs(float(np.median(r)) - 3.0) < 0.001
@@ -95,31 +96,29 @@ def test_returns_follow_range_with_millimeter_noise(pattern: Mid360Pattern) -> N
 
 
 def test_misses_produce_no_points(pattern: Mid360Pattern) -> None:
-    assert len(SimMid360(Void(), pattern, seed=1).cast(ORIGIN, UPRIGHT, 5_000)) == 0
+    assert len(SimLidar(Void(), pattern, 1, RETURNS).cast(ORIGIN, UPRIGHT, 5_000)) == 0
 
 
 def test_blind_zone_drops_near_returns(pattern: Mid360Pattern) -> None:
-    assert len(SimMid360(Sphere(0.1), pattern, seed=1).cast(ORIGIN, UPRIGHT, 5_000)) == 0
+    assert len(SimLidar(Sphere(0.1), pattern, 1, RETURNS).cast(ORIGIN, UPRIGHT, 5_000)) == 0
 
 
 def test_grazing_incidence_drops_returns_by_the_measured_table(pattern: Mid360Pattern) -> None:
-    kept = len(SimMid360(Grazing(82.5), pattern, seed=1).cast(ORIGIN, UPRIGHT, 20_000))
+    kept = len(SimLidar(Grazing(82.5), pattern, 1, RETURNS).cast(ORIGIN, UPRIGHT, 20_000))
     assert 0.45 < kept / 20_000 < 0.55
-    assert len(SimMid360(Grazing(90.0), pattern, seed=1).cast(ORIGIN, UPRIGHT, 5_000)) == 0
+    assert len(SimLidar(Grazing(90.0), pattern, 1, RETURNS).cast(ORIGIN, UPRIGHT, 5_000)) == 0
 
 
 def test_occlusion_map_blocks_the_directions_it_marks(pattern: Mid360Pattern) -> None:
     probability = np.zeros((64, 360), np.float32)
     probability[:, :180] = 1.0
     blocked_right = OcclusionMap(probability, -180.0, -8.0)
-    points = SimMid360(Sphere(3.0), pattern, seed=1, occlusion=blocked_right).cast(
-        ORIGIN, UPRIGHT, 20_000
-    )
+    points = SimLidar(Sphere(3.0), pattern, 1, RETURNS, blocked_right).cast(ORIGIN, UPRIGHT, 20_000)
     assert 5_000 < len(points) < 15_000
     assert np.all(points[:, 1] > 0)
 
 
 def test_same_seed_same_scan(pattern: Mid360Pattern) -> None:
-    a = SimMid360(Sphere(3.0), pattern, seed=7).cast(ORIGIN, UPRIGHT, 4_000)
-    b = SimMid360(Sphere(3.0), pattern, seed=7).cast(ORIGIN, UPRIGHT, 4_000)
+    a = SimLidar(Sphere(3.0), pattern, 7, RETURNS).cast(ORIGIN, UPRIGHT, 4_000)
+    b = SimLidar(Sphere(3.0), pattern, 7, RETURNS).cast(ORIGIN, UPRIGHT, 4_000)
     assert np.array_equal(a, b)

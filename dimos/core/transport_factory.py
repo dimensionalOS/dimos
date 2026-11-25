@@ -104,7 +104,7 @@ def make_transport(
 ) -> PubSubTransport[Any]:
     """Construct the active-backend pub/sub transport for a logical channel.
 
-    A pickled (self-describing) transport is used when no `msg_type` is given or
+    A CBOR (self-describing) transport is used when no `msg_type` is given or
     the type has no `lcm_encode`. Otherwise a typed transport is used.
 
     A channel name alone doesn't fully define a topic: backends have per-topic
@@ -115,16 +115,16 @@ def make_transport(
     transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
-    use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
+    untyped = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
     topic = transport_topic(name, g)
     if g.transport == "zenoh":
         ztopic = ZenohTopic(
-            topic, None if use_pickled else msg_type, qos=default_zenoh_qos(name, msg_type)
+            topic, None if untyped else msg_type, qos=default_zenoh_qos(name, msg_type)
         )
-        return pZenohTransport(ztopic) if use_pickled else ZenohTransport(ztopic)
-    if use_pickled:
+        return pZenohTransport(ztopic) if untyped else ZenohTransport(ztopic)
+    if untyped:
         return pLCMTransport(topic)
-    assert msg_type is not None  # not use_pickled implies a typed msg_type
+    assert msg_type is not None  # not untyped implies a typed msg_type
     return LCMTransport(topic, msg_type)
 
 

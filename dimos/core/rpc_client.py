@@ -48,10 +48,13 @@ class RpcCall:
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
+        *,
+        instance_name: str | None = None,
     ) -> None:
         self._rpc = rpc
         self._name = name
         self._remote_name = remote_name
+        self.instance_name = instance_name or remote_name
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
 
@@ -72,7 +75,7 @@ class RpcCall:
 
     @property
     def remote_name(self) -> str:
-        """The exact deployed module-instance name."""
+        """The deployed module's RPC address."""
         return self._remote_name
 
     def set_rpc(self, rpc: RPCSpec) -> None:
@@ -86,32 +89,21 @@ class RpcCall:
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(
-            f"{self._remote_name}/{self._name}",
-            (args, kwargs),  # type: ignore[arg-type]
-        )
+        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))
         self._unsub_fns.append(unsub_fn)
         return result
-
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        return (self._name, self._remote_name)
-
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self._name, self._remote_name = state
-        self._unsub_fns = []
-        self._rpc = None
-        self._stop_rpc_client = None
 
 
 class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
 
     remote_name: str
+    instance_name: str
 
     def build(self) -> None: ...
     def start(self) -> None: ...
@@ -133,6 +125,7 @@ class RPCClient:
         *,
         rpc: RPCSpec | None = None,
         stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
+        instance_name: str | None = None,
     ) -> None:
         if rpc is None:
             self.rpc = rpc_backend()()
@@ -142,13 +135,14 @@ class RPCClient:
             self.rpc = rpc
             self._owns_rpc = False
         if actor_class is None:
-            # Unpickled in another process; the class stays out of the pickle (see __reduce__).
+            # Decoded in another process; the class stays out of the payload (see cbor_encode).
             assert remote_name is not None and rpcs is not None
         else:
             remote_name = remote_name or actor_class.__name__
             rpcs = actor_class.rpcs if rpcs is None else rpcs
         self.actor_class = actor_class
         self.remote_name = remote_name
+        self.instance_name = instance_name or remote_name
         self.actor_instance = actor_instance
         self.rpcs = frozenset(rpcs)
         self._unsub_fns: list = []  # type: ignore[type-arg]
@@ -179,17 +173,29 @@ class RPCClient:
             self.rpc.stop()
             self.rpc = None  # type: ignore[assignment]
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        # The module class stays out of the pickle: unpickling it in another
+    def cbor_encode(self) -> dict[str, Any]:
+        # The module class stays out of the payload: resolving it in another
         # worker would import the module and everything under it (a
         # SpatialMemory proxy alone pulls in transformers and torch). A proxy
         # only needs the rpc names; the class merely gives RpcCall a local
-        # signature. remote_name must be included or proxies pickled into
-        # workers would fall back to class-name RPC topics.
-        return (self.__class__, (self.actor_instance, None, self.remote_name, self.rpcs))
+        # signature. remote_name must be included or proxies sent into workers
+        # would fall back to class-name RPC topics. The parent-side Actor stays
+        # behind too: receivers only call @rpc methods.
+        return {
+            "remote_name": self.remote_name,
+            "instance_name": self.instance_name,
+            "rpcs": sorted(self.rpcs),
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RPCClient:
+        return cls(
+            None, None, data["remote_name"], data["rpcs"], instance_name=data.get("instance_name")
+        )
 
     def __dir__(self) -> list[str]:
-        return sorted(set(super().__dir__()) | set(self.rpcs))
+        """Expose the module's RPCs for interactive discovery."""
+        return sorted(self.rpcs)
 
     def get_stream(self, name: str) -> RemoteOut[Any]:
         """Get a subscription handle for a stream in a connected remote system."""
@@ -207,6 +213,7 @@ class RPCClient:
             "__getattr__",
             "rpcs",
             "remote_name",
+            "instance_name",
             "remote_instance",
             "actor_instance",
         }:
@@ -221,22 +228,30 @@ class RPCClient:
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
+                instance_name=self.instance_name,
             )
 
         if self.actor_instance is None:
             raise AttributeError(
-                f"{self.remote_name!r} has no @rpc method named {name!r}; "
+                f"{self.instance_name!r} has no @rpc method named {name!r}; "
                 f"this client was constructed without a parent-side Actor "
                 f"(remote-mode), so non-@rpc attribute access is unavailable."
+            )
+
+        if inspect.isfunction(getattr(self.actor_class, name, None)):
+            raise AttributeError(
+                f"{self.instance_name}.{name} is a method without @rpc, so the worker cannot "
+                "send it back; decorate it with @rpc to call it from the host"
             )
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
         result = self.actor_instance.__getattr__(name)
 
-        # When streams are returned from the worker, their owner is a pickled
-        # Actor with no connection. Replace it with a MethodCallProxy that can
-        # talk to the worker through the parent-side Actor's pipe.
+        # When streams are returned from the worker, their owner is an Actor
+        # that crossed the pipe without its connection. Replace it with a
+        # MethodCallProxy that can talk to the worker through the parent-side
+        # Actor's pipe.
         if isinstance(result, RemoteStream):
             result.owner = MethodCallProxy(self.actor_instance)
 
@@ -252,7 +267,7 @@ class AsyncSpecProxy:
     is still synchronous over the wire.  The caller's event loop stays unblocked
     while the response round-trips.
 
-    It's picklable so `set_module_ref`` can ship it across to the worker process.
+    It is CBOR-encodable so `set_module_ref` can ship it across to the worker process.
     """
 
     def __init__(self, inner: Any, async_methods: frozenset[str]) -> None:
@@ -277,14 +292,15 @@ class AsyncSpecProxy:
 
         return async_call
 
-    def __reduce__(self) -> Any:
-        return (
-            AsyncSpecProxy,
-            (
-                object.__getattribute__(self, "_inner"),
-                object.__getattribute__(self, "_async_methods"),
-            ),
-        )
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "inner": object.__getattribute__(self, "_inner"),
+            "async_methods": sorted(object.__getattribute__(self, "_async_methods")),
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> AsyncSpecProxy:
+        return cls(data["inner"], frozenset(data["async_methods"]))
 
 
 if TYPE_CHECKING:

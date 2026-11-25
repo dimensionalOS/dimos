@@ -17,11 +17,16 @@ import math
 import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.planar_base_trajectory_task import planar_base_trajectory_task
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTask,
     PlanarBaseTrajectoryTaskConfig,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
@@ -38,15 +43,22 @@ class _TwistBase:
     def __init__(self, x=0.0, y=0.0, yaw=0.0, gain=1.0):
         self.x, self.y, self.yaw = x, y, yaw
         self.gain = gain
+        # None reports the true pose; "missing" reports nothing; "nan" reports NaN;
+        # a tuple keeps reporting that pose.
         self.odometry = None
 
-    def state(self, t):
-        positions = self.odometry
-        if positions is None:
-            positions = dict(zip(JOINTS, (self.x, self.y, angle_diff(self.yaw, 0.0)), strict=True))
-        return CoordinatorState(
-            joints=JointStateSnapshot(joint_positions=positions), t_now=t, dt=DT
-        )
+    def state(self, task, t):
+        """Send the task this tick's odometry, as the coordinator would, then its state."""
+        pose = self.odometry
+        if pose is None:
+            pose = (self.x, self.y, angle_diff(self.yaw, 0.0))
+        elif pose == "nan":
+            pose = (math.nan, math.nan, 0.0)
+        if pose != "missing":
+            x, y, yaw = pose
+            orientation = Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+            task.on_odometry(Odometry(ts=t, pose=Pose(Vector3(x, y, 0.0), orientation)), t)
+        return CoordinatorState(joints=JointStateSnapshot(), t_now=t, dt=DT)
 
     def step(self, command):
         vx, vy, wz = (self.gain * v for v in command.velocities)
@@ -71,7 +83,7 @@ def _line(start, goal, duration, n=60):
 def _run(task, base, seconds, t=100.0):
     outputs = []
     for _ in range(round(seconds / DT)):
-        output = task.compute(base.state(t))
+        output = task.compute(base.state(task, t))
         outputs.append(output)
         if output is not None:
             base.step(output)
@@ -188,7 +200,7 @@ def test_preemption_aborts_and_zeroes_the_joints_the_winner_left():
     for _ in range(100):
         task.on_preempted("turn_only", frozenset(JOINTS[2:]))
         assert task.get_status().state == TrajectoryState.ABORTED
-        outputs.append(task.compute(base.state(t)))
+        outputs.append(task.compute(base.state(task, t)))
         t += DT
 
     held = [o for o in outputs if o is not None]
@@ -228,12 +240,44 @@ def test_lost_odometry_aborts_and_stops_the_base(loss, goal):
     task.execute(_line((0.0, 0.0, 0.0), goal, duration=2.0))
     _, t = _run(task, base, seconds=0.5)
 
-    base.odometry = {
-        "missing": {},
-        "nan": dict.fromkeys(JOINTS, math.nan),
-        "frozen": dict(base.state(t).joints.joint_positions),
-    }[loss]
+    base.odometry = (base.x, base.y, base.yaw) if loss == "frozen" else loss
     outputs, _ = _run(task, base, seconds=1.2, t=t)
 
     assert task.get_status().state == TrajectoryState.ABORTED
     assert [o for o in outputs if o is not None][-1].velocities == ZERO
+
+
+def test_execution_logs_target_duration_and_completed_pose_once(mocker):
+    log = mocker.patch.object(planar_base_trajectory_task.logger, "info")
+    task = _task()
+    plan = _line(ZERO, [1.0, 0.0, 0.0], duration=2.0, n=2)
+    base = _TwistBase()
+
+    task.execute(plan)
+    task.compute(base.state(task, 100.0))
+    base.x = 1.0
+    task.compute(base.state(task, 102.0))
+    task.compute(base.state(task, 102.1))
+
+    assert log.call_args_list == [
+        mocker.call(
+            "Executing trajectory", task_name="base_traj", duration=2.0, target=[1.0, 0.0, 0.0]
+        ),
+        mocker.call(
+            "Trajectory completed",
+            task_name="base_traj",
+            elapsed=2.0,
+            position=(1.0, 0.0, 0.0),
+        ),
+    ]
+
+
+def test_cancel_logs_result_once(mocker):
+    task = _task()
+    task.execute(_line(ZERO, [1.0, 0.0, 0.0], duration=2.0, n=2))
+    log = mocker.patch.object(planar_base_trajectory_task.logger, "info")
+
+    assert task.cancel()
+    assert not task.cancel()
+
+    log.assert_called_once_with("Trajectory cancelled", task_name="base_traj", elapsed=0.0)

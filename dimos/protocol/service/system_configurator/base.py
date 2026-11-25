@@ -17,6 +17,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import os
 import subprocess
+from typing import Any
 
 from dimos.utils import prompt
 from dimos.utils.logging_config import setup_logger
@@ -53,6 +54,16 @@ def _write_sysctl_int(name: str, value: int) -> None:
 
 class SystemConfigurator(ABC):
     critical: bool = False
+
+    # Configurators ride inside a Blueprint over RPC; plain attributes are all they hold.
+    def cbor_encode(self) -> dict[str, Any]:
+        return dict(vars(self))
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> SystemConfigurator:
+        configurator = cls.__new__(cls)
+        configurator.__dict__.update(data)
+        return configurator
 
     @abstractmethod
     def check(self) -> bool:

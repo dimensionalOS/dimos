@@ -44,20 +44,20 @@ from dimos.imitation.dataprep.core import (
 )
 from dimos.imitation.dataprep.schema import (
     DataPrepConfig,
-    DatasetSchema,
     Episode,
     EpisodeExtractor,
     EpisodeQualityReport,
+    EpisodeReport,
     FeatureSpec,
     OutputConfig,
     QualityConfig,
+    RecordingSchema,
     Sample,
     SyncConfig,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.manipulators.xarm.config import xarm7_hardware
 
 
 @pytest.mark.parametrize(
@@ -532,7 +532,7 @@ def test_saved_schema_rejects_conflicting_source_kinds():
     updates = _held_action()
     snapshot = FeatureSpec(**(updates.model_dump() | {"source_kind": "snapshot"}))
     with pytest.raises(ValueError, match="conflicting source kinds"):
-        DatasetSchema.model_validate_json(
+        RecordingSchema.model_validate_json(
             json.dumps(
                 {
                     "observation": {"state": snapshot.model_dump()},
@@ -859,10 +859,12 @@ def test_summarize_lengths_empty() -> None:
 
 def test_dimos_meta_records_sync_and_quality(tmp_path: Path) -> None:
     cfg = DataPrepConfig(
+        recording_schema=RecordingSchema(
+            observation={"state": _feature("js")},
+            action={"action": _feature("js")},
+            sync=SyncConfig(anchor="state", rate_hz=14.0, tolerance_ms=80.0),
+        ),
         source="s.db",
-        observation={"state": _feature("js")},
-        action={"action": _feature("js")},
-        sync=SyncConfig(anchor="state", rate_hz=14.0, tolerance_ms=80.0),
         output=OutputConfig(format="lerobot", path=tmp_path, metadata={"fps": 14}),
     )
     _write_dimos_meta(tmp_path, cfg, episodes=[], quality_reports=[])
@@ -890,9 +892,11 @@ def test_run_dataprep_rejects_shared_obs_action_key() -> None:
     """A name in both obs and action would silently drop the obs feature when the
     two maps merge; run_dataprep must reject it before opening the store."""
     cfg = DataPrepConfig(
-        source="nonexistent.db",  # never reached — the check runs first
-        observation={"joints": _feature("joint_state")},
-        action={"joints": _feature("joint_state")},
+        recording_schema=RecordingSchema(
+            observation={"joints": _feature("joint_state")},
+            action={"joints": _feature("joint_state")},
+        ),
+        source="nonexistent.db",
     )
     with pytest.raises(ValueError, match="share feature name"):
         run_dataprep(cfg)
@@ -907,24 +911,26 @@ def test_run_dataprep_rejects_empty_recorded_stream_before_writer(mocker, tmp_pa
     )
     mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
     mocker.patch(
-        "dimos.imitation.dataprep.build.extract_episodes",
-        return_value=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)],
+        "dimos.imitation.dataprep.build.inspect_episodes",
+        return_value=EpisodeReport(episodes=[Episode(id="ep_0", start_ts=1.0, end_ts=2.0)]),
     )
     writer = mocker.Mock(return_value=tmp_path)
     cfg = DataPrepConfig(
+        recording_schema=RecordingSchema(
+            observation={
+                "wrist": FeatureSpec(
+                    stream="color_image",
+                    field="data",
+                    dtype="video",
+                    shape=(2, 2, 3),
+                    names=["height", "width", "channels"],
+                ),
+                "state": _feature("joint_state"),
+            },
+            sync=SyncConfig(anchor="wrist", rate_hz=30.0, tolerance_ms=20.0),
+        ),
         source="recording.db",
-        observation={
-            "wrist": FeatureSpec(
-                stream="color_image",
-                field="data",
-                dtype="video",
-                shape=(2, 2, 3),
-                names=["height", "width", "channels"],
-            ),
-            "state": _feature("joint_state"),
-        },
         output=OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
-        sync=SyncConfig(anchor="wrist", rate_hz=30.0, tolerance_ms=20.0),
     )
 
     with pytest.raises(RuntimeError, match="stream 'color_image' has no episode data"):
@@ -942,7 +948,10 @@ def test_run_dataprep_excludes_only_invalid_episode(mocker, tmp_path: Path) -> N
         Episode(id="bad", start_ts=0.0, end_ts=1.0, task_label="pick"),
         Episode(id="good", start_ts=2.0, end_ts=3.0, task_label="pick"),
     ]
-    mocker.patch("dimos.imitation.dataprep.build.extract_episodes", return_value=episodes)
+    mocker.patch(
+        "dimos.imitation.dataprep.build.inspect_episodes",
+        return_value=EpisodeReport(episodes=episodes),
+    )
     mocker.patch(
         "dimos.imitation.dataprep.build.inspect_episode_quality",
         side_effect=[
@@ -973,9 +982,11 @@ def test_run_dataprep_excludes_only_invalid_episode(mocker, tmp_path: Path) -> N
         return tmp_path
 
     config = DataPrepConfig(
+        recording_schema=RecordingSchema(
+            observation={"state": _feature("joint_state")},
+            sync=SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=20.0),
+        ),
         source="recording.db",
-        observation={"state": _feature("joint_state")},
-        sync=SyncConfig(anchor="state", rate_hz=1.0, tolerance_ms=20.0),
         output=OutputConfig(format="hdf5", path=tmp_path / "dataset.hdf5"),
     )
 
@@ -1022,8 +1033,12 @@ print(json.dumps(inspect_recording(sys.argv[1])))
 # -- example config -----------------------------------------------------------
 
 
+# The joints the WebXR xArm7 teleop's coordinator reports.
+_WEBXR_XARM7_JOINTS = [*(f"arm/joint{i}" for i in range(1, 8)), "arm/drive_joint"]
+
+
 def _webxr_xarm7_recording(*, jitter_s: float) -> _FakeStore:
-    joints = xarm7_hardware("arm", gripper=True).joints
+    joints = _WEBXR_XARM7_JOINTS
     image = {"data": np.zeros((480, 640, 3), dtype=np.uint8)}
     images = [_Obs(10.0 + k / 28.0, image) for k in range(57)]
     images[2] = _Obs(images[2].ts + jitter_s, image)
@@ -1053,10 +1068,10 @@ def _example_config(tmp_path: Path) -> DataPrepConfig:
 
 def test_example_config_names_match_the_webxr_xarm7_recording(tmp_path: Path) -> None:
     config = _example_config(tmp_path)
-    joints = xarm7_hardware("arm", gripper=True).joints
+    joints = _WEBXR_XARM7_JOINTS
 
-    assert config.observation["joint_state"].names == joints
-    assert config.action["joint_target"].names == joints
+    assert config.recording_schema.observation["joint_state"].names == joints
+    assert config.recording_schema.action["joint_target"].names == joints
 
 
 def test_example_config_builds_the_webxr_xarm7_recording(mocker, tmp_path: Path) -> None:
@@ -1073,14 +1088,15 @@ def test_example_config_builds_the_webxr_xarm7_recording(mocker, tmp_path: Path)
 
     run_dataprep(config, writer=writer)
 
-    assert config.quality.mode == "fill"
+    assert config.recording_schema.quality.mode == "fill"
     assert len(received) > 20
     assert received[0].observation["joint_state"].shape == (8,)
     assert any(bool(sample.complementary_info["is_filled"][0]) for sample in received)
 
 
 def test_example_config_in_strict_mode_rejects_one_late_image(mocker, tmp_path: Path) -> None:
-    config = _example_config(tmp_path).model_copy(update={"quality": QualityConfig(mode="strict")})
+    config = _example_config(tmp_path)
+    config.recording_schema.quality = QualityConfig(mode="strict")
     mocker.patch(
         "dimos.imitation.dataprep.build._open_recording",
         return_value=_webxr_xarm7_recording(jitter_s=0.025),
@@ -1088,3 +1104,82 @@ def test_example_config_in_strict_mode_rejects_one_late_image(mocker, tmp_path: 
 
     with pytest.raises(RuntimeError, match="failed dataset validation"):
         run_dataprep(config, writer=mocker.Mock(return_value=tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("last_timestamp", "expected"),
+    [(10.066666666, [0, 1, 2]), (10.06, [0, 1])],
+)
+def test_alignment_endpoint_respects_source_timestamp_precision(last_timestamp, expected):
+    store = _FakeStore({"js": _scalar_stream([(10, 0), (10.033333333, 1), (last_timestamp, 2)])})
+    samples = list(
+        iter_episode_samples(
+            store,
+            Episode(id="episode", start_ts=10, end_ts=10.1),
+            {"state": _feature("js")},
+            SyncConfig(anchor="state", rate_hz=30, tolerance_ms=20),
+            QualityConfig(),
+            obs_keys={"state"},
+            action_keys=set(),
+        )
+    )
+    assert [sample.observation["state"].item() for sample in samples] == expected
+
+
+@pytest.mark.parametrize(
+    ("events", "counts"),
+    [
+        ([(1.0, "start", "pick")], "0 saved, 0 discarded, 1 incomplete"),
+        ([(1.0, "start", "pick"), (2.0, "discard", "pick")], "0 saved, 1 discarded, 0 incomplete"),
+        ([], "0 saved, 0 discarded, 0 incomplete"),
+    ],
+)
+@pytest.mark.parametrize("status_stream", ["status", "custom_status"])
+def test_prepare_explains_unsaved_episodes(tmp_path, mocker, events, counts, status_stream):
+    store = _FakeStore({status_stream: _status(events)})
+    mocker.patch("dimos.imitation.dataprep.build._open_recording", return_value=store)
+    config = DataPrepConfig(
+        source="recording.db",
+        recording_schema=RecordingSchema(episodes=EpisodeExtractor(status_stream=status_stream)),
+        output=OutputConfig(path=tmp_path / "dataset"),
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        run_dataprep(config)
+
+    assert str(caught.value) == (
+        f"No saved episodes in 'recording.db'. {counts}. "
+        "Finish and save at least one episode before preparing the dataset."
+    )
+    assert not config.output.path.exists()
+
+
+@pytest.mark.parametrize(
+    ("extractor", "message"),
+    [
+        (
+            EpisodeExtractor(status_stream="custom_status"),
+            "Episode status stream 'custom_status' is missing.",
+        ),
+        (
+            EpisodeExtractor(extractor="ranges"),
+            "using extractor='ranges'. No episode ranges were configured.",
+        ),
+    ],
+)
+def test_prepare_explains_missing_episode_boundaries(tmp_path, extractor, message):
+    source = tmp_path / "recording.db"
+    with SqliteStore(path=str(source)):
+        pass
+    config = DataPrepConfig(
+        source=str(source),
+        recording_schema=RecordingSchema(episodes=extractor),
+        output=OutputConfig(path=tmp_path / "dataset"),
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        run_dataprep(config)
+
+    assert str(source) in str(caught.value)
+    assert str(caught.value).endswith(message)
+    assert not config.output.path.exists()

@@ -16,13 +16,13 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from itertools import count
-import pickle
 import time
 from typing import TYPE_CHECKING, Any
 
 import zenoh
 import zenoh.handlers
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
 from dimos.protocol.service.call_pool import CallPool
@@ -35,6 +35,14 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 EXCEPTION_ENCODING = zenoh.Encoding("dimos/rpc-exception")
+
+
+def _decode_reply(payload: bytes, convert: Callable[[Any], Any]) -> Any:
+    """The decoded reply, or the failure itself so the caller raises instead of timing out."""
+    try:
+        return convert(decode(payload))
+    except Exception as e:
+        return e
 
 
 class ZenohRPC(RPCSpec, ZenohService):
@@ -54,22 +62,6 @@ class ZenohRPC(RPCSpec, ZenohService):
         self._pending: dict[int, Callable[..., Any]] = {}
         self._call_counter = count(1)
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Drop the live queryables, call pool and in-flight calls on top of the session.
-
-        A module carries its RPC service into the worker by pickle, and none of
-        these survive the trip; the far side rebuilds them on first use.
-        """
-        state = super().__getstate__()  # type: ignore[no-untyped-call]
-        for key in ("_queryables", "_pending"):
-            state.pop(key, None)
-        return state
-
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        super().__setstate__(state)
-        self._queryables = []
-        self._pending = {}
-
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         return self._call_pool.get()
 
@@ -88,11 +80,12 @@ class ZenohRPC(RPCSpec, ZenohService):
         timeout = self.rpc_timeouts.get(name) or self.rpc_timeouts.get(
             method, self.default_rpc_timeout
         )
+        # Encode before registering the callback: an unencodable argument raises
+        # to the caller and leaves nothing pending.
+        payload = encode(arguments)
         call_id = next(self._call_counter)
         self._pending[call_id] = cb
-        self._issue_query(
-            call_id, f"dimos/rpc/{name}", pickle.dumps(arguments), time.monotonic() + timeout
-        )
+        self._issue_query(call_id, f"dimos/rpc/{name}", payload, time.monotonic() + timeout)
 
         def unsubscribe_callback() -> None:
             self._pending.pop(call_id, None)
@@ -105,12 +98,12 @@ class ZenohRPC(RPCSpec, ZenohService):
             if err is None:
                 cb = self._pending.pop(call_id, None)
                 if cb is not None:
-                    cb(pickle.loads(reply.ok.payload.to_bytes()))  # type: ignore[union-attr]
+                    cb(_decode_reply(reply.ok.payload.to_bytes(), lambda value: value))  # type: ignore[union-attr]
                 return
             if err.encoding == EXCEPTION_ENCODING:
                 cb = self._pending.pop(call_id, None)
                 if cb is not None:
-                    cb(deserialize_exception(pickle.loads(err.payload.to_bytes())))
+                    cb(_decode_reply(err.payload.to_bytes(), deserialize_exception))
                 return
             self._pending.pop(call_id, None)
 
@@ -147,7 +140,7 @@ class ZenohRPC(RPCSpec, ZenohService):
             consolidation=zenoh.ConsolidationMode.NONE,
             congestion_control=zenoh.CongestionControl.BLOCK,
             timeout=timeout,
-            payload=pickle.dumps(arguments),
+            payload=encode(arguments),
             attachment=b"nowait",
         )
 
@@ -167,17 +160,18 @@ class ZenohRPC(RPCSpec, ZenohService):
         return unsubscribe
 
     def _execute_rpc(self, f: Callable[..., Any], name: str, query: zenoh.Query) -> None:
-        args = pickle.loads(query.payload.to_bytes())  # type: ignore[union-attr]
         nowait = query.attachment is not None
         try:
+            args = decode(query.payload.to_bytes())  # type: ignore[union-attr]
             response = f(*args[0], **args[1])
             if not nowait:
-                query.reply(query.key_expr, pickle.dumps(response))
+                query.reply(query.key_expr, encode(response))
         except Exception as e:
             logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
             if not nowait:
-                query.reply_err(pickle.dumps(serialize_exception(e)), encoding=EXCEPTION_ENCODING)
-        query.drop()
+                query.reply_err(encode(serialize_exception(e)), encoding=EXCEPTION_ENCODING)
+        finally:
+            query.drop()
 
     def stop(self) -> None:
         with self._call_pool.stop_scope():

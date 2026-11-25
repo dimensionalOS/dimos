@@ -194,7 +194,8 @@
 }
 
 @keyframes recording {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 0 0 rgba(255, 92, 92, 0.5);
   }
   50% {
@@ -203,7 +204,8 @@
 }
 
 @keyframes thinking {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {

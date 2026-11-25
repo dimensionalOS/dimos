@@ -17,10 +17,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 import math
 from pathlib import Path
-import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
 import typer
+
+from dimos.memory.utils.time_window import RecordingWindow
+from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -344,10 +346,15 @@ def main(
         "--export",
         help="Export the keyframe pose graph to ./<dataset>.map.db in cwd (unitree-go2 --map-file)",
     ),
-    export_pc2: bool = typer.Option(
+    export_cloud: bool = typer.Option(
         False,
-        "--export-pc2",
-        help="Export the PGO map to ./<dataset>.pc2.lcm in cwd, for the Mid-360 stack (implies --pgo)",
+        "--export-cloud",
+        help="Write the PGO map to ./<dataset>_map.db under --map-name, a relocalization premap (implies --pgo)",
+    ),
+    map_name: str = typer.Option(
+        "v1",
+        "--map-name",
+        help="Name the exported map is written under, as the relocalizer's frame map/<name>",
     ),
     full_pgo: bool = typer.Option(
         False,
@@ -436,7 +443,11 @@ def main(
         "std_ratio=2.0): drops sparse floaters before rendering/export",
     ),
 ) -> None:
-    """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
+    """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.memory.cli.dataset import open_store, resolve_dataset
@@ -455,10 +466,11 @@ def main(
     store = open_store(db_path)
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
-    if export_pc2 or full_pgo:
+    if export_cloud or full_pgo:
         pgo = True
 
-    lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
+    window = RecordingWindow.from_store(store, seek, duration)
+    lidar = window.apply(store.stream(lidar_stream, PointCloud2))
 
     print(lidar.summary())
 
@@ -566,7 +578,7 @@ def main(
     pgo_map = None
     pgo_path: list[tuple[float, float, float]] = []
     graph: PoseGraph | None = None
-    if pgo:
+    if pgo and total:
         print("running PGO twopass map...")
         with progress(total, "pgo pass 1 (optimizing)") as bar:
             # keyframe like the live mapper, so a premap and a live run are one kind of graph
@@ -591,7 +603,7 @@ def main(
             )
 
     full_pgo_map = None
-    if full_pgo:
+    if full_pgo and total:
         assert graph is not None
         with progress(total, "full pgo (rebuilding)") as bar:
             full_pgo_map = _accumulate(
@@ -630,14 +642,12 @@ def main(
         # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
         # --image-pose, swap that stored pose for a different source (e.g.
         # fastlio_odometry), composing the base→optical mount onto it first.
-        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
+        color_image = window.apply(store.stream("color_image", Image))
         n_images = color_image.count()
         if image_pose is not None:
             from dimos.mapping.cli.pose_fill import pose_fill
 
-            src_pose: Stream[Any] = (
-                store.stream(image_pose).from_time(seek or None).to_time(duration)
-            )
+            src_pose: Stream[Any] = window.apply(store.stream(image_pose))
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
         cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
@@ -691,21 +701,27 @@ def main(
         marker_size=marker_size,
         bottom_cutoff=bottom_cutoff,
     )
+    rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen(["rerun", str(out)])
+        spawn_detached([find_executable("rerun") or "rerun", str(out)])
 
-    if export_pc2 and pgo_map is not None:
-        out_path = Path.cwd() / f"{db_path.stem}.pc2.lcm"
-        print(f"exporting PGO twopass map to {out_path}...")
-        out_path.write_bytes(pgo_map.lcm_encode())
-        print(f"wrote {out_path}")
-        print()
-        print("load back with:")
-        print("    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2")
-        print(f'    pcd = PointCloud2.lcm_decode(open("{out_path.name}", "rb").read())')
+    if export_cloud and pgo_map is not None:
+        from dimos.mapping.relocalization.utils import map_cloud_stream, named_map_frame
+        from dimos.memory.store.sqlite import SqliteStore
+
+        out_path = Path.cwd() / f"{db_path.stem}_map.db"
+        out_path.unlink(missing_ok=True)
+        # A .db stream name is a SQL identifier, so no slashes
+        stream = map_cloud_stream(map_name, slashed=False)
+        with SqliteStore(path=str(out_path)) as map_store:
+            map_store.stream(stream, PointCloud2).append(pgo_map, ts=pgo_map.ts or 0.0)
+        print(
+            f"wrote {out_path} ({stream}, frame {named_map_frame(map_name)}), "
+            f"use with run relocalize-mid360 --map-file {out_path.name}"
+        )
 
     if export:
         from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
@@ -724,7 +740,10 @@ def main(
             print("no keyframes, no graph written")
         else:
             premap.save(map_path)
-            print(f"wrote {map_path} ({len(premap)} keyframes, {len(premap.edges)} edges)")
+            print(
+                f"wrote {map_path} ({len(premap)} keyframes, {len(premap.edges)} edges), "
+                f"use with run unitree-go2 --map-file {map_path.name}"
+            )
 
 
 if __name__ == "__main__":

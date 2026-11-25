@@ -15,8 +15,8 @@
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.module import WebcamModule
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.perception.fiducial.blueprints.desk_marker_tf import (
     DESK_CAMERA_FRAME_ID,
     DESK_MARKER_ARUCO_DICTIONARY,
@@ -24,7 +24,7 @@ from dimos.perception.fiducial.blueprints.desk_marker_tf import (
     DESK_MARKER_NAMESPACE_PREFIX,
     DeskStaticTfModule,
     create_desk_camera_info,
-    create_desk_webcam,
+    create_desk_webcam_config,
     desk_marker_tf,
 )
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
@@ -33,27 +33,25 @@ from dimos.protocol.tf.tf import TF
 
 
 def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
-    assert isinstance(desk_marker_tf, Blueprint)
-    assert desk_marker_tf.blueprints[0].module is DeskStaticTfModule
-    assert desk_marker_tf.blueprints[1].module is CameraModule
-    assert desk_marker_tf.blueprints[1].kwargs["hardware"] is create_desk_webcam
-    assert desk_marker_tf.blueprints[1].kwargs["transform"] is None
-    assert desk_marker_tf.blueprints[2].module is MarkerDetectionStreamModule
-    assert desk_marker_tf.blueprints[2].kwargs["marker_length_m"] == DESK_MARKER_LENGTH_M
-    assert desk_marker_tf.blueprints[2].kwargs["aruco_dictionary"] == DESK_MARKER_ARUCO_DICTIONARY
-    assert desk_marker_tf.blueprints[2].kwargs["camera_info"].frame_id == DESK_CAMERA_FRAME_ID
-    assert desk_marker_tf.blueprints[3].module is MarkerTfModule
+    blueprint = desk_marker_tf.solidify()
+    assert isinstance(blueprint, Blueprint)
+    assert blueprint.blueprints[0].module is DeskStaticTfModule
+    assert blueprint.blueprints[1].module is WebcamModule
+    assert isinstance(blueprint.blueprints[1].kwargs["hardware"], WebcamConfig)
+    assert blueprint.blueprints[1].kwargs["transform"] is None
+    assert blueprint.blueprints[2].module is MarkerDetectionStreamModule
+    assert blueprint.blueprints[2].kwargs["marker_length_m"] == DESK_MARKER_LENGTH_M
+    assert blueprint.blueprints[2].kwargs["aruco_dictionary"] == DESK_MARKER_ARUCO_DICTIONARY
+    assert blueprint.blueprints[2].kwargs["camera_info"].frame_id == DESK_CAMERA_FRAME_ID
+    assert blueprint.blueprints[3].module is MarkerTfModule
+    assert blueprint.blueprints[3].kwargs["marker_namespace_prefix"] == DESK_MARKER_NAMESPACE_PREFIX
     assert (
-        desk_marker_tf.blueprints[3].kwargs["marker_namespace_prefix"]
-        == DESK_MARKER_NAMESPACE_PREFIX
-    )
-    assert (
-        desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
+        blueprint.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
         == "/marker_detection/detections"
     )
 
 
-def test_create_desk_webcam_loads_camera_info_yaml(tmp_path: Path) -> None:
+def test_create_desk_webcam_config_loads_camera_info_yaml(tmp_path: Path) -> None:
     camera_info_yaml = tmp_path / "camera_info.yaml"
     camera_info_yaml.write_text(
         """
@@ -80,14 +78,14 @@ projection_matrix:
 """.lstrip()
     )
 
-    camera = create_desk_webcam(camera_info_yaml, camera_index=1, fps=7.5)
+    camera = create_desk_webcam_config(camera_info_yaml, camera_index=1, fps=7.5)
 
-    assert isinstance(camera, Webcam)
-    assert camera.config.camera_index == 1
-    assert camera.config.width == 1920
-    assert camera.config.height == 1080
-    assert camera.config.fps == 7.5
-    assert camera.config.camera_info.frame_id == DESK_CAMERA_FRAME_ID
+    assert isinstance(camera, WebcamConfig)
+    assert camera.camera_index == 1
+    assert camera.width == 1920
+    assert camera.height == 1080
+    assert camera.fps == 7.5
+    assert camera.camera_info.frame_id == DESK_CAMERA_FRAME_ID
 
     camera_info = create_desk_camera_info(camera_info_yaml)
     assert camera_info.frame_id == DESK_CAMERA_FRAME_ID

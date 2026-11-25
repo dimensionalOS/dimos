@@ -16,7 +16,7 @@
   },
   "tasks": {
     "dev": "deno run --allow-net --allow-read relay/main.ts",
-    "test": "deno test --allow-net --allow-read relay shared",
+    "test": "deno test --allow-net --allow-read --v8-flags=--expose-gc relay shared",
     "check": "deno check relay shared"
   },
   "fmt": {

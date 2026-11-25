@@ -32,6 +32,7 @@ GO2_PARAMS = LocalizeParams(
     candidate_floor=0.18,
     accept_score=0.32,
     cluster_radius_m=0.30,
+    embed_hz=3.0,
     verify_radius_m=5.0,
     max_object_extent_m=2.0,
     surface_patch_max_rise_m=0.08,

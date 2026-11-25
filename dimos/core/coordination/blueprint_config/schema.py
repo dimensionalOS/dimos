@@ -28,7 +28,8 @@ from dimos.core.coordination.blueprint_config.fields import (
     all_annotation_types,
     scalar_annotation_types,
 )
-from dimos.core.coordination.blueprints import BlueprintAtom, TransportSpec
+from dimos.core.coordination.blueprints import BlueprintAtom
+from dimos.core.stream import TransportSpec
 
 
 @dataclass(frozen=True, slots=True)

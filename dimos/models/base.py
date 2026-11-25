@@ -18,11 +18,12 @@ from __future__ import annotations
 
 from functools import cached_property
 import sys
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import torch
 
 from dimos.core.resource import Resource
+from dimos.protocol.encode.cbor import register_codec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', 'mps', etc.
@@ -36,6 +37,14 @@ def default_torch_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _torch_dtype(name: str) -> torch.dtype:
+    return cast("torch.dtype", getattr(torch, name))
+
+
+# Model configs carry a torch.dtype default and ride into workers over the CBOR codec.
+register_codec(torch.dtype, lambda dtype: str(dtype).removeprefix("torch."), _torch_dtype)
 
 
 class LocalModelConfig(BaseConfig):
@@ -135,7 +144,7 @@ class LocalModel(Resource, Configurable):
     def _ensure_cuda_initialized(self) -> None:
         """Initialize CUDA context to prevent cuBLAS allocation failures.
 
-        Some models (CLIP, TorchReID) fail if they are the first to use CUDA.
+        Some models (like CLIP) fail if they are the first to use CUDA.
         Call this before model loading if needed.
         """
         if self.config.device.startswith("cuda") and torch.cuda.is_available():

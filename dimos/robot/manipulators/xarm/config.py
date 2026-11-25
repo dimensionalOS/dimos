@@ -16,20 +16,15 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareType,
-)
-from dimos.core.global_config import global_config
-from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
@@ -56,7 +51,7 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 
-def xarm_gripper_config(prefix: str = "") -> GripperConfig:
+def xarm_gripper_config(prefix: str = "", *, robot: str | None = None) -> GripperConfig:
     """Which xArm Gripper links may touch a grasped object, and how it closes.
 
     drive_joint runs 0.0 (open) to 0.85 rad (closed); the other knuckles and
@@ -64,10 +59,13 @@ def xarm_gripper_config(prefix: str = "") -> GripperConfig:
 
     Args:
         prefix: Prefix the robot model puts on every link and joint name.
+        robot: The robot the model names its joints under, e.g. "arm" for
+            "arm/drive_joint"; see ``xarm_model``.
     """
+    joint_prefix = f"{robot}/" if robot else prefix
     return GripperConfig(
         pad_links=(f"{prefix}left_finger", f"{prefix}right_finger"),
-        finger_joints={f"{prefix}drive_joint": (0.0, 0.85)},
+        finger_joints={f"{joint_prefix}drive_joint": (0.0, 0.85)},
     )
 
 
@@ -81,12 +79,108 @@ XARM_HEURISTIC_AIM = {
 }
 
 
+def xarm_wrist_camera_transform(dof: int) -> Transform:
+    """Where the wrist RealSense sits on the arm's last link.
+
+    Measured on the xArm7's link7, with the pitch set so the table the camera sees
+    comes out level at the height of the arm's base. The xArm6 gets the same
+    numbers on link6, not measured there.
+
+    Args:
+        dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6.
+    """
+    # RealSenseCamera publishes only its own subtree, so without this edge
+    # camera_link has no parent, nothing resolves into world, and every cloud the
+    # camera produces is silently unusable. The last link is a frame the model
+    # already publishes, so ManipulationModule emits the whole chain from one
+    # loop at one rate.
+    return Transform(
+        translation=Vector3(x=0.06685201, y=-0.03095927, z=0.00688431),
+        rotation=Quaternion(0.59138443, 0.00099956, 0.80629644, -0.01222741),  # xyzw
+        frame_id=f"link{dof}",
+        child_frame_id="camera_link",
+    )
+
+
+def xarm_link_frames(dof: int) -> list[str]:
+    """The xArm's base and arm links: the frames a viewer needs to draw the arm as it moves."""
+    return ["link_base", *(f"link{i}" for i in range(1, dof + 1))]
+
+
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
 _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
 XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
+
+XArmType = Literal["xarm5", "xarm6", "xarm7", "lite6", "uf850"]
+XArmGripperType = Literal["xarm"]
+
+#: Each arm's joint count and the ``robot_type`` the xarm_ros2 description takes for it.
+XARM_ARMS: dict[XArmType, tuple[int, str]] = {
+    "xarm5": (5, "xarm"),
+    "xarm6": (6, "xarm"),
+    "xarm7": (7, "xarm"),
+    "lite6": (6, "lite"),
+    "uf850": (6, "uf850"),
+}
+
+# The joints each gripper adds that move: the one driven, then those that copy it.
+_GRIPPER_JOINTS: dict[XArmGripperType, tuple[str, ...]] = {
+    "xarm": (
+        "drive_joint",
+        "left_finger_joint",
+        "left_inner_knuckle_joint",
+        "right_outer_knuckle_joint",
+        "right_finger_joint",
+        "right_inner_knuckle_joint",
+    ),
+}
+
+
+def xarm_model(
+    arm: XArmType,
+    gripper: XArmGripperType | None = None,
+    *,
+    robot: str | None = None,
+    prefix: str = "",
+) -> RobotModel:
+    """The arm's URDF, from UFACTORY's xarm_ros2 description.
+
+    Args:
+        arm: Which arm, e.g. "xarm7".
+        gripper: What is on its flange: "xarm" for the xArm Gripper (on a Lite 6,
+            the Lite 6's own gripper, which has no joint).
+        robot: Name the moving joints under this robot, as the coordinator
+            wants them, e.g. "arm" gives "arm/joint1". Links keep their names.
+        prefix: Put in front of every link and joint name, e.g. "left/" for one
+            of two arms in one model. Not with ``robot``.
+    """
+    if robot and prefix:
+        raise ValueError("name the joints with robot or prefix, not both")
+    dof, robot_type = XARM_ARMS[arm]
+    xacro_args = {
+        "dof": str(dof),
+        "robot_type": robot_type,
+        "prefix": prefix,
+        "limited": "true",
+        "attach_xyz": "0 0 0",
+        "attach_rpy": "0 0 0",
+    }
+    if gripper == "xarm":
+        xacro_args["add_gripper"] = "true"
+    model = RobotModel.from_file(
+        XARM_MODEL_PATH, package_paths=XARM_PACKAGE_PATHS, xacro_args=xacro_args
+    )
+    if not robot:
+        return model
+    moving = joint_names(dof)
+    if gripper is not None and arm != "lite6":
+        moving.extend(_GRIPPER_JOINTS[gripper])
+    return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
@@ -99,16 +193,18 @@ XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
 def make_xarm7_sim_robot_config(
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
+    robot: str | None = None,
 ) -> RobotModelConfig:
     """Build the sim planning model.
 
     Pass ``base_pose`` for a scene that mounts ``link_base`` somewhere other than
     the pedestal ``data/xarm7`` uses, and ``tf_extra_links`` when a consumer needs
-    more than the tip transform.
+    more than the tip transform. ``robot`` names the joints under that robot,
+    e.g. "arm" for the coordinator's "arm/joint1".
     """
     return make_xarm7_model_config(
         add_gripper=True,
-        gripper_hardware_id="arm",
+        robot=robot,
         base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
         tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
         home_joints=XARM7_SIM_HOME,
@@ -166,21 +262,6 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
     )
 
 
-def make_xarm7_sim_hardware(
-    address: str | Path | None = None, *, home_joints: list[float] | None = None
-) -> HardwareComponent:
-    """The simulated xArm7; without ``address`` it attaches to the blueprint's MujocoSimModule."""
-    selected_home = XARM7_SIM_HOME if home_joints is None else home_joints
-    return make_xarm_hardware(
-        "arm",
-        7,
-        adapter_type="sim_mujoco",
-        address=address,
-        gripper=True,
-        home_joints=selected_home,
-    )
-
-
 def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
     return {
         "address": address,
@@ -192,147 +273,36 @@ def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
     }
 
 
-def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
-    if home_joints is None:
-        return {}
-    return {"initial_positions": home_joints}
-
-
-def make_xarm_hardware(
-    hw_id: str,
-    dof: int,
-    *,
-    adapter_type: str = "mock",
-    address: str | Path | None = None,
-    gripper: bool = False,
-    auto_enable: bool = True,
-    adapter_kwargs: dict[str, object] | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-    mock_without_address: bool = False,
-) -> HardwareComponent:
-    kwargs = _adapter_kwargs(home_joints)
-    if adapter_type == "xarm":
-        kwargs["arm_dof"] = dof
-    if adapter_kwargs:
-        kwargs.update(adapter_kwargs)
-    gripper_joints = [f"{hw_id}/gripper"] if gripper else []
-    initial_positions = kwargs.get("initial_positions")
-    if gripper and isinstance(initial_positions, list):
-        kwargs["initial_positions"] = [*initial_positions, 0.0]
-    mock_limits = JointLimits(
-        position_lower=[*([-2 * math.pi] * dof), *([0.0] * len(gripper_joints))],
-        position_upper=[*([2 * math.pi] * dof), *([850.0] * len(gripper_joints))],
-        velocity_max=[*([math.pi] * dof), *([0.0] * len(gripper_joints))],
-    )
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=[*(canonical_joint_names or joint_names(dof)), *gripper_joints],
-        adapter_type=adapter_type,
-        address=address,
-        auto_enable=auto_enable,
-        limits=mock_limits if adapter_type == "mock" else None,
-        adapter_kwargs=kwargs,
-        mock_limits=mock_limits if mock_without_address else None,
-    )
-
-
-def xarm7_hardware(
-    hw_id: str = "arm",
-    *,
-    gripper: bool = False,
-    mock_without_address: bool = False,
-    address: str | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-) -> HardwareComponent:
-    """The xArm7; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            7,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    return make_xarm_hardware(
-        hw_id,
-        7,
-        adapter_type="xarm",
-        address=address,
-        gripper=gripper,
-        home_joints=home_joints,
-        canonical_joint_names=canonical_joint_names,
-        mock_without_address=mock_without_address,
-    )
-
-
-def xarm6_hardware(
-    hw_id: str = "arm",
-    *,
-    gripper: bool = False,
-    mock_without_address: bool = False,
-    address: str | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-) -> HardwareComponent:
-    """The xArm6; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            6,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    return make_xarm_hardware(
-        hw_id,
-        6,
-        adapter_type="xarm",
-        address=address,
-        gripper=gripper,
-        home_joints=home_joints,
-        canonical_joint_names=canonical_joint_names,
-        mock_without_address=mock_without_address,
-    )
-
-
 def make_xarm_model_config(
     dof: int,
     *,
     robot_type: str = "xarm",
     prefix: str = "",
+    robot: str | None = None,
     add_gripper: bool = True,
-    gripper_hardware_id: str | None = None,
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
 ) -> RobotModelConfig:
-    xacro_args = {
-        "dof": str(dof),
-        "robot_type": robot_type,
-        "prefix": prefix,
-        "limited": "true",
-        "attach_xyz": "0 0 0",
-        "attach_rpy": "0 0 0",
-    }
-    if add_gripper:
-        xacro_args["add_gripper"] = "true"
+    """The planning model of the xArm with ``dof`` joints and ``robot_type``, from ``xarm_model``.
 
-    model_joint_names = joint_names(dof, prefix=f"{prefix}joint")
+    ``robot`` names the joints under that robot (e.g. "arm/joint1"), with
+    links left bare; ``prefix`` renames both. See ``xarm_model``.
+    """
+    arm = next((a for a, spec in XARM_ARMS.items() if spec == (dof, robot_type)), None)
+    if arm is None:
+        raise ValueError(f"no xArm has {dof} joints and robot_type {robot_type!r}")
+    joint_prefix = f"{robot}/" if robot else prefix
+    model_joint_names = joint_names(dof, prefix=f"{joint_prefix}joint")
     tip_link = f"{prefix}link_tcp" if add_gripper else f"{prefix}link{dof}"
     collision_exclusions = [
         (f"{prefix}{left}", f"{prefix}{right}") for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
     ]
+    xarm_gripper = add_gripper and robot_type == "xarm"
     return RobotModelConfig(
-        model=RobotModel.from_file(
-            XARM_MODEL_PATH,
-            package_paths=XARM_PACKAGE_PATHS,
-            xacro_args=xacro_args,
+        model=xarm_model(
+            arm, "xarm" if add_gripper else None, robot=robot, prefix=prefix
         ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
@@ -346,11 +316,8 @@ def make_xarm_model_config(
             )
         ],
         auto_convert_meshes=True,
-        collision_exclusion_pairs=(
-            collision_exclusions if add_gripper and robot_type == "xarm" else []
-        ),
-        gripper=xarm_gripper_config(prefix) if add_gripper and robot_type == "xarm" else None,
-        gripper_hardware_id=gripper_hardware_id,
+        collision_exclusion_pairs=collision_exclusions if xarm_gripper else [],
+        gripper=xarm_gripper_config(prefix, robot=robot) if xarm_gripper else None,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,
@@ -373,25 +340,3 @@ def make_lite6_model_config(
     **kwargs: Any,
 ) -> RobotModelConfig:
     return make_xarm_model_config(6, robot_type="lite", **kwargs)
-
-
-def lite6_hardware(
-    hw_id: str = "arm",
-    *,
-    gripper: bool = False,
-    mock_without_address: bool = False,
-    address: str | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-) -> HardwareComponent:
-    """Lite 6 speaks the xArm SDK; the adapter detects the model on connect. No sim scene yet."""
-    return make_xarm_hardware(
-        hw_id,
-        6,
-        adapter_type="xarm",
-        address=address,
-        gripper=gripper,
-        home_joints=home_joints,
-        canonical_joint_names=canonical_joint_names,
-        mock_without_address=mock_without_address,
-    )

@@ -31,6 +31,13 @@ class GraspCandidate:
         if not math.isfinite(self.score):
             raise ValueError("GraspCandidate.score must be finite")
 
+    def cbor_encode(self) -> dict[str, Pose | float]:
+        return {"pose": self.pose, "score": self.score}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Pose | float]) -> GraspCandidate:
+        return cls(data["pose"], data["score"])  # type: ignore[arg-type]
+
     def encode(self) -> bytes:
         return pickle.dumps({"pose": self.pose, "score": self.score})
 

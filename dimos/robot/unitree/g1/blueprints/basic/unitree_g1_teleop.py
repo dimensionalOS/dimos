@@ -20,7 +20,7 @@ manipulation, and the dimos.imitation data-collection stack. ``--simulation
 mujoco`` and ``--scene-package`` remain supported. Put on the headset, open
 ``https://<host>:8443/teleop``, and:
 
-    X + A             hold to track both arms from a shared reference
+    Both grips        hold to track both arms from a shared reference
     B                 start / save an episode
     Y                 discard the in-progress episode
 
@@ -36,9 +36,10 @@ The groot MuJoCo sim publishes no color camera, so sim sessions record
 joints/commands only (point DataPrep's sync anchor at joint state, or
 enable a sim color camera, if you need images from sim).
 
-Export afterwards with ``dimos dataprep build`` — measured joint state,
-the commanded wrist poses, and episode status are all in the DB, so
-action semantics (next-state vs commanded) are a DataPrep config choice.
+The measured joint state, commanded wrist poses, and episode status are all in
+the DB, so action semantics (next-state vs commanded) are a DataPrepConfig
+choice. This Blueprint retains its Python recorder; prepare its raw DB through
+the Python dataprep API with an explicit config.
 
 Usage:
     dimos --simulation mujoco --scene-package office run unitree-g1-teleop
@@ -63,7 +64,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
     _unitree_g1_groot_wbc_core,
 )

@@ -17,10 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import sys
 from typing import TYPE_CHECKING, Any
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.robot.unitree.go2.connection import (
@@ -31,11 +30,6 @@ from dimos.robot.unitree.go2.connection import (
 )
 from dimos.utils.logging_config import setup_logger
 
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Twist import Twist
 
@@ -43,15 +37,19 @@ logger = setup_logger()
 
 
 class FleetConnectionConfig(ConnectionConfig):
-    ips: Sequence[str] = Field(
-        default_factory=lambda m: [ip.strip() for ip in m["g"].robot_ips.split(",")]
-    )
+    ips: Sequence[str] = Field(default_factory=lambda m: (m["g"].robot_ips or "").split(","))
 
-    @model_validator(mode="after")
-    def set_ip_after_validation(self) -> Self:
+    def validate_ip(self) -> None:
+        # Resolve the primary IP before the inherited model validator checks it.
+        self.ips = [ip.strip() for ip in self.ips if ip.strip()]
+        if not self.ips:
+            raise ValueError(
+                "No robot IPs specified. Set ROBOT_IPS or --robot-ips "
+                "(or --go2fleetconnection.ips) to at least one IP."
+            )
         if self.ip is None:
             self.ip = self.ips[0]
-        return self
+        super().validate_ip()
 
 
 class Go2FleetConnection(GO2Connection):

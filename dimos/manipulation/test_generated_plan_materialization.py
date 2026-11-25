@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation.manipulation_module import ManipulationState
+from dimos.manipulation.manipulation_spec import OperationStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -136,8 +136,8 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()
     )
-    module._state = ManipulationState.PLANNING
-    module._planning_epoch = 1
+    module._state = OperationStatus.PLANNING
+    module._state_epoch = 1
     return module
 
 
@@ -159,15 +159,15 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
     assert module._plan_selected_path(("left_arm", "right_arm"), path[0], path[-1], 1, 1.0)
     assert RecordingGenerator.calls == [[[0.0, 0.0, 0.0], [0.2, 0.1, 0.3]]]
     assert RecordingGenerator.limits == ([3.0, 3.0, 3.0], [4.0, 4.0, 4.0])
-    assert module._last_plan is not None
-    assert module._last_plan.path is not module._last_plan.trajectory.points
-    assert module._last_plan.trajectory.joint_names == names
-    assert module._last_plan.trajectory.points[-1].time_from_start == 1.0
+    assert module._pending_plan is not None
+    assert module._pending_plan.path is not module._pending_plan.trajectory.points
+    assert module._pending_plan.trajectory.joint_names == names
+    assert module._pending_plan.trajectory.points[-1].time_from_start == 1.0
 
 
 def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
     module = _module(monkeypatch, module_factory)
-    module._state = ManipulationState.IDLE
+    module._state = OperationStatus.IDLE
     names = ["left/b", "left/a"]
     start = JointState(name=names, position=[0.0, 0.0])
     path = [

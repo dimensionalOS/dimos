@@ -16,12 +16,8 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
-from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -55,6 +51,40 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
 
 PIPER_FK_MODEL = _PIPER_REPO / "piper" / "urdf" / "piper_description.urdf"
 
+PIPER_DOF = 6
+#: How far the standard Piper gripper opens, in metres. The URDF lets its
+#: gripper joint go to 0.1 m, the large gripper's stroke.
+PIPER_GRIPPER_STROKE_M = 0.07
+# The gripper joints that move: the one driven, then the two fingers that copy it.
+_GRIPPER_JOINTS = ("gripper", "gripper_joint1", "gripper_joint2")
+
+
+def piper_model(gripper: bool = False, *, robot: str | None = None) -> RobotModel:
+    """The Piper's URDF, from AgileX's agx_arm_urdf description.
+
+    Args:
+        gripper: With its gripper: the joint ``gripper``, the gap between the
+            fingers, from 0 m (closed) to 0.07 m (open).
+        robot: Name the moving joints under this robot, as the coordinator
+            wants them, e.g. "arm" gives "arm/joint1". Links keep their names.
+    """
+    if gripper:
+        model = RobotModel.from_file(
+            PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS
+        ).with_joint_position_limits("gripper", lower=0.0, upper=PIPER_GRIPPER_STROKE_M)
+    else:
+        model = RobotModel.from_file(PIPER_FK_MODEL, package_paths=PIPER_PACKAGE_PATHS)
+    # The Desktop viewer turns COLLADA (.dae) meshes that say Z is up by 90°; the
+    # same shapes as .stl, one folder up, draw right.
+    model = model.with_mesh_paths_replaced("/meshes/dae/", "/meshes/").with_mesh_paths_replaced(
+        ".dae", ".stl"
+    )
+    if not robot:
+        return model
+    moving = [*joint_names(PIPER_DOF), *(_GRIPPER_JOINTS if gripper else ())]
+    return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 PIPER_HOME_JOINTS = [
     0.793,
@@ -66,89 +96,22 @@ PIPER_HOME_JOINTS = [
 ]
 
 
-def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
-    if home_joints is None:
-        return {}
-    return {"initial_positions": home_joints}
-
-
-def make_piper_hardware(
-    hw_id: str = "arm",
-    *,
-    adapter_type: str = "mock",
-    address: str | None = None,
-    gripper: bool = True,
-    auto_enable: bool = True,
-    adapter_kwargs: dict[str, object] | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-    mock_without_address: bool = False,
-) -> HardwareComponent:
-    kwargs = _adapter_kwargs(home_joints)
-    if adapter_kwargs:
-        kwargs.update(adapter_kwargs)
-    gripper_joints = [f"{hw_id}/gripper"] if gripper else []
-    initial_positions = kwargs.get("initial_positions")
-    if gripper and isinstance(initial_positions, list):
-        kwargs["initial_positions"] = [*initial_positions, 0.0]
-    mock_limits = JointLimits(
-        position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
-        position_upper=[*([math.pi] * 6), *([0.08] * len(gripper_joints))],
-        velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
-    )
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=[*(canonical_joint_names or joint_names(6)), *gripper_joints],
-        adapter_type=adapter_type,
-        address=address,
-        auto_enable=auto_enable,
-        limits=mock_limits if adapter_type == "mock" else None,
-        adapter_kwargs=kwargs,
-        mock_limits=mock_limits if mock_without_address else None,
-    )
-
-
-def piper_hardware(
-    hw_id: str = "arm",
-    *,
-    gripper: bool = True,
-    mock_without_address: bool = True,
-    address: str | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-) -> HardwareComponent:
-    """The Piper on a CAN interface; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_piper_hardware(
-            hw_id,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    return make_piper_hardware(
-        hw_id,
-        adapter_type="piper",
-        address=address if mock_without_address else address or "can0",
-        gripper=gripper,
-        home_joints=home_joints,
-        canonical_joint_names=canonical_joint_names,
-        mock_without_address=mock_without_address,
-    )
-
-
 def make_piper_model_config(
     *,
     home_joints: list[float] | None = None,
+    robot: str | None = None,
 ) -> RobotModelConfig:
-    dof = 6
-    model_joint_names = joint_names(dof)
+    """The Piper's planning model, with its gripper.
+
+    Args:
+        home_joints: The arm's home joint angles, in rad, one per joint.
+        robot: Name the moving joints under this robot, as the coordinator
+            wants them, e.g. "arm" gives "arm/joint1"; see ``piper_model``.
+    """
+    model_joint_names = joint_names(PIPER_DOF, prefix=f"{robot}/joint" if robot else "joint")
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
-        model=RobotModel.from_file(
-            PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS
-        ).with_default_joint_acceleration_limit(2.0),
+        model=piper_model(gripper=True, robot=robot).with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[
@@ -161,6 +124,5 @@ def make_piper_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
-        gripper_hardware_id="arm",
         home_joints=model_home_joints,
     )

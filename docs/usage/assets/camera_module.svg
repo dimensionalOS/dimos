@@ -21,11 +21,11 @@
 <polygon fill="#4ecdc4" fill-opacity="0.125490" stroke="#4ecdc4" stroke-dasharray="5,2" points="185.5,-8 185.5,-71 441.65,-71 441.65,-8 185.5,-8"/>
 <text text-anchor="middle" x="210" y="-53.7" font-family="fixed" font-size="14.00" fill="#b5e4f4">Skills</text>
 </g>
-<!-- CameraModule -->
+<!-- WebcamModule -->
 <g id="node1" class="node">
-<title>CameraModule</title>
+<title>WebcamModule</title>
 <polygon fill="#0b0f0f" stroke="#5c9ff0" points="144,-125.8 0,-125.8 0,-68.2 144,-68.2 144,-125.8"/>
-<text text-anchor="middle" x="72" y="-94.22" font-family="fixed" font-size="12.00" fill="#b5e4f4">CameraModule</text>
+<text text-anchor="middle" x="72" y="-94.22" font-family="fixed" font-size="12.00" fill="#b5e4f4">WebcamModule</text>
 </g>
 <!-- out_color_image -->
 <g id="node2" class="node">
@@ -35,9 +35,9 @@
 <polyline fill="none" stroke="#95e1d3" points="365.4,-214.15 361.82,-214.15"/>
 <text text-anchor="middle" x="313.57" y="-204.62" font-family="fixed" font-size="10.00" fill="#b5e4f4">color_image:Image</text>
 </g>
-<!-- CameraModule&#45;&gt;out_color_image -->
+<!-- WebcamModule&#45;&gt;out_color_image -->
 <g id="edge1" class="edge">
-<title>CameraModule&#45;&gt;out_color_image</title>
+<title>WebcamModule&#45;&gt;out_color_image</title>
 <path fill="none" stroke="#95e1d3" d="M97.72,-125.97C116.15,-145.57 143.04,-170.31 172,-184 196.14,-195.41 224.92,-201.29 250.13,-204.27"/>
 <polygon fill="#95e1d3" stroke="#95e1d3" points="249.63,-207.73 259.93,-205.29 250.35,-200.77 249.63,-207.73"/>
 </g>
@@ -49,9 +49,9 @@
 <polyline fill="none" stroke="#dce775" points="377.77,-253.15 374.2,-253.15"/>
 <text text-anchor="middle" x="313.57" y="-243.62" font-family="fixed" font-size="10.00" fill="#b5e4f4">camera_info:CameraInfo</text>
 </g>
-<!-- CameraModule&#45;&gt;out_camera_info -->
+<!-- WebcamModule&#45;&gt;out_camera_info -->
 <g id="edge2" class="edge">
-<title>CameraModule&#45;&gt;out_camera_info</title>
+<title>WebcamModule&#45;&gt;out_camera_info</title>
 <path fill="none" stroke="#dce775" d="M86.59,-126.23C102.47,-156.83 131.79,-203.59 172,-227 191.66,-238.45 215.44,-244.11 237.81,-246.66"/>
 <polygon fill="#dce775" stroke="#dce775" points="237.21,-250.12 247.49,-247.57 237.86,-243.15 237.21,-250.12"/>
 </g>
@@ -61,9 +61,9 @@
 <polygon fill="#7986cb" fill-opacity="0.207843" stroke="#7986cb" points="440.5,-103.65 180,-103.65 180,-90.35 440.5,-90.35 447.15,-97 440.5,-103.65"/>
 <text text-anchor="middle" x="313.57" y="-94.83" font-family="fixed" font-size="9.00" fill="#b5e4f4">set_transport(stream_name: str, transport: Transport) &#45;&gt; bool</text>
 </g>
-<!-- CameraModule&#45;&gt;rpc_set_transport -->
+<!-- WebcamModule&#45;&gt;rpc_set_transport -->
 <g id="edge3" class="edge">
-<title>CameraModule&#45;&gt;rpc_set_transport</title>
+<title>WebcamModule&#45;&gt;rpc_set_transport</title>
 <path fill="none" stroke="#7986cb" d="M144.23,-97C153.14,-97 162.48,-97 172,-97"/>
 </g>
 <!-- skill_video_stream -->
@@ -72,9 +72,9 @@
 <polygon fill="#4ecdc4" fill-opacity="0.207843" stroke="#4ecdc4" points="427,-32.65 193.5,-32.65 193.5,-19.35 427,-19.35 433.65,-26 427,-32.65"/>
 <text text-anchor="middle" x="313.57" y="-23.82" font-family="fixed" font-size="9.00" fill="#b5e4f4">video_stream stream=passive reducer=latest_reducer</text>
 </g>
-<!-- CameraModule&#45;&gt;skill_video_stream -->
+<!-- WebcamModule&#45;&gt;skill_video_stream -->
 <g id="edge4" class="edge">
-<title>CameraModule&#45;&gt;skill_video_stream</title>
+<title>WebcamModule&#45;&gt;skill_video_stream</title>
 <path fill="none" stroke="#4ecdc4" d="M144.23,-75.89C157.32,-72.01 171.35,-67.85 185.5,-63.66"/>
 </g>
 <!-- rpc_start -->

@@ -40,7 +40,7 @@ testcases = [
         tags={"all", "glob", "regex"},  # LCM supports all pattern types
     ),
     Case(
-        name="zenoh_pickle",
+        name="zenoh_cbor",
         pubsub_context=zenoh_context,
         topic_values=[...],
         tags={"all", "glob"},  # Zenoh supports wildcard key expressions
@@ -120,5 +120,5 @@ bytes_topic_values = [
 ## Examples
 
 - `dimos/protocol/pubsub/test_spec.py` - Basic pubsub operations
-- `dimos/protocol/pubsub/test_subscribe_all.py` - Pattern subscriptions
-- `dimos/protocol/pubsub/benchmark/testdata.py` - Benchmark cases
+- `dimos/protocol/pubsub/test_pattern_sub.py` - Pattern subscriptions
+- `dimos/protocol/pubsub/benchmarks/cases.py` - Standalone benchmark cases

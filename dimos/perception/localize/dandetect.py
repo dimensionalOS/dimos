@@ -43,8 +43,8 @@ if TYPE_CHECKING:
     from dimos.models.embedding.base import EmbeddingModel
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-    from dimos.perception.localize.association import Groups
     from dimos.perception.localize.localize import LocalizeTrace
+    from dimos.perception.localize.memento import Memento, Span
     from dimos.perception.localize.rig import Rig
 
 
@@ -174,10 +174,16 @@ class DanDetector(Resource):
         }
         return replace(base, **{**shifts, **(fields or {})})
 
-    def embed_live(self, rig: Rig, source: Stream[Any, Any], index: Stream[Any, Any]) -> None:
+    def embed_live(
+        self,
+        rig: Rig,
+        source: Stream[Any, Any],
+        index: Stream[Any, Any],
+        embed_hz: float | None = None,
+    ) -> None:
         """Tail ``source`` into ``index`` on a background thread while the resource is open."""
         pipeline = (
-            index_frames(rig, source.live())
+            index_frames(rig, source.live(), embed_hz=embed_hz)
             .transform(EmbedImages(self.embedder, batch_size=1))
             .save(index)
         )
@@ -188,21 +194,25 @@ class DanDetector(Resource):
         queries: list[str],
         *,
         index: Stream[Any, Any],
+        window: Span,
+        head: float,
         rig: Rig,
         params: LocalizeParams = LocalizeParams(),
         fields: dict[str, Any] | None = None,
+        memento: Memento | None = None,
         traces: list[LocalizeTrace] | None = None,
-        groups: dict[str, Groups] | None = None,
     ) -> list[list[Localization]]:
         """:func:`localize` on this resource's models, with ``params`` shifted onto their scales."""
         return localize(
             queries,
             index=index,
+            window=window,
+            head=head,
             rig=rig,
             embedder=self.embedder,
             detector=self.detector,
             segmenter=self.segmenter,
             params=self.shifted(params, fields),
+            memento=memento,
             traces=traces,
-            groups=groups,
         )

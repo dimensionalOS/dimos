@@ -35,6 +35,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.service.spec import BaseConfig
@@ -74,10 +75,10 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
     """Follow an (x, y, yaw) trajectory in the odometry frame with feedforward and feedback.
 
     The trajectory's three columns are x, y and yaw in that order; yaw may be
-    unwrapped. Commands are body-frame (vx, vy, wz) on the twist joints, which
-    report odometry through their position fields. A finished, failed, cancelled
-    or preempted run reports its final state at once and streams zero velocity
-    for ``stop_hold_s``.
+    unwrapped. The base pose comes from the ``odometry`` stream; commands are
+    body-frame (vx, vy, wz) on the three velocity joints. A finished, failed,
+    cancelled or preempted run reports its final state at once and streams zero
+    velocity for ``stop_hold_s``.
     """
 
     def __init__(self, name: str, config: PlanarBaseTrajectoryTaskConfig) -> None:
@@ -98,7 +99,8 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
         self._stop_until: float | None = None
         self._stop_pending = False
         self._armed_t: float | None = None
-        self._last_pose_t: float | None = None
+        self._pose: tuple[float, float, float] | None = None
+        self._pose_t: float | None = None
 
     @property
     def name(self) -> str:
@@ -118,17 +120,33 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             or self._stop_until is not None
         )
 
+    def on_odometry(self, msg: Odometry, t_now: float) -> None:
+        """``odometry`` card handler: the base pose the trajectory is tracked against."""
+        pose = (float(msg.x), float(msg.y), float(msg.yaw))
+        if not all(math.isfinite(value) for value in pose):
+            return
+        with self._lock:
+            self._pose = pose
+            self._pose_t = t_now
+
     def execute(
         self,
         trajectory: JointTrajectory,
         current_positions: Mapping[str, float] | None = None,
     ) -> TrajectoryExecutionResult:
-        """Accept a trajectory. Its start is checked against ``current_positions`` when the
-        caller has them, and otherwise against odometry on the first tick."""
+        """Accept a trajectory. Its start is checked against the latest odometry now
+        when there is one, and again on the first tick.
+
+        ``current_positions`` is ignored; it is accepted so every trajectory task
+        takes the same call. The base pose comes from odometry.
+        """
         problem = _trajectory_problem(trajectory, self._config)
-        if not problem and current_positions is not None:
-            problem = self._start_problem(trajectory, current_positions)
+        with self._lock:
+            pose = self._pose
+        if not problem and pose is not None:
+            problem = self._start_problem(trajectory, pose)
         if problem:
+            logger.warning("Trajectory rejected", task_name=self._name, reason=problem)
             return TrajectoryExecutionResult(TrajectoryExecutionStatus.INVALID_TRAJECTORY, problem)
         with self._lock:
             if self._state == TrajectoryState.EXECUTING:
@@ -143,8 +161,13 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             self._stop_pending = False
             self._armed_t = None
             self._error = ""
-            self._last_pose_t = None
             self._state = TrajectoryState.EXECUTING
+            logger.info(
+                "Executing trajectory",
+                task_name=self._name,
+                duration=trajectory.duration,
+                target=trajectory.points[-1].positions,
+            )
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
     def cancel(self) -> bool:
@@ -152,6 +175,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             if self._state != TrajectoryState.EXECUTING:
                 return False
             self._stop(None, TrajectoryState.ABORTED, "cancelled")
+            logger.info("Trajectory cancelled", task_name=self._name, elapsed=self._elapsed)
         return True
 
     def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
@@ -173,16 +197,8 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                 error=self._error,
             )
 
-    def _start_problem(
-        self, trajectory: JointTrajectory, current_positions: Mapping[str, float]
-    ) -> str:
+    def _start_problem(self, trajectory: JointTrajectory, pose: tuple[float, float, float]) -> str:
         """Reject a trajectory that does not start where the base currently is."""
-        pose: list[float] = []
-        for name in self._joints:
-            value = current_positions.get(name)
-            if value is None or not math.isfinite(value):
-                return ""
-            pose.append(float(value))
         start = trajectory.points[0].positions
         position_error = math.hypot(start[0] - pose[0], start[1] - pose[1])
         yaw_error = abs(angle_diff(start[2], pose[2]))
@@ -210,10 +226,13 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             if self._armed_t is None:
                 self._armed_t = state.t_now
 
-            pose = self._read_pose(state)
-            if pose is None:
-                last_seen = self._last_pose_t if self._last_pose_t is not None else self._armed_t
-                if state.t_now - last_seen > self._config.stale_pose_timeout:
+            pose = self._pose
+            timeout = self._config.stale_pose_timeout
+            if pose is None or self._pose_t is None or state.t_now - self._pose_t > timeout:
+                last_seen = (
+                    self._armed_t if self._pose_t is None else max(self._pose_t, self._armed_t)
+                )
+                if state.t_now - last_seen > timeout:
                     return self._fail(state.t_now, "base odometry is unavailable")
                 return self._command(0.0, 0.0, 0.0)
 
@@ -249,6 +268,12 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                     and yaw_error < config.orientation_goal_tolerance
                 ):
                     self._stop(state.t_now, TrajectoryState.COMPLETED, "")
+                    logger.info(
+                        "Trajectory completed",
+                        task_name=self._name,
+                        elapsed=self._elapsed,
+                        position=pose,
+                    )
                     return self._command(0.0, 0.0, 0.0)
                 if self._elapsed - self._trajectory.duration > config.settle_timeout:
                     return self._fail(state.t_now, "base did not reach the end of the trajectory")
@@ -268,21 +293,10 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         with self._lock:
             if joints & set(self._joints) and self._state == TrajectoryState.EXECUTING:
-                logger.warning(f"PlanarBaseTrajectoryTask '{self._name}' preempted by {by_task}")
+                logger.warning(
+                    "Trajectory preempted", task_name=self._name, by_task=by_task, joints=joints
+                )
                 self._stop(None, TrajectoryState.ABORTED, f"preempted by {by_task}")
-
-    def _read_pose(self, state: CoordinatorState) -> tuple[float, float, float] | None:
-        positions = state.joints.joint_positions
-        x = positions.get(self._joints[0])
-        y = positions.get(self._joints[1])
-        yaw = positions.get(self._joints[2])
-        if x is None or y is None or yaw is None:
-            return None
-        pose = (float(x), float(y), float(yaw))
-        if not all(math.isfinite(value) for value in pose):
-            return None
-        self._last_pose_t = state.t_now
-        return pose
 
     def _feedback(
         self, reference: list[float], pose: tuple[float, float, float]
@@ -301,7 +315,9 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
         )
 
     def _fail(self, t_now: float, message: str) -> JointCommandOutput:
-        logger.error(f"PlanarBaseTrajectoryTask '{self._name}' aborted: {message}")
+        logger.error(
+            "Trajectory aborted", task_name=self._name, elapsed=self._elapsed, reason=message
+        )
         self._stop(t_now, TrajectoryState.ABORTED, message)
         return self._command(0.0, 0.0, 0.0)
 

@@ -19,7 +19,6 @@ from __future__ import annotations
 from importlib.metadata import EntryPoint
 import inspect
 import os
-import pickle
 import signal
 import sys
 import threading
@@ -28,6 +27,7 @@ from typing import Any
 import typer
 
 from dimos.experimental.isolated_python.module import IsolatedPythonModule, contract_rpc_names
+from dimos.protocol.encode.cbor import decode
 from dimos.spec.utils import _signatures_compatible
 
 
@@ -91,8 +91,11 @@ def main(
         if not issubclass(runtime_class, IsolatedPythonModule):
             raise TypeError(f"{implementation!r} is not an IsolatedPythonModule subclass")
         validate_runtime(declaration_class, runtime_class)
-        kwargs = pickle.load(sys.stdin.buffer)
+        kwargs = decode(sys.stdin.buffer.read())
         kwargs["instance_name"] = instance_name
+        # The child serves the private address passed by its parent. The config
+        # it inherits contains the public address of the worker-side module.
+        kwargs["rpc_name"] = instance_name
         module = runtime_class(_isolated_python_runtime=True, **kwargs)
         os.write(handshake_fd, b"READY\n")
     except Exception as error:

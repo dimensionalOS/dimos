@@ -69,7 +69,7 @@ Every one of these unpins the listener back to zenoh's all-interfaces default.
 run (`Blueprint.hosted()`, placed on `dimos host` daemons) gets its run id as its domain. A
 rerun bridge listens to every domain and drops the domain from entity paths, so a viewer that
 dials the robot's router on its own still shows such a run. With `topics` set it only listens to
-its own domain. `dimos topic` and `dimos record` show the domain's keys.
+its own domain. `dimos topic` shows the domain's keys.
 
 **Two ways to override for one run or for your shell:**
 
@@ -81,18 +81,18 @@ Architecture notes (Rerun bridge) live under [Zenoh](#zenoh) in PubSub transport
 
 ### Per-topic QoS
 
-Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L49)):
 
 ```python skip
 from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
 
 blueprint = blueprint.transports(
-    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+    {("image", WebcamModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
-When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L97)):
 
 * The agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
 * `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
@@ -100,13 +100,19 @@ When the factory builds transports from the global switch, it applies defaults (
 
 ## Benchmarks
 
-Quick view on performance of our pubsub backends:
+Run the pubsub benchmarks directly:
 
 ```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
+uv run python -m dimos.protocol.pubsub.benchmarks.throughput
 ```
 
-![Benchmark results](../assets/pubsub_benchmark.png)
+See the [benchmark guide](/dimos/protocol/pubsub/benchmarks/README.md) for backend selection,
+image compression comparisons, and blueprint replay measurements.
+
+These historical results include the retired SHM backend. Current results depend on the
+machine, payload size, transport settings, and installed backends.
+
+![Historical pubsub benchmark results](../assets/pubsub_benchmark.png)
 
 ## Abstraction layers
 
@@ -148,16 +154,18 @@ See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
 From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
-Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
+Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L207)) so you can visualize in **rviz2**.
 
 ```python skip
 nav = autoconnect(
-    basic,
-    voxel_mapper(voxel_size=0.1),
-    cost_mapper(),
-    replanning_a_star_planner(),
-    wavefront_frontier_explorer(),
-).global_config(n_workers=6, robot_model="unitree_go2")
+    unitree_go2_basic,
+    PGOVoxelMapper.blueprint(emit_every=5),
+    CostMapper.blueprint(),
+    ReplanningAStarPlanner.blueprint(),
+    WavefrontFrontierExplorer.blueprint(),
+    PatrollingModule.blueprint(),
+    MovementManager.blueprint(),
+).global_config(n_workers=10, robot_model="unitree_go2")
 
 ros = nav.transports(
     {
@@ -173,7 +181,7 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
-The runnable example below uses a tiny synthetic image publisher instead of `CameraModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
+The runnable example below uses a tiny synthetic image publisher instead of `WebcamModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
 
 ```python ansi=false
 import time
@@ -274,16 +282,16 @@ dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 
 ![dimos spy](../assets/lcmspy.png)
 
-`dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
+`dimos topic echo /topic` finds the typed channel for a topic name and decodes automatically. On Zenoh the channel is a key like `dimos/topic/pkg.Msg`. On LCM it is `/topic#pkg.Msg`. The full channel is also accepted in place of the name.
 
 ```sh skip
-Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
+Listening on /camera/rgb (inferring from typed Zenoh keys like 'dimos/camera/rgb/pkg.Msg')... (Ctrl+C to stop)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
 ```
 
 ## Implementing a transport
 
-At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L83)) and implementing:
+At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L92)) and implementing:
 
 * `broadcast(...)`
 * `subscribe(...)`
@@ -337,7 +345,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have CBOR-encoded transports for Python values without an LCM form.
 
 ### LCM (UDP multicast)
 
@@ -439,13 +447,13 @@ See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the com
 
 Transports often need to serialize messages before sending and deserialize after receiving.
 
-`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py#L39) provides a clean way to add encoding/decoding to any pubsub implementation.
+`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py#L42) provides a clean way to add encoding/decoding to any pubsub implementation.
 
 ### Available mixins
 
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
-| `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
+| `CborEncoderMixin`   | CBOR            | Python values with their types kept (tuples, numpy, enums, dataclasses, messages); what RPC uses |
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
@@ -478,26 +486,20 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 Swap serialization by changing the mixin:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.encoders import PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
 
-class MyPicklePubSub(PickleEncoderMixin, Memory):
+class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 
-## Testing and benchmarks
-
-### Spec tests
+## Testing
 
 See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid tests your new backend should pass.
 
-### Benchmarks
-
-Add your backend to benchmarks to compare in context:
-
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
-```
+Add performance comparisons to the cases in
+[`benchmarks/cases.py`](/dimos/protocol/pubsub/benchmarks/cases.py) and run the standalone
+commands in the [benchmark guide](/dimos/protocol/pubsub/benchmarks/README.md).
 
 ## Available transports
 

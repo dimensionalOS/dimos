@@ -149,7 +149,7 @@ class PanelState:
             and bool(self.selected_group_ids)
             and self.action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
-            and self.manipulation_state in {"IDLE", "COMPLETED"}
+            and self.manipulation_state in {"IDLE", "HAS_PLAN"}
             and self.plan_state.status != PlanStatus.PLANNING
         )
 
@@ -176,7 +176,7 @@ class PanelState:
             and self.backend_status == BackendConnectionStatus.READY
             and effective_action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
-            and self.manipulation_state in {"IDLE", "COMPLETED"}
+            and self.manipulation_state == "HAS_PLAN"
             and plan.status == PlanStatus.FRESH
             and plan.plan is not None
             and plan.group_ids == self.selected_group_ids

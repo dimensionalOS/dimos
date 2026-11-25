@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, TypeAlias
 from uuid import uuid4
+
+import numpy as np
 
 from dimos.manipulation.planning.spec.enums import (
     IKStatus,
@@ -28,7 +30,6 @@ from dimos.manipulation.planning.spec.enums import (
 )
 
 if TYPE_CHECKING:
-    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -110,7 +111,8 @@ class Obstacle:
             - MESH: Not used
         color: RGBA color tuple (0-1 range)
         mesh_path: Path to mesh file (for MESH type)
-        points: Occupied cell centers in the obstacle's frame (for OCTREE type)
+        points: Occupied cell centers in the obstacle's frame as an (N, 3) float
+            array (for OCTREE type). Sequences of triples are accepted and converted.
         octree_resolution: Edge length of an OCTREE cell (meters)
         touch_links: Robot links allowed to touch the obstacle, by exact link
             name; their collisions with it are ignored
@@ -122,11 +124,24 @@ class Obstacle:
     dimensions: tuple[float, ...] = ()
     color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
-    # Plain tuples rather than an array: obstacles are deepcopied, compared and
-    # pickled across worker RPC, and an ndarray field breaks all three.
-    points: tuple[tuple[float, float, float], ...] = ()
+    # An array, not one tuple per cell: it crosses worker RPC as a single ndarray tag.
+    # __eq__ below keeps obstacles comparable, which the world's snapshots rely on.
+    points: NDArray[np.float64] = field(default_factory=lambda: np.empty((0, 3)))
     octree_resolution: float | None = None
     touch_links: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        self.points = np.asarray(self.points, dtype=np.float64)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Obstacle):
+            return NotImplemented
+        for f in fields(self):
+            mine, theirs = getattr(self, f.name), getattr(other, f.name)
+            same = np.array_equal(mine, theirs) if f.name == "points" else mine == theirs
+            if not same:
+                return False
+        return True
 
 
 @dataclass

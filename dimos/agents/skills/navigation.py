@@ -225,7 +225,8 @@ class NavigationSkillContainer(Module):
             if odom is None:
                 where = "robot position unknown"
             else:
-                distance = goal.position.distance(odom.position)
+                # In the plane: a semantic map goal is at z=0, odometry is at body height.
+                distance = goal.position.to_2d().distance(odom.position.to_2d())
                 where = (
                     f"robot at ({odom.position.x:.2f}, {odom.position.y:.2f}), "
                     f"{distance:.2f} m from it"
@@ -253,7 +254,10 @@ class NavigationSkillContainer(Module):
         logger.info(f"Found {query} at {bbox}")
 
         # Start tracking - BBoxNavigationModule automatically generates goals
-        self._object_tracking.track(bbox)  # type: ignore[arg-type]
+        tracking_result = self._object_tracking.track(bbox)  # type: ignore[arg-type]
+        if tracking_result.get("status") != "tracking_started":
+            logger.warning("Could not start object tracking", result=tracking_result)
+            return None
 
         start_time = time.time()
         timeout = 30.0
@@ -288,7 +292,7 @@ class NavigationSkillContainer(Module):
         self._object_tracking.stop_track()
         # The tracker's last goal stays with the planner and nothing records it in
         # _active, so cancel it before this call can return and release the hold.
-        self._navigation.cancel_goal()
+        self._navigation.cancel_goal(reason="NavigationSkillContainer: object tracking timed out")
         return None
 
     def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
@@ -335,7 +339,9 @@ class NavigationSkillContainer(Module):
         return "Stopped"
 
     def _cancel_goal_and_stop(self) -> None:
-        self._navigation.cancel_goal()
+        self._navigation.cancel_goal(
+            reason="NavigationSkillContainer.stop_navigation: stop requested"
+        )
 
     def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)

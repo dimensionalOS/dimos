@@ -21,13 +21,18 @@ import sys
 import threading
 import time
 from typing import Any
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 import psutil
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches
+from experimental.gateway import launches, shared_config
+from experimental.gateway.introspect import IntrospectError
+from experimental.gateway.routes import active as active_routes
+from experimental.gateway.state import State
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -67,9 +72,11 @@ def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(client: TestClient
     config = {"global": {"n_workers": 4, "replay": True}, "modules": {"agent": {"api_key": "k1"}}}
     started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
     assert started.status_code == 200, started.text
-    assert started.json()["phase"] == "starting"
+    # the fake dimos registers at once, so on a busy machine it can be running before the gateway answers
+    assert started.json()["phase"] in ("starting", "running")
     until(output_has(client, "secret k1"))
-    until(output_has(client, "dtop 1"))
+    # dimos's own defaults: a caller wanting dtop (Desktop does) says so in the config
+    until(output_has(client, "dtop None"))
     until(running(client))
     now = client.get("/active").json()
     launch = now["launch"]
@@ -99,15 +106,220 @@ def test_a_bad_config_or_name_is_refused(client: TestClient) -> None:
         == 400
     )
     assert client.post("/active/launch", json={"blueprint": "-x"}).status_code == 400
+    assert client.post("/active/launch", json={"blueprint": ""}).status_code == 400
     bad = client.post(
         "/active/launch", json={"blueprint": "demo", "config": {"global": {"robot_iq": 1}}}
     )
     assert bad.status_code == 400 and "robot_iq" in bad.json()["error"]
     assert client.post("/active/exec", json={"args": ["--n-workers=7"]}).status_code == 400
+    assert client.post("/active/exec", json={"args": []}).status_code == 400
+
+
+@pytest.mark.parametrize("scan", ["missing", "stale", "fresh"])
+@pytest.mark.parametrize("field", ["blueprint", "module", "args"])
+@pytest.mark.parametrize("name", ["", " ", "\t", "demo cam", "-x"])
+def test_bad_launch_names_are_refused_before_starting(
+    client: TestClient,
+    state: State,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    scan: str,
+    field: str,
+    name: str,
+) -> None:
+    if scan != "missing":
+        scanned(state, monkeypatch, stale=scan == "stale")
+    start = mocker.spy(launches, "start")
+    payload: dict[str, Any] = {field: [name] if field == "args" else name}
+    if field != "args":
+        payload["module" if field == "blueprint" else "blueprint"] = None
+    path = "/active/exec" if field == "args" else "/active/launch"
+
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {"error": f"bad name: {name}"}
+    start.assert_not_called()
+    assert client.get("/active").json()["launch"] is None
+    assert not launches.request_file().exists()
+
+
+@pytest.mark.parametrize(
+    ("values", "normalized", "flags"),
+    [
+        (
+            {"replay": "true", "n_workers": 3.0},
+            {"replay": True, "n_workers": 3},
+            "--n-workers=3 --replay",
+        ),
+        (
+            {"replay": "false", "n_workers": "4"},
+            {"replay": False, "n_workers": 4},
+            "--n-workers=4 --no-replay",
+        ),
+    ],
+)
+def test_launch_and_legacy_relaunch_normalize_saved_globals(
+    client: TestClient, values: dict[str, Any], normalized: dict[str, Any], flags: str
+) -> None:
+    values = {**values, "robot_ip": None}
+    normalized = {**normalized, "robot_ip": None}
+    started = client.post(
+        "/active/launch", json={"blueprint": "demo", "config": {"global": values}}
+    )
+    assert started.status_code == 200, started.text
+    until(output_has(client, f"args {flags} run demo\n"))
+    until(running(client))
+    assert started.json()["config"] == {"global": normalized, "modules": {}}
+    saved = json.loads(launches.request_file().read_text())
+    assert saved["global"] == normalized
+
+    # Older gateways persisted the accepted JSON values before Pydantic coercion.
+    launches.request_file().write_text(json.dumps({**saved, "global": values}))
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    assert relaunched.json()["pid"] != started.json()["pid"]
+    until(output_has(client, f"args {flags} run demo\n"))
+    assert relaunched.json()["config"] == {"global": normalized, "modules": {}}
+    assert json.loads(launches.request_file().read_text())["global"] == normalized
+
+
+@pytest.mark.parametrize("values", [{"replay": "maybe"}, {"n_workers": 2.5}, {"robot_iq": 1}])
+def test_invalid_globals_are_rejected_without_spawning(
+    client: TestClient, mocker: MockerFixture, values: dict[str, Any]
+) -> None:
+    spawn = mocker.patch.object(launches, "_spawn")
+    response = client.post(
+        "/active/launch", json={"blueprint": "demo", "config": {"global": values}}
+    )
+    assert response.status_code == 400, response.text
+    spawn.assert_not_called()
+    assert not launches.request_file().exists()
+
+
+@pytest.mark.parametrize(("blueprint", "phase"), [("demo", "running"), ("slow", "starting")])
+def test_invalid_saved_globals_do_not_stop_the_current_launch(
+    client: TestClient, mocker: MockerFixture, blueprint: str, phase: str
+) -> None:
+    started = client.post("/active/launch", json={"blueprint": blueprint})
+    assert started.status_code == 200, started.text
+    until(output_has(client, "args"))
+    until(lambda: launch_of(client).get("phase") == phase)
+    saved = json.loads(launches.request_file().read_text())
+    invalid = {**saved, "global": {"replay": "maybe"}}
+    launches.request_file().write_text(json.dumps(invalid))
+    spawn = mocker.patch.object(launches, "_spawn")
+
+    response = client.post("/active/relaunch")
+
+    assert response.status_code == 400, response.text
+    spawn.assert_not_called()
+    assert launches.alive(started.json()["pid"])
+    assert launch_of(client)["phase"] == phase
+    assert json.loads(launches.request_file().read_text()) == invalid
+
+
+def test_direct_start_normalizes_globals(client: TestClient, checkout: Path) -> None:
+    started = launches.start(
+        checkout, "demo", launches.LaunchConfig(global_={"replay": "false", "n_workers": "3"})
+    )
+    until(output_has(client, "args --n-workers=3 --no-replay run demo\n"))
+    assert started["config"]["global"] == {"replay": False, "n_workers": 3}
+    assert json.loads(launches.request_file().read_text())["global"] == {
+        "replay": False,
+        "n_workers": 3,
+    }
+
+
+def test_nested_launch_and_relaunch_keep_secrets_out_of_args_and_metadata(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock
+) -> None:
+    config = {
+        "modules": {
+            "camera": {
+                "auth": {"token": "nested-token", "region": "west"},
+                "credentials": {"Service-A": "private-value", "public.region": "east"},
+            }
+        },
+        "secrets": ["camera.credentials.Service-A"],
+    }
+    expected_config = {
+        "global": {},
+        "modules": {
+            "camera": {
+                "auth": {"token": launches.HIDDEN, "region": "west"},
+                "credentials": {"Service-A": launches.HIDDEN, "public.region": "east"},
+            }
+        },
+    }
+
+    def assert_private_launch() -> int:
+        until(running(client))
+        current = launch_of(client)
+        process = psutil.Process(current["pid"])
+        env = process.environ()
+        assert env["CAMERA__AUTH__TOKEN"] == "nested-token"
+        assert json.loads(env["CAMERA__CREDENTIALS"]) == {
+            "Service-A": "private-value",
+            "public.region": "east",
+        }
+        assert process.cmdline()[-3:] == ["run", "demo", "--camera.auth.region=west"]
+        assert current["config"] == expected_config
+        shown = json.dumps(current) + launches.launch_file().read_text()
+        assert "nested-token" not in shown
+        assert "private-value" not in shown
+        assert "--camera.auth.region=west" in current["output"].splitlines()[0]
+        return current["pid"]
+
+    started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
+    assert started.status_code == 200, started.text
+    first_pid = assert_private_launch()
+    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
+    launch_targets.reset_mock()
+
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    assert assert_private_launch() != first_pid
+    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
+
+
+def test_launch_introspection_receives_global_mode_settings(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock
+) -> None:
+    started = client.post(
+        "/active/launch",
+        json={
+            "blueprint": "demo",
+            "config": {
+                "global": {"simulation": "mujoco"},
+                "modules": {"camera": {"auth.region": "west"}},
+            },
+        },
+    )
+    assert started.status_code == 200, started.text
+    launch_targets.assert_awaited_once_with(
+        checkout, ["targets", "demo"], stdin={"simulation": "mujoco"}
+    )
+
+
+def test_launch_refuses_unreadable_schema_before_spawning_or_saving_config(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    launch_targets.side_effect = IntrospectError("blueprint unavailable")
+    spawn = mocker.patch.object(launches, "_spawn")
+    refused = client.post(
+        "/active/launch",
+        json={"blueprint": "demo", "config": {"modules": {"camera": {"auth.token": "key"}}}},
+    )
+    assert refused.status_code == 400
+    assert refused.json()["error"] == "could not read launch config fields: blueprint unavailable"
+    spawn.assert_not_called()
+    assert not launches.launch_file().exists()
+    assert not launches.request_file().exists()
 
 
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     started = client.post("/active/launch", json={"module": "cam", "config": {"n_workers": 3}})
     assert started.status_code == 200, started.text
@@ -117,6 +329,8 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     until(running(client))
     client.post("/active/stop")
     until(stopped(client))
+    # Raw commands bypass structured validation, including validation of inherited env values.
+    monkeypatch.setenv("N_WORKERS", "invalid")
     typed = client.post("/active/exec", json={"args": ["demo", "--n-workers=7"]})
     assert typed.status_code == 200, typed.text
     until(running(client))
@@ -127,6 +341,21 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     until(running(client))
     assert client.get("/active").json()["runId"] != old
     assert launch_of(client)["output"].splitlines()[0].endswith("run demo --n-workers=7")
+
+
+def test_a_launch_that_registers_before_the_answer_answers_running(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remember = launches._remember
+
+    def remember_late(blueprint: str, pid: int, *rest: Any) -> None:
+        until(lambda: any(int(run["pid"]) == pid for run in launches.registry_runs()))
+        remember(blueprint, pid, *rest)
+
+    monkeypatch.setattr(launches, "_remember", remember_late)
+    started = client.post("/active/launch", json={"blueprint": "demo"})
+    assert started.status_code == 200, started.text
+    assert started.json()["phase"] == "running"
 
 
 def test_relaunch_waits_for_the_stopped_run_to_be_reaped(
@@ -170,7 +399,10 @@ def test_a_launch_right_after_a_stop_starts(
     until(stopped(client))
 
 
-def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) -> None:
+def test_relaunch_starts_the_last_launch_with_its_secrets(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned(state, monkeypatch)
     assert client.post("/active/relaunch").status_code == 409
     config = {"global": {"n_workers": 2}, "modules": {"agent": {"api_key": "k2"}}}
     client.post("/active/launch", json={"blueprint": "demo", "config": config})
@@ -190,6 +422,14 @@ def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) ->
     assert client.get("/active").json()["runId"] not in (first, second)
 
 
+def test_a_launch_stopped_while_starting_is_stopped_not_failed(client: TestClient) -> None:
+    client.post("/active/launch", json={"blueprint": "slow"})
+    until(output_has(client, "args"))
+    assert client.post("/active/stop").status_code == 200
+    launch = launch_of(client)
+    assert launch["phase"] == "stopped" and launch["error"] is None
+
+
 def test_relaunch_restarts_a_launch_stuck_starting(client: TestClient) -> None:
     started = client.post("/active/launch", json={"blueprint": "slow"})
     assert started.status_code == 200, started.text
@@ -202,9 +442,54 @@ def test_relaunch_restarts_a_launch_stuck_starting(client: TestClient) -> None:
     assert not launches.alive(stuck_pid)
 
 
-def test_relaunch_copies_a_run_the_gateway_did_not_launch(
-    client: TestClient, tmp_path: Path
+@pytest.mark.parametrize("blueprint", ["demo", "slow"])
+@pytest.mark.parametrize(
+    ("name", "status"),
+    [
+        ("", 400),
+        (" ", 400),
+        ("demo cam", 400),
+        ("-x", 400),
+        (None, 400),
+        (7, 400),
+        ("None", 404),
+        ("removed-blueprint", 404),
+    ],
+)
+def test_relaunch_refuses_bad_saved_names_before_stopping(
+    client: TestClient,
+    state: State,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    blueprint: str,
+    name: Any,
+    status: int,
 ) -> None:
+    first = client.post("/active/launch", json={"blueprint": blueprint})
+    assert first.status_code == 200
+    until(output_has(client, "args"))
+    if blueprint == "demo":
+        until(running(client))
+    request = json.loads(launches.request_file().read_text())
+    request["blueprint"] = name
+    launches.request_file().write_text(json.dumps(request))
+    scanned(state, monkeypatch)
+    stop = mocker.spy(launches, "stop")
+    start = mocker.spy(launches, "start")
+
+    response = client.post("/active/relaunch")
+
+    assert response.status_code == status
+    stop.assert_not_called()
+    start.assert_not_called()
+    assert launch_of(client)["pid"] == first.json()["pid"]
+    assert launches.alive(first.json()["pid"])
+
+
+def test_relaunch_copies_a_run_the_gateway_did_not_launch(
+    client: TestClient, tmp_path: Path, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned(state, monkeypatch)
     command = [sys.executable, "-c", "import time; time.sleep(60)", "run", "outside"]
     env = {**os.environ, "OUTSIDE_RUN": "yes"}
     outside = subprocess.Popen(command, cwd=tmp_path, env=env, start_new_session=True)
@@ -299,21 +584,21 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
 
 
 def test_recordings_is_the_standard_directory(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
 ) -> None:
-    assert client.get("/history/recordings").json() == {"path": str(launches.store.RECORDINGS_DIR)}
+    # the served checkout isn't the gateway's own (Desktop's pinned copy serves the user's): its default, as its own
+    # dimos would pick it, never the copy's recordings/ (replaced on the next move)
+    assert client.get("/history/recordings").json() == {
+        "path": str(tmp_path / "state" / "recordings")
+    }
+    (checkout / ".git").mkdir()
+    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
+    shared_config.shared_config.cache_clear()
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
-
-
-def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.core.global_config import GlobalConfig
-
-    monkeypatch.setenv(launches.DTOP_ENV, "1")
-    assert GlobalConfig().dtop is True
 
 
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
@@ -321,23 +606,72 @@ def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
     assert launches.current_launch()["phase"] == "failed"
 
 
-def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
-    client: TestClient, tmp_path: Path
+def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs_gossip(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from experimental.gateway import events, store
+    from experimental.gateway import events
 
-    assert (events.resolve_namespace(None), store.setting("dimos-gateway", "socket")) == (
-        None,
-        None,
-    )
+    assert (events.resolve_namespace(), shared_config.shared_config().socket) == (None, None)
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         "zenoh: {namespace: desk1, connect: 'tcp/10.0.0.2:7447', gossip: false}\n"
         "dimos-gateway: {socket: /tmp/gw.sock}\ndesktop: {port: 5555}\n"
     )
-    assert events.resolve_namespace(None) == "desk1"
-    assert events.resolve_namespace("given") == "given"
-    assert events.resolve_connect(None) == ["tcp/10.0.0.2:7447"]
-    assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    # read once: a config.yaml written after the first read changes nothing until a reload
+    assert events.resolve_namespace() is None
+    shared_config.shared_config.cache_clear()
+    assert events.resolve_namespace() == "desk1"
+    assert events.resolve_connect() == ["tcp/10.0.0.2:7447"]
+    assert shared_config.shared_config().socket == "/tmp/gw.sock"
+    app = {
+        "home": str(tmp_path / "dimos_home"),
+        "socket": "/tmp/app.sock",
+        "zenohNamespace": "app1",
+    }
+    monkeypatch.setenv("DIMOS_APP", json.dumps(app))
+    shared_config.shared_config.cache_clear()
+    assert (events.resolve_namespace(), shared_config.shared_config().socket) == (
+        "app1",
+        "/tmp/app.sock",
+    )
+    # a run's gossip is its launch config's (Desktop puts zenoh.gossip there), not this file's
     client.post("/active/launch", json={"blueprint": "demo"})
-    until(output_has(client, "gossip false"))
+    until(output_has(client, "gossip None"))
+
+
+def scanned(state: State, monkeypatch: pytest.MonkeyPatch, stale: bool = False) -> None:
+    """A listing and a finished scan in which `cam` scanned fine and `lidar`'s import timed out."""
+    state.listed = [{"name": "demo", "kind": "builtin"}]
+    cache = {
+        "finished_at": "2026-01-01T12:00:00Z",
+        "fingerprint": "old" if stale else state.scanner.current_fingerprint(),
+        "results": {},
+        "modules": {},
+        "errors": ["module:lidar: timed out"],
+        "names": {"blueprints": ["demo"], "modules": ["cam", "lidar"]},
+    }
+    monkeypatch.setattr(state.scanner, "cache", lambda: cache)
+
+
+def test_an_unknown_name_is_refused_before_anything_is_spawned(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned(state, monkeypatch)
+    monkeypatch.setattr(launches, "start", lambda *args: pytest.fail(f"spawned {args[1]}"))
+    refused = client.post("/active/launch", json={"blueprint": "dmeo"})
+    assert refused.status_code == 404 and "did you mean demo" in refused.json()["error"]
+    assert client.post("/active/launch", json={"module": "cams"}).status_code == 404
+    assert client.post("/active/exec", json={"args": ["nope"]}).status_code == 404
+
+
+def test_known_names_are_the_listing_plus_the_registry_of_a_fresh_scan(
+    state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (
+        active_routes.known_names(state) is None
+    )  # never listed or scanned: the name is left to dimos
+    scanned(state, monkeypatch, stale=True)
+    assert active_routes.known_names(state) is None  # the checkout changed since the scan
+    scanned(state, monkeypatch)
+    # lidar's import timed out in the scan, and is still a name
+    assert active_routes.known_names(state) == {"demo", "cam", "lidar"}

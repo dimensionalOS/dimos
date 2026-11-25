@@ -32,14 +32,9 @@ from dimos_lcm.std_msgs import Bool
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos.utils.data import get_data
-
-# Path to the frontend HTML templates and command-center build
+# Path to the frontend HTML templates
 _TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
 _DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
-_COMMAND_CENTER_DIR = (
-    FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
-)
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -72,7 +67,7 @@ _browser_opened = False
 class WebsocketConfig(ModuleConfig):
     open_browser: bool | None = Field(
         default=None,
-        description="Open the command center; by default follows the Rerun bridge's web/both mode.",
+        description="Open the dashboard; by default follows the Rerun bridge's web/both mode.",
     )
     show_rerun_dashboard: bool | None = Field(
         default=None,
@@ -85,11 +80,11 @@ class WebsocketVisModule(Module):
     """
     WebSocket-based visualization module for real-time navigation data.
 
-    This module provides a web interface for visualizing:
+    This module provides a socket.io API for:
     - Robot position and orientation
     - Navigation paths
     - Costmaps
-    - Interactive goal setting via mouse clicks
+    - Setting navigation goals
 
     Inputs:
         - robot_pose: Current robot position
@@ -169,9 +164,9 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread.start()
 
         # Open the dashboard when requested by this module's configuration.
-        if self.config.open_browser:
+        if self.config.open_browser and self.config.show_rerun_dashboard:
             url = f"http://localhost:{self.config.port}/"
-            logger.info(f"Dimensional Command Center: {url}")
+            logger.info(f"Dimensional dashboard: {url}")
 
             global _browser_opened
             with _browser_open_lock:
@@ -252,35 +247,18 @@ class WebsocketVisModule(Module):
         # socketio, starlette and uvicorn: a 0.35 s import, only needed once the server is built.
         import socketio  # type: ignore[import-untyped]
         from starlette.applications import Starlette
-        from starlette.responses import FileResponse, RedirectResponse, Response
+        from starlette.responses import FileResponse
         from starlette.routing import Route
         import uvicorn
 
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
-        async def serve_index(request):  # type: ignore[no-untyped-def]
-            """Serve appropriate HTML based on viewer mode."""
-            if not self.config.show_rerun_dashboard:
-                return RedirectResponse(url="/command-center")
+        async def serve_dashboard(request):  # type: ignore[no-untyped-def]
+            """Serve the page that embeds the Rerun web viewer."""
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
-        async def serve_command_center(request):  # type: ignore[no-untyped-def]
-            """Serve the command center 2D visualization (built React app)."""
-            index_file = get_data("command_center.html")
-            if index_file.exists():
-                return FileResponse(index_file, media_type="text/html")
-            else:
-                return Response(
-                    content="Command center not built. Run: cd dimos/web/command-center-extension && npm install && npm run build:standalone",
-                    status_code=503,
-                    media_type="text/plain",
-                )
-
-        routes = [
-            Route("/", serve_index),
-            Route("/command-center", serve_command_center),
-        ]
+        routes = [Route("/", serve_dashboard)] if self.config.show_rerun_dashboard else []
 
         starlette_app = Starlette(routes=routes)
 

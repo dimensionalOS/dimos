@@ -20,16 +20,17 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.global_planner.viz import render_goal
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.diy.alfred.config import alfred_model
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 
@@ -52,6 +53,7 @@ def _path_colored(msg: NavPath, color: tuple[int, int, int]) -> Archetype:
 def _resolved_urdf() -> Path:
     """The model written out with package:// resolved, which the rerun urdf loader cannot do."""
     loaded = alfred_model().load()
+    assert loaded.source_path is not None, "Alfred's model must have a URDF source"
     path = loaded.source_path.parent / ".resolved" / loaded.source_path.name
     path.parent.mkdir(exist_ok=True)
     path.write_text(loaded.xml)
@@ -97,6 +99,7 @@ def _alfred_rerun_config() -> dict[str, Any]:
         },
         "visual_override": {
             "world/planner_path": partial(_path_colored, color=(170, 60, 220)),
+            "world/goal": render_goal,
             **motion_visual_override(embodiment=ALFRED),
             # The planner publishes its surface and edges by cell.
             **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, WALL_CLEARANCE_M),
@@ -104,7 +107,7 @@ def _alfred_rerun_config() -> dict[str, Any]:
     }
 
 
-def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
+def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> MetaBlueprint:
     """Mapping, planning and following. map_cloud_topic is what the voxel map raytraces."""
     return autoconnect(
         RayTracingVoxelMap.blueprint(

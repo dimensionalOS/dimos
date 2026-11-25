@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Barrier, Lock
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +30,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.manipulation.manipulation_spec import OperationStatus
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
@@ -94,6 +96,21 @@ class ConcurrentRemovalHandle:
             if self.remove_count > 1:
                 raise RuntimeError("handle removed more than once")
         time.sleep(0.01)
+
+
+class OnceRemovableHandle:
+    """Like a Viser handle: a folder removes its children, and nothing is removed twice."""
+
+    def __init__(self, *children: OnceRemovableHandle) -> None:
+        self.children = children
+        self.removed = False
+
+    def remove(self) -> None:
+        assert not self.removed, "handle removed twice"
+        self.removed = True
+        for child in self.children:
+            if not child.removed:
+                child.remove()
 
 
 class FakeJointGui:
@@ -256,7 +273,7 @@ def executable_gui(monkeypatch, mocker):
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = ("manipulator",)
     gui.state.plan_state = PanelPlanState(
         status=PlanStatus.FRESH,
@@ -348,6 +365,8 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     gui, submissions, _execute = executable_gui
     module = module_factory()
     mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    module._pending_plan = gui.state.plan_state.plan
+    module._state = OperationStatus.HAS_PLAN
     reported = {"state": TrajectoryState.EXECUTING}
 
     def invoke(task, method, args=None):
@@ -369,7 +388,7 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     reported["state"] = TrajectoryState.COMPLETED
     gui._refresh_model_state()
 
-    assert gui.state.manipulation_state == "COMPLETED"
+    assert gui.state.manipulation_state == "IDLE"
     assert gui.state.can_plan() is True
     assert gui.state.can_cancel() is False
     assert gui.state.can_execute() is False
@@ -574,6 +593,26 @@ def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.Monkey
     assert stop_timeouts == [2.0]
 
 
+def test_gui_close_removes_each_handle_once_and_leaves_target_controls_to_the_scene() -> None:
+    gui = make_gui()
+    scene_removals: list[str] = []
+    gui.scene = SimpleNamespace(
+        cancel_preview_animation=lambda: None, remove_target_controls=scene_removals.append
+    )
+    button = OnceRemovableHandle()
+    folder = OnceRemovableHandle(button)
+    control = OnceRemovableHandle()
+    gui._handles.update({"panel_folder": folder, "plan": button, "ee_control:manipulator": control})
+
+    gui.close()
+
+    assert folder.removed and button.removed
+    # The scene made the target controls, so the scene removes them.
+    assert not control.removed
+    assert scene_removals == ["manipulator"]
+    assert gui._handles == {}
+
+
 def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
     submissions: list[dict[str, float]] = []
     gui = make_gui()
@@ -599,7 +638,7 @@ def test_gui_preview_enters_previewing_before_worker_runs(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = ("manipulator",)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
@@ -636,7 +675,7 @@ def test_gui_selection_change_clears_invalidated_preview(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = (groups[0].id,)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
@@ -672,7 +711,7 @@ def test_gui_selection_change_ignores_invalidated_preview_error(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = (groups[0].id,)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
@@ -784,6 +823,8 @@ def test_execute_rejection_reports_coordinator_reason(executable_gui, module_fac
     gui, submissions, _execute = executable_gui
     module = module_factory()
     mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    module._pending_plan = gui.state.plan_state.plan
+    module._state = OperationStatus.HAS_PLAN
     reason = "Trajectory start for joint arm/j0 differs from current position by 0.1"
     mocker.patch.object(
         module._control_coordinator,

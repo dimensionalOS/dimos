@@ -21,8 +21,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.memory.blobstore.memory import MemoryBlobStore
+from dimos.memory.blobstore.sqlite import SqliteBlobStore
+from dimos.memory.utils.sqlite import open_disposable_sqlite_connection
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from dimos.memory.blobstore.base import BlobStore
 
 
@@ -71,6 +75,43 @@ class TestBlobStore:
         blob_store.delete("s", 1)
         assert blob_store.size_bytes("s") == 10
         assert blob_store.size_bytes("other") == 0
+
+
+class TestSqliteBlobStore:
+    def test_owned_mutations_persist_across_reopen(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "blobs.db")
+        with SqliteBlobStore(path=path) as store:
+            store.put("s", 1, b"old")
+            store.put("s", 2, b"remove")
+            # Each write is committed, so a second connection sees it before the writer closes.
+            with SqliteBlobStore(path=path) as reader:
+                assert reader.get("s", 1) == b"old"
+
+        with SqliteBlobStore(path=path) as store:
+            assert store.get("s", 1) == b"old"
+            store.put("s", 1, b"new")
+            store.delete("s", 2)
+
+        with SqliteBlobStore(path=path) as store:
+            assert store.get("s", 1) == b"new"
+            with pytest.raises(KeyError):
+                store.get("s", 2)
+
+    def test_borrowed_transaction_remains_caller_owned(self, tmp_path: Path) -> None:
+        disposable, conn = open_disposable_sqlite_connection(tmp_path / "blobs.db")
+        try:
+            isolation_level = conn.isolation_level
+            with SqliteBlobStore(conn=conn) as store:
+                store.put("s", 1, b"committed")
+                conn.commit()
+                store.put("s", 2, b"pending")
+
+            assert conn.isolation_level == isolation_level
+            assert conn.in_transaction
+            conn.rollback()
+            assert conn.execute('SELECT data FROM "s_blob"').fetchall() == [(b"committed",)]
+        finally:
+            disposable.dispose()
 
 
 class TestMemoryBlobStore:

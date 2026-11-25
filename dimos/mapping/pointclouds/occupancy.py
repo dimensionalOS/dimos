@@ -222,7 +222,6 @@ class GeneralOccupancyConfig(OccupancyConfig):
     mark_free_radius: float = 0.4
 
 
-# can remove, just needs pulling out of unitree type/map.py
 def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create an OccupancyGrid from a PointCloud2 message.
 

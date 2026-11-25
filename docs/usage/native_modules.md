@@ -51,7 +51,7 @@ When `start()` is called, NativeModule:
 4. **Launches the subprocess** with `Popen`, piping stdout/stderr.
 5. **Starts a watchdog** thread that calls `stop()` if the process crashes.
 
-For the example above, the launched command would look like:
+With LCM selected for the example above, the launched command would look like:
 
 ```sh skip
 ./build/my_lidar \
@@ -72,9 +72,9 @@ mylidar.start()
 2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
 ```
 
-Topic strings use the format `/<name>#<msg_type>`, which is the LCM channel name that Python `LCMTransport` subscribers use. The native binary publishes on these exact channels.
+LCM topic strings use the format `/<name>#<msg_type>`, matching Python `LCMTransport` subscribers. With the default Zenoh transport, topics use `dimos/<name>/<msg_type>`. The native binary must support the selected transport and publish on the assigned topics.
 
-When `stop()` is called, the process receives SIGTERM. If it doesn't exit within `shutdown_timeout` seconds (default 10), it gets SIGKILL.
+When `stop()` is called, the process receives SIGTERM. If it doesn't exit within `shutdown_timeout` seconds (default 2), it gets SIGKILL.
 
 ## Config
 
@@ -87,8 +87,8 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
 | `extra_env`        | `dict[str, str]` | `{}`          | Extra environment variables for the subprocess              |
-| `shutdown_timeout` | `float`          | `10.0`        | Seconds to wait for SIGTERM before SIGKILL                  |
-| `log_format`       | `LogFormat`      | `TEXT`        | How to parse subprocess output (`TEXT` or `JSON`)           |
+| `shutdown_timeout` | `float`          | `2.0`         | Seconds to wait for SIGTERM before SIGKILL                  |
+| `log_format`       | `LogFormat`      | `JSON`        | How to parse subprocess output (`TEXT` or `JSON`)           |
 | `cli_exclude`      | `frozenset[str]` | `frozenset()` | Config fields to skip when generating CLI args              |
 
 ### Auto CLI arg generation
@@ -132,18 +132,25 @@ Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module
+from dimos.core.stream import In
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
     imu: In[Imu]
 
-autoconnect(
+blueprint = autoconnect(
     MyLidar.blueprint(host_ip="192.168.1.10"),
     PointCloudConsumer.blueprint(),
-).build().loop()
+)
+
+# Workers import this script again, so build under the __main__ guard
+if __name__ == "__main__":
+    ModuleCoordinator.build(blueprint).loop()
 ```
 
-`autoconnect` matches ports by `(name, type)`, assigns LCM topics, and passes them to the native binary as CLI args. You can override transports as usual:
+`autoconnect` matches ports by `(name, type)`, assigns topics on the active transport (Zenoh by default), and passes them to the native binary as CLI args. You can override transports as usual:
 
 ```python skip
 blueprint = autoconnect(
@@ -163,7 +170,7 @@ NativeModule pipes subprocess stdout and stderr through structlog:
 
 ### JSON log format
 
-If your native binary outputs structured JSON lines, set `log_format=LogFormat.JSON`:
+`log_format` defaults to `LogFormat.JSON`, for binaries that output structured JSON lines. Set `LogFormat.TEXT` for plain-text output:
 
 ```python skip
 class MyConfig(NativeModuleConfig):
@@ -226,7 +233,7 @@ The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects ov
 
 `run_with_transport` reads `DIMOS_TRANSPORT`, which the coordinator sets from the global `transport` setting, and opens LCM or zenoh. The zenoh side is built on [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) and [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp), reads the same `session` and `qos` blocks the Rust SDK reads, and waits for the dialed endpoints to link before the module starts, so a C++ module behaves like a Rust one on either transport.
 
-A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`](/dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp) is a real driver example.
+A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/).
 
 ## Examples
 
@@ -245,8 +252,9 @@ from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
-    executable: str = "../../../../../../target/release/mid360_native"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/mid360_native"
+    build_command: str | None = "nix build -L path:."
+    stdin_config: bool = True
     host_ip: str | None = None  # auto-detected on the lidar's subnet
     lidar_ip: str | None = None  # required for a live sensor
     frequency: float = 10.0
@@ -296,9 +304,8 @@ external binary, pass absolute resource paths or use a launcher script if the
 program needs a different working directory. Passing `cwd` raises a migration error.
 Data downloads and IsolatedPython behavior are unchanged.
 
-Nix-based modules still require Nix and their normal build dependencies.
-FastLIO2 requires Nix 2.26 or newer for relative flake inputs. This change does
-not establish additional platform or hardware support.
+Nix-based modules still require Nix and their normal build dependencies. This
+change does not establish additional platform or hardware support.
 
 ## Auto Building
 
@@ -337,3 +344,7 @@ locally to skip cold compiles when the cache has them:
 extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
+
+The cache holds the native modules that ship in the `dimos` package, the ones
+`bin/native-modules --build` builds. CI does not publish the examples under
+[/examples/native-modules/](/examples/native-modules/), so their first run compiles them.

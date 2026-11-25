@@ -21,6 +21,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from unittest import mock
 import uuid
@@ -120,6 +121,28 @@ class TestRunEntryCRUD:
         entry = _make_entry()
         entry.save()
         assert entry.registry_path.exists()
+
+    def test_a_reader_never_sees_an_entry_half_saved(self, tmp_registry: Path) -> None:
+        entry = _make_entry()
+        entry.save()
+        done = threading.Event()
+        listed: list[int] = []
+
+        def read() -> None:
+            while not done.is_set():
+                listed.append(len(list_runs(alive_only=True)))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            for _ in range(2000):
+                entry.save()
+        finally:
+            done.set()
+            reader.join(timeout=10)
+        # list_runs deletes an entry it can't parse, so one read half written would be gone for good
+        assert set(listed) == {1}
+        assert [path.name for path in tmp_registry.iterdir()] == [entry.registry_path.name]
 
     def test_remove_idempotent(self, tmp_registry: Path):
         entry = _make_entry()
@@ -449,6 +472,46 @@ class TestStatusCommand:
 class TestStopCommand:
     """Tests for `dimos stop` CLI command."""
 
+    @pytest.fixture
+    def clock(self, mocker):
+        clock = mocker.Mock(spec=time)
+        clock.monotonic.return_value = 0.0
+
+        def sleep(seconds):
+            clock.monotonic.return_value += seconds
+
+        clock.sleep.side_effect = sleep
+        mocker.patch.object(run_registry, "time", clock)
+        return clock
+
+    @pytest.mark.parametrize("cleanup_seconds", [0.0, 6.5, 22.0])
+    def test_stop_waits_for_cleanup(self, tmp_registry, mocker, clock, cleanup_seconds):
+        entry = _make_entry(pid=12345)
+        entry.save()
+        kill = mocker.patch.object(run_registry.os, "kill")
+        mocker.patch.object(
+            run_registry,
+            "is_pid_alive",
+            side_effect=lambda pid: clock.monotonic() < cleanup_seconds,
+        )
+
+        assert stop_entry(entry) == ("Stopped with SIGTERM", True)
+
+        kill.assert_called_once_with(entry.pid, signal.SIGTERM)
+        assert not entry.registry_path.exists()
+
+    def test_force_stop_skips_cleanup_wait(self, tmp_registry, mocker, clock):
+        entry = _make_entry(pid=12345)
+        entry.save()
+        kill = mocker.patch.object(run_registry.os, "kill")
+        mocker.patch.object(run_registry, "is_pid_alive", return_value=True)
+
+        assert stop_entry(entry, force=True) == ("Stopped with SIGKILL", True)
+
+        kill.assert_called_once_with(entry.pid, signal.SIGKILL)
+        clock.sleep.assert_not_called()
+        assert not entry.registry_path.exists()
+
     def test_stop_recognizes_exited_child_without_reaping_it(self, tmp_registry, mocker):
         with subprocess.Popen([sys.executable, "-c", "raise SystemExit(23)"]) as child:
             wait_until(
@@ -565,44 +628,24 @@ class TestStopCommand:
         stop_entry(entry, force=False)
         assert not entry.registry_path.exists()
 
-    def test_stop_escalates_to_sigkill_after_timeout(self, tmp_path, monkeypatch):
-        """If SIGTERM doesn't kill within 5s, escalates to SIGKILL."""
-        reg_dir = tmp_path / "runs"
-        monkeypatch.setattr(run_registry, "REGISTRY_DIR", reg_dir)
-
+    def test_stop_escalates_to_sigkill_after_timeout(self, tmp_registry, mocker, clock):
+        """A stuck process is killed after the graceful shutdown budget."""
+        entry = _make_entry(pid=12345)
+        entry.save()
         signals_sent = []
 
-        def mock_kill(pid, sig):
-            signals_sent.append(sig)
-            # Don't raise — process "survives"
+        def kill(pid, sig):
+            signals_sent.append((pid, sig, clock.monotonic()))
 
-        monkeypatch.setattr(os, "kill", mock_kill)
+        mocker.patch.object(run_registry.os, "kill", side_effect=kill)
+        mocker.patch.object(run_registry, "is_pid_alive", return_value=True)
 
-        # Make is_pid_alive always return True (process won't die)
-        monkeypatch.setattr(run_registry, "is_pid_alive", lambda pid: True)
+        assert stop_entry(entry) == ("Escalated to SIGKILL after SIGTERM timeout", True)
 
-        # Speed up the wait loop
-        monkeypatch.setattr("time.sleep", lambda x: None)
-
-        entry = RunEntry(
-            run_id="20260306-120000-stubborn",
-            pid=12345,
-            blueprint="stubborn",
-            started_at="2026-03-06T12:00:00Z",
-            log_dir=str(tmp_path / "logs"),
-            cli_args=["stubborn"],
-            config_overrides={},
-        )
-        entry.save()
-
-        from dimos.core.run_registry import stop_entry
-
-        stop_entry(entry, force=False)
-
-        import signal
-
-        assert signal.SIGTERM in signals_sent
-        assert signal.SIGKILL in signals_sent
+        assert signals_sent == [
+            (entry.pid, signal.SIGTERM, 0.0),
+            (entry.pid, signal.SIGKILL, pytest.approx(30.0)),
+        ]
         assert not entry.registry_path.exists()
 
     def test_get_most_recent_returns_latest(self, tmp_path, monkeypatch):
@@ -671,7 +714,9 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
             on_ready=lambda _: readiness.append(True),
         )
 
-    build.assert_called_once_with("bp", "cfg", remote_module_refs=None)
+    build.assert_called_once_with(
+        "bp", "cfg", reserve_rpc_name="runs/x", module_rpc_namespace=None, remote_module_refs=None
+    )
     coordinator.start_rpc_service.assert_called_once_with(name="runs/x")
     watchdog.assert_called_once_with("run-x", log_dir=str(tmp_path))
     handlers.assert_called_once_with("run-x", coordinator, sigint=False)
@@ -680,11 +725,13 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
     assert entry.registry_path.exists()
 
 
-def test_run_coordinator_stops_the_build_when_the_health_check_fails() -> None:
+def test_run_coordinator_stops_the_build_when_the_health_check_fails(mocker, monkeypatch) -> None:
     from dimos.core.daemon import run_coordinator
 
     coordinator = mock.MagicMock()
     coordinator.health_check.return_value = False
+    mocker.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog")
+    monkeypatch.setenv("DIMOS_RUN_ID", "run-y")
     build = "dimos.core.coordination.module_coordinator.ModuleCoordinator.build"
     with (
         mock.patch(build, return_value=coordinator),

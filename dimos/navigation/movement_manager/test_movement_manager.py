@@ -25,6 +25,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.movement_manager import movement_manager
 from dimos.navigation.movement_manager.movement_manager import (
     MovementManager,
 )
@@ -104,11 +105,13 @@ def test_nav_resumes_after_cooldown(manager_and_captured):
 
 
 def test_valid_click_publishes_goal(manager_and_captured):
-    """A valid click should publish to both goal and way_point."""
+    """A valid click publishes a goal with no heading and the way point itself."""
     manager, captured = manager_and_captured
     click = _click(x=5.0, y=3.0, z=0.1)
     manager._on_click(click)
-    assert captured.goal == [click]
+    (goal,) = captured.goal
+    assert (goal.x, goal.y, goal.z, goal.frame_id, goal.ts) == (5.0, 3.0, 0.1, "map", click.ts)
+    assert goal.orientation.is_zero()
     assert captured.way_point == [click]
 
 
@@ -139,3 +142,22 @@ def test_tele_cmd_vel_scaling(manager_and_captured):
     assert published.linear.y == pytest.approx(2.0)
     assert published.linear.z == pytest.approx(0.0)
     assert published.angular.z == pytest.approx(0.25)
+
+
+@pytest.mark.parametrize("velocity", [0.0, 0.3])
+def test_teleop_logs_stop_source_once_per_takeover(manager_and_captured, mocker, velocity):
+    manager, captured = manager_and_captured
+    clock = mocker.patch.object(movement_manager.time, "monotonic", return_value=10.0)
+    log = mocker.patch.object(movement_manager.logger, "info")
+
+    manager._on_teleop(_twist(lx=velocity))
+    manager._on_teleop(_twist(lx=velocity))
+
+    log.assert_called_once_with(
+        "MovementManager: cancelling navigation via stop_movement", reason="Received tele_cmd_vel"
+    )
+    assert [msg.data for msg in captured.stop_movement] == [True, True]
+
+    clock.return_value = 11.0
+    manager._on_teleop(_twist(lx=velocity))
+    assert log.call_count == 2

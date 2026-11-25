@@ -11,6 +11,16 @@ updates:
       actions:
         patterns: ["*"]
 
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 7
+    groups:
+      agent:
+        patterns: ["*"]
+
   - package-ecosystem: "uv"
     directory: "/"
     # Can't use "all" because it exceeds the 55 min timeout and fails to open any PRs.

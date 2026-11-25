@@ -217,11 +217,15 @@ class Arm:
             raise MotionError("move_linear", result)
         return result
 
-    def reset(self) -> CommandResult:
-        """Stop any motion and clear a failed state so new moves are accepted."""
-        result = self.rpc.reset()
-        if not result.succeeded:
-            raise MotionError("reset", result)
+    def cancel(self) -> ExecutionResult:
+        """Cancel work, raising if the stop is not confirmed. Does not clear hardware errors."""
+        result = self.rpc.cancel()
+        if result.status not in {
+            ExecutionStatus.COMPLETED,
+            ExecutionStatus.ABORTED,
+            ExecutionStatus.NO_EXECUTION,
+        }:
+            raise MotionError("cancel", result)
         return result
 
     def set_gripper_position(self, position: float) -> CommandResult:

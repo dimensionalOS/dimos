@@ -54,6 +54,10 @@ dimos --simulation run unitree-go2       # quadruped
 dimos --simulation run unitree-g1-sim    # humanoid
 ```
 
+!!! note
+
+    The first simulation run downloads the [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) robot models, about **2 GB**, before the simulator opens.
+
 ### Real robot
 
 With a Unitree Go2 on the same network, point dimOS at its IP address and drop the `--replay` flag:
@@ -109,7 +113,7 @@ The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) 
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |
 | `dimos --replay run drone-agentic` | Drone with an LLM agent and flight skills, replayed |
 | `dimos run demo-camera` | Webcam demo, no robot needed |
-| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
+| `dimos run keyboard-teleop-xarm7 --choice arm=mock` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agent using a local LLM (needs Ollama running via `ollama serve`) |
 
 To learn how blueprints are composed, or to write your own, see the [blueprints guide](/docs/usage/blueprints.md).

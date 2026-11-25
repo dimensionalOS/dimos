@@ -26,6 +26,3 @@ max_line_length = 100
 [*.rs]
 indent_style = space
 indent_size = 4
-
-[*.{ts,svelte}]
-indent_size = 2

@@ -53,10 +53,10 @@ Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the
 
 ```python skip session=qb
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 # Load recorded camera frames (bundled test data path)
-video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
+video_replay = LegacyPickleStore("unitree_go2_bigoffice/video")
 
 # Use stream() with seek to skip blank frames, speed=10x to collect faster
 input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(
@@ -77,16 +77,16 @@ show_frames(input_frames)
 Loaded 20 frames from Go2 camera
 Frame resolution: 1280x720
 Sharpness scores:
-  Frame 0: 0.351
-  Frame 1: 0.227
-  Frame 2: 0.223
-  Frame 3: 0.267
-  Frame 4: 0.295
-  Frame 5: 0.307
-  Frame 6: 0.328
-  Frame 7: 0.348
-  Frame 8: 0.346
-  Frame 9: 0.322
+  Frame 0: 0.611
+  Frame 1: 0.395
+  Frame 2: 0.386
+  Frame 3: 0.463
+  Frame 4: 0.559
+  Frame 5: 0.568
+  Frame 6: 0.598
+  Frame 7: 0.606
+  Frame 8: 0.602
+  Frame 9: 0.584
 ```
 
 Using `sharpness_barrier` to select the sharpest frames:
@@ -105,9 +105,9 @@ show_frames(sharp_frames)
 
 ```results
 Output: 3 frame(s) (selected sharpest per window)
-  Frame 0: 0.351
-  Frame 1: 0.352
-  Frame 2: 0.360
+  Frame 0: 0.611
+  Frame 1: 0.619
+  Frame 2: 0.623
 ```
 
 <details>
@@ -186,12 +186,12 @@ show_frames(sharp_frames)
 
 ```results
 Output: 6 frame(s) (selected sharpest per window)
-  Frame 0: 0.351
-  Frame 1: 0.348
-  Frame 2: 0.346
-  Frame 3: 0.352
-  Frame 4: 0.360
-  Frame 5: 0.329
+  Frame 0: 0.611
+  Frame 1: 0.598
+  Frame 2: 0.612
+  Frame 3: 0.619
+  Frame 4: 0.623
+  Frame 5: 0.602
 ```
 
 ```python skip session=qb output=assets/frame_mosaic2.jpg
@@ -215,7 +215,7 @@ Here's how it's used in the actual camera module:
 ```python skip
 from dimos.core.module import Module
 
-class CameraModule(Module):
+class WebcamModule(Module):
     frequency: float = 2.0  # Target output frequency
     @rpc
     def start(self) -> None:
@@ -254,7 +254,7 @@ print(f"Normalized sharpness:    {img.sharpness:.3f}")
 
 ```results
 Mean gradient magnitude: 230.00
-Normalized sharpness:    0.332
+Normalized sharpness:    0.612
 ```
 
 ## Custom Quality Functions

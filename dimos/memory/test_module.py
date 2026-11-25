@@ -17,11 +17,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import threading
 
 import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport import pLCMTransport
 from dimos.memory.module import StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
@@ -86,3 +89,33 @@ def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
+
+
+@pytest.fixture
+def pipeline_scheduler(monkeypatch):
+    scheduler = ThreadPoolScheduler(max_workers=1)
+    monkeypatch.setattr("dimos.utils.threadpool.scheduler", scheduler)
+    try:
+        yield scheduler
+    finally:
+        scheduler.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("module_cls", module_cases)
+def test_runtime_wiring(module_cls, pipeline_scheduler, retry_until):
+    """Each pipeline style transforms input-port data into output-port data."""
+    module = module_cls()
+    module.numbers.transport = pLCMTransport("/test/stream_module/numbers")
+    module.doubled.transport = pLCMTransport("/test/stream_module/doubled")
+    received = []
+    done = threading.Event()
+
+    with module:
+        unsubscribe = module.doubled.subscribe(lambda msg: (received.append(msg), done.set()))
+        try:
+            # The live pipeline subscribes on its scheduler. Retry until it is
+            # listening, without a fixed startup sleep or relying on replay.
+            retry_until(done, lambda: module.numbers.transport.publish(42))
+            assert set(received) == {84}
+        finally:
+            unsubscribe()
