@@ -16,14 +16,16 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.simulation.engines import mujoco_engine
+from dimos.simulation.engines import mujoco_engine, mujoco_sim_module
 from dimos.simulation.engines.mujoco_engine import CameraConfig, MujocoEngine, _RealtimeKeeper
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 _DT = 0.002
 _CAMERA_XML = f"""
@@ -67,22 +69,34 @@ def _run_with_slow_renders(
     render_s: float,
     fps: float,
     wall_s: float,
+    step_s: float = 0.0,
+    renders: list[float] | None = None,
 ) -> float:
-    """Run the sim loop for ``wall_s`` of fake wall time; each due render takes ``render_s``."""
+    """Run the sim loop for ``wall_s`` of fake wall time and return its real-time factor.
+
+    Each due render takes ``render_s`` and each physics step ``step_s``; the
+    fake wall time of every render is appended to ``renders``.
+    """
     clock = _FakeClock()
     monkeypatch.setattr(mujoco_engine, "time", clock)
     monkeypatch.setattr(engine, "_init_cameras", lambda: {})
     last = [float("-inf")]
+    drawn = renders if renders is not None else []
 
     def slow_render(now: float, cam_renderers: dict[str, Any]) -> None:
         if now - last[0] >= 1.0 / fps:
             last[0] = now
+            drawn.append(clock.now)
             clock.now += render_s
+
+    def physics_cost(_: MujocoEngine) -> None:
+        clock.now += step_s
 
     monkeypatch.setattr(engine, "_render_cameras", slow_render)
     start = clock.now
     engine.set_step_hooks(
-        after=lambda e: e._stop_event.set() if clock.now - start >= wall_s else None
+        before=physics_cost,
+        after=lambda e: e._stop_event.set() if clock.now - start >= wall_s else None,
     )
     engine._sim_loop()
     return engine.data.time / (clock.now - start)
@@ -102,18 +116,26 @@ def test_keeper_makes_up_a_render_that_held_the_loop() -> None:
 
     # The pass made its one step, then a render held it 76.5 ms: 38 steps were due.
     assert keeper.steps_due(0.0765) == 37
+    keeper.made(37)
+
+    assert keeper.steps_due(0.0785) == 0
     assert keeper.made_up == 37
 
 
-def test_keeper_caps_one_pass_and_lets_a_long_stall_go() -> None:
-    keeper = _RealtimeKeeper(_DT, start=0.0, max_behind_s=0.5, max_steps=100)
-    assert keeper.steps_due(0.1001) == 49
+def test_keeper_lets_a_long_stall_go() -> None:
+    keeper = _RealtimeKeeper(_DT, start=0.0, max_behind_s=0.5)
 
-    # A 3 s stall: 0.5 s of it is made up, 100 steps per pass; the rest is let go.
-    after_stall = [keeper.steps_due(3.1001 + pass_ * 0.001) for pass_ in range(4)]
-
-    assert after_stall == [100, 100, 49, 0]
+    # A 3 s stall: 0.5 s of it is due, the rest is let go.
+    assert keeper.steps_due(3.0001) == 250
     assert keeper.skipped_s == pytest.approx(2.5, abs=0.005)
+
+
+def test_keeper_asks_again_for_steps_a_short_burst_left() -> None:
+    keeper = _RealtimeKeeper(_DT, start=0.0)
+    assert keeper.steps_due(0.1001) == 49
+    keeper.made(20)
+
+    assert keeper.steps_due(0.1011) == 28
 
 
 def test_slow_renders_hold_simulated_time_back_without_keep_realtime(
@@ -121,7 +143,7 @@ def test_slow_renders_hold_simulated_time_back_without_keep_realtime(
 ) -> None:
     engine = _engine(tmp_path, keep_realtime="off")
 
-    rtf = _run_with_slow_renders(engine, monkeypatch, render_s=0.05, fps=15.0, wall_s=2.0)
+    rtf = _run_with_slow_renders(engine, monkeypatch, render_s=0.05, fps=15.0, wall_s=10.0)
 
     assert rtf < 0.5
     assert engine._realtime_keeper is None
@@ -132,11 +154,87 @@ def test_keep_realtime_follows_the_wall_clock_through_slow_renders(
 ) -> None:
     engine = _engine(tmp_path, keep_realtime="on")
 
-    rtf = _run_with_slow_renders(engine, monkeypatch, render_s=0.05, fps=15.0, wall_s=2.0)
+    rtf = _run_with_slow_renders(engine, monkeypatch, render_s=0.05, fps=15.0, wall_s=10.0)
 
     assert rtf == pytest.approx(1.0, abs=0.02)
     assert engine._realtime_keeper is not None
     assert engine._realtime_keeper.made_up > 0
+
+
+def test_slow_physics_keeps_the_camera_rate_and_lets_the_backlog_go(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each 2 ms physics step costs 3 ms of wall time: no loop can keep real time.
+    renders: list[float] = []
+    engine = _engine(tmp_path, keep_realtime="on")
+
+    rtf = _run_with_slow_renders(
+        engine, monkeypatch, render_s=0.032, fps=15.0, wall_s=10.0, step_s=0.003, renders=renders
+    )
+
+    gaps = [later - earlier for earlier, later in pairwise(renders)]
+    assert len(renders) / 10.0 > 11.0
+    assert max(gaps) < 1.0 / 15.0 + mujoco_engine._MAX_CATCH_UP_S + 2 * 0.003
+    assert 0.3 < rtf < 0.5
+    keeper = engine._realtime_keeper
+    assert keeper is not None
+    assert keeper.skipped_s > 0.0
+
+
+def test_a_stop_ends_a_catch_up_burst(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(mujoco_engine, "time", clock)
+    engine = _engine(tmp_path, keep_realtime="on")
+    monkeypatch.setattr(engine, "_init_cameras", lambda: {})
+    stalled: list[bool] = []
+
+    def one_long_render(now: float, cam_renderers: dict[str, Any]) -> None:
+        if not stalled:
+            stalled.append(True)
+            clock.now += 0.4  # 200 steps come due
+
+    monkeypatch.setattr(engine, "_render_cameras", one_long_render)
+    steps: list[int] = []
+
+    def stop_after_ten(e: MujocoEngine) -> None:
+        steps.append(1)
+        if len(steps) == 10:
+            e._stop_event.set()
+
+    engine.set_step_hooks(after=stop_after_ten)
+    engine._sim_loop()
+
+    assert len(steps) == 10
+
+
+def test_sim_module_hands_render_settings_to_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    xml = tmp_path / "camera.xml"
+    xml.write_text(_CAMERA_XML)
+    seen: dict[str, Any] = {}
+
+    class _BuiltError(Exception):
+        pass
+
+    def fake_engine(**kwargs: Any) -> MujocoEngine:
+        seen.update(kwargs)
+        raise _BuiltError
+
+    monkeypatch.setattr(mujoco_sim_module, "MujocoEngine", fake_engine)
+    # Not constructed: start() reads only its config before the engine, and no RPC is served.
+    module = MujocoSimModule.__new__(MujocoSimModule)
+    module.config = MujocoSimModuleConfig(
+        address=str(xml), camera_name="cam", shadows="off", keep_realtime="on"
+    )
+    try:
+        with pytest.raises(_BuiltError):
+            module.start()
+    finally:
+        module._shm.cleanup()
+
+    assert seen["shadows"] == "off"
+    assert seen["keep_realtime"] == "on"
 
 
 @pytest.mark.parametrize(

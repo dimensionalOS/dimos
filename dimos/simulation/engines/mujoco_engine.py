@@ -57,9 +57,12 @@ StepHook = Callable[["MujocoEngine"], None]
 
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
-# Keeping real time: never make up more than this much lost time, nor more steps in one pass.
+# Keeping real time: lost time beyond this is let go, not made up.
 _MAX_BEHIND_S = 0.5
-_MAX_CATCH_UP_STEPS = 400
+# One catch-up burst takes at most this much wall time, nor more than half the
+# shortest camera or lidar interval: when physics itself is slower than real
+# time, the sensors keep their rate and the sim falls behind instead.
+_MAX_CATCH_UP_S = 0.02
 
 
 def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
@@ -119,23 +122,16 @@ class _RealtimeKeeper:
 
     The loop makes one step per pass and sleeps off what is left of ``dt``, so a
     camera render longer than ``dt`` holds simulated time back for good. Asked
-    after each pass, this says how many steps to make at once to be back on the
-    clock, at most ``max_steps`` per pass. Lost time beyond ``max_behind_s``
-    (the machine was busy elsewhere) is not made up: the clock moves on.
+    after each pass, this says how many steps the clock asks for now; the loop
+    reports how many it made. Lost time beyond ``max_behind_s`` (physics slower
+    than real time, or the machine busy elsewhere) is let go: the clock moves on.
+    Times are ``time.perf_counter()`` seconds.
     """
 
-    def __init__(
-        self,
-        dt: float,
-        start: float,
-        *,
-        max_behind_s: float = _MAX_BEHIND_S,
-        max_steps: int = _MAX_CATCH_UP_STEPS,
-    ) -> None:
+    def __init__(self, dt: float, start: float, *, max_behind_s: float = _MAX_BEHIND_S) -> None:
         self._dt = dt
         self._start = start
         self._max_behind = int(max_behind_s / dt)
-        self._max_steps = max_steps
         self._steps = 0
         self.made_up = 0
         self.skipped_s = 0.0
@@ -148,10 +144,12 @@ class _RealtimeKeeper:
             self.skipped_s += (behind - self._max_behind) * self._dt
             self._start += (behind - self._max_behind) * self._dt
             behind = self._max_behind
-        due = max(0, min(behind, self._max_steps))
-        self._steps += due
-        self.made_up += due
-        return due
+        return max(0, behind)
+
+    def made(self, steps: int) -> None:
+        """Count the catch-up steps the loop made after ``steps_due``."""
+        self._steps += steps
+        self.made_up += steps
 
 
 @dataclass
@@ -229,7 +227,9 @@ class MujocoEngine(SimulationEngine):
                 it off when the renderer is slow (see ``keep_realtime``).
             keep_realtime: After a pass's camera renders, make the physics steps
                 that came due meanwhile, so simulated time follows the wall
-                clock when rendering is slow. "auto" turns it on when the
+                clock when rendering is slow. Each burst is bounded in wall
+                time, so with physics slower than real time the cameras keep
+                their rate and the sim falls behind. "auto" turns it on when the
                 renderer is slow: one shadowed colour render per camera, timed
                 at start, would take more than ``SLOW_RENDER_SHARE`` of real time
                 at the cameras' rates (software GL, no GPU). A GPU renders far
@@ -719,8 +719,11 @@ class MujocoEngine(SimulationEngine):
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
-        keeper = _RealtimeKeeper(dt, time.time()) if self._keep_realtime else None
+        keeper = _RealtimeKeeper(dt, time.perf_counter()) if self._keep_realtime else None
         self._realtime_keeper = keeper
+        intervals = [state.interval for state in cam_renderers.values()]
+        intervals += [state.interval for state in lidar_states.values()]
+        burst_s = min([_MAX_CATCH_UP_S] + [interval / 2 for interval in intervals])
 
         def _physics_step(sync_viewer: bool) -> None:
             if self._on_before_step is not None:
@@ -754,8 +757,15 @@ class MujocoEngine(SimulationEngine):
             self._render_cameras(loop_start, cam_renderers)
             self._raycast_lidars(loop_start, lidar_states)
             if keeper is not None:
-                for _ in range(keeper.steps_due(time.time())):
+                due = keeper.steps_due(time.perf_counter())
+                burst_end = time.perf_counter() + burst_s
+                made = 0
+                while (
+                    made < due and time.perf_counter() < burst_end and not self._stop_event.is_set()
+                ):
                     _physics_step(sync_viewer=False)
+                    made += 1
+                keeper.made(made)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed

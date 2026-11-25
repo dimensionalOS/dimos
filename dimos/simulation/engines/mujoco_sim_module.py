@@ -270,7 +270,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     camera_info_fps: float = 1.0
     # "auto" times one shadowed render per camera at start: when shadowed renders
     # would take over 30% of real time (software GL, no GPU), shadows go off and
-    # the sim makes up the steps renders held up. "on"/"off" force either one.
+    # the sim makes up the steps renders held up, in short bursts that leave the
+    # cameras their rate. "on"/"off" force either one.
     shadows: AutoSwitch = "auto"
     keep_realtime: AutoSwitch = "auto"
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
