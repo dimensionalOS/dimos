@@ -37,7 +37,7 @@ Distance, interpolation, edge subdivision, simplification, and reported path len
 | Viser | Renders interval sliders, unbounded line number inputs, and wrapped circle sliders from coordinate topology. |
 | Trajectory | RoboPlan TOPP-RA expands continuous scalar inputs to cosine/sine coordinates, then collapses and lifts its output back into a continuous canonical path. Unbounded translations pass through unchanged. |
 
-A base plan executes when the blueprint binds a `planar_base_trajectory` coordinator task to the base joints, as `r1pro-planar-preview` does on a mock twist base. Base joints with no task bound stay preview-only. That check is tied to the planar-base controller capability, not to circular topology. A continuous arm joint is not rejected merely because it is periodic.
+A base plan executes when the blueprint binds a `planar_base_trajectory` coordinator task to the base joints, as `r1pro-planar-preview` does on a mock base that turns its commanded speeds into odometry. Base joints with no task bound stay preview-only. That check is tied to the planar-base controller capability, not to circular topology. A continuous arm joint is not rejected merely because it is periodic.
 
 ## R1 Pro manual test
 

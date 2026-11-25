@@ -41,6 +41,7 @@ PACKAGE = ROOT / "dimos/agents"
 ANSWER = "🤖 This answer comes from the pi-durable agent."
 # Only the model is scripted. The agent owns a real store, scheduler, and Chord socket.
 DAEMON = """
+import { once } from 'node:events';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import { agentPaths } from '#dimos/agents/gateway/config/paths.ts';
 import { parseDimosInstall } from '#dimos/agents/gateway/config/environment.ts';
@@ -51,7 +52,14 @@ const faux = fauxProvider({models:[{id:'test', input:['text','image']}],
     tokensPerSecond: 15, tokenSize:{min:1,max:1}});
 const {provider, id:modelId} = faux.getModel();
 await (await ConfigStore.open(paths.configFile)).update({model:{provider,modelId}});
-faux.setResponses(Array.from({length:3}, () => fauxAssistantMessage(process.argv[1])));
+faux.setResponses([
+    fauxAssistantMessage(process.argv[1]),
+    async (_context, {signal}) => {
+        // Keep the scheduled turn active while the test queues both inputs and aborts it.
+        if (!signal.aborted) await once(signal, 'abort');
+        return fauxAssistantMessage('');
+    },
+]);
 await runGateway({paths, install:parseDimosInstall(process.env), bundledSkillsDir:'harness/skills',
     env:process.env, providers:[faux.provider]});
 """
@@ -262,6 +270,7 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     assert recovered.decode("utf-16-le") == ANSWER
     run = (await http.post("/agent/jobs/demo/runs", json=request_id())).raise_for_status().json()
     assert run == {"kind": "submitted"}
+    await event("agent/chat", lambda e: e["conversation"] == cid and e.get("turn"))
     follow_up = {**msg, **request_id(), "images": [], "text": "later"}
     assert (await http.post(f"{room}/submissions", json=follow_up)).status_code == 200
     steer = {**follow_up, **request_id(), "whenBusy": "steer", "text": "use metric units"}

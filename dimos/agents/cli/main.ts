@@ -4,22 +4,31 @@ import { parseArgs } from "node:util";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import type { Command, CommandContext } from "#dimos/agents/cli/commands/base.ts";
+import { runConversations } from "#dimos/agents/cli/commands/conversations.ts";
+import { runSdk } from "#dimos/agents/cli/commands/sdk.ts";
+import { printRun } from "#dimos/agents/cli/commands/run.ts";
+import { runStatus } from "#dimos/agents/cli/commands/status.ts";
+import { runStop } from "#dimos/agents/cli/commands/stop.ts";
+import { runVersion } from "#dimos/agents/cli/commands/version.ts";
+import { ensureGateway } from "#dimos/agents/cli/process.ts";
 
 const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
 dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json
+dimos agent sdk OPERATION [CONVERSATION_ID]                       read a JSON request from stdin and print the reply
+dimos agent sdk watch                                             stream conversation and job events as JSON lines
 dimos agent conversations                                         list conversations, newest first
 dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon
 dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams
 dimos agent stop | version`;
 
-const commands = new Map<string, Command>([
-  ["sdk", async (ctx) => (await import("#dimos/agents/cli/commands/sdk.ts")).runSdk(ctx)],
+const commands: ReadonlyMap<string, Command> = new Map([
+  ["sdk", runSdk],
   ["gateway", async (ctx) => (await import("#dimos/agents/cli/commands/gateway.ts")).runGatewayCommand(ctx)],
-  ["stop", async (ctx) => (await import("#dimos/agents/cli/commands/stop.ts")).runStop(ctx)],
-  ["status", async (ctx) => (await import("#dimos/agents/cli/commands/status.ts")).runStatus(ctx)],
-  ["version", async (ctx) => (await import("#dimos/agents/cli/commands/version.ts")).runVersion(ctx)],
-  ["conversations", async (ctx) => (await import("#dimos/agents/cli/commands/conversations.ts")).runConversations(ctx)],
-  ["run", async (ctx) => (await import("#dimos/agents/cli/commands/run.ts")).printRun(ctx)],
+  ["stop", runStop],
+  ["status", runStatus],
+  ["version", runVersion],
+  ["conversations", runConversations],
+  ["run", printRun],
 ]);
 
 function conversationId(value: string | undefined): ConversationId | null {
@@ -64,8 +73,8 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
     args,
     // Both cli/main.ts and dist/cli.js are one directory below the package root.
     bundledSkillsDir: join(dirname(fileURLToPath(import.meta.url)), "..", "harness", "skills"),
-    startGateway: async () =>
-      (await import("#dimos/agents/cli/process.ts")).ensureGateway(
+    startGateway: () =>
+      ensureGateway(
         paths,
         [process.execPath, ...process.execArgv, resolve(process.argv[1] ?? "cli/main.ts"), "gateway"],
         env,

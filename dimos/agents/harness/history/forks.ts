@@ -26,6 +26,7 @@ export type Branch =
   | { readonly kind: "fork" | "new"; readonly conversation: ConversationId }
   | { readonly kind: "not_found"; readonly what: "conversation" | "message" }
   | { readonly kind: "not_a_user_message" }
+  | { readonly kind: "invalid"; readonly problem: string }
   /** Summarize up to a conversation's first message: nothing comes before it. */
   | { readonly kind: "nothing_before" }
   /** Summarize up to a message above the newest compaction or summary head. */
@@ -102,6 +103,7 @@ export class ConversationHistory {
         context,
       );
       if (sent.kind === "unknown_conversation") return { kind: "not_found", what: "conversation" };
+      if (sent.kind === "invalid") return sent;
       return this.complete(request, fork, context);
     });
   }

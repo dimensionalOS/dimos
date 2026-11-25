@@ -16,32 +16,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.mock_joint_connection import (
+    MockJointConnection,
+    MockJointConnectionConfig,
+)
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators._modeling import joint_names
-from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
-from dimos.robot.manipulators.common.sim import mujoco_if_sim
+from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_BASE_POSE,
     XARM7_SIM_PATH,
     XARM_ARMS,
     XArmType,
-    lite6_hardware,
     make_dual_xarm6_model_config,
     make_lite6_model_config,
-    make_xarm_hardware,
     make_xarm_model_config,
-    xarm6_hardware,
-    xarm7_hardware,
     xarm_model,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
@@ -49,121 +51,177 @@ from dimos.simulation.engines.mujoco_arm_connection import MujocoArmConnection
 
 SIMULATED = bool(global_config.simulation)
 
-_dual_xarm6_model = make_dual_xarm6_model_config()
-_mock_left_xarm6_hw = make_xarm_hardware(
-    "left_arm", 6, canonical_joint_names=list(_dual_xarm6_model.planning_groups[0].joint_names)
-)
-_mock_right_xarm6_hw = make_xarm_hardware(
-    "right_arm", 6, canonical_joint_names=list(_dual_xarm6_model.planning_groups[1].joint_names)
-)
-
-dual_xarm6_planner_coordinator = autoconnect(
-    planner(
-        model=_dual_xarm6_model,
-        visualization={"backend": "viser"},
-    ),
-    coordinator(
-        hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
-        tasks=[trajectory_task(_mock_left_xarm6_hw, _mock_right_xarm6_hw)],
-    ),
-)
-
-
-def _gripper_task() -> TaskConfig:
-    return TaskConfig(
-        name="arm_gripper",
-        type="gripper",
-        joint_names=["arm/gripper"],
-        priority=20,
-    )
+# The MuJoCo scene of each arm that has one; each has the xArm Gripper.
+XARM_SIM_SCENES: dict[XArmType, Any] = {"xarm6": XARM6_SIM_PATH, "xarm7": XARM7_SIM_PATH}
 
 
 class XArmCoordinator(ControlCoordinator):
-    """Joint targets out to one xArm named "arm", and its joints in, through
-    ``XArmConnection``."""
+    """Joint targets and speeds out to one xArm named "arm", and its joints in."""
 
     arm_position_command: Out[JointState]
+    arm_velocity_command: Out[JointState]
     arm_joint_state: In[JointState]
 
 
-# The connection module's ports, onto the coordinator's ports for the robot named "arm".
-XARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
-    (XArmConnection, "position_command", "arm_position_command"),
-    (XArmCoordinator, "arm_joint_state", "joint_state"),
-]
-# The same, onto the simulated xArm7 ``xarm_coordinator(..., simulated=True)`` drives.
-XARM_SIM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
-    (MujocoArmConnection, "position_command", "arm_position_command"),
-    (XArmCoordinator, "arm_joint_state", "joint_state"),
-]
-
-
-def _xarm7_sim() -> MetaBlueprint:
-    """The xArm7 in MuJoCo, behind the same ports and joint names as ``XArmConnection``."""
-    # mujoco is optional; import it only when a blueprint runs the sim.
-    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-
-    return autoconnect(
-        MujocoArmConnection.blueprint(
-            model=xarm_model("xarm7", gripper="xarm"), gripper_joint="drive_joint"
-        ),
-        MujocoSimModule.blueprint(address=str(XARM7_SIM_PATH), headless=False, dof=7),
+def xarm_gripper_task(**kwargs: Any) -> TaskConfig:
+    """Open and close the xArm Gripper of the arm named "arm" (``arm/drive_joint``)."""
+    # drive_joint is open at 0 rad.
+    return TaskConfig(
+        name="arm_gripper",
+        type="gripper",
+        joint_names=["arm/drive_joint"],
+        priority=20,
+        params={"open_at": "lower"},
+        **kwargs,
     )
 
 
-def xarm_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint:
-    """Run planned joint trajectories on an xArm and open and close its xArm
-    Gripper, through ``XArmConnection``.
+def xarm_connection(
+    arm: XArmType,
+    robot: str = "arm",
+    *,
+    gripper: bool = True,
+    velocity: bool = False,
+    simulated: bool = False,
+    sim_module_kwargs: dict[str, Any] | None = None,
+    instance_name: str | None = None,
+) -> tuple[ConnectionConfig, Blueprint | MetaBlueprint]:
+    """One xArm for a coordinator: its declaration, and the connection wired onto
+    the coordinator ports ``<robot>_position_command``, ``<robot>_velocity_command``
+    and ``<robot>_joint_state``. Joints are named ``<robot>/joint1`` ... and
+    ``<robot>/drive_joint``.
 
-    The coordinator names the joints ``arm/joint1`` ... and ``arm/drive_joint``;
-    a planner driving it uses the model from ``make_xarm_model_config(...,
-    robot="arm")``, whose joints are named the same, and
-    ``gripper_tasks={"manipulator": "arm_gripper"}``.
-    Wire it up with ``.remappings(XARM_REMAPS)``. The arm's address is given at
-    run time, after the blueprint name (``--xarmconnection.ip 192.168.1.185``)
-    or as ``XARMCONNECTION__IP``.
+    A real arm without an ``instance_name`` can be swapped at launch for a
+    ``MockJointConnection`` with the same joints: ``--choice arm=mock``.
 
     Args:
         arm: Which arm, e.g. "xarm7".
-        simulated: Drive the xArm7 in MuJoCo instead; wire it up with
-            ``.remappings(XARM_SIM_REMAPS)``.
+        robot: The robot's name in front of each joint name.
+        gripper: With the xArm Gripper. The MuJoCo scenes always have it.
+        velocity: Drive the arm joints by speed (rad/s) instead of position (rad).
+        simulated: Run the arm in its MuJoCo scene instead of over the SDK.
+        sim_module_kwargs: When simulated, the ``MujocoSimModule`` settings
+            (scene, camera, start pose); the arm's plain scene if None.
+        instance_name: The connection's name, for a blueprint with two xArms.
+            The real arm's address flag follows it: ``--<instance_name>.ip``.
     """
-    if simulated and arm != "xarm7":
-        raise ValueError(
-            f"only the xArm7 runs in MuJoCo through a connection module, not the {arm}"
+    if simulated and arm not in XARM_SIM_SCENES:
+        raise ValueError(f"there is no MuJoCo scene of the {arm}; only of {list(XARM_SIM_SCENES)}")
+    if simulated and not gripper:
+        raise ValueError("the MuJoCo xArm scenes have the xArm Gripper; simulate with gripper=True")
+    model = xarm_model(arm, gripper="xarm" if gripper else None, robot=robot)
+    arm_interface = Interface.VELOCITY if velocity else Interface.POSITION
+    declaration = ConnectionConfig(
+        source=robot,
+        model=model,
+        joint_commands={
+            joint.name: (
+                Interface.POSITION if joint.name.endswith("/drive_joint") else arm_interface,
+            )
+            for joint in movable_joints(model)
+        },
+    )
+    fields = {
+        "source": robot,
+        "model": model,
+        "joint_commands": declaration.joint_commands,
+        **({"instance_name": instance_name} if instance_name else {}),
+    }
+    if simulated:
+        # mujoco is optional; import it only when a blueprint runs the sim.
+        from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+
+        if sim_module_kwargs is None:
+            sim_module_kwargs = {
+                "address": str(XARM_SIM_SCENES[arm]),
+                "headless": False,
+                "dof": XARM_ARMS[arm][0],
+            }
+        sim = autoconnect(
+            MujocoArmConnection.blueprint(**fields, gripper_joint=f"{robot}/drive_joint"),
+            MujocoSimModule.blueprint(**sim_module_kwargs),
         )
-    dof = XARM_ARMS[arm][0]
-    model = xarm_model(arm, gripper="xarm", robot="arm")
+        return declaration, sim.remappings(_arm_ports(instance_name or MujocoArmConnection, robot))
+    real = XArmConnection.blueprint(
+        arm=arm, gripper="xarm" if gripper else None, **fields
+    ).remappings(_arm_ports(instance_name or XArmConnection, robot))
+    if instance_name:
+        return declaration, real
+    mock = MockJointConnection.blueprint(**fields).remappings(
+        _arm_ports(MockJointConnection, robot)
+    )
+    return declaration, autoconnect(
+        ChoiceAtom(name="arm", default="real", choices={"real": real, "mock": mock})
+    )
+
+
+def _arm_ports(
+    module: type[ModuleBase] | str, robot: str
+) -> list[tuple[type[ModuleBase] | str, str, str]]:
+    """A connection's ports, onto the coordinator's ports for the robot named ``robot``."""
+    return [
+        (module, "position_command", f"{robot}_position_command"),
+        (module, "velocity_command", f"{robot}_velocity_command"),
+        (module, "joint_state", f"{robot}_joint_state"),
+    ]
+
+
+def xarm_coordinator(
+    arm: XArmType,
+    *,
+    cls: type[ControlCoordinator] = XArmCoordinator,
+    tasks: Sequence[TaskConfig] | None = None,
+    gripper: bool = True,
+    velocity: bool = False,
+    simulated: bool = False,
+    sim_module_kwargs: dict[str, Any] | None = None,
+    **coordinator_kwargs: Any,
+) -> MetaBlueprint:
+    """A coordinator driving one xArm named "arm", through ``XArmConnection``, or
+    ``MujocoArmConnection`` when simulated.
+
+    Joints are named ``arm/joint1`` ... and ``arm/drive_joint``; a planner or IK
+    task uses a model from ``make_xarm_model_config(..., robot="arm")``. The
+    arm's address is given at run time (``--xarmconnection.ip 192.168.1.185``
+    or ``XARMCONNECTION__IP``); ``--choice arm=mock`` runs without an arm.
+
+    Args:
+        arm: Which arm, e.g. "xarm7".
+        cls: The coordinator, with the ports of ``XArmCoordinator``.
+        tasks: The coordinator's tasks; if None, joint trajectories over the arm
+            and its gripper, and the gripper's task, when it has one.
+        gripper, velocity, simulated, sim_module_kwargs: See ``xarm_connection``.
+        coordinator_kwargs: More coordinator settings, e.g. ``tick_rate``.
+    """
+    declaration, connection = xarm_connection(
+        arm,
+        gripper=gripper,
+        velocity=velocity,
+        simulated=simulated,
+        sim_module_kwargs=sim_module_kwargs,
+    )
+    if tasks is None:
+        arm_joints = joint_names(XARM_ARMS[arm][0], prefix="arm/joint")
+        if gripper:
+            tasks = [
+                joint_trajectory_task([*arm_joints, "arm/drive_joint"]),
+                xarm_gripper_task(),
+            ]
+        else:
+            tasks = [joint_trajectory_task(arm_joints)]
     return autoconnect(
-        XArmCoordinator.blueprint(
+        cls.blueprint(
             instance_name="ControlCoordinator",
-            connections=[
-                ConnectionConfig(
-                    source="arm",
-                    model=model,
-                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
-                )
-            ],
-            tasks=[
-                joint_trajectory_task(joint_names(dof, prefix="arm/joint")),
-                # drive_joint is open at 0 rad.
-                TaskConfig(
-                    name="arm_gripper",
-                    type="gripper",
-                    joint_names=["arm/drive_joint"],
-                    priority=20,
-                    params={"open_at": "lower"},
-                ),
-            ],
+            connections=[declaration],
+            tasks=list(tasks),
+            **coordinator_kwargs,
         ),
-        _xarm7_sim() if simulated else XArmConnection.blueprint(arm=arm, gripper="xarm"),
+        connection,
     )
 
 
 def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBlueprint:
-    """Plan and run motions of an xArm with the xArm Gripper. Wire it up with
-    ``.remappings(XARM_REMAPS)``, or ``XARM_SIM_REMAPS`` when simulated; see
-    ``xarm_coordinator``."""
+    """Plan and run motions of an xArm with the xArm Gripper; see ``xarm_coordinator``."""
     dof, robot_type = XARM_ARMS[arm]
     return autoconnect(
         planner(
@@ -171,7 +229,7 @@ def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBluep
                 dof,
                 robot_type=robot_type,
                 robot="arm",
-                base_pose=XARM7_SIM_BASE_POSE if simulated else None,
+                base_pose=XARM7_SIM_BASE_POSE if simulated and arm == "xarm7" else None,
             ),
             gripper_tasks={"manipulator": "arm_gripper"},
         ),
@@ -179,63 +237,107 @@ def _planner_coordinator(arm: XArmType, *, simulated: bool = False) -> MetaBluep
     )
 
 
-# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_planner_coordinator = _planner_coordinator("xarm7", simulated=SIMULATED).remappings(
-    XARM_SIM_REMAPS if SIMULATED else XARM_REMAPS
-)
-xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS)
+xarm7_planner_coordinator = autoconnect(_planner_coordinator("xarm7", simulated=SIMULATED))
+xarm6_planner_coordinator = autoconnect(_planner_coordinator("xarm6"))
 
-_coordinator_xarm7_hw = xarm7_hardware("arm")
+# The real arm has no gripper here; the MuJoCo scene's comes with the arm.
+coordinator_xarm7 = autoconnect(xarm_coordinator("xarm7", gripper=SIMULATED, simulated=SIMULATED))
+coordinator_xarm6 = autoconnect(xarm_coordinator("xarm6", simulated=SIMULATED))
 
-coordinator_xarm7 = autoconnect(
-    coordinator(
-        hardware=[_coordinator_xarm7_hw],
-        tasks=[trajectory_task(_coordinator_xarm7_hw)],
-    ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
-)
-
-_coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
-
-coordinator_xarm6 = autoconnect(
-    coordinator(
-        hardware=[_coordinator_xarm6_hw],
-        tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
-    ),
-    *mujoco_if_sim(XARM6_SIM_PATH, 6),
-)
-
-_coordinator_lite6_hw = lite6_hardware("arm", gripper=True)
-
-coordinator_lite6 = ControlCoordinator.blueprint(
-    hardware=[_coordinator_lite6_hw],
-    tasks=[trajectory_task(_coordinator_lite6_hw), _gripper_task()],
-)
-
-_lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
+# The Lite 6's gripper has no joint, so XArmConnection does not drive it.
+coordinator_lite6 = autoconnect(xarm_coordinator("lite6", gripper=False))
 
 lite6_planner_coordinator = autoconnect(
     planner(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=make_lite6_model_config(
-            add_gripper=True,
-        ),
+        model=make_lite6_model_config(add_gripper=True, robot="arm"),
         visualization={"backend": "viser"},
     ),
-    coordinator(
-        hardware=[_lite6_hw],
-        tasks=[trajectory_task(_lite6_hw), _gripper_task()],
+    xarm_coordinator("lite6", gripper=False),
+)
+
+
+class _DualXArmCoordinator(ControlCoordinator):
+    left_arm_position_command: Out[JointState]
+    left_arm_velocity_command: Out[JointState]
+    left_arm_joint_state: In[JointState]
+    right_arm_position_command: Out[JointState]
+    right_arm_velocity_command: Out[JointState]
+    right_arm_joint_state: In[JointState]
+
+
+_left_xarm7, _left_xarm7_connection = xarm_connection(
+    "xarm7", "left_arm", gripper=False, instance_name="left_arm"
+)
+_right_xarm6, _right_xarm6_connection = xarm_connection(
+    "xarm6", "right_arm", gripper=False, instance_name="right_arm"
+)
+
+# Each arm's address: --left_arm.ip and --right_arm.ip.
+coordinator_dual_xarm = autoconnect(
+    _DualXArmCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_left_xarm7, _right_xarm6],
+        tasks=[
+            joint_trajectory_task(
+                [
+                    *joint_names(7, prefix="left_arm/joint"),
+                    *joint_names(6, prefix="right_arm/joint"),
+                ]
+            )
+        ],
     ),
+    _left_xarm7_connection,
+    _right_xarm6_connection,
 )
 
-_xarm7_left = xarm7_hardware(
-    "left_arm", canonical_joint_names=[f"left_arm/joint{i}" for i in range(1, 8)]
-)
-_xarm6_right = xarm6_hardware(
-    "right_arm", canonical_joint_names=[f"right_arm/joint{i}" for i in range(1, 7)]
-)
 
-coordinator_dual_xarm = ControlCoordinator.blueprint(
-    hardware=[_xarm7_left, _xarm6_right],
-    tasks=[trajectory_task(_xarm7_left, _xarm6_right)],
+class _DualXArm6MockCoordinator(ControlCoordinator):
+    left_position_command: Out[JointState]
+    left_joint_state: In[JointState]
+    right_position_command: Out[JointState]
+    right_joint_state: In[JointState]
+
+
+_dual_xarm6_model = make_dual_xarm6_model_config()
+
+
+def _mock_xarm6(robot: str) -> tuple[ConnectionConfig, Blueprint]:
+    """A mock xArm6 named ``robot``, with the planning model's joints ``<robot>/joint1`` ..."""
+    mock = MockJointConnectionConfig(source=robot, model=xarm_model("xarm6", robot=robot))
+    connection = MockJointConnection.blueprint(
+        **{**mock.model_dump(), "instance_name": robot}
+    ).remappings(
+        [
+            (robot, "position_command", f"{robot}_position_command"),
+            (robot, "joint_state", f"{robot}_joint_state"),
+        ]
+    )
+    return (
+        ConnectionConfig(source=robot, model=mock.model, joint_commands=mock.joint_commands),
+        connection,
+    )
+
+
+_mock_left_xarm6, _mock_left_xarm6_connection = _mock_xarm6("left")
+_mock_right_xarm6, _mock_right_xarm6_connection = _mock_xarm6("right")
+
+dual_xarm6_planner_coordinator = autoconnect(
+    planner(
+        model=_dual_xarm6_model,
+        visualization={"backend": "viser"},
+    ),
+    _DualXArm6MockCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_mock_left_xarm6, _mock_right_xarm6],
+        tasks=[
+            joint_trajectory_task(
+                [
+                    *_dual_xarm6_model.planning_groups[0].joint_names,
+                    *_dual_xarm6_model.planning_groups[1].joint_names,
+                ]
+            )
+        ],
+    ),
+    _mock_left_xarm6_connection,
+    _mock_right_xarm6_connection,
 )
