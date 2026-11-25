@@ -100,7 +100,7 @@ class _PulledFirstError(Exception):
 def test_the_agx_lut_is_fetched_from_git_lfs_when_the_clone_has_its_pointer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dimos.sim2 import lfs
+    from dimos.robot.assets.usd_utils import lfs
     from dimos.sim2.mujoco import look
 
     pulled: list[list[Path]] = []

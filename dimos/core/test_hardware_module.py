@@ -104,6 +104,61 @@ def test_each_namespace_gets_its_own_unmounted_hardware() -> None:
         _verify(autoconnect(Arm.blueprint(), WristCamera.blueprint()).namespace("left"))
 
 
+def test_a_mount_no_hardware_offers_is_refused() -> None:
+    with pytest.raises(
+        ValueError, match=r"wrist/wristcamera is mounted on 'wrist', which no other"
+    ):
+        _verify(autoconnect(WristCamera.mount(Arm.mounts.wrist)))
+
+
+def test_a_sensor_namespaced_without_its_parent_is_refused() -> None:
+    # The camera is under left/, the arm it mounts on is not: left/wrist is offered by nobody.
+    with pytest.raises(
+        ValueError, match=r"(?s)offered: 'wrist'.*left/wrist/wristcamera is mounted on 'left/wrist'"
+    ):
+        _verify(autoconnect(Arm.blueprint(), WristCamera.mount(Arm.mounts.wrist).namespace("left")))
+
+
+class Gripper(HardwareModule):
+    config: WristCameraConfig
+    mounts = Mounts("palm")
+
+
+class Palm(HardwareModule):
+    config: WristCameraConfig
+    mounts = Mounts("finger")
+
+
+def test_hardware_mounted_on_each_other_in_a_loop_is_refused() -> None:
+    # Each names the other's mount, but a mount namespaces under itself, so neither frame exists.
+    with pytest.raises(
+        ValueError,
+        match=r"(?s)finger/gripper is mounted on 'finger'.*palm/palm is mounted on 'palm'",
+    ):
+        _verify(autoconnect(Gripper.mount(Palm.mounts.finger), Palm.mount(Gripper.mounts.palm)))
+
+
+def test_two_hardware_on_one_mount_is_refused() -> None:
+    with pytest.raises(ValueError, match=r"wrist holds wrist/gripper, wrist/wristcamera"):
+        _verify(
+            autoconnect(
+                Arm.blueprint(),
+                WristCamera.mount(Arm.mounts.wrist),
+                Gripper.mount(Arm.mounts.wrist),
+            )
+        )
+
+
+def test_a_chain_of_mounts_under_a_namespace_passes() -> None:
+    robot = autoconnect(
+        Arm.blueprint(),
+        Gripper.mount(Arm.mounts.wrist),
+        # The camera mounts on the gripper, so it goes under the gripper's namespace.
+        WristCamera.mount(Gripper.mounts.palm).namespace(Arm.mounts.wrist),
+    )
+    _verify(robot.namespace("left"))
+
+
 def _build(blueprint: MetaBlueprint) -> ModuleCoordinator:
     solid = blueprint.solidify()
     parsed = BlueprintConfigParser(solid).parse(environ={}, overrides={"g": {"viewer": "none"}})

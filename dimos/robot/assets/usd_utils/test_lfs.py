@@ -19,7 +19,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2 import lfs
+from dimos.robot.assets.usd_utils import lfs
 
 _POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:0\n"
 
@@ -30,8 +30,9 @@ def test_only_the_pointers_are_fetched_in_one_pull(mocker: MockerFixture, tmp_pa
     fetched.write_bytes(b"mesh")
     mocker.patch.object(lfs, "get_project_root", return_value=tmp_path)
     mocker.patch.object(lfs, "_initialize_git_lfs")
-    run = mocker.patch.object(
-        lfs.subprocess, "run", side_effect=lambda *_a, **_k: pointer.write_bytes(b"mesh")
+    run = mocker.patch(
+        "dimos.robot.assets.usd_utils.lfs.subprocess.run",
+        side_effect=lambda *_a, **_k: pointer.write_bytes(b"mesh"),
     )
 
     lfs.pull_lfs_files([pointer, fetched])
@@ -48,7 +49,7 @@ def test_a_pointer_it_could_not_fetch_is_named(mocker: MockerFixture, tmp_path: 
     pointer = tmp_path / "a.usdc"
     pointer.write_text(_POINTER)
     mocker.patch.object(lfs, "get_project_root", return_value=tmp_path / "elsewhere")
-    run = mocker.patch.object(lfs.subprocess, "run")
+    run = mocker.patch("dimos.robot.assets.usd_utils.lfs.subprocess.run")
 
     with pytest.raises(RuntimeError, match="a.usdc"):
         lfs.pull_lfs_files([pointer])
