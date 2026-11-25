@@ -100,7 +100,10 @@ class MujocoBackend:
             **self._files,
         }
 
-    def step(self, actions: Sequence[Action] = ()) -> tuple[float, WorldObservations]:
+    def step(
+        self, actions: Sequence[Action] = (), hold: bool = False
+    ) -> tuple[float, WorldObservations]:
+        """Catch the world up to real time; held, only its clock runs and nothing in it moves."""
         model, data = self.model, self.data
         if actions:
             self.apply(actions)
@@ -115,8 +118,11 @@ class MujocoBackend:
         if steps > max_steps:
             self._started += (steps - max_steps) * model.opt.timestep / self._speed
             steps = max_steps
-        for _ in range(steps):
-            mujoco.mj_step(model, data)
+        if hold:
+            data.time += steps * model.opt.timestep
+        else:
+            for _ in range(steps):
+                mujoco.mj_step(model, data)
         return float(data.time), self.frame()
 
     def apply(self, actions: Sequence[Action]) -> None:
