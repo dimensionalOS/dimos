@@ -396,8 +396,10 @@ function updateHudTexture() {
     const saved = episodeStatus.episodes_saved;
     const discarded = episodeStatus.episodes_discarded;
     const recording = episodeStatus.state === 'recording';
-    const state = hudOffline ? 'OFFLINE' : recording ? 'RECORDING' : 'READY';
-    const stateColor = hudOffline ? '#f6b94d' : recording ? '#ff6b6b' : '#63d6a3';
+    // A take that has ended and waits for its save (B) or discard (Y).
+    const pending = episodeStatus.state === 'pending';
+    const state = hudOffline ? 'OFFLINE' : recording ? 'RECORDING' : pending ? 'B SAVE / Y DROP' : 'READY';
+    const stateColor = hudOffline || pending ? '#f6b94d' : recording ? '#ff6b6b' : '#63d6a3';
     const lastEvent = episodeStatus.last_event === 'init' ? 'NONE' : episodeStatus.last_event.toUpperCase();
     const sections = [
         [400, 'STATE', state, '#f4f7fb', stateColor],

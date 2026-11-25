@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DimOS Operator Console</title>
+<style>
+  :root { color-scheme: light dark; --line: #8884; --stop: #c62828; --go: #2e7d32; --warn: #b26a00; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0 auto; padding: 20px; max-width: 760px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  button { font: inherit; font-weight: 600; padding: 10px 14px; border-radius: 8px;
+           border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #estop { width: 100%; padding: 28px; font-size: 28px; color: #fff; background: var(--stop); border: none; }
+  #estop.latched { background: var(--go); }
+  #banner { margin: 12px 0 20px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); min-height: 44px; }
+  #banner.stopped { border-color: var(--stop); color: var(--stop); font-weight: 600; }
+  #banner.error { border-color: var(--warn); color: var(--warn); }
+  .arm { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .home { font-family: ui-monospace, monospace; font-size: 13px; margin: 0 0 12px; opacity: 0.85; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .label { width: 100%; font-size: 12px; opacity: 0.7; margin-top: 6px; }
+  footer { font-size: 12px; opacity: 0.7; margin-top: 18px; }
+</style>
+</head>
+<body>
+<h1>DimOS Operator Console</h1>
+<button id="estop">E-STOP</button>
+<div id="banner">Connecting...</div>
+<div id="arms"></div>
+<button id="cancel">Cancel move</button>
+<footer>
+  Space bar: E-STOP. This is a software stop that holds the arms where they are; it is not a safety-rated stop.
+  Manual moves skip the planner and check nothing for collisions: watch the arm.
+</footer>
+<script>
+const estopButton = document.getElementById('estop');
+const banner = document.getElementById('banner');
+const arms = document.getElementById('arms');
+let estopped = false;
+
+function show(message, kind) {
+  banner.textContent = message;
+  banner.className = kind || '';
+}
+
+async function call(path, body) {
+  const response = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || response.statusText);
+  return data;
+}
+
+function degrees(pose) {
+  return pose.map((value) => (value * 180 / Math.PI).toFixed(1)).join(', ');
+}
+
+function button(text, handler) {
+  const element = document.createElement('button');
+  element.textContent = text;
+  element.dataset.motion = '1';
+  element.onclick = async () => {
+    try { await handler(); } catch (error) { show(error.message, 'error'); }
+  };
+  return element;
+}
+
+function render(state) {
+  estopped = state.estopped;
+  estopButton.textContent = estopped ? 'CLEAR E-STOP' : 'E-STOP';
+  estopButton.className = estopped ? 'latched' : '';
+  arms.replaceChildren();
+  for (const [arm, info] of Object.entries(state.arms)) {
+    const card = document.createElement('div');
+    card.className = 'arm';
+    const title = document.createElement('h2');
+    title.textContent = arm;
+    const home = document.createElement('p');
+    home.className = 'home';
+    home.textContent = `home (deg): ${degrees(info.home)}  [${info.saved ? 'saved by you' : 'default'}]`;
+    const homes = document.createElement('div');
+    homes.className = 'row';
+    homes.append(
+      button('Save current pose as Home', async () => {
+        await call('/api/home/save', { arm });
+        show(`${arm}: home saved`);
+        await refresh();
+      }),
+      button('Back to default Home', async () => {
+        await call('/api/home/clear', { arm });
+        show(`${arm}: default home restored`);
+        await refresh();
+      }),
+    );
+    const moves = document.createElement('div');
+    moves.className = 'row';
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = 'Manual, slow, no planner';
+    moves.append(
+      label,
+      button('Manual Home', async () => {
+        const reply = await call('/api/move', { arm, target: 'home' });
+        show(`${arm} home: ${reply.result}`);
+      }),
+      button('Manual De-Home', async () => {
+        const reply = await call('/api/move', { arm, target: 'rest' });
+        show(`${arm} de-home: ${reply.result}`);
+      }),
+    );
+    card.append(title, home, homes, moves);
+    arms.append(card);
+  }
+  for (const element of document.querySelectorAll('button[data-motion]')) element.disabled = estopped;
+  if (estopped) show('E-STOP latched: nothing moves until it is cleared.', 'stopped');
+}
+
+async function refresh() {
+  render(await call('/api/state'));
+}
+
+async function toggleStop(stop) {
+  try {
+    await call('/api/estop', { estopped: stop });
+    if (!stop) show('E-stop cleared.');
+    await refresh();
+  } catch (error) {
+    show(`E-STOP REQUEST FAILED: ${error.message}`, 'stopped');
+  }
+}
+
+estopButton.onclick = () => toggleStop(!estopped);
+document.getElementById('cancel').onclick = async () => {
+  try { await call('/api/cancel', {}); show('Move cancelled.'); } catch (error) { show(error.message, 'error'); }
+};
+// Space only ever stops. Its default is cancelled on both edges so it can never
+// also click a focused button, which would clear the stop it just set.
+document.addEventListener('keydown', (event) => {
+  if (event.code !== 'Space') return;
+  event.preventDefault();
+  if (!estopped && !event.repeat) toggleStop(true);
+});
+document.addEventListener('keyup', (event) => {
+  if (event.code === 'Space') event.preventDefault();
+});
+
+refresh().then(() => { if (!estopped) show('Ready.'); }).catch((error) => show(`Not connected: ${error.message}`, 'error'));
+</script>
+</body>
+</html>

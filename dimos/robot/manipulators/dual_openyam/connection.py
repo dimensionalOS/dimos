@@ -23,6 +23,7 @@ from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
 )
+from dimos.robot.manipulators.dual_openyam.anvil import DUAL_OPENYAM_ANVIL
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 
 
@@ -51,3 +52,9 @@ class DualOpenYamConnection(DamiaoConnection):
 
     def can_ports(self) -> list[str]:
         return [self.config.left_can_port, self.config.right_can_port]
+
+
+class DualOpenYamAnvilConnection(DualOpenYamConnection):
+    """The same two buses, driven with Anvil's mass model, joint limits and gains."""
+
+    robot = DUAL_OPENYAM_ANVIL

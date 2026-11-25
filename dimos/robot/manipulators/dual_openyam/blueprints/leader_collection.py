@@ -51,7 +51,8 @@ def dual_openyam_collection_camera(name: str) -> Blueprint:
     )
 
 
-def dual_openyam_leader_collection_profile() -> CollectionProfile:
+def dual_openyam_collection_profile(name: str) -> CollectionProfile:
+    """Joint state, joint commands and the three cameras' color, for any dual OpenYAM teleop."""
     state = FeatureSpec(
         stream="coordinator_joint_state",
         message_type=JointState,
@@ -86,8 +87,12 @@ def dual_openyam_leader_collection_profile() -> CollectionProfile:
                 deep=True,
             )
         },
-        metadata={"name": "dual-openyam-leader", "robot_type": "dual_openyam"},
+        metadata={"name": name, "robot_type": "dual_openyam"},
     )
+
+
+def dual_openyam_leader_collection_profile() -> CollectionProfile:
+    return dual_openyam_collection_profile("dual-openyam-leader")
 
 
 # The leaders have no buttons; episodes are marked with dimos imitation control.

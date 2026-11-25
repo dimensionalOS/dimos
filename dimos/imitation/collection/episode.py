@@ -19,8 +19,9 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, FiniteFloat
 
-EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
-RecordingState: TypeAlias = Literal["idle", "recording"]
+# "end" closes a take that still awaits its save or discard, in state "pending".
+EpisodeEvent: TypeAlias = Literal["start", "end", "save", "discard", "init"]
+RecordingState: TypeAlias = Literal["idle", "recording", "pending"]
 
 
 class EpisodeStatus(BaseModel):

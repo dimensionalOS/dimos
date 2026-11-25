@@ -128,6 +128,7 @@ def extract_episodes(store: Store, cfg: EpisodeExtractor) -> list[Episode]:
     EPISODE_STATUS: scan `cfg.status_stream` for state transitions emitted
         by `EpisodeMonitorModule`. State machine (mirrors the live monitor):
             ev.last_event == "start":   begin (auto-commit any prior pending)
+            ev.last_event == "end":     the take ends here; its verdict follows
             ev.last_event == "save":    commit (success=True)
             ev.last_event == "discard": drop (success=False)
             end of stream with pending: dropped (matches live spec)
@@ -155,24 +156,27 @@ def inspect_episodes(store: Store, cfg: EpisodeExtractor) -> EpisodeReport:
 
     episodes: list[Episode] = []
     pending_start_ts: float | None = None
+    # Set by "end": where the take stops, while its save or discard is awaited.
+    pending_end_ts: float | None = None
     pending_label: str | None = None
     counter = 0
 
     def _commit(end_ts: float, success: bool, label: str | None) -> None:
-        nonlocal counter, pending_start_ts, pending_label
+        nonlocal counter, pending_start_ts, pending_end_ts, pending_label
         if pending_start_ts is None:
             return
         episodes.append(
             Episode(
                 id=f"ep_{counter:06d}",
                 start_ts=pending_start_ts,
-                end_ts=end_ts,
+                end_ts=end_ts if pending_end_ts is None else pending_end_ts,
                 task_label=label,
                 success=success,
             )
         )
         counter += 1
         pending_start_ts = None
+        pending_end_ts = None
         pending_label = None
 
     for obs in events:
@@ -192,6 +196,9 @@ def inspect_episodes(store: Store, cfg: EpisodeExtractor) -> EpisodeReport:
             # must never shift an episode boundary.
             pending_start_ts = ts
             pending_label = label
+        elif last_event == "end":
+            if pending_start_ts is not None and pending_end_ts is None:
+                pending_end_ts = ts
         elif last_event == "save":
             _commit(ts, success=True, label=pending_label or label)
         elif last_event == "discard":

@@ -330,3 +330,39 @@ def test_stop_waits_for_in_flight_transition_and_blocks_later_transitions(
     event_count = len(_events(m))
     m._transition("start", 3.0)
     assert len(_events(m)) == event_count
+
+
+def test_confirm_save_ends_the_take_first_then_saves_or_discards_it(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    """B starts, B ends, then B saves or Y discards; the counts move only on the verdict."""
+    monitor = make_monitor(confirm_save=True)
+
+    for alias in ["B", "B", "B", "B", "B", "Y"]:
+        _press(monitor, alias)
+
+    assert [
+        (event.last_event, event.state, event.episodes_saved, event.episodes_discarded)
+        for event in _events(monitor)
+    ] == [
+        ("start", "recording", 0, 0),
+        ("end", "pending", 0, 0),
+        ("save", "idle", 1, 0),
+        ("start", "recording", 1, 0),
+        ("end", "pending", 1, 0),
+        ("discard", "idle", 1, 1),
+    ]
+
+
+def test_confirm_save_still_lets_y_discard_a_take_that_is_recording(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    monitor = make_monitor(confirm_save=True)
+
+    _press(monitor, "B")
+    _press(monitor, "Y")
+
+    assert [(event.last_event, event.state) for event in _events(monitor)] == [
+        ("start", "recording"),
+        ("discard", "idle"),
+    ]

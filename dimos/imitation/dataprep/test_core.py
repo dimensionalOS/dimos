@@ -1009,6 +1009,25 @@ def test_episode_boundaries_use_document_time_instead_of_reception_time():
     assert [(e.start_ts, e.end_ts, e.task_label) for e in episodes] == [(12.0, 13.0, "pick")]
 
 
+def test_an_ended_take_stops_at_its_end_not_at_its_later_verdict() -> None:
+    """The operator's pause before save or discard must not be recorded into the take."""
+    values = _status(
+        [
+            (12.0, "start", "pick"),
+            (13.0, "end", "pick"),
+            (20.0, "save", "pick"),
+            (21.0, "start", "pick"),
+            (22.0, "end", "pick"),
+            (30.0, "discard", "pick"),
+        ]
+    )
+    episodes = extract_episodes(_FakeStore({"status": values}), EpisodeExtractor())
+    assert [(e.start_ts, e.end_ts, e.success) for e in episodes] == [
+        (12.0, 13.0, True),
+        (21.0, 22.0, False),
+    ]
+
+
 def test_sqlite_inspection_does_not_require_optional_mcap(tmp_path):
     source = tmp_path / "recording.db"
     script = """

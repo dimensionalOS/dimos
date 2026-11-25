@@ -46,8 +46,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 # A button/keyboard press requests one of these; `toggle` resolves to
-# `start`/`save` based on the current state, so it never reaches the output.
-EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
+# `start`/`end`/`save` based on the current state, so it never reaches the output.
+EpisodeCommand: TypeAlias = Literal["start", "end", "save", "discard", "toggle"]
 
 
 class EpisodeControlSpec(Spec, Protocol):
@@ -62,6 +62,9 @@ def _default_button_map() -> dict[EpisodeCommand, str]:
 class EpisodeMonitorModuleConfig(ModuleConfig):
     button_map: dict[EpisodeCommand, str] = Field(default_factory=_default_button_map)
     task: str
+    # When set, `toggle` while recording ends the take and waits: the next
+    # `toggle` saves it and `discard` drops it. The take ends at the first press.
+    confirm_save: bool = False
 
     @field_validator("task")
     @classmethod
@@ -166,28 +169,39 @@ class EpisodeMonitorModule(Module):
         """State-machine transition. Publishes EpisodeStatus on every change.
 
         ``toggle`` resolves to ``start`` when idle and ``save`` when recording,
-        so one button can begin and end a take. The resolved event is what gets
-        published (DataPrep only ever sees start/save/discard).
+        so one button can begin and end a take. With ``confirm_save`` it resolves
+        to ``end`` when recording and ``save`` when pending. The resolved event
+        is what gets published (DataPrep only ever sees start/end/save/discard).
         """
-        if event not in ("start", "save", "discard", "toggle"):
+        if event not in ("start", "end", "save", "discard", "toggle"):
             raise ValueError(f"unknown episode command: {event!r}")
         with self._transition_lock:
             with self._lock:
                 if self._stopping:
                     return self._snapshot(self._last_event, ts)
                 if event == "toggle":
-                    event = "save" if self._state == "recording" else "start"
+                    if self._state == "idle":
+                        event = "start"
+                    elif self._state == "recording" and self.config.confirm_save:
+                        event = "end"
+                    else:
+                        event = "save"
+                open_take = self._state != "idle"
                 if event == "start":
                     # Auto-commit any in-progress episode (matches DataPrep extractor).
-                    if self._state == "recording":
+                    if open_take:
                         self._saved += 1
                     self._state = "recording"
+                elif event == "end":
+                    if self._state != "recording":
+                        return self._snapshot(self._last_event, ts)
+                    self._state = "pending"
                 elif event == "save":
-                    if self._state == "recording":
+                    if open_take:
                         self._saved += 1
                     self._state = "idle"
                 elif event == "discard":
-                    if self._state == "recording":
+                    if open_take:
                         self._discarded += 1
                     self._state = "idle"
                 self._last_event = event
@@ -216,6 +230,7 @@ class EpisodeMonitorModule(Module):
         """One-line operator feedback to the terminal on every transition."""
         verb = {
             "start": "▶ RECORDING episode",
+            "end": "ENDED episode, save or discard",
             "save": "✓ SAVED episode",
             "discard": "✗ DISCARDED episode",
             "init": "· ready",
