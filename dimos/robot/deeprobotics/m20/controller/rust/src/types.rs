@@ -91,6 +91,9 @@ pub struct UserCommand {
     /// metric velocity (m/s, m/s, rad/s) in place of axes: normalized by [real_steer] for the commanded gait
     #[serde(default)]
     pub velocity: Option<[f64; 3]>,
+    /// `velocity` is basic_server's normalized /STEER (the vendor app's joystick), not a metric /REAL_STEER
+    #[serde(default)]
+    pub steer: bool,
     #[serde(default)]
     pub params: BTreeMap<String, f64>,
     /// force a runner by name (for runners no gait code selects)

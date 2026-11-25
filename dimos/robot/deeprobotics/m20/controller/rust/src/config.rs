@@ -46,6 +46,9 @@ pub struct Config {
     /// rl_deploy's battery levels (SafeController::IsBatteryNormal) and what ours does at the error level
     #[serde(default)]
     pub battery: BatteryConfig,
+    /// the vendor phone app's server (basic_server's CmdHandle on UDP / TCP); a config without it serves no app
+    #[serde(default)]
+    pub app_server: AppServerConfig,
     /// the runners safety.default_command_slew gave a slew (rl_deploy's have none)
     #[serde(skip)]
     pub slew_defaulted: Vec<String>,
@@ -68,13 +71,17 @@ pub struct RealSteer {
 }
 
 impl RealSteer {
-    /// The normalized axes rl_deploy stores for velocity `v` received while `gait` is commanded (f32 as it).
-    pub fn axes(&self, gait: u32, v: [f64; 3]) -> [f64; 3] {
-        let d = self
-            .by_gait
+    /// The divisor HandlerVel uses for `gait`.
+    pub fn divisor(&self, gait: u32) -> [f64; 3] {
+        self.by_gait
             .iter()
             .find(|g| g.gaits.contains(&gait))
-            .map_or(self.default, |g| g.divisor);
+            .map_or(self.default, |g| g.divisor)
+    }
+
+    /// The normalized axes rl_deploy stores for velocity `v` received while `gait` is commanded (f32 as it).
+    pub fn axes(&self, gait: u32, v: [f64; 3]) -> [f64; 3] {
+        let d = self.divisor(gait);
         let (mut x, mut y) = (v[0] as f32, v[1] as f32);
         if self.rescale_gaits.contains(&gait) {
             let (ax, ay) = ((x.abs()) as f64, (y.abs()) as f64);
@@ -91,6 +98,28 @@ impl RealSteer {
         let div = |a: f32, d: f64| (a as f64 / d) as f32 as f64;
         [div(x, d[0]), div(y, d[1]), div(v[2] as f32, d[2])]
     }
+}
+
+/// basic_server's app side (CmdHandle, heratBeat), served by crate::app_server; missing, it is off.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AppServerConfig {
+    pub enabled: bool,
+    pub bind: String,
+    pub udp_port: u16,
+    pub tcp_port: u16,
+    pub heartbeat_timeout_s: f64,
+    pub report_period_s: f64,
+    pub slow_report_every: u64,
+    /// ours: how often the server's threads look at the stop flag (s)
+    pub poll_s: f64,
+    /// the error report's period (s)
+    pub error_report_period_s: f64,
+    /// the robot's serial number for GetSn ("" when it has none, as DeviceControl::getDeviceSn)
+    pub sn: String,
+    /// GetReleaseNote's file
+    pub release_note_path: String,
+    /// BasicStatus.Version
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -763,6 +792,20 @@ impl Config {
             if !(v.is_finite() && v > 0.0) {
                 bail!("{name} must be a positive number, is {v}");
             }
+        }
+        let app = &self.app_server;
+        if app.enabled
+            && !([
+                app.heartbeat_timeout_s,
+                app.report_period_s,
+                app.error_report_period_s,
+                app.poll_s,
+            ]
+            .iter()
+            .all(|v| v.is_finite() && *v > 0.0)
+                && app.slow_report_every > 0)
+        {
+            bail!("app_server: the periods and slow_report_every must be positive");
         }
         if self.timing.policy_decimation == 0 {
             bail!("timing.policy_decimation must be at least 1");

@@ -25,6 +25,7 @@
 //!   - docking (policy on): `dock_cmd` ("dock", "undock", "cancel") runs charge_manager's sequence (crate::dock)
 //!     on the dock pose from `dock_pose` (m20_dock_detector_module) and the packs' charge MOS; `dock_state` is its
 //!     status as JSON.
+//!   - the vendor phone app (policy on, [app_server]): crate::app_server, on `cmd_vel`'s command path.
 //!
 //! Every frame is published as it arrives; a publish still in flight when newer data lands makes the older data be
 //! skipped (latest wins).
@@ -171,8 +172,6 @@ pub struct M20Controller {
     #[config]
     config: Config,
 
-    /// What the operator asks for now; each change goes to the 1 kHz loop.
-    current: UserCommand,
     shared: Arc<Shared>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -180,7 +179,10 @@ pub struct M20Controller {
 /// Between the module's handlers and the 1 kHz loop.
 #[derive(Default)]
 pub struct Shared {
-    command: Mutex<Option<UserCommand>>,
+    /// the operator's command (the inputs' and the vendor app server's)
+    operator: Arc<crate::operator::Operator>,
+    /// the vendor app server's view of the robot, from the 1 kHz loop
+    app: Arc<crate::app_reports::Snapshots>,
     imu: Mutex<Option<(ImuSample, std::time::Instant)>>,
     /// the newest rt/IMU_DATA roll, pitch, yaw (deg)
     imu_rpy: Mutex<Option<[f32; 3]>>,
@@ -232,8 +234,7 @@ pub struct SharedCommands {
 
 impl crate::commands::CommandSource for SharedCommands {
     fn poll(&mut self, _now: f64) -> Option<UserCommand> {
-        // a command the receiver is still writing stays in the slot for the next tick
-        crate::rt::try_read(&self.shared.command, &crate::rt::LOCK_SKIPS, |c| c.take()).flatten()
+        self.shared.operator.take()
     }
 }
 
@@ -339,7 +340,7 @@ struct Status {
 impl M20Controller {
     async fn start(&mut self) {
         let config = self.config.clone();
-        self.current.gait = config.gait;
+        self.shared.operator.set_start_gait(config.gait);
         let (joint_state, joint_state_rx) = watch::channel(None);
         let (joint_command, joint_command_rx) = watch::channel(None);
         let (battery, battery_rx) = watch::channel(None);
@@ -461,24 +462,9 @@ impl M20Controller {
         }
     }
 
-    fn send_command(&self) {
-        *self
-            .shared
-            .command
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(self.current.clone());
-    }
-
     async fn on_cmd_vel(&mut self, msg: Twist) {
         let v = [msg.linear.x, msg.linear.y, msg.angular.z];
-        // the vendor bridge's NaN guard: a non-finite twist is a zero one
-        let limits = self.config.cmd_vel_limits;
-        self.current.velocity = Some(if v.iter().all(|x| x.is_finite()) {
-            std::array::from_fn(|i| v[i].clamp(-limits[i], limits[i]))
-        } else {
-            [0.0; 3]
-        });
-        self.send_command();
+        self.shared.operator.velocity(v, self.config.cmd_vel_limits);
     }
 
     async fn on_motion_cmd(&mut self, msg: std_msgs::String) {
@@ -488,14 +474,7 @@ impl M20Controller {
             return;
         }
         match parse_target(&msg.data) {
-            Some(target) => {
-                info!(motion = %msg.data, "motion command");
-                self.current.target = target;
-                self.current.motion_seq += 1;
-                // a state change starts from standing still
-                self.current.velocity = None;
-                self.send_command();
-            }
+            Some(target) => self.shared.operator.motion(target),
             None => {
                 warn!(motion = %msg.data, "unknown motion command (passive, stand, rl_control, lie_down, joint_damping)")
             }
@@ -503,12 +482,7 @@ impl M20Controller {
     }
 
     async fn on_gait_cmd(&mut self, msg: UInt32) {
-        info!(gait = format!("{:#x}", msg.data as u32), "gait command");
-        self.current.gait = msg.data as u32;
-        self.current.motion_seq += 1;
-        self.current.gait_seq += 1;
-        self.current.velocity = None;
-        self.send_command();
+        self.shared.operator.gait(msg.data as u32);
     }
 
     async fn on_usage_mode(&mut self, msg: UInt32) {
@@ -699,12 +673,16 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
         }
     };
     let charge_feed = shared.dock.clone();
+    let app_packs = shared.app.clone();
     let mut battery_reports = 0u64;
     let sink: Sink = Box::new(move |t, direction, frame| {
         if let Some(reading) = charge_reading(direction, frame, battery_reports + 1) {
             battery_reports += 1;
             if let Ok(mut slot) = charge_feed.charge.try_lock() {
                 *slot = Some(reading);
+            }
+            if let Some(packs) = app_packs_of(direction, frame) {
+                app_packs.offer_packs(packs);
             }
         }
         latest.see(t, direction, frame);
@@ -784,6 +762,9 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     );
     let usage = shared.usage.clone();
     let imu_seen = shared.clone();
+    let app_server = start_app_server(&cfg, config, &shared);
+    let app_every =
+        ((cfg.timing.control_hz * cfg.app_server.report_period_s).round() as u64).max(1);
     let mut controller = Controller::new(cfg.clone());
     let status_every = (cfg.timing.control_hz.round() as u64).max(1);
     let ready_every = ((cfg.timing.control_hz / config.command_ready_hz).round() as u64).max(1);
@@ -834,6 +815,16 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             }
             let dock = dock_latest.lock().ok().and_then(|d| d.clone());
             let mode = usage.current.load(Ordering::Relaxed);
+            if app_server.is_some() && tick.stats.ticks % app_every == 0 {
+                imu_seen.app.offer_robot(crate::app_reports::RobotView::of(
+                    &cfg,
+                    tick,
+                    mode,
+                    usage.direction.load(Ordering::Relaxed),
+                    dock.as_ref(),
+                    imu_seen.hard_stop.get(),
+                ));
+            }
             let mut full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref(), mode);
             // the bridge's command_ready also needs the hard stop clear (main.cpp robot_ready)
             let hard_stop_clear = imu_seen.hard_stop.clear();
@@ -879,10 +870,65 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             }
         },
     );
+    if let Some(server) = app_server {
+        server.stop();
+    }
     match result {
         Ok(stats) => info!(?stats, "policy loop stopped"),
         Err(error) => warn!(error = format!("{error:#}"), "policy loop failed"),
     }
+}
+
+/// The vendor app server ([app_server] in the TOML), on the operator's command path; none when off or unbound.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn start_app_server(
+    cfg: &crate::config::Config,
+    config: &Config,
+    shared: &Arc<Shared>,
+) -> Option<crate::app_server::AppServer> {
+    if !cfg.app_server.enabled {
+        return None;
+    }
+    let links = crate::app_commands::Links {
+        operator: shared.operator.clone(),
+        usage: shared.usage.clone(),
+        dock: shared.dock.clone(),
+        snapshots: shared.app.clone(),
+        velocity_limits: config.cmd_vel_limits,
+    };
+    match crate::app_server::AppServer::start(&cfg.app_server, links) {
+        Ok(server) => Some(server),
+        Err(error) => {
+            warn!(
+                error = format!("{error:#}"),
+                "no vendor app server (is basic_server still running?)"
+            );
+            None
+        }
+    }
+}
+
+/// Both packs as the app's device report shows them, from a battery frame off the board.
+pub fn app_packs_of(
+    direction: Direction,
+    frame: &[u8],
+) -> Option<[crate::app_reports::PackView; 2]> {
+    let (_, message) = m20_ecan::decode_ethernet(frame, direction).ok()?;
+    let report = m20_battery::BatteryReport::from_message(&message).ok()?;
+    Some(report.packs().map(|p| {
+        crate::app_reports::PackView {
+            voltage_v: p.voltage_v as f64,
+            level_percent: p.level_percent,
+            temperature_c: p
+                .temperatures()
+                .iter()
+                .map(|&t| t as f64)
+                .reduce(f64::max)
+                .unwrap_or(0.0),
+            charging: p.is_charging(),
+            serial: p.serial_number.clone(),
+        }
+    }))
 }
 
 /// The packs' charge state from a battery frame off the board, as docking reads it.
@@ -1106,14 +1152,14 @@ mod tests {
             velocity: Some([0.5, 0.0, 0.0]),
             ..Default::default()
         };
-        *shared.command.lock().unwrap() = Some(walk.clone());
+        *shared.operator.slot.lock().unwrap() = Some(walk.clone());
         let skips = crate::rt::LOCK_SKIPS.load(Ordering::Relaxed);
         {
             // the receivers hold every slot (a newer sample half written)
             let mut slot = shared.imu.lock().unwrap();
             *slot = Some((sample(2.0), std::time::Instant::now()));
             let _rpy = shared.imu_rpy.lock().unwrap();
-            let _command = shared.command.lock().unwrap();
+            let _command = shared.operator.slot.lock().unwrap();
             let held = imu.latest().unwrap();
             assert_eq!((held.stamp, held.rpy_deg), (1.0, Some([1.0, 2.0, 3.0])));
             assert!(crate::commands::CommandSource::poll(&mut commands, 0.0).is_none());

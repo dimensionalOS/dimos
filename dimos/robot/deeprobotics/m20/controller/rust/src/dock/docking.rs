@@ -1688,6 +1688,7 @@ impl<C: CommandSource> DockingCommands<C> {
             gait: out.gait,
             axes: out.axes,
             velocity: None,
+            steer: false,
             params,
             runner: None,
             motion_seq: self.operator.motion_seq,

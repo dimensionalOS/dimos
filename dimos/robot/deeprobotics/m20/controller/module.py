@@ -31,6 +31,8 @@ calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
   (``rust/src/dock``, with the vendor's own ``charge_manager.toml``) on the dock pose and the obstacle check from
   ``M20DockDetector`` (``dock_pose``, ``dock_obstacle``) and the packs' charge MOS; ``charge_status()`` is its
   latest status.
+- The vendor phone app (owner + policy, ``[app_server]`` in ``rust/m20_controller.toml``): basic_server's UDP 30000 /
+  TCP 30001 server, its commands on the same path as ``cmd_vel``, ``motion_cmd`` and ``gait_cmd``.
 """
 
 from __future__ import annotations

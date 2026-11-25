@@ -22,6 +22,10 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod app_commands;
+pub mod app_frame;
+pub mod app_reports;
+pub mod app_server;
 pub mod basic_server;
 pub mod battery;
 pub mod commands;
@@ -31,6 +35,7 @@ pub mod frames;
 pub mod hardware;
 #[cfg(feature = "module")]
 pub mod module;
+pub mod operator;
 pub mod ort;
 pub mod policy;
 #[cfg(feature = "module")]

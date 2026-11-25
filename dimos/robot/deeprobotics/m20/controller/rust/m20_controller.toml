@@ -905,6 +905,32 @@ check_period_s = 1.0
 accel_z = 9.0
 height_m = 0.4
 
+# the vendor phone app's server in place of basic_server's (CmdHandle / heratBeat, AOS basic_server v1.2.43): it binds
+# only with the policy on the bus (mode owner), and a port basic_server still holds leaves it off with a warning
+[app_server]
+enabled = true
+# basic_server: 0.0.0.0 on UDP 30000 and TCP 30001 (ss -tulpn on AOS 2026-11-25; TcpServer::Init's 0x7531)
+bind = "0.0.0.0"
+udp_port = 30000
+tcp_port = 30001
+# heratBeat::heartbeatCheckThread, every 2 s: a client with no heartbeat since the last check is dropped, and every
+# client when no frame at all came in the last 2 s
+heartbeat_timeout_s = 2.0
+# CmdHandle::UploadThread: the motion report every 100 ms, the device and basic reports every 5th (2 Hz), counting
+# only periods with a client
+report_period_s = 0.1
+slow_report_every = 5
+# ExceptionHandle::uploadThead: the error list every 0.5 s
+error_report_period_s = 0.5
+# ours: the server threads' read timeout, how soon they see a stop
+poll_s = 0.05
+# GetSn (3001/0): the robot's serial number (DeviceControl::getDeviceSn; "" when it has none)
+sn = ""
+# GetReleaseNote (2003/1): the file basic_server reads
+release_note_path = "/var/opt/robot/release_note.json"
+# BasicStatus.Version: basic_server's version the app is told
+version = "1.2.43"
+
 # rl_deploy's battery levels (SafeController::IsBatteryNormal 0x174e30, every pack): a pack at or under 54 V is in
 # voltage error until back at 58 V; under 21 % a warning, under 6 % (or every pack in voltage error) an error. rl_deploy
 # only reports them; ours (act_on_error, rl_deploy: false): at the error level stand-ups are refused and a standing robot

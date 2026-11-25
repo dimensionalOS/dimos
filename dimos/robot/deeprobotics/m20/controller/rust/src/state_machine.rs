@@ -1159,6 +1159,7 @@ impl Controller {
     /// The normalized axes: cmd.axes, or a metric cmd.velocity as HandlerVel normalizes it for the commanded gait.
     fn axes_for(&self, _runner: &str, cmd: &UserCommand) -> [f64; 3] {
         match cmd.velocity {
+            Some(v) if cmd.steer => v,
             Some(v) => self.cfg.real_steer.axes(cmd.gait, v),
             None => cmd.axes,
         }

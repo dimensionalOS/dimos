@@ -29,6 +29,8 @@ pub const MODE_REGULAR: i32 = 0;
 pub const MODE_NAVIGATION: i32 = 1;
 pub const MODE_ASSIST: i32 = 2;
 pub const GAIT_BASIC: u32 = 0x1001;
+/// The usage modes the app's Steer drives in (VelControl::sendVel 0x261e50 publishes /STEER in mode 0 only).
+pub const STEER_MODES: [i32; 1] = [MODE_REGULAR];
 
 /// The gait codes SwitchGait (0x261640) sends; it logs and drops any other.
 pub fn known_gait(gait: u32) -> bool {
@@ -75,6 +77,8 @@ pub struct UsageMode {
     pub current: AtomicI32,
     /// CmdHandle::cmdHandle_AligningBodyPosture: get up after a fall
     pub align: std::sync::atomic::AtomicBool,
+    /// VelControl::setDirection (cmdHandle_Direction): 1 reverses the app's steer
+    pub direction: AtomicI32,
 }
 
 /// aligningBodyPosture (0x262550): RL control on 0xf003 from Idle until up ([basic_server.align]), else soft e-stop.
@@ -161,8 +165,13 @@ impl<C: CommandSource + ChargerState> BasicServer<C> {
         if let Some((gait, _)) = self.gait_override {
             c.gait = gait;
         }
-        // NavCmd / RealSteer and charge_manager's steer reach rl_deploy only in modes 1 and 2
-        if !matches!(self.mode, MODE_NAVIGATION | MODE_ASSIST) {
+        // RealSteer and charge_manager's steer pass in modes 1 and 2, the app's Steer in STEER_MODES
+        let passes = if c.steer {
+            STEER_MODES.contains(&self.mode)
+        } else {
+            matches!(self.mode, MODE_NAVIGATION | MODE_ASSIST)
+        };
+        if !passes {
             c.axes = [0.0; 3];
         }
         c
@@ -200,7 +209,12 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
             // HandlerVel normalizes a twist once, on receipt, by the gait then commanded; a later gait change keeps it
             if let Some(v) = c.velocity.take() {
                 let gait = self.gait_override.map_or(c.gait, |(g, _)| g);
-                c.axes = self.real_steer.axes(gait, v);
+                // the app's Steer is already normalized
+                c.axes = if c.steer {
+                    v
+                } else {
+                    self.real_steer.axes(gait, v)
+                };
             }
             self.last = c;
             self.dirty = true;
@@ -620,6 +634,23 @@ mod tests {
             },
         );
         assert!(close(out.axes, [0.5, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn the_app_s_steer_is_taken_as_axes_in_its_modes_only() {
+        let (mut s, usage) = server();
+        let steer = UserCommand {
+            target: Target::RlControl,
+            gait: 0x3003,
+            velocity: Some([0.5, 0.0, -0.2]),
+            steer: true,
+            ..Default::default()
+        };
+        // regular mode: the joystick drives, not divided by the gait's REAL_STEER divisor
+        assert_eq!(send(&mut s, steer.clone()).axes, [0.5, 0.0, -0.2]);
+        *usage.request.lock().unwrap() = Some(MODE_NAVIGATION);
+        let _ = s.poll(0.0);
+        assert_eq!(send(&mut s, steer).axes, [0.0; 3]);
     }
 
     #[test]
