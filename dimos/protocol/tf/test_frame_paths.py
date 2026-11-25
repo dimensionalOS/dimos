@@ -119,11 +119,9 @@ class _Edged(TfModule):
 
 
 class _Slashed(_Edged):
-    """Puts its "top" and "base" frames on the wire with a slash, as a HardwareModule does its own."""
+    """Puts every frame on the wire with a slash, as a HardwareModule does."""
 
-    @classmethod
-    def blueprint_wire_roles(cls, atom: Any) -> set[str]:
-        return {"top", "base"}
+    tf_slashes_frames = True
 
 
 def _atoms(
@@ -207,3 +205,17 @@ def test_a_module_that_is_not_hardware_cannot_fake_a_hardware_edge() -> None:
             odometry._create_tfbuffer(None).publish(slashed)
     finally:
         odometry.stop()
+
+
+def test_skipping_tf_checks_does_not_lift_the_wire_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.core.stream import IO
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    monkeypatch.setattr(IO, "publish", lambda _port, msg: None)
+    unchecked = _Edged(instance_name="unchecked", skip_tf_checks=True)
+    try:
+        unchecked.tf.publish(TFMessage(Transform(frame_id="odom", child_frame_id="anything")))
+        with pytest.raises(ValueError, match="with a leading '/'"):
+            unchecked.tf.publish(TFMessage(Transform(frame_id="odom", child_frame_id="/go2/base")))
+    finally:
+        unchecked.stop()

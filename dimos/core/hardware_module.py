@@ -167,11 +167,26 @@ def usd_tf(
             raise ValueError(
                 f"tf_frames_local[{role!r}] is {frame!r}, but the USD's frame {role!r} is that role"
             )
+    if values.get("skip_tf_checks"):
+        raise ValueError(
+            "a HardwareModule cannot skip_tf_checks: it publishes its USD's edges and its mount, "
+            "and the check is what keeps it to those"
+        )
     for role, frame in values["tf_frames_global"].items():
-        check_frame_path(frame, f"tf_frames_global[{role!r}]")
-        if shared.setdefault(role, frame) != frame:
+        if shared.get(role) != frame:
             raise ValueError(
-                f"tf_frames_global[{role!r}] is {frame!r}, but {role!r} is the mount's role"
+                f"tf_frames_global[{role!r}] is {frame!r}, but a HardwareModule publishes only its "
+                f"USD's frames and its mount; an estimate (odom, map, ...) belongs in a separate "
+                f"module that is not a HardwareModule"
+            )
+    roles = {**local, **shared}
+    usd_frames = {(roles[parent], roles[child]) for parent, child in edges}
+    for parent, child in values["tf_edges"]:
+        if (roles.get(parent), roles.get(child)) not in usd_frames:
+            raise ValueError(
+                f"tf_edges holds ({parent!r}, {child!r}), which is not an edge of this hardware's USD "
+                f"or its mount; a HardwareModule never publishes an estimate (odom -> base, ...), "
+                f"so that belongs in a separate module that is not a HardwareModule"
             )
     return local, shared, list(dict.fromkeys([*edges, *values["tf_edges"]]))
 
@@ -185,7 +200,7 @@ class HardwareSpec(Spec, Protocol):
 
 
 class _HardwareTfIO(TfIO):
-    """A HardwareModule's tf port: its own frames (and its mount) go on the wire with a leading "/"."""
+    """A HardwareModule's tf port: every frame it publishes goes on the wire with a leading "/"."""
 
     owner: "HardwareModule"
 
@@ -196,8 +211,8 @@ class _HardwareTfIO(TfIO):
 class HardwareModule(TfModule):
     """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted.
 
-    On the wire its own frames (and its mount) carry one leading "/" (``/go2_A/go2/base``), which says
-    an edge between two of them is hardware; the tf buffer drops it, so code never sees it.
+    On the wire every frame it publishes carries one leading "/" (``/go2_A/go2/base``), which says the
+    edge is hardware; the tf buffer drops it, so code never sees it.
     """
 
     config: HardwareModuleConfig
@@ -209,6 +224,7 @@ class HardwareModule(TfModule):
     hardware_file_response: Out[FileInfo]
     # The edges that never move, once at start (not latched: only what listens then gets them).
     tf_static: Out[TFMessage]
+    tf_slashes_frames: ClassVar[bool] = True
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -231,34 +247,14 @@ class HardwareModule(TfModule):
         """The tf this hardware's USD and config declare, as its config would fill it in."""
         return usd_tf(atom.kwargs, atom.name.rpartition("/")[0], cls.mounts)
 
-    @classmethod
-    def blueprint_wire_roles(cls, atom: "BlueprintAtom") -> set[str]:
-        """Its own frames and its mount, which go on the wire with a leading "/"."""
-        local, shared, _ = cls.blueprint_tf(atom)
-        return set(local) | ({MOUNT_ROLE} & set(shared))
-
-    @cached_property
-    def tf_wire_frames(self) -> frozenset[str]:  # type: ignore[override]
-        """Its own frames and its mount, which it puts on the wire with a leading "/"."""
-        frames = self.tf_frames
-        own = {frames[role] for role in self.config.tf_frames_local}
-        if self.config.attached_to is not None:
-            own.add(frames[MOUNT_ROLE])
-        return frozenset(own)
-
     def on_wire(self, transforms: "Iterable[Transform]") -> list[Transform]:
-        """``transforms`` as they go on the wire: each of this hardware's own frames (and its mount) with a leading "/"."""
-        own = self.tf_wire_frames
-
-        def wire(frame: str) -> str:
-            return f"/{frame}" if frame in own else frame
-
+        """``transforms`` as they go on the wire: every frame with a leading "/"."""
         return [
             Transform(
                 translation=t.translation,
                 rotation=t.rotation,
-                frame_id=wire(t.frame_id),
-                child_frame_id=wire(t.child_frame_id),
+                frame_id=f"/{t.frame_id}",
+                child_frame_id=f"/{t.child_frame_id}",
                 ts=t.ts,
             )
             for t in transforms

@@ -17,7 +17,7 @@
 from collections import defaultdict, deque
 from functools import cached_property
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
 
 from pydantic import Field, model_validator
 
@@ -26,7 +26,7 @@ from dimos.core.stream import IO
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.frame_paths import is_hardware_edge
-from dimos.protocol.tf.tf import TF, refuse_undeclared_edges
+from dimos.protocol.tf.tf import TF, refuse_off_wire_format, refuse_undeclared_edges
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -69,12 +69,13 @@ class TfIO(IO[TFMessage]):
     owner: "TfModule"
 
     def publish(self, msg: TFMessage) -> None:
+        # A wire-format rule, not an edge check: skip_tf_checks does not lift it.
+        refuse_off_wire_format(
+            self.owner.tf_owner_name, msg.transforms, self.owner.tf_slashes_frames
+        )
         if not self.owner.config.skip_tf_checks:
             refuse_undeclared_edges(
-                self.owner.tf_edge_ids,
-                self.owner.tf_owner_name,
-                msg.transforms,
-                self.owner.tf_wire_frames,
+                self.owner.tf_edge_ids, self.owner.tf_owner_name, msg.transforms
             )
         super().publish(msg)
 
@@ -111,6 +112,8 @@ class TfModule(Module):
     """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
+    # Whether every frame it publishes goes on the wire with a leading "/" (a HardwareModule's edge).
+    tf_slashes_frames: ClassVar[bool] = False
     if TYPE_CHECKING:
         tf: TfIO
     else:
@@ -133,11 +136,6 @@ class TfModule(Module):
         frames = self.tf_frames
         return frozenset((frames[parent], frames[child]) for parent, child in self.config.tf_edges)
 
-    @property
-    def tf_wire_frames(self) -> frozenset[str]:
-        """The frames this module may put on the wire with a leading "/" (a HardwareModule's own); none here."""
-        return frozenset()
-
     @cached_property
     def tf_frames(self) -> dict[str, str]:
         """Every role -> frame id, local (under the namespace) and global together."""
@@ -159,11 +157,6 @@ class TfModule(Module):
             atom.kwargs["tf_edges"],
         )
 
-    @classmethod
-    def blueprint_wire_roles(cls, atom: "BlueprintAtom") -> set[str]:
-        """The roles whose frames this module puts on the wire with a leading "/" (a HardwareModule's own); none here."""
-        return set()
-
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
         """Refuse declared edges that close a loop, or a frame with two parents of one kind; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
@@ -173,19 +166,21 @@ class TfModule(Module):
         are refused, since each says where the frame is and nothing says which wins.
         """
         owners: dict[tuple[str, str], list[str]] = defaultdict(list)
-        on_wire_with_slash: set[str] = set()
+        # Each edge with whether its owner puts it on the wire slashed (a HardwareModule).
+        slashed: dict[tuple[str, str], bool] = defaultdict(bool)
         for atom in atoms:
             if not _is_checked(atom):
                 continue
             module = cast("type[TfModule]", atom.module)
             local, shared, edges = module.blueprint_tf(atom)
             frames = _frame_ids(local, shared, atom.name.rpartition("/")[0])
-            on_wire_with_slash |= {frames[role] for role in module.blueprint_wire_roles(atom)}
             for parent_role, child_role in edges:
-                owners[frames[parent_role], frames[child_role]].append(atom.name)
+                edge = frames[parent_role], frames[child_role]
+                owners[edge].append(atom.name)
+                slashed[edge] |= module.tf_slashes_frames
 
-        def wire(frame: str) -> str:
-            return f"/{frame}" if frame in on_wire_with_slash else frame
+        def wire(frame: str, edge: tuple[str, str]) -> str:
+            return f"/{frame}" if slashed[edge] else frame
 
         if not owners:
             return
@@ -193,9 +188,9 @@ class TfModule(Module):
         errors = []
         parents: dict[tuple[str, bool], list[str]] = defaultdict(list)
         for (parent, child), names in sorted(owners.items()):
-            parents[child, is_hardware_edge(wire(parent), wire(child))].append(
-                f"{parent} (from {', '.join(names)})"
-            )
+            parents[
+                child, is_hardware_edge(wire(parent, (parent, child)), wire(child, (parent, child)))
+            ].append(f"{parent} (from {', '.join(names)})")
             if len(names) > 1:
                 logger.warning(
                     f"tf edge '{parent}' -> '{child}' is declared by several modules "
@@ -262,7 +257,7 @@ class TfModule(Module):
             port,
             edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
             module_name=self.tf_owner_name,
-            slashed_frames=self.tf_wire_frames,
+            slashes_frames=self.tf_slashes_frames,
         )
 
 

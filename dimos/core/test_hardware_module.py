@@ -443,31 +443,71 @@ def test_the_usd_fills_the_tf_config_so_every_edge_is_declared() -> None:
         camera.stop()
 
 
-class LocalizedArmConfig(ArmConfig):
-    tf_frames_local: dict[str, str] = {"body": "arm/base"}
-    tf_frames_global: dict[str, str] = {"map": "map"}
-    tf_edges: list[tuple[str, str]] = [("map", "body")]
-
-
-class LocalizedArm(HardwareModule):
-    config: LocalizedArmConfig
-
-
-def test_only_its_own_frames_go_on_the_wire_with_a_slash() -> None:
-    arm = LocalizedArm(instance_name="left/arm")
+def test_every_frame_a_hardware_module_publishes_goes_on_the_wire_with_a_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[TFMessage] = []
+    monkeypatch.setattr(IO, "publish", lambda _port, msg: sent.append(msg))
+    arm = Arm(instance_name="left/arm")
     try:
-        (wire,) = arm.on_wire([Transform(frame_id="map", child_frame_id="left/arm/base")])
-        assert (wire.frame_id, wire.child_frame_id) == ("map", "/left/arm/base")
+        arm.tf.publish(TFMessage(Transform(frame_id="left/arm", child_frame_id="left/arm/base")))
+        with pytest.raises(ValueError, match="exactly one leading '/'"):
+            arm.tf.publish(
+                TFMessage(Transform(frame_id="/left/arm", child_frame_id="left/arm/base"))
+            )
+    finally:
+        arm.stop()
+    ((wire,),) = [message.transforms for message in sent]
+    assert (wire.frame_id, wire.child_frame_id) == ("/left/arm", "/left/arm/base")
+
+
+class AliasedArmConfig(ArmConfig):
+    tf_frames_local: dict[str, str] = {"body": "arm/base", "elbow": "arm/base/forearm"}
+    tf_edges: list[tuple[str, str]] = [("body", "elbow")]
+
+
+class AliasedArm(HardwareModule):
+    config: AliasedArmConfig
+
+
+def test_a_subclass_may_name_its_usd_s_frames_and_edges_by_role() -> None:
+    arm = AliasedArm(instance_name="left/arm")
+    try:
+        assert (arm.frame.body, arm.frame.elbow) == ("left/arm/base", "left/arm/base/forearm")
     finally:
         arm.stop()
 
 
-def test_a_subclass_adds_only_the_edges_its_usd_does_not_have() -> None:
-    arm = LocalizedArm(instance_name="left/arm")
+@pytest.mark.parametrize(
+    "estimate",
+    [
+        {"tf_frames_global": {"map": "map"}},
+        {"tf_frames_local": {"body": "arm/base"}, "tf_edges": [("arm/base/forearm", "body")]},
+    ],
+)
+def test_a_hardware_module_never_publishes_an_estimate(estimate: dict[str, Any]) -> None:
+    with pytest.raises(
+        ValueError, match="belongs in a separate module that is not a HardwareModule"
+    ):
+        Arm(instance_name="left/arm", **estimate)
+
+
+def test_a_hardware_module_cannot_skip_the_check_that_keeps_it_to_its_usd() -> None:
+    with pytest.raises(ValueError, match="cannot skip_tf_checks"):
+        Arm(instance_name="left/arm", skip_tf_checks=True)
+
+
+def test_a_hardware_module_publishes_no_edge_but_its_usd_s_and_its_mount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(IO, "publish", lambda _port, msg: None)
+    arm = Arm(instance_name="left/arm")
     try:
-        assert arm.frame.body == "left/arm/base"
-        # left/arm/base has a hardware parent (left/arm) and an imaginary one (map).
-        assert {("map", "left/arm/base"), ("left/arm", "left/arm/base")} <= arm.tf_edge_ids
+        estimate = Transform(frame_id="left/arm/base/forearm", child_frame_id="left/arm/base")
+        with pytest.raises(ValueError, match="undeclared tf edge"):
+            arm.tf.publish(TFMessage(estimate))
+        with pytest.raises(ValueError, match="undeclared tf edge"):
+            arm._create_tfbuffer(None).publish(*arm.on_wire([estimate]))
     finally:
         arm.stop()
 
@@ -477,11 +517,6 @@ def test_a_local_frame_its_usd_does_not_have_is_refused() -> None:
         ValueError, match=r"tf_frames_local\['odom'\] is 'odom', which is not a frame"
     ):
         Arm(instance_name="arm", tf_frames_local={"odom": "odom"})
-
-
-def test_a_global_frame_that_cannot_be_a_prim_path_is_refused() -> None:
-    with pytest.raises(ValueError, match=r"'my-map' has at position 2 '-'"):
-        Arm(instance_name="arm", tf_frames_global={"map": "my-map"})
 
 
 def test_a_mount_its_usd_does_not_have_is_refused_in_the_blueprint() -> None:
