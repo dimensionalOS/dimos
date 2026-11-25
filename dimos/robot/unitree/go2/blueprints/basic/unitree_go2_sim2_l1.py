@@ -40,13 +40,13 @@ unitree_go2_sim2_l1 = autoconnect(
         {
             "mujoco": autoconnect(
                 MujocoSim.blueprint(),
-                Go2Sim.blueprint(mount=ROBOT).namespace(ROBOT, shared=SHARED),
+                Go2Sim.blueprint(attached_to=ROBOT).namespace(ROBOT, shared=SHARED),
             ),
             "dimsim": autoconnect(
                 DimSimSim.blueprint(),
-                SimKinematicBase.blueprint(usd=GO2_USD, mount=ROBOT, **GO2_TF_FRAMES).namespace(
-                    ROBOT, shared=SHARED
-                ),
+                SimKinematicBase.blueprint(
+                    usd=GO2_USD, attached_to=ROBOT, **GO2_TF_FRAMES
+                ).namespace(ROBOT, shared=SHARED),
             ),
         },
         default="mujoco",

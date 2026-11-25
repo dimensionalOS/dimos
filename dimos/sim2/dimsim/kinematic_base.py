@@ -62,7 +62,7 @@ class SimKinematicBase(OnWorldTime, HardwareModule):
         self._start: np.ndarray | None = None
 
     @property
-    def mounted_frame(self) -> str:
+    def attach_frame(self) -> str:
         return str(self.frame.odom)
 
     @rpc

@@ -49,7 +49,7 @@ pytestmark = pytest.mark.self_hosted
 def apartment() -> Iterator[_Apartment]:
     scene = DimSimApartment()
     go2 = SimKinematicBase(
-        usd=UsdModel.from_file(_GO2), mount="go2", instance_name="go2/SimKinematicBase"
+        usd=UsdModel.from_file(_GO2), attached_to="go2", instance_name="go2/SimKinematicBase"
     )
     try:
         world, robot = (
