@@ -157,6 +157,52 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
         camera.stop()
 
 
+_LINKAGE_URDF = """<robot name="linkage">
+  <link name="base"/><link name="a"/><link name="b"/><link name="c"/><link name="d"/>
+  <joint name="hinge" type="revolute">
+    <parent link="base"/><child link="a"/>
+    <origin xyz="0.1 -0.2 0.3" rpy="0.4 -0.5 0.6"/><axis xyz="1 2 -3"/>
+    <limit lower="-3" upper="3" effort="1" velocity="1"/>
+  </joint>
+  <joint name="slide" type="prismatic">
+    <parent link="a"/><child link="b"/>
+    <origin xyz="0 0.2 0" rpy="-0.3 0.2 1.1"/><axis xyz="0 1 1"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+  <joint name="follower" type="revolute">
+    <parent link="b"/><child link="c"/>
+    <origin xyz="0 0 0.1" rpy="3.0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3" upper="3" effort="1" velocity="1"/>
+    <mimic joint="hinge" multiplier="-2" offset="0.25"/>
+  </joint>
+  <joint name="weld" type="fixed">
+    <parent link="c"/><child link="d"/><origin xyz="0.3 0 0" rpy="0 1.2 0"/>
+  </joint>
+</robot>"""
+
+
+class LinkageConfig(HardwareModuleConfig):
+    usd: UsdModel = UsdModel.from_robot_model(RobotModel.from_urdf_string(_LINKAGE_URDF))
+
+
+class Linkage(HardwareModule):
+    config: LinkageConfig
+
+
+def test_every_edge_is_where_its_joint_puts_it_at_any_position() -> None:
+    from dimos.core.hardware_module import _position
+
+    linkage = Linkage(instance_name="linkage")
+    try:
+        for positions in ({}, {"hinge": 2.9, "slide": -0.7}, {"hinge": -1.3, "slide": 0.4}):
+            edges = {t.child_frame_id: t.to_matrix() for t in linkage.usd_transforms(positions)}
+            for joint in linkage._posable_joints:
+                expected = joint.parent_from_child(_position(joint, positions))
+                np.testing.assert_allclose(edges[joint.child_link], expected, atol=1e-9)
+    finally:
+        linkage.stop()
+
+
 def test_a_frame_id_prefix_names_the_usd_and_its_tf_alike() -> None:
     pytest.importorskip("pxr")
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
