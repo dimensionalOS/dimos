@@ -96,6 +96,57 @@ def test_a_single_source_passes_through_unchanged(make_task, sources, side):
     assert task.get_status()[f"{side}_present"] == ["gripper", "j1"]
 
 
+@pytest.mark.parametrize("side", ["operator", "policy"])
+def test_blends_all_joint_groups_from_a_source_output_list(make_task, sources, side):
+    sources["operator"].compute.return_value = _output(j1=-2, j2=-4, gripper=0)
+    sources["policy"].compute.return_value = _output(j1=4, j2=8, gripper=1)
+    command = sources[side].compute.return_value
+    sources[side].compute.return_value = [
+        JointCommandOutput(
+            joint_names=command.joint_names[:2],
+            positions=command.positions[:2],
+            mode=ControlMode.POSITION,
+        ),
+        _output(gripper=command.positions[2]),
+    ]
+    task = make_task(alpha=0.25)
+    state = _state()
+
+    assert task.compute(state) == _output(j1=-0.5, j2=-1, gripper=0.25)
+    sources[side].compute.assert_called_once_with(state)
+    assert task.get_status()[f"{side}_present"] == ["gripper", "j1", "j2"]
+
+
+def test_empty_output_list_does_not_refresh_cached_targets(make_task, sources):
+    sources["policy"].compute.return_value = [_output(j1=4)]
+    task = make_task()
+    assert task.compute(_state()) == _output(j1=4)
+
+    sources["policy"].compute.return_value = []
+    assert task.compute(_state(1.1)) == _output(j1=4)
+    assert task.compute(_state(1.21)) is None
+    assert task.get_status()["policy_present"] == []
+
+
+@pytest.mark.parametrize(
+    "invalid_command, message",
+    [
+        (
+            JointCommandOutput(joint_names=["j2"], velocities=[1], mode=ControlMode.VELOCITY),
+            "must command positions",
+        ),
+        (_output(unknown=1), "invalid joint target"),
+        (_output(j2=math.nan), "invalid joint target"),
+    ],
+)
+def test_validates_each_command_in_source_output_list(make_task, sources, invalid_command, message):
+    sources["policy"].compute.return_value = [_output(j1=4), invalid_command]
+    task = make_task()
+
+    with pytest.raises(ValueError, match=message):
+        task.compute(_state())
+
+
 def test_presence_and_timeout_are_per_joint_and_hold_inactive_policy_targets(make_task, sources):
     sources["operator"].compute.return_value = _output(j1=-2, gripper=0.8)
     sources["policy"].compute.return_value = _output(j1=4, j2=6)

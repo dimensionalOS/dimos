@@ -172,17 +172,19 @@ class PolicyTeleopTask(BaseControlTask):
             output = task.compute(state) if task.is_active() else None
             if output is None:
                 continue
-            if output.mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
-                raise ValueError(f"policy_teleop source {task.name!r} must command positions")
-            if output.positions is None:
-                continue
-            for joint, position in zip(output.joint_names, output.positions, strict=True):
-                if joint not in self._weights or not math.isfinite(position):
-                    raise ValueError(
-                        f"policy_teleop source {task.name!r} returned an invalid joint target"
-                    )
-                values[joint] = position
-                timestamps[joint] = state.t_now
+            commands = output if isinstance(output, list) else [output]
+            for command in commands:
+                if command.mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+                    raise ValueError(f"policy_teleop source {task.name!r} must command positions")
+                if command.positions is None:
+                    continue
+                for joint, position in zip(command.joint_names, command.positions, strict=True):
+                    if joint not in self._weights or not math.isfinite(position):
+                        raise ValueError(
+                            f"policy_teleop source {task.name!r} returned an invalid joint target"
+                        )
+                    values[joint] = position
+                    timestamps[joint] = state.t_now
         return {
             joint
             for joint, timestamp in timestamps.items()
