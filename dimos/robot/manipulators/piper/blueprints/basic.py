@@ -17,11 +17,12 @@
 from __future__ import annotations
 
 from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.coordination.blueprints import ChoiceAtom, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
@@ -51,14 +52,25 @@ def piper_declaration() -> ConnectionConfig:
     )
 
 
-def piper_arm(*, simulated: bool) -> Blueprint | MetaBlueprint:
+def piper_arm(*, simulated: bool) -> MetaBlueprint:
     """The Piper named "arm" with its gripper, through ``PiperConnection``, or in
     MuJoCo behind the same ports, joint names and units when ``simulated``.
 
-    The CAN port is given at run time (``--piperconnection.can-port can0``).
+    The CAN port is given at run time (``--piperconnection.can-port can0``). The
+    real arm can be swapped at launch for a ``MockJointConnection`` with the same
+    joints: ``--choice arm=mock``.
     """
     if not simulated:
-        return PiperConnection.blueprint(gripper=True)
+        real = PiperConnection.blueprint(gripper=True).remappings(_command_port(PiperConnection))
+        declaration = piper_declaration()
+        mock = MockJointConnection.blueprint(
+            source=declaration.source,
+            model=declaration.model,
+            joint_commands=declaration.joint_commands,
+        ).remappings(_command_port(MockJointConnection))
+        return autoconnect(
+            ChoiceAtom(name="arm", default="real", choices={"real": real, "mock": mock})
+        )
     # mujoco is optional; import it only when a blueprint runs the sim.
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
@@ -73,19 +85,18 @@ def piper_arm(*, simulated: bool) -> Blueprint | MetaBlueprint:
             dof=PIPER_DOF,
             reset_joint_positions=_SIM_START_JOINTS,
         ),
-    )
+    ).remappings(_command_port(MujocoArmConnection))
 
 
-def piper_remaps(
-    coordinator: type[ModuleBase], *, simulated: bool
-) -> list[tuple[type[ModuleBase], str, str]]:
-    """The ports of ``piper_arm(simulated=...)``, onto ``coordinator``'s ports for
-    the robot named "arm": ``arm_position_command`` and ``arm_joint_state``."""
-    connection = MujocoArmConnection if simulated else PiperConnection
-    return [
-        (connection, "position_command", "arm_position_command"),
-        (coordinator, "arm_joint_state", "joint_state"),
-    ]
+def _command_port(connection: type[ModuleBase]) -> list[tuple[type[ModuleBase], str, str]]:
+    """The connection's joint targets, onto the coordinator's ``arm_position_command``."""
+    return [(connection, "position_command", "arm_position_command")]
+
+
+def piper_remaps(coordinator: type[ModuleBase]) -> list[tuple[type[ModuleBase], str, str]]:
+    """``coordinator``'s readings of the robot named "arm", from the connection's
+    ``joint_state``; ``piper_arm`` wires the joint targets itself."""
+    return [(coordinator, "arm_joint_state", "joint_state")]
 
 
 class PiperCoordinator(ControlCoordinator):
@@ -103,4 +114,4 @@ coordinator_piper = autoconnect(
         tasks=[joint_trajectory_task(PIPER_JOINTS)],
     ),
     piper_arm(simulated=SIMULATED),
-).remappings(piper_remaps(PiperCoordinator, simulated=SIMULATED))
+).remappings(piper_remaps(PiperCoordinator))

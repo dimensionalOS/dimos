@@ -94,7 +94,7 @@ class PiperWebXRCoordinator(TeleopControlCoordinator):
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
 # With --simulation the Piper runs in MuJoCo; otherwise the CAN port is given at
-# run time (--piperconnection.can-port can0).
+# run time (--piperconnection.can-port can0), or --choice arm=mock runs without one.
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
     PiperKeyboardCoordinator.blueprint(
@@ -127,7 +127,7 @@ keyboard_teleop_piper = autoconnect(
         visualization={"backend": "viser"},
     ),
     piper_arm(simulated=SIMULATED),
-).remappings(piper_remaps(PiperKeyboardCoordinator, simulated=SIMULATED))
+).remappings(piper_remaps(PiperKeyboardCoordinator))
 
 
 def _cartesian_ik_task() -> TaskConfig:
@@ -167,7 +167,7 @@ coordinator_cartesian_ik_mock = autoconnect(
 )
 
 # With --simulation the Piper runs in MuJoCo; otherwise the CAN port is given at
-# run time (--piperconnection.can-port can0).
+# run time (--piperconnection.can-port can0), or --choice arm=mock runs without one.
 coordinator_teleop_piper = autoconnect(
     PiperWebXRCoordinator.blueprint(
         instance_name="ControlCoordinator",
@@ -194,7 +194,7 @@ coordinator_teleop_piper = autoconnect(
         visualization={"backend": "viser"},
     ),
     piper_arm(simulated=SIMULATED),
-).remappings(piper_remaps(PiperWebXRCoordinator, simulated=SIMULATED))
+).remappings(piper_remaps(PiperWebXRCoordinator))
 
 # On the Piper at CAN port can0, unless given another (--piperconnection.can-port).
 coordinator_cartesian_ik_piper = autoconnect(
@@ -204,7 +204,12 @@ coordinator_cartesian_ik_piper = autoconnect(
         tasks=[_cartesian_ik_task()],
     ),
     PiperConnection.blueprint(gripper=True, can_port="can0"),
-).remappings(piper_remaps(PiperPoseCoordinator, simulated=False))
+).remappings(
+    [
+        (PiperConnection, "position_command", "arm_position_command"),
+        *piper_remaps(PiperPoseCoordinator),
+    ]
+)
 
 
 class PiperTwistCoordinator(ArmTwistCoordinator):
@@ -216,8 +221,8 @@ class PiperTwistCoordinator(ArmTwistCoordinator):
     arm_joint_state: In[JointState]
 
 
-# The connection module's ports, onto the coordinator's ports for the robot named "arm".
-_ARM_REMAPS = piper_remaps(PiperTwistCoordinator, simulated=False)
+# The coordinator's readings of the robot named "arm", from the connection.
+_ARM_REMAPS = piper_remaps(PiperTwistCoordinator)
 
 
 def _teleop() -> MetaBlueprint:

@@ -16,7 +16,7 @@ import platform
 import runpy
 import sys
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, cast, get_type_hints
 
 import pytest
 
@@ -26,6 +26,8 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
     )
 
+from dimos.control.connection.connection_module import ConnectionModule
+from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.limits import limits, movable_joints
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
@@ -160,6 +162,37 @@ def test_simulation_runs_the_arm_and_gripper_in_mujoco(
     assert connection.kwargs["gripper_joint"] == "arm/drive_joint"
     # The sim finds the gripper only in a scene joint past its dof.
     assert sim.kwargs["dof"] == len(movable_joints(connection.kwargs["model"])) - 1
+
+
+@pytest.mark.parametrize(
+    ("choices", "connection", "overrides"),
+    [
+        ({}, XArmConnection, {"xarmconnection": {"ip": "192.0.2.1"}}),
+        ({"arm": "mock"}, MockJointConnection, {}),
+    ],
+)
+def test_arm_choice_runs_the_real_arm_or_a_mock_with_its_joints(
+    choices: dict[str, str], connection: type[ConnectionModule], overrides: dict[str, Any]
+) -> None:
+    blueprint = keyboard_teleop_xarm7.solidify(choices=choices)
+    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
+    coordinator = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    (arm,) = [atom for atom in blueprint.blueprints if issubclass(atom.module, ConnectionModule)]
+    declared = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name))
+    driver = get_type_hints(connection)["config"].model_validate(parsed.module_kwargs(arm.name))
+
+    assert arm.module is connection
+    assert limits(driver) == limits(declared.connections[0])
+    assert list(limits(driver)) == [
+        *(f"arm/joint{i}/position" for i in range(1, 8)),
+        "arm/drive_joint/position",
+    ]
+    ports = ("position_command", "velocity_command", "joint_state")
+    assert [blueprint.remapping_map[(arm.name, port)] for port in ports] == [
+        f"arm_{port}" for port in ports
+    ]
 
 
 @pytest.mark.parametrize("blueprint", [xarm6_teleop.solidify(), xarm7_teleop.solidify()])

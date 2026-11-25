@@ -28,8 +28,9 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators._modeling import joint_names
@@ -90,6 +91,9 @@ def xarm_connection(
     and ``<robot>_joint_state``. Joints are named ``<robot>/joint1`` ... and
     ``<robot>/drive_joint``.
 
+    A real arm without an ``instance_name`` can be swapped at launch for a
+    ``MockJointConnection`` with the same joints: ``--choice arm=mock``.
+
     Args:
         arm: Which arm, e.g. "xarm7".
         robot: The robot's name in front of each joint name.
@@ -123,35 +127,43 @@ def xarm_connection(
         "joint_commands": declaration.joint_commands,
         **({"instance_name": instance_name} if instance_name else {}),
     }
-    connection: Blueprint | MetaBlueprint
     if simulated:
         # mujoco is optional; import it only when a blueprint runs the sim.
         from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-        cls: type[XArmConnection] | type[MujocoArmConnection] = MujocoArmConnection
         if sim_module_kwargs is None:
             sim_module_kwargs = {
                 "address": str(XARM_SIM_SCENES[arm]),
                 "headless": False,
                 "dof": XARM_ARMS[arm][0],
             }
-        connection = autoconnect(
+        sim = autoconnect(
             MujocoArmConnection.blueprint(**fields, gripper_joint=f"{robot}/drive_joint"),
             MujocoSimModule.blueprint(**sim_module_kwargs),
         )
-    else:
-        cls = XArmConnection
-        connection = XArmConnection.blueprint(
-            arm=arm, gripper="xarm" if gripper else None, **fields
-        )
-    module: type[XArmConnection] | type[MujocoArmConnection] | str = instance_name or cls
-    return declaration, connection.remappings(
-        [
-            (module, "position_command", f"{robot}_position_command"),
-            (module, "velocity_command", f"{robot}_velocity_command"),
-            (module, "joint_state", f"{robot}_joint_state"),
-        ]
+        return declaration, sim.remappings(_arm_ports(instance_name or MujocoArmConnection, robot))
+    real = XArmConnection.blueprint(
+        arm=arm, gripper="xarm" if gripper else None, **fields
+    ).remappings(_arm_ports(instance_name or XArmConnection, robot))
+    if instance_name:
+        return declaration, real
+    mock = MockJointConnection.blueprint(**fields).remappings(
+        _arm_ports(MockJointConnection, robot)
     )
+    return declaration, autoconnect(
+        ChoiceAtom(name="arm", default="real", choices={"real": real, "mock": mock})
+    )
+
+
+def _arm_ports(
+    module: type[ModuleBase] | str, robot: str
+) -> list[tuple[type[ModuleBase] | str, str, str]]:
+    """A connection's ports, onto the coordinator's ports for the robot named ``robot``."""
+    return [
+        (module, "position_command", f"{robot}_position_command"),
+        (module, "velocity_command", f"{robot}_velocity_command"),
+        (module, "joint_state", f"{robot}_joint_state"),
+    ]
 
 
 def xarm_coordinator(
@@ -171,7 +183,7 @@ def xarm_coordinator(
     Joints are named ``arm/joint1`` ... and ``arm/drive_joint``; a planner or IK
     task uses a model from ``make_xarm_model_config(..., robot="arm")``. The
     arm's address is given at run time (``--xarmconnection.ip 192.168.1.185``
-    or ``XARMCONNECTION__IP``).
+    or ``XARMCONNECTION__IP``); ``--choice arm=mock`` runs without an arm.
 
     Args:
         arm: Which arm, e.g. "xarm7".
