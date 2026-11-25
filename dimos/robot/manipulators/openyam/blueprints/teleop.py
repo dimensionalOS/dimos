@@ -34,6 +34,10 @@ from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+from dimos.robot.manipulators.openyam.trimode_connection import TrimodeConnection, declaration
+from dimos.robot.manipulators.openyam.trimode_coordinator import TrimodeCoordinator
+from dimos.robot.manipulators.openyam.trimode_quest import TrimodeQuest
+from dimos.robot.manipulators.openyam.trimode_tasks import QUEST_TIMEOUT
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -147,4 +151,34 @@ keyboard_teleop_openyam_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
     planner(model=_openyam_model, gripper_tasks={"manipulator": "arm_gripper"}),
     _twist_control([_eef_twist_task(priority=20), _gripper_task(), _trajectory_task(priority=10)]),
+)
+
+
+# Opt-in only: CAN selector and pinned local model path are required CLI configuration.
+openyam_trimode = (
+    autoconnect(
+        TrimodeQuest.blueprint(input_timeout_s=QUEST_TIMEOUT),
+        TrimodeCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[declaration(TrimodeConnection.robot.model)],
+        ),
+        TrimodeConnection.blueprint(**dict(declaration(TrimodeConnection.robot.model))),
+        ManipulationModule.blueprint(
+            model=_openyam_model,
+            gripper_tasks={"manipulator": "arm_gripper"},
+            kinematics=OPENYAM_QUEST_KINEMATICS,
+            visualization={"backend": "viser"},
+        ),
+    )
+    .remappings(
+        [
+            (TrimodeQuest, "right_controller_output", "right_cartesian_command"),
+            (TrimodeCoordinator, "arm_joint_state", "joint_state"),
+            (TrimodeConnection, "position_command", "arm_position_command"),
+            (TrimodeConnection, "joint_reference", "arm_joint_reference"),
+            (TrimodeConnection, "tcp_pose", "arm_tcp_pose"),
+            (TrimodeConnection, "tcp_position", "arm_tcp_position"),
+        ]
+    )
+    .global_config(viewer="none", build_native=False)
 )

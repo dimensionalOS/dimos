@@ -590,19 +590,22 @@ class DamiaoConnection(ConnectionModule):
                     reading = self._read_state()
                 if self._stop_reading.is_set():
                     return
-                self.joint_state.publish(
-                    JointState(
-                        ts=time.time(),
-                        frame_id=self._state_frame,
-                        name=[f"{self.config.source}/{name}" for name in self.joint_names],
-                        position=reading.position,
-                        velocity=reading.velocity,
-                        effort=reading.effort,
-                    )
-                )
+                self._publish_reading(reading)
             except Exception as error:
                 with self._hardware_lock:
                     if self._fault is None:
                         self._feedback_failed(error)
                 return
             self._stop_reading.wait(max(0.0, period - (time.monotonic() - started)))
+
+    def _publish_reading(self, reading: ArmReading) -> None:
+        self.joint_state.publish(
+            JointState(
+                ts=time.time(),
+                frame_id=self._state_frame,
+                name=[f"{self.config.source}/{name}" for name in self.joint_names],
+                position=reading.position,
+                velocity=reading.velocity,
+                effort=reading.effort,
+            )
+        )

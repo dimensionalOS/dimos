@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import BeforeValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
+from dimos.control.group_command import GroupCommandOutput
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -267,7 +268,7 @@ class JointTrajectoryTask(BaseControlTask):
         """Check if task should run this tick."""
         return self._state == TrajectoryState.EXECUTING
 
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+    def compute(self, state: CoordinatorState) -> JointCommandOutput | GroupCommandOutput | None:
         """Compute trajectory output for this tick.
 
         CRITICAL: Uses state.t_now for timing, NOT time.time()!
