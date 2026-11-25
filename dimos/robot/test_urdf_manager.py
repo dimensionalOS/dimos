@@ -747,7 +747,7 @@ def test_two_namespaced_copies_of_one_class_are_two_different_mounts() -> None:
 def test_a_blueprint_the_config_parser_flattened_still_names_its_instance() -> None:
     from dimos.core.coordination.blueprint_config.values import plain
 
-    flattened = plain(_FakeArm.blueprint(frame_id_prefix="left").namespace("left"))
+    flattened = plain(_FakeArm.blueprint().namespace("left"))
     assert isinstance(flattened, dict), "the parser turns a pinned blueprint into a dict"
 
     mount = Mount.of(flattened)
@@ -840,13 +840,13 @@ def test_a_nested_namespace_carries_the_whole_prefix() -> None:
     assert Mount.of(blueprint).frame_prefix == "fleet/robot0"
 
 
-def test_a_hand_set_frame_id_prefix_wins_over_the_namespace() -> None:
+def test_a_hand_set_frame_id_prefix_goes_under_the_namespace() -> None:
     blueprint = _FakeArm.blueprint(frame_id_prefix="custom").namespace("left")
 
     mount = Mount.of(blueprint)
 
     assert mount.remote_name == "left/_fakearm"
-    assert mount.frame_prefix == "custom"
+    assert mount.frame_prefix == "left/custom"
 
 
 @pytest.mark.parametrize(

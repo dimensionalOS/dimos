@@ -98,8 +98,10 @@ class Mount:
 
     @classmethod
     def of(cls, value: object) -> Mount:
-        from dimos.core.coordination.blueprints import Blueprint
+        from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 
+        if isinstance(value, MetaBlueprint):
+            value = value.solidify()
         if isinstance(value, Mount):
             return value
         if isinstance(value, Mapping) and "remote_name" in value:
@@ -134,7 +136,7 @@ class Mount:
         return cls(
             atoms[0].module,
             atoms[0].name,
-            atoms[0].kwargs.get("frame_id_prefix") or "",
+            _frame_prefix(atoms[0].name, atoms[0].kwargs.get("frame_id_prefix")),
             subtree_rpc=cls._tree_rpc(atoms[0].module),
         )
 
@@ -153,13 +155,20 @@ class Mount:
         return cls(
             atoms[0]["module"],
             atoms[0]["instance_name"],
-            (atoms[0].get("kwargs") or {}).get("frame_id_prefix") or "",
+            _frame_prefix(
+                atoms[0]["instance_name"], (atoms[0].get("kwargs") or {}).get("frame_id_prefix")
+            ),
             subtree_rpc=cls._tree_rpc(atoms[0]["module"]),
         )
 
     @staticmethod
     def _tree_rpc(module: type[ModuleBase]) -> str:
         return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
+
+
+def _frame_prefix(instance_name: str, own_prefix: str | None) -> str:
+    """The prefix the mounted module puts on its frames, as ``ModuleBase.frame_id_prefix`` builds it."""
+    return "/".join(part for part in (instance_name.rpartition("/")[0], own_prefix) if part)
 
 
 class UrdfManagerConfig(ModuleConfig):
