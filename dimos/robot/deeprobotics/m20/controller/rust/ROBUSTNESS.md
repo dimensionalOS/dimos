@@ -100,12 +100,21 @@ At a zero command the policies' wheel targets carry a common-mode bias, so rl_de
 cancel_wheel_drift`): while the operator's command and the runner's ramped command are both zero the four wheel
 targets' mean is subtracted, the differential kept for balance (`tests/drift.rs`): 15 s still on 0x3003 / 0x3005 /
 0x1004 moves 1.6-18 mm (under 1 mm/s); a 0.2 m/s shove rolls 3 cm and stops; after a 0.5 m/s walk the hold moves 6 mm;
-a command from rest starts as rl_deploy's does (within 5 mm/s at every instant). The wheel position hold (`hold_kp`)
-is off: in the sim at kp 3 standing on a 10-15 deg slope facing up it moved 2-4 cm where none moved 1 cm without it;
-across a 15 deg slope it cut basic_stair's 18 cm slide to 3 cm (navi_flat 6 -> 0.5 cm) (`slope_hold_probe`).
+a command from rest starts as rl_deploy's does (within 5 mm/s at every instant).
+
+On a slope the wheels, velocity-only (kp 0), roll with any along-heading gravity: across 15 deg basic_stair rolled
+10-23 cm in 15 s, navi_flat 20-38, navi_orienteer 15-21 (sim). Ours (`hold_kp`, `hold = "common"`): at the same zero
+command the 4 wheels' mean position springs back (kp 10) to where it was when the command stopped, the differential
+left to the policy; every rolling gait (0x1001 / 1002 / 3003 / 1004 / 3002 / 3005 / 5001) moves under 1.2 cm in 15 s
+across 10-15 deg and facing up 15 deg (`a_zero_command_holds_on_a_slope`), and a command on the slope starts as it does
+without the hold. A hold of each wheel or of each side made navi_flat / basic_plat slide or turn 1-10 cm. These sims
+use MuJoCo's noslip contact: its default soft contact lets a held wheel creep 4 cm in 15 s on 15 deg with no
+controller at all (the earlier "the hold is worse facing up" was that creep). navi_charge (a stepping phase at zero
+command) is left as rl_deploy runs it (`off_runners`: the cancel made it slide 23 cm on flat, 3 without); extre's zero
+command rolls 0.2-2.7 m with or without either and the hold made it worse (`no_hold_runners`).
 
 ## Not covered
 
 Steps, stairs and gaps (all flat or sloped ground), payloads, IMU / joint noise and bus dropouts, the real robot's
-numbers for `still` and `settle_*`, docking during these events, recovery after a fall, the hardware e-stop, and the
-policies' own drift at zero cmd_vel across a slope (basic_stair slides 18 cm in 15 s across 15 deg).
+numbers for `still` and `settle_*`, docking during these events, recovery after a fall, the hardware e-stop, and
+extre's (0x2001-0x2004) roll at zero cmd_vel (0.2 m in 15 s on flat, up to 2.7 m across 15 deg in the sim).

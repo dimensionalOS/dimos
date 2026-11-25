@@ -61,6 +61,8 @@ class Terrain:
     # slope: the ground tilted by slope_deg about the axis slope_yaw_deg turns from world y (0: uphill along +x)
     slope_deg: float = 0.0
     slope_yaw_deg: float = 0.0
+    # MuJoCo's noslip passes (0: off): a held wheel's soft contact creeps several cm in 15 s on a 15 deg slope, 0 with these
+    noslip_iterations: int = 0
 
 
 def terrain_xml(t: Terrain) -> str:
@@ -149,6 +151,7 @@ class World:
         xml = xml.replace("</worldbody>", terrain_xml(self.terrain) + "\n</worldbody>", 1)
         self.model = mujoco.MjModel.from_xml_string(xml)
         self.model.opt.timestep = 0.001
+        self.model.opt.noslip_iterations = self.terrain.noslip_iterations
         self.data = mujoco.MjData(self.model)
         self.torque_lo = self.model.actuator_ctrlrange[:, 0].copy()
         self.torque_hi = self.model.actuator_ctrlrange[:, 1].copy()

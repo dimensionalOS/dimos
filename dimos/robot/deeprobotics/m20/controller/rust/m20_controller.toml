@@ -179,10 +179,18 @@ overheat = { rest_c = 70.0, abort_motor_c = 100.0, abort_driver_c = 90.0, still_
 
 # ours (rl_deploy: none): at a zero operator and ramped command the policies' wheel targets carry a common-mode bias
 # (sim: basic_stair +0.04 m/s, navi_orienteer +0.06, basic_backknee +0.09, navi_flat +0.03), so the robot creeps; its
-# mean is subtracted (the differential stays for balance), and with hold_kp > 0 the wheels are held where they were
+# mean is subtracted (the differential stays for balance). The wheels are velocity-only (kp 0), so on a slope any
+# along-heading gravity rolls them: sim (noslip contact), 15 deg across, basic_stair 10-23 cm in 15 s, navi_flat 20-38,
+# navi_orienteer 15-21; hold_kp springs the 4 wheels' mean position back to where it was at the stop (sim-tuned: 10
+# keeps every rolling gait under 1.2 cm at 10-15 deg across and facing up, 3 under 1.7; "wheels" / "sides" hold more
+# and made navi_flat / basic_plat slide or turn 1-10 cm). navi_charge (a stepping phase) slides 23 cm on flat with the
+# cancel, 3 without; extre's zero command rolls 0.2-2.7 m with or without either and the hold made it worse (sim)
 [states.rl_control.zero_command]
 cancel_wheel_drift = true
-hold_kp = 0.0
+hold_kp = 10.0
+hold = "common"
+off_runners = ["navi_charge"]
+no_hold_runners = ["extre"]
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner

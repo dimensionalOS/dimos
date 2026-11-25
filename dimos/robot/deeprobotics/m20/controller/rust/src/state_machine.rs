@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
-use crate::config::{tile, Config, Robot, StandIn, JOINTS};
+use crate::config::{tile, Config, Robot, StandIn, WheelHold, JOINTS};
 use crate::policy::{PolicyRequest, PolicyService};
 use crate::runner::Targets;
 use crate::types::{roll_pitch, JointCommand, RobotState, Target, UserCommand};
@@ -1524,10 +1524,10 @@ impl Controller {
         runner: &str,
         c: &mut JointCommand,
     ) {
-        let zc = self.cfg.states.rl_control.zero_command.clone();
+        let zc = &self.cfg.states.rl_control.zero_command;
         let operator_zero = self.axes_for(runner, cmd).iter().all(|a| *a == 0.0);
         let ramped_zero = self.targets.as_ref().is_some_and(|t| t.command_zero);
-        if !(operator_zero && ramped_zero) {
+        if !(operator_zero && ramped_zero) || zc.off_runners.iter().any(|r| r == runner) {
             self.wheel_hold = None;
             return;
         }
@@ -1538,13 +1538,23 @@ impl Controller {
                 c.dq[i] -= mean;
             }
         }
-        if zc.hold_kp > 0.0 {
+        if zc.hold_kp > 0.0 && !zc.no_hold_runners.iter().any(|r| r == runner) {
             let held = *self
                 .wheel_hold
                 .get_or_insert_with(|| std::array::from_fn(|k| s.q[3 + 4 * k]));
-            for (k, &i) in wheels.iter().enumerate() {
-                c.kp[i] = zc.hold_kp;
-                c.q[i] = held[k];
+            // wheels fl, fr, hl, hr: the groups whose mean position is held
+            let groups: &[&[usize]] = match zc.hold {
+                WheelHold::Wheels => &[&[0], &[1], &[2], &[3]],
+                WheelHold::Sides => &[&[0, 2], &[1, 3]],
+                WheelHold::Common => &[&[0, 1, 2, 3]],
+            };
+            for group in groups {
+                let n = group.len() as f64;
+                let error = group.iter().map(|&k| held[k] - s.q[wheels[k]]).sum::<f64>() / n;
+                for &k in *group {
+                    c.kp[wheels[k]] = zc.hold_kp;
+                    c.q[wheels[k]] = s.q[wheels[k]] + error;
+                }
             }
         }
     }

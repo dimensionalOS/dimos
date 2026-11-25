@@ -318,6 +318,25 @@ pub struct ZeroCommand {
     pub cancel_wheel_drift: bool,
     /// the wheels held at their positions there with this kp (0: no hold)
     pub hold_kp: f64,
+    /// what hold_kp holds: each wheel, each side's mean, or the 4 wheels' mean
+    #[serde(default)]
+    pub hold: WheelHold,
+    /// runners left as rl_deploy runs them (no cancel, no hold)
+    #[serde(default)]
+    pub off_runners: Vec<String>,
+    /// runners that get the cancel but not the hold
+    #[serde(default)]
+    pub no_hold_runners: Vec<String>,
+}
+
+/// The wheel positions zero_command's hold springs back to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WheelHold {
+    #[default]
+    Wheels,
+    Sides,
+    Common,
 }
 
 /// Ours (ROBUSTNESS.md): bridged switches, a still body before a switch or lie-down, a target blend.

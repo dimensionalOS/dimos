@@ -13,7 +13,8 @@
 // limitations under the License.
 
 //! Zero-command drift (ROBUSTNESS.md "Drift") against the MuJoCo sim: standing at a zero command the robot stays put
-//! with zero_command on and creeps with rl_deploy's behavior; a shove, a stop from walking and a start from rest.
+//! with zero_command on and creeps with rl_deploy's behavior; a shove, a stop from walking and a start from rest; the
+//! same on 10-15 deg slopes, across and facing up, in every rolling gait.
 //! Needs the extracted policies and a sim Python (M20_SIM_PYTHON); skips otherwise.
 
 mod common;
@@ -254,26 +255,75 @@ fn a_command_from_rest_starts_at_once() {
     }
 }
 
-/// Probe (ROBUSTNESS.md "Drift"): drift standing on a slope, wheel hold off and at kp 3.
+/// A zero-command hold on a slope (noslip contact: MuJoCo's soft contact creeps a held wheel cm on its own).
+fn on_slope(gait: u32, deg: f64, yaw: f64) -> Plan {
+    let mut plan = hold(gait);
+    plan.terrain = serde_json::json!({
+        "kind": "slope", "slope_deg": deg, "slope_yaw_deg": yaw, "noslip_iterations": 10
+    });
+    plan
+}
+
+/// The gaits that roll on their wheels (navi_charge's stepping phase and extre: ROBUSTNESS.md "Drift").
+const ROLLING: [u32; 7] = [0x1001, 0x1002, 0x3003, 0x1004, 0x3002, 0x3005, 0x5001];
+
+/// 15 s of zero command across a 10 / 15 deg slope (either side) and facing up 15 deg: under 2 cm in every gait.
 #[test]
-#[ignore]
-fn slope_hold_probe() {
-    for kp in [0.0, 3.0] {
-        for (deg, yaw) in [(10.0, 0.0), (15.0, 0.0), (15.0, 90.0)] {
-            for gait in [0x3003, 0x1001, 0x3002] {
-                let mut cfg = common::config();
-                cfg.states.rl_control.zero_command.hold_kp = kp;
-                let mut plan = hold(gait);
-                plan.terrain =
-                    serde_json::json!({"kind": "slope", "slope_deg": deg, "slope_yaw_deg": yaw});
-                let Some(trace) = run(&cfg, &plan) else {
-                    return;
-                };
-                let (dx, vx) = drift(&trace, 5.0, 20.0);
-                println!(
-                    "PROBE kp {kp} slope {deg} yaw {yaw} {gait:#x}: moved {dx:.3} m, |vx| {vx:.4}"
-                );
+fn a_zero_command_holds_on_a_slope() {
+    let cfg = common::config();
+    let mut worst = Vec::new();
+    for (deg, yaw) in [(10.0, 90.0), (15.0, 90.0), (15.0, -90.0), (15.0, 0.0)] {
+        for gait in ROLLING {
+            let Some(trace) = run(&cfg, &on_slope(gait, deg, yaw)) else {
+                return;
+            };
+            let (dx, _) = drift(&trace, 5.0, 20.0);
+            println!("slope {deg} yaw {yaw} {gait:#x}: moved {dx:.4} m");
+            if dx >= 0.02 {
+                worst.push(format!("slope {deg} yaw {yaw} {gait:#x}: {dx:.3} m"));
             }
         }
+    }
+    assert!(worst.is_empty(), "slid: {worst:?}");
+}
+
+/// Without the hold the same side-slope stand rolls (what the hold stops).
+#[test]
+fn without_the_hold_a_side_slope_rolls() {
+    let mut cfg = common::config();
+    cfg.states.rl_control.zero_command.hold_kp = 0.0;
+    let Some(trace) = run(&cfg, &on_slope(0x3003, 15.0, 90.0)) else {
+        return;
+    };
+    let (dx, _) = drift(&trace, 5.0, 20.0);
+    println!("no hold, 0x3003 across 15 deg: moved {dx:.3} m");
+    assert!(dx > 0.05, "moved {dx:.3} m");
+}
+
+/// From rest on a side slope a command starts the robot at once: the hold lets go on the command's first tick.
+#[test]
+fn a_command_on_a_slope_starts_at_once() {
+    let mut plan = on_slope(0x3003, 15.0, 90.0);
+    plan.axes = vec![(10.0, [0.25, 0.0, 0.0])];
+    plan.seconds = 12.0;
+    let ours = common::config();
+    let mut no_hold = ours.clone();
+    no_hold.states.rl_control.zero_command.hold_kp = 0.0;
+    let (Some(a), Some(b)) = (run(&ours, &plan), run(&no_hold, &plan)) else {
+        return;
+    };
+    let vx = |tr: &[(f64, Truth)], t: f64| tr.iter().find(|(s, _)| *s >= t).unwrap().1.velocity[0];
+    for t in [10.6, 11.0, 11.9] {
+        println!(
+            "t {t}: hold {:+.3} no hold {:+.3} m/s",
+            vx(&a, t),
+            vx(&b, t)
+        );
+        assert!(
+            (vx(&a, t) - vx(&b, t)).abs() < 0.08,
+            "at {t}: {:.3} vs {:.3}",
+            vx(&a, t),
+            vx(&b, t)
+        );
     }
 }
