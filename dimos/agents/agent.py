@@ -345,10 +345,11 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             if self._state_graph is None or self._stop_event.is_set():
                 raise RuntimeError("Agent is not running; it starts with the blueprint")
             turn = self._process_message(self._state_graph, x)
-        answer = next(m for m in reversed(turn) if isinstance(m, AIMessage))
-        if TURN_FAILED_KEY in answer.additional_kwargs:
-            raise RuntimeError(str(answer.text))
-        return answer
+        answers = [m for m in turn if isinstance(m, AIMessage)]
+        failed = [m for m in answers if TURN_FAILED_KEY in m.additional_kwargs]
+        if failed or not answers:
+            raise RuntimeError(str(failed[0].text) if failed else "The turn produced no answer")
+        return answers[-1]
 
     @rpc
     def dispatch_continuation(

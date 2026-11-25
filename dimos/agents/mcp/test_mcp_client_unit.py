@@ -651,27 +651,216 @@ def test_infer_called_during_a_turn_raises_once_the_agent_stops(
     assert len(running_agent._history) == 2
 
 
-def test_infer_answers_after_the_image_its_tool_returned(
+def _image(label: str) -> dict[str, Any]:
+    return {"type": "image_url", "image_url": {"url": label}}
+
+
+def _blocks(message: BaseMessage) -> Any:
+    """The content blocks of an image message: [text, image]."""
+    return message.content
+
+
+class _CameraGraph:
+    """A model whose tools return images.
+
+    A question makes each tool in `looks[question]` return its images; the model then
+    answers "pending". Each image arrives as its own message and is answered "saw <label>".
+    An image in `chain` makes one more tool call, and one in `broken` fails its model call.
+    """
+
+    def __init__(
+        self,
+        agent: Agent,
+        looks: dict[str, list[tuple[str, list[str]]]],
+        chain: dict[str, str] | None = None,
+        broken: tuple[str, ...] = (),
+    ) -> None:
+        self.agent, self.looks, self.chain, self.broken = agent, looks, chain or {}, broken
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        last = state["messages"][-1]
+        if TOOL_ORIGIN_KEY not in last.additional_kwargs:
+            for tool, labels in self.looks.get(str(last.content), []):
+                for label in labels:
+                    _append_image_to_history(self.agent, tool, label, _image(label))
+            yield {"model": {"messages": [AIMessage(content="pending")]}}
+            return
+        label = _blocks(last)[1]["image_url"]["url"]
+        if label in self.broken:
+            raise RuntimeError(f"cannot read {label}")
+        if label in self.chain:
+            _append_image_to_history(
+                self.agent, "zoom", self.chain[label], _image(self.chain[label])
+            )
+        yield {"model": {"messages": [AIMessage(content=f"saw {label}")]}}
+
+
+def _transcript(agent: Agent) -> list[str]:
+    """The history as short strings: questions, answers, and "<tool>:<label>" for images."""
+    lines = []
+    for message in agent._history:
+        if TOOL_ORIGIN_KEY in message.additional_kwargs:
+            url = _blocks(message)[1]["image_url"]["url"]
+            lines.append(f"{message.additional_kwargs[TOOL_ORIGIN_KEY]}:{url}")
+        else:
+            lines.append(str(message.content))
+    return lines
+
+
+@pytest.mark.parametrize(
+    "looks, chain, answer, transcript",
+    [
+        pytest.param(
+            [("look", ["a"])], {}, "saw a", ["q", "pending", "look:a", "saw a"], id="one image"
+        ),
+        pytest.param(
+            [("look", ["a", "b", "c"])],
+            {},
+            "saw c",
+            ["q", "pending", "look:a", "saw a", "look:b", "saw b", "look:c", "saw c"],
+            id="one tool, three images",
+        ),
+        pytest.param(
+            [("left", ["a"]), ("right", ["b"])],
+            {},
+            "saw b",
+            ["q", "pending", "left:a", "saw a", "right:b", "saw b"],
+            id="two tools in one turn",
+        ),
+        pytest.param(
+            [("look", ["a", "b"])],
+            {"a": "a2"},
+            "saw a2",
+            ["q", "pending", "look:a", "saw a", "look:b", "saw b", "zoom:a2", "saw a2"],
+            id="an image whose answer asks for another image",
+        ),
+        pytest.param([], {}, "pending", ["q", "pending"], id="no image"),
+    ],
+)
+def test_infer_answers_after_every_image_its_tools_returned(
+    running_agent: Agent,
+    monkeypatch: pytest.MonkeyPatch,
+    looks: list[tuple[str, list[str]]],
+    chain: dict[str, str],
+    answer: str,
+    transcript: list[str],
+) -> None:
+    monkeypatch.setattr(
+        running_agent, "_state_graph", _CameraGraph(running_agent, {"q": looks}, chain)
+    )
+
+    assert running_agent.infer(HumanMessage("q")).content == answer
+    assert _transcript(running_agent) == transcript
+    assert running_agent._message_queue.empty() and running_agent._artifacts == []
+
+
+def test_infer_raises_when_any_image_of_its_turn_fails(
     running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An image comes back as a follow-up message; infer answers once the model has seen it."""
+    graph = _CameraGraph(running_agent, {"q": [("look", ["a", "b"])]}, broken=("a",))
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
 
-    class _ImageGraph:
-        def stream(
-            self, state: dict[str, list[BaseMessage]], stream_mode: str
-        ) -> Iterator[dict[str, Any]]:
-            last = state["messages"][-1]
-            if TOOL_ORIGIN_KEY in last.additional_kwargs:
-                yield {"model": {"messages": [AIMessage(content="it is red")]}}
-            else:
-                _append_image_to_history(running_agent, "look", "u1", {"type": "image_url"})
-                yield {"model": {"messages": [AIMessage(content="no image yet")]}}
+    with pytest.raises(RuntimeError, match="cannot read a"):
+        running_agent.infer(HumanMessage("q"))
+    assert _transcript(running_agent)[-2:] == ["look:b", "saw b"], "b was still shown"
+    assert running_agent._artifacts == []
 
-    monkeypatch.setattr(running_agent, "_state_graph", _ImageGraph())
+    graph.broken = ()
+    assert running_agent.infer(HumanMessage("q")).content == "saw b"
 
-    assert running_agent.infer(HumanMessage("what colour?")).content == "it is red"
-    assert [m.text for m in running_agent._history if isinstance(m, AIMessage)] == [
-        "no image yet",
-        "it is red",
-    ]
-    assert running_agent._message_queue.empty() and running_agent._artifacts == []
+
+def test_infer_raises_when_the_turn_has_no_answer(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Silent:
+        def stream(self, state: Any, stream_mode: str) -> Iterator[dict[str, Any]]:
+            return iter(())
+
+    monkeypatch.setattr(running_agent, "_state_graph", _Silent())
+    with pytest.raises(RuntimeError, match="no answer"):
+        running_agent.infer(HumanMessage("q"))
+
+
+def test_concurrent_infer_calls_each_see_their_own_images(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    looks = {f"q{i}": [("look", [f"a{i}", f"b{i}"])] for i in range(10)}
+    monkeypatch.setattr(running_agent, "_state_graph", _CameraGraph(running_agent, looks))
+    answers: dict[str, str] = {}
+
+    def ask(question: str) -> None:
+        answers[question] = str(running_agent.infer(HumanMessage(question)).content)
+
+    callers = [Thread(target=ask, args=(question,)) for question in looks]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=10)
+
+    assert answers == {f"q{i}": f"saw b{i}" for i in range(10)}
+    lines = _transcript(running_agent)
+    for i in range(10):
+        at = lines.index(f"q{i}")
+        assert lines[at : at + 6] == [
+            f"q{i}", "pending", f"look:a{i}", f"saw a{i}", f"look:b{i}", f"saw b{i}"
+        ]  # fmt: skip
+
+
+def test_a_stream_turn_shows_its_images_before_the_next_message(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _CameraGraph(running_agent, {"q1": [("look", ["a", "b"])]})
+    held = Event()
+    stream = graph.stream
+
+    def hold_first(state: dict[str, list[BaseMessage]], stream_mode: str) -> Iterator[Any]:
+        held.wait(timeout=5)  # both messages are queued before the first turn runs
+        return stream(state, stream_mode)
+
+    monkeypatch.setattr(graph, "stream", hold_first)
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
+    events: list[str] = []
+    monkeypatch.setattr(
+        running_agent.agent_idle, "publish", lambda idle: events.append(f"idle={idle}")
+    )
+    monkeypatch.setattr(running_agent.agent, "publish", lambda m: events.append(_line(m)))
+
+    running_agent.add_message(HumanMessage("q1"))
+    running_agent.add_message(HumanMessage("q2"))
+    held.set()
+    wait_until(lambda: len(running_agent._history) == 8, timeout=5, interval=0.01)
+    wait_until(lambda: events[-1] == "idle=True", timeout=5, interval=0.01)
+
+    assert _transcript(running_agent) == [
+        "q1", "pending", "look:a", "saw a", "look:b", "saw b", "q2", "pending"
+    ]  # fmt: skip
+    assert "idle=True" not in events[: events.index("pending", events.index("q2"))]
+
+
+def _line(message: BaseMessage) -> str:
+    return "image" if TOOL_ORIGIN_KEY in message.additional_kwargs else str(message.content)
+
+
+def test_a_tool_result_with_several_images_queues_each_in_order(mcp_client: Agent) -> None:
+    """Through the real tool wrapper: text plus two images in one MCP result."""
+    images = [_image("a"), _image("b")]
+
+    def payload(body: dict[str, object]) -> dict[str, object]:
+        if body["method"] != "tools/call":
+            return _mock_payload(body)
+        content = [{"type": "text", "text": "two frames. "}, *images]
+        return {"jsonrpc": "2.0", "id": body["id"], "result": {"content": content}}
+
+    mcp_client._http_client = _mock_session(payload)
+    greet = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
+    assert greet.func is not None
+
+    reply = greet.func(name="Alice")
+
+    assert reply.startswith("two frames. ") and reply.count("Tool call started with UUID") == 2
+    assert [_blocks(m)[1] for m in mcp_client._artifacts] == images
+    for artifact in mcp_client._artifacts:
+        uuid_ = str(_blocks(artifact)[0]["text"]).split("UUID:=")[1].rstrip(".")
+        assert uuid_ in reply
