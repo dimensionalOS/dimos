@@ -68,8 +68,7 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
             # USD matrices are row-vector, so a direction maps through the upper 3x3 from the left.
             direction = np.array([0.0, 0.0, -1.0]) @ to_world[:3, :3]
             direction /= np.linalg.norm(direction)
-            # Blender 5.1 imports intensity I as sun strength E = 4·I (1 -> 4.0 at any angle), and Lambert sends back a·E/π.
-            irradiance = 4.0 * radiance / math.pi
+            irradiance = _sun_irradiance(UsdLux, prim, radiance) / math.pi
             spec.worldbody.add_light(
                 name=name,
                 type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
@@ -236,6 +235,16 @@ def _linear_image(path: Path) -> NDArray[np.float32] | None:
     return np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4).astype(
         np.float32
     )
+
+
+def _sun_irradiance(UsdLux: Any, prim: Any, radiance: np.ndarray) -> np.ndarray:
+    """A DistantLight's irradiance as Blender 5.1 imports and renders it, so a Lambert surface sends back a·E/π."""
+    light = UsdLux.DistantLight(prim)
+    # Measured in Blender 5.1: strength 4·I; unnormalized, that is the radiance of a disc of half-angle inputs:angle, so times π·sin²(angle).
+    if _value(light.GetNormalizeAttr(), False):
+        return 4.0 * radiance
+    half_angle = math.radians(_value(light.GetAngleAttr(), 0.53))
+    return 4.0 * radiance * math.pi * math.sin(half_angle) ** 2
 
 
 def _radiance(UsdLux: Any, light: Any) -> np.ndarray:

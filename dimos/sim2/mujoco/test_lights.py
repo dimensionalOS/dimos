@@ -43,6 +43,7 @@ LIGHTS = """
         color3f inputs:color = (1, 1, 0.5)
         float inputs:intensity = 3
         float inputs:exposure = 1
+        bool inputs:normalize = 1
         bool inputs:shadow:enable = 0
         float xformOp:rotateX = 90
         uniform token[] xformOpOrder = ["xformOp:rotateX"]
@@ -99,6 +100,7 @@ def test_a_stage_with_lights_is_lit_by_them_in_blenders_units_and_not_by_a_headl
     assert sky.ambient == pytest.approx(np.array([1, 0.5, 0.25]) * 2 * camera)
     assert sky.diffuse == pytest.approx([0, 0, 0])
 
+    # Normalized, Blender's sun strength is 4·I; the surface sends back a·E/π.
     assert sun.diffuse == pytest.approx(np.array([1, 1, 0.5]) * 3 * 2 * 4 / math.pi * camera)
     assert sun.specular == pytest.approx(sun.diffuse)
     assert sun.ambient == pytest.approx([0, 0, 0])
@@ -106,7 +108,9 @@ def test_a_stage_with_lights_is_lit_by_them_in_blenders_units_and_not_by_a_headl
     assert model.light_dir[sun.id] == pytest.approx([0, 1, 0], abs=1e-6)
 
     blackbody = np.array(UsdLux.BlackbodyTemperatureAsRgb(3000))
-    assert warm.diffuse == pytest.approx(blackbody * 4 / math.pi * camera, rel=1e-5)
+    # Not normalized, the strength is the radiance of a disc 2 x 0.53 degrees across (USD's default angle).
+    disc = math.pi * math.sin(math.radians(0.53)) ** 2
+    assert warm.diffuse == pytest.approx(blackbody * 4 * disc / math.pi * camera, rel=1e-5)
     assert warm.castshadow == 1, "a ShadowAPI light casts unless it says not to"
     assert model.light_dir[warm.id] == pytest.approx([0, 0, -1])
 
