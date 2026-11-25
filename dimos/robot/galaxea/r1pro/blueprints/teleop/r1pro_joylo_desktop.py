@@ -105,7 +105,7 @@ def _external_camera() -> Blueprint:
     )
 
 
-def make_joylo_desktop(*, recording: bool = False) -> MetaBlueprint:
+def make_joylo_desktop(*, recording: bool = False, impedance: bool = False) -> MetaBlueprint:
     """Hardware teleop: control and cameras on the robot, leaders and Joy-Cons here.
 
     Args:
@@ -129,14 +129,14 @@ def make_joylo_desktop(*, recording: bool = False) -> MetaBlueprint:
             make_joylo_real(
                 publish_odom_tf=True,
                 enable_wrist_color=True,
-                webxr=True,
+                webxr=not impedance,
+                impedance=impedance,
                 arm_rate=_ARM_RATE,
                 arm_ceiling=_ARM_CEILING,
                 tracking_speed=_TRACKING_SPEED,
             ),
             # Retarget beside feedback and IK, where headset poses arrive.
-            _webxr_blueprint(),
-            _webxr_joystick_blueprint(),
+            *([] if impedance else [_webxr_blueprint(), _webxr_joystick_blueprint()]),
             _vision,
         ).hosted(tags={"r1pro": True}),
         operator.hosted(local=True),
@@ -147,3 +147,5 @@ def make_joylo_desktop(*, recording: bool = False) -> MetaBlueprint:
 # autoconnect(...) is what the registry generator recognises as a runnable blueprint.
 r1pro_openarm_joylo_real = autoconnect(make_joylo_desktop())
 r1pro_openarm_joylo_collect = autoconnect(make_joylo_desktop(recording=True))
+
+r1pro_openarm_joylo_impedance = autoconnect(make_joylo_desktop(impedance=True))

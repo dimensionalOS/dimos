@@ -20,13 +20,18 @@ Starts paused. The existing vendor stack must be started and checked explicitly.
 
 import math
 
+from dimos.control.contract.limits import PD_INTERFACES
 from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import _wrist_cameras
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
     _camera_transports,
     _control_blueprint,
 )
-from dimos.robot.galaxea.r1pro.connection import R1ProConnection, R1ProConnectionConfig
+from dimos.robot.galaxea.r1pro.connection import (
+    R1ProConnection,
+    R1ProConnectionConfig,
+    _R1ProConnection,
+)
 from dimos.robot.galaxea.r1pro.joylo import ARMS, TORSO, JoyloConfig
 from dimos.robot.galaxea.r1pro.motion import motion_groups
 
@@ -48,6 +53,7 @@ def make_joylo_real(
     publish_odom_tf: bool = True,
     enable_wrist_color: bool = True,
     webxr: bool = False,
+    impedance: bool = False,
     arm_rate: float = 0.75,
     arm_ceiling: float = 1.0,
     tracking_speed: float = 1.0,
@@ -62,7 +68,25 @@ def make_joylo_real(
     declaration = _declaration.model_copy(
         update={"publish_odom_tf": publish_odom_tf, "tracking_speed": tracking_speed}
     )
-    connection: Blueprint | MetaBlueprint = R1ProConnection.blueprint(**declaration.model_dump())
+    arm_task = None
+    connection_type: type[_R1ProConnection] = R1ProConnection
+    if impedance:
+        from dimos.robot.galaxea.r1pro.impedance import joylo_impedance_task
+        from dimos.robot.galaxea.r1pro.wim_impedance import R1ProWimImpedanceConnection
+
+        arm_task = joylo_impedance_task(arm_rate)
+        declaration = declaration.model_copy(
+            update={
+                "joint_commands": {
+                    **declaration.joint_commands,
+                    **dict.fromkeys(ARMS, PD_INTERFACES),
+                },
+                "max_stiffness": arm_task.params["stiffness"],
+                "max_damping": arm_task.params["damping"],
+            }
+        )
+        connection_type = R1ProWimImpedanceConnection
+    connection: Blueprint | MetaBlueprint = connection_type.blueprint(**declaration.model_dump())
     if enable_wrist_color:
         # The connection no longer carries wrist video: each D405's colour comes
         # straight off V4L2 (640x480 JPEG at 30 fps), on the same stream names.
@@ -79,9 +103,10 @@ def make_joylo_real(
         )
     return _control_blueprint(
         connection,
-        R1ProConnection,
-        _declaration,
-        joylo=_profile.model_dump(),
+        connection_type,
+        declaration,
+        arm_impedance=arm_task,
+        joylo={**_profile.model_dump(), "release_arm_impedance_on_pause": impedance},
         motion_limits=motion_groups(arm_rate=arm_rate, arm_ceiling=arm_ceiling),
         velocity_limits={**dict.fromkeys(ARMS, 1.0), **dict.fromkeys(TORSO, 0.5)},
         webxr=webxr,

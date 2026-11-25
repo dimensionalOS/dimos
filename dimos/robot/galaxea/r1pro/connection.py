@@ -215,7 +215,7 @@ class R1ProConnectionConfig(ConnectionConfig):
     vendor_profile: str = Field(default="")
 
 
-class R1ProConnection(ConnectionModule):
+class _R1ProConnection(ConnectionModule):
     """R1 Pro connection module — ROS 2 control and sensor nodes.
 
     ``position_command`` carries all 18 upper-body joints' targets in rad,
@@ -227,10 +227,6 @@ class R1ProConnection(ConnectionModule):
     """
 
     config: R1ProConnectionConfig
-
-    # Control inputs.
-    position_command: In[JointState]
-    velocity_command: In[JointState]
 
     # Whole-body feedback.
     joint_state: Out[JointState]
@@ -349,20 +345,7 @@ class R1ProConnection(ConnectionModule):
                 *seen,
             )
 
-        self.register_disposable(
-            Disposable(
-                self.position_command.subscribe(
-                    lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
-                )
-            )
-        )
-        self.register_disposable(
-            Disposable(
-                self.velocity_command.subscribe(
-                    lambda msg: self.command(joint_state_to_values(msg, (Interface.VELOCITY,)))
-                )
-            )
-        )
+        self._subscribe_commands()
 
         self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
         self._publish_thread.start()
@@ -414,6 +397,9 @@ class R1ProConnection(ConnectionModule):
             self._odom_last_ts = None
 
     # The control contract
+
+    def _subscribe_commands(self) -> None:
+        raise NotImplementedError
 
     def write(self, values: Values) -> None:
         """Forward one checked command: joint targets to the three vendor
@@ -1009,3 +995,24 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         except queue.Full:
             pass
         return True
+
+
+class R1ProConnection(_R1ProConnection):
+    position_command: In[JointState]
+    velocity_command: In[JointState]
+
+    def _subscribe_commands(self) -> None:
+        self.register_disposable(
+            Disposable(
+                self.position_command.subscribe(
+                    lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+                )
+            )
+        )
+        self.register_disposable(
+            Disposable(
+                self.velocity_command.subscribe(
+                    lambda msg: self.command(joint_state_to_values(msg, (Interface.VELOCITY,)))
+                )
+            )
+        )
