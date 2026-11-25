@@ -865,6 +865,7 @@ def test_suites_and_agents_importable() -> None:
         "question_answer",
         "blind",
         "agent_adapter",
+        "base_agent_adapter",
         "pi",
         "dimcode",
         "dimos_agent",

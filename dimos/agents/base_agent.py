@@ -97,6 +97,11 @@ class BaseAgent(Module, Generic[I, O]):
         return _matches(cls.input_type, x)
 
     @rpc
+    def agent_types(self) -> tuple[Any, Any]:
+        """(input_type, output_type), for a caller that only holds a proxy to this agent."""
+        return self.input_type, self.output_type
+
+    @rpc
     def agent_transports(self) -> dict[str, Any]:
         """The transport of each chat stream this agent has, for a client outside the blueprint."""
         streams = ("agent_input", "agent_output", "agent", "agent_idle")
