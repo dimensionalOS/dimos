@@ -32,7 +32,7 @@ from dimos.sim2.sim import sim
 from dimos.visualization.vis_module import vis_module
 
 ROBOT = Logistics.mounts.go2
-SHARED = {"world_observations", "actions", "cmd_vel"}
+SHARED = {"cmd_vel"}
 
 unitree_go2_sim2_l1 = autoconnect(
     # Each backend comes with the Go2 it can move: joint-driven in MuJoCo, a kinematic base in DimSim.
@@ -55,6 +55,6 @@ unitree_go2_sim2_l1 = autoconnect(
     autoconnect(
         SimL1.mount(Go2Sim.mounts.l1),
         SimCamera.mount(Go2Sim.mounts.camera),
-    ).namespace(ROBOT, shared=SHARED - {"actions", "cmd_vel"}),
+    ).namespace(ROBOT),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")

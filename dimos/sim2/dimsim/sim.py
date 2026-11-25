@@ -50,7 +50,7 @@ class DimSimSim(Module):
     """The DimSim backend: one PhysicsBackend, its world run by DimSim's own engine."""
 
     config: DimSimSimConfig
-    actions: In[WorldAction]
+    world_actions: In[WorldAction]
     world_observations: Out[WorldObservations]
     render_file_request: In[String]
     file_info: Out[File]
@@ -62,7 +62,7 @@ class DimSimSim(Module):
         self._built = Event()
 
     async def main(self) -> AsyncIterator[None]:
-        self.actions.subscribe(self._on_actions)
+        self.world_actions.subscribe(self._on_actions)
         running = asyncio.create_task(until_it_stops("the world", self._run()))
         yield
         running.cancel()

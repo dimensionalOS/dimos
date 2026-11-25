@@ -114,7 +114,7 @@ class _Readings(Module):
         }
 
 
-SENSOR_STREAMS = {"world_observations", "color_image", "imu", "lidar", "livox_imu", "l1_lidar"}
+SENSOR_STREAMS = {"color_image", "imu", "lidar", "livox_imu", "l1_lidar"}
 
 
 def _run(seconds: float, speed: float) -> dict[str, Any]:

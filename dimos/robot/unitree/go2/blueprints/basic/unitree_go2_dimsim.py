@@ -38,6 +38,6 @@ unitree_go2_dimsim = autoconnect(
         SimKinematicBase.blueprint(usd=GO2_USD, mount=ROBOT, **GO2_TF_FRAMES),
         SimL1.mount(Go2Sim.mounts.l1),
         SimCamera.mount(Go2Sim.mounts.camera),
-    ).namespace(ROBOT, shared={"world_observations", "actions", "cmd_vel"}),
+    ).namespace(ROBOT, shared={"cmd_vel"}),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")

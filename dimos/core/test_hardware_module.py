@@ -22,7 +22,8 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
-from dimos.core.stream import Out
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.assets.model import RobotModel, UsdModel
 
@@ -275,24 +276,34 @@ def test_a_frame_id_prefix_names_the_usd_and_its_tf_alike() -> None:
     assert {frame for edge in edges for frame in edge} <= frames
 
 
-class SharedCamera(WristCamera):
-    mount_shared = frozenset({"color_image"})
-    color_image: Out[Image]
-
-
-def test_a_mount_keeps_its_shared_streams_outside_its_namespace() -> None:
-    blueprint = (
-        autoconnect(Arm.blueprint(), SharedCamera.mount(Arm.mounts.wrist))
-        .namespace("left", shared={"color_image"})
-        .solidify()
-    )
-    (camera,) = [atom for atom in blueprint.active_blueprints if atom.module is SharedCamera]
-    assert blueprint.remapping_map.get((camera.name, "color_image"), "color_image") == "color_image"
-
-
 def test_hardware_without_a_usd_is_refused() -> None:
     class Bare(HardwareModule):
         config: HardwareModuleConfig
 
     with pytest.raises(ValueError, match="usd"):
         Bare(instance_name="bare")
+
+
+class WorldReader(Module):
+    world_observations: In[Image]
+    world_actions: Out[Image]
+    color_image: Out[Image]
+
+
+def test_the_simulated_world_stays_global_under_any_namespace() -> None:
+    blueprint = WorldReader.blueprint().namespace("lidar").namespace("robot1")
+
+    for stream in ("world_observations", "world_actions"):
+        assert ("robot1/lidar/worldreader", stream) not in blueprint.remapping_map
+    assert (
+        blueprint.remapping_map[("robot1/lidar/worldreader", "color_image")]
+        == "robot1/lidar/color_image"
+    )
+
+
+def test_a_module_names_its_namespace_over_rpc() -> None:
+    reader = WorldReader(instance_name="robot1/lidar/worldreader")
+    try:
+        assert reader.get_namespace() == "robot1/lidar"
+    finally:
+        reader.stop()

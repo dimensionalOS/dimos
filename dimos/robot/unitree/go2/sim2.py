@@ -123,7 +123,7 @@ class Go2Sim(HardwareModule):
     world: SimulatedWorldSpec
     cmd_vel: In[Twist]
     world_observations: In[WorldObservations]
-    actions: Out[WorldAction]
+    world_actions: Out[WorldAction]
     odom: Out[PoseStamped]
     joint_state: Out[JointState]
 
@@ -193,7 +193,7 @@ class Go2Sim(HardwareModule):
             joint_velocity=np.array([joints[name][1] for name in policy.joint_names]),
         )
         targets = policy.act(observation, self._command + np.array([0.0, 0.0, turn]))
-        self.actions.publish(
+        self.world_actions.publish(
             world_action(
                 world,
                 JointCommand(robot, tuple(policy.joint_names), position=tuple(map(float, targets))),
