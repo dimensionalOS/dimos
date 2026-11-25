@@ -43,6 +43,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.safe_thread_map import ExceptionGroup
 from dimos.utils.testing.waiting import wait_until
 
 J1, J2, J3 = "mock/joint1", "mock/joint2", "mock/joint3"
