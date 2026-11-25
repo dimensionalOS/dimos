@@ -80,7 +80,7 @@ class _Dog(HardwareModule):
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        return SimulatedRobot(self.namespace, self.config.usd, odom_frame=self.mounted_frame)
+        return SimulatedRobot(self.namespace, self.config.usd, odom_frame=self.attach_frame)
 
 
 class _Readings(Module):
@@ -122,16 +122,16 @@ def _run(seconds: float, speed: float) -> dict[str, Any]:
         sim({"mujoco": MujocoSim.blueprint(speed=speed)}, default="mujoco"),
         _Room.blueprint(),
         autoconnect(
-            _Dog.blueprint(mount="dog"),
+            _Dog.blueprint(attached_to="dog"),
             # A mount namespaces its sensor's streams; these take them back out to _Readings.
-            SimCamera.mount("eye", width=64, height=48, rate_hz=RATES["color_image"]).remappings(
+            SimCamera.attach("eye", width=64, height=48, rate_hz=RATES["color_image"]).remappings(
                 [(SimCamera, "color_image", "color_image")]
             ),
-            SimImu.mount("imu", rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
-            LivoxSim.mount(
+            SimImu.attach("imu", rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
+            LivoxSim.attach(
                 "livox", rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
             ).remappings([(LivoxSim, "imu", "livox_imu"), (LivoxSim, "lidar", "lidar")]),
-            SimL1.mount("l1", period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
+            SimL1.attach("l1", period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
         ).namespace("dog", shared=SENSOR_STREAMS),
         _Readings.blueprint(),
     ).solidify()
