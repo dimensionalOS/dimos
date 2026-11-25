@@ -77,6 +77,7 @@ class MujocoBackend:
         self._sent: dict[str, np.ndarray] = {}
         self._sent_joints: dict[str, np.ndarray] = {}
         self._refusals: list[tuple[str, str]] = []
+        self._servo_lookup: dict[tuple[str, tuple[str, ...]], tuple[np.ndarray, np.ndarray]] = {}
         self._started = time.monotonic()
         self._rebase = True
         self._files = _files_named_by_usd(self._scene_layer)
@@ -198,23 +199,39 @@ class MujocoBackend:
                 self.data.ctrl[actuator] = values[index]
 
     def _command_motors(self, command: JointCommand) -> None:
-        model, n = self.model, len(command.names)
-        zeros = (0.0,) * n
-        kp, kd = command.kp or zeros, command.kd or zeros
-        position, velocity = command.position or zeros, command.velocity or zeros
-        effort = command.effort or zeros
-        for index, name in enumerate(command.names):
-            joint = model.joint(self._joint_name(command.entity, name))
-            for actuator in np.flatnonzero(model.actuator_trnid[:, 0] == joint.id):
-                if model.actuator_biastype[actuator] != mujoco.mjtBias.mjBIAS_AFFINE:
-                    raise ValueError(f"{name}'s actuator is not a servo, so it cannot take gains")
-                p, d = kp[index], kd[index]
-                model.actuator_gainprm[actuator, 0] = p if p > 0 else 1.0
-                model.actuator_biasprm[actuator, 1:3] = (-p, -d)
-                feedforward = d * velocity[index] + effort[index]
-                self.data.ctrl[actuator] = (
-                    position[index] + feedforward / p if p > 0 else feedforward
-                )
+        model = self.model
+        actuators, of = self._servos(command.entity, command.names)
+        zeros = np.zeros(len(command.names))
+
+        def given(values: tuple[float, ...] | None) -> np.ndarray:
+            every = zeros if values is None else np.asarray(values, dtype=np.float64)
+            return np.asarray(every[of])
+
+        kp, kd = given(command.kp), given(command.kd)
+        feedforward = kd * given(command.velocity) + given(command.effort)
+        gain = np.where(kp > 0, kp, 1.0)
+        model.actuator_gainprm[actuators, 0] = gain
+        model.actuator_biasprm[actuators, 1] = -kp
+        model.actuator_biasprm[actuators, 2] = -kd
+        self.data.ctrl[actuators] = np.where(
+            kp > 0, given(command.position) + feedforward / gain, feedforward
+        )
+
+    def _servos(self, entity: str, names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+        """The servo actuators driving these joints, and which of them each drives: found once per entity and joint list, as a policy sends the same one every tick."""
+        if (entity, names) not in self._servo_lookup:
+            model, actuators, of = self.model, [], []
+            for index, name in enumerate(names):
+                joint = model.joint(self._joint_name(entity, name))
+                for actuator in np.flatnonzero(model.actuator_trnid[:, 0] == joint.id):
+                    if model.actuator_biastype[actuator] != mujoco.mjtBias.mjBIAS_AFFINE:
+                        raise ValueError(
+                            f"{name}'s actuator is not a servo, so it cannot take gains"
+                        )
+                    actuators.append(int(actuator))
+                    of.append(index)
+            self._servo_lookup[(entity, names)] = (np.array(actuators, int), np.array(of, int))
+        return self._servo_lookup[(entity, names)]
 
     def _joint_name(self, entity: str, name: str) -> str:
         return f"{entity}/{name}" if entity in self._robots else name
@@ -323,7 +340,8 @@ class MujocoBackend:
 
 
 def _close(a: np.ndarray, b: np.ndarray) -> bool:
-    return a.shape == b.shape and bool(np.allclose(a, b, rtol=0.0, atol=_MOVED))
+    # Not np.allclose: its overhead, per entity every step, was a sixth of the physics loop.
+    return a.shape == b.shape and bool((np.abs(a - b) <= _MOVED).all())
 
 
 def _actuator_kind(model: mujoco.MjModel, actuator: int) -> str:
