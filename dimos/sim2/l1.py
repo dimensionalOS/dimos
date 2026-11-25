@@ -103,7 +103,6 @@ class SimL1(SimSensor):
                     (self._indices(cells) + 0.5) * config.cell, odom_frame, stamp
                 )
             )
-            self.publish_usd_tf(ts=stamp)
 
     def _rider_odometry(self, rider: str | None) -> tuple[str, NDArray[np.float64]]:
         """The rider's odometry frame, and world -> odom: odometry starts at the rider's scene mount."""
