@@ -352,7 +352,7 @@ class JointTrajectoryTask(BaseControlTask):
             self._state = TrajectoryState.COMPLETED
             self._trajectory = None
             self._pending_start = False
-            logger.info("Trajectory completed", task_name=self._name)
+            logger.debug("Trajectory completed", task_name=self._name)
 
         emitted_names = [name for name in output_names if name in targets]
         if not emitted_names:
@@ -531,7 +531,7 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
-        logger.info(
+        logger.debug(
             f"Executing trajectory on {self._name}: "
             f"{len(trajectory.points)} points, duration={trajectory.duration:.3f}s"
         )
