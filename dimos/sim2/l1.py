@@ -86,6 +86,8 @@ class SimL1(SimSensor):
                     blind_to_robots=() if rider is None else (rider,),
                 )
                 odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
+                # Opening took this tick's sim time, so the next tick is the first read on time.
+                continue
             assert raycaster is not None
             view.update(self._world)
             stamp = view.time

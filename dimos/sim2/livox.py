@@ -91,6 +91,8 @@ class LivoxSim(SimSensor):
                     if self.config.go2_occlusion
                     else None,
                 )
+                # Opening took this tick's sim time, so the next tick is the first read on time.
+                continue
             assert sensor is not None
             view.update(self._world)
             stamp = view.time
@@ -113,6 +115,8 @@ class LivoxSim(SimSensor):
         async for _ in self._world.ticks(self.config.imu_rate_hz):
             if view is None:
                 view = await asyncio.to_thread(self._open)
+                # Opening took this tick's sim time, so the next tick is the first read on time.
+                continue
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)
             self.imu.publish(

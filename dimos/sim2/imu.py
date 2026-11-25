@@ -50,6 +50,8 @@ class SimImu(SimSensor):
             if view is None:
                 layer = await asyncio.to_thread(self.world_layer)
                 view = open_view(layer, robot_ids(self._world), SensorMount("imu", site, site))
+                # Opening took this tick's sim time, so the next tick is the first read on time.
+                continue
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)
             stamp = view.time
