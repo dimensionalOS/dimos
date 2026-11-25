@@ -26,8 +26,8 @@ prim path is already its tf frame and the layers of an assembly overlay each oth
 ``tf_frames_local`` (role = frame path) and ``tf_edges``, so TfModule's checks see every edge.
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
-the mount frame it sits on to its top prim. The edges that never move (fixed joints and the
-mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
+the mount frame it sits on to its top prim. The edges that never move (its USD's static ones and
+the mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
 USD and every file it reaches on ``hardware_file_request``/``hardware_file_response``, named
 relative to itself, so whatever needs the whole assembly (a simulator, on this machine or another)
 fetches them with ``fetch_hardware_files`` and composes them (each already sits at its tf frames).
@@ -52,8 +52,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.frame_paths import check_frame_path
-from dimos.robot.assets.joint_transforms import JointTransforms
-from dimos.robot.assets.model import JointDescription, UsdModel
+from dimos.robot.assets.model import TfEdge, UsdModel
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -137,11 +136,8 @@ def usd_tf(
             raise ValueError(
                 f"the mount {mount!r} is not a frame of the USD (its frames: {sorted(frames)})"
             )
-    # A floating joint has no single position: what moves its child (odometry) is another parent.
-    joints = [joint for joint in usd.joints if joint.type != "floating"]
-    edges = [(edge.parent_link, edge.child_link) for edge in (*joints, *usd.prim_edges)]
-    # A joint may name a frame no prim carries: the anchor usd_to_urdf adds off a child's origin.
-    local = {frame: frame for frame in sorted({*frames, *(f for edge in edges for f in edge)})}
+    edges = list(usd.tf_edges)
+    local = {frame: frame for frame in sorted(usd.tf_frames)}
     shared: dict[str, str] = {}
     attached_to: str | None = values.get("attached_to")
     if attached_to is not None:
@@ -230,7 +226,7 @@ class HardwareModule(TfModule):
         from dimos.core.coordination.blueprints import config_defaults
 
         defaults = config_defaults(cls)
-        usd: UsdModel = kwargs.get("usd", defaults.get("usd"))
+        usd = cast("UsdModel", kwargs.get("usd", defaults.get("usd")))
         return {
             **kwargs,
             "tf_frames_local": {
@@ -355,7 +351,7 @@ class HardwareModule(TfModule):
         return self.tf_frames[self.config.usd.top_frame]
 
     def static_transforms(self, ts: float | None = None) -> list[Transform]:
-        """The edges that never move (fixed joints and the mount), stamped ``ts``."""
+        """The edges that never move (the USD's static ones and the mount), stamped ``ts``."""
         return [
             Transform(
                 translation=edge.translation,
@@ -368,45 +364,27 @@ class HardwareModule(TfModule):
         ]
 
     def moving_transforms(
-        self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
+        self, positions: Mapping[str, float] | None = None, ts: float | None = None
     ) -> list[Transform]:
-        """The edges of joints that move, at ``joint_positions`` (missing joints sit at zero)."""
-        return self._edge_transforms(self._moving_edges, joint_positions or {}, ts)
+        """The USD's edges that move, at ``positions`` (the USD's own names; one not named sits at zero)."""
+        return self._namespaced(self.config.usd.moving_transforms(positions), ts)
 
-    def _edge_transforms(
-        self, edges: JointTransforms, positions: Mapping[str, float], ts: float | None
-    ) -> list[Transform]:
-        translations, rotations = edges.at(positions)
+    def _namespaced(self, edges: "list[TfEdge]", ts: float | None) -> list[Transform]:
         return [
             Transform(
-                translation=Vector3(*translation),
-                rotation=Quaternion(*rotation),
+                translation=Vector3(*edge.translation),
+                rotation=Quaternion(*edge.rotation),
                 ts=ts,
-                frame_id=self.tf_frames[parent],
-                child_frame_id=self.tf_frames[child],
+                frame_id=self.tf_frames[edge.parent],
+                child_frame_id=self.tf_frames[edge.child],
             )
-            for (parent, child), translation, rotation in zip(
-                edges.links, translations.tolist(), rotations.tolist(), strict=True
-            )
+            for edge in edges
         ]
 
     @cached_property
-    def _posable_joints(self) -> tuple[JointDescription, ...]:
-        # A floating joint has no single position: the robot owning it publishes its pose from odometry.
-        return tuple(j for j in self.config.usd.joints if j.type != "floating")
-
-    @cached_property
-    def _moving_edges(self) -> JointTransforms:
-        # Worked out once: a robot publishes these edges at every tick, and only the positions change.
-        return JointTransforms(tuple(j for j in self._posable_joints if j.type != "fixed"))
-
-    @cached_property
     def _static_edges(self) -> list[Transform]:
-        """The fixed joints, the prim edges and the mount, worked out once and only restamped; a subclass may narrow them."""
-        fixed = tuple(j for j in self._posable_joints if j.type == "fixed")
-        transforms = self._edge_transforms(
-            JointTransforms((*fixed, *self.config.usd.prim_edges)), {}, None
-        )
+        """The USD's static edges and the mount, worked out once and only restamped; a subclass may narrow them."""
+        transforms = self._namespaced(self.config.usd.static_transforms(), None)
         if self.config.attached_to is not None:
             transforms.append(
                 Transform.from_matrix(

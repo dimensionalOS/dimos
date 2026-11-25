@@ -419,16 +419,18 @@ class Linkage(HardwareModule):
 
 
 def test_every_edge_is_where_its_joint_puts_it_at_any_position() -> None:
-    linkage = Linkage(instance_name="linkage")
+    linkage = Linkage(instance_name="linkage_ns/linkage")
     try:
         for positions in ({}, {"hinge": 2.9, "slide": -0.7}, {"hinge": -1.3, "slide": 0.4}):
             edges = {
                 t.child_frame_id: t.to_matrix()
                 for t in [*linkage.static_transforms(), *linkage.moving_transforms(positions)]
             }
-            for joint in linkage._posable_joints:
+            for joint in linkage.config.usd.joints:
                 expected = joint.parent_from_child(joint_position(joint, positions))
-                np.testing.assert_allclose(edges[joint.child_link], expected, atol=1e-9)
+                np.testing.assert_allclose(
+                    edges[f"linkage_ns/{joint.child_link}"], expected, atol=1e-9
+                )
     finally:
         linkage.stop()
 
