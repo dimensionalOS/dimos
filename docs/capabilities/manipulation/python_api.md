@@ -94,7 +94,7 @@ Move to an endpoint, then translate in a straight line:
 ```python skip
 pose = arm.pose()
 arm.move_pose([pose.x, pose.y, pose.z + 0.01], speed_scale=0.2)
-arm.move_linear(dz=-0.01, check_collision=True)
+arm.move_linear(dz=-0.01)
 ```
 
 After successful moves, restore the initial joints and open the gripper. If a
@@ -112,9 +112,9 @@ the current orientation. It targets an endpoint, not necessarily a straight path
 No frame transformations are performed.
 
 `move_linear(dx, dy, dz)` invokes the existing straight-translation primitive
-directly, in the world frame. **Collision checking remains off by default**, as
-on the RPC. Pass `check_collision=True` to validate against the configured world;
-this rejects a colliding segment rather than finding a detour.
+directly, in the world frame. It checks collisions by default, and rejects a
+colliding segment rather than finding a detour. Pass `check_collision=False` to
+skip the check.
 
 | SDK call | Result |
 |---|---|
@@ -148,7 +148,7 @@ the move and wait for completion.
 from dimos.manipulation.sdk import MotionError
 
 try:
-    arm.move_linear(dz=0.01, check_collision=True, timeout=30.0)
+    arm.move_linear(dz=0.01, timeout=30.0)
 except MotionError as error:
     print(error.operation, error.result)
     raise
@@ -255,3 +255,14 @@ A depth pixel `(u, v)` back-projects to the camera's optical frame as
 `z = depth[v, u]`, `x = (u - cx) * z / fx`, `y = (v - cy) * z / fy`, with +Z
 forward, +X image right and +Y image down. `app.list_streams()` lists every
 stream the running modules publish.
+
+## Intended contact
+
+The planner treats every mapped point as an obstacle, including the object you
+pick and the surface you place onto. On the xArm grasp blueprints,
+`ManipulationLocalize` handles both: `add_surface` puts the table in as one flat
+box, and `ignore_object`, `hold_object` and `release_object` keep the object out
+of the map while you grasp, carry and place it. The planner checks the arm and
+gripper, not a held object, so lift it clear before moving sideways.
+[Voxel map obstacles](/docs/capabilities/manipulation/xarm-grasp.md#voxel-map-obstacles)
+explains the map.
