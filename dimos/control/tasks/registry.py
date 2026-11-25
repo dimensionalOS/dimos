@@ -144,6 +144,7 @@ class ControlTaskRegistry:
         cfg: TaskConfig,
         *,
         connections: Mapping[str, ConnectionSource] | None = None,
+        tasks: Mapping[str, ControlTask] | None = None,
     ) -> ControlTask:
         """Instantiate a task by registered name.
 
@@ -155,12 +156,16 @@ class ControlTaskRegistry:
                 Passed only to a factory that takes a ``connections``
                 argument, so tasks can read deployment declarations such as
                 zero-stiffness joints.
+            tasks: Already registered coordinator tasks. Passed only to a
+                factory taking ``tasks``, for tasks that compose other tasks.
         """
         key = name.lower()
         factory = self._resolve_factory(key)
         kwargs: dict[str, Any] = {"cfg": cfg}
         if "connections" in inspect.signature(factory).parameters:
             kwargs["connections"] = connections or {}
+        if "tasks" in inspect.signature(factory).parameters:
+            kwargs["tasks"] = tasks if tasks is not None else {}
         task = factory(**kwargs)
         self._validate_bound_handlers(key, task)
         return task

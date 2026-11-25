@@ -1,85 +1,138 @@
-# PolicyTeleopModule
+# Policy teleoperation as a coordinator task
 
-## Goal
+`PolicyTeleopTask` blends joint targets inside `ControlCoordinator`, using the
+same measured joints and clock as its source tasks. For each joint:
 
-Continuously blend human teleop and policy commands for one end effector, using
-pose-dependent weights. The MVP blends linear and angular velocities; pose and
-trajectory sources require upstream adapters. Policy training, gripper control,
-and direct whole-trajectory blending are outside scope.
+```text
+out = (1 - w) * U + w * P
+```
 
-## Interface and blending
+`Q` is measured joint position, `U` is the operator task's target, and `P` is
+the policy task's target. `w` is the policy's share: zero selects the operator
+and one selects the policy. With both sides present, `w` moves towards the
+configured `alpha` or the result of `TakeoverFn`.
 
-All commands refer to the same TCP in the world frame, using m/s and rad/s.
+The policy runs without operator input. Operator commands can join and leave at
+any time; their share ramps in and out while the policy continues computing.
+PTM has no mode switch or deadman. A device may gate its own publication with a
+deadman; holding it admits operator commands into the blend.
 
-| Port               | Type                | Meaning                    |
-| ------------------ | ------------------- | -------------------------- |
-| `current_pose`     | `In[Transform]`     | Measured world-to-TCP pose |
-| `teleop_command`   | `In[TwistStamped]`  | Human velocity command     |
-| `policy_command`   | `In[TwistStamped]`  | Policy velocity command    |
-| `ee_twist_command` | `Out[TwistStamped]` | Blended velocity command   |
+## Sources and joint ownership
 
-Pass `TakeoverFn(current_pose: Transform) -> float | Weights6` at construction.
-It returns final policy weights in `[0, 1]`: `0` is human, `1` is policy.
-A scalar applies to all axes; six weights correspond to `[vx, vy, vz, wx, wy, wz]`.
-Rotation weights act on angular velocity, not quaternion components.
+Ordinary source tasks remain registered before the PTM in the coordinator's
+`tasks` list. Existing routing and conversion remain in place:
 
-Each control tick computes `alpha = takeover_fn(current_pose)` and:
+| Source | Coordinator entry point | Source task |
+| --- | --- | --- |
+| Keyboard twist | `ee_twist_command` | `eef_twist` |
+| Headset pose | Cartesian pose input | `teleop_ik` |
+| Gripper intent | `gripper_command` | `gripper` |
+| Policy trajectory | `execute_trajectory(JointTrajectory)` | `trajectory` |
+| Joint target device | `joint_command` | `trajectory` |
 
-**`u_out[i] = (1 - alpha[i]) * u_teleop[i] + alpha[i] * u_policy[i]`**
+A registered source belongs to exactly one PTM and one side of that PTM. Task
+names refer to instances, not registered type names. Each source computes once
+per tick, called by PTM, and its output bypasses normal arbitration. PTM alone
+arbitrates for the source joints. This prevents twist double integration and
+preemption of a lower-priority policy trajectory by an operator source.
 
-Provide distance-to-target and reference-path progress examples that map the pose
-to `lambda` in `[0, 1]`, then return `alpha = g(lambda)`:
+A joint device used as the operator source needs its own task instance, distinct
+from the policy source. The coordinator currently permits one canonical
+`JointTrajectoryTask`; listing that instance on both sides is rejected.
 
-| Curve       | `g(lambda)`                             |
-| ----------- | --------------------------------------- |
-| Linear      | `lambda`                                |
-| Quadratic   | `lambda ** 2`                           |
-| Power       | `lambda ** q`, `q > 0`                  |
-| Logarithmic | `log1p(k * lambda) / log1p(k)`, `k > 0` |
+`ControlTaskRegistry.create(..., tasks=...)` injects the coordinator's already
+created tasks only into factories declaring a `tasks` parameter. PTM declares
+no `TASK_CONSUMES`; its card exposes only `get_status`. Source routing, trajectory
+RPCs, TF publication and coordinator emergency stops continue through the
+registered source tasks. Actual preemption of PTM is forwarded to every source.
 
-`PolicyTeleopConfig` sets the loop frequency, input timeouts, world frame, and TCP.
-Missing/stale required inputs, invalid values or frames, and callable failures
-produce zero velocity and a reported fault. Entirely unused command sources may
-be absent. Shutdown cleans up the loop and subscriptions.
+## Configuration
 
-## File organization
+Use `TaskConfig(type="policy_teleop", name=..., joint_names=..., priority=...,
+params=...)`, or the `policy_teleop_task` blueprint helper in
+`dimos/robot/manipulators/common/blueprints.py`. Its joints must include every
+joint claimed by its sources. Unknown, repeated, shared or nested source names
+fail at creation.
 
-Proposed package: `dimos/teleop/policy/`.
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `operator_tasks` | required | Names of tasks producing U |
+| `policy_tasks` | required | Names of tasks producing P |
+| `alpha` | `0.5` | Policy share in [0, 1] while both sides are present |
+| `takeover_fn` | `None` | Callable or `"package.module:function"`, usable from JSON/CLI |
+| `switch_joints` | `[]` | Select a source at weight 0.5 instead of interpolating |
+| `weight_rate` | `2.0` | Positive maximum change of weight per second |
+| `source_timeout_s` | `0.2` | Positive lifetime of the last output on each joint |
 
-| File                                                     | Responsibility                                                           |
-| -------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `module.py`                                              | Config, streams, lifecycle, periodic blending, timeouts, and publication |
-| `takeover.py`                                            | `TakeoverFn`, `Weights6`, curves, and spatial mapping helpers            |
-| `blending.py`                                            | Pure `blend_twist(teleop, policy, weights)` and numerical validation     |
-| `test_takeover.py`, `test_blending.py`, `test_module.py` | Numerical behavior and module lifecycle tests                            |
-| `demo_takeover.py`                                       | Curve plots and physical-space trajectory visualization                  |
-| `README.md`                                              | Interface conventions and usage                                          |
+Sources must produce position outputs. PTM returns `SERVO_POSITION`, including
+when `alpha=1`; policy targets never pass through Cartesian conversion or IK.
 
-Robot-specific wiring belongs in
-`dimos/robot/manipulators/xarm/blueprints/policy_teleop_sim.py`, following the
-[existing simulation blueprint](/dimos/robot/manipulators/xarm/blueprints/hybrid_teleop_sim.py).
-Keep robot configuration and policy-specific adapters outside the blender.
+## Per-tick computation
 
-## Repository integration
+1. Call `compute(state)` on each active source. Cache each returned joint
+   position with `state.t_now`, separately for operator and policy.
+2. A side is present on a joint until its last output is older than
+   `source_timeout_s`. Inactive trajectory tasks can therefore hold their latest
+   target between policy submissions. Freshness is per joint, not per task.
+3. Choose the target share: `TakeoverFn`/`alpha` for both sides, one for policy
+   only, zero for operator only. Emit nothing when neither side is present.
+4. Move `w`, initially one, towards the target by at most
+   `weight_rate * state.dt`. If either side has never produced a value for the
+   joint, set `w` to the target immediately.
+5. Blend the latest values, retaining expired endpoints while the weight ramps.
+   A switch joint selects P at `w >= 0.5`, otherwise U.
+6. Return one position output for joints with a present source, or `None`.
 
-- Feed the output to `ArmTwistCoordinator.ee_twist_command`; reuse
-  [EEFTwistTask](/dimos/control/tasks/eef_twist_task/eef_twist_task.py) for integration and IK.
-- Adapt world-to-TCP TF data into `current_pose`. Coordinator TF publication
-  requires `publish_frame_poses=True` and a `tf` output.
-- [LeRobotPolicyModule](/dimos/imitation/policy/lerobot/module.py) currently submits
-  joint trajectories directly. It needs a separate output path and Cartesian
-  adapter; begin the demo with synthetic velocity sources.
-- Both sources must pass through the blender. Preserve coordinator emergency-stop
-  behavior and prevent parallel motion tasks from resuming when blending stops.
-- When implementing the module/blueprint, regenerate the registry with
-  `uv run pytest dimos/robot/test_all_blueprints_generation.py`.
+The task uses only `state.t_now` and `state.dt` for time. It is always active and
+claims its configured joints and priority. Emergency stop and runtime reset
+forget cached values and presence, and restore all weights to one. The
+coordinator stops the source tasks itself. No cached pre-stop command is
+restored by PTM.
 
-## Demo and acceptance
+Weight ramping bounds the change in source authority. Source targets can still
+change, and switch joints intentionally select whole targets at the threshold.
 
-Show all four curves, a spatial path colored by policy weight, and human-only,
-policy-only, and blended motion. Use a bottle-cap example: human-dominant lifting
-along world Z and policy-dominant rotation about Z.
+## Takeover function
 
-Verify exact outputs at weights `0` and `1`, component-wise averaging at `0.5`,
-independent axis weights, curve endpoints, timeout/fault handling, and lifecycle
-cleanup. Run the blended output through the actual coordinator and IK in simulation.
+```python
+@dataclass(frozen=True)
+class TakeoverContext:
+    joint_names: tuple[str, ...]
+    measured: Mapping[str, float]
+    operator: Mapping[str, float]
+    policy: Mapping[str, float]
+    t_now: float
+    dt: float
+
+TakeoverFn = Callable[[TakeoverContext], float | Mapping[str, float]]
+```
+
+`joint_names` contains the joints on which both sides are present. The mappings
+are read-only snapshots of Q, U and P. The callable is invoked once per tick,
+only when at least one joint has both sides present. A scalar applies to every
+such joint; a mapping overrides named joints and uses `alpha` for missing names.
+Finite weights are clipped to [0, 1]. An exception or non-finite result falls
+back to `alpha` for that tick, with the failure logged once per task instance.
+Without a callable, `alpha` is the constant arbitration function.
+
+Linear, quadratic, power and logarithmic progress curves remain optional helpers
+in `dimos/teleop/policy/takeover.py`. The offline Cartesian plotting examples do
+not participate in the coordinator's joint control path.
+
+## Status and verification
+
+`ControlCoordinator.task_invoke("policy_teleop", "get_status")` returns a plain
+mapping with `weights` per joint, `operator_present` joint names and
+`policy_present` joint names, from the latest tick.
+
+The `policy-teleop-sim` blueprint contains `eef_twist`, `joint_trajectory` and
+`policy_teleop`. Keyboard commands reach `ee_twist_command`. `JointPolicyDemo`
+submits an out-and-back joint trajectory through `execute_trajectory` after the
+first measured feedback, using the same RPC as `LeRobotPolicyModule`. There is
+no TCP feedback adapter or twist-publishing policy. `alpha` is 0.5; the two demo
+variants set it to zero or one while both sources are present.
+
+Tests cover source absence and expiry, opposing targets, per-joint weights,
+weight ramps, switch joints, callable failures and import paths, emergency stop,
+single source computation, source routing, status and uninterrupted trajectory
+execution. Self-hosted tests exercise actual Pink IK and MuJoCo.

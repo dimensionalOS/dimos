@@ -18,7 +18,6 @@ import pytest
 
 from dimos.core.stream import Out, Transport
 from dimos.core.transport_factory import rpc_backend
-from dimos.teleop.policy.module import PolicyTeleopModule
 
 
 @pytest.fixture
@@ -28,7 +27,7 @@ def modules(mocker):
         mocker.patch.object(backend, method)
     with ExitStack() as stack:
 
-        def make(cls=PolicyTeleopModule, **kwargs):
+        def make(cls, **kwargs):
             module = cls(**kwargs)
             stack.callback(module.stop)
             for port in module.inputs.values():

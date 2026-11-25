@@ -14,7 +14,7 @@
 
 """Policy weights and pose-to-progress examples, independent of robot control."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import math
 from typing import TypeAlias
 
@@ -23,16 +23,7 @@ import numpy as np
 from dimos.msgs.geometry_msgs.Transform import Transform
 
 Weights6: TypeAlias = tuple[float, float, float, float, float, float]
-TakeoverFn: TypeAlias = Callable[[Transform], float | Weights6]
 Point3: TypeAlias = tuple[float, float, float]
-
-
-def human_only(pose: Transform) -> float:
-    return 0.0
-
-
-def policy_only(pose: Transform) -> float:
-    return 1.0
 
 
 def linear(progress: float) -> float:

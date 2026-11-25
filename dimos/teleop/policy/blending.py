@@ -39,7 +39,7 @@ def blend_twist(
     """Blend six velocity axes; entirely unused sources may be absent or invalid.
 
     The output keeps the active sources' common frame and latest timestamp.
-    Freshness and the configured world frame are checked by PolicyTeleopModule.
+    This standalone illustration is not used by the coordinator's joint blender.
     """
     alpha = normalize_weights(weights)
     result = np.zeros(6)

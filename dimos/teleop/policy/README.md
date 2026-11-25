@@ -1,111 +1,99 @@
 # Policy teleoperation
 
-`PolicyTeleopModule` blends velocities for **one TCP in one world frame**.
-Linear components use m/s; angular components use rad/s. Both sources must
-already refer to that TCP. Pose and trajectory commands need upstream adapters.
-
-| Port | Type | Meaning |
-| --- | --- | --- |
-| `current_pose` | `In[Transform]` | Measured world-to-TCP transform |
-| `teleop_command` | `In[TwistStamped]` | Human velocity |
-| `policy_command` | `In[TwistStamped]` | Policy velocity |
-| `ee_twist_command` | `Out[TwistStamped]` | Blended velocity |
-
-Pass `takeover_fn` at construction or in `.blueprint(takeover_fn=...)`.
-It returns final policy authority: a scalar or six weights ordered
-`[vx, vy, vz, wx, wy, wz]`. For each axis:
+Shared control runs as `PolicyTeleopTask` inside the coordinator. It mixes
+operator and policy **joint targets** on each coordinator tick:
 
 ```text
-output = (1 - alpha) * human + alpha * policy
+output = (1 - weight) * operator + weight * policy
 ```
 
-Zero selects human control; one selects policy control. Rotation weights blend
-angular velocities, never quaternion components. Values outside `[0, 1]` are
-faults, rather than silently clamped weights.
+The policy runs alone until an operator source starts commanding. With both
+sources present, the policy share approaches `alpha` (default 0.5). When the
+operator's output expires, the share approaches one again. The policy keeps
+running throughout. Device deadman keys gate the device's publication.
 
-`PolicyTeleopConfig` provides `control_hz`, `timeout_s`, `world_frame` and
-`tcp_frame`. `timeout_s` applies to all three input timestamps (Unix seconds);
-producers must use a synchronized clock. A missing, stale, future-dated,
-nonfinite or wrong-frame required input, invalid pose quaternion, invalid
-weights or a failing callable produces a fresh zero twist each tick.
-An entirely unused command source may be absent. Pose feedback is always required.
-Fault transitions are logged, and `get_fault()` returns the current reason or
-`None` after recovery. Shutdown cancels the periodic task, publishes zero and
-releases subscriptions through `Module.stop()`.
-
-## Pose-dependent weights
-
-Define importable functions at module scope so blueprints can send them to workers:
+## Blueprint configuration
 
 ```python
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.teleop.policy.module import PolicyTeleopModule
-from dimos.teleop.policy.takeover import (
-    distance_to_target,
-    logarithmic,
-    quadratic,
-    reference_path_progress,
+from dimos.robot.manipulators.common.blueprints import (
+    eef_twist_task,
+    policy_teleop_task,
+    trajectory_task,
 )
 
-
-def distance_takeover(pose: Transform) -> float:
-    progress = distance_to_target(pose, (0.4, 0.0, 0.4), outer_radius=0.3)
-    return logarithmic(progress, k=9.0)
-
-
-def path_takeover(pose: Transform) -> float:
-    path = [(0.25, -0.1, 0.25), (0.4, -0.1, 0.35), (0.4, 0.0, 0.4)]
-    return quadratic(reference_path_progress(pose, path))
-
-
-blender = PolicyTeleopModule.blueprint(takeover_fn=distance_takeover)
+operator = eef_twist_task(hardware, robot_model=model, target_frame="link_tcp")
+policy = trajectory_task(hardware)
+tasks = [
+    operator,
+    policy,
+    policy_teleop_task(
+        hardware.joints,
+        operator_tasks=[operator.name],
+        policy_tasks=[policy.name],
+        alpha=0.5,
+        weight_rate=2.0,
+        source_timeout_s=0.2,
+    ),
+]
 ```
 
-`distance_to_target` maps the outer radius to zero and the inner radius to one,
-clamping points beyond those radii. `reference_path_progress` projects onto the
-nearest polyline segment and divides traveled arc length by total length.
-Repeated points are ignored; a zero-length path is invalid. Self-intersections
-select the first closest segment. Available curves are `linear`, `quadratic`,
-`power(progress, q)` with `q > 0`, and `logarithmic(progress, k)` with `k > 0`.
+Pass `tasks` to the coordinator. Sources stay registered for stream routing,
+RPCs and emergency stops. The blender computes them once each tick and owns
+their joints during arbitration. Keep every source before the blender in the
+configuration. Add the gripper task to `operator_tasks` and its joint names to
+`switch_joints` to select gripper targets instead of interpolating them.
 
-## Simulation and plots
+`LeRobotPolicyModule` already uses `execute_trajectory`; it requires no adapter
+or new output stream. Operator devices retain their existing command streams.
+
+## Custom weights and status
+
+A takeover function receives measured positions, latest source targets and tick
+time. Return a scalar policy share or a mapping keyed by joint name:
+
+```python
+from dimos.control.tasks.policy_teleop_task.policy_teleop_task import TakeoverContext
+
+
+def takeover(context: TakeoverContext) -> float:
+    error = max(abs(context.operator[j] - context.policy[j]) for j in context.joint_names)
+    return min(1.0, error / 0.5)
+```
+
+Pass `takeover_fn=takeover` in Python, or `"your_package.weights:takeover"` in
+JSON/CLI configuration. Missing mapping keys use `alpha`. Finite weights are
+clipped to [0, 1]; callable failures or non-finite weights use `alpha` for that
+tick and log the failure once. Weight changes are limited by `weight_rate`.
+
+Read `coordinator.task_invoke("policy_teleop", "get_status")` to inspect
+`weights`, `operator_present` and `policy_present`. Source presence is tracked
+per joint from the time the source last returned a position. Emergency stop
+clears cached targets and weights; sources follow their existing stop behavior.
+
+## Simulation
 
 ```bash
-# Synthetic bottle-cap example: human lifts along world Z, policy rotates about Z.
 uv run dimos run policy-teleop-sim
-
-# Same simulation and sources, with only one source selected.
 uv run dimos run demo-policy-teleop-human-sim
 uv run dimos run demo-policy-teleop-policy-sim
-
-# Headless operation (the simulation module's normal config override).
 uv run dimos run policy-teleop-sim --mujocosimmodule.headless=true
-
-# Four curves, a spatial path colored by weight, and three motion comparisons.
-uv run python -m dimos.teleop.policy.demo_takeover --output /tmp/policy-teleop.png
 ```
 
-Stop a running blueprint before starting another. Synthetic sources wait for TCP
-feedback, perform one lift/rotate-and-return cycle, then publish zeros. Replace
-`SyntheticVelocitySources` with real teleop and policy velocity producers when
-integrating an application. The example only illustrates bottle-cap motion; it
-does not grasp a physical cap or control the gripper.
+The synthetic policy submits an eight-second joint out-and-back trajectory
+after initial feedback. Use the keyboard window to supply EEF twists during
+that trajectory. W/S, A/D and Q/E translate; R/F, T/G and Y/H rotate. The
+variants set policy share to 0 or 1 when both sides are present. With only one
+source present that source still commands the arm. Gripper teleoperation is
+not configured in this minimal example. Stop a blueprint before starting another.
 
-The simulation blueprint connects coordinator TF through `TcpPoseAdapter`, with
-`publish_frame_poses=True`, and sends only the blender's output to
-`ArmTwistCoordinator.ee_twist_command`. `EEFTwistTask` performs integration and
-Pink IK. It is the only motion task, so stopping cannot resume a parallel
-trajectory. Its command timeout stops motion even if the blender disappears;
-the coordinator's emergency stop remains authoritative. Adding parallel motion
-tasks requires an explicit arbitration/hold design.
-
-`LeRobotPolicyModule` currently sends joint trajectories directly to the
-coordinator. It cannot be wired into this blender as-is; a separate Cartesian
-velocity output and adapter belong upstream. Training and direct trajectory
-blending are outside this module.
+The curve helpers and Cartesian examples in this directory remain available
+for offline illustration:
 
 ```bash
-uv run pytest dimos/teleop/policy
-# Requires xArm assets, Pink and MuJoCo; runs the actual coordinator and IK.
+uv run python -m dimos.teleop.policy.demo_takeover --output /tmp/policy-teleop.png
+uv run pytest dimos/control/tasks/policy_teleop_task dimos/control/test_policy_teleop.py
 uv run pytest dimos/teleop/policy/test_simulation.py -m self_hosted
 ```
+
+See the [task specification](/docs/capabilities/teleoperation/policy_teleop_spec.md)
+for the exact per-tick rules and configuration contract.
