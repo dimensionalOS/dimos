@@ -93,7 +93,7 @@ class MockBaseConnection(MockJointConnection):
             self.odometry.publish(
                 Odometry(
                     ts=time.time(),
-                    frame_id=self.frame("odom"),
+                    frame_id=self.tf_frames.get("odom", "odom"),
                     child_frame_id=self._frame,
                     pose=Pose(position, orientation),
                     twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
