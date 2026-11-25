@@ -12,7 +12,7 @@ import { conversationStanding } from "#dimos/agents/shared/protocol/actions/stan
 import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
 import { forward } from "#dimos/agents/gateway/server/objects/lib/forward.ts";
 import { fromBranch, fromSubmit } from "#dimos/agents/gateway/server/objects/lib/outcomes.ts";
-import { imageAt } from "#dimos/agents/gateway/server/objects/lib/items.ts";
+import { imageAt, transcriptItem } from "#dimos/agents/gateway/server/objects/lib/items.ts";
 import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
 
 const SHARED = Object.keys(ConversationState) as (keyof typeof ConversationState)[];
@@ -96,7 +96,16 @@ export const serveConversation: ServeObject = (host, deps) =>
       },
       stopBackground: async ({ call: target }) =>
         agent.detacher.stop(conversation, target) ? done(null) : refused({ code: "not_running", call: target }),
-      image: async ({ at }, call) => imageAt(await agent.harness.commit((tx) => tx.entry(at.entry), call.context), at),
+      submission: async ({ id }, { context }) => {
+        const record = await agent.storage.submission(id, context);
+        if (record?.conversationId !== conversation || record.type !== "input")
+          return refused({ code: "not_found", what: "submission", name: String(id) });
+        const answer =
+          record.status === "done" ? await agent.storage.entry(conversation, record.answer, context) : undefined;
+        return done({ record, answer: answer ? transcriptItem(answer.entry) : null });
+      },
+      image: async ({ at }, { context }) =>
+        imageAt((await agent.storage.entry(conversation, at.entry, context))?.entry, at),
     };
     if (!owner)
       return {

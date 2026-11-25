@@ -123,7 +123,7 @@ Each served object implements one contract from shared/protocol. Clients hold th
 | ---------------------------------- | ------------------- | ---------------------- | ------------------------ | ------------- | ---------------------------------------------- | ---------------------------------------------- |
 | [lifecycle.ts](/dimos/agents/gateway/server/objects/lifecycle.ts)       | `serveLifecycle`    | `LifecycleContract`    | `{}`                     | owner, viewer | `process`                                      | `LIFECYCLE_ACTIONS` on owner                   |
 | [gateway.ts](/dimos/agents/gateway/server/objects/gateway.ts)           | `serveGateway`      | `GatewayContract`      | `{}`                     | owner, viewer | `GatewayState` from the store, and `loginFlow` | `GATEWAY_ACTIONS` on owner                     |
-| [conversation.ts](/dimos/agents/gateway/server/objects/conversation.ts) | `serveConversation` | `ConversationContract` | `{ conversation, role }` | owner, viewer | `ConversationState` from the room              | `CONVERSATION_ACTIONS`, only `image` on viewer |
+| [conversation.ts](/dimos/agents/gateway/server/objects/conversation.ts) | `serveConversation` | `ConversationContract` | `{ conversation, role }` | owner, viewer | `ConversationState` from the room              | `CONVERSATION_ACTIONS`, `submission` and `image` on viewer |
 | [inventory.ts](/dimos/agents/gateway/server/objects/inventory.ts)       | `serveInventory`    | `InventoryContract`    | `{}`                     | viewer        | `inventory` from the store                     | none                                           |
 
 `serveLifecycle` serves the gateway process's identity and its one action, `stop`. `LifecycleContract` is frozen at
@@ -389,7 +389,7 @@ its `ServeObject` to `OBJECTS`.
 
 This is [conversation.ts](/dimos/agents/gateway/server/objects/conversation.ts) without the listener that marks notices seen. It gets the conversation's room
 and the store, forwards the room's members, and binds the conversation actions for the variant it picks. An owner gets
-every method. A viewer gets the same state and only `image`.
+every method. A viewer gets the same state and the `submission` and `image` read methods.
 
 ```ts
 import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
@@ -405,7 +405,7 @@ import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
 import { forward } from "#dimos/agents/gateway/server/objects/lib/forward.ts";
 import { fromBranch, fromSubmit } from "#dimos/agents/gateway/server/objects/lib/outcomes.ts";
 import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
-import { imageAt } from "#dimos/agents/gateway/server/objects/lib/items.ts";
+import { imageAt, transcriptItem } from "#dimos/agents/gateway/server/objects/lib/items.ts";
 
 const SHARED = Object.keys(ConversationState) as (keyof typeof ConversationState)[];
 
@@ -477,8 +477,15 @@ export const serveConversation: ServeObject = (host, deps) =>
             },
             stopBackground: async ({ call: target }) =>
                 agent.detacher.stop(conversation, target) ? done(null) : refused({ code: "not_running", call: target }),
-            image: async ({ at }, call) =>
-                imageAt(await agent.harness.commit((tx) => tx.entry(at.entry), call.context), at),
+            submission: async ({ id }, { context }) => {
+                const record = await agent.storage.submission(id, context);
+                if (record?.conversationId !== conversation || record.type !== "input")
+                    return refused({ code: "not_found", what: "submission", name: String(id) });
+                const answer = record.status === "done" ? await agent.storage.entry(conversation, record.answer, context) : undefined;
+                return done({ record, answer: answer ? transcriptItem(answer.entry) : null });
+            },
+            image: async ({ at }, { context }) =>
+                imageAt((await agent.storage.entry(conversation, at.entry, context))?.entry, at),
         };
         if (!owner)
             return {
@@ -497,7 +504,7 @@ export const serveConversation: ServeObject = (host, deps) =>
 `self.get(ConversationRoom, { conversation })` acts as the host, so every client of one conversation shares one room and
 one pi-durable watch. `forward(room, SHARED)` returns the room's cells, so the served object keeps no state of its own.
 `standing` reads the room's values each time a method runs, so `rules.idle` sees the current `pi.live` run. `Handlers`
-makes you write all ten executors, even though the viewer variant exposes only `image`. Each executor passes
+requires an executor for each action. Each executor passes
 `call.context` on, so the call's abort signal, or the gateway's for a `by_request_id` action, reaches pi-durable.
 
 ### Add a served object
