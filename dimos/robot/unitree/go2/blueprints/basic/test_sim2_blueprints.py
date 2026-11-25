@@ -70,7 +70,7 @@ def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
         sensed = {
             module.frame_id
             for module in hardware
-            if isinstance(module, SimSensor) and module.mounted_on() is not None
+            if isinstance(module, SimSensor) and module.attached_to() is not None
         }
 
     assert len(sensed) == 2, f"{name} mounts the sensors {sorted(sensed)}"
@@ -87,7 +87,7 @@ def test_a_simulated_go2_publishes_the_tf_a_real_one_does() -> None:
         edges = {
             (go2.tf_frames[parent], go2.tf_frames[child]) for parent, child in go2.config.tf_edges
         }
-        edges.add((go2.mounted_on(), go2.mounted_frame))
+        edges.add((go2.attached_to(), go2.attach_frame))
         robot, announced = go2.namespace, go2.simulated_robot().odom_frame
 
     real_odom = ConnectionConfig.model_fields["odom_frame_id"].default
