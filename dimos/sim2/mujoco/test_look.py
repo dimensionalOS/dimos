@@ -93,6 +93,10 @@ def test_agx_is_blenders_agx_view():
     assert agx(linear) == pytest.approx(np.array(blender), abs=2e-4)
 
 
+class _PulledFirstError(Exception):
+    pass
+
+
 def test_the_agx_lut_is_fetched_from_git_lfs_when_the_clone_has_its_pointer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -100,10 +104,17 @@ def test_the_agx_lut_is_fetched_from_git_lfs_when_the_clone_has_its_pointer(
     from dimos.sim2.mujoco import look
 
     pulled: list[list[Path]] = []
-    monkeypatch.setattr(lfs, "pull_lfs_files", lambda paths: pulled.append(list(paths)))
+
+    def pull(paths: list[Path]) -> None:
+        pulled.append(list(paths))
+        # Stop before the load, which a clone without the LUT's content could not do.
+        raise _PulledFirstError
+
+    monkeypatch.setattr(lfs, "pull_lfs_files", pull)
     look._agx_base.cache_clear()
     try:
-        look._agx_base()
+        with pytest.raises(_PulledFirstError):
+            look._agx_base()
     finally:
         look._agx_base.cache_clear()
     assert pulled == [[look._AGX]]
