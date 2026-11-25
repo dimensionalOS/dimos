@@ -85,6 +85,7 @@ def test_every_kind_of_asset_is_published_under_a_bus_name() -> None:
 
     assert set(public.values()) == _EVERY_KIND_OF_FILE
     assert referenced_asset_paths(usd) == set(public)
+    assert not [name for name in public if name.startswith("/") or ".." in name.split("/")]
 
 
 def test_a_sublayer_keeps_its_offset_when_its_path_moves() -> None:

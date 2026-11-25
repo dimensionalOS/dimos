@@ -976,12 +976,6 @@ def test_an_unfetched_pointer_is_refused_and_a_merely_missing_file_is_not(
     require_fetched_assets(unopenable_assets(_REFERENCING_LAYER, root), root, what="the scene")
 
 
-def test_unopenable_assets_ignores_names_a_scene_published_for_the_bus() -> None:
-    published = _REFERENCING_LAYER.replace("meshes/", "/dimos/assets/room/")
-
-    assert unopenable_assets(published, None) == {}
-
-
 _SCENE_WITH_ITS_OWN_SHADER = """#usda 1.0
 (
     defaultPrim = "room"
