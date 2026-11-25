@@ -60,6 +60,8 @@ pub struct ControllerStatus {
     pub hard_stop: Option<u8>,
     /// the 1 kHz loop's overruns so far and its slowest tick (ms)
     pub overruns: u64,
+    /// the 1 kHz loop's reads skipped so far because a receiver held the lock (rt::try_read)
+    pub lock_skips: u64,
     pub max_tick_ms: f64,
     pub dock_active: bool,
     pub charging: bool,
@@ -113,6 +115,7 @@ impl ControllerStatus {
             imu_age_ms: None,
             hard_stop: None,
             overruns: tick.stats.overruns,
+            lock_skips: crate::rt::LOCK_SKIPS.load(std::sync::atomic::Ordering::Relaxed),
             max_tick_ms: round(tick.stats.max_tick_s * 1e3),
             dock_active: dock.is_some_and(|d| d.active),
             charging: dock.is_some_and(|d| d.charging),
@@ -272,6 +275,7 @@ mod tests {
             imu_age_ms: None,
             hard_stop: None,
             overruns: 0,
+            lock_skips: 0,
             max_tick_ms: Default::default(),
             dock_active: false,
             charging: false,

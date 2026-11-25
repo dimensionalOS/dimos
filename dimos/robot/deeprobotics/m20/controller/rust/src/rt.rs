@@ -17,7 +17,8 @@
 //! an overrun skips ahead instead of bursting to catch up. Policy inference lives on its own thread
 //! (crate::policy) and is never waited on.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -28,6 +29,25 @@ use crate::hardware::Hardware;
 use crate::policy::PolicyService;
 use crate::state_machine::Controller;
 use crate::types::{JointCommand, RobotState, UserCommand};
+
+/// The 1 kHz loop's reads that found a receiver thread holding the lock and went on without it (controller_report).
+pub static LOCK_SKIPS: AtomicU64 = AtomicU64::new(0);
+
+/// The 1 kHz loop's read of a lock a receiver thread writes: never waits; None (counted in `skips`) while it is held.
+pub fn try_read<T, R>(
+    lock: &Mutex<T>,
+    skips: &AtomicU64,
+    read: impl FnOnce(&mut T) -> R,
+) -> Option<R> {
+    match lock.try_lock() {
+        Ok(mut value) => Some(read(&mut value)),
+        Err(TryLockError::Poisoned(p)) => Some(read(&mut p.into_inner())),
+        Err(TryLockError::WouldBlock) => {
+            skips.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pacing {
@@ -302,6 +322,47 @@ pub fn run<H: Hardware + ?Sized>(
         }
     }
     Ok(stats)
+}
+
+#[cfg(test)]
+mod try_read_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn a_held_lock_is_skipped_at_once_and_counted() {
+        let (lock, skips) = (Arc::new(Mutex::new(7)), AtomicU64::new(0));
+        assert_eq!(try_read(&lock, &skips, |v| *v), Some(7));
+        let (held, release) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _guard = lock.lock().unwrap();
+                held.wait();
+                release.wait();
+            });
+            held.wait();
+            // the receiver holds it: no value (WouldBlock, never a wait), one skip
+            assert_eq!(try_read(&lock, &skips, |v| *v), None);
+            assert_eq!(skips.load(Ordering::Relaxed), 1);
+            release.wait();
+        });
+        assert_eq!(try_read(&lock, &skips, |v| *v), Some(7));
+        assert_eq!(skips.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_poisoned_lock_is_still_read() {
+        let (lock, skips) = (Arc::new(Mutex::new(3)), AtomicU64::new(0));
+        let poisoner = lock.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("a receiver panics holding the lock");
+        })
+        .join();
+        assert!(lock.is_poisoned());
+        assert_eq!(try_read(&lock, &skips, |v| *v), Some(3));
+        assert_eq!(skips.load(Ordering::Relaxed), 0);
+    }
 }
 
 #[cfg(test)]

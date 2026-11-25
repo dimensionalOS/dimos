@@ -53,6 +53,7 @@ use super::vendor::{
 use super::{ChargeReading, DockPose};
 use crate::commands::CommandSource;
 use crate::config::Config;
+use crate::rt::try_read;
 use crate::state_machine::{Controller, State};
 use crate::types::{Target, UserCommand};
 
@@ -1709,16 +1710,18 @@ impl<C: CommandSource> CommandSource for DockingCommands<C> {
                 passthrough = Some(c);
             }
         }
+        // the receivers' slots, never waited on (a held one is read next tick)
+        let skips = &crate::rt::LOCK_SKIPS;
         if !self.docking.active() {
-            if let Some(t) = self.feed.vendor.try_lock().ok().and_then(|mut v| v.take()) {
+            if let Some(t) = try_read(&self.feed.vendor, skips, |v| v.take()).flatten() {
                 self.docking.set_vendor(&t);
             }
         }
-        let pose = self.feed.pose.try_lock().ok().and_then(|p| *p);
-        let charge = self.feed.charge.try_lock().ok().and_then(|c| *c);
-        let obstacle = self.feed.obstacle.try_lock().ok().and_then(|o| *o);
+        let pose = try_read(&self.feed.pose, skips, |p| *p).flatten();
+        let charge = try_read(&self.feed.charge, skips, |c| *c).flatten();
+        let obstacle = try_read(&self.feed.obstacle, skips, |o| *o).flatten();
         self.docking.ingest(pose, charge, obstacle);
-        let request = self.feed.request.try_lock().ok().and_then(|mut r| r.take());
+        let request = try_read(&self.feed.request, skips, |r| r.take()).flatten();
         if let Some(request) = request {
             if let Err(why) = self.docking.request(request, &self.view) {
                 self.docking.status.result = format!("{request:?} refused: {why}");

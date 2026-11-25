@@ -197,22 +197,25 @@ pub struct Shared {
 }
 
 /// The body IMU as the loop reads it: the newest sample that arrived, however old (rl_deploy's, which never ages one
-/// out).
+/// out); while a receiver holds its lock, the one read last.
 pub struct SharedImu {
     shared: Arc<Shared>,
+    sample: Option<ImuSample>,
+    rpy: Option<[f32; 3]>,
 }
 
 impl ImuSource for SharedImu {
     fn latest(&mut self) -> Option<ImuSample> {
-        let rpy = *self
-            .shared
-            .imu_rpy
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let guard = self.shared.imu.lock().unwrap_or_else(|p| p.into_inner());
-        guard.as_ref().map(|(sample, _)| ImuSample {
-            rpy_deg: rpy,
-            ..*sample
+        let skips = &crate::rt::LOCK_SKIPS;
+        if let Some(rpy) = crate::rt::try_read(&self.shared.imu_rpy, skips, |r| *r) {
+            self.rpy = rpy;
+        }
+        if let Some(sample) = crate::rt::try_read(&self.shared.imu, skips, |i| i.map(|(s, _)| s)) {
+            self.sample = sample;
+        }
+        self.sample.map(|sample| ImuSample {
+            rpy_deg: self.rpy,
+            ..sample
         })
     }
 }
@@ -224,11 +227,8 @@ pub struct SharedCommands {
 
 impl crate::commands::CommandSource for SharedCommands {
     fn poll(&mut self, _now: f64) -> Option<UserCommand> {
-        self.shared
-            .command
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .take()
+        // a command the receiver is still writing stays in the slot for the next tick
+        crate::rt::try_read(&self.shared.command, &crate::rt::LOCK_SKIPS, |c| c.take()).flatten()
     }
 }
 
@@ -694,6 +694,8 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
     });
     let imu = SharedImu {
         shared: shared.clone(),
+        sample: None,
+        rpy: None,
     };
     let owner = m20_ecan::owner::OwnerConfig {
         allow_gains: cfg.ecan.allow_gains,
@@ -815,10 +817,11 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             let hard_stop_clear = imu_seen.hard_stop.clear();
             full.hard_stop = imu_seen.hard_stop.get();
             full.ready &= hard_stop_clear;
-            full.imu_age_ms = imu_seen.imu.try_lock().ok().and_then(|i| {
+            full.imu_age_ms = crate::rt::try_read(&imu_seen.imu, &crate::rt::LOCK_SKIPS, |i| {
                 i.as_ref()
                     .map(|(_, at)| (at.elapsed().as_secs_f64() * 1e4).round() / 10.0)
-            });
+            })
+            .flatten();
             let logged = status_log.changed(&full);
             if logged {
                 info!(
@@ -1054,6 +1057,50 @@ fn run_owner(_: &Config, _: &Latest) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loop_keeps_the_last_imu_and_command_while_a_receiver_holds_the_lock() {
+        let shared = Arc::new(Shared::default());
+        let sample = |stamp| ImuSample {
+            quat: [1.0, 0.0, 0.0, 0.0],
+            gyro: [0.0; 3],
+            accel: [0.0, 0.0, 9.8],
+            stamp,
+            rpy_deg: None,
+        };
+        let mut imu = SharedImu {
+            shared: shared.clone(),
+            sample: None,
+            rpy: None,
+        };
+        let mut commands = SharedCommands {
+            shared: shared.clone(),
+        };
+        *shared.imu.lock().unwrap() = Some((sample(1.0), std::time::Instant::now()));
+        *shared.imu_rpy.lock().unwrap() = Some([1.0, 2.0, 3.0]);
+        assert_eq!(imu.latest().map(|s| s.stamp), Some(1.0));
+        let walk = UserCommand {
+            velocity: Some([0.5, 0.0, 0.0]),
+            ..Default::default()
+        };
+        *shared.command.lock().unwrap() = Some(walk.clone());
+        let skips = crate::rt::LOCK_SKIPS.load(Ordering::Relaxed);
+        {
+            // the receivers hold every slot (a newer sample half written)
+            let mut slot = shared.imu.lock().unwrap();
+            *slot = Some((sample(2.0), std::time::Instant::now()));
+            let _rpy = shared.imu_rpy.lock().unwrap();
+            let _command = shared.command.lock().unwrap();
+            let held = imu.latest().unwrap();
+            assert_eq!((held.stamp, held.rpy_deg), (1.0, Some([1.0, 2.0, 3.0])));
+            assert!(crate::commands::CommandSource::poll(&mut commands, 0.0).is_none());
+        }
+        assert!(crate::rt::LOCK_SKIPS.load(Ordering::Relaxed) >= skips + 3);
+        // released: the newer sample, and the command waited in its slot for this tick
+        assert_eq!(imu.latest().map(|s| s.stamp), Some(2.0));
+        let polled = crate::commands::CommandSource::poll(&mut commands, 0.001).unwrap();
+        assert_eq!(polled.velocity, walk.velocity);
+    }
 
     #[test]
     fn the_built_in_config_loads_with_gains_off() {

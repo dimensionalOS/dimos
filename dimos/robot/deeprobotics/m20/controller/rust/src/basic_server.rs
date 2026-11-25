@@ -205,7 +205,9 @@ impl<C: CommandSource + ChargerState> CommandSource for BasicServer<C> {
             self.last = c;
             self.dirty = true;
         }
-        if let Some(mode) = self.usage.request.lock().ok().and_then(|mut r| r.take()) {
+        if let Some(mode) =
+            crate::rt::try_read(&self.usage.request, &crate::rt::LOCK_SKIPS, |r| r.take()).flatten()
+        {
             self.set_mode(mode);
         }
         // DDSWorker::ChannelChargerStatusCallback (0x220c60), on a change of charge_manager's state
