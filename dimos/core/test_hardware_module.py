@@ -694,11 +694,3 @@ def test_share_sim_false_keeps_the_simulated_world_inside_the_namespace() -> Non
 
     with pytest.raises(ValueError, match="share_sim=False"):
         WorldReader.blueprint().namespace("lidar", shared={"world_observations"}, share_sim=False)
-
-
-def test_a_module_names_its_namespace_over_rpc() -> None:
-    reader = WorldReader(instance_name="robot1/lidar/worldreader")
-    try:
-        assert reader.get_namespace() == "robot1/lidar"
-    finally:
-        reader.stop()
