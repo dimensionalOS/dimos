@@ -92,6 +92,7 @@ def test_mujoco_simulates_the_robot_off_the_layer_alone(robot: str) -> None:
     assert bool(np.isfinite(data.qpos).all()), f"{robot} left the real numbers within 100 steps"
 
 
+@pytest.mark.self_hosted  # usd_layer fetches the robot's Git LFS meshes
 def test_mujoco_keeps_its_actuators_when_usd_core_went_first() -> None:
     source = textwrap.dedent("""
         from dimos.robot.unitree.g1.sim2 import G1_USD
@@ -177,6 +178,7 @@ def test_the_physics_and_the_tf_chain_place_a_frame_the_same(robot: str) -> None
     assert compared > 10, f"{robot}: only {compared} frames compared, so this proves little"
 
 
+@pytest.mark.self_hosted  # usd_layer fetches (and reads) the robot's Git LFS meshes
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_no_mesh_is_left_in_the_converters_placeholder_grey(robot: str) -> None:
     """A mesh that binds a material says that material's colour, not (0.5, 0.5, 0.5).
