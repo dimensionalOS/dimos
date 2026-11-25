@@ -137,6 +137,14 @@ class UsdModel:
     def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
         # A frame added again replaces the earlier one where it stood, so joints and the layer
         # agree on it and frames hung off it still come after it.
+        from dimos.protocol.tf.frame_paths import check_frame_path
+
+        for name in frames:
+            if "/" in name:
+                raise ValueError(
+                    f"cannot add the frame {name!r}: it is hung off its parent, so its name has no '/'"
+                )
+            check_frame_path(name, "the added frame")
         # A frame is its path (parent/name), so the same name under another parent is another frame.
         merged = {
             f"{parent}/{name}": (name, parent, xyz, rpy)
@@ -283,18 +291,27 @@ class UsdModel:
         return {self.top_frame, *self._urdf_link_paths.values(), *added}
 
     def _added_frame_joints(self) -> tuple[JointDescription, ...]:
-        """The frames with_frames added, as the fixed joints the layer welds them on."""
-        return tuple(
-            JointDescription(
-                name=_FixedFrame(name, parent, xyz, rpy).joint_name,
-                type="fixed",
-                parent_link=parent,
-                child_link=f"{parent}/{name}",
-                origin_xyz=xyz,
-                origin_rpy=rpy,
+        """The frames with_frames added (to a URDF-backed model), as the fixed joints the layer welds them on."""
+        known = {self.root_link.partition("/")[0], *self._urdf_link_paths.values()}
+        joints = []
+        for name, parent, xyz, rpy in self._added_frames:
+            if parent not in known:
+                raise ValueError(
+                    f"cannot add the frame {name!r}: the model has no frame {parent!r} to hang it "
+                    f"off (it has {sorted(known)[:8]}...)"
+                )
+            known.add(f"{parent}/{name}")
+            joints.append(
+                JointDescription(
+                    name=_FixedFrame(name, parent, xyz, rpy).joint_name,
+                    type="fixed",
+                    parent_link=parent,
+                    child_link=f"{parent}/{name}",
+                    origin_xyz=xyz,
+                    origin_rpy=rpy,
+                )
             )
-            for name, parent, xyz, rpy in self._added_frames
-        )
+        return tuple(joints)
 
     def referenced_files(self) -> set[str]:
         if self._urdf is None:

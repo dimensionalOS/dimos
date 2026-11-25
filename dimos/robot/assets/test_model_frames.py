@@ -108,3 +108,14 @@ def test_a_urdf_model_names_its_frames_as_the_layer_it_converts_to(tmp_path: Pat
     assert links(fast) == links(read)
     edges = lambda model: {(j.parent_link, j.child_link) for j in model.prim_edges}  # noqa: E731
     assert edges(fast) == edges(read) == {("leg", "leg/hip")}
+
+
+def test_a_urdf_model_refuses_a_frame_hung_off_a_frame_it_lacks(tmp_path: Path) -> None:
+    source = tmp_path / "arm.urdf"
+    source.write_text('<robot name="arm"><link name="base_link"/></robot>')
+    model = RobotModel.from_file(source).to_usd()
+
+    with pytest.raises(ValueError, match="no frame 'base_link'"):
+        model.with_frames({"tool": ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}).frame_names()
+    with pytest.raises(ValueError, match="has no '/'"):
+        model.with_frames({"a/tool": ("arm/base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
