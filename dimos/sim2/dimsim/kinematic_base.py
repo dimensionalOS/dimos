@@ -68,7 +68,7 @@ class SimKinematicBase(OnWorldTime, HardwareModule):
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
         return SimulatedRobot(
-            self.namespace, UsdModel.from_layer(self.local_usd()), odom_frame=self.frame.odom
+            self.namespace, UsdModel.from_layer(self._local_usd()), odom_frame=self.frame.odom
         )
 
     async def main(self) -> AsyncIterator[None]:
