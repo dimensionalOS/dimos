@@ -176,8 +176,8 @@ def xarm_coordinator(
     Args:
         arm: Which arm, e.g. "xarm7".
         cls: The coordinator, with the ports of ``XArmCoordinator``.
-        tasks: The coordinator's tasks; planned joint trajectories, and the
-            gripper's task when it has one, if None.
+        tasks: The coordinator's tasks; if None, joint trajectories over the arm
+            and its gripper, and the gripper's task, when it has one.
         gripper, velocity, simulated, sim_module_kwargs: See ``xarm_connection``.
         coordinator_kwargs: More coordinator settings, e.g. ``tick_rate``.
     """
@@ -189,8 +189,14 @@ def xarm_coordinator(
         sim_module_kwargs=sim_module_kwargs,
     )
     if tasks is None:
-        arm_task = joint_trajectory_task(joint_names(XARM_ARMS[arm][0], prefix="arm/joint"))
-        tasks = [arm_task, xarm_gripper_task()] if gripper else [arm_task]
+        arm_joints = joint_names(XARM_ARMS[arm][0], prefix="arm/joint")
+        if gripper:
+            tasks = [
+                joint_trajectory_task([*arm_joints, "arm/drive_joint"]),
+                xarm_gripper_task(),
+            ]
+        else:
+            tasks = [joint_trajectory_task(arm_joints)]
     return autoconnect(
         cls.blueprint(
             instance_name="ControlCoordinator",

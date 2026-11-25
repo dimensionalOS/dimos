@@ -54,8 +54,7 @@ def test_dual_arm_trajectory_uses_unique_connection_joints(blueprint) -> None:
     config = next(task for task in atom.kwargs["tasks"] if task.type == "trajectory")
     task = control_task_registry.create(config.type, config, connections={})
     assert task.name == "joint_trajectory"
-    # Every arm joint, without the grippers.
-    assert config.joint_names == [name for name in names if "/joint" in name]
+    assert config.joint_names == names
 
 
 def test_standalone_xarm7_has_only_arm_tasks() -> None:

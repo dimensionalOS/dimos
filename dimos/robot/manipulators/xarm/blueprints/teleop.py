@@ -187,7 +187,9 @@ def _vr_teleop(
                     _arm_model(arm, add_gripper=False), f"link{dof}", timeout=jog_timeout
                 ),
                 xarm_gripper_task(stream_bind={"gripper_command": "right_gripper_command"}),
-                joint_trajectory_task(list(model.joint_names), priority=trajectory_priority),
+                joint_trajectory_task(
+                    [*model.joint_names, "arm/drive_joint"], priority=trajectory_priority
+                ),
             ],
             simulated=SIMULATED,
         ),

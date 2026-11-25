@@ -106,15 +106,17 @@ def test_gripper_has_dedicated_task(blueprint: Blueprint) -> None:
 
 
 @pytest.mark.parametrize(
-    "blueprint", [coordinator_teleop_xarm6.solidify(), coordinator_teleop_xarm7.solidify()]
+    "blueprint",
+    [
+        coordinator_teleop_xarm6.solidify(),
+        coordinator_teleop_xarm7.solidify(),
+        xarm7_planner_coordinator.solidify(),
+    ],
 )
-def test_trajectory_takes_the_planned_joints(blueprint: Blueprint) -> None:
+def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
-    manipulation = next(
-        atom for atom in blueprint.blueprints if issubclass(atom.module, ManipulationModule)
-    )
 
-    assert trajectory.joint_names == list(manipulation.kwargs["model"].joint_names)
+    assert "arm/drive_joint" in trajectory.joint_names
 
 
 # The blueprints that run their arm and its gripper in MuJoCo under --simulation.

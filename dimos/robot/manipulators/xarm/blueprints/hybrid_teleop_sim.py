@@ -213,7 +213,7 @@ hybrid_teleop_sim = autoconnect(
         "xarm7",
         cls=HybridTeleopCoordinator,
         tasks=[
-            joint_trajectory_task(list(_xarm7_sim_model.joint_names)),
+            joint_trajectory_task([*_xarm7_sim_model.joint_names, "arm/drive_joint"]),
             xarm_jog_task(_xarm7_sim_model, "link_tcp", priority=20),
             xarm_gripper_task(),
             operator_hold_task(),

@@ -84,6 +84,8 @@ coordinator_piper_xarm = autoconnect(
                 [
                     *joint_names(6, prefix="xarm_arm/joint"),
                     *joint_names(6, prefix="piper_arm/joint"),
+                    # This coordinator has no gripper task; trajectories move the Piper's gripper.
+                    "piper_arm/gripper",
                 ]
             )
         ],
