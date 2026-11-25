@@ -108,7 +108,6 @@ class SimCamera(SimSensor):
                 self.color_image.publish(
                     Image(data=rgb, format=ImageFormat.RGB, frame_id=site, ts=stamp)
                 )
-                self.publish_usd_tf(ts=stamp)
         finally:
             if view is not None:
                 view.close()

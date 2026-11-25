@@ -14,9 +14,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from dimos.core.hardware_module import Mounts
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.sim2.scene import SimScene, SimSceneConfig
 
@@ -42,7 +45,7 @@ class _Room(SimScene):
 def test_a_scene_publishes_only_the_path_to_its_mounts() -> None:
     room = _Room()
     try:
-        edges = {(t.frame_id, t.child_frame_id) for t in room.mount_transforms()}
+        edges = {(t.frame_id, t.child_frame_id) for t in room.static_transforms()}
     finally:
         room.stop()
 
@@ -55,11 +58,14 @@ def test_a_scene_works_its_edges_out_once_and_restamps_them(
     room = _Room()
     try:
         worked_out = []
-        usd_transforms = room.usd_transforms
-        monkeypatch.setattr(
-            room, "usd_transforms", lambda **kw: worked_out.append(1) or usd_transforms(**kw)
-        )
-        stamps = [room.mount_transforms(ts=float(tick)) for tick in range(3)]
+        edge_transforms = room._edge_transforms
+
+        def working_out(*args: Any) -> list[Transform]:
+            worked_out.append(1)
+            return edge_transforms(*args)
+
+        monkeypatch.setattr(room, "_edge_transforms", working_out)
+        stamps = [room.static_transforms(ts=float(tick)) for tick in range(3)]
     finally:
         room.stop()
 

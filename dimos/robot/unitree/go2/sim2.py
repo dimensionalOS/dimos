@@ -48,7 +48,7 @@ from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import OnWorldTime, WorldMirror
 from dimos.simulation.go2_legged.policy import Go2Policy, Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import (
     COMMAND_SLEW,
@@ -115,7 +115,7 @@ class Go2SimConfig(HardwareModuleConfig):
     tf_edges: list[tuple[str, str]] = [("odom", "body")]
 
 
-class Go2Sim(HardwareModule):
+class Go2Sim(OnWorldTime, HardwareModule):
     """A Go2 in a simulated world; mount it on a frame of the scene, which is where it starts."""
 
     config: Go2SimConfig
@@ -230,5 +230,5 @@ class Go2Sim(HardwareModule):
         odom = self._odom(pose, stamp)
         self.odom.publish(odom)
         self.tfbuffer.publish(
-            Transform.from_pose(self.frame.body, odom), *self.usd_transforms(positions, ts=stamp)
+            Transform.from_pose(self.frame.body, odom), *self.moving_transforms(positions, ts=stamp)
         )

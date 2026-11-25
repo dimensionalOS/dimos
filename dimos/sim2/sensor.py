@@ -24,10 +24,10 @@ from dimos.core.stream import In
 from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.sim2.sim import SimulatedWorldSpec
 from dimos.sim2.usd_layer import layer_file
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import OnWorldTime, WorldMirror
 
 
-class SimSensor(HardwareModule):
+class SimSensor(OnWorldTime, HardwareModule):
     world: SimulatedWorldSpec
     world_observations: In[WorldObservations]
 
