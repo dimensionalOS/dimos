@@ -41,7 +41,7 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it() -> None:
     scene = UsdModel.from_file(SCENE).with_frames(
         {"g1": ("scene", MOUNT_XYZ, (0.0, 0.0, MOUNT_YAW))}
     )
-    sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
+    sim = G1Sim(attached_to="g1", instance_name="g1/G1Sim")
     try:
         g1 = fetched_usd(serving_hardware_files(sim))
         world = UsdModel.from_layer(graft_usd(scene.usd, {"g1": g1}))
@@ -67,7 +67,7 @@ def test_odom_is_in_the_frame_a_real_g1_reports_it_in() -> None:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
     from dimos.robot.unitree.g1.sim2 import G1Sim
 
-    sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
+    sim = G1Sim(attached_to="g1", instance_name="g1/G1Sim")
     try:
         # Point-LIO puts its namespace in front of its frame_id itself.
         assert sim.tf_frames["odom"] == f"g1/{PointLioConfig.model_fields['frame_id'].default}"
@@ -90,7 +90,7 @@ def test_tf_goes_out_at_the_rate_a_real_g1_publishes_it() -> None:
             for _ in ():
                 yield 0.0
 
-    sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
+    sim = G1Sim(attached_to="g1", instance_name="g1/G1Sim")
     try:
         sim._world = _World()  # type: ignore[assignment]
         asyncio.run(sim._publish_tf())

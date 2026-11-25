@@ -107,8 +107,8 @@ def _walker() -> Blueprint:
 def _g1(spot: str) -> MetaBlueprint:
     return (
         autoconnect(
-            G1Sim.blueprint(mount=spot),
-            LivoxSim.mount(G1Sim.mounts.lidar),
+            G1Sim.blueprint(attached_to=spot),
+            LivoxSim.attach(G1Sim.mounts.lidar),
             _walker(),
         )
         .remappings(
@@ -126,7 +126,7 @@ def _g1(spot: str) -> MetaBlueprint:
 three_g1_office_555 = autoconnect(
     sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
     Office555.blueprint(),
-    SimCamera.mount(Office555.mounts.overview),
+    SimCamera.attach(Office555.mounts.overview),
     *(_g1(spot) for spot in SPOTS),
     vis_module(viewer_backend=global_config.viewer),
 ).global_config(robot_model="unitree_g1")
