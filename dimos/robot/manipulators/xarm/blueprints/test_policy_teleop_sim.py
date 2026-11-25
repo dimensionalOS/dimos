@@ -24,13 +24,14 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.transport_factory import rpc_backend
 from dimos.imitation.policy.lerobot.module import PolicyControlSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.xarm.blueprints.policy_teleop_sim import (
     JointPolicyDemo,
     demo_policy_teleop_human_sim,
     demo_policy_teleop_policy_sim,
     policy_teleop_sim,
 )
+from dimos.robot.manipulators.xarm.blueprints.teleop import XArmJogCoordinator
+from dimos.simulation.engines.mujoco_arm_connection import MujocoArmConnection
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
@@ -44,23 +45,46 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
     ],
 )
 def test_simulation_blends_registered_joint_policy_and_twist_tasks(blueprint, alpha):
-    parsed = BlueprintConfigParser(blueprint.disabled_modules(ArmTwistCoordinator)).parse(
-        ["--mujocosimmodule.headless=true"], environ={}
-    )
+    blueprint = blueprint.solidify()
+    parsed = BlueprintConfigParser(blueprint).parse(["--mujocosimmodule.headless=true"], environ={})
     assert parsed.global_config["simulation"] == "mujoco"
     atoms = {atom.module: atom for atom in blueprint.active_blueprints}
-    tasks = atoms[ArmTwistCoordinator].kwargs["tasks"]
+    tasks = atoms[XArmJogCoordinator].kwargs["tasks"]
     assert [task.type for task in tasks] == ["eef_twist", "trajectory", "policy_teleop"]
     assert tasks[2].params["operator_tasks"] == [tasks[0].name]
     assert tasks[2].params["policy_tasks"] == [tasks[1].name]
     assert tasks[2].params["alpha"] == alpha
     assert set(tasks[2].joint_names) >= set(tasks[0].joint_names) | set(tasks[1].joint_names)
+    joints = [f"arm/joint{i}" for i in range(1, 8)]
+    assert tasks[2].joint_names == joints
+    assert atoms[JointPolicyDemo].kwargs["joint_names"] == joints
+    assert atoms[XArmJogCoordinator].kwargs["connections"][0].source == "arm"
     assert set(atoms) == {
-        ArmTwistCoordinator,
+        XArmJogCoordinator,
         MujocoSimModule,
+        MujocoArmConnection,
         JointPolicyDemo,
         KeyboardTeleopModule,
     }
+
+
+def test_simulation_wires_commands_and_feedback_through_the_arm_connection():
+    blueprint = policy_teleop_sim.solidify()
+    streams = {
+        atom.module: {
+            (blueprint.remapping_map.get((atom.name, stream.name), stream.name), stream.direction)
+            for stream in atom.streams
+        }
+        for atom in blueprint.active_blueprints
+    }
+    assert ("arm_position_command", "out") in streams[XArmJogCoordinator]
+    assert ("arm_position_command", "in") in streams[MujocoArmConnection]
+    assert ("arm_joint_state", "out") in streams[MujocoArmConnection]
+    assert ("arm_joint_state", "in") in streams[XArmJogCoordinator]
+    assert ("coordinator_joint_state", "out") in streams[XArmJogCoordinator]
+    assert ("coordinator_joint_state", "in") in streams[JointPolicyDemo]
+    assert ("ee_twist_command", "out") in streams[KeyboardTeleopModule]
+    assert ("ee_twist_command", "in") in streams[XArmJogCoordinator]
 
 
 @pytest.fixture

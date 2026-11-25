@@ -21,28 +21,25 @@ import math
 
 from pydantic import Field
 
-from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionStatus,
+    joint_trajectory_task,
+)
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.imitation.policy.lerobot.module import PolicyControlSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.common.blueprints import (
-    coordinator,
-    eef_twist_task,
-    policy_teleop_task,
-    trajectory_task,
-)
-from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
+from dimos.robot.manipulators.common.blueprints import policy_teleop_task
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm_coordinator
+from dimos.robot.manipulators.xarm.blueprints.teleop import XArmJogCoordinator, xarm_jog_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
-    make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
@@ -105,32 +102,31 @@ class JointPolicyDemo(Module):
         self._submitted = result.status is TrajectoryExecutionStatus.ACCEPTED
 
 
-def _make_policy_teleop_sim(alpha: float) -> Blueprint:
-    hardware = make_xarm7_sim_hardware()
-    model = make_xarm7_sim_robot_config()
-    operator = eef_twist_task(hardware, robot_model=model, target_frame="link_tcp")
-    policy = trajectory_task(hardware)
+def _make_policy_teleop_sim(alpha: float) -> MetaBlueprint:
+    model = make_xarm7_sim_robot_config(robot="arm")
+    operator = xarm_jog_task(model, "link_tcp")
+    policy = joint_trajectory_task(model.joint_names)
     return autoconnect(
-        MujocoSimModule.blueprint(
-            **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
-            enable_color=False,
-            enable_depth=False,
-        ),
-        coordinator(
-            hardware=[hardware],
+        xarm_coordinator(
+            "xarm7",
+            simulated=True,
+            sim_module_kwargs={
+                **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
+                "enable_color": False,
+                "enable_depth": False,
+            },
             tasks=[
                 operator,
                 policy,
                 policy_teleop_task(
-                    hardware.joints,
+                    model.joint_names,
                     operator_tasks=[operator.name],
                     policy_tasks=[policy.name],
                     alpha=alpha,
                 ),
             ],
             publish_frame_poses=True,
-            cls=ArmTwistCoordinator,
-            instance_name="ControlCoordinator",
+            cls=XArmJogCoordinator,
         ),
         KeyboardTeleopModule.blueprint(linear_speed=0.12, angular_speed=0.8),
         JointPolicyDemo.blueprint(joint_names=list(model.joint_names)),
