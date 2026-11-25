@@ -111,6 +111,16 @@ def test_a_view_renders_linear_light_only_for_a_stage_that_asks_for_a_tone_map()
     assert MujocoView(toned).model.light_ambient[0] == pytest.approx([1, 1, 1])
 
 
+def test_a_lidar_view_opens_on_a_dome_sky_given_as_pixels():
+    from dimos.sim2.mujoco.view import MujocoView
+    from dimos.sim2.mujoco.world import SensorMount
+
+    sky = '\ndef DomeLight "sky"\n{\n    color3f inputs:color = (1, 0.5, 0.25)\n}\n'
+    scene = layer_file(SCENE.read_text() + sky, called="look")
+    lidar = MujocoView(scene, mount=SensorMount("lidar", "world", "lidar"))
+    assert lidar.model.tex_type.tolist() == [mujoco.mjtTexture.mjTEXTURE_SKYBOX]
+
+
 def test_a_tone_mapped_view_shows_the_domes_sky_as_blender_would():
     from dimos.sim2.mujoco.view import MujocoView
 

@@ -25,6 +25,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.sim2.mujoco.lights import dome_sky
 from dimos.sim2.mujoco.look import (
+    blank_textures,
     display,
     light_headroom,
     linear_textures,
@@ -55,9 +56,13 @@ class MujocoView:
         # Held while the view is built, so each reader of the scene below shares its parsed layers instead of reparsing them.
         stage = _open_stage(Path(scene)) if Path(scene).suffix.lower() in USD_SUFFIXES else None
         spec = compile_world(scene, ids=self._robots)
+        # Only a camera draws the world, and decoding a scene's textures can take gigabytes a view.
+        self._draws = mount is None or mount.kind == "camera"
+        if not self._draws:
+            blank_textures(spec)
         if mount is not None:
             mount_sensor(spec, mount)
-        self._tone_map = stage_tone_map(Path(scene)) if stage is not None else None
+        self._tone_map = stage_tone_map(Path(scene)) if stage is not None and self._draws else None
         if self._tone_map is not None:
             linear_textures(spec, Path(scene))
         self.model = spec.compile()
@@ -148,6 +153,8 @@ class MujocoView:
         return angular_linear[3:], angular_linear[:3]
 
     def render(self, camera: str, width: int, height: int) -> NDArray[np.uint8]:
+        if not self._draws:
+            raise ValueError("a lidar or imu view has no textures to render; open a camera view")
         if self._renders is None:
             # A worker is forked, and macOS's Metal compiles no shader there (see renders.py).
             self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(self.model)
