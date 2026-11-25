@@ -903,6 +903,8 @@ mod tests {
             graze_cos: 0.5,
             graze_recent_frames: u32::MAX,
             support_min: 0,
+            support_global: false,
+            global_min_health: 0,
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
