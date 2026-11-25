@@ -20,6 +20,7 @@ from pathlib import Path
 import posixpath
 import threading
 
+from dimos.constants import CACHE_DIR
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
@@ -34,6 +35,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 HARDWARE_USD = "hardware.usda"
+# Where a module keeps the layers it rewrote, so it serves them from disk like any other file.
+SERVED_LAYERS = CACHE_DIR / "hardware_files" / "served"
 
 # A file's sha256 by (path, size, mtime in ns), so a file is hashed again only once it changes.
 _hashes: dict[tuple[str, int, int], str] = {}
@@ -42,11 +45,24 @@ _hashes_lock = threading.Lock()
 
 @dataclass(frozen=True)
 class _Layer:
-    """A layer served rewritten, so the names in it are relative to where it is served."""
+    """A layer served rewritten (so the names in it are relative to where it is served), kept on disk."""
 
-    content: bytes
+    path: Path
     sha256: str
     mtime: float | None
+
+
+def _written_layer(text: str, name: str, mtime: float | None) -> _Layer:
+    """``text`` stored once under its sha256, so serving it holds no copy of it in memory."""
+    content = text.encode()
+    sha256 = asset_hash(content)
+    path = SERVED_LAYERS / sha256.partition(":")[2] / name
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        staged = path.with_name(f".{name}.{threading.get_ident()}")
+        staged.write_bytes(content)
+        staged.replace(path)
+    return _Layer(path, sha256, mtime)
 
 
 def hardware_file_topics(namespace: str) -> tuple[str, str]:
@@ -78,11 +94,16 @@ class HardwareFiles:
         """``usd`` names its files by absolute path; what is served names them relative to it."""
         # Before any layer is opened or hashed: a clone without LFS smudging has pointers, not meshes.
         pull_usd_assets([usd])
-        self.usd, published = publish_usd_assets(usd)
-        self._usd = _Layer(self.usd.encode(), asset_hash(self.usd.encode()), mtime)
+        served, published = publish_usd_assets(usd)
+        self._usd = _written_layer(served, HARDWARE_USD, mtime)
         # None: named by a served layer but not servable, which is said in a header with no sha256.
         self._files: dict[str, Path | _Layer | None] = {}
         self._serve_reached("", published, frozenset())
+
+    @property
+    def usd(self) -> str:
+        """``hardware.usda`` as served, read from where it is kept."""
+        return self._usd.path.read_text()
 
     @property
     def uris(self) -> list[str]:
@@ -107,7 +128,7 @@ class HardwareFiles:
         if isinstance(found, _Layer):
             if request.sha256 == found.sha256:
                 return FileInfo(uri, found.sha256, found.mtime)
-            return FileInfo(uri, found.sha256, found.mtime, found.content)
+            return FileInfo(uri, found.sha256, found.mtime, found.path.read_bytes())
         try:
             sha256, mtime = file_hash(found)
             if request.sha256 == sha256:
@@ -156,6 +177,5 @@ class HardwareFiles:
         text = resolve_usd_assets(str(layer.ExportToString()), str(path.parent))
         pull_usd_assets([text])
         served, reached = publish_usd_assets(text)
-        content = served.encode()
         self._serve_reached(posixpath.dirname(uri), reached, walking | {path.resolve()})
-        return _Layer(content, asset_hash(content), path.stat().st_mtime)
+        return _written_layer(served, path.name, path.stat().st_mtime)

@@ -156,19 +156,22 @@ class HardwareModule(TfModule):
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.mount is not None else None
 
-    @cached_property
-    def _hardware_files(self) -> HardwareFiles:
-        usd = self.config.usd
+    def local_usd(self) -> str:
+        """This hardware's USD for its own use: frames named as on tf, files as paths on this machine."""
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 
-        source = usd.source_path
+        source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        absolute = prefix_usd_frames(
-            resolve_usd_assets(usd.usd, root), self.frame_id_prefix, root or None
+        return prefix_usd_frames(
+            resolve_usd_assets(self.config.usd.usd, root), self.frame_id_prefix, root or None
         )
+
+    @cached_property
+    def _hardware_files(self) -> HardwareFiles:
+        source = self.config.usd.source_path
         return HardwareFiles(
-            absolute, source.stat().st_mtime if source and source.is_file() else None
+            self.local_usd(), source.stat().st_mtime if source and source.is_file() else None
         )
 
     def _on_hardware_file_request(self, request: FileInfo) -> None:
