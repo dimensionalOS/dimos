@@ -91,6 +91,13 @@ def Xform "robot"
     return robot
 
 
+@pytest.fixture(autouse=True)
+def _served_layers_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dimos.core.hardware_files as hardware_files
+
+    monkeypatch.setattr(hardware_files, "SERVED_LAYERS", tmp_path / "served")
+
+
 def _files(tmp_path: Path) -> HardwareFiles:
     from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 
@@ -105,6 +112,16 @@ def _served(files: HardwareFiles) -> dict[str, bytes]:
         assert reply is not None and reply.content is not None, uri
         served[uri] = reply.content
     return served
+
+
+def test_rewritten_layers_are_served_from_disk_not_held_in_memory(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    kept = {path.name: path.read_bytes() for path in (tmp_path / "served").rglob("*.usda")}
+
+    assert "hardware.usda" in kept
+    for uri, content in _served(files).items():
+        if uri.endswith(".usda"):
+            assert content in kept.values(), uri
 
 
 def test_a_request_holding_the_current_sha256_gets_only_the_header(tmp_path: Path) -> None:
