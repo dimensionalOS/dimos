@@ -160,6 +160,11 @@ class ManipulationModuleConfig(ModuleConfig):
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
+    # A simulator that runs slower than the wall clock (RoboLab in Isaac) is sent a
+    # trajectory faster than its arm can follow. When set, a blocking execute also waits
+    # until every measured joint is this close (rad or m) to the trajectory end.
+    arrival_tolerance: float | None = Field(default=None, gt=0.0)
+    arrival_timeout: float = Field(default=30.0, gt=0.0)
     # Coordinator joint name -> model joint name, so a twist base's odometry
     # joints (chassis/vx, ...) can feed the model's planar base joints.
     joint_state_aliases: dict[str, str] = Field(default_factory=dict)
@@ -267,6 +272,8 @@ class ManipulationModule(Module):
 
         # Canonical generated plan for the plan/preview/execute workflow.
         self._pending_plan: GeneratedPlan | None = None
+        # The joint positions the dispatched trajectory ends at, for arrival_tolerance.
+        self._dispatched_goal: dict[str, float] = {}
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
@@ -1217,6 +1224,10 @@ class ManipulationModule(Module):
             ), None
         try:
             result = self._execution_manager.execute(target_plan, blocking=False)
+            trajectory = target_plan.trajectory
+            self._dispatched_goal = dict(
+                zip(trajectory.joint_names, trajectory.points[-1].positions, strict=True)
+            )
         except Exception as exc:
             logger.exception("Failed to dispatch generated plan")
             result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
@@ -1238,6 +1249,8 @@ class ManipulationModule(Module):
         except Exception as exc:
             logger.exception("Failed to wait for execution")
             result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
+        if result.status is ExecutionStatus.COMPLETED and self.config.arrival_tolerance:
+            result = self._wait_for_arrival(result)
         if result.status is ExecutionStatus.TIMED_OUT:
             result = replace(
                 result,
@@ -1246,6 +1259,29 @@ class ManipulationModule(Module):
         if epoch is not None:
             self._apply_execution_result(result, epoch)
         return result
+
+    def _wait_for_arrival(self, result: ExecutionResult) -> ExecutionResult:
+        """Wait for the measured joints to reach the trajectory end (arrival_tolerance)."""
+        goal, tolerance = self._dispatched_goal, self.config.arrival_tolerance
+        if not goal or tolerance is None or self._world_monitor is None:
+            return result
+        deadline = time.monotonic() + self.config.arrival_timeout
+        error = math.inf
+        while True:
+            state = self._world_monitor.get_current_joint_state()
+            if state is not None:
+                measured = dict(zip(state.name, state.position, strict=False))
+                if all(name in measured for name in goal):
+                    error = max(abs(measured[name] - value) for name, value in goal.items())
+                    if error <= tolerance:
+                        return result
+            if time.monotonic() >= deadline:
+                return replace(
+                    result,
+                    message=f"{result.message}. The arm is still {error:.3f} from the "
+                    f"trajectory end after {self.config.arrival_timeout:.0f} s",
+                )
+            time.sleep(0.05)
 
     def _apply_execution_result(
         self,

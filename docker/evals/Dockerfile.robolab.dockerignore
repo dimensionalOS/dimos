@@ -1,0 +1,20 @@
+# Allowlist for docker/evals/Dockerfile.robolab (BuildKit prefers <Dockerfile>.dockerignore).
+*
+!dimos
+!web
+!native/python/graspgenx
+!docker/evals
+!pyproject.toml
+!uv.lock
+!setup.py
+!README.md
+!default.env
+!assets/agent/prompt.txt
+**/__pycache__
+**/.venv
+**/*.pyc
+web/**/node_modules
+web/**/dist
+dimos/agents/node_modules
+dimos/agents/dist
+dimos/**/*.so
