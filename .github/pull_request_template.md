@@ -17,11 +17,12 @@
         In rerun, click on a far away region.
         The robot should travel without detouring much.
 -->
-<!-- Optional. Leave this empty if there are no manual steps. Omit automated test commands. -->
+<!-- If you leave this empty, your PR will very likely be closed. -->
+<!-- DO NOT post pytest commands. -->
 
 ## Which issue(s) does this PR close?
 
-<!-- Optional. Use "Fixes DIM-XXX / #XXX / URL" when closing an issue. -->
+<!-- Usage: "Fixes DIM-XXX / #XXX / URL" -->
 
 ## Checklist
 
