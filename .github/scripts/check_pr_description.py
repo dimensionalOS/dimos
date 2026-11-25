@@ -19,7 +19,7 @@ import re
 import string
 import sys
 
-MAX_LENGTH = 3000
+MAX_LENGTH = 5000
 CLA = re.compile(
     r" {0,3}[-*+] \[([ xX])\] I have read and approved the "
     r"(?:CLA|\[CLA\]\([^)]+\))\.?[ \t]*",
