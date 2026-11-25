@@ -110,7 +110,8 @@ def test_a_mesh_the_layer_names_that_is_a_git_lfs_pointer_is_fetched_before_it_i
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dimos.robot.assets.model import UsdModel
-    from dimos.sim2 import lfs
+    from dimos.robot.assets.usd_utils import lfs
+    from dimos.utils.data import _is_lfs_pointer_file
 
     meshes = tmp_path / "robot" / "meshes"
     meshes.mkdir(parents=True)
@@ -125,7 +126,7 @@ def test_a_mesh_the_layer_names_that_is_a_git_lfs_pointer_is_fetched_before_it_i
     pulled: list[list[Path]] = []
 
     def pull(paths: Iterable[Path]) -> None:
-        pulled.append(sorted(path for path in paths if lfs._is_lfs_pointer_file(path)))
+        pulled.append(sorted(path for path in paths if _is_lfs_pointer_file(path)))
         for path in pulled[-1]:
             path.write_bytes(b"PXR-USDC fetched")
 

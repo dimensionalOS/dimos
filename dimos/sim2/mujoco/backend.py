@@ -13,9 +13,7 @@
 # limitations under the License.
 
 
-from collections.abc import Iterable, Mapping, Sequence
-from pathlib import Path
-import re
+from collections.abc import Iterable, Sequence
 from threading import Lock
 import time
 from typing import TYPE_CHECKING, Any
@@ -80,10 +78,7 @@ class MujocoBackend:
         self._servo_lookup: dict[tuple[str, tuple[str, ...]], tuple[np.ndarray, np.ndarray]] = {}
         self._started = time.monotonic()
         self._rebase = True
-        self._files = _files_named_by_usd(self._scene_layer)
         self._layers = {id: usd_layer(r.model) for id, r in self._robots.items()}
-        for layer in self._layers.values():
-            self._files.update(_files_named_by_usd(layer))
         self._reset()
 
     @property
@@ -93,13 +88,6 @@ class MujocoBackend:
 
     def describe(self) -> dict[str, Any]:
         return {"backend": "mujoco", "scene": str(self._scene_layer)}
-
-    def assets(self) -> Mapping[str, Path | bytes]:
-        return {
-            "world.xml": self._scene_layer,
-            str(self._scene_layer): self._scene_layer,
-            **self._files,
-        }
 
     def step(
         self, actions: Sequence[Action] = (), hold: bool = False
@@ -348,19 +336,3 @@ def _actuator_kind(model: mujoco.MjModel, actuator: int) -> str:
     if model.actuator_biastype[actuator] == mujoco.mjtBias.mjBIAS_NONE:
         return "effort"
     return "position" if model.actuator_biasprm[actuator][1] != 0 else "velocity"
-
-
-_USD_ASSET = re.compile(r"@([^@\n]+)@")
-
-
-def _files_named_by_usd(layer: Path) -> dict[str, Path]:
-    files = {str(layer): layer}
-    try:
-        text = layer.read_text(errors="ignore")
-    except OSError:
-        return files
-    for name in _USD_ASSET.findall(text):
-        path = (layer.parent / name).resolve()
-        if path.is_file():
-            files[str(path)] = path
-    return files
