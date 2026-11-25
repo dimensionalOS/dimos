@@ -52,8 +52,7 @@ from dimos.simulation.m20_policy_sim.runner import RobotState, Runner
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# journal.log / capture events by kind, each time-sorted with its time first: states (t, name), gaits (t, gait),
-# heights (t, scale), nav (t, x, y, yaw, z, roll, pitch, metric)
+# journal.log / capture events by kind (states, gaits, heights, nav), each a time-sorted tuple with its time first
 Events = dict[str, list[tuple[Any, ...]]]
 # build_plan's state segments and policy steps, as plan.json carries them
 PlanEntry = dict[str, Any]
