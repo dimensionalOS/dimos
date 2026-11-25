@@ -30,6 +30,7 @@ from typing import Any
 import numpy as np
 
 from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
+from dimos.sim2.lfs import pull_lfs_files
 
 DIMSIM_SCENES = DIMOS_PROJECT_ROOT / "misc" / "DimSim" / "scenes"
 INTERACTIVE = "interactive"
@@ -38,7 +39,6 @@ TITLE = "title"
 STATE = "state"
 # Loaded as scene content, so it is this user's alone: see _private().
 _MESHES = CACHE_DIR / "dimsim-meshes"
-_LFS_POINTER = b"version https://git-lfs.github.com/spec/v1"
 # DimSim's scenes are three.js, y up: this rotation (120 degrees about x+y+z) takes its x, y, z to our y, z, x.
 _Y_UP_TO_Z_UP = (0.5, 0.5, 0.5, 0.5)
 
@@ -58,10 +58,17 @@ def dimsim_scene_usd(name: str) -> str:
     y_up = f"/{name}/y_up"
     pxr.UsdGeom.Xform.Define(stage, y_up).AddOrientOp().Set(pxr.Gf.Quatf(*_Y_UP_TO_Z_UP))
     structure = scene / "structure.glb"
-    if structure.is_file():
-        _reference(pxr, stage, f"{y_up}/structure", _mesh_file(pxr, structure, name))
     manifest = scene / "objects" / "manifest.json"
     entries = json.loads(manifest.read_text()) if manifest.is_file() else []
+    # One pull for every model the scene uses that is still a Git LFS pointer, before any is read.
+    pull_lfs_files(
+        [
+            structure,
+            *(scene / "objects" / state["file"] for entry in entries for state in entry["states"]),
+        ]
+    )
+    if structure.is_file():
+        _reference(pxr, stage, f"{y_up}/structure", _mesh_file(pxr, structure))
     taken: set[str] = set()
     for entry in entries:
         _add_object(pxr, stage, f"{y_up}/objects/{_prim_name(entry['title'], taken)}", entry, name)
@@ -82,7 +89,7 @@ def _add_object(pxr: Any, stage: Any, path: str, entry: dict[str, Any], scene: s
         variants.SetVariantSelection(state["id"])
         glb = DIMSIM_SCENES / scene / "objects" / state["file"]
         with variants.GetVariantEditContext():
-            _reference(pxr, stage, f"{path}/geometry", _mesh_file(pxr, glb, scene))
+            _reference(pxr, stage, f"{path}/geometry", _mesh_file(pxr, glb))
     variants.SetVariantSelection(entry["currentStateId"])
     prim.SetCustomDataByKey(TITLE, entry["title"])
     if entry.get("pickable"):
@@ -108,14 +115,9 @@ def _reference(pxr: Any, stage: Any, path: str, layer: Path) -> None:
     stage.DefinePrim(path, "Xform").GetReferences().AddReference(str(layer))
 
 
-def _mesh_file(pxr: Any, glb: Path, scene: str) -> Path:
+def _mesh_file(pxr: Any, glb: Path) -> Path:
     """The GLB's meshes as a cached USD layer, one Mesh per GLB mesh node, each in the GLB's own frame and material."""
     data = glb.read_bytes()
-    if data.startswith(_LFS_POINTER):
-        raise FileNotFoundError(
-            f"{glb} is a Git LFS pointer, not the model; fetch the scene with "
-            f'git lfs pull --include="misc/DimSim/scenes/{scene}/**"'
-        )
     out = _private(_MESHES) / f"{hashlib.sha256(data).hexdigest()[:16]}.usdc"
     if out.exists():
         return out

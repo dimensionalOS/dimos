@@ -39,11 +39,8 @@ _GO2 = Path(__file__).parents[2] / "robot" / "unitree" / "go2" / "assets" / "go2
 _Apartment = tuple[DimSimBackend, WorldMirror]
 _MANIFEST = json.loads((_SCENE / "objects" / "manifest.json").read_text())
 
-if (_SCENE / "structure.glb").read_bytes().startswith(b"version https://git-lfs"):
-    pytest.skip(
-        'the apartment\'s models are Git LFS pointers: git lfs pull --include="misc/DimSim/scenes/apartment/**"',
-        allow_module_level=True,
-    )
+# The apartment's models are Git LFS data, which the scene fetches as it loads.
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture(scope="module")
