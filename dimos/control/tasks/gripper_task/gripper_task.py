@@ -163,7 +163,7 @@ class GripperControlTask(BaseControlTask):
                 self._target = None
 
     def set_position(self, values: list[float], t_now: float | None = None) -> bool:
-        """Set per-joint targets in the adapter's native units."""
+        """Set per-joint targets in the connection's native units."""
         if not self._validate_values("set_position", values, self._limits):
             return False
         return self._latch(list(values), t_now)

@@ -37,10 +37,10 @@ class ZeroStiffnessSource(Protocol):
 
 
 class HandGuidingTask(BaseControlTask):
-    """Follow measured positions while the adapter supplies damping and gravity torque.
+    """Follow measured positions while the connection supplies damping and gravity torque.
 
     The hardware must have zero position gains. This task supplies the periodic
-    writes needed by torque-compensating adapters; it does not compute gravity.
+    writes needed by torque-compensating connections; it does not compute gravity.
     """
 
     def __init__(self, name: str, joint_names: list[str], priority: int) -> None:

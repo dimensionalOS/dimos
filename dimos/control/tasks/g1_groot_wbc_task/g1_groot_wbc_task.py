@@ -218,7 +218,7 @@ class G1GrootWBCTaskConfig:
             False - safe for real hardware; the blueprint sets True for
             simulation.
         auto_dry_run: Enter dry-run mode on ``start()``.  Policy still
-            runs but outputs are not emitted to the adapter - useful for
+            runs but outputs are not sent to the robot - useful for
             verifying on real hardware without commanding motors.
         default_ramp_seconds: Duration of the arming ramp (current pose
             -> ``default_15``) when ``arm()`` is called without an
@@ -715,7 +715,7 @@ class G1GrootWBCTask(BaseControlTask):
 
         In dry-run the policy still runs (obs history stays hot) but
         ``compute()`` returns ``None``, so the coordinator forwards no
-        command to the adapter.  Use to verify policy sanity on real
+        command to the robot.  Use to verify policy sanity on real
         hardware before committing motor torques.
         """
         new_val = bool(enabled)
