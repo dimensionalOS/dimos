@@ -67,9 +67,15 @@ class Renders:
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
 
     def render(
-        self, data: mujoco.MjData, camera: str, width: int, height: int
+        self,
+        data: mujoco.MjData,
+        camera: str,
+        width: int,
+        height: int,
+        dimmer: float = 1.0,
+        direct: bool = True,
     ) -> NDArray[np.uint8]:
-        """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight)."""
+        """`camera`'s image of `data` (lights placed by mj_camlight); `dimmer` < 1 scales every light, sky left out; `direct` False: ambient and emission only."""
         if (width, height) not in self._renderers:
             renderer = mujoco.Renderer(self.model, height, width)
             flags = renderer.scene.flags
@@ -78,8 +84,25 @@ class Renders:
             flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = int(self._quality.skybox)
             self._renderers[width, height] = renderer
         renderer = self._renderers[width, height]
-        renderer.update_scene(data, camera=camera, scene_option=self._options)
-        return renderer.render().copy()
+        if dimmer == 1.0 and direct:
+            renderer.update_scene(data, camera=camera, scene_option=self._options)
+            return renderer.render().copy()
+        model, sky = self.model, mujoco.mjtRndFlag.mjRND_SKYBOX
+        lights = model.light_ambient.copy(), model.light_diffuse.copy(), model.light_specular.copy()
+        emission, shown = model.mat_emission.copy(), renderer.scene.flags[sky]
+        model.light_ambient *= dimmer
+        model.light_diffuse *= dimmer * direct
+        model.light_specular *= dimmer * direct
+        model.mat_emission *= dimmer
+        # The skybox's texels were scaled for the undimmed light, so a dimmed image leaves it out.
+        renderer.scene.flags[sky] = int(shown and dimmer == 1.0)
+        try:
+            renderer.update_scene(data, camera=camera, scene_option=self._options)
+            return renderer.render().copy()
+        finally:
+            model.light_ambient[:], model.light_diffuse[:], model.light_specular[:] = lights
+            model.mat_emission[:] = emission
+            renderer.scene.flags[sky] = shown
 
     def close(self) -> None:
         for renderer in self._renderers.values():
@@ -103,10 +126,18 @@ class RenderProcess:
         self._connection.send((model, asdict(quality)))
 
     def render(
-        self, data: mujoco.MjData, camera: str, width: int, height: int
+        self,
+        data: mujoco.MjData,
+        camera: str,
+        width: int,
+        height: int,
+        dimmer: float = 1.0,
+        direct: bool = True,
     ) -> NDArray[np.uint8]:
-        """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight)."""
-        self._connection.send((data.qpos, data.mocap_pos, data.mocap_quat, camera, width, height))
+        """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight); `dimmer` and `direct` as Renders takes them."""
+        self._connection.send(
+            (data.qpos, data.mocap_pos, data.mocap_quat, camera, width, height, dimmer, direct)
+        )
         reply = self._connection.recv()
         if isinstance(reply, BaseException):
             raise reply
@@ -126,7 +157,9 @@ def _serve(descriptor: int) -> None:
     try:
         while True:
             try:
-                qpos, mocap_pos, mocap_quat, camera, width, height = connection.recv()
+                qpos, mocap_pos, mocap_quat, camera, width, height, dimmer, direct = (
+                    connection.recv()
+                )
             except EOFError:
                 return
             data.qpos[:], data.mocap_pos[:], data.mocap_quat[:] = qpos, mocap_pos, mocap_quat
@@ -134,7 +167,7 @@ def _serve(descriptor: int) -> None:
             mujoco.mj_comPos(renders.model, data)
             mujoco.mj_camlight(renders.model, data)
             try:
-                connection.send(renders.render(data, camera, width, height))
+                connection.send(renders.render(data, camera, width, height, dimmer, direct))
             except Exception as error:
                 connection.send(error)
     finally:

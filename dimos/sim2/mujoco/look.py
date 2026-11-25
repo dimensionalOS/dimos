@@ -111,6 +111,28 @@ def light_headroom(model: mujoco.MjModel) -> float:
     )
 
 
+def ambient_headroom(model: mujoco.MjModel) -> float:
+    """The most linear light a surface lit by no light directly (ambient and emission alone) can send back."""
+    active = model.light_active.astype(bool)
+    total = model.light_ambient[active].sum(axis=0)
+    headlight = model.vis.headlight
+    if headlight.active:
+        total = total + headlight.ambient
+    return max(
+        1.0, float(np.max(total, initial=0.0)) + float(np.max(model.mat_emission, initial=0.0))
+    )
+
+
+def merged_light(
+    shade: NDArray[np.uint8], shade_headroom: float, lit: NDArray[np.uint8], lit_headroom: float
+) -> NDArray[np.float32]:
+    """Linear light from two 8-bit renders of one view: `shade` (ambient alone) plus what direct light `lit` adds above it."""
+    ambient = shade.astype(np.float32) * np.float32(shade_headroom / 255.0)
+    added = lit.astype(np.float32) * np.float32(lit_headroom / 255.0) - ambient
+    # Below one of `lit`'s 8-bit steps, the difference is its rounding, not light.
+    return ambient + np.where(added > lit_headroom / 255.0, added, np.float32(0.0))
+
+
 def scale_light(model: mujoco.MjModel, factor: float) -> None:
     """Multiply every source of light in the model by `factor`."""
     model.light_ambient *= factor
@@ -215,7 +237,11 @@ def agx(color: NDArray[np.float32]) -> NDArray[np.float32]:
 
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:
     """A render of light scaled down by `headroom`, back to linear light, tone mapped and sRGB encoded."""
-    linear = render.astype(np.float32) * np.float32(headroom / 255.0)
+    return tone_mapped(render.astype(np.float32) * np.float32(headroom / 255.0), curve)
+
+
+def tone_mapped(linear: NDArray[np.float32], curve: str) -> NDArray[np.uint8]:
+    """Linear light through `curve`, sRGB encoded."""
     if curve == "agx":
         return np.rint(np.clip(agx(linear), 0.0, 1.0) * 255).astype(np.uint8)
     return srgb_bytes(pbr_neutral(linear) if curve == "neutral" else linear)

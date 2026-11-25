@@ -25,13 +25,16 @@ from scipy.spatial.transform import Rotation
 
 from dimos.sim2.mujoco.lights import dome_sky
 from dimos.sim2.mujoco.look import (
+    ambient_headroom,
     blank_textures,
     display,
     light_headroom,
     linear_textures,
+    merged_light,
     scale_light,
     show_sky,
     stage_tone_map,
+    tone_mapped,
 )
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
@@ -76,13 +79,14 @@ class MujocoView:
             linear_textures(spec, Path(scene))
         self.model = spec.compile()
         quality.apply_to_model(self.model)
-        self._headroom = 1.0
+        self._headroom = self._full_headroom = 1.0
         if self._tone_map is not None:
             # MuJoCo writes linear light to 8 bits and clips at 1, so render it scaled to fit.
             sky = dome_sky(Path(scene))
-            self._headroom = max(
-                light_headroom(self.model), 0.0 if sky is None else float(sky.max())
-            )
+            skies = [] if sky is None else [float(sky.max())]
+            # Fitting a sun into 8 bits leaves the shade a code value or two, so the shade gets its own exposure.
+            self._headroom = max(ambient_headroom(self.model), *skies)
+            self._full_headroom = max(light_headroom(self.model), *skies)
             scale_light(self.model, 1.0 / self._headroom)
             if sky is not None:
                 show_sky(self.model, sky / self._headroom)
@@ -173,10 +177,15 @@ class MujocoView:
         # Placed here as well as where it renders, as pose() reads the cameras this places.
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
-        rgb = self._renders.render(self.data, camera, width, height)
-        if self._tone_map is None:
-            return rgb
-        return display(rgb, self._headroom, self._tone_map)
+        if self._tone_map is None or self._full_headroom <= self._headroom:
+            rgb = self._renders.render(self.data, camera, width, height)
+            return rgb if self._tone_map is None else display(rgb, self._headroom, self._tone_map)
+        # MuJoCo clips each light's color at 1, so the shade renders alone at its own scale and the direct light at the full one.
+        shade = self._renders.render(self.data, camera, width, height, direct=False)
+        dimmer = self._headroom / self._full_headroom
+        lit = self._renders.render(self.data, camera, width, height, dimmer)
+        linear = merged_light(shade, self._headroom, lit, self._full_headroom)
+        return tone_mapped(linear, self._tone_map)
 
     def raycaster(
         self,

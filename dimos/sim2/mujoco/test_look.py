@@ -20,8 +20,10 @@ import pytest
 
 from dimos.sim2.mujoco.look import (
     agx,
+    ambient_headroom,
     display,
     light_headroom,
+    merged_light,
     pbr_neutral,
     scale_light,
     srgb_bytes,
@@ -96,6 +98,24 @@ def test_a_render_scaled_by_its_headroom_comes_back_as_the_light_it_was():
     render = np.full((1, 1, 3), 51, np.uint8)
     assert display(render, 5.0, "linear").tolist() == [[[255, 255, 255]]]
     assert display(render, 1.0, "linear").tolist() == srgb_bytes(np.full((1, 1, 3), 0.2)).tolist()
+
+
+def test_the_shade_and_the_direct_light_merge_into_one_linear_image():
+    shade = np.array([[[51, 51, 51], [51, 51, 51], [255, 255, 255]]], np.uint8)
+    lit = np.array([[[5, 5, 5], [102, 102, 102], [0, 0, 0]]], np.uint8)
+    merged = merged_light(shade, 1.0, lit, 10.0)
+    # Unlit, the shade's finer steps; lit, the shade plus what the lit render adds; the sky, left out of the lit render, the shade's.
+    assert merged[0, :, 0] == pytest.approx([0.2, 4.0, 1.0])
+
+
+def test_the_shades_headroom_counts_ambient_light_alone():
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><visual><headlight active="0"/></visual><worldbody>'
+        '<light directional="true" ambient="2 2 2" diffuse="9 9 9" specular="1 1 1"/>'
+        '<geom type="plane" size="1 1 1"/></worldbody></mujoco>'
+    )
+    assert ambient_headroom(model) == pytest.approx(2.0)
+    assert light_headroom(model) == pytest.approx(12.0)
 
 
 def test_the_headroom_scales_every_light_so_the_brightest_surface_fits():
