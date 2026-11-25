@@ -25,7 +25,7 @@ import pytest
 
 from dimos.simulation.engines import mujoco_engine, mujoco_sim_module
 from dimos.simulation.engines.mujoco_engine import CameraConfig, MujocoEngine, _RealtimeKeeper
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 _DT = 0.002
 _CAMERA_XML = f"""
@@ -222,16 +222,12 @@ def test_sim_module_hands_render_settings_to_the_engine(
         raise _BuiltError
 
     monkeypatch.setattr(mujoco_sim_module, "MujocoEngine", fake_engine)
-    # Not constructed: start() reads only its config before the engine, and no RPC is served.
-    module = MujocoSimModule.__new__(MujocoSimModule)
-    module.config = MujocoSimModuleConfig(
-        address=str(xml), camera_name="cam", shadows="off", keep_realtime="on"
-    )
+    module = MujocoSimModule(address=str(xml), camera_name="cam", shadows="off", keep_realtime="on")
     try:
         with pytest.raises(_BuiltError):
             module.start()
     finally:
-        module._shm.cleanup()
+        module.stop()
 
     assert seen["shadows"] == "off"
     assert seen["keep_realtime"] == "on"
