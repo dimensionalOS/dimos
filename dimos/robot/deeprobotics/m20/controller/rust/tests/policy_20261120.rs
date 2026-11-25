@@ -147,7 +147,7 @@ fn policy_steps_match_rl_deploy() {
     let Some(dir) = common::policy_dir() else {
         return;
     };
-    let cfg = common::config();
+    let cfg = common::config().rl_deploy();
     // rl_deploy's own library where it is installed ([inference] onnxruntime), else $M20_ONNXRUNTIME
     let Some(library) = m20_controller::runner::onnxruntime_library(&cfg.inference.onnxruntime)
     else {

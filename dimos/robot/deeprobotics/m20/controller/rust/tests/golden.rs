@@ -46,7 +46,7 @@ fn runners_match_python_reference() {
         eprintln!("skipping: run python -m dimos.simulation.m20_policy_sim.golden first");
         return;
     }
-    let cfg = common::config();
+    let cfg = common::config().rl_deploy();
     let golden: Value = serde_json::from_str(&std::fs::read_to_string(golden).unwrap()).unwrap();
     let dt = cfg.timing.policy_decimation as f64 / cfg.timing.control_hz;
     for (name, spec) in &cfg.runners {

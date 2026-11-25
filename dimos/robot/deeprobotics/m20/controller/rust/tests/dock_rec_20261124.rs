@@ -405,7 +405,7 @@ fn sweeps_are_the_detector_on_the_capture() {
         );
         return;
     }
-    let cfg = common::config();
+    let cfg = common::config().rl_deploy();
     let detector = Detector::new(&cfg.dock);
     let mut decoder = Decoder::new(DecoderConfig {
         // the vendor driver's (NOS node_driver config.yaml)
@@ -551,7 +551,7 @@ fn replay(start_point: [f32; 3]) -> Vec<(f64, Write)> {
 fn replay_traced(
     start_point: [f32; 3],
 ) -> (Vec<(f64, Write)>, Vec<(f64, Phase)>, Option<[f32; 3]>) {
-    let mut cfg = common::config();
+    let mut cfg = common::config().rl_deploy();
     // charge_manager waits on its detector process's service: the replies are reflective_column_node's, logged
     cfg.dock.sequence.detector_service = true;
     let replies = service_replies();

@@ -43,6 +43,9 @@ pub struct Config {
     pub basic_server: BasicServerConfig,
     /// rl_deploy's metric velocity command to normalized axes (DdsInterface::HandlerVel)
     pub real_steer: RealSteer,
+    /// the runners safety.default_command_slew gave a slew (rl_deploy's have none)
+    #[serde(skip)]
+    pub slew_defaulted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -647,8 +650,13 @@ impl Config {
         let mut cfg: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         if let Some(slew) = cfg.safety.default_command_slew {
-            for r in cfg.runners.values_mut() {
-                r.command_slew.get_or_insert(slew);
+            for (name, r) in cfg
+                .runners
+                .iter_mut()
+                .filter(|(_, r)| r.command_slew.is_none())
+            {
+                r.command_slew = Some(slew);
+                cfg.slew_defaulted.push(name.clone());
             }
         }
         cfg.validate()?;
@@ -774,6 +782,22 @@ impl Config {
             .find(|(_, r)| r.gaits.contains(&gait))
             .map(|(n, _)| n.as_str())
             .unwrap_or(&self.states.rl_control.fallback_runner)
+    }
+
+    /// This config with every difference of ours from rl_deploy (ROBUSTNESS.md) off: replays of its recordings.
+    pub fn rl_deploy(mut self) -> Config {
+        self.states.rl_control.safe_switch = None;
+        self.safety.finite_commands = false;
+        self.safety.default_command_slew = None;
+        for name in std::mem::take(&mut self.slew_defaulted) {
+            if let Some(r) = self.runners.get_mut(&name) {
+                r.command_slew = None;
+            }
+        }
+        for r in self.runners.values_mut() {
+            r.param_limits.clear();
+        }
+        self
     }
 
     pub fn control_dt(&self) -> f64 {
