@@ -61,13 +61,28 @@ from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 print(app.ManipulationLocalize.state())   # repeat until it reads ready
 Arm.from_app(app).move_linear(dy=0.08)   # localize confirms an object from two camera poses
 time.sleep(2.0)   # let the second view reach memory
-for o in app.ManipulationLocalize.scan(XARM_GRASP_PROMPTS, window_s=30.0):   # labels are unreliable, so pick by position
-    print(o["id"], o["label"], o["position"])
-app.PickAndPlaceModule.pick_object("<id>")   # the can, near x=0.57 y=0.00
+objects = app.ManipulationLocalize.scan(XARM_GRASP_PROMPTS, window_s=30.0)
+for o in objects:
+    print(o["id"], o["label"], o["position"], "score", o["score"], "views", o["views"])
+```
+
+The scene contains six objects, but `scan` returns only verified detections, not a scene inventory. The six-result expectation belonged to the old OSR pipeline. With localize, the count depends on the prompts, confidence and camera views. A missing label does not mean the object is absent. The default OWLv2 configuration requires a score of at least 0.40 and two distinct camera positions for each returned instance.
+
+This pick-and-place check requires a verified can near `(0.57, 0.00)`, regardless of its label or how many other objects were found. If it is missing, stop the check and inspect the `verification '<label>'` lines in the blueprint log for scores and view counts. Capture additional views with the target visible and keep both poses inside the scan's time window before retrying. Report a missing can as a perception failure, not a successful pick-and-place test.
+
+...then select the can by position and pick it:
+
+```python
+can_candidates = [
+    o for o in objects
+    if abs(o["position"][0] - 0.57) < 0.05 and abs(o["position"][1]) < 0.05
+]
+assert len(can_candidates) == 1, "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+app.PickAndPlaceModule.pick_object(can_candidates[0]["id"])
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 
-Expected result: the scan finds six objects, the pick returns "Pick complete", the place returns "Place complete", and Viser shows the arm lifting the can and setting it down. Restart the blueprint before another pick. `xarm-grasp-graspgenx` is the same check with learned grasps, and needs a CUDA 12.8 GPU.
+Expected result: the scan includes a verified can, the pick returns "Pick complete", the place returns "Place complete", and Viser shows the arm lifting the can and setting it down. There is no fixed expected scan count. Restart the blueprint before another pick. `xarm-grasp-graspgenx` is the same check with learned grasps, and needs a CUDA 12.8 GPU.
 
 ## 3.4 Agentic xArm in MuJoCo
 
