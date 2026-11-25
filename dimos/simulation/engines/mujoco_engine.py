@@ -193,6 +193,38 @@ class _RaycastLidarState:
     last_cast_time: float = 0.0
 
 
+def _slow_render_message(
+    share: float,
+    shadows: AutoSwitch,
+    shadows_off: bool,
+    keep_realtime: AutoSwitch,
+    keeping: bool,
+) -> str:
+    """The slow-render warning, naming what the engine does with each setting."""
+    if shadows_off:
+        drawing = "rendering without shadows" + (" (forced off)" if shadows == "off" else "")
+    else:
+        drawing = "rendering with shadows (forced on)"
+    if keeping:
+        clock = "keeping the sim on the wall clock" + (
+            " (forced on)" if keep_realtime == "on" else ""
+        )
+    else:
+        clock = "letting the sim fall behind the wall clock (keep-realtime forced off)"
+    overrides = [
+        flag
+        for setting, flag in (
+            (shadows, "--mujocosimmodule.shadows on"),
+            (keep_realtime, "--mujocosimmodule.keep-realtime off"),
+        )
+        if setting == "auto"
+    ]
+    return (
+        f"Shadowed camera renders would take {share:.0%} of real time; {drawing}, {clock}"
+        f" (force with {', '.join(overrides)})"
+    )
+
+
 class MujocoEngine(SimulationEngine):
     """
     MuJoCo simulation engine.
@@ -490,8 +522,8 @@ class MujocoEngine(SimulationEngine):
     def _settle_render_settings(self, cameras: list[tuple[CameraConfig, int]]) -> None:
         """Decide the "auto" shadows and keep_realtime; before any renderer or viewer is built."""
         slow = False
+        share = 0.0
         if "auto" in (self._shadows, self._keep_realtime_setting):
-            share = 0.0
             for cfg, cam_id in cameras:
                 if cfg.fps > 0:
                     ms = render_ms(
@@ -499,17 +531,22 @@ class MujocoEngine(SimulationEngine):
                     )
                     share += ms * cfg.fps / 1e3
             slow = share > SLOW_RENDER_SHARE
-            if slow:
-                logger.warning(
-                    f"Shadowed camera renders would take {share:.0%} of real time; "
-                    "rendering without shadows and keeping the sim on the wall clock "
-                    "(force with --mujocosimmodule.shadows on, --mujocosimmodule.keep-realtime off)"
-                )
-        if self._shadows == "off" or (self._shadows == "auto" and slow):
-            disable_shadows(self._model)
+        shadows_off = self._shadows == "off" or (self._shadows == "auto" and slow)
         self._keep_realtime = self._keep_realtime_setting == "on" or (
             self._keep_realtime_setting == "auto" and slow
         )
+        if slow:
+            logger.warning(
+                _slow_render_message(
+                    share,
+                    self._shadows,
+                    shadows_off,
+                    self._keep_realtime_setting,
+                    self._keep_realtime,
+                )
+            )
+        if shadows_off:
+            disable_shadows(self._model)
 
     def _init_raycast_lidars(self) -> dict[str, _RaycastLidarState]:
         lidar_states: dict[str, _RaycastLidarState] = {}

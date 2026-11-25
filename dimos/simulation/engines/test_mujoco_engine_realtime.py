@@ -281,3 +281,60 @@ def test_without_cameras_auto_keeps_the_stock_loop(
     timed.assert_not_called()
     assert engine._keep_realtime is False
     assert engine.model.vis.quality.shadowsize == shadow_size
+
+
+@pytest.mark.parametrize(
+    ("shadows", "keep_realtime", "says", "suggests"),
+    [
+        (
+            "auto",
+            "auto",
+            "rendering without shadows, keeping the sim on the wall clock",
+            "--mujocosimmodule.shadows on, --mujocosimmodule.keep-realtime off",
+        ),
+        (
+            "on",
+            "auto",
+            "rendering with shadows (forced on), keeping the sim on the wall clock",
+            "--mujocosimmodule.keep-realtime off",
+        ),
+        (
+            "auto",
+            "off",
+            "rendering without shadows, letting the sim fall behind the wall clock",
+            "--mujocosimmodule.shadows on",
+        ),
+        (
+            "off",
+            "auto",
+            "rendering without shadows (forced off), keeping the sim on the wall clock",
+            "--mujocosimmodule.keep-realtime off",
+        ),
+        (
+            "auto",
+            "on",
+            "rendering without shadows, keeping the sim on the wall clock (forced on)",
+            "--mujocosimmodule.shadows on",
+        ),
+    ],
+)
+def test_slow_render_warning_names_the_settings_applied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shadows: str,
+    keep_realtime: str,
+    says: str,
+    suggests: str,
+) -> None:
+    monkeypatch.setattr(mujoco_engine, "render_ms", MagicMock(return_value=65.7))
+    logger = MagicMock()
+    monkeypatch.setattr(mujoco_engine, "logger", logger)
+    engine = _engine(tmp_path, shadows=shadows, keep_realtime=keep_realtime)
+
+    engine._settle_render_settings([(CameraConfig(name="cam", fps=15.0), 0)])
+
+    [message] = [call.args[0] for call in logger.warning.call_args_list]
+    assert says in message
+    assert message.endswith(f"(force with {suggests})")
+    assert (engine.model.vis.quality.shadowsize == 0) is (shadows != "on")
+    assert engine._keep_realtime is (keep_realtime != "off")
