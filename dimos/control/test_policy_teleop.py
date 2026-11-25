@@ -87,7 +87,6 @@ async def coordinator(mocker):
         instance.add_task(blend, task_type=blend_cfg.type)
         instance._tick_loop = TickLoop(
             tick_rate=100,
-            hardware={},
             hardware_lock=instance._hardware_lock,
             tasks=instance._tasks,
             task_lock=instance._task_lock,

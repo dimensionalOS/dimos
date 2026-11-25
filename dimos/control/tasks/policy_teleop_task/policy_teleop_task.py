@@ -38,7 +38,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
-    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
 
 logger = setup_logger()
 
@@ -294,10 +293,8 @@ class PolicyTeleopTask(BaseControlTask):
 
 def create_task(
     cfg: TaskConfig,
-    hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
     tasks: Mapping[str, ControlTask],
 ) -> PolicyTeleopTask:
-    del hardware
     return PolicyTeleopTask(
         cfg.name,
         cfg.joint_names,
