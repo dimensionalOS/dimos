@@ -104,6 +104,18 @@ def _apply_sliding_friction(spec: mujoco.MjSpec, layer: Path) -> int:
     return applied
 
 
+def _textured_materials_win(spec: mujoco.MjSpec) -> int:
+    """MuJoCo lets the displayColor rgba its USD reader sets tint a textured material, as a USD renderer does not; the number changed."""
+    textured = {m.name for m in spec.materials if any(m.textures)}
+    unset = spec.default.geom.rgba
+    changed = 0
+    for geom in spec.geoms:
+        if geom.material in textured and not np.array_equal(geom.rgba, unset):
+            geom.rgba = unset
+            changed += 1
+    return changed
+
+
 def compile_world(
     scene: Path, simulated: Iterable[Simulated] = (), ids: Iterable[str] | None = None
 ) -> mujoco.MjSpec:
@@ -116,6 +128,7 @@ def compile_world(
     _apply_sliding_friction(world, Path(scene))
     if Path(scene).suffix.lower() in USD_SUFFIXES:
         apply_lights(world, Path(scene))
+        _textured_materials_win(world)
     shorten(world, ids=owners)
     for robot in robots:
         standing = resolved(
