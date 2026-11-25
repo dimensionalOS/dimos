@@ -215,6 +215,24 @@ def test_project_pixels_past_the_fold() -> None:
     assert (pixels[1] == -1.0).all()
 
 
+def test_project_pixels_past_a_rational_pole() -> None:
+    # k4 = -1 puts a pole at r = 1 with no numerator root to cancel it; past
+    # it the ratio turns negative and OpenCV would mirror rays back into the
+    # image, so they get out-of-image pixels
+    D = [0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0]
+    info = CameraInfo(height=480, width=640, distortion_model="rational_polynomial", D=D, K=K)
+    points = np.array([[0.5, 0.0, 1.0], [1.2, 0.0, 1.0]])
+    expected, _ = cv2.projectPoints(
+        points, np.zeros(3), np.zeros(3), np.reshape(K, (3, 3)), np.array(D)
+    )
+    assert 0 <= expected[1, 0, 0] < info.width
+
+    pixels = Detection3DPC.project_pixels(points, info)
+
+    np.testing.assert_allclose(pixels[0], expected[0, 0])
+    assert (pixels[1] == -1.0).all()
+
+
 def test_project_cloud_empty() -> None:
     # nothing in front of the camera
     cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, -1.0]]), frame_id="world", timestamp=1.0)
