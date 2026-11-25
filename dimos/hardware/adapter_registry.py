@@ -18,7 +18,7 @@ Adapter packages declare factories in dependency-free ``_registry.py``
 manifests mapping name to a ``"module:attr"`` import path::
 
     ADAPTER_FACTORIES = {
-        "xarm": "dimos.hardware.manipulators.xarm.adapter:XArmAdapter",
+        "mock": "dimos.hardware.manipulators.mock.adapter:MockAdapter",
     }
 
 Adapter modules are imported only when ``create()`` is first called for a

@@ -19,10 +19,10 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos --simulation run keyboard-teleop-piper # Piper 6-DOF + gripper, in MuJoCo
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
-dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
-dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
+dimos run keyboard-teleop-xarm6 --choice arm=mock  # XArm6 6-DOF, mock arm
+dimos run keyboard-teleop-xarm7 --choice arm=mock  # XArm7 7-DOF, mock arm
 ```
 
 The Galaxea A1Z runs only on the real arm, through `A1ZConnection`:
@@ -70,6 +70,7 @@ dimos run xarm7-planner-coordinator --xarmconnection.ip 192.168.1.185
 The planner and the coordinator name the arm's joints `arm/joint1` ...; its
 links and tf frames keep their URDF names (`link7`, `link_tcp`). The other
 `xarm7-planner-coordinator` commands below need the same `--xarmconnection.ip`.
+Without an arm, give `--choice arm=mock` instead: a single-xArm blueprint then runs on a mock arm.
 
 Pink IK is the default solver. Tune it with nested module config overrides:
 
@@ -557,4 +558,4 @@ planner is locked for its whole native call.
 | [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
 
-Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
+An xArm's address is `--xarmconnection.ip`. Other arms' device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
