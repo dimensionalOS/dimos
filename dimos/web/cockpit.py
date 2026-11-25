@@ -558,7 +558,7 @@ class Teleop(Panel):
 @dataclass(frozen=True)
 class Chat(Panel):
     """Agent conversation: the humancli contract as a panel. Typed text
-    goes out on `input` (Agent.human_input); the LangChain transcript
+    goes out on `input` (Agent.agent_input); the LangChain transcript
     comes back on `messages` (Agent.agent, one chat.json.v1 frame per
     message, none dropped) and `idle` (Agent.agent_idle) drives the
     thinking spinner. The composer's push-to-talk mic ships recordings as
@@ -568,7 +568,7 @@ class Chat(Panel):
     """
 
     kind: ClassVar[str] = "chat"
-    input: str = "human_input"
+    input: str = "agent_input"
     messages: str = "agent"
     idle: str = "agent_idle"
     audio: str = "audio_in"
@@ -585,14 +585,19 @@ class Chat(Panel):
         # extra, so only a Chat panel pays for it; the codec module imports
         # register chat.json.v1 and audio.json.v1 for cockpit()'s codec
         # resolution.
-        from langchain_core.messages import BaseMessage
+        from langchain_core.messages import BaseMessage, HumanMessage
 
         from dimos.web.relay_bridge import chat_codec  # noqa: F401
         from dimos.web.relay_bridge.audio_codec import AudioChunk
 
         return (
             Channel(
-                self.input, str, dir="tx", encoding="text.json.v1", publish="shared", max_hz=5.0
+                self.input,
+                HumanMessage,
+                dir="tx",
+                encoding="text.json.v1",
+                publish="shared",
+                max_hz=5.0,
             ),
             # Every agent message and idle flip must reach the viewer: paced,
             # not sampled.

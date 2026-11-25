@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""VoiceInput: audio_in chunks -> decode -> STT pipeline -> human_input text.
+"""VoiceInput: audio_in chunks -> decode -> STT pipeline -> agent_input message.
 
 The real normalizer and WhisperNode wiring run against a fake Whisper model;
 the PyAV decode runs for real in the container test and is otherwise
@@ -120,7 +120,7 @@ def make_voice(monkeypatch: pytest.MonkeyPatch) -> Iterator[_MakeVoice]:
         harness = _Harness(module)
         # In ports deliver through a transport; the test thread plays LCM.
         module.audio_in.transport = FakeTransport()
-        module.human_input.subscribe(harness.texts.append)
+        module.agent_input.subscribe(lambda message: harness.texts.append(str(message.text)))
         if start:
             module.start()
         return harness
@@ -131,7 +131,7 @@ def make_voice(monkeypatch: pytest.MonkeyPatch) -> Iterator[_MakeVoice]:
             module.stop()
 
 
-def test_chunks_reassemble_through_decode_to_human_input(
+def test_chunks_reassemble_through_decode_to_agent_input(
     make_voice: _MakeVoice, wait_until: Any
 ) -> None:
     h = make_voice()
@@ -143,7 +143,7 @@ def test_chunks_reassemble_through_decode_to_human_input(
     assert h.decoded == [b"come to the kitchen"]
 
 
-def test_real_container_bytes_reach_pcm_and_human_input(
+def test_real_container_bytes_reach_pcm_and_agent_input(
     make_voice: _MakeVoice, wait_until: Any
 ) -> None:
     # A real WAV through the real PyAV decode: the pipeline receives the

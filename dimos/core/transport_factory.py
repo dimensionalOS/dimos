@@ -69,7 +69,8 @@ _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 # chunk where one gap discards the whole utterance, or a region of a seeded map
 # that is sent once.
 _NEVER_DROP_CHANNELS = (
-    "human_input",
+    "agent_input",
+    "agent_output",
     "agent",
     "agent_idle",
     "command",

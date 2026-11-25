@@ -379,6 +379,13 @@ class ModuleCoordinator(Resource):
             )
         return self._deployed_modules.get(names[0]) if names else None  # type: ignore[return-value]
 
+    def get_instances(self, module: type[ModuleBase]) -> dict[str, ModuleProxy]:
+        """Every deployed module of this class or a subclass of it, by instance name."""
+        return {
+            name: cast("ModuleProxy", self._deployed_modules[name])
+            for name in self._instance_keys_of(module)
+        }
+
     @property
     def transports(self) -> Mapping[tuple[str, type], Transport[Any]]:
         """Every wired stream ``(name, type)`` and the transport carrying it."""

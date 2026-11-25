@@ -25,6 +25,7 @@ import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from langchain_core.messages import HumanMessage
 from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
@@ -38,7 +39,7 @@ from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
-from dimos.core.transport_factory import make_transport
+from dimos.core.stream import Out
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
@@ -375,6 +376,7 @@ class McpServerConfig(ModuleConfig):
 
 class McpServer(Module):
     config: McpServerConfig
+    agent_input: Out[HumanMessage]
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
@@ -452,17 +454,12 @@ class McpServer(Module):
 
     @skill
     def agent_send(self, message: str) -> str:
-        """Send a message to the running DimOS agent over the active transport."""
+        """Send a message to the running DimOS agent."""
         if not message:
             raise ValueError("Message cannot be empty")
 
-        transport = make_transport("/human_input")
-        try:
-            transport.start()
-            transport.publish(message)
-            return f"Message sent to agent: {message[:100]}"
-        finally:
-            transport.stop()
+        self.agent_input.publish(HumanMessage(message))
+        return f"Message sent to agent: {message[:100]}"
 
     @rpc
     def mcp_url(self) -> str:

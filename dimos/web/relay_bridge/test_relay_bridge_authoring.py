@@ -567,10 +567,14 @@ def test_chat_panel_forwards_every_message(monkeypatch) -> None:
         assert wait_until(lambda: len(clients[0].writers["agent_idle"].offers) == 2)
         assert [json.loads(p) for p, _ in clients[0].writers["agent_idle"].offers] == [False, True]
 
-        # The tx leg: a browser publish lands on the bridge's human_input port.
+        # The tx leg: a browser publish lands on the bridge's agent_input port.
         seen: list[str] = []
-        module.human_input.subscribe(seen.append)
-        push(module, clients[0], _pub_frame(json.dumps("walk forward").encode()))
+        module.agent_input.subscribe(lambda message: seen.append(str(message.text)))
+        push(
+            module,
+            clients[0],
+            _pub_frame(json.dumps("walk forward").encode(), ch="agent_input"),
+        )
         assert wait_until(lambda: clients[0].control_frames)
         assert seen == ["walk forward"]
         assert isinstance(clients[0].control_frames[0], PubAck)

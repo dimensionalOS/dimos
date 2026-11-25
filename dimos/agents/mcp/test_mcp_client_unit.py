@@ -862,3 +862,17 @@ def test_a_tool_result_with_several_images_queues_each_in_order(mcp_client: Agen
     for artifact in mcp_client._artifacts:
         uuid_ = str(_blocks(artifact)[0]["text"]).split("UUID:=")[1].rstrip(".")
         assert uuid_ in reply
+
+
+def test_each_turn_publishes_its_final_answer_once_on_agent_output(
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _CameraGraph(mcp_client, {"with images": [("look", ["a", "b"])]})
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+    answers: list[AIMessage] = []
+    monkeypatch.setattr(mcp_client.agent_output, "publish", answers.append)
+
+    mcp_client.infer(HumanMessage("plain"))
+    mcp_client.infer(HumanMessage("with images"))
+
+    assert [a.content for a in answers] == ["pending", "saw b"]

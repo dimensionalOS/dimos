@@ -14,13 +14,13 @@
 
 from threading import Thread
 
+from langchain_core.messages import HumanMessage
 import reactivex as rx
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.transport import PubSubTransport
-from dimos.core.transport_factory import make_transport
+from dimos.core.stream import Out
 from dimos.stream.audio.pipeline import whisper_pipeline
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -29,15 +29,14 @@ logger = setup_logger()
 
 
 class WebInput(Module):
+    agent_input: Out[HumanMessage]
+
     _web_interface: RobotWebInterface | None = None
     _thread: Thread | None = None
-    _human_transport: PubSubTransport[str] | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        self._human_transport = make_transport("/human_input")
 
         # Browser audio -> the owned STT chain (normalizer -> whisper).
         audio_subject, transcripts = whisper_pipeline()
@@ -50,11 +49,11 @@ class WebInput(Module):
 
         # Subscribe to both text input sources
         # 1. Direct text from web interface
-        unsub = self._web_interface.query_stream.subscribe(self._human_transport.publish)
+        unsub = self._web_interface.query_stream.subscribe(self._send)
         self.register_disposable(unsub)
 
         # 2. Transcribed text from STT
-        unsub = transcripts.subscribe(self._human_transport.publish)
+        unsub = transcripts.subscribe(self._send)
         self.register_disposable(unsub)
 
         self._thread = Thread(target=self._web_interface.run, daemon=True)
@@ -62,12 +61,13 @@ class WebInput(Module):
 
         logger.info("Web interface started at http://localhost:5555")
 
+    def _send(self, text: str) -> None:
+        self.agent_input.publish(HumanMessage(text))
+
     @rpc
     def stop(self) -> None:
         if self._web_interface:
             self._web_interface.shutdown()
         if self._thread:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        if self._human_transport:
-            self._human_transport.stop()
         super().stop()

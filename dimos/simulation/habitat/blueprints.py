@@ -197,7 +197,7 @@ habitat_nav = autoconnect(
 ).global_config(transport="zenoh")
 
 
-# `go to the chair` on /human_input; visible annotated instances are the detections.
+# `go to the chair` on agent_input; visible annotated instances are the detections.
 habitat_typesafe = autoconnect(
     habitat_teleop,
     HabitatConnection.blueprint(

@@ -31,7 +31,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
-from dimos.web.codecs import web_encoder
+from dimos.web.codecs import web_decoder, web_encoder
 
 # Tool progress rides /agent as HumanMessage("[tool:NAME] text")
 # (Agent._on_tool_stream_message) and a tool's image artefact as a
@@ -76,6 +76,14 @@ def chat_lines(msg: BaseMessage, ts: float) -> list[dict[str, Any]]:
             line["text"] = line["text"][:_CHAT_TEXT_MAX_CHARS] + "..."
         line["ts"] = ts
     return [line for line in lines if line["text"]]
+
+
+@web_decoder("text.json.v1")
+def decode_human_message(msg: str) -> HumanMessage:
+    """Typed chat text from the browser, as the message an agent takes."""
+    if not isinstance(msg, str):
+        raise ValueError(f"text.json.v1 wants a string, got {type(msg).__name__}")
+    return HumanMessage(msg)
 
 
 @web_encoder("chat.json.v1")

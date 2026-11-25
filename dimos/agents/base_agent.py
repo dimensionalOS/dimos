@@ -20,7 +20,7 @@ from pydantic.errors import PydanticUserError
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 
 I = TypeVar("I")
 O = TypeVar("O")
@@ -73,7 +73,6 @@ class BaseAgent(Module, Generic[I, O]):
     input_type: ClassVar[Any]
     output_type: ClassVar[Any]
 
-    human_input: In[str]
     agent: Out[BaseMessage]
     agent_idle: Out[bool]
 
@@ -96,6 +95,15 @@ class BaseAgent(Module, Generic[I, O]):
     def accepts(cls, x: object) -> bool:
         """Whether x is a valid input for this agent."""
         return _matches(cls.input_type, x)
+
+    @rpc
+    def agent_transports(self) -> dict[str, Any]:
+        """The transport of each chat stream this agent has, for a client outside the blueprint."""
+        streams = ("agent_input", "agent_output", "agent", "agent_idle")
+        transports = {
+            name: getattr(getattr(self, name, None), "transport", None) for name in streams
+        }
+        return {name: transport for name, transport in transports.items() if transport is not None}
 
     @rpc
     def infer(self, x: I) -> O:

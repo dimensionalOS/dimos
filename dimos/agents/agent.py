@@ -46,6 +46,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
+from dimos.core.stream import In, Out
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -100,6 +101,9 @@ class AgentConfig(ModuleConfig):
 
 class Agent(BaseAgent[HumanMessage, AIMessage]):
     config: AgentConfig
+
+    agent_input: In[HumanMessage]
+    agent_output: Out[AIMessage]
 
     # Injected when the blueprint has an McpServer.
     _mcp_server: McpServerSpec | None = None
@@ -259,10 +263,11 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     def start(self) -> None:
         super().start()
 
-        def _on_human_input(string: str) -> None:
-            self._message_queue.put(HumanMessage(content=string))
-
-        self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
+        # No transport: the agent is used as a plain class and only infer() reaches it.
+        if self.agent_input.transport is not None:
+            self.register_disposable(
+                Disposable(self.agent_input.subscribe(self._message_queue.put))
+            )
 
         # Subscribe directly over LCM rather than through the server's GET
         # /mcp SSE channel.  HTTP would add a startup race: the first few
@@ -432,6 +437,9 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         # The model sees an image a tool returned as the next message, before the turn ends.
         while self._artifacts:
             self._call_model(state_graph, self._artifacts.pop(0))
+        answer = self._history[-1]
+        if isinstance(answer, AIMessage):
+            self.agent_output.publish(answer)
         if self._message_queue.empty():
             self.agent_idle.publish(True)
         return self._history[turn_start:]

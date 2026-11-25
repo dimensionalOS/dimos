@@ -24,7 +24,7 @@ from dimos_lcm import (
     visualization_msgs as lcm_visualization_msgs,
 )
 from dimos_lcm.std_msgs import Bool
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -69,7 +69,7 @@ from dimos.web.relay_bridge.builtin_codecs import (
     encode_stats,
     encode_voxels,
 )
-from dimos.web.relay_bridge.chat_codec import encode_chat
+from dimos.web.relay_bridge.chat_codec import decode_human_message, encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -529,24 +529,24 @@ def test_chat_panel_blueprint() -> None:
     ] == [
         ("agent", "rx", "chat.json.v1", "reliable", "none"),
         ("agent_idle", "rx", "json.v1", "latest", "none"),
-        ("human_input", "tx", "text.json.v1", "reliable", "shared"),
+        ("agent_input", "tx", "text.json.v1", "reliable", "shared"),
         ("audio_in", "tx", "audio.json.v1", "reliable", "shared"),
     ]
     (panel,) = manifest["panels"]
     assert panel["kind"] == "chat"
-    assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
+    assert panel["channels"] == ["agent_input", "agent", "agent_idle", "audio_in"]
     assert parse_manifest(manifest).model_dump() == manifest
     # The agent and mic streams ride a generated subclass whose ports
     # autoconnect to Agent's and VoiceInput's by name + type.
     ports = {(s.name, s.direction): s.type for s in atom.streams}
     assert ports[("agent", "in")] is BaseMessage
     assert ports[("agent_idle", "in")] is bool
-    assert ports[("human_input", "out")] is str
+    assert ports[("agent_input", "out")] is HumanMessage
     assert ports[("audio_in", "out")] is AudioChunk
     specs = {s.ch: s for s in atom.kwargs["channels"]}
     assert specs["agent"].encoder is encode_chat and specs["agent"].paced
     assert specs["agent_idle"].paced
-    assert specs["human_input"].decoder is decode_text
+    assert specs["agent_input"].decoder is decode_human_message
     assert specs["audio_in"].decoder is decode_audio_chunk
     assert not specs["audio_in"].decoder_takes_context and specs["audio_in"].encoder is None
     restored = decode(encode(blueprint))
