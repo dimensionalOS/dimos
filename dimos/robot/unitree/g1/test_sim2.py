@@ -96,3 +96,9 @@ def test_tf_goes_out_at_the_rate_a_real_g1_publishes_it() -> None:
     finally:
         sim.stop()
     assert rates == [G1TfPublisherConfig.model_fields["publish_hz"].default]
+
+
+def test_the_simulated_body_is_the_root_link_of_the_g1_usd() -> None:
+    from dimos.robot.unitree.g1.sim2 import G1_TF_FRAMES, G1_USD
+
+    assert G1_TF_FRAMES["tf_frames_local"]["body"] == G1_USD.root_link

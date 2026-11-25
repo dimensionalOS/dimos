@@ -66,7 +66,8 @@ IMU_FRAME = "imu_in_pelvis"
 G1_TF_FRAMES: dict[str, dict[str, str]] = {
     "tf_frames_local": {
         "odom": PointLioConfig.model_fields["frame_id"].default,
-        "body": G1_USD.root_link,
+        # G1_USD's root link, named here so building a blueprint needs no USD read.
+        "body": "pelvis",
     },
 }
 
