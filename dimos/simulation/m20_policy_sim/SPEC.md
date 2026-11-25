@@ -153,9 +153,12 @@ f = (1 + |wz| / 12) max(1 + vx / 15, 1 + |vy| / 3.5), clamped to [1, 1.5], and i
 
 ### HeightGap height map [C, partly U]
 
-`/HEIGHT_IMAGE` (32FC1, from height_map_nav), 41 x 11. Per cell h: NaN, Inf or |h| > 1.2 rejected; v = -(h + off);
-kept if v > 0.18 and row >= 20, else 0.6; obs = 5 v. [U]: `off`, the grid spacing and orientation. The sim uses
-v = base height above the cell - 0.1 on a 0.05 m grid, under which the policy stands but walks and climbs wrongly.
+`/HEIGHT_IMAGE` (32FC1, from height_map_nav), 41 rows x 11 columns (EcanHardwareInterface ctor 0x1801c8). Per pixel
+h (HeightsSubCallback 0x176bf0): NaN -> 0, Inf or |h| > 1.2 -> +-1; v = -(h + 0.46) (ctor 0x1801cc); in rows 0-19 a
+v above 0.18 (0x1e1bb0, a gap) becomes 0.6, every other v is kept; the last row repeats row 39; the observation runs
+column by column from the last, each from its last row; obs = 5 v. So h is the terrain relative to the base (-0.46 on
+flat ground at the trained stance: v = 0). [U]: the grid spacing and which way the rows run (the sim: 0.05 m, row 0
+in front). Until 2026-11-24 the sim used v = base height - 0.1 kept only past row 20, and height_gap fell walking.
 
 ## Per-runner observation, command and action
 

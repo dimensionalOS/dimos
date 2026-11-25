@@ -204,28 +204,29 @@ def run_sequence(
     return score(seq, log, fell_at, world)
 
 
-# HeightGap's map as rl_deploy's HeightsSubCallback filters it [C]; the grid spacing, orientation and offset are not
-# in the binary (height_map_nav makes the image) [I]
+# HeightGap's map (SPEC "HeightGap height map"): [C] but the grid spacing and orientation [I]
 class HeightMapGrid(TypedDict):
     """World.height_map's grid arguments past rows and cols."""
 
     spacing_x: float
     spacing_y: float
     offset: float
-    min_value: float
+    max_gap: float
     fill: float
     min_row: int
+    limit: float
     front_first: bool
 
 
 HEIGHT_MAP_GRID = HeightMapGrid(
     spacing_x=0.05,
     spacing_y=0.05,
-    offset=0.1,
-    min_value=0.18,
+    offset=0.46,
+    max_gap=0.18,
     fill=0.6,
     min_row=20,
-    front_first=False,
+    limit=1.2,
+    front_first=True,
 )
 
 

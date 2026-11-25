@@ -42,7 +42,7 @@ def m20_mjcf_path() -> str:
 
 @dataclass
 class Terrain:
-    kind: str = "flat"  # flat | step | stairs | dock | charge_dock
+    kind: str = "flat"  # flat | step | stairs | dock | charge_dock | slope
     # step / stairs: first riser this far ahead of the start (m), height and depth of each step
     distance: float = 1.0
     height: float = 0.08
@@ -58,6 +58,9 @@ class Terrain:
     post_spacing: float = 0.374
     post_radius: float = 0.025
     post_height: float = 0.6
+    # slope: the ground tilted by slope_deg about the axis slope_yaw_deg turns from world y (0: uphill along +x)
+    slope_deg: float = 0.0
+    slope_yaw_deg: float = 0.0
 
 
 def terrain_xml(t: Terrain) -> str:
@@ -71,6 +74,15 @@ def terrain_xml(t: Terrain) -> str:
                 f'<geom name="step{k}" type="box" pos="{x0 + length / 2} 0 {top / 2}" size="{length / 2} 2 {top / 2}" '
                 f'friction="1 0.01 0.01" rgba="0.6 0.6 0.7 1"/>'
             )
+    if t.kind == "slope":
+        # a 40 m plate through the origin, tilted about the axis slope_yaw_deg from y
+        a, yaw = math.radians(t.slope_deg) / 2, math.radians(t.slope_yaw_deg)
+        axis = (-math.sin(yaw), math.cos(yaw))
+        q = (math.cos(a), -math.sin(a) * axis[0], -math.sin(a) * axis[1], 0.0)
+        geoms.append(
+            f'<geom name="slope" type="box" pos="0 0 -0.05" size="20 20 0.05" quat="{q[0]} {q[1]} {q[2]} {q[3]}" '
+            f'friction="1 0.01 0.01" rgba="0.6 0.7 0.6 1"/>'
+        )
     if t.kind == "dock":
         x = -t.dock_distance
         geoms.append(
@@ -162,6 +174,9 @@ class World:
             d.xpos[self.base][2] - 0.12,
         )
         d.qpos[2] -= lowest - 0.002
+        if self.terrain.kind == "slope":
+            # level above the slope: the uphill wheels (0.35 m out) clear it, then it settles
+            d.qpos[2] += 0.35 * math.tan(math.radians(self.terrain.slope_deg))
         mujoco.mj_forward(self.model, d)
         self.time = 0.0
 
@@ -216,13 +231,13 @@ class World:
         spacing_x: float,
         spacing_y: float,
         offset: float,
-        min_value: float,
+        max_gap: float,
         fill: float,
         min_row: int,
+        limit: float,
         front_first: bool,
     ) -> np.ndarray:
-        """rl_deploy's HeightGap input from a yaw-aligned grid around the base (HeightsSubCallback): per cell
-        v = (base height above the terrain) - offset, kept when v > min_value and row >= min_row, else fill."""
+        """rl_deploy's HeightGap input from a yaw-aligned image around the base (SPEC "HeightGap height map")."""
         d = self.data
         base = d.qpos[0:3]
         w, x, y, z = d.qpos[3:7]
@@ -232,21 +247,21 @@ class World:
         if front_first:
             xs = xs[::-1]
         ys = (np.arange(cols) - (cols - 1) / 2) * spacing_y
-        out = np.full((rows, cols), fill)
+        image = np.zeros((rows, cols))
         geomid = np.zeros(1, np.int32)
         group = np.array([1, 0, 0, 0, 0, 0], np.uint8)  # group 0 = floor and terrain
         for i, px in enumerate(xs):
-            if i < min_row:
-                continue
             for j, py in enumerate(ys):
                 pt = np.array([base[0] + c * px - s * py, base[1] + s * px + c * py, 2.0])
                 dist = mujoco.mj_ray(  # type: ignore[attr-defined]  # missing from stubs/mujoco
                     self.model, d, pt, np.array([0, 0, -1.0]), group, 1, -1, geomid
                 )
-                v = base[2] - (2.0 - dist if dist >= 0 else 0.0) - offset
-                if v > min_value:
-                    out[i, j] = v
-        return out.ravel()
+                image[i, j] = (2.0 - dist if dist >= 0 else 0.0) - base[2]
+        h = np.where(np.abs(image) > limit, np.sign(image), image)
+        v = -(h + offset)
+        out = np.where((v > max_gap) & (np.arange(rows)[:, None] < min_row), fill, v)
+        out[rows - 1] = out[rows - 2]
+        return out[::-1, ::-1].T.ravel()
 
     def lidar_scan(
         self,
