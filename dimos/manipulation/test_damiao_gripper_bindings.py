@@ -42,25 +42,28 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 @pytest.mark.parametrize(
     "blueprint,expected",
     [
-        (makermods_metal_planner_coordinator, {"arm": "metal_gripper"}),
+        (makermods_metal_planner_coordinator.solidify(), {"arm": "metal_gripper"}),
         (
-            dual_makermods_metal_planner_coordinator,
+            dual_makermods_metal_planner_coordinator.solidify(),
             {"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
         ),
-        (openyam_planner_coordinator, {"manipulator": "arm_gripper"}),
-        (keyboard_teleop_openyam, {"manipulator": "arm_gripper"}),
-        (keyboard_teleop_openyam_planner, {"manipulator": "arm_gripper"}),
-        (teleop_webxr_openyam, {"manipulator": "arm_gripper"}),
-        (build_openyam_rollout(quest_control=True), {"manipulator": "arm_gripper"}),
+        (openyam_planner_coordinator.solidify(), {"manipulator": "arm_gripper"}),
+        (keyboard_teleop_openyam.solidify(), {"manipulator": "arm_gripper"}),
+        (keyboard_teleop_openyam_planner.solidify(), {"manipulator": "arm_gripper"}),
+        (teleop_webxr_openyam.solidify(), {"manipulator": "arm_gripper"}),
+        (build_openyam_rollout(quest_control=True).solidify(), {"manipulator": "arm_gripper"}),
         (
-            dual_openyam_planner_coordinator,
+            dual_openyam_planner_coordinator.solidify(),
             {"left_manipulator": "left_arm_gripper", "right_manipulator": "right_arm_gripper"},
         ),
         (
-            teleop_webxr_dual_openyam,
+            teleop_webxr_dual_openyam.solidify(),
             {"left_manipulator": "left_arm_gripper", "right_manipulator": "right_arm_gripper"},
         ),
-        (teleop_webxr_openarm, {"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"}),
+        (
+            teleop_webxr_openarm.solidify(),
+            {"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
+        ),
     ],
 )
 def test_deployed_gripper_command_and_feedback_dispatch(blueprint, expected, module_factory):

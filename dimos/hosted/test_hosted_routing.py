@@ -201,10 +201,14 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
 ) -> None:
     edge_rpc, base_rpc, root = hosts
     result = tmp_path / "result.json"
-    app = autoconnect(
-        autoconnect(Source.blueprint(), Relay.blueprint()).hosted(host="edge"),
-        Sink.blueprint(result_path=str(result)),
-    ).global_config(n_workers=1)
+    app = (
+        autoconnect(
+            autoconnect(Source.blueprint(), Relay.blueprint()).solidify().hosted(host="edge"),
+            Sink.blueprint(result_path=str(result)),
+        )
+        .solidify()
+        .global_config(n_workers=1)
+    )
 
     descriptors = wait_for_hosts(root, {"edge", "base"}, timeout=20.0)
     logs: list[tuple[str, str]] = []
@@ -253,10 +257,14 @@ def test_a_module_ref_calls_its_provider_on_another_host(
     _edge_rpc, _base_rpc, root = hosts
     result = tmp_path / "answer.txt"
     # Pinned apart on purpose: a chatty pair is kept together by pinning both sides alike.
-    app = autoconnect(
-        Adder.blueprint().hosted(host="edge"),
-        Consumer.blueprint(result_path=str(result)).hosted(host="base"),
-    ).global_config(n_workers=1)
+    app = (
+        autoconnect(
+            Adder.blueprint().hosted(host="edge"),
+            Consumer.blueprint(result_path=str(result)).hosted(host="base"),
+        )
+        .solidify()
+        .global_config(n_workers=1)
+    )
 
     descriptors = wait_for_hosts(root, {"edge", "base"}, timeout=20.0)
     with deployed(

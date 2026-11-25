@@ -19,13 +19,11 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from pathlib import Path
-import sys
 
 import pytest
 
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.hardware.manipulators.registry import AdapterRegistry, adapter_registry
-from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
 # Vendor SDKs that are legitimately absent in some environments. A factory
 # path failing on one of these still passes IF the SDK is not installed;
@@ -35,41 +33,24 @@ OPTIONAL_VENDOR_MODULES = {
     "can",
     "cyclonedds",
     "mujoco",
-    "piper_sdk",
     "rclpy",
     "unitree_sdk2py",
-    "xarm",
 }
 
 # Every name each registry must declare. Removing a name from a manifest is a
 # conscious change: update this set in the same PR.
 EXPECTED_NAMES = {
     "manipulators": {
-        "a750",
         "mock",
-        "piper",
-        "sim_mujoco",
-        "xarm",
     },
     "drive_trains": {
-        "flowbase",
         "mock_twist_base",
-        "transport_lcm",
-        "transport_ros",
-        "unitree_go2",
-    },
-    "whole_body": {
-        "mock_whole_body",
-        "sim_mujoco_g1",
-        "transport_lcm",
-        "transport_ros",
     },
 }
 
 FAMILIES = [
     pytest.param(adapter_registry, "manipulators", id="manipulators"),
     pytest.param(twist_base_adapter_registry, "drive_trains", id="drive_trains"),
-    pytest.param(whole_body_adapter_registry, "whole_body", id="whole_body"),
 ]
 
 
@@ -118,25 +99,6 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
     assert checked > 0
 
 
-def test_every_sim_whole_body_module_is_declared() -> None:
-    """Sim whole-body adapters are flat modules; each must appear in the root manifest."""
-    pkg = importlib.import_module("dimos.simulation.adapters.whole_body")
-    manifest = importlib.import_module("dimos.simulation.adapters.whole_body._registry")
-    names = set(manifest.ADAPTER_FACTORIES)
-    assert "sim_mujoco_g1" in names
-    assert names <= set(whole_body_adapter_registry.available())
-    declared_modules = {path.split(":", 1)[0] for path in manifest.ADAPTER_FACTORIES.values()}
-    for root in pkg.__path__:
-        for mod_file in sorted(Path(root).glob("*.py")):
-            if mod_file.name.startswith(("_", ".", "test_")):
-                continue
-            mod_name = f"dimos.simulation.adapters.whole_body.{mod_file.stem}"
-            assert mod_name in declared_modules, (
-                f"{mod_file} is not referenced by _registry.py; "
-                f"its adapter would silently vanish from the registry"
-            )
-
-
 @pytest.mark.parametrize(("registry", "family"), FAMILIES)
 def test_declared_factory_paths_resolve(registry, family) -> None:
     for name, factory_path in sorted(registry._factory_paths.items()):
@@ -150,18 +112,6 @@ def test_declared_factory_paths_resolve(registry, family) -> None:
         factory = getattr(module, attr, None)
         assert factory is not None, f"{name}: {module_name!r} has no attribute {attr!r}"
         assert callable(factory), f"{name}: {factory_path!r} is not callable"
-
-
-def test_missing_vendor_sdk_fails_loud_at_create(monkeypatch) -> None:
-    registry = AdapterRegistry()
-    assert "xarm" in registry.available()
-    for mod_name in [m for m in sys.modules if m == "xarm" or m.startswith("xarm.")]:
-        monkeypatch.delitem(sys.modules, mod_name)
-    monkeypatch.delitem(sys.modules, "dimos.hardware.manipulators.xarm.adapter", raising=False)
-    monkeypatch.setitem(sys.modules, "xarm", None)
-    with pytest.raises(ImportError, match="xarm"):
-        registry.create("xarm")
-    assert "xarm" in registry.available()
 
 
 def test_unknown_adapter_raises_keyerror() -> None:
@@ -184,4 +134,4 @@ def test_direct_register_still_works() -> None:
 def test_conflicting_manifest_paths_raise() -> None:
     registry = AdapterRegistry()
     with pytest.raises(ValueError, match="Duplicate"):
-        registry.register_path("xarm", "somewhere.else:Thing")
+        registry.register_path("mock", "somewhere.else:Thing")

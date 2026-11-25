@@ -25,6 +25,7 @@ from dimos.evals.environments.habitat import HabitatEnvironment
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.simulation.habitat.blueprints import habitat_nav
 from dimos.simulation.habitat.connection import HabitatConnection, HabitatConnectionConfig
 
 
@@ -46,8 +47,6 @@ def test_smoke_checks_recorded_samples(mocker, missing):
 
 
 def test_scene_config_reaches_blueprint_parser(tmp_path):
-    from dimos.simulation.habitat.blueprints import habitat_nav
-
     dataset = tmp_path / "dataset.json"
     dataset.write_text("{}")
     env = environment(
@@ -59,7 +58,7 @@ def test_scene_config_reaches_blueprint_parser(tmp_path):
     )
     proc = DimosCliCall()
     env.configure_launch(proc)
-    parsed = BlueprintConfigParser(habitat_nav).parse(environ=proc.extra_env)
+    parsed = BlueprintConfigParser(habitat_nav.solidify()).parse(environ=proc.extra_env)
     config = parsed.module_kwargs("habitatconnection")
     assert config["scene_id"] == "apt_1"
     assert config["scene_dataset_config"] == str(dataset)

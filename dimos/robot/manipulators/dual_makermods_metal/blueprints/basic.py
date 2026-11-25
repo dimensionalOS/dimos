@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
@@ -62,7 +62,7 @@ class DualMetalManipulationModule(ManipulationModule):
         super()._initialize_planning()
 
 
-def dual_metal_control() -> Blueprint:
+def dual_metal_control() -> MetaBlueprint:
     """Trajectories and both jaws over the two-bus connection."""
     return autoconnect(
         DamiaoCoordinator.blueprint(

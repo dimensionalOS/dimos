@@ -31,7 +31,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from dimos.control.benchmarking.benchmark import RunRecording
+from dimos.control.benchmarking.benchmark import OPERATOR_STOPPED, RunRecording
 from dimos.control.benchmarking.scoring import ExecutedTrajectory, TrajectoryTick, score_run
 from dimos.control.benchmarking.tuning import OperatingPoint, OperatingPointMap, invert_tolerance
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -107,6 +107,9 @@ def score_recordings(
     points: list[OperatingPoint] = []
     runs: list[dict[str, Any]] = []
     for rec in recs:
+        if rec.reason == OPERATOR_STOPPED:
+            logger.info("skipping operator-stopped run", path=rec.path, speed=rec.speed)
+            continue
         try:
             ref = rec.reference_path()
             executed = _executed_from_recording(rec)
@@ -256,7 +259,7 @@ def score_dir(
     robot = recs[0].robot
     out_json = Path(out_path) if out_path else d / f"{robot}_benchmark_scores.json"
     out_json.write_text(json.dumps(asdict(opm), indent=2))
-    logger.info(f"scored {len(recs)} run(s) -> {out_json}")
+    logger.info(f"scored {len(runs)} run(s) -> {out_json}")
     for row in opm.tolerance_inversion:
         if row.max_speed is None:
             logger.info(

@@ -19,13 +19,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
     from dimos.core.introspection.blueprint.dot import LayoutAlgo
     from dimos.core.introspection.module.info import ModuleInfo
 
 
 def to_svg(
-    target: ModuleInfo | Blueprint,
+    target: ModuleInfo | Blueprint | MetaBlueprint,
     output_path: str,
     *,
     layout: set[LayoutAlgo] | None = None,
@@ -34,17 +34,20 @@ def to_svg(
 
     Dispatches to the appropriate renderer based on input type:
     - ModuleInfo -> module/dot.render_svg
-    - Blueprint -> blueprint/dot.render_svg
+    - Blueprint or MetaBlueprint -> blueprint/dot.render_svg
 
     Args:
-        target: Either a ModuleInfo (single module) or Blueprint (blueprint graph).
+        target: Either a ModuleInfo (single module) or a blueprint (blueprint graph).
+            A MetaBlueprint is drawn with its default choices.
         output_path: Path to write the SVG file.
         layout: Layout algorithms (only used for blueprints).
     """
     # Avoid circular imports by importing here
-    from dimos.core.coordination.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
     from dimos.core.introspection.module.info import ModuleInfo
 
+    if isinstance(target, MetaBlueprint):
+        target = target.solidify()
     if isinstance(target, ModuleInfo):
         from dimos.core.introspection.module import dot as module_dot
 
@@ -54,4 +57,6 @@ def to_svg(
 
         blueprint_dot.render_svg(target, output_path, layout=layout)
     else:
-        raise TypeError(f"Expected ModuleInfo or Blueprint, got {type(target).__name__}")
+        raise TypeError(
+            f"Expected ModuleInfo, Blueprint or MetaBlueprint, got {type(target).__name__}"
+        )

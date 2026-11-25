@@ -1,0 +1,153 @@
+root = "Mission"
+resources = ["base"]
+
+[constants]
+route = [
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 4.0, y = 4.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 7.4, y = 4.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 9.5, y = 5.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 8.0, y = 8.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 8.5, y = 11.3, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 6.5, y = 11.3, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 3.5, y = 10.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 3.0, y = 7.1, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+]
+charger = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 1.0, y = 1.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
+low_battery = 0.20
+full_battery = 0.95
+pause_s = 3.0
+retry_s = 1.0
+PREEMPTED = 2
+SUCCEEDED = 3
+ABORTED = 4
+
+[vars]
+"patrol.index" = 0
+
+[[stream_value]]
+name = "nav_state"
+stream = "MLSPlannerNative.nav_status"
+field = "status"
+
+[[stream_value]]
+name = "nav_stamp"
+stream = "MLSPlannerNative.nav_status"
+field = "goal_id.stamp"
+
+[[stream_value]]
+name = "battery_level"
+stream = "FakeBattery.battery"
+field = "percentage"
+
+[[activity]]
+name = "navigate"
+start = "MLSPlannerNative.go_to"
+cancel = "MLSPlannerNative.stop_navigation"
+uses = ["base"]
+
+[[activity]]
+name = "charge"
+start = "FakeBattery.start_charging"
+cancel = "FakeBattery.stop_charging"
+
+[[node]]
+name = "Mission"
+children = ["Patrolling", "Charging"]
+initial = "Patrolling"
+
+[[node]]
+name = "Patrolling"
+children = ["NextWaypoint", "Navigating", "Retrying", "Pausing"]
+initial = "NextWaypoint"
+
+[[node.transition]]
+if = "battery_level < low_battery"
+goto = "Charging"
+
+[[node]]
+name = "NextWaypoint"
+
+[[node.transition]]
+if = "patrol.index < size(route)"
+goto = "Navigating"
+
+[[node.transition]]
+goto = "Navigating"
+set = { "patrol.index" = 0 }
+
+[[node]]
+name = "Navigating"
+activity = "navigate"
+args = { pose = "route[patrol.index]" }
+result = "nav.goal"
+
+[[node.transition]]
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
+goto = "Pausing"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node.transition]]
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
+goto = "NextWaypoint"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node.transition]]
+on = "failed"
+goto = "Retrying"
+
+[[node]]
+name = "Retrying"
+
+[[node.transition]]
+after = "retry_s"
+goto = "Navigating"
+
+[[node]]
+name = "Pausing"
+
+[[node.transition]]
+after = "pause_s"
+goto = "NextWaypoint"
+
+[[node]]
+name = "Charging"
+children = ["ReturnToCharger", "ReturnRetry", "OnCharger"]
+initial = "ReturnToCharger"
+outcomes = ["done"]
+
+[[node.transition]]
+on = "done"
+goto = "Patrolling"
+
+[[node]]
+name = "ReturnToCharger"
+activity = "navigate"
+args = { pose = "charger" }
+result = "nav.goal"
+
+[[node.transition]]
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
+goto = "OnCharger"
+
+[[node.transition]]
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
+goto = "ReturnRetry"
+
+[[node.transition]]
+on = "failed"
+goto = "ReturnRetry"
+
+[[node]]
+name = "ReturnRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "ReturnToCharger"
+
+[[node]]
+name = "OnCharger"
+activity = "charge"
+
+[[node.transition]]
+if = "battery_level >= full_battery"
+goto = "done"

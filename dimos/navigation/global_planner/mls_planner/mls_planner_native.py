@@ -16,35 +16,18 @@
 
 from __future__ import annotations
 
-import math
-import threading
-from typing import Any
-
 from dimos_lcm.actionlib_msgs import GoalStatus
-from reactivex.disposable import Disposable
+from dimos_lcm.std_msgs import Time
 
-from dimos.agents.annotation import skill
-from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
-
-
-def reports_goal(msg: GoalStatus, goal: PointStamped) -> bool:
-    """Whether a nav_status report is about this goal, which its stamp says."""
-    return [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] == goal.ros_timestamp()
-
-
-def holds_goal(status: int) -> bool:
-    """Whether a status means the planner still holds the goal."""
-    return status in (GoalStatus.PENDING, GoalStatus.ACTIVE)
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -72,6 +55,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     goal_z_tolerance: float = 0.5
+    # Heading error in radians under which a goal with a heading counts as reached.
+    goal_yaw_tolerance: float = 0.25
     # Seconds a goal may go without a safe path before the planner aborts it.
     blocked_timeout_s: float = 2.0
     # Seconds a followed goal may go without the robot moving before it is aborted.
@@ -85,11 +70,6 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
-    # Seconds a go_to waits for the robot pose to show up on tf.
-    pose_wait_s: float = 0.5
-
-    def to_config_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in super().to_config_dict().items() if k != "pose_wait_s"}
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
@@ -97,7 +77,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
 
     Feed either global_map, which rebuilds fully per message, or the local_map
     plus region_bounds pair from RayTracingVoxelMap for incremental updates.
-    The agent drives it through go_to and stop_navigation.
+    Callers drive it through the go_to and stop_navigation RPCs.
     """
 
     config: MLSPlannerNativeConfig
@@ -109,7 +89,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     # the region pipeline between live updates. Live updates keep priority.
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
-    goal: In[PointStamped]
+    goal: In[PoseStamped]
     tf: In[TFMessage]
 
     path: Out[Path]
@@ -118,99 +98,28 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     nodes: Out[PointCloud2]
     node_edges: Out[LineSegments3D]
 
-    _goal: PointStamped | None = None
-    """The goal of the go_to under way."""
-
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._goal_lock = threading.Lock()
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        # The binary publishes nav_status. The wrapper reads it back to end go_to.
-        self.register_disposable(
-            Disposable(self.nav_status.transport.subscribe(self._on_nav_status, self.nav_status))
-        )
-
     @rpc
     def stop(self) -> None:
-        self._finish("Canceled, module stopping")
+        # A planner that was never deployed has no goal transport to cancel on.
+        if self.goal.transport is not None:
+            self.stop_navigation()
         super().stop()
 
-    def _on_nav_status(self, msg: GoalStatus) -> None:
-        with self._goal_lock:
-            goal = self._goal
-        if goal is None or not reports_goal(msg, goal) or holds_goal(msg.status):
-            return
-        if msg.status == GoalStatus.SUCCEEDED:
-            outcome = "Reached the target"
-        elif msg.status == GoalStatus.PREEMPTED:
-            outcome = msg.text.capitalize()
-        else:
-            outcome = f"Failed: {msg.text}"
-        self._finish(outcome, cancel=False, ended=goal)
+    @rpc
+    def go_to(self, pose: PoseStamped, face_heading: bool = False) -> Time:
+        """Start driving to a pose and return the goal's stamp at once.
 
-    def _pose(self, wait_s: float = 0.0) -> PoseStamped | None:
-        return self.tfbuffer.get_pose(
-            self.config.world_frame, self.config.base_frame, forward_tolerance=wait_s
-        )
-
-    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    async def go_to(self, x: float, y: float) -> str:
-        """Start driving to a point in the world frame and return immediately.
-
-        Replaces any goal under way. A tool update reports where the robot is and how far
-        from the point when it stops, which can be short of it.
-
-        Args:
-            x: target x in meters, world frame.
-            y: target y in meters, world frame.
+        Replaces any goal under way. The robot ends facing whichever way it arrives, unless
+        `face_heading` is set, when it turns to the pose's orientation there. An empty frame
+        is the world frame. `nav_status` reports carry the stamp in `goal_id.stamp`, and a
+        report with a status other than PENDING or ACTIVE says the goal is over.
         """
-        pose = self._pose(wait_s=self.config.pose_wait_s)
-        # Close the old go_to's stream first so start_tool opens a new one for this call.
-        self._finish("Replaced by another goal", cancel=pose is None)
-        # Opened before any return so the movement claim always has a stream to release it.
-        self.start_tool("go_to")
-        if pose is None:
-            self.stop_tool("go_to")
-            return f"No goal sent: no {self.config.world_frame} -> {self.config.base_frame} on tf."
-
-        # The planner picks the surface nearest the goal's z, so send the floor height under the robot.
-        floor_z = pose.z - self.config.start_z_offset_m
-        goal = PointStamped(x, y, floor_z, frame_id=self.config.world_frame)
-        with self._goal_lock:
-            self._goal = goal
+        orientation = pose.orientation if face_heading else spec.NO_HEADING
+        goal = PoseStamped(frame_id=pose.frame_id, position=pose.position, orientation=orientation)
         self.goal.transport.publish(goal)
-        return "Navigating. A tool update reports the robot's position when it stops."
+        return Time(*goal.ros_timestamp())
 
-    def _finish(
-        self, outcome: str, *, cancel: bool = True, ended: PointStamped | None = None
-    ) -> None:
-        with self._goal_lock:
-            if ended is not None and self._goal is not ended:
-                return
-            goal, self._goal = self._goal, None
-        if goal is None:
-            return
-        pose = self._pose()
-        if pose is None:
-            where = "robot position unknown"
-        else:
-            distance = math.dist((goal.x, goal.y), (pose.x, pose.y))
-            where = f"robot at ({pose.x:.2f}, {pose.y:.2f}), {distance:.2f} m from the target"
-        self.tool_update("go_to", f"{outcome}; {where}.")
-        self.stop_tool("go_to")
-        if cancel:
-            self._cancel()
-
-    def _cancel(self) -> None:
-        self.goal.transport.publish(PointStamped(math.nan, math.nan, math.nan))
-
-    @skill
-    async def stop_navigation(self) -> str:
-        """Cancel the current goal and stop moving."""
-        # The goal may have come from a click, so cancel whether or not a go_to is under way.
-        self._finish("Canceled", cancel=False)
-        self._cancel()
-        return "Stopped."
+    @rpc
+    def stop_navigation(self) -> None:
+        """Cancel the current goal, whoever sent it, and return at once."""
+        self.goal.transport.publish(spec.cancel_goal(frame_id=self.config.world_frame))

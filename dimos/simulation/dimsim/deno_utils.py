@@ -12,13 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import subprocess
 
 from dimos.utils.deno import DENO_VERSION, ensure_deno  # noqa: F401
 
+# Keep in step with misc/DimSim/cli/deno.json: the launcher there must find the
+# Chromium revision installed here. 1.61.0 is the first release with builds for
+# Ubuntu 26.04.
+_PLAYWRIGHT_PACKAGE = "npm:playwright@1.61.0"
+
 
 def ensure_playwright_chromium(deno_path: str) -> None:
+    """Install Chromium only when the pinned Playwright browser is missing."""
+    # Ask Playwright so platform revisions and PLAYWRIGHT_BROWSERS_PATH are
+    # respected. DimSim launches full Chromium, even in headless mode.
+    executable = subprocess.check_output(
+        [
+            deno_path,
+            "eval",
+            "--quiet",
+            f'import {{ chromium }} from "{_PLAYWRIGHT_PACKAGE}"; '
+            "console.log(chromium.executablePath());",
+        ],
+        text=True,
+    ).strip()
+    if Path(executable).is_file():
+        return
+
     subprocess.run(
-        [deno_path, "run", "--allow-all", "npm:playwright@1.58.2", "install", "chromium"],
+        [deno_path, "run", "--allow-all", _PLAYWRIGHT_PACKAGE, "install", "chromium"],
         check=True,
     )
