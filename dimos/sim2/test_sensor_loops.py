@@ -31,12 +31,14 @@ class _World:
 
     def __init__(self) -> None:
         self.time = 1.0
+        self.ticked: list[float] = []
 
     def stamp(self) -> float:
         return self.time
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
         for _ in range(TICKS):
+            self.ticked.append(self.time)
             yield self.time
 
 
@@ -80,17 +82,25 @@ class _View:
         return np.zeros(3), np.array([0.0, 0.0, 9.81]), np.array([1.0, 0.0, 0.0, 0.0])
 
 
-def _run(sensor: Any, loop: str, stream: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _run(
+    sensor: Any, loop: str, stream: str, monkeypatch: pytest.MonkeyPatch, opening: float = 0.0
+) -> dict[str, Any]:
+    """Run ``sensor``'s ``loop`` in a _World, its view taking ``opening`` sim seconds to open."""
     world = _World()
     view = _View(world)
     published: list[Any] = []
     transforms: list[float | None] = []
     sensor._world = world
-    monkeypatch.setattr(sensor, "_open", lambda: view)
+
+    def open_view() -> _View:
+        world.time += opening
+        return view
+
+    monkeypatch.setattr(sensor, "_open", open_view)
     monkeypatch.setattr(getattr(sensor, stream), "publish", published.append)
     monkeypatch.setattr(sensor, "publish_usd_tf", lambda ts=None: transforms.append(ts))
     asyncio.run(getattr(sensor, loop)())
-    return {"view": view, "published": published, "transforms": transforms}
+    return {"view": view, "published": published, "transforms": transforms, "ticked": world.ticked}
 
 
 @pytest.fixture
@@ -117,7 +127,8 @@ def test_a_livox_cloud_is_stamped_with_the_world_it_was_cast_in(
     livox: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run = _run(livox, "_scan", "lidar", monkeypatch)
-    cast_at = [1.0 + tick for tick in range(TICKS)]
+    # The first tick opens the view, and each after it casts.
+    cast_at = [1.0 + tick for tick in range(TICKS - 1)]
     assert [cloud.ts for cloud in run["published"]] == cast_at
     assert run["transforms"] == cast_at
 
@@ -141,9 +152,27 @@ def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
     l1: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run = _run(l1, "_map", "lidar", monkeypatch)
-    cast_at = [1.0 + tick for tick in range(TICKS)]
+    # The first tick opens the view, and each after it casts.
+    cast_at = [1.0 + tick for tick in range(TICKS - 1)]
     assert [cloud.ts for cloud in run["published"]] == cast_at
     assert run["transforms"] == cast_at
+
+
+@pytest.mark.parametrize(
+    ("sensor", "loop", "stream"),
+    [("l1", "_map", "lidar"), ("livox", "_scan", "lidar"), ("livox", "_read_imu", "imu")],
+)
+def test_a_sensor_slow_to_open_still_stamps_each_reading_with_its_own_tick(
+    sensor: str,
+    loop: str,
+    stream: str,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run(request.getfixturevalue(sensor), loop, stream, monkeypatch, opening=10.0)
+    stamps = [reading.ts for reading in run["published"]]
+    # One reading per tick after the one spent opening, each stamped with its tick's time.
+    assert stamps == run["ticked"][1:]
 
 
 SPOT_XY, SPOT_YAW = (2.0, 1.0), np.pi / 2
