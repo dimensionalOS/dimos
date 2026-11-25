@@ -15,24 +15,44 @@
 from collections.abc import Callable, Iterator
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from pydantic import TypeAdapter
 import pytest
 
-from dimos.control.components import HardwareComponent
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
-from dimos.robot.manipulators.xarm.config import make_xarm_hardware, xarm7_hardware
+from dimos.hardware.spec import JointLimits
+
+
+def _arm(
+    hw_id: str,
+    *,
+    adapter_type: str = "piper",
+    address: str | None = None,
+    mock_stand_in: bool = False,
+) -> HardwareComponent:
+    """A seven-joint arm; with ``mock_stand_in``, a mock runs it when it has no address."""
+    limits = JointLimits(
+        position_lower=[-1.0] * 7, position_upper=[1.0] * 7, velocity_max=[1.0] * 7
+    )
+    return HardwareComponent(
+        hardware_id=hw_id,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=[f"{hw_id}/joint{i}" for i in range(1, 8)],
+        adapter_type=adapter_type,
+        address=address,
+        mock_limits=limits if mock_stand_in else None,
+    )
 
 
 def test_hardware_configuration_replaces_the_full_list_with_independent_addresses(
     tmp_path: Path,
 ) -> None:
     hardware = [
-        make_xarm_hardware("left", 6, adapter_type="xarm", address="192.0.2.10"),
-        make_xarm_hardware("right", 6, adapter_type="xarm", address="192.0.2.11"),
+        _arm("left", address="192.0.2.10"),
+        _arm("right", address="192.0.2.11"),
     ]
     path = tmp_path / "hardware.json"
     path.write_text(
@@ -46,7 +66,7 @@ def test_hardware_configuration_replaces_the_full_list_with_independent_addresse
             }
         )
     )
-    blueprint = ControlCoordinator.blueprint(hardware=[make_xarm_hardware("arm", 7)])
+    blueprint = ControlCoordinator.blueprint(hardware=[_arm("arm", adapter_type="mock")])
 
     parsed = BlueprintConfigParser(blueprint).parse(config_path=path, environ={})
     config = ControlCoordinatorConfig(**parsed.module_kwargs("controlcoordinator"))
@@ -77,49 +97,27 @@ def test_addresses_select_the_physical_adapter_by_hardware_id(
     make_coordinator: Callable[[str], ControlCoordinator],
 ) -> None:
     coordinator = make_coordinator("")
-    component = xarm7_hardware("arm", gripper=True, mock_without_address=True)
-    assert (component.adapter_type, component.address) == ("xarm", None)
+    component = _arm("arm", mock_stand_in=True)
 
     resolved = coordinator._resolve_component(component)
 
     assert (resolved.adapter_type, resolved.address, resolved.limits) == (
-        "xarm",
+        "piper",
         "192.0.2.10",
         None,
     )
-    assert resolved.adapter_kwargs["arm_dof"] == 7
 
 
 def test_a_component_without_an_address_runs_its_mock_stand_in(
     make_coordinator: Callable[[str], ControlCoordinator],
 ) -> None:
     coordinator = make_coordinator("")
-    component = xarm7_hardware("other", gripper=True, mock_without_address=True)
+    component = _arm("other", mock_stand_in=True)
 
     resolved = coordinator._resolve_component(component)
 
     assert (resolved.adapter_type, resolved.address) == ("mock", None)
     assert resolved.limits == component.mock_limits
-    assert resolved.limits is not None and resolved.limits.position_upper[-1] == 850.0
     # Without a stand-in the physical adapter keeps its missing address.
-    needs_address = coordinator._resolve_component(xarm7_hardware("other"))
-    assert (needs_address.adapter_type, needs_address.address) == ("xarm", None)
-
-
-def test_simulation_keeps_the_simulated_adapter_and_takes_the_sim_modules_scene(
-    make_coordinator: Callable[[str], ControlCoordinator],
-) -> None:
-    coordinator = make_coordinator("mujoco")
-    component = xarm7_hardware("arm", gripper=True, mock_without_address=True)
-    assert (component.adapter_type, component.address) == ("sim_mujoco", None)
-
-    with pytest.raises(RuntimeError, match="no MujocoSimModule"):
-        coordinator._resolve_component(component)
-    coordinator._mujoco_sim = SimpleNamespace(scene_path=lambda: "/scenes/table.xml")
-    resolved = coordinator._resolve_component(component)
-
-    assert (resolved.adapter_type, resolved.address) == ("sim_mujoco", "/scenes/table.xml")
-    explicit = coordinator._resolve_component(
-        make_xarm_hardware("arm", 7, adapter_type="sim_mujoco", address="/own.xml")
-    )
-    assert explicit.address == "/own.xml"
+    needs_address = coordinator._resolve_component(_arm("other"))
+    assert (needs_address.adapter_type, needs_address.address) == ("piper", None)

@@ -110,8 +110,7 @@ my_robot = ControlCoordinator.blueprint(
             hardware_id="left_arm",
             hardware_type=HardwareType.MANIPULATOR,
             joints=make_joints("left_arm", 7),
-            adapter_type="xarm",
-            address="192.168.1.100",
+            adapter_type="mock",
         ),
         HardwareComponent(
             hardware_id="right_arm",
@@ -125,6 +124,16 @@ my_robot = ControlCoordinator.blueprint(
         joint_trajectory_task([...]),  # union of both arms
     ],
 )
+```
+
+An xArm runs through its connection module instead of a hardware adapter. Its
+address is given at run time (`--xarmconnection.ip 192.168.1.185`), or it runs
+in MuJoCo with `simulated=True`:
+
+```python
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm_coordinator
+
+my_xarm = xarm_coordinator("xarm7")
 ```
 
 ## RPC Methods

@@ -163,12 +163,12 @@ goal; RoboPlan composes the selected groups automatically.
 
 A plan that moves the planar base executes when the module config maps a
 coordinator task name to the model's base joints in `trajectory_tasks`. That task
-has type `planar_base_trajectory` and claims the base's twist joints. The plan's
+has type `planar_base_trajectory` and claims the base's three velocity joints. The plan's
 base columns go to that task and the rest to the joint trajectory task, both driven by the coordinator's tick clock. A
 failure on either side cancels the other, because collision checking only covers
-the simultaneous motion the plan describes. Because the twist joints report
-odometry through their position fields, `joint_state_aliases` maps those
-coordinator joint names onto the model's generated base joints. Without a base
+the simultaneous motion the plan describes. The base joints take speeds and report
+no position, so both the task and the module read the base pose from an
+`odometry` stream; the module fills the model's generated base joints from it. Without a base
 task, `execute()` still rejects a plan containing a generated base joint, and
 arm-only trajectories from the same model remain executable.
 

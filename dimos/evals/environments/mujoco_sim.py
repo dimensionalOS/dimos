@@ -45,7 +45,7 @@ class MujocoEnvironmentConfig(SimConfig):
         "body_poses",
         "odom",
     )
-    # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
+    # Full xArm MJCF for the MujocoSimModule; the arm's MujocoArmConnection attaches to it.
     scene: Path | None = None
     base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
