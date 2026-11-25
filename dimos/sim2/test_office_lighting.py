@@ -95,10 +95,14 @@ def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
     renderer.update_scene(data, camera=camera)
     # The sky's texels are scaled by the shade's headroom, as the view renders it.
     image = display(renderer.render(), view._headroom, "agx")
-    renderer.enable_segmentation_rendering()
-    renderer.update_scene(data, camera=camera)
-    sky = renderer.render()[..., 0] < 0
     renderer.close()
+    # A segment id is drawn as a color, and multisampling blends those at every edge into ids no geom has.
+    model.vis.quality.offsamples = 0
+    segmenter = mujoco.Renderer(model, 120, 160)
+    segmenter.enable_segmentation_rendering()
+    segmenter.update_scene(data, camera=camera)
+    sky = segmenter.render()[..., 0] < 0
+    segmenter.close()
     view.close()
 
     assert sky.mean() > 0.05, "the skylight is in frame"
