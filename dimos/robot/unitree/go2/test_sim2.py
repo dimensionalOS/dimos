@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.sim2.world_observations import WorldMirror
@@ -101,3 +102,21 @@ def test_the_simulated_body_is_the_root_link_of_a_real_go2() -> None:
     assert (
         GO2_USD.root_link == GO2_MODEL.load().root_link == GO2_TF_FRAMES["tf_frames_local"]["body"]
     )
+
+
+def test_a_go2_publishes_its_odometry_and_only_the_joints_that_move(go2_sim: Go2Sim) -> None:
+    go2_sim._tf = go2_sim._create_tfbuffer(None)
+    published: list[set[tuple[str, str]]] = []
+    publish = go2_sim._tf.publish
+
+    def recorded(*transforms: Transform) -> None:
+        published.append({(t.frame_id, t.child_frame_id) for t in transforms})
+        publish(*transforms)
+
+    go2_sim._tf.publish = recorded  # type: ignore[method-assign]
+    go2_sim._publish_pose(np.array([0.0, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]), 1.0, {})
+
+    moving = {(t.frame_id, t.child_frame_id) for t in go2_sim.moving_transforms()}
+    static = {(t.frame_id, t.child_frame_id) for t in go2_sim.static_transforms()}
+    assert moving and static
+    assert published == [{(go2_sim.frame.odom, go2_sim.frame.body)} | moving]

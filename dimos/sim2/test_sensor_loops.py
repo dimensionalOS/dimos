@@ -32,6 +32,7 @@ class _World:
     def __init__(self) -> None:
         self.time = 1.0
         self.ticked: list[float] = []
+        self.awaited: list[float] = []
 
     def stamp(self) -> float:
         return self.time
@@ -39,6 +40,9 @@ class _World:
     def entity(self, name: str) -> None:
         # No world entity, so its geometry never changes and the views are built once.
         return None
+
+    async def reached(self, ts: float) -> None:
+        self.awaited.append(ts)
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
         for _ in range(TICKS):
@@ -99,7 +103,6 @@ def _run(
     world = _World()
     view = _View(world)
     published: list[Any] = []
-    transforms: list[float | None] = []
     sensor._world = world
 
     def open_view() -> _View:
@@ -108,9 +111,8 @@ def _run(
 
     monkeypatch.setattr(sensor, "_open", open_view)
     monkeypatch.setattr(getattr(sensor, stream), "publish", published.append)
-    monkeypatch.setattr(sensor, "publish_usd_tf", lambda ts=None: transforms.append(ts))
     asyncio.run(getattr(sensor, loop)())
-    return {"view": view, "published": published, "transforms": transforms, "ticked": world.ticked}
+    return {"view": view, "published": published, "ticked": world.ticked}
 
 
 @pytest.fixture
@@ -140,7 +142,6 @@ def test_a_livox_cloud_is_stamped_with_the_world_it_was_cast_in(
     # The first tick opens the view, and each after it casts.
     cast_at = [1.0 + tick for tick in range(TICKS - 1)]
     assert [cloud.ts for cloud in run["published"]] == cast_at
-    assert run["transforms"] == cast_at
 
 
 def test_a_livox_imu_is_read_at_the_frame_it_is_labelled_with(
@@ -165,7 +166,6 @@ def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
     # The first tick opens the view, and each after it casts.
     cast_at = [1.0 + tick for tick in range(TICKS - 1)]
     assert [cloud.ts for cloud in run["published"]] == cast_at
-    assert run["transforms"] == cast_at
 
 
 @pytest.mark.parametrize(
@@ -220,7 +220,6 @@ def test_a_livox_opens_one_view_for_its_lidar_and_imu_and_reads_both_at_their_ra
     monkeypatch.setattr(livox, "_open", open_view)
     for stream, stamps in published.items():
         monkeypatch.setattr(getattr(livox, stream), "publish", lambda m, s=stamps: s.append(m.ts))
-    monkeypatch.setattr(livox, "publish_usd_tf", lambda ts=None: None)
 
     async def both() -> None:
         await asyncio.gather(livox._scan(), livox._read_imu())
@@ -294,7 +293,6 @@ def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPat
         monkeypatch.setattr(livox, "_open", counted_open)
         monkeypatch.setattr(livox.lidar, "publish", clouds.append)
         monkeypatch.setattr(livox.imu, "publish", readings.append)
-        monkeypatch.setattr(livox, "publish_usd_tf", lambda ts=None: None)
 
         async def both() -> None:
             await asyncio.gather(livox._scan(), livox._read_imu())
@@ -372,7 +370,6 @@ def test_a_livox_in_its_housing_sees_past_the_housing() -> None:
     try:
         _toy_world(livox, "dog/lidar")
         livox.lidar.publish = published.append
-        livox.publish_usd_tf = lambda ts=None: None
         asyncio.run(livox._scan())
     finally:
         livox.stop()
@@ -387,7 +384,6 @@ def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides() -> None:
     try:
         _toy_world(l1, "dog/l1")
         l1.lidar.publish = published.append
-        l1.publish_usd_tf = lambda ts=None: None
         asyncio.run(l1._map())
     finally:
         l1.stop()
@@ -409,7 +405,6 @@ def test_an_l1_maps_none_of_the_robot_it_rides() -> None:
     try:
         _toy_world(l1, "dog/l1_up")
         l1.lidar.publish = published.append
-        l1.publish_usd_tf = lambda ts=None: None
         asyncio.run(l1._map())
     finally:
         l1.stop()
@@ -418,3 +413,19 @@ def test_an_l1_maps_none_of_the_robot_it_rides() -> None:
     head = np.array([0.3, 0.0, 0.5])
     near_the_head = np.linalg.norm(points - head, axis=1) < 2 * l1.config.cell
     assert len(points) > 0 and not near_the_head.any(), "the L1 mapped the dog's own head"
+
+
+def test_a_sensor_stamps_and_sleeps_in_the_world_s_time() -> None:
+    from dimos.sim2.imu import SimImu
+
+    imu = SimImu(instance_name="dog/imu/simimu", mount="dog/imu")
+    world = _World()
+    try:
+        imu._world = world  # type: ignore[assignment]
+        stamp = imu.time()
+        asyncio.run(imu.sleep(0.25))
+    finally:
+        imu.stop()
+
+    assert stamp == 1.0
+    assert world.awaited == [1.25]

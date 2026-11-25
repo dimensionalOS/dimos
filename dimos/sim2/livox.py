@@ -126,7 +126,6 @@ class LivoxSim(SimSensor):
                     offset_times=np.zeros(len(points), np.uint32),
                 )
             )
-            self.publish_usd_tf(ts=stamp)
 
     async def _read_imu(self) -> None:
         site, view, built = self.imu_frame_id, None, 0
