@@ -539,30 +539,30 @@ def running_agent(
 
 
 def test_infer_returns_the_final_answer_of_its_turn(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph = _AnswersGraph(
         AIMessage(content="", tool_calls=[_call("add", "c1", x=1, y=2)]),
         ToolMessage(content="3", tool_call_id="c1"),
         AIMessage(content=[{"type": "text", "text": "It is "}, {"type": "text", "text": "3."}]),
     )
-    monkeypatch.setattr(running_agent, "_state_graph", graph)
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
 
-    assert running_agent.infer(HumanMessage("what is 1 + 2?")).text == "It is 3."
-    assert running_agent._history[0].content == "what is 1 + 2?"
+    assert mcp_client.infer(HumanMessage("what is 1 + 2?")).text == "It is 3."
+    assert mcp_client._history[0].content == "what is 1 + 2?"
 
 
 def test_infer_raises_when_its_turn_fails(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(running_agent, "_state_graph", _FailsOnceGraph([]))
+    monkeypatch.setattr(mcp_client, "_state_graph", _FailsOnceGraph([]))
 
     with pytest.raises(RuntimeError, match="TimeoutError: LLM API timed out"):
-        running_agent.infer(HumanMessage("first"))
-    assert running_agent.infer(HumanMessage("second")).text == "done"
+        mcp_client.infer(HumanMessage("first"))
+    assert mcp_client.infer(HumanMessage("second")).text == "done"
 
 
-def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
+def test_infer_needs_a_mcp_client(mcp_client: Agent) -> None:
     with pytest.raises(RuntimeError, match="not running"):
         mcp_client.infer(HumanMessage("too early"))
 
@@ -740,58 +740,56 @@ def _transcript(agent: Agent) -> list[str]:
     ],
 )
 def test_infer_answers_after_every_image_its_tools_returned(
-    running_agent: Agent,
+    mcp_client: Agent,
     monkeypatch: pytest.MonkeyPatch,
     looks: list[tuple[str, list[str]]],
     chain: dict[str, str],
     answer: str,
     transcript: list[str],
 ) -> None:
-    monkeypatch.setattr(
-        running_agent, "_state_graph", _CameraGraph(running_agent, {"q": looks}, chain)
-    )
+    monkeypatch.setattr(mcp_client, "_state_graph", _CameraGraph(mcp_client, {"q": looks}, chain))
 
-    assert running_agent.infer(HumanMessage("q")).content == answer
-    assert _transcript(running_agent) == transcript
-    assert running_agent._message_queue.empty() and running_agent._artifacts == []
+    assert mcp_client.infer(HumanMessage("q")).content == answer
+    assert _transcript(mcp_client) == transcript
+    assert mcp_client._message_queue.empty() and mcp_client._artifacts == []
 
 
 def test_infer_raises_when_any_image_of_its_turn_fails(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    graph = _CameraGraph(running_agent, {"q": [("look", ["a", "b"])]}, broken=("a",))
-    monkeypatch.setattr(running_agent, "_state_graph", graph)
+    graph = _CameraGraph(mcp_client, {"q": [("look", ["a", "b"])]}, broken=("a",))
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
 
     with pytest.raises(RuntimeError, match="cannot read a"):
-        running_agent.infer(HumanMessage("q"))
-    assert _transcript(running_agent)[-2:] == ["look:b", "saw b"], "b was still shown"
-    assert running_agent._artifacts == []
+        mcp_client.infer(HumanMessage("q"))
+    assert _transcript(mcp_client)[-2:] == ["look:b", "saw b"], "b was still shown"
+    assert mcp_client._artifacts == []
 
     graph.broken = ()
-    assert running_agent.infer(HumanMessage("q")).content == "saw b"
+    assert mcp_client.infer(HumanMessage("q")).content == "saw b"
 
 
 def test_infer_raises_when_the_turn_has_no_answer(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class _Silent:
         def stream(self, state: Any, stream_mode: str) -> Iterator[dict[str, Any]]:
             return iter(())
 
-    monkeypatch.setattr(running_agent, "_state_graph", _Silent())
+    monkeypatch.setattr(mcp_client, "_state_graph", _Silent())
     with pytest.raises(RuntimeError, match="no answer"):
-        running_agent.infer(HumanMessage("q"))
+        mcp_client.infer(HumanMessage("q"))
 
 
 def test_concurrent_infer_calls_each_see_their_own_images(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     looks = {f"q{i}": [("look", [f"a{i}", f"b{i}"])] for i in range(10)}
-    monkeypatch.setattr(running_agent, "_state_graph", _CameraGraph(running_agent, looks))
+    monkeypatch.setattr(mcp_client, "_state_graph", _CameraGraph(mcp_client, looks))
     answers: dict[str, str] = {}
 
     def ask(question: str) -> None:
-        answers[question] = str(running_agent.infer(HumanMessage(question)).content)
+        answers[question] = str(mcp_client.infer(HumanMessage(question)).content)
 
     callers = [Thread(target=ask, args=(question,)) for question in looks]
     for caller in callers:
@@ -800,7 +798,7 @@ def test_concurrent_infer_calls_each_see_their_own_images(
         caller.join(timeout=10)
 
     assert answers == {f"q{i}": f"saw b{i}" for i in range(10)}
-    lines = _transcript(running_agent)
+    lines = _transcript(mcp_client)
     for i in range(10):
         at = lines.index(f"q{i}")
         assert lines[at : at + 6] == [
