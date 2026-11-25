@@ -16,6 +16,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from functools import cached_property
 
 from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -45,7 +46,21 @@ class SimScene(SimSensor):
 
     def mount_transforms(self, ts: float | None = None) -> list[Transform]:
         """The edges from the room's root to each mount: a real room publishes no furniture, and the world USD places it."""
-        transforms = self.usd_transforms(ts=ts)
+        return [
+            Transform(
+                translation=edge.translation,
+                rotation=edge.rotation,
+                frame_id=edge.frame_id,
+                child_frame_id=edge.child_frame_id,
+                ts=ts,
+            )
+            for edge in self._mount_edges
+        ]
+
+    @cached_property
+    def _mount_edges(self) -> list[Transform]:
+        # A room does not move: its edges are worked out once and only restamped, as working them out holds the GIL for every joint it has.
+        transforms = self.usd_transforms()
         parent_of = {t.child_frame_id: t.frame_id for t in transforms}
         needed: set[str] = set()
         for mount in self.mounts:
