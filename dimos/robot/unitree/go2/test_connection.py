@@ -31,7 +31,7 @@ from unittest.mock import MagicMock
 from mcap.writer import Writer
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Subject
+from reactivex import Subject, empty, timer
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -45,8 +45,11 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.dimsim_connection import DimSimConnection
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
+from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.utils.testing.waiting import wait_until
 
@@ -435,7 +438,7 @@ def test_body_command_and_pose_derived_feedback(connection):
 
 
 def test_canonical_lifecycle_deadman_and_post_stop_no_replay(monkeypatch):
-    from dimos.control.test_coordinator_connections import LocalTransport
+    from dimos.control._control_test_helpers import LocalTransport
 
     backend = MagicMock()
     backend.odom_stream.return_value = Subject()
@@ -475,6 +478,97 @@ def test_stop_disposes_stream_readers_before_closing_connection(connection, mock
     conn.stop()
 
     assert disposed_at_close == [True]
+
+
+@pytest.fixture
+def lidar_connection(mocker, request):
+    scheduler = TestScheduler()
+    mocker.patch.object(
+        go2_conn, "timer", side_effect=lambda delay: timer(delay, scheduler=scheduler)
+    )
+    backend = mocker.Mock(spec=getattr(request, "param", go2_conn.UnitreeWebRTCConnection))
+    backend.odom_stream.return_value = empty()
+    backend.lowstate_stream.return_value = empty()
+    mocker.patch.object(go2_conn, "make_connection", return_value=backend)
+    # Skip the physical robot's stand-up delay.
+    mocker.patch.object(go2_conn.time, "sleep")
+    with Subject() as lidar:
+        backend.lidar_stream.return_value = lidar
+        module = GO2Connection(ip="192.0.2.1", camera=False)
+        mocker.patch.object(module.cmd_vel, "subscribe", return_value=lambda: None)
+        mocker.patch.object(module.velocity_command, "subscribe", return_value=lambda: None)
+        mocker.patch.object(module.lidar, "publish", autospec=True)
+        yield module, lidar, scheduler
+        module.stop()
+
+
+def test_no_lidar_warns_once_and_late_data_still_publishes(lidar_connection, mocker):
+    module, lidar, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+
+    scheduler.advance_to(9)
+    warning.assert_not_called()
+    scheduler.advance_to(10)
+
+    warning.assert_called_once_with(
+        "No lidar message received. Mapping and navigation need lidar data. Check the lidar stream.",
+        timeout_s=10.0,
+    )
+    message = PointCloud2()
+    lidar.on_next(message)
+    module.lidar.publish.assert_called_once_with(message)
+    scheduler.advance_to(60)
+    assert warning.call_count == 1
+
+
+def test_first_lidar_message_suppresses_startup_warning(lidar_connection, mocker):
+    module, lidar, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(9)
+    message = PointCloud2()
+    lidar.on_next(message)
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
+    module.lidar.publish.assert_called_once_with(message)
+
+
+def test_stop_cancels_pending_lidar_warning(lidar_connection, mocker):
+    module, _, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(9)
+    module.stop()
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
+
+
+def test_disabled_lidar_does_not_warn(lidar_connection, mocker):
+    module, _, scheduler = lidar_connection
+    mocker.patch.object(module.config, "lidar", False)
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
+    module.connection.lidar_stream.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "lidar_connection",
+    [DimSimConnection, MujocoConnection, go2_conn.ReplayConnection],
+    indirect=True,
+)
+def test_offline_connection_does_not_warn_about_robot_lidar(lidar_connection, mocker):
+    module, _, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
 
 
 class _StopLoopError(Exception):

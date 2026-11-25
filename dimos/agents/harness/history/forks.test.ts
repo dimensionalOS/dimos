@@ -85,7 +85,7 @@ async function open(name: string) {
     budget: new ContextBudget(model.models),
     defaultMaxChars: 2_000,
   });
-  const inputs = new InputGate({ harness, observer, limiter });
+  const inputs = new InputGate({ harness, observer, limiter, skills: [] });
   const history = new ConversationHistory(harness, inputs, model.models);
   const source = await harness.createConversation(
     { ownership: { kind: "ownerless" }, agent: { model: model.model } },
@@ -162,18 +162,35 @@ test("an edit forks before the message, so the model gets the history before it 
   await h.harness.close(context);
 });
 
-test("editing the first message starts the fork's context over at the edited text", async () => {
+test("an invalid edited skill starts no model turn and leaves the edit retry incomplete", async () => {
   const h = await open("first");
   await h.say(h.source, "count the boxes", "4 boxes");
   const first = await h.input(h.source, "count the boxes");
   h.model.script([h.answer("5 crates")]);
 
-  const edited = await h.history.edit(h.source, first, "count the crates", [], "edit-first" as UserRequestId, context);
-  assert.equal(edited.kind, "new");
-  assert.ok(edited.kind === "new");
-  await (await h.harness.conversation(edited.conversation, context))?.waitForIdle(context);
-
+  const text = "/skill:missing count the crates";
+  const edited = await h.history.edit(h.source, first, text, [], "edit-first" as UserRequestId, context);
+  assert.deepEqual(edited, { kind: "invalid", problem: 'Unknown skill "missing".' });
+  assert.equal(h.requests.length, 1, "invalid edits start no model call");
+  assert.deepEqual(await h.history.edit(h.source, first, text, [], "edit-first" as UserRequestId, context), edited);
+  const corrected = await h.history.edit(
+    h.source,
+    first,
+    "count the crates",
+    [],
+    "edit-first" as UserRequestId,
+    context,
+  );
+  assert.ok(corrected.kind === "new");
+  await (await h.harness.conversation(corrected.conversation, context))?.waitForIdle(context);
+  assert.equal(h.requests.length, 2);
   assert.deepEqual(h.requests.at(-1), ["system: ", `user: ${DOWN} | count the crates`]);
+  assert.deepEqual(
+    await h.history.edit(h.source, first, "count the crates", [], "edit-first" as UserRequestId, context),
+    corrected,
+  );
+  const conversations = await h.harness.commit((tx) => tx.scanConversations({ order: "ascending" }, 10), context);
+  assert.equal(conversations.items.length, 2, "the retry uses the original edit fork");
   assert.deepEqual(h.reports, []);
   await h.harness.close(context);
 });

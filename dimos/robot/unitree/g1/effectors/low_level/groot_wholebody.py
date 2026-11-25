@@ -41,7 +41,6 @@ from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -51,6 +50,10 @@ from dimos.robot.unitree.g1.config import G1_JOINT_MODEL, G1_JOINT_NAMES
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Unitree SDK sentinels meaning "no command" for that DOF.
+POS_STOP: float = 2.146e9
+VEL_STOP: float = 16000.0
 
 _NUM_MOTORS = 29
 _NUM_MOTOR_SLOTS = 35  # G1 hg LowCmd has 35 slots; only 29 are used

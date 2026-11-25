@@ -2,11 +2,13 @@
 
 > Arm built on Damiao motors? Start with [Arms with Damiao motors](#arms-with-damiao-motors) below.
 
-This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
+This guide walks through integrating a new robot arm with dimOS, from writing its connection module to creating blueprints for planning and control.
 
 ## Architecture Overview
 
-dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
+Each arm sits behind a **connection module**: a `ConnectionModule` subclass
+(`dimos/control/connection/connection_module.py`) that wraps the vendor SDK and
+talks to the `ControlCoordinator` through named `JointState` streams:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -17,27 +19,25 @@ dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is re
                         │ RPC: execute trajectory
 ┌───────────────────────▼──────────────────────────────────────┐
 │              ControlCoordinator (100Hz control loop)         │
-│  - Reads state from all adapters                             │
+│  - Reads each robot's latest joint_state                     │
 │  - Runs tasks (trajectory, velocity, gripper, ...)           │
 │  - Arbitrates per-joint conflicts (priority-based)           │
-│  - Routes commands to the correct adapter                    │
+│  - Sends each robot its complete command every tick          │
 │  - Publishes aggregated joint state                          │
 └───────────────────────┬──────────────────────────────────────┘
-                        │ uses
+                        │ position_command / joint_state
 ┌───────────────────────▼──────────────────────────────────────┐
-│              Your Adapter (implements Protocol)              │
+│              Your ConnectionModule                           │
 │  - Wraps vendor SDK (TCP/IP, CAN, serial, etc.)              │
 │  - Converts between vendor units and SI units                │
-│  - Handles connection lifecycle                              │
+│  - Holds the arm when commands stop (deadman)                │
 └──────────────────────────────────────────────────────────────┘
 ```
-
-> See also: `dimos/hardware/manipulators/README.md` for a quick reference.
 
 ## Arms with Damiao motors
 
 If dimOS talks to your arm's Damiao motors directly (DM4310, DM4340, DM8009, each on its own CAN ID, through a CAN
-adapter or a Damiao USB-CAN bridge), don't write a vendor-SDK `ManipulatorAdapter` (Step 1 below). Damiao arms are
+adapter or a Damiao USB-CAN bridge), don't write a vendor-SDK connection module (Step 1 below). Damiao arms are
 connection modules: the motor protocol, the CAN transports, gripper calibration, gravity compensation and command
 checks live in `dimos/robot/manipulators/damiao/` and the `can-motor-control` library (installed by the `control`
 extra). Your arm declares its data and a small connection class in `dimos/robot/manipulators/<yourarm>/`. Copy the
@@ -47,8 +47,8 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     finger joints to `named_for_robot(..., fingers=...)`, and the robot data), `connection.py`,
     `blueprints/basic.py` (the coordinator, the trajectory and gripper `TaskConfig`s, the planner), `test_config.py`
     and `docs/capabilities/manipulation/<yourarm>_integration.md`; optionally `joints.py` (joint-name constants) and
-    `coordinator.py` (an empty `DamiaoCoordinator` subclass, as in `openyam/coordinator.py`). There is no adapter
-    registry, `_registry.py` or `__init__.py`.
+    `coordinator.py` (an empty `DamiaoCoordinator` subclass, as in `openyam/coordinator.py`). There is no
+    `_registry.py` or `__init__.py`.
 
 2. **Robot data.** Declare one module-level `DamiaoRobot(buses=[...], model=..., gravity_model=..., base_link=...,
     joint_names=[...], gravity=True, home_joints=[...])` (`dimos/robot/manipulators/damiao/robot.py`). Each
@@ -95,6 +95,14 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     commands (motors before it are still commanded), and it shows up only as a repeated warning and in
     `status().last_error`. Check gains copied from a vendor SDK against these ranges, and check the largest gravity
     torque over the joint range (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
+
+    Your arm's calibration is one file, `blueprints/calibrate.py`:
+    `<yourarm>_calibrate = calibration_blueprint(<YourConnection>).remappings([])`, which hands the calibration module
+    your connection's `robot`. `dimos run <yourarm>-calibrate` runs it and `dimos shell` drives the calibration module's
+    `run`, `status`, `answer` and `abort`; the robot data's `name` (`<yourarm>`, `_` for `-`) names its arms'
+    calibration files. `DamiaoConnection` serves `get_config()` and `set_config(patch, save)`,
+    which the calibration drives; each arm id's entry is an `ArmConfigState` or `ArmConfigPatch` from
+    `dimos/control/calibration/schema.py`.
 
 6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
     URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
@@ -148,441 +156,133 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
 2. **URDF/xacro**: A robot description file (only needed if you want motion planning)
 3. **Connection info**: IP address, CAN port, serial device, etc.
 
-## Step 1: Create the Adapter
+## Step 1: Write the Connection Module
 
-Create a new directory for your arm under `dimos/hardware/manipulators/`:
+Each arm gets its own folder under `dimos/robot/manipulators/`. The A-750
+(`dimos/robot/manipulators/a750/`) is a small, complete example to copy:
 
 ```
-dimos/hardware/manipulators/
-├── spec.py              # ManipulatorAdapter Protocol (don't modify)
-├── registry.py          # Auto-discovery registry (don't modify)
-├── mock/
-├── xarm/
-├── piper/
-├── sim/                 # MuJoCo adapter (sim_mujoco)
-└── yourarm/             # ← New directory
-    ├── _registry.py  # Declares your adapter (name → import path)
-    └── adapter.py
+dimos/robot/manipulators/yourarm/
+├── config.py            # URDF model, RobotModelConfig factory, ConnectionConfig helper
+├── connection.py        # YourArmConnection(ConnectionModule)
+├── test_connection.py   # The connection against a fake SDK
+└── blueprints/
+    └── basic.py         # Coordinator, connection and planner blueprints
 ```
 
-### adapter.py: Full Skeleton
-
-Below is a complete annotated adapter. Implement each method by wrapping your vendor SDK calls. All values crossing the adapter boundary **must use SI units**, except a gripper position, which may use the gripper's own unit.
-
-| Quantity         | SI Unit  |
-|------------------|----------|
-| Angles           | radians  |
-| Angular velocity | rad/s    |
-| Torque           | Nm       |
-| Position         | meters   |
-| Force            | Newtons  |
+`connection.py` declares a config and a module. The config says where the arm
+is plugged in and which joints take which commands; the module implements
+four methods. Values are in SI units (rad, m) under canonical
+`<source>/<joint>` names, e.g. `arm/joint1`.
 
 ```python skip
-"""YourArm adapter: implements ManipulatorAdapter protocol.
+class YourArmConfig(ConnectionConfig):
+    """Where YourArm is plugged in.
 
-SDK Units: <describe your SDK's native units here>
-dimOS Units: angles=radians, distance=meters, velocity=rad/s
-"""
-
-from __future__ import annotations
-
-import math
-
-# Import your vendor SDK
-from yourarm_sdk import YourArmSDK
-
-from dimos.hardware.manipulators.spec import (
-    ControlMode,
-    ManipulatorInfo,
-)
-from dimos.hardware.spec import JointLimits
-
-# Unit conversion constants (if your SDK doesn't use SI units)
-MM_TO_M = 0.001
-M_TO_MM = 1000.0
-
-# Gripper opening in meters, 0 = closed (take the maximum from your gripper's spec)
-GRIPPER_MAX_OPENING = 0.08
-
-
-class YourArmAdapter:
-    """YourArm hardware adapter.
-
-    Implements ManipulatorAdapter protocol via duck typing.
-    No inheritance required. Just match the method signatures in spec.py.
+    Attributes:
+        address: The arm's IP address, e.g. "192.168.1.100".
     """
 
-    def __init__(self, address: str, dof: int = 6, arm_dof: int | None = None, **_: object) -> None:
-        """Initialize the adapter.
-
-        Args:
-            address: Connection address (IP, CAN port, serial device, etc.)
-            dof: Number of joints in the blueprint: the arm's, then the gripper's.
-            arm_dof: Number of arm joints, when a gripper adds one (set in adapter_kwargs).
-            **_: Other arguments the coordinator passes, such as hardware_id.
-        """
-        if not address:
-            raise ValueError("address is required for YourArmAdapter")
-        self._address = address
-        self._dof = dof
-        self._arm_dof = dof if arm_dof is None else arm_dof
-        self._gripper_dof = dof - self._arm_dof  # 0, or 1 with a gripper
-        self._sdk: YourArmSDK | None = None
-        self._control_mode: ControlMode = ControlMode.POSITION
+    address: str
+    source: str = "arm"
 
 
-    def connect(self) -> bool:
-        """Connect to hardware. Returns True on success."""
-        try:
-            self._sdk = YourArmSDK(self._address)
-            self._sdk.connect()
-            # Verify connection succeeded
-            if not self._sdk.is_alive():
-                print(f"ERROR: Arm at {self._address} not reachable")
-                return False
-            return True
-        except Exception as e:
-            print(f"ERROR: Failed to connect to arm at {self._address}: {e}")
-            return False
+class YourArmConnection(ConnectionModule):
+    """YourArm driven over its SDK; joint targets in rad on ``position_command``."""
 
-    def disconnect(self) -> None:
-        """Disconnect from hardware."""
-        if self._sdk:
-            self._sdk.disconnect()
-            self._sdk = None
+    config: YourArmConfig
 
-    def is_connected(self) -> bool:
-        """Check if connected."""
-        return self._sdk is not None and self._sdk.is_alive()
+    position_command: In[JointState]
+    joint_state: Out[JointState]
 
-    def activate(self) -> bool:
-        """Prepare hardware for commanded motion after connect()."""
-        return self.write_enable(True)
+    @rpc
+    def start(self) -> None:
+        super().start()  # Calls connect(), then starts the deadman.
+        self.register_disposable(Disposable(self.position_command.subscribe(
+            lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+        )))
+        # Start a thread that publishes joint_state at the arm's own rate.
 
-    def deactivate(self) -> bool:
-        """Gracefully stop commanded motion before disconnect()."""
-        return self.write_stop()
+    def connect(self) -> None:
+        """Open the SDK; raise if the arm does not answer."""
 
+    def write(self, values: Values) -> None:
+        """Send targets, e.g. {"arm/joint1/position": 0.3}. A joint left out keeps its target."""
 
-    def get_info(self) -> ManipulatorInfo:
-        """Get manipulator info (vendor, model, DOF)."""
-        return ManipulatorInfo(
-            vendor="YourVendor",
-            model="YourModel",
-            dof=self._dof,
-            firmware_version=None,  # Optional: query from SDK if available
-            serial_number=None,     # Optional: query from SDK if available
-        )
-
-    def get_dof(self) -> int:
-        """Get the number of joints, including the gripper."""
-        return self._dof
-
-    def get_limits(self) -> JointLimits:
-        """Get limits for every joint: the arm's in SI units, then the gripper's.
-
-        Either hardcode known limits or query them from the SDK.
-        """
-        return JointLimits(
-            position_lower=[-math.pi] * self._arm_dof + [0.0] * self._gripper_dof,  # radians, gripper meters
-            position_upper=[math.pi] * self._arm_dof + [GRIPPER_MAX_OPENING] * self._gripper_dof,
-            velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,  # rad/s
-        )
-
-
-    def set_control_mode(self, mode: ControlMode) -> bool:
-        """Set control mode.
-
-        Map dimOS ControlMode enum values to your SDK's mode codes.
-        Return False for modes your arm doesn't support.
-        """
-        if not self._sdk:
-            return False
-
-        mode_map = {
-            ControlMode.POSITION: 0,        # Your SDK's position mode code
-            ControlMode.SERVO_POSITION: 1,   # High-frequency servo mode
-            ControlMode.VELOCITY: 4,         # Velocity mode
-            # Add other supported modes...
-        }
-
-        sdk_mode = mode_map.get(mode)
-        if sdk_mode is None:
-            return False  # Unsupported mode
-
-        success = self._sdk.set_mode(sdk_mode)
-        if success:
-            self._control_mode = mode
-        return success
-
-    def get_control_mode(self) -> ControlMode:
-        """Get current control mode."""
-        return self._control_mode
-
-
-    def read_joint_positions(self) -> list[float]:
-        """Read current joint positions: the arm's in radians, then the gripper's.
-
-        Convert from SDK units to radians.
-        """
-        if not self._sdk:
-            raise RuntimeError("Not connected")
-        raw_positions = self._sdk.get_joint_positions()
-        positions = [math.radians(p) for p in raw_positions[:self._arm_dof]]
-        if self._gripper_dof:
-            positions.append(self._sdk.get_gripper_position() * MM_TO_M)
-        return positions
-
-    def read_joint_velocities(self) -> list[float]:
-        """Read current joint velocities in rad/s.
-
-        If your SDK doesn't provide velocity feedback, return zeros.
-        The coordinator publishes these zeros as they are.
-        """
-        if not self._sdk:
-            return [0.0] * self._dof
-        # If SDK supports velocity reading:
-        # raw_velocities = self._sdk.get_joint_velocities()
-        # return [math.radians(v) for v in raw_velocities[:self._arm_dof]] + [0.0] * self._gripper_dof
-        return [0.0] * self._dof
-
-    def read_joint_efforts(self) -> list[float]:
-        """Read current joint torques in Nm.
-
-        If your SDK doesn't provide torque feedback, return zeros.
-        """
-        if not self._sdk:
-            return [0.0] * self._dof
-        # If SDK supports torque reading:
-        # return list(self._sdk.get_joint_torques()[:self._arm_dof]) + [0.0] * self._gripper_dof
-        return [0.0] * self._dof
-
-    def read_state(self) -> dict[str, int]:
-        """Read robot state (mode, state code, etc)."""
-        if not self._sdk:
-            return {"state": 0, "mode": 0}
-        return {
-            "state": self._sdk.get_state(),
-            "mode": self._sdk.get_mode(),
-        }
-
-    def read_error(self) -> tuple[int, str]:
-        """Read error code and message. (0, '') means no error."""
-        if not self._sdk:
-            return 0, ""
-        code = self._sdk.get_error_code()
-        if code == 0:
-            return 0, ""
-        return code, f"YourArm error {code}"
-
-
-    def write_joint_positions(
-        self,
-        positions: list[float],
-        velocity: float = 1.0,
-    ) -> bool:
-        """Command joint positions: the arm's in radians, then the gripper's.
-
-        Args:
-            positions: One target per joint, in get_limits() order and units.
-            velocity: Speed as fraction of max (0-1).
-
-        Convert from radians to SDK units before sending.
-        """
-        if not self._sdk or len(positions) != self._dof:
-            return False
-        arm, gripper = positions[:self._arm_dof], positions[self._arm_dof:]
-        ok = self._sdk.set_joint_positions([math.degrees(p) for p in arm])
-        if gripper:
-            ok = self._sdk.set_gripper_position(gripper[0] * M_TO_MM) and ok
-        return ok
-
-    def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command joint velocities in rad/s.
-
-        Return False if velocity control is not supported.
-        """
-        if not self._sdk or len(velocities) != self._dof or any(velocities[self._arm_dof:]):
-            return False  # a gripper velocity may be ignored only when it is zero (spec.py)
-        sdk_velocities = [math.degrees(v) for v in velocities[:self._arm_dof]]
-        return self._sdk.set_joint_velocities(sdk_velocities)
-
-    def write_stop(self) -> bool:
-        """Stop all motion immediately."""
-        if not self._sdk:
-            return False
-        return self._sdk.emergency_stop()
-
-
-    def write_enable(self, enable: bool) -> bool:
-        """Enable or disable servos."""
-        if not self._sdk:
-            return False
-        return self._sdk.enable_motors(enable)
-
-    def read_enabled(self) -> bool:
-        """Check if servos are enabled."""
-        if not self._sdk:
-            return False
-        return self._sdk.motors_enabled()
-
-    def write_clear_errors(self) -> bool:
-        """Clear error state."""
-        if not self._sdk:
-            return False
-        return self._sdk.clear_errors()
-
-
-    def read_cartesian_position(self) -> dict[str, float] | None:
-        """Read end-effector pose.
-
-        Returns dict with keys: x, y, z (meters), roll, pitch, yaw (radians).
-        Return None if not supported.
-        """
-        return None  # Or implement if your SDK supports it
-
-    def write_cartesian_position(
-        self,
-        pose: dict[str, float],
-        velocity: float = 1.0,
-    ) -> bool:
-        """Command end-effector pose. Return False if not supported."""
-        return False
-
-
-    def read_force_torque(self) -> list[float] | None:
-        """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
-        return None
+    def halt(self) -> None:
+        """Hold the arm where it is. Called when commands stop."""
 ```
 
-Then declare the adapter in a `_registry.py` manifest next to it:
+See `dimos/robot/manipulators/a750/connection.py` for the full version,
+including the read loop, and `a750/config.py` for the model and the
+`ConnectionConfig` helper the coordinator shares.
 
-```py
-# dimos/hardware/manipulators/yourarm/_registry.py
-ADAPTER_FACTORIES = {
-    "yourarm": "dimos.hardware.manipulators.yourarm.adapter:YourArmAdapter",
-}
-```
+## Step 2: Create Your Blueprints
 
-### Key implementation notes
-
-- **Unsupported features**: Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
-- **Velocity/effort feedback**: If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
-- **Gripper**: there are no gripper methods. A gripper is the last joint: `dof` counts it, `get_limits()` gives its range in the gripper's own unit (meters of opening above), and the joint arrays carry it last. A gripper task opens it toward the `upper` end of that range unless the task has `params={"open_at": "lower"}`.
-- **SDK import**: Import the vendor SDK at module level, as the xArm and Piper adapters do. The manifest keeps the registry importable when the SDK is missing.
-
-## Step 2: Create Package Files
-
-### How discovery works
-
-The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers adapters from `_registry.py` manifests at import time:
-
-1. It iterates over all subpackages under `dimos/hardware/manipulators/`
-2. For each subpackage, it loads `<subpackage>._registry` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
-3. Your adapter module is imported only when `create("yourarm")` is first called
-
-The manifest must import nothing beyond stdlib. It is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) checks manifests and pins the available adapter names. Add `"yourarm"` to `EXPECTED_NAMES["manipulators"]`, and add the SDK's top-level module to `OPTIONAL_VENDOR_MODULES` if CI does not install it.
-
-You can verify discovery works:
+The coordinator drives a robot through ports named `<robot>_<kind>`, declared
+on a subclass. The blueprint remaps the connection's ports onto them. Create
+`dimos/robot/manipulators/yourarm/blueprints/basic.py`:
 
 ```python skip
-from dimos.hardware.manipulators.registry import adapter_registry
-print(adapter_registry.available())  # Should include "yourarm"
-```
-
-## Step 3: Create Your Robot Folder and Blueprints
-
-Each arm in dimOS gets its own folder under `dimos/robot/manipulators/`. This is where you define all blueprints for your arm: coordinator, planning, perception, etc. The existing arms there, such as `xarm/`, are the reference.
-
-### 3a. Create the robot directory
-
-```
-dimos/robot/manipulators/
-├── xarm/                    # An existing arm (reference example)
-│   ├── blueprints/
-│   └── config.py
-└── yourarm/                 # ← New directory for your robot
-    └── blueprints.py
-```
-
-### 3b. Define your blueprints
-
-Create `dimos/robot/manipulators/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
-
-```python skip
-"""Blueprints for YourArm robot.
+"""Blueprints for YourArm.
 
 Usage:
-    # Run via CLI:
-    dimos run coordinator-yourarm          # Start coordinator with real hardware
-    dimos run yourarm-planner              # Start planner (optional, for motion planning)
-
-    # Or programmatically:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.robot.manipulators.yourarm.blueprints import coordinator_yourarm
-    coordinator = ModuleCoordinator.build(coordinator_yourarm)
-    coordinator.loop()
+    dimos run coordinator-yourarm --yourarmconnection.address 192.168.1.100
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.yourarm.config import yourarm_coordinator_connection
+from dimos.robot.manipulators.yourarm.connection import YourArmConnection
 
 
-# YourArm (6-DOF), real hardware
-coordinator_yourarm = ControlCoordinator.blueprint(
-    tick_rate=100.0,                    # Control loop frequency (Hz)
-    publish_joint_state=True,           # Publish aggregated joint state
-    joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",                        # Unique ID for this hardware
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),             # Creates ["arm/joint1", ..., "arm/joint6"]
-            adapter_type="yourarm",                   # Must match registry name
-            address="192.168.1.100",                  # Passed to adapter __init__
-            auto_enable=True,                         # Auto-enable servos on start
-        ),
-    ],
-    tasks=[
-        joint_trajectory_task(make_joints("arm", 6)),
-    ],
-)
+class YourArmCoordinator(ControlCoordinator):
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
 
 
+coordinator_yourarm = autoconnect(
+    YourArmCoordinator.blueprint(
+        instance_name="ControlCoordinator",  # RPC clients look for this name
+        tick_rate=100.0,
+        connections=[yourarm_coordinator_connection()],
+        tasks=[joint_trajectory_task([f"arm/joint{i}" for i in range(1, 7)])],
+    ),
+    YourArmConnection.blueprint(),
+).remappings([
+    (YourArmConnection, "position_command", "arm_position_command"),
+    (YourArmCoordinator, "arm_joint_state", "joint_state"),
+])
 ```
 
-If your arm has a gripper, list its joint last (`joints=[*make_joints("arm", 6), "arm/gripper"]`), pass
-`adapter_kwargs={"arm_dof": 6}` so the adapter knows which entry is the gripper, and add
-`TaskConfig(name="arm_gripper", type="gripper", joint_names=["arm/gripper"])` (from `dimos.control.coordinator`) to
-`tasks`. With a planner (Step 4c), also pass
-`gripper_tasks={"manipulator": "arm_gripper"}` to `planner(...)`.
+If your arm has a gripper, give it a joint in the model (the A-750's is
+`finger`), declare it in `joint_commands`, and add
+`TaskConfig(name="arm_gripper", type="gripper", joint_names=["arm/finger"])`
+(from `dimos.control.coordinator`) to `tasks`. With a planner (Step 3c), also
+pass `gripper_tasks={"manipulator": "arm_gripper"}` to `planner(...)`.
 
 ### Blueprint field reference
 
 | Field | Description |
 |-------|-------------|
-| `hardware_id` | Unique name for this hardware component. Used to route commands. |
-| `adapter_type` | Name registered with `adapter_registry` (e.g., `"yourarm"`). |
-| `address` | Connection info passed to adapter's `__init__` as `address` kwarg. |
-| `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm/joint1", ..., "arm/joint6"]`. |
-| `auto_enable` | If `True`, servos are enabled automatically when the coordinator starts. |
+| `connections` | One `ConnectionConfig` per robot: its `source` name, model and per-joint command interfaces. The connection module gets the same declaration. |
 | `task.name` | Name used by the ManipulationModule to invoke trajectory execution via RPC. |
 | `task.type` | Task type, such as `"trajectory"`, `"velocity"`, `"cartesian_ik"` or `"gripper"`. |
 | `task.priority` | Priority for per-joint arbitration. Higher number wins. |
 
-## Step 4: Add URDF and Planning Integration (Optional)
+## Step 3: Add URDF and Planning Integration (Optional)
 
 If you want motion planning, you need a URDF and a planning blueprint. Add these
-to your robot's own `blueprints.py`.
+to your robot's own `blueprints/basic.py`.
 
-### 4a. Add your URDF
+### 3a. Add your URDF
 
-Prefer an upstream `RobotDescriptionSource` beside your robot adapter. Joining
+Prefer an upstream `RobotDescriptionSource` beside your robot's config. Joining
 paths from the source is lazy: importing the catalog does not clone or update
 the repository, while the first concrete path access resolves it into the
 robot asset cache. Use `LfsPath` only when the description is intentionally
@@ -689,7 +389,7 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
     )
 ```
 
-### 4b. Create a robot model config helper
+### 3b. Create a robot model config helper
 
 ```python skip
 from dimos.robot.manipulators._modeling import named_for_robot
@@ -723,13 +423,13 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
     )
-    # Match the arm/joint1... names make_joints("arm", 6) gives the coordinator.
+    # Match the arm/joint1... names the connection gives the coordinator.
     return named_for_robot(config, "arm")
 ```
 
-### 4c. Create a planning blueprint
+### 3c. Create a planning blueprint
 
-Add this to your `dimos/robot/manipulators/yourarm/blueprints.py` alongside the coordinator blueprint:
+Add this to your `dimos/robot/manipulators/yourarm/blueprints/basic.py` alongside the coordinator blueprint:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
@@ -783,14 +483,14 @@ yourarm_planner = autoconnect(
 
 Coordinator-facing joint states and trajectories use the model's canonical
 joint names unchanged. Keep hardware-native name translation inside the
-hardware adapter.
+connection module.
 
 Planning-group `base_link`/`tip_link` values define kinematic chains and pose
 target frames. `base_link` is only the robot-scoped link placed by
 `base_pose`; do not use it as a substitute for planning-group chain metadata.
 See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
 
-### 4d. Add Cartesian and teleoperation IK
+### 3d. Add Cartesian and teleoperation IK
 
 Cartesian, EEF-twist, and engagement-relative teleoperation tasks share the
 Pink backend. Install its dependencies with the manipulation extra:
@@ -809,36 +509,40 @@ Use one control task for each robot model that Pink should solve as one system:
 
 The task uses coordinator-facing joint names and URDF frame names. Give it the
 same `RobotModelConfig` used by planning; hardware-native naming remains inside
-the adapter.
+the connection module.
 
 ```python skip
+from dimos.control.coordinator import TaskConfig
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 
-pink = PinkKinematicsConfig()
 robot_model = _make_yourarm_config()
-teleop_task = teleop_ik_task(
-    hardware,
+teleop_task = TaskConfig(
     name="teleop_arm",
-    robot_model=robot_model,
-    bindings=[{"hand": "right", "target_frame": "link6"}],
-    params={"pink": pink},
+    type="teleop_ik",
+    joint_names=list(robot_model.joint_names),
+    params={
+        "robot_model": robot_model,
+        "bindings": [{"hand": "right", "target_frame": "link6"}],
+        "pink": PinkKinematicsConfig(),
+    },
 )
 ```
 
 For a bimanual model, pass both joint sets and bind each hand to its own frame:
 
 ```python skip
-bimanual_task = teleop_ik_task(
-    dual_arm_hardware,
+bimanual_task = TaskConfig(
     name="teleop_dual_arm",
-    robot_model=dual_arm_model,
+    type="teleop_ik",
     joint_names=[*left_arm_joint_names, *right_arm_joint_names],
-    bindings=[
-        {"hand": "left", "target_frame": "left_tool_frame"},
-        {"hand": "right", "target_frame": "right_tool_frame"},
-    ],
-    params={"pink": PinkKinematicsConfig()},
+    params={
+        "robot_model": dual_arm_model,
+        "bindings": [
+            {"hand": "left", "target_frame": "left_tool_frame"},
+            {"hand": "right", "target_frame": "right_tool_frame"},
+        ],
+        "pink": PinkKinematicsConfig(),
+    },
 )
 ```
 
@@ -851,7 +555,7 @@ Before connecting hardware, follow [Pink IK Configuration and Tuning](/docs/capa
 to tune task weights, robot-specific objectives, velocity limits, feedback
 tolerance, and command tracking.
 
-## Step 5: Register Blueprints
+## Step 4: Register Blueprints
 
 The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** by scanning the codebase for blueprint declarations. After adding your blueprints:
 
@@ -865,110 +569,30 @@ The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** 
    dimos run yourarm-planner        # If you added a planning blueprint
    ```
 
-## Step 6: Testing
+## Step 5: Testing
 
-### Verify adapter registration
+Test the connection against a fake SDK, as
+`dimos/robot/manipulators/a750/test_connection.py` does: start the module,
+send a `position_command`, and check what reached the fake SDK and what
+`joint_state` reports. Check that the arm holds where it is when commands stop.
 
-```python skip
-from dimos.hardware.manipulators.registry import adapter_registry
-
-# Check your adapter shows up
-assert "yourarm" in adapter_registry.available()
-
-# Create an instance via registry (same path the coordinator uses)
-adapter = adapter_registry.create("yourarm", address="192.168.1.100", dof=6)
-```
-
-### Unit test with mock
-
-You can test coordinator logic without hardware by using `unittest.mock`:
-
-```python skip
-import pytest
-from unittest.mock import MagicMock
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
-
-@pytest.fixture
-def mock_adapter():
-    adapter = MagicMock(spec=ManipulatorAdapter)
-    adapter.get_dof.return_value = 6
-    adapter.read_joint_positions.return_value = [0.0] * 6
-    adapter.read_joint_velocities.return_value = [0.0] * 6
-    adapter.read_joint_efforts.return_value = [0.0] * 6
-    adapter.write_joint_positions.return_value = True
-    adapter.activate.return_value = True
-    adapter.deactivate.return_value = True
-    adapter.read_enabled.return_value = True
-    adapter.is_connected.return_value = True
-    return adapter
-
-def test_read_positions(mock_adapter):
-    assert mock_adapter.read_joint_positions() == [0.0] * 6
-
-def test_write_positions(mock_adapter):
-    target = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    assert mock_adapter.write_joint_positions(target) is True
-```
-
-### Integration test with coordinator
-
-```python skip
-from dimos.robot.manipulators.common.mock import coordinator_mock
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
-
-# Build and start coordinator with mock hardware
-coordinator = ModuleCoordinator.build(coordinator_mock)
-coordinator.start()
-
-# Your adapter is tested through the same coordinator interface
-# Just swap adapter_type="mock" to adapter_type="yourarm" in a blueprint
-
-coordinator.stop()
-```
-
-### Test the real adapter standalone
-
-```python skip
-from dimos.hardware.manipulators.yourarm.adapter import YourArmAdapter
-
-adapter = YourArmAdapter(address="192.168.1.100", dof=6)
-assert adapter.connect() is True
-assert adapter.is_connected() is True
-
-# Read state
-positions = adapter.read_joint_positions()
-assert len(positions) == 6
-print(f"Joint positions (rad): {positions}")
-
-# Activate and move
-adapter.activate()
-adapter.write_joint_positions([0.0] * 6)
-
-# Cleanup
-adapter.deactivate()
-adapter.disconnect()
-```
+The blueprint tests under `dimos/robot/` build every registered blueprint, so a
+wiring mistake (a port without a declaration, a wrong remapping) fails there.
 
 ## Quick Reference Checklist
 
 Files to create:
 
-- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
-- [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
-- [ ] `dimos/robot/manipulators/yourarm/blueprints.py` (coordinator + planning blueprints)
+- [ ] `dimos/robot/manipulators/yourarm/config.py` (model, `RobotModelConfig`, `ConnectionConfig` helper)
+- [ ] `dimos/robot/manipulators/yourarm/connection.py` (`ConnectionModule` subclass)
+- [ ] `dimos/robot/manipulators/yourarm/test_connection.py` (against a fake SDK)
+- [ ] `dimos/robot/manipulators/yourarm/blueprints/basic.py` (coordinator + planning blueprints)
 
 Files to modify:
 
 - [ ] `pyproject.toml`: Add vendor SDK to optional dependencies *(if applicable)*
-- [ ] `dimos/hardware/test_adapter_registries.py`: Add `"yourarm"` to `EXPECTED_NAMES["manipulators"]`, and the SDK's top-level module to `OPTIONAL_VENDOR_MODULES` if CI does not install it
 
 Verification:
 
-- [ ] `adapter_registry.available()` includes `"yourarm"`
 - [ ] `pytest dimos/robot/test_all_blueprints_generation.py` passes (regenerates `all_blueprints.py`)
 - [ ] `dimos run coordinator-yourarm` starts successfully
-
-For firmware-configured protocol ranges, see the
-[MakerMods Metal integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
-Its firmware ranges are declared through the shared codec's custom profile API
-rather than being aliased to stock Damiao SKUs or added as library enum entries. The same guide compares macOS SLCAN and native gs_usb.
