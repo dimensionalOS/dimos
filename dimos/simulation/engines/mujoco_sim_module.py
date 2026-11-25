@@ -16,12 +16,10 @@
 
 Owns a single ``MujocoEngine`` and publishes:
 - camera streams (Out ports), replacing ``MujocoCamera``
-- joint state via shared memory, consumed by ``ShmMujocoAdapter`` inside
-  ``ControlCoordinator``
+- joint state via shared memory, consumed by ``MujocoArmConnection``
 
-This avoids the prior pattern of sharing engines via a global in-process
-registry, which was fragile when ``WorkerManager`` places the adapter and
-the camera in different worker processes.
+Shared memory lets the connection and the cameras run in different worker
+processes from the engine.
 """
 
 from __future__ import annotations
@@ -317,11 +315,10 @@ class MujocoSimModule(
     perception.DepthCamera,
 ):
     """Single Module that owns a MujocoEngine, publishes camera streams, and
-    exposes joint state/commands to a ``ShmMujocoAdapter`` via shared memory.
+    exposes joint state/commands to a ``MujocoArmConnection`` via shared memory.
 
-    The adapter attaches to the same SHM buffers using the MJCF path as the
-    discovery key - no RPC, no globals. From ControlCoordinator's perspective
-    the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
+    The connection attaches to the same SHM buffers using the MJCF path as
+    the discovery key.
     """
 
     config: MujocoSimModuleConfig
@@ -413,7 +410,7 @@ class MujocoSimModule(
 
     @rpc
     def scene_path(self) -> str:
-        """The MJCF the simulated manipulator adapters attach to (their SHM key)."""
+        """The MJCF the simulated arm connections attach to (their SHM key)."""
         return str(self.config.robot_mjcf or self.config.address)
 
     @rpc
@@ -426,7 +423,7 @@ class MujocoSimModule(
                 "or config.robot_mjcf (composed scene path) is required"
             )
 
-        # SHM key - adapters derive the same key from the robot/control MJCF path.
+        # SHM key - connections derive the same key from the robot/control MJCF path.
         shm_key_source = self.config.robot_mjcf or self.config.address
         shm_key = shm_key_from_path(shm_key_source)
         self._shm = ManipShmWriter(shm_key)
@@ -786,7 +783,7 @@ class MujocoSimModule(
         """Post-step hook: SHM writes + LCM publishes.
 
         This stays in the module so odom/IMU continue to flow through normal
-        typed ports while the whole-body adapter consumes joint state via SHM.
+        typed ports while the whole-body connection consumes joint state via SHM.
         """
         if self._sim_hooks is not None:
             self._sim_hooks.post_step(engine)
