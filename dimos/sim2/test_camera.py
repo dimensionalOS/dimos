@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.sim2.camera import SimCameraConfig
 from dimos.sim2.mujoco.renders import RenderQuality
+
+# A camera's config builds its USD, which needs usd-core (absent on linux-aarch64).
+pytest.importorskip("pxr")
 
 
 def test_a_camera_left_alone_renders_as_the_view_does_by_default():
