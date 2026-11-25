@@ -359,9 +359,16 @@ def r1pro_lidar_odometry() -> MetaBlueprint:
 
 
 # n_workers keeps the 100 Hz coordinator tick loop out of the interpreter running the connection's sensor threads.
-r1pro_coordinator = autoconnect(
-    r1pro_visualization(),
-    # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-    r1pro_control(publish_odom_tf=False),
-    r1pro_lidar_odometry(),
-).global_config(n_workers=4)
+r1pro_coordinator = (
+    autoconnect(
+        r1pro_visualization(),
+        # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
+        r1pro_control(publish_odom_tf=False),
+        r1pro_lidar_odometry(),
+    )
+    .remappings(
+        # Drive the base from the viewer.
+        [(RerunWebSocketServer, "tele_cmd_vel", "twist_command")]
+    )
+    .global_config(n_workers=4)
+)
