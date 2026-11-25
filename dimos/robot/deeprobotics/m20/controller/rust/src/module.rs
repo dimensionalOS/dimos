@@ -470,8 +470,9 @@ impl M20Controller {
     }
 
     async fn on_motion_cmd(&mut self, msg: std_msgs::String) {
-        if msg.data.trim() == "reset_joint_zero" {
-            self.reset_joint_zero();
+        let words: Vec<&str> = msg.data.split_whitespace().collect();
+        if words.first() == Some(&"reset_joint_zero") {
+            self.reset_joint_zero(&words[1..]);
             return;
         }
         if self.shared.operator.held() {
@@ -497,15 +498,22 @@ impl M20Controller {
         }
     }
 
-    /// AutoSetHome -1 in the 1 kHz loop (crate::joint_zero); its code lands in controller_report's joint_zero.
-    fn reset_joint_zero(&self) {
+    /// AutoSetHome with these arguments in the 1 kHz loop; none or a bad one sends nothing (a warning).
+    fn reset_joint_zero(&self, args: &[&str]) {
+        let joints = match crate::joint_zero::parse_joints(args) {
+            Ok(joints) => joints,
+            Err(why) => {
+                warn!(%why, "joint zeroing not started");
+                return;
+            }
+        };
         if !(self.config.mode == "owner" && self.config.policy) {
             warn!("joint zeroing needs mode = owner with the policy on; ignored");
             return;
         }
-        match self.shared.joint_zero.request() {
+        match self.shared.joint_zero.request(joints.clone()) {
             Ok(result) => {
-                info!("joint zeroing requested");
+                info!(?joints, "joint zeroing requested");
                 tokio::task::spawn_blocking(move || match result.recv() {
                     Ok(code) => info!(code, "joint zeroing over"),
                     Err(_) => warn!("joint zeroing: the loop stopped without an answer"),
@@ -872,7 +880,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             let hard_stop_clear = imu_seen.hard_stop.clear();
             full.hard_stop = imu_seen.hard_stop.get();
             full.ready &= hard_stop_clear;
-            if let Some(asker) = zero_requests.take() {
+            if let Some((asker, joints)) = zero_requests.take() {
                 let c = tick.controller;
                 let charger_connected =
                     crate::rt::try_read(&idle_dock.charge, &crate::rt::LOCK_SKIPS, |r| {
@@ -893,7 +901,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
                 let refused = match &cfg.joint_zero {
                     None => Some(crate::app_commands::error::UNSUPPORTED_FUNCTION),
                     Some(z) => crate::joint_zero::refusal(&conditions)
-                        .or_else(|| hw.start_joint_zero(z).err()),
+                        .or_else(|| hw.start_joint_zero(z, &joints).err()),
                 };
                 match refused {
                     Some(code) => {

@@ -28,7 +28,7 @@ use crate::types::Target;
 #[derive(Default)]
 pub struct Requests {
     /// a request the loop has not taken yet, and where its result code goes
-    slot: Mutex<Option<Sender<i32>>>,
+    slot: Mutex<Option<(Sender<i32>, Vec<usize>)>>,
     running: AtomicBool,
     abort: AtomicBool,
     finished: AtomicU64,
@@ -47,18 +47,18 @@ pub struct Report {
 
 impl Requests {
     /// Ask for a zeroing; its code arrives on the receiver (0xe008 while one is asked or running).
-    pub fn request(&self) -> Result<Receiver<i32>, i32> {
+    pub fn request(&self, joints: Vec<usize>) -> Result<Receiver<i32>, i32> {
         let mut slot = self.slot.lock().unwrap_or_else(|p| p.into_inner());
         if slot.is_some() || self.running() {
             return Err(error::NOT_ALLOWED);
         }
         let (tx, rx) = channel();
-        *slot = Some(tx);
+        *slot = Some((tx, joints));
         Ok(rx)
     }
 
     /// The loop's take: never waits (a request being written is taken next tick).
-    pub fn take(&self) -> Option<Sender<i32>> {
+    pub fn take(&self) -> Option<(Sender<i32>, Vec<usize>)> {
         crate::rt::try_read(&self.slot, &crate::rt::LOCK_SKIPS, |s| s.take()).flatten()
     }
 
@@ -99,6 +99,30 @@ impl Requests {
         }
     }
 }
+
+/// main 0x1058f0's arguments: "-1" (ours: "all") is all 16, else indices 0-15 in order; ours refuses any other or none.
+pub fn parse_joints<S: AsRef<str>>(args: &[S]) -> Result<Vec<usize>, String> {
+    let mut joints = Vec::new();
+    for a in args {
+        let a = a.as_ref().trim();
+        if a == "-1" || a == "all" {
+            return Ok((0..crate::config::JOINTS).collect());
+        }
+        match a.parse::<usize>() {
+            Ok(j) if j < crate::config::JOINTS => joints.push(j),
+            _ => return Err(format!("invalid joint {a:?}: -1 / all, or indices 0-15 (robot order fl fr hl hr x hipx hipy knee wheel)")),
+        }
+    }
+    if joints.is_empty() {
+        return Err(NO_JOINTS.to_string());
+    }
+    Ok(joints)
+}
+
+/// The answer to a call without joints: nothing is sent.
+pub const NO_JOINTS: &str = "reset_joint_zero sends nothing without joints: it presses each given joint into its mechanical \
+stop at 5-10 N m for 6 s and rewrites its driver's stored zero (the robot lying or passive, off the dock, allow_gains on); \
+call reset_joint_zero(-1) (or \"all\") for all 16, or joint indices 0-15 (robot order fl fr hl hr x hipx hipy knee wheel)";
 
 /// What the gate reads on the tick a request is taken.
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +182,8 @@ mod sequence {
     pub struct Sequence {
         cfg: JointZero,
         selected: [bool; JOINTS],
+        /// the joints in the order given (the check reports the first failing one in this order, as 0x108c70)
+        order: Vec<usize>,
         /// AutoSetHome's unit array: each frame changes some units and sends all 16
         units: Vec<JointCommand>,
         tick: u64,
@@ -172,10 +198,16 @@ mod sequence {
     impl Sequence {
         /// `-1`: every joint.
         pub fn all(cfg: &JointZero) -> Sequence {
-            Sequence::new(cfg, [true; JOINTS])
+            Sequence::new(cfg, &(0..JOINTS).collect::<Vec<_>>())
         }
 
-        pub fn new(cfg: &JointZero, selected: [bool; JOINTS]) -> Sequence {
+        /// `joints`: indices under 16 (others are dropped), as parse_joints gives them.
+        pub fn new(cfg: &JointZero, joints: &[usize]) -> Sequence {
+            let order: Vec<usize> = joints.iter().copied().filter(|&j| j < JOINTS).collect();
+            let mut selected = [false; JOINTS];
+            for &j in &order {
+                selected[j] = true;
+            }
             // main 0x105bd0: board 0x79, the joint's CAN channel and id (FUN_0010b318's CA9B table), the rest 0, word 4
             let units = JointId::all()
                 .map(|joint| JointCommand {
@@ -193,6 +225,7 @@ mod sequence {
             Sequence {
                 cfg: cfg.clone(),
                 selected,
+                order,
                 units,
                 tick: 0,
                 checking: false,
@@ -282,8 +315,10 @@ mod sequence {
             }
             let tol = self.cfg.home_tolerance_rad;
             // 0x108c70: (double)position >= 0.001 or <= -0.001 fails; ours: a non-finite one fails too
-            self.failed = (0..JOINTS)
-                .filter(|&i| self.selected[i])
+            self.failed = self
+                .order
+                .iter()
+                .copied()
                 .find(|&i| {
                     self.positions[i].is_some_and(|p| {
                         let p = p as f64;
@@ -390,10 +425,8 @@ mod tests {
     #[test]
     fn some_joints_keep_disable_and_the_check_fails_the_first_joint_off_zero() {
         let c = cfg();
-        let mut selected = [false; JOINTS];
-        selected[2] = true;
-        selected[9] = true;
-        let mut seq = Sequence::new(&c, selected);
+        let selected = [9, 2];
+        let mut seq = Sequence::new(&c, &selected);
         let state = |positions: [f32; JOINTS]| -> Vec<JointState> {
             m20_ecan::JointId::all()
                 .map(|joint| JointState {
@@ -440,7 +473,7 @@ mod tests {
             }
         };
         assert_eq!(code, 0, "joint 9 read zero after the last frame");
-        let mut seq = Sequence::new(&c, selected);
+        let mut seq = Sequence::new(&c, &selected);
         let mut code = None;
         while code.is_none() {
             match seq.step() {
@@ -454,8 +487,8 @@ mod tests {
                 Step::Done(c) => code = Some(c),
             }
         }
-        // 0x108c70: <= -0.001 fails, the first selected joint wins (exit code joint + 1)
-        assert_eq!(code, Some(3));
+        // 0x108c70: <= -0.001 and NaN fail; the first failing joint in the order given wins (exit code joint + 1)
+        assert_eq!(code, Some(10));
     }
 
     #[test]
@@ -587,13 +620,45 @@ mod tests {
     }
 
     #[test]
+    fn joints_are_autosethome_s_arguments_and_none_or_a_bad_one_sends_nothing() {
+        let all: Vec<usize> = (0..JOINTS).collect();
+        assert_eq!(parse_joints(&["-1"]), Ok(all.clone()));
+        assert_eq!(parse_joints(&["all"]), Ok(all.clone()));
+        assert_eq!(parse_joints(&["5", "-1"]), Ok(all));
+        assert_eq!(parse_joints(&["7"]), Ok(vec![7]));
+        assert_eq!(parse_joints(&["9", "2", "9"]), Ok(vec![9, 2, 9]));
+        assert_eq!(parse_joints::<&str>(&[]), Err(NO_JOINTS.to_string()));
+        for bad in [["16"], ["-2"], ["knee"], [""]] {
+            assert!(
+                parse_joints(&bad).unwrap_err().starts_with("invalid joint"),
+                "{bad:?}"
+            );
+        }
+        assert!(parse_joints(&["3", "x"]).is_err());
+        // a single joint: only it gets ErrorReset, Enable, the press and SetHome; Disable reaches all 16
+        let c = cfg();
+        let (sent, _, code) = run(&mut Sequence::new(&c, &[7]));
+        assert_eq!(code, 0);
+        for (_, cmds) in &sent {
+            let others: Vec<_> = cmds.iter().filter(|u| u.joint.index() != 7).collect();
+            assert!(others
+                .iter()
+                .all(|u| u.control_word == 1 && u.torque == 0.0));
+        }
+        assert!(sent
+            .iter()
+            .any(|(_, f)| f[7].control_word == 6 && f[7].torque == c.press_torque[7]));
+    }
+
+    #[test]
     fn one_request_at_a_time_and_its_code_reaches_the_asker() {
         let r = Requests::default();
-        let rx = r.request().unwrap();
-        assert_eq!(r.request().err(), Some(error::NOT_ALLOWED));
-        let tx = r.take().unwrap();
+        let rx = r.request(vec![3]).unwrap();
+        assert_eq!(r.request(vec![3]).err(), Some(error::NOT_ALLOWED));
+        let (tx, joints) = r.take().unwrap();
+        assert_eq!(joints, [3]);
         r.set_running(true);
-        assert_eq!(r.request().err(), Some(error::NOT_ALLOWED));
+        assert_eq!(r.request(vec![3]).err(), Some(error::NOT_ALLOWED));
         r.abort();
         assert!(r.take_abort());
         assert!(!r.take_abort());
@@ -609,7 +674,7 @@ mod tests {
             }
         );
         // a loop gone: the asker's receive ends
-        let rx = r.request().unwrap();
+        let rx = r.request(vec![3]).unwrap();
         drop(r.take());
         assert!(rx.recv().is_err());
         // an abort outside a zeroing is nothing

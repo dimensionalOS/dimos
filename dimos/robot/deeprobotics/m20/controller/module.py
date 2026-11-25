@@ -96,6 +96,34 @@ def _gait(status: dict[str, Any]) -> int | None:
 
 logger = setup_logger()
 
+# the M20's joints: 4 legs x hipx, hipy, knee, wheel (AutoSetHome's CA9B table)
+M20_JOINTS = 4 * 4
+
+JOINT_ZERO_WARNING = (
+    "reset_joint_zero() sent nothing: it presses each given joint into its mechanical stop at 5-10 N m for 6 s and "
+    "rewrites its motor driver's stored zero (the robot lying or passive, off the dock, allow_gains on). Call "
+    "reset_joint_zero(-1) (or 'all') for all 16 joints, or joint indices 0-15 in robot order "
+    "(fl, fr, hl, hr x hipx, hipy, knee, wheel)."
+)
+
+
+def _joint_zero_args(joints: int | str | list[int]) -> list[str]:
+    """AutoSetHome's arguments for `joints`: ["-1"] for -1 / "all", else the indices 0-15; anything else raises ValueError."""
+    if joints == -1 or joints == "all":
+        return ["-1"]
+    picked = [joints] if isinstance(joints, int) else joints
+    if (
+        isinstance(picked, str)
+        or not picked
+        or not all(
+            isinstance(j, int) and not isinstance(j, bool) and 0 <= j < M20_JOINTS for j in picked
+        )
+    ):
+        raise ValueError(
+            f"reset_joint_zero: joints must be -1, 'all', or indices 0-15, not {joints!r}"
+        )
+    return [str(j) for j in picked]
+
 
 _PYTHON_ONLY = frozenset(
     {
@@ -649,8 +677,12 @@ class M20ControllerApi(CompositeResource):
                 return f"Undocking failed: not off the dock after {elapsed:.0f} s."
 
     @rpc
-    def reset_joint_zero(self) -> int:
-        """AutoSetHome -1 (joints pressed into their stops become zero): 0 done, joint + 1 off zero, 0xe008 refused, 0xe009 aborted."""
+    def reset_joint_zero(self, joints: int | str | list[int] | None = None) -> int | str:
+        """AutoSetHome's joints (-1 / "all", an index 0-15 or a list): 0 done, joint + 1 off zero, 0xe008 refused; no joints: a warning."""
+        if joints is None:
+            logger.warning(f"M20 {JOINT_ZERO_WARNING}")
+            return JOINT_ZERO_WARNING
+        args = _joint_zero_args(joints)
         if not self._can_sequence("reset_joint_zero"):
             raise RuntimeError(
                 "Joint zeroing needs the controller in owner mode with the policy on."
@@ -659,7 +691,7 @@ class M20ControllerApi(CompositeResource):
             before = self._status.get("joint_zero", {}).get("finished")
         if before is None:
             raise RuntimeError("Joint zeroing failed: the controller is not reporting its status.")
-        self._send("motion_cmd", String("reset_joint_zero"))
+        self._send("motion_cmd", String(" ".join(["reset_joint_zero", *args])))
 
         def over(s: dict[str, Any]) -> bool:
             return bool(s.get("joint_zero", {}).get("finished", before) > before)

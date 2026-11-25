@@ -412,21 +412,26 @@ impl Hardware for BusHardware {
         }
     }
 
-    fn start_joint_zero(&mut self, cfg: &crate::config::JointZero) -> Result<(), i32> {
+    fn start_joint_zero(
+        &mut self,
+        cfg: &crate::config::JointZero,
+        joints: &[usize],
+    ) -> Result<(), i32> {
         use crate::app_commands::error;
         let busy = self.zero.is_some()
             || self.bus.owner.in_startup()
             || self.charge_pending > 0
             || self.charge_ticks > 0;
         // the press torque goes out only with gains allowed
-        if busy || !self.bus.owner.config().allow_gains {
+        let valid = !joints.is_empty() && joints.iter().all(|&j| j < crate::config::JOINTS);
+        if busy || !valid || !self.bus.owner.config().allow_gains {
             return Err(error::NOT_ALLOWED);
         }
         let Some(held) = self.last.clone() else {
             return Err(error::NOT_ALLOWED);
         };
         self.zero = Some(ZeroRun {
-            sequence: crate::joint_zero::Sequence::all(cfg),
+            sequence: crate::joint_zero::Sequence::new(cfg, joints),
             held,
             restart: None,
         });

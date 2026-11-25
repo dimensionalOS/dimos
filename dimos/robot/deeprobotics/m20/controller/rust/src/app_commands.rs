@@ -303,7 +303,12 @@ impl App {
     /// cmdHandle_ResetJointsZero 0x18e930: AutoSetHome -1 in the 1 kHz loop, answered with its code once over.
     fn reset_joints_zero(&self) -> Answer {
         info!("app joint zeroing");
-        let code = match self.links.joint_zero.request() {
+        // the app's button: AutoSetHome -1, all joints
+        let code = match self
+            .links
+            .joint_zero
+            .request((0..crate::config::JOINTS).collect())
+        {
             // the loop gone without an answer: basic_server's system() failure
             Ok(result) => result.recv().unwrap_or(error::INTERNAL),
             Err(code) => code,
@@ -703,7 +708,8 @@ mod tests {
         let loop_side = links.clone();
         let zeroing = std::thread::spawn(move || {
             let tx = loop {
-                if let Some(tx) = loop_side.joint_zero.take() {
+                if let Some((tx, joints)) = loop_side.joint_zero.take() {
+                    assert_eq!(joints.len(), crate::config::JOINTS);
                     break tx;
                 }
                 std::thread::yield_now();
@@ -755,7 +761,7 @@ mod tests {
             std::thread::spawn(move || code(&send(&app, 1101, 8, serde_json::json!({}))))
         };
         let tx = loop {
-            if let Some(tx) = links.joint_zero.take() {
+            if let Some((tx, _)) = links.joint_zero.take() {
                 break tx;
             }
             std::thread::yield_now();
@@ -768,7 +774,7 @@ mod tests {
             std::thread::spawn(move || code(&send(&app, 1101, 8, serde_json::json!({}))))
         };
         let tx = loop {
-            if let Some(tx) = links.joint_zero.take() {
+            if let Some((tx, _)) = links.joint_zero.take() {
                 break tx;
             }
             std::thread::yield_now();
