@@ -256,7 +256,8 @@ def _installed(package: Path) -> bool:
 
 
 def _built(package: Path) -> bool:
-    """Whether the recorded inputs and JavaScript outputs of the last build are current."""
+    """Whether every file the last build read, as build.mjs recorded in dist/inputs.json, is
+    unchanged."""
     try:
         read = json.loads((package / "dist" / "inputs.json").read_text())
         return (
@@ -379,7 +380,7 @@ def _unit_path() -> Path:
 
 def _unit_text() -> str:
     """`dimos agent gateway` from this checkout, with the installing shell's PATH and XDG dirs."""
-    captured = ["PATH", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
+    captured = ["PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
     environment = [
         f"Environment={_quoted(f'{name}={os.environ[name]}')}"
         for name in captured

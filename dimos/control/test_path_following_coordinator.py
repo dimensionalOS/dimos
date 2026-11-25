@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from dimos.control.benchmarking.paths import straight_rotate
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+from dimos.control.components import make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.control.tasks.registry import control_task_registry
@@ -39,14 +39,6 @@ def coordinator(mocker, request) -> Any:
     mocker.patch("dimos.control.coordinator.TickLoop")
     coord = PathFollowingCoordinator(
         publish_joint_state=False,
-        hardware=[
-            HardwareComponent(
-                hardware_id="go2",
-                hardware_type=HardwareType.BASE,
-                joints=JOINTS,
-                adapter_type="mock_twist_base",
-            )
-        ],
         tasks=[
             TaskConfig(
                 name="follower",
@@ -88,7 +80,6 @@ def test_published_path_arms_the_follower_through_the_tick_loop(coordinator):
     # A real tick, not a hand-called compute(): the loop skips inactive tasks.
     TickLoop(
         tick_rate=100.0,
-        hardware=coord._hardware,
         hardware_lock=coord._hardware_lock,
         tasks=coord._tasks,
         task_lock=coord._task_lock,

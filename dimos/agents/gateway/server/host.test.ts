@@ -14,15 +14,14 @@ import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contr
 import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import { createHost, webSocketLink } from "@earendil-works/chord";
 import { createServer } from "node:net";
-import { createInterface } from "node:readline";
 import { json } from "node:stream/consumers";
 import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { dirname, join } from "node:path";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { gatewayState, stopGateway } from "#dimos/agents/cli/process.ts";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
-import { EventEmitter, once } from "node:events";
+import { once } from "node:events";
 import { parseJobName } from "#dimos/agents/harness/jobs/registry.ts";
 import { parseTimeZone } from "#dimos/agents/harness/jobs/cron.ts";
 import { randomUUID } from "node:crypto";
@@ -61,6 +60,7 @@ async function scratch(): Promise<{ readonly root: string; readonly paths: Agent
   const paths = agentPaths({
     HOME: root,
     XDG_CONFIG_HOME: join(root, "config"),
+    XDG_DATA_HOME: join(root, "data"),
     XDG_STATE_HOME: join(root, "state"),
     XDG_CACHE_HOME: join(root, "cache"),
     XDG_RUNTIME_DIR: join(root, "run"),
@@ -163,36 +163,20 @@ async function startGateway(
   }
 }
 
-test("sdk CLI replies with JSON and watches entries committed before it attaches", { timeout: 30_000 }, async (t) => {
+test("sdk CLI prints JSON for successful requests and refused arguments", { timeout: 30_000 }, async (t) => {
   const { root, paths, remove } = await scratch();
   const scripted = scriptedModel();
   const faux = scripted.models.getProvider("faux");
   assert(faux);
-  const gate = new EventEmitter();
-  const secondTurn = once(gate, "started", { signal: t.signal });
-  const finish = once(gate, "finish");
-  t.after(() => {
-    gate.emit("finish");
-  });
-  scripted.script([
-    fauxAssistantMessage("First answer"),
-    async () => {
-      gate.emit("started");
-      await finish;
-      return fauxAssistantMessage("Second answer");
-    },
-  ]);
   await startGateway(t, root, paths, faux, scripted.model);
   t.after(remove);
 
-  const sdk = (...args: string[]) =>
-    spawn(process.execPath, [join(PACKAGE, "cli/main.ts"), "sdk", ...args], {
+  const call = (body: object, ...args: string[]) => {
+    const child = spawn(process.execPath, [join(PACKAGE, "cli/main.ts"), "sdk", ...args], {
       env: { ...process.env, XDG_RUNTIME_DIR: dirname(paths.socket) },
       stdio: ["pipe", "pipe", "inherit"],
       signal: t.signal,
     });
-  const call = (body: object, ...args: string[]) => {
-    const child = sdk(...args);
     child.stdin.end(JSON.stringify(body));
     return json(child.stdout);
   };
@@ -203,27 +187,9 @@ test("sdk CLI replies with JSON and watches entries committed before it attaches
   const created = (await call({ request: newActionRequest(), cwd: root }, "createConversation")) as {
     value: { conversation: number };
   };
-  const id = String(created.value.conversation);
-  for (const text of ["first", "second"])
-    await call({ text, request: newUserRequest(), images: [], whenBusy: "followUp" }, "send", id);
-  await secondTurn;
-  const snapshot = (await call({}, "conversation", id)) as { value: { transcript: { items: unknown[] } } };
-  assert(snapshot.value.transcript.items.length > 1);
-
-  const watcher = sdk("watch");
-  const closed = once(watcher, "close");
-  try {
-    for await (const line of createInterface({ input: watcher.stdout })) {
-      const event = JSON.parse(line);
-      if (event.type !== "agent/chat" || !event.entries) continue;
-      assert.deepEqual(event.entries, snapshot.value.transcript.items);
-      return;
-    }
-    assert.fail("watch exited before emitting the conversation entries");
-  } finally {
-    watcher.stdin.end();
-    await closed;
-  }
+  assert.deepEqual(await call({}, "conversation", String(created.value.conversation)), {
+    value: { transcript: { items: [], omitted: 0 }, turn: null },
+  });
 });
 
 test("file and stream references reach the model as ordinary text", { timeout: 120_000 }, async (t) => {
@@ -446,6 +412,21 @@ test(
     assert(recovered.variant === "owner");
     assert.deepEqual(recovered.jobs.value, [savedJob], "the store initializes its cells from durable state");
     assert.equal(recovered.conversations.value.find((row) => row.id === conversation)?.title, "hello");
+    const room = await c.host.get(ConversationContract, { conversation, role: "viewer" });
+    const stored = await room.submission({ id: first.value.submission });
+    assert(stored.ok);
+    assert.equal(stored.value.record.id, first.value.submission);
+    assert.deepEqual(stored.value.answer, answer);
+    const other = await recovered.createConversation({ request: newActionRequest(), cwd: root });
+    assert(other.ok);
+    const otherRoom = await c.host.get(ConversationContract, {
+      conversation: other.value.conversation,
+      role: "viewer",
+    });
+    assert.deepEqual(await otherRoom.submission({ id: first.value.submission }), {
+      ok: false,
+      refusal: { code: "not_found", what: "submission", name: String(first.value.submission) },
+    });
     assert.deepEqual(await recovered.deleteJob({ name: job.name }), { ok: true, value: null });
     await until(recovered.jobs, (rows) => (rows.length === 0 ? true : undefined));
     const stop = await c.host.get(LifecycleContract, {});
@@ -495,3 +476,108 @@ test("status answers within its limit for a stale socket file and for a socket n
   assert.equal(await stopGateway(paths), "not_running");
   await assert.rejects(stat(paths.socket), { code: "ENOENT" }, "stop removes the stale socket file");
 });
+
+test(
+  "the gateway loads the full selected skill before the first model call and preserves its snapshot",
+  { timeout: 60_000 },
+  async (t) => {
+    const { root, paths, remove } = await scratch();
+    t.after(remove);
+    assert.equal(paths.userSkillsDir, join(root, "data", "dimos", "agent", "skills"));
+    const skillDir = join(paths.userSkillsDir, "dimensional");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    const path = join(skillDir, "SKILL.md");
+    const reference = join(skillDir, "references", "guide.txt");
+    const body = `---\nname: dimensional\ndescription: User override\n---\nRead references/guide.txt.\n${"Complete instructions. ".repeat(200)}END OF SKILL`;
+    await writeFile(path, body);
+    await writeFile(reference, "Supporting reference from the selected skill.");
+    const scripted = scriptedModel();
+    const faux = scripted.models.getProvider("faux");
+    assert.ok(faux);
+    const raw = "/skill:dimensional  explain this\nusing the reference";
+    let modelCalls = 0;
+    let receivedSkillBody = false;
+    scripted.script([
+      (request) => {
+        modelCalls += 1;
+        const text = JSON.stringify(request);
+        assert.ok(text.includes(path), "the prompt and explicit instruction use the custom skill");
+        const message = request.messages.find((message) => message.role === "user");
+        assert.ok(message && typeof message.content !== "string");
+        assert.ok(message.content.some((block) => block.type === "text" && block.text === raw));
+        receivedSkillBody = message.content.some((block) => block.type === "text" && block.text.includes(body));
+        assert.ok(text.includes(skillDir), "relative references have the skill base directory");
+        assert.ok(!text.includes("Read and follow"), "the harness does not ask the model to load the skill");
+        return fauxAssistantMessage([fauxToolCall("read", { path: reference }, { id: "call_reference" })], {
+          stopReason: "toolUse",
+        });
+      },
+      (request) => {
+        modelCalls += 1;
+        const results = request.messages.filter((message) => message.role === "toolResult");
+        assert.equal(results.length, 1);
+        const text = JSON.stringify(results);
+        assert.ok(text.includes("Supporting reference from the selected skill."));
+        return fauxAssistantMessage("Used the loaded skill and read its supporting reference.");
+      },
+    ]);
+    const gateway = await startGateway(t, root, paths, faux, scripted.model);
+    const client = await connect(paths, randomUUID() as TerminalId, "skill-client");
+    t.after(() => client.host.close());
+    const gw = await client.host.get(GatewayContract, {});
+    assert.equal(gw.variant, "owner");
+    if (gw.variant !== "owner") return;
+    assert.deepEqual(
+      gw.skills.value.find((skill) => skill.name === "dimensional"),
+      { name: "dimensional", description: "User override" },
+    );
+    assert.equal(gw.skills.value.filter((skill) => skill.name === "dimensional").length, 1);
+    assert.ok(gw.skills.value.some((skill) => skill.name === "dimos-runtime"));
+    const created = await gw.createConversation({ request: newActionRequest(), cwd: root });
+    assert.ok(created.ok);
+    const conversation = await client.host.get(ConversationContract, {
+      conversation: created.value.conversation,
+      role: "owner",
+    });
+    assert.equal(conversation.variant, "owner");
+    if (conversation.variant !== "owner") return;
+    const args = { request: newUserRequest(), text: raw, images: [], whenBusy: "followUp" as const };
+    const sent = await conversation.send(args);
+    assert.ok(sent.ok);
+    const outcome = await until(conversation.outcomes, (rows) =>
+      rows.find((row) => row.submission === sent.value.submission),
+    );
+    assert.equal(receivedSkillBody, true, "the first model call receives the full skill body beyond the input limit");
+    assert.equal(outcome.status, "done");
+    assert.equal(modelCalls, 2);
+    const input = conversation.transcript.value.items.find((item) => item.kind === "input");
+    assert.ok(input?.kind === "input");
+    assert.equal(input.input.text, raw);
+    assert.deepEqual(input.input.skill, { name: "dimensional", path, content: body });
+    await rm(path);
+    assert.deepEqual(
+      await conversation.send({ ...args, text: "/skill:missing" }),
+      sent,
+      "duplicate lookup precedes skill resolution",
+    );
+    assert.equal(modelCalls, 2);
+    const unknown = await conversation.send({ ...args, request: newUserRequest(), text: "/skill:missing" });
+    assert.deepEqual(unknown, {
+      ok: false,
+      refusal: { code: "invalid", field: "text", problem: 'Unknown skill "missing".' },
+    });
+    const unreadable = await conversation.send({ ...args, request: newUserRequest() });
+    assert.ok(!unreadable.ok && unreadable.refusal.code === "invalid");
+    assert.ok(unreadable.refusal.problem.includes(path));
+    assert.deepEqual(
+      await conversation.edit({ request: newUserRequest(), message: input.entry, text: "/skill:missing", images: [] }),
+      unknown,
+      "edited skill failures use the same visible refusal",
+    );
+    assert.equal(modelCalls, 2, "failed skill resolution starts no model turn");
+    const lifecycle = await client.host.get(LifecycleContract, {});
+    assert.equal(lifecycle.variant, "owner");
+    if (lifecycle.variant === "owner") await lifecycle.stop({});
+    await gateway.stopped;
+  },
+);

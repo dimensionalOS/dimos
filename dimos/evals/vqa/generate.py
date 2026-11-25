@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -189,17 +189,25 @@ class _GeneratedFrame:
 def generate_dataset(
     request: GenerationRequest,
     config: VqaGenerationConfig | None = None,
+    *,
+    progress: Callable[[str], None] | None = None,
 ) -> GenerationResult:
-    """Generate a standalone dataset from selected Memory images."""
+    """Generate a standalone dataset, optionally reporting setup and frame progress."""
+    if progress is not None:
+        progress("Loading VQA model dependencies...")
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
 
     config = config or VqaGenerationConfig()
+    if progress is not None:
+        progress(f"Loading recording {request.dataset}...")
     with PointCloudFrameLoader(
         request.dataset,
         tolerance_s=config.synchronization_tolerance_s,
     ) as loader:
+        if progress is not None:
+            progress("Selecting frames...")
         if request.quality_window is not None:
             assert request.start is not None and request.stop is not None
             indices = select_quality_indices(
@@ -212,6 +220,9 @@ def generate_dataset(
         else:
             indices = resolve_generation_frame_indices(request, loader.image_count)
 
+        if progress is not None:
+            progress(f"Selected {len(indices)} frame(s).")
+            progress("Initializing VQA models (weights load on first use)...")
         author_model = OpenAIVlModel()
         detector_model = MoondreamVlModel()
         try:
@@ -223,7 +234,11 @@ def generate_dataset(
             mask_estimator = EdgeTAMObjectMaskPipeline(detector)
 
             def pointcloud_frames() -> Iterable[GenerationFrame]:
-                for index in indices:
+                for number, index in enumerate(indices, start=1):
+                    if progress is not None:
+                        progress(
+                            f"Processing frame {number}/{len(indices)} (color_image index {index})..."
+                        )
                     try:
                         pointcloud_frame = loader.load(index)
                     except PointCloudFrameUnavailableError:
