@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from dimos.core.hardware_module import HardwareModule
 from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -84,22 +85,20 @@ class _Edged(TfModule):
     config: _Edges
 
 
-class _Hardware(_Edged):
-    """Declares hardware edges, as a HardwareModule does."""
-
-    tf_edges_are_hardware = True
+class _Hardware(HardwareModule):
+    """A HardwareModule's atom, made without a USD: only its class marks its edges as hardware."""
 
 
 def _atoms(
     *declared: tuple[dict[str, str], list[tuple[str, str]]], hardware: tuple[int, ...] = ()
 ) -> list[Any]:
-    from dimos.core.coordination.blueprints import autoconnect, config_defaults
+    from dimos.core.coordination.blueprints import Blueprint, autoconnect, config_defaults
 
     blueprint = autoconnect(
         *(
-            (_Hardware if index in hardware else _Edged)
-            .blueprint(tf_frames_global=frames, tf_edges=edges)
-            .namespace(f"m{index}")
+            Blueprint.create(
+                _Hardware if index in hardware else _Edged, tf_frames_global=frames, tf_edges=edges
+            ).namespace(f"m{index}")
             for index, (frames, edges) in enumerate(declared)
         )
     )

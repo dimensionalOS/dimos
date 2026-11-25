@@ -17,7 +17,7 @@
 from collections import defaultdict, deque
 from functools import cached_property
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
 
@@ -108,8 +108,6 @@ class TfModule(Module):
     """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-    # Whether every edge it declares is hardware (a HardwareModule's: its USD's and its mount).
-    tf_edges_are_hardware: ClassVar[bool] = False
     if TYPE_CHECKING:
         tf: TfIO
     else:
@@ -150,12 +148,13 @@ class TfModule(Module):
         parent (an estimate, a localization): lookups search the tree both ways. Two imaginary parents
         are refused, since each says where the frame is and nothing says which wins.
         """
+        from dimos.core.hardware_module import HardwareModule
+
         owners: dict[tuple[str, str], list[str]] = defaultdict(list)
         hardware_ids: set[tuple[str, str]] = set()
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            module = cast("type[TfModule]", atom.module)
             frames = _frame_ids(
                 atom.kwargs["tf_frames_local"],
                 atom.kwargs["tf_frames_global"],
@@ -164,7 +163,7 @@ class TfModule(Module):
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 edge = frames[parent_role], frames[child_role]
                 owners[edge].append(atom.name)
-                if module.tf_edges_are_hardware:
+                if issubclass(atom.module, HardwareModule):
                     hardware_ids.add(edge)
 
         if not owners:
