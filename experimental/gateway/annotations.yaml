@@ -1017,6 +1017,9 @@ robots:
           placeholder: /dev/ttyACM0
           when: {simulation: ''}
       blueprints:
+        keyboard-teleop-seeed-b601-dm:
+          title: B601-DM keyboard + planner
+          description: Move a Seeed reBot B601-DM arm with this computer's keyboard, and plan its motions.
         seeed-b601-dm-planner-coordinator:
           title: B601-DM motion planning
           description: Motion planning and execution for a Seeed reBot B601-DM arm.

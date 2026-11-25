@@ -56,6 +56,18 @@ gripper from [`dimos shell`](/docs/capabilities/manipulation/python_api.md) with
 `coordinator-seeed-b601-dm` runs the same coordinator and connection without
 the planner.
 
+To jog the arm from the keyboard, with the same planner:
+
+```bash skip
+dimos run keyboard-teleop-seeed-b601-dm --can-port /dev/ttyACM0
+```
+
+Hold W, S, A, D, Q or E in the pygame window to move the tool link at 0.05 m/s
+along x, y or z in the base frame, R, F, T, G, Y or H to turn it; `[` opens
+the gripper and `]` closes it. A held key preempts a planned trajectory. From
+the folded rest the arm can barely move back or down: press Q first to lift
+the hand clear, then jog.
+
 ## Behavior
 
 - **Activation** switches the arm motors to MIT mode, enables them and
@@ -75,3 +87,8 @@ the planner.
   rad, because the arm's folded rest reads just past the URDF's zero.
 - The gripper is the URDF finger joint `arm/finger_left`, in metres: 0 is
   closed and 0.05 fully open. `finger_right` copies it.
+- Planning and the jog limit every arm joint to 2.0 rad/s, in place of the
+  vendor URDF's 50 and 200 rad/s, with a 0.5 rad/s² acceleration limit. Long
+  planned moves are limited by the acceleration: a 1.57 rad turn of joint 1
+  takes about 3.5 s and peaks under 1 rad/s. The jog's command filter keeps
+  about a quarter of the limit per joint, enough for 0.05 m/s at the hand.
