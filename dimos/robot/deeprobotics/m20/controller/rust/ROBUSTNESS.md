@@ -71,9 +71,19 @@ EcanHardwareInterface ctor (0x1801c8) give the convention: h = terrain relative 
 map"). With it height_gap stands and walks in every baseline; its 280 cases are all calm. Still [U]: the grid spacing
 and which way the rows run (the sim's 0.05 m, row 0 in front).
 
+## Drift
+
+At a zero command the policies' wheel targets carry a common-mode bias, so rl_deploy's robot creeps (sim: 0.84 m in
+15 s on navi_orienteer; basic_stair +0.04 m/s, basic_backknee +0.09). Ours (`[states.rl_control.zero_command]
+cancel_wheel_drift`): while the operator's command and the runner's ramped command are both zero the four wheel
+targets' mean is subtracted, the differential kept for balance (`tests/drift.rs`): 15 s still on 0x3003 / 0x3005 /
+0x1004 moves 1.6-18 mm (under 1 mm/s); a 0.2 m/s shove rolls 3 cm and stops; after a 0.5 m/s walk the hold moves 6 mm;
+a command from rest starts as rl_deploy's does (within 5 mm/s at every instant). The wheel position hold (`hold_kp`)
+is off: in the sim at kp 3 standing on a 10-15 deg slope facing up it moved 2-4 cm where none moved 1 cm without it;
+across a 15 deg slope it cut basic_stair's 18 cm slide to 3 cm (navi_flat 6 -> 0.5 cm) (`slope_hold_probe`).
+
 ## Not covered
 
 Steps, stairs and gaps (all flat or sloped ground), payloads, IMU / joint noise and bus dropouts, the real robot's
 numbers for `still` and `settle_*`, docking during these events, recovery after a fall, the hardware e-stop, and the
-policies' own drift at zero cmd_vel (height_gap drifts 0.15 m/s in the sim; settle_* lets switches and lie-downs
-through it).
+policies' own drift at zero cmd_vel across a slope (basic_stair slides 18 cm in 15 s across 15 deg).

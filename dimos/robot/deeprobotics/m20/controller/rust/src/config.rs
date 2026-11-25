@@ -255,6 +255,18 @@ pub struct RlControl {
     /// ours, not rl_deploy's: what keeps a gait switch calm (absent: rl_deploy's switch)
     #[serde(default)]
     pub safe_switch: Option<SafeSwitch>,
+    /// ours: what rl_control does with the wheels while the command is zero
+    #[serde(default)]
+    pub zero_command: ZeroCommand,
+}
+
+/// Ours (ROBUSTNESS.md "Drift"): the wheels at a zero operator and ramped command.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ZeroCommand {
+    /// the 4 wheel velocity targets' mean subtracted (the policies' common-mode bias)
+    pub cancel_wheel_drift: bool,
+    /// the wheels held at their positions there with this kp (0: no hold)
+    pub hold_kp: f64,
 }
 
 /// Ours (ROBUSTNESS.md): bridged switches, a still body before a switch or lie-down, a target blend.
@@ -821,6 +833,7 @@ impl Config {
     /// This config with every difference of ours from rl_deploy (ROBUSTNESS.md) off: replays of its recordings.
     pub fn rl_deploy(mut self) -> Config {
         self.states.rl_control.safe_switch = None;
+        self.states.rl_control.zero_command = ZeroCommand::default();
         self.states.joint_damping.lie_down_first = false;
         self.states.joint_damping.lie_down_first_on_command = false;
         self.safety.finite_commands = false;

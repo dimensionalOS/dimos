@@ -26,6 +26,7 @@ Little-endian. Request: u8 op, then
   5 LIDAR  u32 length + JSON {"mount_xyz": [3], "mount_rpy": [3], "elevations_deg": [..], "azimuths_deg": [..],
                      "range_noise_m": f, "seed": n}
                                                 -> u32 4n + n x (x, y, z, intensity) f64, in the lidar's frame
+  6 PUSH   2 f64 (vx, vy) added to the base's world velocity  -> u32 0
 STATE reply: u32 n + n f64: stamp, quat (w, x, y, z), gyro 3, accel 3, q 16, dq 16, tau 16, then the height map.
 """
 
@@ -139,6 +140,11 @@ class Session:
                 conn.sendall(self.state())
             elif op == 4:
                 conn.sendall(self.truth())
+            elif op == 6:
+                # PUSH: add (vx, vy) m/s to the base's world velocity
+                v = np.frombuffer(recv_exact(conn, 16), "<f8")
+                self.world.data.qvel[0:2] += v
+                conn.sendall(pack(np.zeros(0)))
             elif op == 5:
                 (n,) = struct.unpack("<I", recv_exact(conn, 4))
                 conn.sendall(self.lidar(json.loads(recv_exact(conn, n))))

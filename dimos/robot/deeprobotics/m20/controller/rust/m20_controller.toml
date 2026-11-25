@@ -159,6 +159,13 @@ switch_below_speed = 0.01
 # RLControlState::Run on basic_flat: a hot standstill (still_ticks, above rest_c) runs the 0xf001 stand-in once
 overheat = { rest_c = 70.0, abort_motor_c = 100.0, abort_driver_c = 90.0, still_ticks = 1000, still_body_speed = 0.08 }
 
+# ours (rl_deploy: none): at a zero operator and ramped command the policies' wheel targets carry a common-mode bias
+# (sim: basic_stair +0.04 m/s, navi_orienteer +0.06, basic_backknee +0.09, navi_flat +0.03), so the robot creeps; its
+# mean is subtracted (the differential stays for balance), and with hold_kp > 0 the wheels are held where they were
+[states.rl_control.zero_command]
+cancel_wheel_drift = true
+hold_kp = 0.0
+
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner
 # BasicFlat's is the decoded 3 s + 0.5 s (a fresh rl_deploy's first entry, robot 16:37); one later entry (14:17) ran
@@ -252,6 +259,9 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [6.0, 6.0, 6.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
+# ours: under safety.command_limit, vy at rl_deploy's own 0x1001 HandlerVel maximum (0.8, [real_steer]): at (-1, -1, -1)
+# basic_flat stepped 1.7 rad in the sim with vy 1.0
+command_limit = [2.0, 0.8, 1.0]
 # the decoded HandlerVel table says (2, 0.8, 1.5) for 0x1001, but /NAV_CMD replays against the robot match (2, 1, 2)
 # bin M20BasicFlatRunner ctor (0x54..0x5c): limit_cmd_vel's per-step slew in normalized axes, before command_max
 command_slew = [0.025, 0.025, 0.04]
@@ -467,6 +477,9 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [3.0, 1.0, 2.0]
+# ours: under safety.command_limit, vx at basic_server.toml's HIGH_SPEED 1.5: at (1, 1, 1) extre put a hipx on its stop
+# in the sim at 2 m/s
+command_limit = [1.5, 1.0, 1.0]
 command_params = { mode = 0.0 }
 # ours: the operator's mode clamped to 0, the only value the sim walks on (SPEC [U]: -2 tall stance, +-1 and 5 fall over)
 param_limits = { mode = [0.0, 0.0] }

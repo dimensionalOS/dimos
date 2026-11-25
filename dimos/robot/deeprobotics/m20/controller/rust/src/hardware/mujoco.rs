@@ -123,6 +123,15 @@ impl MujocoSim {
         })
     }
 
+    /// Add (vx, vy) m/s to the base's world velocity (server.py's PUSH): a shove.
+    pub fn push(&mut self, v: [f64; 2]) -> Result<()> {
+        self.stream.write_all(&[6])?;
+        for x in v {
+            self.stream.write_all(&x.to_le_bytes())?;
+        }
+        self.read_doubles().map(|_| ())
+    }
+
     /// One lidar sweep (server.py's LIDAR request: mount, beam pattern, noise, seed) as (x, y, z, intensity) in the
     /// lidar's frame.
     pub fn lidar(&mut self, request: &serde_json::Value) -> Result<Vec<[f32; 4]>> {

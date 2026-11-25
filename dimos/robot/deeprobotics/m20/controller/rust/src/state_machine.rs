@@ -507,6 +507,8 @@ pub struct Controller {
     lie_bridged: bool,
     /// each joint's last finite position (a lie-down from a NaN reading starts there)
     finite_q: [f64; JOINTS],
+    /// zero_command's wheel positions held since the command went to zero
+    wheel_hold: Option<[f64; 4]>,
 }
 
 impl Controller {
@@ -568,6 +570,7 @@ impl Controller {
             stop_rim: (0.0, 0, None, false),
             lie_bridged: false,
             finite_q: [0.0; JOINTS],
+            wheel_hold: None,
         }
     }
 
@@ -761,6 +764,7 @@ impl Controller {
             self.runner = None;
             self.blend_from = None;
             self.stop_rim = (0.0, 0, None, false);
+            self.wheel_hold = None;
             self.entry_pending = true;
             self.targets = None;
             self.targets_runner = None;
@@ -1442,8 +1446,42 @@ impl Controller {
             c.kp[i] = 0.0;
             c.q[i] = 0.0;
         }
+        self.zero_command_wheels(s, cmd, &wanted, &mut c);
         self.last_leg_q = c.q;
         c
+    }
+
+    /// zero_command (ours): at a zero operator and ramped command the wheels lose their common-mode target, held.
+    fn zero_command_wheels(
+        &mut self,
+        s: &RobotState,
+        cmd: &UserCommand,
+        runner: &str,
+        c: &mut JointCommand,
+    ) {
+        let zc = self.cfg.states.rl_control.zero_command.clone();
+        let operator_zero = self.axes_for(runner, cmd).iter().all(|a| *a == 0.0);
+        let ramped_zero = self.targets.as_ref().is_some_and(|t| t.command_zero);
+        if !(operator_zero && ramped_zero) {
+            self.wheel_hold = None;
+            return;
+        }
+        let wheels: Vec<usize> = (3..JOINTS).step_by(4).collect();
+        if zc.cancel_wheel_drift {
+            let mean = wheels.iter().map(|&i| c.dq[i]).sum::<f64>() / wheels.len() as f64;
+            for &i in &wheels {
+                c.dq[i] -= mean;
+            }
+        }
+        if zc.hold_kp > 0.0 {
+            let held = *self
+                .wheel_hold
+                .get_or_insert_with(|| std::array::from_fn(|k| s.q[3 + 4 * k]));
+            for (k, &i) in wheels.iter().enumerate() {
+                c.kp[i] = zc.hold_kp;
+                c.q[i] = held[k];
+            }
+        }
     }
 }
 
