@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from dimos.sim2.mujoco.look import (
+    agx,
     display,
     light_headroom,
     pbr_neutral,
@@ -54,6 +55,36 @@ def test_pbr_neutral_matches_the_khronos_reference_curve():
         abs=1e-5,
     )
     assert pbr_neutral(np.array([[1e6, 1e6, 1e6]], np.float32)).max() < 1.0
+
+
+def test_agx_is_blenders_agx_view():
+    linear = np.array(
+        [
+            [0, 0, 0],
+            [0.01] * 3,
+            [0.18] * 3,
+            [1] * 3,
+            [4] * 3,
+            [100] * 3,
+            [0.5, 0.2, 0.1],
+            [0.05, 0.3, 0.9],
+            [3, 1, 0.2],
+        ],
+        np.float32,
+    )
+    # Blender 5.1's own OCIO processor, Linear Rec.709 -> sRGB display through the "AgX" view.
+    blender = [
+        [0, 0, 0],
+        [0.0725] * 3,
+        [0.4613] * 3,
+        [0.771] * 3,
+        [0.9137] * 3,
+        [1, 1, 1],
+        [0.6833, 0.4793, 0.361],
+        [0.3718, 0.5863, 0.782],
+        [0.9249, 0.7555, 0.639],
+    ]
+    assert agx(linear) == pytest.approx(np.array(blender), abs=2e-4)
 
 
 def test_srgb_encoding_is_the_standard_transfer_curve():
@@ -92,6 +123,7 @@ def test_the_tone_map_is_the_one_the_render_settings_name():
         "neutral"
     )
     assert stage_tone_map(_with_settings("    int omni:rtx:post:tonemap:op = 1")) == "linear"
+    assert stage_tone_map(_with_settings('    uniform token dimos:look:toneMap = "agx"')) == "agx"
     assert stage_tone_map(_with_settings("")) is None
     assert stage_tone_map(SCENE) is None
 

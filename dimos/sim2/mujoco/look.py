@@ -14,6 +14,7 @@
 
 """The view transform a stage's RenderSettings ask for, applied to a MuJoCo render: linear light in, display sRGB out."""
 
+import functools
 from pathlib import Path
 
 import mujoco
@@ -36,7 +37,7 @@ _NAMED_TONE_MAPS = {
     "linear": "linear",
     "none": "none",
 }
-_CURVES = {"neutral", "linear", "none"}
+_CURVES = {"agx", "neutral", "linear", "none"}
 
 # Khronos PBR Neutral's own definition (KhronosGroup/ToneMapping), not a tuning.
 _START_COMPRESSION = 0.8 - 0.04
@@ -158,7 +159,63 @@ def srgb_bytes(linear: NDArray[np.float32]) -> NDArray[np.uint8]:
     return np.rint(encoded * 255).astype(np.uint8)
 
 
+_AGX = Path(__file__).parent / "assets" / "agx_base_srgb.npz"
+
+
+@functools.cache
+def _agx_base() -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+    """Blender's "AgX Base sRGB" LUT (57^3, [r, g, b] -> Rec.1886 code value), its Linear Rec.709 -> E-Gamut matrix and lg2 range."""
+    stored = np.load(_AGX)
+    return (
+        stored["lut"].astype(np.float32) / np.float32(65535),
+        stored["rec709_to_egamut"].astype(np.float32),
+        stored["log2_range"].astype(np.float32),
+    )
+
+
+def _tetrahedral(lut: NDArray[np.float32], point: NDArray[np.float32]) -> NDArray[np.float32]:
+    """`lut` (N, N, N, 3) at `point` (..., 3) in [0, 1], interpolated tetrahedrally as OCIO does."""
+    size = lut.shape[0]
+    flat = lut.reshape(-1, 3)
+    scaled = np.clip(point, 0.0, 1.0) * (size - 1)
+    base = np.minimum(scaled.astype(np.int32), size - 2)
+    red, green, blue = (scaled - base).transpose(-1, *range(point.ndim - 1))
+    corner = (base[..., 0] * size + base[..., 1]) * size + base[..., 2]
+    step_red, step_green, step_blue = size * size, size, 1
+    # The cell's low corner to its high one, stepping first along the axis with the largest fraction, last the smallest.
+    first = np.where(
+        (red >= green) & (red >= blue), step_red, np.where(green >= blue, step_green, step_blue)
+    )
+    last = np.where(
+        (blue <= red) & (blue <= green), step_blue, np.where(green <= red, step_green, step_red)
+    )
+    middle = step_red + step_green + step_blue - first - last
+    high = np.maximum(np.maximum(red, green), blue)
+    low = np.minimum(np.minimum(red, green), blue)
+    mid = red + green + blue - high - low
+    return (
+        flat[corner] * (1.0 - high)[..., None]
+        + flat[corner + first] * (high - mid)[..., None]
+        + flat[corner + first + middle] * (mid - low)[..., None]
+        + flat[corner + step_red + step_green + step_blue] * low[..., None]
+    )
+
+
+def agx(color: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Blender's AgX view on linear Rec.709 (..., 3) as display sRGB in [0, 1]: its config.ocio "AgX Base Rec.1886" chain for an sRGB display."""
+    # Linear Rec.709 -> E-Gamut, the lg2 allocation, AgX_Base_sRGB.cube (Blender 5.1's, at 16 bits), then Rec.1886's 2.4 power to sRGB.
+    lut, to_egamut, (low, high) = _agx_base()
+    egamut = color @ to_egamut.T
+    stops = np.log2(np.maximum(egamut, np.float32(2.0) ** low))
+    encoded = _tetrahedral(lut, (stops - low) / (high - low))
+    light = np.clip(encoded, 0.0, 1.0) ** np.float32(2.4)
+    # The sRGB transfer curve as IEC 61966-2-1 defines it.
+    return np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
+
+
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:
     """A render of light scaled down by `headroom`, back to linear light, tone mapped and sRGB encoded."""
     linear = render.astype(np.float32) * np.float32(headroom / 255.0)
+    if curve == "agx":
+        return np.rint(np.clip(agx(linear), 0.0, 1.0) * 255).astype(np.uint8)
     return srgb_bytes(pbr_neutral(linear) if curve == "neutral" else linear)

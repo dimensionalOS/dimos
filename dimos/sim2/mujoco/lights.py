@@ -68,8 +68,8 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
             # USD matrices are row-vector, so a direction maps through the upper 3x3 from the left.
             direction = np.array([0.0, 0.0, -1.0]) @ to_world[:3, :3]
             direction /= np.linalg.norm(direction)
-            # Blender's sun strength is irradiance E, and a Lambert surface of albedo a sends back a·E/π.
-            irradiance = radiance / math.pi
+            # Blender 5.1 imports intensity I as sun strength E = 4·I (1 -> 4.0 at any angle), and Lambert sends back a·E/π.
+            irradiance = 4.0 * radiance / math.pi
             spec.worldbody.add_light(
                 name=name,
                 type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
