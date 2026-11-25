@@ -1510,6 +1510,7 @@ def test_a_cycle_stays_a_cycle_over_a_second_process_boundary(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     """A -> B -> A is recognised at B, and the manager past B has to hear a cycle, not a retry."""
+    pytest.importorskip("pxr")
     from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 
     arrived = deserialize_exception(serialize_exception(CircularMountError("a -> b -> a")))
