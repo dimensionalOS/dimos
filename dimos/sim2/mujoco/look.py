@@ -14,6 +14,7 @@
 
 """The view transform a stage's RenderSettings ask for, applied to a MuJoCo render: linear light in, display sRGB out."""
 
+import functools
 from pathlib import Path
 
 import mujoco
@@ -36,7 +37,7 @@ _NAMED_TONE_MAPS = {
     "linear": "linear",
     "none": "none",
 }
-_CURVES = {"neutral", "linear", "none"}
+_CURVES = {"agx", "neutral", "linear", "none"}
 
 # Khronos PBR Neutral's own definition (KhronosGroup/ToneMapping), not a tuning.
 _START_COMPRESSION = 0.8 - 0.04
@@ -110,6 +111,28 @@ def light_headroom(model: mujoco.MjModel) -> float:
     )
 
 
+def ambient_headroom(model: mujoco.MjModel) -> float:
+    """The most linear light a surface lit by no light directly (ambient and emission alone) can send back."""
+    active = model.light_active.astype(bool)
+    total = model.light_ambient[active].sum(axis=0)
+    headlight = model.vis.headlight
+    if headlight.active:
+        total = total + headlight.ambient
+    return max(
+        1.0, float(np.max(total, initial=0.0)) + float(np.max(model.mat_emission, initial=0.0))
+    )
+
+
+def merged_light(
+    shade: NDArray[np.uint8], shade_headroom: float, lit: NDArray[np.uint8], lit_headroom: float
+) -> NDArray[np.float32]:
+    """Linear light from two 8-bit renders of one view: `shade` (ambient alone) plus what direct light `lit` adds above it."""
+    ambient = shade.astype(np.float32) * np.float32(shade_headroom / 255.0)
+    added = lit.astype(np.float32) * np.float32(lit_headroom / 255.0) - ambient
+    # Below one of `lit`'s 8-bit steps, the difference is its rounding, not light.
+    return ambient + np.where(added > lit_headroom / 255.0, added, np.float32(0.0))
+
+
 def scale_light(model: mujoco.MjModel, factor: float) -> None:
     """Multiply every source of light in the model by `factor`."""
     model.light_ambient *= factor
@@ -158,7 +181,80 @@ def srgb_bytes(linear: NDArray[np.float32]) -> NDArray[np.uint8]:
     return np.rint(encoded * 255).astype(np.uint8)
 
 
+_AGX = Path(__file__).parent / "assets" / "agx_base_srgb.npz"
+
+
+@functools.cache
+def _agx_base() -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+    """Blender's "AgX Base sRGB" LUT (57^3, [r, g, b] -> Rec.1886 code value), its Linear Rec.709 -> E-Gamut matrix and lg2 range."""
+    from dimos.sim2.lfs import pull_lfs_files
+
+    # A clone that skips LFS smudging has the LUT as a pointer; 336 KiB is under hosted CI's 1 MiB pull cap.
+    pull_lfs_files([_AGX])
+    stored = np.load(_AGX)
+    return (
+        stored["lut"].astype(np.float32) / np.float32(65535),
+        stored["rec709_to_egamut"].astype(np.float32),
+        stored["log2_range"].astype(np.float32),
+    )
+
+
+def _tetrahedral(lut: NDArray[np.float32], point: NDArray[np.float32]) -> NDArray[np.float32]:
+    """`lut` (N, N, N, 3) at `point` (..., 3) in [0, 1], interpolated tetrahedrally as OCIO does."""
+    size = lut.shape[0]
+    flat = lut.reshape(-1, 3)
+    scaled = np.clip(point.reshape(-1, 3), 0.0, 1.0) * np.float32(size - 1)
+    base = np.minimum(scaled.astype(np.int32), size - 2)
+    fraction = scaled - base.astype(np.float32)
+    red, green, blue = fraction[:, 0], fraction[:, 1], fraction[:, 2]
+    corner = (base[:, 0] * size + base[:, 1]) * size + base[:, 2]
+    step_red, step_green, step_blue = size * size, size, 1
+    across = step_red + step_green + step_blue
+    # The cell's low corner to its high one, stepping first along the axis with the largest fraction, last the smallest.
+    first = np.where(
+        (red >= green) & (red >= blue), step_red, np.where(green >= blue, step_green, step_blue)
+    )
+    last = np.where(
+        (blue <= red) & (blue <= green), step_blue, np.where(green <= red, step_green, step_red)
+    )
+    high = np.maximum(np.maximum(red, green), blue)
+    low = np.minimum(np.minimum(red, green), blue)
+    mid = red + green + blue - high - low
+    result = np.take(flat, corner, axis=0) * (1.0 - high)[:, None]
+    result += np.take(flat, corner + first, axis=0) * (high - mid)[:, None]
+    result += np.take(flat, corner + across - last, axis=0) * (mid - low)[:, None]
+    result += np.take(flat, corner + across, axis=0) * low[:, None]
+    return result.reshape(point.shape)
+
+
+def agx(color: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Blender's AgX view on linear Rec.709 (..., 3) as display sRGB in [0, 1]: its config.ocio "AgX Base Rec.1886" chain for an sRGB display."""
+    # Linear Rec.709 -> E-Gamut, the lg2 allocation, AgX_Base_sRGB.cube (Blender 5.1's, at 16 bits), then Rec.1886's 2.4 power to sRGB.
+    lut, to_egamut, (low, high) = _agx_base()
+    egamut = color @ to_egamut.T
+    stops = np.log2(np.maximum(egamut, np.float32(2.0) ** low))
+    encoded = _tetrahedral(lut, (stops - low) / (high - low))
+    # Rec.1886 to sRGB is one curve per channel, so it is looked up at 16 bits rather than computed per pixel.
+    steps = _rec1886_to_srgb()
+    index = np.rint(np.clip(encoded, 0.0, 1.0) * np.float32(steps.size - 1)).astype(np.int32)
+    return steps[index]
+
+
+@functools.cache
+def _rec1886_to_srgb() -> NDArray[np.float32]:
+    """Rec.1886's 2.4 power decoded and the sRGB transfer curve (IEC 61966-2-1) encoded, at every 16-bit code value."""
+    light = np.linspace(0.0, 1.0, np.iinfo(np.uint16).max + 1, dtype=np.float64) ** 2.4
+    encoded = np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
+    return encoded.astype(np.float32)
+
+
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:
     """A render of light scaled down by `headroom`, back to linear light, tone mapped and sRGB encoded."""
-    linear = render.astype(np.float32) * np.float32(headroom / 255.0)
+    return tone_mapped(render.astype(np.float32) * np.float32(headroom / 255.0), curve)
+
+
+def tone_mapped(linear: NDArray[np.float32], curve: str) -> NDArray[np.uint8]:
+    """Linear light through `curve`, sRGB encoded."""
+    if curve == "agx":
+        return np.rint(np.clip(agx(linear), 0.0, 1.0) * 255).astype(np.uint8)
     return srgb_bytes(pbr_neutral(linear) if curve == "neutral" else linear)

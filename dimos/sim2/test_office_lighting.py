@@ -40,14 +40,40 @@ def test_the_office_camera_sees_the_room_as_its_lighting_notes_describe_it(rende
     renderer.close()
     view.close()
 
-    floor = geom == model.geom("/office_555/Geometry/slab_ground/floor").id
-    # scene.usda: "measured in frame, the floor sits around 0.44 and no pixel falls into black at all"
-    assert np.median(brightness[floor]) == pytest.approx(0.44, abs=0.1)
-    black = (model.geom_rgba[:, :3].max(axis=1) == 0) & (model.geom_matid < 0)
+    floor = geom == model.geom("/office_555/Geometry/slab_ground/floor_visual").id
+    walls = np.isin(
+        geom,
+        [
+            g
+            for g in range(model.ngeom)
+            if model.geom(g).name.endswith("_g0_visual") and "/box_" in model.geom(g).name
+        ],
+    )
+    desks = np.isin(
+        geom,
+        [
+            g
+            for g in range(model.ngeom)
+            if "/desk_" in model.geom(g).name and model.geom(g).name.endswith("_g0")
+        ],
+    )
+    # scene.usda's sky, sun and paint were fit so AgX shows the Controller's walls and floor (0.83, 0.41 in Jeff's screenshot).
+    assert np.median(brightness[walls]) == pytest.approx(0.83, abs=0.06)
+    # MuJoCo draws no fittings, whose light reaches the floor most: 0.07 under Blender's 0.44 here.
+    assert np.median(brightness[floor]) == pytest.approx(0.44 - 0.07, abs=0.03)
+    # The sun through the skylights lights patches of floor brighter than the rest of it, as the Controller's 0.84.
+    patches = np.percentile(brightness[floor], 97)
+    assert patches == pytest.approx(0.84, abs=0.06) and patches > np.median(brightness[floor])
+    # The desks keep their orange through AgX: red over green over blue, far apart.
+    desk = np.median(image[desks].astype(float), axis=0) / 255
+    assert desk[0] > desk[1] > desk[2] and (desk[0] - desk[2]) / desk[0] > 0.4
+    # A surface authored black, by its displayColor or by the material that now carries it.
+    material_black = np.append(model.mat_rgba[:, :3].max(axis=1) == 0, False)[model.geom_matid]
+    black = (model.geom_rgba[:, :3].max(axis=1) == 0) | material_black
     painted = (geom >= 0) & ~black[geom]
     assert brightness[painted].min() > 0.02, "only a surface authored black renders black"
-    # The stage's neutral tone curve rolls bright walls off below white rather than clipping them.
-    assert (image[geom >= 0] >= 254).any(axis=-1).mean() == 0
+    # AgX rolls even the sunlit floor off below white.
+    assert (image[geom >= 0] >= 254).all(axis=-1).mean() == 0
 
 
 @pytest.mark.self_hosted
@@ -67,7 +93,8 @@ def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
     camera.azimuth, camera.elevation, camera.distance = 90, 70, 5
     renderer = mujoco.Renderer(model, 120, 160)
     renderer.update_scene(data, camera=camera)
-    image = display(renderer.render(), view._headroom, "neutral")
+    # The sky's texels are scaled by the shade's headroom, as the view renders it.
+    image = display(renderer.render(), view._headroom, "agx")
     renderer.enable_segmentation_rendering()
     renderer.update_scene(data, camera=camera)
     sky = renderer.render()[..., 0] < 0
@@ -75,5 +102,35 @@ def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
     view.close()
 
     assert sky.mean() > 0.05, "the skylight is in frame"
-    # scene.usda's dome: color (1, 0.955, 0.895) at 1.9, which the neutral curve shows near white.
-    assert image[sky].min() > 200
+    # scene.usda's dome, white at 3.56 times the stage's 1.05 exposure, as AgX shows it.
+    from dimos.sim2.mujoco.look import agx
+
+    expected = agx(np.full((1, 3), 3.559 * 2**0.070389, np.float32))[0] * 255
+    assert np.median(image[sky], axis=0) == pytest.approx(expected, abs=2)
+
+
+def test_every_office_visual_is_a_mesh_with_a_material_that_blender_imports():
+    from pxr import Usd, UsdGeom, UsdShade
+
+    from dimos.simulation.scenes.office_555.room import SCENE
+
+    stage = Usd.Stage.Open(str(SCENE))
+    visuals = [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdGeom.Gprim)
+        and UsdGeom.Imageable(prim).ComputePurpose() == UsdGeom.Tokens.default_
+        and not prim.HasAPI("PhysicsCollisionAPI")
+    ]
+    # Blender 5.1 imports a Cube or Cylinder with no material, and reads no displayColor at all.
+    assert {prim.GetTypeName() for prim in visuals} == {"Mesh"}
+    unbound = [p for p in visuals if not UsdShade.MaterialBindingAPI(p).ComputeBoundMaterial()[0]]
+    assert unbound == []
+    # The ground plane under the floor slab is the one collider still drawn: nothing sees it.
+    drawn_colliders = [
+        prim.GetName()
+        for prim in stage.Traverse()
+        if prim.HasAPI("PhysicsCollisionAPI")
+        and UsdGeom.Imageable(prim).ComputePurpose() == UsdGeom.Tokens.default_
+    ]
+    assert drawn_colliders == ["ground"]

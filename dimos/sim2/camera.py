@@ -21,6 +21,7 @@ from pydantic import model_validator
 from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor import SimSensor
@@ -34,6 +35,35 @@ class SimCameraConfig(HardwareModuleConfig):
     height: int = 480
     fovy: float = 60.0
     rate_hz: float = 10.0
+    # Lights cast shadows (MuJoCo's mjRND_SHADOW).
+    shadows: bool = True
+    # Shadow map texels per side; None: the scene's (MuJoCo's default 4096).
+    shadow_size: int | None = None
+    # Multisampling for anti-aliasing; None: the scene's (MuJoCo's default 4).
+    samples: int | None = None
+    # Reflective materials mirror the scene (mjRND_REFLECTION).
+    reflections: bool = True
+    # The dome's sky is drawn behind everything (mjRND_SKYBOX).
+    skybox: bool = True
+    # Materials show their textures (mjVIS_TEXTURE).
+    textures: bool = True
+    # The tone curve ("agx", "neutral", "linear", "none"); None: the one the stage's RenderSettings name.
+    tone_map: str | None = None
+    # MuJoCo's headlight; None: on only when the stage brings no lights.
+    headlight: bool | None = None
+
+    def quality(self) -> RenderQuality:
+        """The render knobs above, as the view takes them."""
+        return RenderQuality(
+            shadows=self.shadows,
+            shadow_size=self.shadow_size,
+            samples=self.samples,
+            reflections=self.reflections,
+            skybox=self.skybox,
+            textures=self.textures,
+            tone_map=self.tone_map,
+            headlight=self.headlight,
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -73,6 +103,7 @@ class SimCamera(SimSensor):
                         layer,
                         robot_ids(self._world),
                         SensorMount("camera", site, site, self.config.fovy),
+                        self.config.quality(),
                     )
                     # Opening took this tick's sim time, so the next tick is the first read on time.
                     continue

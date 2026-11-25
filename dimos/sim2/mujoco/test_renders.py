@@ -20,7 +20,7 @@ import mujoco
 import numpy as np
 import pytest
 
-from dimos.sim2.mujoco.renders import RenderProcess, Renders
+from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
 from dimos.sim2.mujoco.view import MujocoView
 
 SHADOWED = """
@@ -57,6 +57,47 @@ def test_a_render_process_draws_what_this_process_draws(renders: None) -> None:
     finally:
         here.close()
         there.close()
+
+
+def test_shadows_off_leave_the_floor_unshadowed(renders: None) -> None:
+    model, data = _posed()
+    lit, flat = Renders(model), Renders(model, RenderQuality(shadows=False))
+    try:
+        shadowed, unshadowed = lit.render(data, "eye", 64, 48), flat.render(data, "eye", 64, 48)
+    finally:
+        lit.close()
+        flat.close()
+    # The box's shadow darkens part of the floor, so the shadowed image is the darker one.
+    assert shadowed.astype(int).sum() < unshadowed.astype(int).sum()
+
+
+def test_quality_sets_the_models_shadow_map_samples_and_headlight() -> None:
+    model = mujoco.MjModel.from_xml_string(SHADOWED)
+    RenderQuality().apply_to_model(model)
+    assert (model.vis.quality.shadowsize, model.vis.quality.offsamples) == (4096, 4)
+    RenderQuality(shadow_size=512, samples=0, headlight=False).apply_to_model(model)
+    assert (model.vis.quality.shadowsize, model.vis.quality.offsamples) == (512, 0)
+    assert model.vis.headlight.active == 0
+
+
+def test_samples_off_leave_edges_unblended(renders: None) -> None:
+    model, data = _posed()
+    smooth = Renders(model)
+    jagged_model = mujoco.MjModel.from_xml_string(SHADOWED)
+    RenderQuality(samples=0).apply_to_model(jagged_model)
+    jagged = Renders(jagged_model)
+    try:
+        blended = smooth.render(data, "eye", 64, 48)
+        aliased = jagged.render(data, "eye", 64, 48)
+    finally:
+        smooth.close()
+        jagged.close()
+
+    # Multisampling blends edge pixels, so it shows more distinct colors than a render without it.
+    def distinct(image):
+        return len(np.unique(image.reshape(-1, 3), axis=0))
+
+    assert distinct(blended) > distinct(aliased)
 
 
 def test_a_render_process_raises_what_the_render_raised(renders: None) -> None:

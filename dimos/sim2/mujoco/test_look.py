@@ -12,15 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import mujoco
 import numpy as np
 import pytest
 
 from dimos.sim2.mujoco.look import (
+    agx,
+    ambient_headroom,
     display,
     light_headroom,
+    merged_light,
     pbr_neutral,
     scale_light,
     srgb_bytes,
@@ -56,6 +63,97 @@ def test_pbr_neutral_matches_the_khronos_reference_curve():
     assert pbr_neutral(np.array([[1e6, 1e6, 1e6]], np.float32)).max() < 1.0
 
 
+def test_agx_is_blenders_agx_view():
+    linear = np.array(
+        [
+            [0, 0, 0],
+            [0.01] * 3,
+            [0.18] * 3,
+            [1] * 3,
+            [4] * 3,
+            [100] * 3,
+            [0.5, 0.2, 0.1],
+            [0.05, 0.3, 0.9],
+            [3, 1, 0.2],
+        ],
+        np.float32,
+    )
+    # Blender 5.1's own OCIO processor, Linear Rec.709 -> sRGB display through the "AgX" view.
+    blender = [
+        [0, 0, 0],
+        [0.0725] * 3,
+        [0.4613] * 3,
+        [0.771] * 3,
+        [0.9137] * 3,
+        [1, 1, 1],
+        [0.6833, 0.4793, 0.361],
+        [0.3718, 0.5863, 0.782],
+        [0.9249, 0.7555, 0.639],
+    ]
+    assert agx(linear) == pytest.approx(np.array(blender), abs=2e-4)
+
+
+def test_the_agx_lut_is_fetched_from_git_lfs_when_the_clone_has_its_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dimos.sim2 import lfs
+    from dimos.sim2.mujoco import look
+
+    pulled: list[list[Path]] = []
+    monkeypatch.setattr(lfs, "pull_lfs_files", lambda paths: pulled.append(list(paths)))
+    look._agx_base.cache_clear()
+    try:
+        look._agx_base()
+    finally:
+        look._agx_base.cache_clear()
+    assert pulled == [[look._AGX]]
+
+
+@pytest.mark.skipif(
+    not (shutil.which("git-lfs") and shutil.which("jq")), reason="needs git-lfs and jq"
+)
+def test_hosted_cis_git_lfs_guard_lets_the_agx_lut_through(tmp_path: Path) -> None:
+    from dimos.sim2.mujoco import look
+    from dimos.utils.data import get_project_root
+
+    root = get_project_root()
+    lut = str(look._AGX.relative_to(root))
+    # The real git-lfs behind the guard, but as a clone with nothing downloaded sees it, and recording a pull rather than fetching.
+    real = tmp_path / "git-lfs.orig"
+    real.write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1" = pull ]; then echo "$@" > {tmp_path}/pulled; exit 0; fi\n'
+        f"{shutil.which('git-lfs')} \"$@\" | jq '.files[].downloaded = false'\n"
+    )
+    real.chmod(0o755)
+    size = json.loads(
+        subprocess.run(
+            ["git-lfs", "ls-files", "--json", "--size", "--include", lut],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )["files"][0]["size"]
+
+    def pull(limit: int) -> subprocess.CompletedProcess[str]:
+        guard = root / "bin" / "git-lfs-guard"
+        env = {
+            **os.environ,
+            "DIMOS_LFS_GUARD_REAL": str(real),
+            "DIMOS_LFS_GUARD_LIMIT_BYTES": str(limit),
+        }
+        command = [str(guard), "pull", "--include", lut, "--exclude="]
+        return subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+
+    # CI's default cap (bin/git-lfs-guard): the LUT's pull goes through to git-lfs.
+    assert pull(1024 * 1024).returncode == 0
+    assert (tmp_path / "pulled").read_text().split() == ["pull", "--include", lut, "--exclude="]
+    # One byte under its size, the same guard refuses it, so the pass above was the cap and not a guard that lets anything by.
+    refused = pull(size - 1)
+    assert refused.returncode != 0 and "blocked pull" in refused.stderr
+
+
 def test_srgb_encoding_is_the_standard_transfer_curve():
     linear = np.array([0.0, 0.0031308, 0.18, 0.5, 1.0, 2.0], np.float32)
     assert srgb_bytes(linear).tolist() == [0, 10, 118, 188, 255, 255]
@@ -65,6 +163,24 @@ def test_a_render_scaled_by_its_headroom_comes_back_as_the_light_it_was():
     render = np.full((1, 1, 3), 51, np.uint8)
     assert display(render, 5.0, "linear").tolist() == [[[255, 255, 255]]]
     assert display(render, 1.0, "linear").tolist() == srgb_bytes(np.full((1, 1, 3), 0.2)).tolist()
+
+
+def test_the_shade_and_the_direct_light_merge_into_one_linear_image():
+    shade = np.array([[[51, 51, 51], [51, 51, 51], [255, 255, 255]]], np.uint8)
+    lit = np.array([[[5, 5, 5], [102, 102, 102], [0, 0, 0]]], np.uint8)
+    merged = merged_light(shade, 1.0, lit, 10.0)
+    # Unlit, the shade's finer steps; lit, the shade plus what the lit render adds; the sky, left out of the lit render, the shade's.
+    assert merged[0, :, 0] == pytest.approx([0.2, 4.0, 1.0])
+
+
+def test_the_shades_headroom_counts_ambient_light_alone():
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><visual><headlight active="0"/></visual><worldbody>'
+        '<light directional="true" ambient="2 2 2" diffuse="9 9 9" specular="1 1 1"/>'
+        '<geom type="plane" size="1 1 1"/></worldbody></mujoco>'
+    )
+    assert ambient_headroom(model) == pytest.approx(2.0)
+    assert light_headroom(model) == pytest.approx(12.0)
 
 
 def test_the_headroom_scales_every_light_so_the_brightest_surface_fits():
@@ -92,6 +208,7 @@ def test_the_tone_map_is_the_one_the_render_settings_name():
         "neutral"
     )
     assert stage_tone_map(_with_settings("    int omni:rtx:post:tonemap:op = 1")) == "linear"
+    assert stage_tone_map(_with_settings('    uniform token dimos:look:toneMap = "agx"')) == "agx"
     assert stage_tone_map(_with_settings("")) is None
     assert stage_tone_map(SCENE) is None
 
