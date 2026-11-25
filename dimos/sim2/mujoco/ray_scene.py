@@ -20,7 +20,6 @@ from typing import Any
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 _BOX_CORNERS = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)], float)
 _BOX_FACES = np.array(
@@ -199,9 +198,9 @@ def _seen(
     )
 
 
-def _scene(
-    vertices: NDArray[np.float64], faces: NDArray[np.int64]
-) -> o3d.t.geometry.RaycastingScene:
+def _scene(vertices: NDArray[np.float64], faces: NDArray[np.int64]) -> Any:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(
         o3d.core.Tensor(vertices.astype(np.float32)), o3d.core.Tensor(faces.astype(np.uint32))
@@ -210,11 +209,13 @@ def _scene(
 
 
 def _embree(
-    scene: o3d.t.geometry.RaycastingScene,
+    scene: Any,
     origin: NDArray[np.float64],
     directions: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Distance (inf on a miss) and the hit face's normal, turned to face the ray as MuJoCo's is."""
+    import open3d as o3d  # type: ignore[import-untyped]
+
     rays = np.empty((len(directions), 6), dtype=np.float32)
     rays[:, :3], rays[:, 3:] = origin, directions
     result = scene.cast_rays(o3d.core.Tensor(rays))
