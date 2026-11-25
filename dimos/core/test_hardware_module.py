@@ -22,6 +22,9 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.assets.model import RobotModel, UsdModel
 
 _ARM_URDF = """<robot name="arm">
@@ -279,3 +282,28 @@ def test_hardware_without_a_usd_is_refused() -> None:
 
     with pytest.raises(ValueError, match="usd"):
         Bare(instance_name="bare")
+
+
+class WorldReader(Module):
+    world_observations: In[Image]
+    world_actions: Out[Image]
+    color_image: Out[Image]
+
+
+def test_the_simulated_world_stays_global_under_any_namespace() -> None:
+    blueprint = WorldReader.blueprint().namespace("lidar").namespace("robot1")
+
+    for stream in ("world_observations", "world_actions"):
+        assert ("robot1/lidar/worldreader", stream) not in blueprint.remapping_map
+    assert (
+        blueprint.remapping_map[("robot1/lidar/worldreader", "color_image")]
+        == "robot1/lidar/color_image"
+    )
+
+
+def test_a_module_names_its_namespace_over_rpc() -> None:
+    reader = WorldReader(instance_name="robot1/lidar/worldreader")
+    try:
+        assert reader.get_namespace() == "robot1/lidar"
+    finally:
+        reader.stop()

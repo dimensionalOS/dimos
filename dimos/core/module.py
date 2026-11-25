@@ -392,6 +392,11 @@ class ModuleBase(Configurable, CompositeResource):
         return descriptors
 
     @rpc
+    def get_namespace(self) -> str:
+        """``namespace`` for a caller that holds only an RPC handle to this module."""
+        return self.namespace
+
+    @rpc
     def get_config(self) -> dict[str, Any]:
         return self.config.model_dump(mode="json", fallback=repr)
 
