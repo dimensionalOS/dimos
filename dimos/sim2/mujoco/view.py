@@ -143,6 +143,9 @@ class MujocoView:
         if self._renders is None:
             # A worker is forked, and macOS's Metal compiles no shader there (see renders.py).
             self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(self.model)
+        # Placed here as well as where it renders, as pose() reads the cameras this places.
+        mujoco.mj_comPos(self.model, self.data)
+        mujoco.mj_camlight(self.model, self.data)
         rgb = self._renders.render(self.data, camera, width, height)
         if self._tone_map is None:
             return rgb
