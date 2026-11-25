@@ -19,6 +19,7 @@ from dimos_lcm.std_msgs import Bool
 from langchain_core.messages import HumanMessage
 import pytest
 
+from dimos.agents.skills import navigation
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -70,7 +71,15 @@ class StubNavigation(Module):
         return False
 
     @rpc
-    def cancel_goal(self) -> bool:
+    def get_goal_cancel_reason(self) -> str | None:
+        return None
+
+    @rpc
+    def is_goal_cancelled(self) -> bool:
+        return False
+
+    @rpc
+    def cancel_goal(self, reason: str = "cancel_goal RPC: cancellation requested") -> bool:
         return True
 
 
@@ -314,7 +323,9 @@ def test_stop_navigation_during_a_lookup_leaves_the_stream_to_that_call(containe
     message = container.navigate_with_text("bed")
 
     assert "Started navigating" in message
-    container._navigation.cancel_goal.assert_called_once_with()
+    container._navigation.cancel_goal.assert_called_once_with(
+        reason="NavigationSkillContainer.stop_navigation: stop requested"
+    )
     container._navigation.set_goal.assert_called_once()
     # The stop left the stream to the call, and the goal it sent keeps it open.
     container.stop_tool.assert_not_called()
@@ -340,7 +351,9 @@ def test_stop_navigation_cancels_the_goal_and_closes_the_tool(container) -> None
 
     assert container.stop_navigation() == "Stopped"
 
-    container._navigation.cancel_goal.assert_called_once_with()
+    container._navigation.cancel_goal.assert_called_once_with(
+        reason="NavigationSkillContainer.stop_navigation: stop requested"
+    )
     container.stop_tool.assert_called_once_with("navigate_with_text")
     # The cancel's own goal_reached frame is not reported as a stop short of the target.
     container._on_goal_reached(Bool(False))
@@ -350,7 +363,9 @@ def test_stop_navigation_cancels_the_goal_and_closes_the_tool(container) -> None
 def test_stop_navigation_with_nothing_under_way(container) -> None:
     assert container.stop_navigation() == "Stopped"
 
-    container._navigation.cancel_goal.assert_called_once_with()
+    container._navigation.cancel_goal.assert_called_once_with(
+        reason="NavigationSkillContainer.stop_navigation: stop requested"
+    )
     container.stop_tool.assert_called_once_with("navigate_with_text")
 
 
@@ -369,3 +384,19 @@ def test_object_navigation_does_not_use_tracking_retained_after_stop_timeout(
 
     tracker.track.assert_called_once_with([16, 16, 48, 48])
     tracker.is_tracking.assert_not_called()
+
+
+def test_object_tracking_timeout_reports_cancel_source(container, mocker):
+    tracker = mocker.Mock(spec=ObjectTrackingSpec)
+    tracker.track.return_value = {"status": "tracking_started"}
+    mocker.patch.object(container, "_object_tracking", tracker)
+    mocker.patch.object(container, "_get_bbox_for_current_frame", return_value=[16, 16, 48, 48])
+    clock = mocker.patch.object(navigation, "time")
+    clock.time.side_effect = [0.0, 31.0]
+
+    assert container._navigate_to_object("chair") is None
+
+    tracker.stop_track.assert_called_once_with()
+    container._navigation.cancel_goal.assert_called_once_with(
+        reason="NavigationSkillContainer: object tracking timed out"
+    )

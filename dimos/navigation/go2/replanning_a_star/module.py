@@ -117,14 +117,15 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     @rpc
     def stop(self) -> None:
-        self.cancel_goal()
         self._planner.stop()
 
         super().stop()
 
     def _on_stop_movement(self, msg: Bool) -> None:
         if msg.data:
-            self.cancel_goal()
+            self.cancel_goal(
+                reason="stop_movement: external stop requested (teleop or manual stop)"
+            )
 
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
@@ -140,8 +141,16 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         return self._planner.is_goal_reached()
 
     @rpc
-    def cancel_goal(self) -> bool:
-        self._planner.cancel_goal()
+    def is_goal_cancelled(self) -> bool:
+        return self._planner.is_goal_cancelled()
+
+    @rpc
+    def get_goal_cancel_reason(self) -> str | None:
+        return self._planner.get_goal_cancel_reason()
+
+    @rpc
+    def cancel_goal(self, reason: str = "cancel_goal RPC: cancellation requested") -> bool:
+        self._planner.cancel_goal(reason=reason)
         return True
 
     @rpc
