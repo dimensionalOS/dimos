@@ -184,7 +184,10 @@ class TfModule(Module):
         for (child, hardware), listed in sorted(parents.items()):
             if len(listed) > 1:
                 kind = "hardware" if hardware else "imaginary"
-                errors.append(f"    - '{child}' has several {kind} parents: {', '.join(listed)}")
+                errors.append(
+                    f"    - '{child}' has several parents: {', '.join(listed)} (all {kind}; a "
+                    f"frame has at most one hardware and one imaginary parent)"
+                )
 
         # Union-find over the declared edges, undirected: an edge between two frames already joined closes a loop.
         component: dict[str, str] = {}
@@ -197,8 +200,11 @@ class TfModule(Module):
 
         for parent, child in sorted(owners):
             if root_of(parent) == root_of(child):
-                loop = " -> ".join(_path_between(neighbours, child, parent))
-                errors.append(f"    - '{parent}' -> '{child}' closes a loop: {loop} -> {parent}")
+                path = _path_between(neighbours, child, parent)
+                errors.append(
+                    f"    - frames {sorted(path)} form a cycle: '{parent}' -> '{child}' closes "
+                    f"the loop {' -> '.join([*path, parent])}"
+                )
                 continue
             component[root_of(child)] = root_of(parent)
             neighbours[parent].add(child)
