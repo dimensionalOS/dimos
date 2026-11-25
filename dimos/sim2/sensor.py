@@ -18,8 +18,10 @@ from pathlib import Path
 
 from dimos_lcm.world_msgs import WorldObservations
 
+from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule
 from dimos.core.stream import In
+from dimos.sim2.lfs import pull_model_assets
 from dimos.sim2.sim import SimulatedWorldSpec
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror
@@ -29,6 +31,12 @@ class SimSensor(HardwareModule):
     mount_shared = frozenset({"world_observations"})
     world: SimulatedWorldSpec
     world_observations: In[WorldObservations]
+
+    @rpc
+    def start(self) -> None:
+        # Before anything opens its stage, which opens every mesh layer it references.
+        pull_model_assets(self.config.usd)
+        super().start()
 
     @property
     def frame_id(self) -> str:
