@@ -301,11 +301,15 @@ class WorldMirror:
         await future
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
-        period, due = 1.0 / rate_hz, 0.0
+        period = 1.0 / rate_hz
+        # The first tick is the first frame, not sim time 0, which would leave a backlog to burst through.
+        await self.reached(0.0)
+        due = self.time
         while True:
             await self.reached(due)
-            yield self.time
-            now = self.time
+            ticked = self.time
+            yield ticked
             due += period
-            if now >= due + period:
-                due = now
+            if self.time >= due:
+                # Busy past its next tick: the missed ones are skipped, and none comes within a period of this one.
+                due = max(self.time, ticked + period)
