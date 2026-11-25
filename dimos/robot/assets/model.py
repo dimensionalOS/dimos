@@ -28,9 +28,8 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import ConfigDict, Field, GetCoreSchemaHandler, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from pydantic_core import CoreSchema, core_schema
 from scipy.spatial.transform import Rotation
 from typing_extensions import Self
 
@@ -210,23 +209,6 @@ class UsdModel:
         if (path is None) == (content is None):
             raise ValueError("a UsdModel has exactly one of path or content")
         return cls.from_file(path) if path is not None else cls.from_layer(value["content"])
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
-        # A config field takes a UsdModel or its JSON, and dumps to JSON as {path} or {content}.
-        def validate(value: Any) -> UsdModel:
-            if isinstance(value, UsdModel):
-                return value
-            if isinstance(value, Mapping):
-                return cls.from_json(value)
-            raise ValueError(f"a UsdModel or {{path}} / {{content}}, not {type(value).__name__}")
-
-        return core_schema.no_info_plain_validator_function(
-            validate,
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda model: model.to_json(), when_used="json"
-            ),
-        )
 
     @cached_property
     def usd(self) -> str:

@@ -1049,15 +1049,3 @@ def test_usd_json_has_exactly_one_of_path_or_content() -> None:
         UsdModel.from_json({"path": "box.usda", "content": _LAYER})
     with pytest.raises(ValueError, match="not \\['frames'\\]"):
         UsdModel.from_json({"content": _LAYER, "frames": {}})
-
-
-def test_a_usd_config_field_dumps_to_json_and_reads_back() -> None:
-    from pydantic import BaseModel
-
-    class Holder(BaseModel):
-        usd: UsdModel
-
-    held = Holder(usd=UsdModel.from_layer(_LAYER))
-    dumped = held.model_dump(mode="json")
-    assert dumped == {"usd": {"content": _LAYER}}
-    assert Holder.model_validate(dumped).usd.usd == _LAYER
