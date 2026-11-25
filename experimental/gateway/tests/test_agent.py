@@ -234,10 +234,6 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     assert detail["turn"]["run"]["inputs"] == [sent["submission"]]
     assert detail["turn"]["messageTimestamp"] == partial["messageTimestamp"]
     assert ANSWER.startswith(detail["turn"]["text"])
-    receipt = f"{room}/submissions/{sent['submission']}"
-    pending = (await http.get(receipt)).raise_for_status().json()
-    assert pending["record"]["status"] == "placed"
-    assert pending["answer"] is None
     at = next(item for item in detail["transcript"]["items"] if item["kind"] == "input")["images"][
         0
     ]["at"]
@@ -251,16 +247,18 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     assert committed["conversation"] == cid
     finished = await event("agent/chat", lambda e: "turn" in e and e["turn"] is None)
     assert finished["conversation"] == cid
-    record = (await http.get(receipt)).raise_for_status().json()
-    assert record["record"]["status"] == "done"
-    assert record["answer"]["message"]["content"][0]["text"] == ANSWER
-    assert record["answer"] in committed["entries"]
+    final = (await http.get(room)).raise_for_status().json()
+    assert final["turn"] is None
+    answer = final["transcript"]["items"][-1]
+    assert answer["kind"] == "assistant"
+    assert answer["message"]["content"][0]["text"] == ANSWER
+    assert answer in committed["entries"]
     assert len(chunks) > 1
     recovered = detail["turn"]["text"].encode("utf-16-le")
     offset = 0
     for chunk in chunks:
         assert chunk["conversation"] == cid
-        assert chunk["messageTimestamp"] == record["answer"]["message"]["timestamp"]
+        assert chunk["messageTimestamp"] == answer["message"]["timestamp"]
         assert chunk["offset"] == offset
         assert chunk["delta"] and "reset" not in chunk
         data = chunk["delta"].encode("utf-16-le")
@@ -303,9 +301,6 @@ async def test_agent_chat_and_jobs_share_the_daemons_state(live_agent):
     }
     assert (await http.get("/agent/jobs")).json() == []
     other = (await http.post("/agent/conversations", json=request_id())).json()["conversation"]
-    assert (
-        await http.get(f"/agent/conversations/{other}/submissions/{sent['submission']}")
-    ).status_code == 404
     assert (
         await http.get(f"/agent/conversations/{other}/images/{at['entry']}/0/{at['block']}")
     ).status_code == 404

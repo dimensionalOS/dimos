@@ -32,7 +32,7 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
-| `/agent` | On-robot dimOS Agent conversations, submissions, images, and scheduled jobs |
+| `/agent` | On-robot dimOS Agent conversations, messages, images, and scheduled jobs |
 | views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
@@ -79,7 +79,6 @@ the agent's private Unix socket. An offline agent returns 503.
 | GET, POST | `/agent/conversations` | List summaries or create with `{request, cwd?}` and receive `{conversation}`. |
 | GET | `/agent/conversations/{id}` | Read `transcript.items`, its `omitted` count, and `turn` with the active run and partial text. |
 | POST | `/agent/conversations/{id}/submissions` | Send `{request, text, images, whenBusy}` and receive `{submission}`. Each image has `type: "image"`, `mimeType`, and base64 `data`. Use `steer` or `followUp` for `whenBusy`. |
-| GET | `/agent/conversations/{id}/submissions/{submission}` | The durable `record` and its `answer` entry when done. An unanswered record includes its reason. |
 | POST | `/agent/conversations/{id}/abort` | Send `{request}` to stop the turn. The result is the user's withdrawn `{mode, text}` items in queue order. |
 | GET | `/agent/conversations/{id}/images/{entry}/{message}/{block}` | Use the address in a transcript image reference to fetch its stored image. |
 | GET, POST | `/agent/jobs` | List schedules or create one with `{name, conversation, cron, timeZone, action}`. Rows include `nextDue`, `upcoming`, and recent `runs`. |

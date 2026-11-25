@@ -117,12 +117,11 @@ function serveGateway(afterSend: (request: UserRequestId | null) => void = () =>
       jobs: cell(self, "jobs", []),
       streams: cell(self, "streams", []),
     };
-    if (role === "viewer" || viewer) return { variant: "viewer", ...state, image: unused, submission: unused };
+    if (role === "viewer" || viewer) return { variant: "viewer", ...state, image: unused };
     return {
       variant: "owner",
       ...state,
       image: unused,
-      submission: unused,
       send: async ({ request }: { readonly request: UserRequestId }) => {
         const before = calls.send.get(request);
         calls.send.set(request, before === undefined ? 1 : before + 1);

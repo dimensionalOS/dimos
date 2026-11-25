@@ -9,7 +9,7 @@ import { DimosUnavailable } from "#dimos/agents/harness/dimos/connection.ts";
 import { Replies } from "#dimos/agents/gateway/server/replies.ts";
 import { bind } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
 import { createHost } from "@earendil-works/chord";
-import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { done } from "#dimos/agents/shared/protocol/outcome.ts";
 import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
 import { principalKey } from "#dimos/agents/gateway/auth/principal.ts";
@@ -56,7 +56,6 @@ function recording(calls: string[]): Handlers<typeof CONVERSATION_ACTIONS> {
     summarizeFrom: async () => done({ conversation: 2 as ConversationId }),
     background: async () => done({ task: 1 as TaskId }),
     stopBackground: async () => done(null),
-    submission: async ({ id }) => refused({ code: "not_found", what: "submission", name: String(id) }),
     image: async () => done({ type: "image", data: "", mimeType: "image/png" }),
   };
 }
@@ -66,7 +65,7 @@ test("bind derives the methods from the catalog, runs the rule first, joins retr
   const calls: string[] = [];
   const replies = new Replies(60_000, BACKGROUND_CONTEXT);
   const viewer = bind("conversation", CONVERSATION_ACTIONS, recording(calls), () => idle, replies, "viewer");
-  assert.deepEqual(Object.keys(viewer), ["submission", "image"]);
+  assert.deepEqual(Object.keys(viewer), ["image"]);
 
   const whenBusy = bind("conversation", CONVERSATION_ACTIONS, recording(calls), () => busy, replies, "owner");
   const refusedConfigure = await host.root((ctx) => whenBusy.configure({ model: null, thinkingLevel: null }, ctx));

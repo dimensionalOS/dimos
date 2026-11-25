@@ -27,16 +27,7 @@ export type Refusal =
   | { readonly code: "running"; readonly conversation: ConversationId }
   | {
       readonly code: "not_found";
-      readonly what:
-        | "conversation"
-        | "message"
-        | "call"
-        | "module"
-        | "job"
-        | "submission"
-        | "subscription"
-        | "provider"
-        | "model";
+      readonly what: "conversation" | "message" | "call" | "module" | "job" | "subscription" | "provider" | "model";
       readonly name: string;
     }
   /** An argument the executor rejected: a bad cron expression, an unknown time zone, a job that already exists. */

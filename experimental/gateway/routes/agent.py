@@ -162,13 +162,6 @@ async def send(state: GatewayState, id: Id, body: Message) -> Any:
     return await call_sdk(state.dimos_dir, "send", body, id)
 
 
-@router.get(
-    "/conversations/{id}/submissions/{submission}", response_model=responses.AgentSubmission
-)
-async def submission_status(state: GatewayState, id: Id, submission: Id) -> Any:
-    return await call_sdk(state.dimos_dir, "submission", {"id": submission}, id)
-
-
 @router.post("/conversations/{id}/abort", response_model=list[responses.AgentQueuedText])
 async def abort(state: GatewayState, id: Id, body: RequestId) -> Any:
     return await call_sdk(state.dimos_dir, "abort", body, id)

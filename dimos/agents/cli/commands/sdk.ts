@@ -1,7 +1,7 @@
 import type { Command } from "#dimos/agents/cli/commands/base.ts";
 import type { ConversationId, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { Transcript } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import type { Ctx } from "@earendil-works/chord";
 import { isChordError } from "@earendil-works/chord";
 import type { Static } from "typebox";
@@ -67,7 +67,8 @@ async function watch(client: Client): Promise<never> {
   const active = new Set<ConversationId>();
   const lastEntry = new Map<ConversationId, EntryId>();
   const follow = async (conversation: ConversationId) => {
-    const room = await client.host.get(ConversationContract, { conversation, role: "viewer", markSeen: false });
+    const address = { conversation, role: "viewer", markSeen: false } as const;
+    const room = await client.host.get(ConversationContract, address);
     const chat = (update: object) => write({ type: "agent/chat", conversation, ...update });
     const partials = new Map<number, string>();
     const publishText = (message: Pick<AssistantMessage, "timestamp" | "content">) => {
@@ -82,34 +83,30 @@ async function watch(client: Client): Promise<never> {
       partials.set(message.timestamp, text);
     };
     let lastAssistant: EntryId | undefined;
-    const publishEntries = (entries: readonly TranscriptItem[], flushText: boolean) => {
-      // The harness throttles live text. Its last few characters may first arrive in the saved entry.
-      for (const item of entries) {
-        if (item.kind !== "assistant" || (lastAssistant !== undefined && item.entry <= lastAssistant)) continue;
-        if (flushText) publishText(item.message);
-        partials.delete(item.message.timestamp);
-        lastAssistant = item.entry;
-      }
-      chat({ entries });
-    };
     let initial = true;
-    const history = room.transcript.subscribe(({ items }) => {
+    const publishHistory = ({ items }: Transcript) => {
       // Replay the available window on first attach or when its bounded history no longer contains our cursor.
       const last = lastEntry.get(conversation);
       const entries = last === undefined ? items : items.slice(items.findIndex((item) => item.entry === last) + 1);
+      // The harness throttles live text. Its last few characters may first arrive in the saved entry.
+      for (const item of entries) {
+        if (item.kind !== "assistant" || (lastAssistant !== undefined && item.entry <= lastAssistant)) continue;
+        if (!initial) publishText(item.message);
+        partials.delete(item.message.timestamp);
+        lastAssistant = item.entry;
+      }
       const newest = entries.at(-1);
       if (newest) {
-        publishEntries(entries, !initial);
+        chat({ entries });
         lastEntry.set(conversation, newest.entry);
       }
       initial = false;
-    });
-    let input = room.live.value.run?.inputs[0];
+    };
+    const history = room.transcript.subscribe(publishHistory);
     let previousRun: LiveState["run"];
     let previousMessage: number | null = null;
     const live = room.live.subscribe((state) => {
       if (state.run) {
-        input = state.run.inputs[0];
         const message = state.generation?.message;
         const messageTimestamp = message?.timestamp ?? null;
         if (messageTimestamp !== previousMessage || !isDeepStrictEqual(previousRun, state.run)) {
@@ -121,22 +118,23 @@ async function watch(client: Client): Promise<never> {
       }
     });
     try {
-      // The global list and room cells arrive independently. Finish from the durable answer
-      // even when the list goes idle before the room delivers the final transcript entry.
       await until(gateway.conversations, (rows) =>
         rows.find((row) => row.id === conversation)?.running ? undefined : true,
       );
-      if (input !== undefined) {
-        const outcome = await room.submission({ id: input });
-        if (outcome.ok && outcome.value.answer && outcome.value.answer.entry !== lastEntry.get(conversation))
-          publishEntries([outcome.value.answer], true);
-      }
-      if (!gateway.conversations.value.find((row) => row.id === conversation)?.running) chat({ turn: null });
+      await until(room.live, (state) => (state.run ? undefined : true));
     } finally {
       live();
       history();
       room.release();
     }
+    // The idle notification can arrive ahead of the last transcript update. Read the
+    // conversation once more before telling clients the turn has finished.
+    await client.host.root(async (ctx) => {
+      const final = await ctx.get(ConversationContract, address);
+      publishHistory(final.transcript.value);
+      if (!final.live.value.run && !gateway.conversations.value.find((row) => row.id === conversation)?.running)
+        chat({ turn: null });
+    });
   };
   const start = (id: ConversationId) => {
     active.add(id);
@@ -196,7 +194,7 @@ async function invoke(ctx: Ctx, operation: string, id: string | undefined): Prom
     );
     if (operation === "conversation") return done({ transcript: room.transcript.value, turn: turn(room.live.value) });
     if (needsOwner) return call(CONVERSATION_ACTIONS, owner(room), operation);
-    if (operation === "image" || operation === "submission") return call(CONVERSATION_ACTIONS, room, operation);
+    if (operation === "image") return call(CONVERSATION_ACTIONS, room, operation);
   } else {
     const list = operation === "conversations" || operation === "jobs";
     const gateway = await ctx.get(GatewayContract, {}, { state: list });

@@ -670,11 +670,6 @@ class AgentSubmissionId(Body):
     submission: int
 
 
-class AgentSubmission(Body):
-    record: dict[str, Any]
-    answer: dict[str, Any] | None
-
-
 class AgentQueuedText(Body):
     mode: Literal["steer", "followUp"]
     text: str

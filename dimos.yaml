@@ -326,12 +326,6 @@ provides:
       post:
         summary: Submit text and images with a request UUID and steer or followUp mode
         parameters: [*conversationId]
-    /agent/conversations/{id}/submissions/{submission}:
-      get:
-        summary: Look up a durable input and the assistant entry that answered it
-        parameters:
-          - *conversationId
-          - {name: submission, in: path, required: true, schema: {type: integer, minimum: 1}}
     /agent/conversations/{id}/abort:
       post:
         summary: Stop the current turn and return withdrawn user text in queue order
