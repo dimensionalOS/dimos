@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 import math
 import time
 
@@ -35,12 +34,14 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.robot.manipulators.openyam.joints import OPENYAM_ARM_JOINTS
+from dimos.robot.manipulators.openyam.trimode_connection import TrimodeLifecycle
 from dimos.robot.manipulators.openyam.trimode_tracker import (
+    REFERENCE_TIMEOUT,
+    ArmSample,
     Bounds,
     JointGoal,
     PoseGoal,
     PositionGoal,
-    Session,
     Vector,
     bounded,
     tcp_pose,
@@ -58,34 +59,35 @@ SETTLE_POSITION = 0.03  # rad
 SETTLE_VELOCITY = 0.08  # rad/s
 
 
-@dataclass(frozen=True)
-class Feedback:
-    epoch: int
-    received: float
-    expires_at: float
-    q: Vector
-    dq: Vector
+ReadFeedback = Callable[[], ArmSample | None]
 
 
-ReadFeedback = Callable[[str], Feedback | None]
+def _begin(lifecycle: TrimodeLifecycle, interface: str) -> str | None:
+    return lifecycle.open_reference(interface.split("/")[1], time.monotonic() + REFERENCE_TIMEOUT)
 
 
 class QuestReference(BaseControlTask):
-    def __init__(self, interface: str, read: ReadFeedback, takeover: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        interface: str,
+        read: ReadFeedback,
+        takeover: Callable[[], None],
+        lifecycle: TrimodeLifecycle,
+    ) -> None:
         if interface not in (POSE, XYZ):
             raise ValueError("Quest interface must be TCP pose or position")
         self._name = "teleop_openyam"
         self._interface, self._read, self._takeover = interface, read, takeover
-        self._session: Session | None = None
+        self._lifecycle = lifecycle
+        self._session: str | None = None
         self._held = self._estopped = False
         self._need_release = True
         self._buttons_at = self._buttons_deadline = float("-inf")
         self._pose: PoseStamped | None = None
         self._anchor: tuple[PoseStamped, PoseStamped] | None = None
-        self._epoch: int | None = None
 
     def claim(self) -> ResourceClaim:
-        return ResourceClaim(frozenset(JOINTS), priority=20)
+        return ResourceClaim(frozenset(), priority=20)
 
     def is_active(self) -> bool:
         return self._session is not None
@@ -95,9 +97,10 @@ class QuestReference(BaseControlTask):
         return self._held and time.monotonic() < self._buttons_deadline
 
     def _end(self) -> None:
-        if self._session is not None:
-            self._session.close()
-        self._session = self._pose = self._anchor = self._epoch = None
+        session, self._session = self._session, None
+        self._pose = self._anchor = None
+        if session is not None:
+            self._lifecycle.close_reference(session)
 
     def set_estop(self, estopped: bool) -> None:
         self._estopped = estopped
@@ -154,7 +157,8 @@ class QuestReference(BaseControlTask):
             self._need_release = True
         elif self._session is None and not self._need_release:
             self._takeover()  # Close the plan session before granting grip authority.
-            self._session = Session()
+            self._session = _begin(self._lifecycle, self._interface)
+            self._opened_at = time.monotonic()
             self._need_release = True
         return True
 
@@ -165,18 +169,18 @@ class QuestReference(BaseControlTask):
         deadline = self._buttons_deadline
         if self._pose is not None:
             deadline = min(deadline, self._pose.ts)
-        if time.monotonic() >= deadline or not session.active:
+        now = time.monotonic()
+        if now >= deadline:
             self._end()
             self._need_release = True
             return None
         if self._pose is None:
             return None
-        feedback = self._read(self._interface)
-        if feedback is None or (self._epoch is not None and feedback.epoch != self._epoch):
+        feedback = self._read()
+        if feedback is None or (feedback.at >= self._opened_at and feedback.session != session):
             self._end()
             self._need_release = True
             return None
-        self._epoch = feedback.epoch
         if self._anchor is None:
             xyz = tcp_pose(feedback.q)
             world = PoseStamped(frame_id="world", position=xyz[:3], orientation=(*xyz[4:], xyz[3]))
@@ -190,17 +194,12 @@ class QuestReference(BaseControlTask):
         cls = PoseGoal if self._interface == POSE else PositionGoal
         return GroupCommandOutput(
             self._interface,
-            cls(
-                session,
-                feedback.q,
-                feedback.dq,
-                _pose_vector(target),
-                min(deadline, feedback.expires_at),
-            ),
+            cls(session, now, min(deadline, now + REFERENCE_TIMEOUT), _pose_vector(target)),
         )
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        if joints & self.claim().joints:
+        if joints:
+            self._need_release = True
             self._end()
 
 
@@ -212,11 +211,17 @@ def _pose_vector(pose: PoseStamped) -> Vector:
 class PlannedReference(JointTrajectoryTask):
     """Canonical trajectory RPC/status, without a position-servo fallback."""
 
-    def __init__(self, bounds: Bounds, read: ReadFeedback, blocked: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        bounds: Bounds,
+        read: ReadFeedback,
+        blocked: Callable[[], bool],
+        lifecycle: TrimodeLifecycle,
+    ) -> None:
         super().__init__(JointTrajectoryTaskConfig(joint_names=JOINTS, priority=10))
         self._bounds, self._read, self._blocked = bounds, read, blocked
-        self._session: Session | None = None
-        self._epoch: int | None = None
+        self._lifecycle = lifecycle
+        self._session: str | None = None
         self._plan: JointTrajectory | None = None
         self._began: float | None = None
         self._error = ""
@@ -227,10 +232,10 @@ class PlannedReference(JointTrajectoryTask):
     def is_active(self) -> bool:
         return self._state == TrajectoryState.EXECUTING
 
-    def _valid_measurement(self, reading: Feedback | None) -> bool:
+    def _valid_measurement(self, reading: ArmSample | None) -> bool:
         return (
             reading is not None
-            and time.monotonic() < reading.expires_at
+            and 0 <= time.monotonic() - reading.at < REFERENCE_TIMEOUT
             and bounded(reading.q, self._bounds)
             and len(reading.dq) == len(JOINTS)
             and all(math.isfinite(v) for v in reading.dq)
@@ -267,7 +272,7 @@ class PlannedReference(JointTrajectoryTask):
             return TrajectoryExecutionResult(
                 status.INVALID_TRAJECTORY, "reference outside joint limits"
             )
-        reading = self._read(JOINT)
+        reading = self._read()
         if reading is None or not self._valid_measurement(reading):
             return TrajectoryExecutionResult(status.START_STATE_UNAVAILABLE)
         if any(
@@ -275,7 +280,10 @@ class PlannedReference(JointTrajectoryTask):
             for q, ref in zip(reading.q, points[0].positions, strict=True)
         ):
             return TrajectoryExecutionResult(status.START_STATE_MISMATCH)
-        self._session, self._epoch = Session(), reading.epoch
+        session = _begin(self._lifecycle, JOINT)
+        if session is None:
+            return TrajectoryExecutionResult(status.START_STATE_UNAVAILABLE)
+        self._session, self._opened_at = session, time.monotonic()
         self._plan = JointTrajectory(points=points, joint_names=list(JOINTS))
         self._began, self._error = None, ""
         self._state = TrajectoryState.EXECUTING
@@ -283,9 +291,10 @@ class PlannedReference(JointTrajectoryTask):
 
     def _clear_active_trajectory(self) -> None:
         super()._clear_active_trajectory()
-        if self._session is not None:
-            self._session.close()
-        self._plan = self._session = self._epoch = None
+        session, self._session = self._session, None
+        self._plan = None
+        if session is not None:
+            self._lifecycle.close_reference(session)
 
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         self.cancel()
@@ -306,10 +315,9 @@ class PlannedReference(JointTrajectoryTask):
             self._began = state.t_now
         elapsed = state.t_now - self._began
         remaining = plan.duration + SETTLE_TIMEOUT - elapsed
-        measured = self._read(JOINT)
-        with session.lock:
-            active, fault, terminal_at = session.active, session.fault, session.terminal_at
-        if not active or measured is None or measured.epoch != self._epoch:
+        measured = self._read()
+        if measured is None or (measured.at >= self._opened_at and measured.session != session):
+            fault = measured.fault if measured is not None else None
             self._finish(TrajectoryState.FAULT, fault or "arm feedback interrupted")
             return None
         if not self._valid_measurement(measured):
@@ -320,25 +328,20 @@ class PlannedReference(JointTrajectoryTask):
             return None
         ref = tuple(plan.sample(elapsed)[0])
         terminal = elapsed >= plan.duration
+        assert measured is not None
         if (
             terminal
-            and terminal_at is not None
-            and measured.received > terminal_at
+            and measured.session == session
+            and measured.terminal_at is not None
+            and measured.at > measured.terminal_at
             and max(abs(a - b) for a, b in zip(ref, measured.q, strict=True)) <= SETTLE_POSITION
             and max(map(abs, measured.dq)) <= SETTLE_VELOCITY
         ):
             self._finish(TrajectoryState.COMPLETED)
             return None
+        now = time.monotonic()
         return GroupCommandOutput(
-            JOINT,
-            JointGoal(
-                session,
-                measured.q,
-                measured.dq,
-                ref,
-                min(time.monotonic() + remaining, measured.expires_at),
-                terminal,
-            ),
+            JOINT, JointGoal(session, now, now + min(remaining, REFERENCE_TIMEOUT), ref, terminal)
         )
 
     def get_progress(self, t_now: float) -> float:

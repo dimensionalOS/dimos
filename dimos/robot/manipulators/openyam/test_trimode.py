@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The two real reference consumers against a recording, co-located test plant."""
+"""The two real reference consumers against a recording, no-hardware connection."""
 
 from collections.abc import Callable, Iterator
 import os
@@ -20,43 +20,51 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.test_coordinator_connections import LocalTransport
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_spec import ExecutionStatus, OperationStatus
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.damiao.arm import ArmReading
 from dimos.robot.manipulators.openyam.blueprints.teleop import openyam_trimode
-from dimos.robot.manipulators.openyam.joints import OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT
-from dimos.robot.manipulators.openyam.trimode_coordinator import (
-    TrimodeCoordinator,
-    trimode_connection,
+from dimos.robot.manipulators.openyam.joints import OPENYAM_ARM_JOINTS
+from dimos.robot.manipulators.openyam.trimode_connection import (
+    TrimodeArm,
+    TrimodeConnection,
+    declaration,
 )
+from dimos.robot.manipulators.openyam.trimode_coordinator import TrimodeCoordinator
 from dimos.robot.manipulators.openyam.trimode_quest import TrimodeQuest
 from dimos.robot.manipulators.openyam.trimode_tasks import (
-    JOINT,
     JOINTS,
     POSE,
     QUEST_FRESH,
     QUEST_TIMEOUT,
-    Feedback,
     PlannedReference,
     QuestReference,
 )
 from dimos.robot.manipulators.openyam.trimode_tracker import (
+    REFERENCE_TIMEOUT,
     Actor,
+    ArmSample,
     JointGoal,
     Vector,
     load_actor,
@@ -67,7 +75,7 @@ from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerSt
 HOME = (0.0, 1.047, 1.047, 0.0, 0.0, 0.0)
 
 
-class Plant:
+class Plant(TrimodeArm):
     def __init__(self) -> None:
         self.q = HOME
         self.dq: Vector = (0.0,) * 6
@@ -75,33 +83,120 @@ class Plant:
         self.arm_writes: list[Vector] = []
         self.jaw_writes: list[float] = []
         self.include_velocity = True
+        self.holds = 0
+        self._active = False
 
-    def read(self) -> JointState:
-        return JointState(
-            name=[*JOINTS, OPENYAM_GRIPPER_JOINT],
+    def connect(self) -> None:
+        pass
+
+    def enable(self) -> None:
+        self._active = True
+
+    def disable(self) -> None:
+        self._active = False
+
+    def read(self) -> ArmReading:
+        return ArmReading(
             position=[*self.q, self.jaw],
             velocity=[*self.dq, 0.0] if self.include_velocity else [],
+            effort=[0.0] * 7,
         )
 
     def submit_arm(self, q_des: Vector) -> None:
+        assert self.active
         self.arm_writes.append(q_des)
 
-    def submit_jaw(self, position: float) -> None:
-        self.jaw_writes.append(position)
-        self.jaw = position
+    def hold_arm(self, q: Vector) -> None:
+        self.holds += 1
+
+    def command(self, values: dict[str, float]) -> None:
+        self.jaw = values["joint7"]
+        self.jaw_writes.append(self.jaw)
+
+    def hold(self) -> None:
+        pass
 
 
-def test_opt_in_blueprint_has_no_stock_connection() -> None:
-    blueprint = openyam_trimode(model_path=Path("unused"), plant_factory=Plant).solidify()
+class TestConnection(TrimodeConnection):
+    __test__ = False
+
+    def _make_arm(self) -> Plant:
+        return Plant()
+
+    @rpc
+    def evidence(self) -> tuple[int, list[Vector], list[float], int]:
+        with self._hardware_lock:
+            plant = self._arm
+            assert isinstance(plant, Plant)
+            return os.getpid(), list(plant.arm_writes), list(plant.jaw_writes), plant.holds
+
+    @rpc
+    def move_measurement(self, q: Vector, dq: Vector) -> None:
+        with self._hardware_lock:
+            plant = self._arm
+            assert isinstance(plant, Plant)
+            plant.q, plant.dq = q, dq
+
+
+def test_physical_blueprint_is_static() -> None:
+    blueprint = openyam_trimode.solidify()
     atoms = {atom.module: atom for atom in blueprint.active_blueprints}
-    assert set(atoms) == {TrimodeQuest, TrimodeCoordinator, ManipulationModule}
-    ctrl = atoms[TrimodeCoordinator]
-    assert ctrl.kwargs["plant_factory"] is Plant
-    assert set(ctrl.kwargs["connections"][0].joint_commands) == {"joint7"}
+    assert set(atoms) == {TrimodeQuest, TrimodeCoordinator, TrimodeConnection, ManipulationModule}
+    assert set(atoms[TrimodeCoordinator].kwargs["connections"][0].joint_commands) == {"joint7"}
+    assert TrimodeConnection.dedicated_worker
     assert (
-        blueprint.remapping_map[(TrimodeQuest.name, "right_controller_output")]
-        == "right_cartesian_command"
+        blueprint.remapping_map[(TrimodeConnection.name, "joint_reference")]
+        == "arm_joint_reference"
     )
+    parsed = BlueprintConfigParser(blueprint).parse(
+        [
+            "--can-port",
+            "follower_r",
+            "--model-path",
+            "/models/actor.onnx",
+            "--quest-mode",
+            "position",
+        ],
+        environ={},
+    )
+    config = parsed.module_kwargs("trimodeconnection")
+    assert config["can_port"] == "follower_r" and config["source"] == "arm"
+    assert config["model_path"] == Path("/models/actor.onnx")
+    assert config["group_commands"].keys() == {"tcp_pose", "tcp_position", "joint_reference"}
+    assert parsed.module_kwargs("ControlCoordinator")["quest_mode"] == "position"
+
+
+def test_stock_sdk_calls_split_jaw_resend_from_native_mit() -> None:
+    # Actual adapter with recording SDK boundary; never connect/calibrate.
+    arm = TrimodeArm(TrimodeConnection.robot, ["fake"])
+    native, motors, jaw = Mock(), Mock(), Mock()
+    arm._native = native
+    arm._arms["arm"] = motors
+    arm._grippers["gripper"] = jaw
+    arm._travel["joint7"] = (0.06, 0.01)
+    arm._active = True
+    arm.command({"joint7": 0.035})
+    arm.command({"joint7": 0.035})
+    assert jaw.set_opening.call_count == native.tick.call_count == 2
+    assert jaw.set_opening.call_args.args[0] == pytest.approx(0.5)
+    motors.mit_control.assert_not_called()
+    arm.submit_arm(HOME)
+    motors.mit_control.assert_called_once()
+    rows = motors.mit_control.call_args.args[0]
+    np.testing.assert_allclose(rows[:, 0], [50, 60, 50, 25, 15, 10])
+    np.testing.assert_allclose(rows[:, 1], [3, 4, 3, 2, 1, 0.8])
+    np.testing.assert_allclose(rows[:, 2], HOME)
+    np.testing.assert_array_equal(rows[:, 3:], 0)
+    assert jaw.set_opening.call_count == 2
+    arm._physical = Mock()
+    arm._physical.gravity.return_value = np.asarray([0.1] * 6)
+    arm.hold_arm(HOME)
+    hold = motors.mit_control.call_args.args[0]
+    (bus,) = TrimodeConnection.robot.buses
+    np.testing.assert_allclose(hold[:, 0], bus.kp)
+    np.testing.assert_allclose(hold[:, 1], bus.kd)
+    np.testing.assert_allclose(hold[:, 4], 0.1)
+    assert jaw.set_opening.call_count == 2
 
 
 def wait(predicate: Callable[[], Any], timeout: float = 2.0) -> None:
@@ -144,15 +239,15 @@ def plan(end: Vector, duration: float = 0.12) -> GeneratedPlan:
 class Rig:
     def __init__(self, path: Path, mode: str) -> None:
         robot = model()
-        self.plant = Plant()
+        contract = declaration(robot)
+        self.connection = TestConnection(can_port="fake", model_path=path, **contract.model_dump())
         self.control = TrimodeCoordinator(
             instance_name="ControlCoordinator",
-            model_path=path,
             quest_mode=mode,
-            connections=[trimode_connection(robot)],
+            connections=[contract],
             publish_joint_state=False,
         )
-        self.control.bind_local_plant(self.plant)
+        self.control._lifecycle = self.connection
         self.quest = TrimodeQuest()
         for src, dst in (
             ("teleop_buttons", "teleop_buttons"),
@@ -164,14 +259,28 @@ class Rig:
             self.quest.set_transport(src, wire)  # type: ignore[arg-type]
         for dst in ("joint_command", "left_cartesian_command"):
             self.control.set_transport(dst, LocalTransport())  # type: ignore[arg-type]
+        for ctrl, plant in (
+            ("arm_position_command", "position_command"),
+            ("arm_joint_state", "joint_state"),
+            ("arm_sample", "arm_sample"),
+            ("arm_joint_reference", "joint_reference"),
+            ("arm_tcp_pose", "tcp_pose"),
+            ("arm_tcp_position", "tcp_position"),
+        ):
+            wire = LocalTransport()
+            self.control.set_transport(ctrl, wire)  # type: ignore[arg-type]
+            self.connection.set_transport(plant, wire)  # type: ignore[arg-type]
         self.control.start()
+        self.connection.start()
+        assert isinstance(self.connection._arm, Plant)
+        self.plant = self.connection._arm
         self.manipulation = ManipulationModule(
             model=RobotModelConfig(model=robot, joint_names=list(JOINTS), base_link="base")
         )
         self.manipulation._control_coordinator = self.control
         self.manipulation._initialize_execution()
         self.manipulation._started = True
-        wait(lambda: self.control._read_group(JOINT))
+        wait(lambda: self.control._read_sample())
 
     def quest_input(self, grip: float, *, fresh: bool = True, x: float = 0.0) -> None:
         now = time.monotonic() if fresh else None
@@ -194,6 +303,7 @@ class Rig:
         self.quest.stop()
         self.manipulation.stop()
         self.control.stop()
+        self.connection.stop()
 
 
 @pytest.fixture
@@ -202,7 +312,7 @@ def make_rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[Actor, str],
 
     def make(actor: Actor, mode: str = "pose") -> Rig:
         monkeypatch.setattr(
-            "dimos.robot.manipulators.openyam.trimode_coordinator.load_actor", lambda _: actor
+            "dimos.robot.manipulators.openyam.trimode_connection.load_actor", lambda _: actor
         )
         rig = Rig(Path("not-used-by-injected-loader"), mode)
         rigs.append(rig)
@@ -267,7 +377,7 @@ def test_real_cpu_quest_and_viser_share_single_arm_sink(
     assert len(rig.plant.arm_writes) == before
 
 
-@pytest.mark.parametrize("event", ["cancel", "takeover", "estop", "velocity_stale", "reset"])
+@pytest.mark.parametrize("event", ["cancel", "takeover", "estop", "expired", "reset"])
 def test_blocked_inference_cannot_write_after_authority_loss(
     make_rig: Callable[[Actor, str], Rig], event: str
 ) -> None:
@@ -293,14 +403,12 @@ def test_blocked_inference_cannot_write_after_authority_loss(
         elif event == "reset":
             assert all(rig.control.reset_runtime_state().values())
         else:
-            rig.plant.include_velocity = False
-            wait(lambda: rig.control._read_group(JOINT) is None)
+            with rig.connection._hardware_lock:
+                rig.connection._deadline = time.monotonic() - 1
             wait(
                 lambda: rig.control.task_invoke("joint_trajectory", "get_state")
                 is TrajectoryState.FAULT
             )
-            rig.plant.include_velocity = True
-            wait(lambda: rig.control._read_group(JOINT))
     finally:
         finish.set()
     time.sleep(0.065)
@@ -325,7 +433,7 @@ def test_disconnect_neutral_is_not_physical_release(make_rig: Callable[[Actor, s
 
 def test_first_held_packet_after_idle_gap_cannot_take_over() -> None:
     takeovers: list[bool] = []
-    task = QuestReference(POSE, lambda _: None, lambda: takeovers.append(True))
+    task = QuestReference(POSE, lambda: None, lambda: takeovers.append(True), Mock())
     released = Buttons(data=QUEST_FRESH)
     held = Buttons(data=QUEST_FRESH)
     held.right_grip = True
@@ -395,7 +503,7 @@ def test_raw_gap_clears_cached_pair_before_replacement(
     assert buttons[-1].right_grip and not buttons[-1].data & QUEST_FRESH
     assert len(poses) == 2
     takeovers: list[bool] = []
-    task = QuestReference(POSE, lambda _: None, lambda: takeovers.append(True))
+    task = QuestReference(POSE, lambda: None, lambda: takeovers.append(True), Mock())
     for i, msg in enumerate(buttons):
         task.on_teleop_buttons(msg, 100.0 + 0.02 * i)
     assert not takeovers
@@ -442,17 +550,42 @@ def test_cancel_revokes_arm_during_blocked_inference_while_jaw_keeps_writing(
     assert len(rig.plant.arm_writes) == 1
 
 
+def test_delayed_and_expired_references_cannot_restart_arm(
+    make_rig: Callable[[Actor, str], Rig],
+) -> None:
+    rig = make_rig(lambda _: np.asarray([HOME], dtype=np.float32), "pose")
+    worker = rig.connection
+    port = "joint_reference"
+    session = worker.open_reference(port, time.monotonic() + REFERENCE_TIMEOUT)
+    assert session is not None
+    before = time.monotonic() - 0.20
+    worker._offer(port, JointGoal(session, before, before + REFERENCE_TIMEOUT, HOME))
+    assert not rig.plant.arm_writes
+    now = time.monotonic()
+    worker._offer(port, JointGoal(session, now, now + REFERENCE_TIMEOUT, HOME))
+    wait(lambda: len(rig.plant.arm_writes) == 1)
+    jaws = len(rig.plant.jaw_writes)
+    wait(lambda: rig.plant.holds == 1)
+    now = time.monotonic()
+    worker._offer(port, JointGoal(session, now, now + REFERENCE_TIMEOUT, HOME))
+    wait(lambda: len(rig.plant.jaw_writes) > jaws + 3)
+    assert len(rig.plant.arm_writes) == 1
+
+
 @pytest.mark.parametrize("bad", ["position", "velocity", "expired", None])
 def test_planned_settle_validates_measurement_and_reports_progress(
     monkeypatch: pytest.MonkeyPatch, bad: str | None
 ) -> None:
     now = 100.0
     monkeypatch.setattr(time, "monotonic", lambda: now)
-    q, dq, expires = (2.99, *HOME[1:]), (0.0,) * 6, 103.0
+    q, dq, at, terminal = (2.99, *HOME[1:]), (0.0,) * 6, now, None
+    lifecycle = Mock()
+    lifecycle.open_reference.return_value = "token"
     task = PlannedReference(
         ((-3.0, 3.0),) * 6,
-        lambda _: Feedback(1, now, expires, q, dq),
+        lambda: ArmSample(at, q, dq, "token", terminal),
         lambda: False,
+        lifecycle,
     )
     trajectory = JointTrajectory(
         joint_names=list(JOINTS),
@@ -468,13 +601,14 @@ def test_planned_settle_validates_measurement_and_reports_progress(
     state.t_now = 1.0
     end = task.compute(state)
     assert end is not None and isinstance(end.payload, JointGoal) and end.payload.terminal
-    assert end.payload.session.submit(end.payload, lambda _: None, q)
+    terminal = now
     now += 0.02
+    at = now
     q = ((3.01 if bad == "position" else 3.0), *q[1:])
     if bad == "velocity":
         dq = (float("nan"), *dq[1:])
     if bad == "expired":
-        expires = now
+        at = now - 1
     assert task.compute(state) is None
     status = task.get_status(state.t_now)
     assert status.state is (TrajectoryState.FAULT if bad else TrajectoryState.COMPLETED)
@@ -519,3 +653,110 @@ def test_tcp_matches_native_browser_scene() -> None:
         mujoco.mj_kinematics(plant, data)
         expected = np.r_[data.xpos[tcp], data.xquat[tcp] * np.sign(data.xquat[tcp, 0])]
         np.testing.assert_allclose(tcp_pose(q), expected, rtol=0.0, atol=1e-9)
+
+
+class TestQuest(TrimodeQuest):
+    __test__ = False
+
+    @rpc
+    def start(self) -> None:
+        Module.start(self)  # no HTTP/WebXR service in this acceptance test
+
+    @rpc
+    def right(self, grip: float, x: float = 0.0) -> None:
+        # Real producer, from decoded native right-hand messages to typed output.
+        self._on_pose(PoseStamped(frame_id="right", position=(x, 0.0, 0.0)))
+        self._on_joy(Joy(frame_id="right", axes=[0, 0, 0.75, grip], buttons=[0] * 6))
+        self._publish_button_state(None, self._controllers[Hand.RIGHT])
+        self._publish_msg(Hand.RIGHT, PoseStamped(position=(x, 0.0, 0.0)))
+
+
+class TestCoordinator(TrimodeCoordinator):
+    __test__ = False
+
+    @rpc
+    def pid(self) -> int:
+        return os.getpid()
+
+
+@pytest.mark.parametrize("mode", ["pose", "position"])
+def test_cross_worker_pinned_policy_and_actual_viser_handler(mode: str) -> None:
+    artifact = os.getenv("DIMOS_TRIMODE_ONNX")
+    if not artifact:
+        pytest.skip("set DIMOS_TRIMODE_ONNX to the pinned local actor")
+    robot = model()
+    contract = declaration(robot)
+    blueprint = (
+        autoconnect(
+            TestQuest.blueprint(),
+            TestCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[contract],
+                quest_mode=mode,
+            ),
+            TestConnection.blueprint(can_port="fake", model_path=Path(artifact), **dict(contract)),
+        )
+        .remappings(
+            [
+                (TestQuest, "right_controller_output", "right_cartesian_command"),
+                (TestCoordinator, "arm_joint_state", "joint_state"),
+                (TestConnection, "position_command", "arm_position_command"),
+                (TestConnection, "joint_reference", "arm_joint_reference"),
+                (TestConnection, "tcp_pose", "arm_tcp_pose"),
+                (TestConnection, "tcp_position", "arm_tcp_position"),
+            ]
+        )
+        .solidify()
+    )
+    config = BlueprintConfigParser(blueprint).parse(
+        environ={},
+        global_overrides={
+            "viewer": "none",
+            "build_native": False,
+            "zenoh_scout_addr": os.environ["ZENOH_SCOUT_ADDR"],
+            "serve_coordinator_rpc": False,
+        },
+    )
+    system = ModuleCoordinator.build(blueprint, config)
+    manipulation = ManipulationModule(
+        model=RobotModelConfig(model=robot, joint_names=list(JOINTS), base_link="base")
+    )
+    try:
+        control, connection, quest = (
+            system.get_instance(TestCoordinator),
+            system.get_instance(TestConnection),
+            system.get_instance(TestQuest),
+        )
+        manipulation._control_coordinator = control  # type: ignore[assignment]
+        manipulation._initialize_execution()
+        manipulation._started = True
+        wait(lambda: connection.evidence()[2])
+        plant_pid, actions, _, _ = connection.evidence()
+        assert control.pid() != plant_pid and not actions
+        quest.right(0.0)
+        time.sleep(0.025)
+        quest.right(1.0, 0.004)
+        wait(lambda: connection.evidence()[1])
+        quest.right(0.0)
+        wait(lambda: connection.evidence()[3] == 1)
+        count = len(connection.evidence()[1])
+        end = (0.04, *HOME[1:])
+        generated = plan(end, 0.20)
+        manipulation._pending_plan = generated
+        manipulation._state = OperationStatus.HAS_PLAN
+        assert manipulation._execute_generated_plan(generated)
+        wait(lambda: len(connection.evidence()[1]) > count + 4)
+        connection.move_measurement(end, (1.0,) * 6)
+        time.sleep(0.2)
+        assert control.task_invoke("joint_trajectory", "get_state") is TrajectoryState.EXECUTING
+        connection.move_measurement(end, (0.0,) * 6)
+        assert manipulation.wait_for_execution(timeout=1.0).status == ExecutionStatus.COMPLETED
+        _, actions, jaws, holds = connection.evidence()
+        assert holds == 2 and jaws
+        time.sleep(REFERENCE_TIMEOUT * 1.2)
+        assert connection.evidence()[1] == actions
+    finally:
+        try:
+            manipulation.stop()
+        finally:
+            system.stop()

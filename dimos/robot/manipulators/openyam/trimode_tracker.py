@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One local, lease-guarded actor for OpenYAM arm goals."""
+"""One connection-owned actor for OpenYAM arm goals."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 import threading
@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.control.group_command import GroupCommandLease
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -110,55 +109,45 @@ def load_actor(path: Path) -> Actor:
     return infer
 
 
-@dataclass(eq=False)
-class Session:
-    """Task-side revocation fence independent of Layer A ownership."""
-
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    active: bool = True
-    terminal_at: float | None = None
-    fault: str | None = None
-
-    def close(self, reason: str | None = None) -> None:
-        with self.lock:
-            if self.active:
-                self.active = False
-                self.fault = reason
-
-    def submit(self, goal: Goal, sink: Callable[[Vector], None], q_des: Vector) -> bool:
-        with self.lock:
-            if not self.active or time.monotonic() >= goal.deadline:
-                return False
-            sink(q_des)
-            if isinstance(goal, JointGoal) and goal.terminal and self.terminal_at is None:
-                self.terminal_at = time.monotonic()
-            return True
+# Same-host monotonic timestamps. Ingress must never refresh a reference's deadline.
+REFERENCE_TIMEOUT = 0.10
 
 
 @dataclass(frozen=True, slots=True)
 class Goal:
-    session: Session
-    q: Vector
-    dq: Vector
-    target: Vector
+    session: str
+    issued_at: float
     deadline: float
+    target: Vector
 
 
 @dataclass(frozen=True, slots=True)
 class PoseGoal(Goal):
-    """World XYZ + WXYZ."""
+    """OpenYAM base-frame arm_tcp XYZ + WXYZ."""
 
 
 @dataclass(frozen=True, slots=True)
 class PositionGoal(Goal):
-    """World XYZ + non-authoritative anchor orientation."""
+    """Base-frame arm_tcp XYZ with the grip anchor orientation for conditioning."""
 
 
 @dataclass(frozen=True, slots=True)
 class JointGoal(Goal):
-    """Ordered reference radians, converted to TCP only for conditioning."""
+    """Full reference radians, ordered as OPENYAM_ARM_JOINTS."""
 
     terminal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ArmSample:
+    """Host SDK poll; not a hardware acquisition timestamp or motor receipt."""
+
+    at: float
+    q: Vector
+    dq: Vector
+    session: str | None
+    terminal_at: float | None
+    fault: str | None = None
 
 
 def goal_features(goal: Goal) -> tuple[Vector, Vector, int]:
@@ -172,33 +161,35 @@ def goal_features(goal: Goal) -> tuple[Vector, Vector, int]:
 
 
 class Tracker:
-    """A latest-value mailbox, with at most one inference per 20 ms.
+    """Latest-value mailbox; ONNX runs outside the connection's device lock."""
 
-    Sink must submit synchronously to a local plant, not enqueue, publish, or
-    call the coordinator. The sink raises if submission fails.
-    """
-
-    def __init__(self, actor: Actor, bounds: Bounds, sink: Callable[[Vector], None]) -> None:
+    def __init__(
+        self,
+        actor: Actor,
+        bounds: Bounds,
+        prepare: Callable[[Goal], ArmSample | None],
+        submit: Callable[[Goal, ArmSample, Vector], bool],
+        fail: Callable[[Goal], None],
+    ) -> None:
         if len(bounds) != 6 or any(
             not np.isfinite((lo, hi)).all() or lo >= hi for lo, hi in bounds
         ):
             raise ValueError("tracker needs six finite ordered joint bounds")
-        self._actor, self._bounds, self._sink = actor, bounds, sink
+        self._actor, self._bounds = actor, bounds
+        self._prepare, self._submit, self._fail = prepare, submit, fail
         self._condition = threading.Condition()
-        self._pending: tuple[Goal, GroupCommandLease] | None = None
+        self._pending: Goal | None = None
         self._closed = False
-        self._session: Session | None = None
+        self._session: str | None = None
         self._history = np.empty((16, 19), dtype=np.float32)
         self._previous: Vector | None = None
         self._thread = threading.Thread(target=self._run, name="openyam-trimode", daemon=True)
         self._thread.start()
 
-    def offer(self, payload: object, lease: GroupCommandLease) -> None:
-        if not isinstance(payload, (PoseGoal, PositionGoal, JointGoal)):
-            raise TypeError("expected an OpenYAM goal")
+    def offer(self, goal: Goal) -> None:
         with self._condition:
             if not self._closed:
-                self._pending = payload, lease
+                self._pending = goal
                 self._condition.notify()
 
     def close(self) -> None:
@@ -208,7 +199,7 @@ class Tracker:
             self._condition.notify()
         self._thread.join(timeout=2.0)
         if self._thread.is_alive():
-            raise RuntimeError("tri-mode worker did not exit; leases must remain revoked")
+            raise RuntimeError("tri-mode worker did not exit; authority remains revoked")
 
     def _run(self) -> None:
         next_tick = 0.0
@@ -217,37 +208,34 @@ class Tracker:
                 while not self._closed:
                     remaining = next_tick - time.monotonic()
                     if self._pending is not None and remaining <= 0:
-                        goal, lease = self._pending
-                        self._pending = None
+                        goal, self._pending = self._pending, None
                         break
                     self._condition.wait(remaining if remaining > 0 else None)
                 else:
                     return
             next_tick = time.monotonic() + PERIOD
             try:
-                self._step(goal, lease)
+                self._step(goal)
             except Exception:
-                goal.session.close("tri-mode inference or submission failed")
                 logger.exception("OpenYAM tri-mode tick failed")
+                self._fail(goal)
 
-    def _step(self, goal: Goal, lease: GroupCommandLease) -> None:
-        now = time.monotonic()
-        with goal.session.lock:
-            if not goal.session.active or now >= min(goal.deadline, lease.expires_at):
-                return
-        if not bounded(goal.q, self._bounds) or len(goal.dq) != 6 or not np.isfinite(goal.dq).all():
+    def _step(self, goal: Goal) -> None:
+        sample = self._prepare(goal)
+        if sample is None:
+            return
+        q, dq = sample.q, sample.dq
+        if not bounded(q, self._bounds) or len(dq) != 6 or not np.isfinite(dq).all():
             raise ValueError("invalid OpenYAM feedback")
         if isinstance(goal, JointGoal) and not bounded(goal.target, self._bounds):
             raise ValueError("out-of-range planned reference")
         tcp, ref, mode = goal_features(goal)
-        if goal.session is self._session and self._previous is not None:
+        if goal.session == self._session and self._previous is not None:
             history = self._history.copy()
             history[:-1] = self._history[1:]
-            history[-1] = (*goal.q, *goal.dq, *self._previous, 1.0)
+            history[-1] = (*q, *dq, *self._previous, 1.0)
         else:
-            history = np.tile(
-                np.asarray((*goal.q, *goal.dq, *goal.q, 0.0), dtype=np.float32), (16, 1)
-            )
+            history = np.tile(np.asarray((*q, *dq, *q, 0.0), dtype=np.float32), (16, 1))
             history[-1, -1] = 1.0
         obs = np.concatenate((history.ravel(), np.asarray((*tcp, *ref, mode), dtype=np.float32)))
         if not np.isfinite(obs).all():
@@ -258,10 +246,5 @@ class Tracker:
         q_des = tuple(output[0].tolist())
         if not bounded(q_des, self._bounds):
             raise ValueError("non-finite or out-of-range q_des")
-
-        def submit() -> None:
-            if goal.session.submit(goal, self._sink, q_des):
-                self._session, self._history, self._previous = goal.session, history, q_des
-
-        if not lease.try_write(submit):
-            goal.session.close("tri-mode lease revoked")
+        if self._submit(goal, sample, q_des):
+            self._session, self._history, self._previous = goal.session, history, q_des
