@@ -163,7 +163,12 @@ def test_an_l1_map_is_stamped_with_the_world_it_was_cast_in(
 
 @pytest.mark.parametrize(
     ("sensor", "loop", "stream"),
-    [("l1", "_map", "lidar"), ("livox", "_scan", "lidar"), ("livox", "_read_imu", "imu")],
+    [
+        ("l1", "_map", "lidar"),
+        # the Mid-360 scan pattern is Git LFS data
+        pytest.param("livox", "_scan", "lidar", marks=pytest.mark.self_hosted),
+        ("livox", "_read_imu", "imu"),
+    ],
 )
 def test_a_sensor_slow_to_open_still_stamps_each_reading_with_its_own_tick(
     sensor: str,

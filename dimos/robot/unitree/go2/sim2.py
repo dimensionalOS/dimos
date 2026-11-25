@@ -32,7 +32,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
-from dimos.robot.unitree.go2.connection import ConnectionConfig
+from dimos.robot.unitree.go2.connection import GO2_MODEL, ConnectionConfig
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -75,7 +75,8 @@ GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with
 
 # What a real Go2 publishes, for any module simulating one: odom unprefixed, the body its root link.
 GO2_TF_FRAMES: dict[str, dict[str, str]] = {
-    "tf_frames_local": {"body": GO2_USD.root_link},
+    # The real Go2's root link, which needs no USD read to build a blueprint; GO2_USD's matches it.
+    "tf_frames_local": {"body": GO2_MODEL.load().root_link},
     "tf_frames_global": {"odom": ConnectionConfig.model_fields["odom_frame_id"].default},
 }
 
