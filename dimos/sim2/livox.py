@@ -50,6 +50,8 @@ class LivoxSim(SimSensor):
     config: LivoxSimConfig
     lidar: Out[PointCloud2]
     imu: Out[Imu]
+    # The one view the lidar and IMU loops read, opened by whichever ticks first.
+    _opening: "asyncio.Future[WorldView] | None" = None
 
     @property
     def imu_frame_id(self) -> str:
@@ -72,6 +74,14 @@ class LivoxSim(SimSensor):
             SensorMount("lidar", self.frame_id, self.frame_id),
         )
 
+    async def _view(self) -> tuple[WorldView, bool]:
+        """The shared view, and whether this tick was spent waiting for it to open."""
+        if self._opening is None:
+            self._opening = asyncio.ensure_future(asyncio.to_thread(self._open))
+        waited = not self._opening.done()
+        # Shielded, so one loop stopping mid-open leaves the other its view.
+        return await asyncio.shield(self._opening), waited
+
     async def _scan(self) -> None:
         site = self.frame_id
         view: WorldView | None = None
@@ -79,7 +89,7 @@ class LivoxSim(SimSensor):
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
         async for _ in self._world.ticks(self.config.rate_hz):
             if view is None:
-                view = await asyncio.to_thread(self._open)
+                view, waited = await self._view()
                 sensor = sim_mid360(
                     view.raycaster(
                         self.config.geom_groups,
@@ -91,8 +101,9 @@ class LivoxSim(SimSensor):
                     if self.config.go2_occlusion
                     else None,
                 )
-                # Opening took this tick's sim time, so the next tick is the first read on time.
-                continue
+                if waited:
+                    # Opening took this tick's sim time, so the next tick is the first read on time.
+                    continue
             assert sensor is not None
             view.update(self._world)
             stamp = view.time
@@ -114,9 +125,12 @@ class LivoxSim(SimSensor):
         site, view = self.imu_frame_id, None
         async for _ in self._world.ticks(self.config.imu_rate_hz):
             if view is None:
-                view = await asyncio.to_thread(self._open)
-                # Opening took this tick's sim time, so the next tick is the first read on time.
-                continue
+                shared, waited = await self._view()
+                # Its own poses, as the lidar casts against the shared view's in a thread while this updates.
+                view = shared.twin()
+                if waited:
+                    # Opening took this tick's sim time, so the next tick is the first read on time.
+                    continue
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)
             self.imu.publish(
