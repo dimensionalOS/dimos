@@ -703,9 +703,8 @@ def test_cancel_revokes_arm_during_blocked_inference_while_jaw_keeps_writing(
     assert returned.wait(1.0)
     jaw_count = len(rig.plant.jaw_writes)
     wait(lambda: len(rig.plant.jaw_writes) > jaw_count + 3)
-    wait(lambda: len(rig.plant.arm_writes) >= 3)
-    assert tuple(np.float32(stale_action).tolist()) not in rig.plant.arm_writes
-    assert rig.plant.holds == 0
+    assert len(rig.plant.arm_writes) == 1  # Neither the late action nor an idle policy write.
+    assert rig.plant.holds == 1
 
 
 @pytest.fixture
