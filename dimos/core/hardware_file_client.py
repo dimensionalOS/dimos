@@ -151,7 +151,10 @@ def _fetch_named(asking: _Asking, cache: Path, tree: Path, uri: str, stored: Pat
         return
     directory = posixpath.dirname(uri)
     named = {}
-    for name, sha256 in _named_files(stored.read_text()).items():
+    # Through pxr, since a layer may be a binary crate (.usd, .usdc) rather than text.
+    for name, sha256 in _named_files(
+        str(pxr.Sdf.Layer.OpenAsAnonymous(str(stored)).ExportToString())
+    ).items():
         reached = posixpath.normpath(posixpath.join(directory, name))
         if not is_relative_uri(reached):
             logger.warning(f"{uri!r} names {name!r}, which is not relative to the module")
