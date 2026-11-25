@@ -35,7 +35,7 @@ from dimos.sim2.mujoco.look import (
 )
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
-from dimos.sim2.mujoco.renders import RenderProcess, Renders
+from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
 from dimos.sim2.mujoco.world import USD_SUFFIXES, SensorMount, compile_world, mount_sensor
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 
@@ -50,8 +50,13 @@ def _open_stage(scene: Path) -> Any:
 
 class MujocoView:
     def __init__(
-        self, scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None
+        self,
+        scene: Path,
+        ids: Iterable[str] = (),
+        mount: SensorMount | None = None,
+        quality: RenderQuality = RenderQuality(),
     ) -> None:
+        self._quality = quality
         self._robots = set(ids)
         # Held while the view is built, so each reader of the scene below shares its parsed layers instead of reparsing them.
         stage = _open_stage(Path(scene)) if Path(scene).suffix.lower() in USD_SUFFIXES else None
@@ -62,10 +67,15 @@ class MujocoView:
             blank_textures(spec)
         if mount is not None:
             mount_sensor(spec, mount)
-        self._tone_map = stage_tone_map(Path(scene)) if stage is not None and self._draws else None
+        self._tone_map = (
+            (quality.tone_map or stage_tone_map(Path(scene)))
+            if stage is not None and self._draws
+            else None
+        )
         if self._tone_map is not None:
             linear_textures(spec, Path(scene))
         self.model = spec.compile()
+        quality.apply_to_model(self.model)
         self._headroom = 1.0
         if self._tone_map is not None:
             # MuJoCo writes linear light to 8 bits and clips at 1, so render it scaled to fit.
@@ -157,7 +167,9 @@ class MujocoView:
             raise ValueError("a lidar or imu view has no textures to render; open a camera view")
         if self._renders is None:
             # A worker is forked, and macOS's Metal compiles no shader there (see renders.py).
-            self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(self.model)
+            self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(
+                self.model, self._quality
+            )
         # Placed here as well as where it renders, as pose() reads the cameras this places.
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)

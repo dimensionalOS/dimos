@@ -14,6 +14,7 @@
 
 """MuJoCo renders here or from an exec'd process: on macOS Metal compiles no shader in a forked worker, so a first shadow aborts it."""
 
+from dataclasses import asdict, dataclass
 from multiprocessing.connection import Connection
 import socket
 import subprocess
@@ -24,11 +25,45 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+@dataclass(frozen=True)
+class RenderQuality:
+    """How a camera draws, in MuJoCo's own render knobs; a None takes the model's (MuJoCo's default unless the scene sets it)."""
+
+    # Lights cast shadows (mjRND_SHADOW).
+    shadows: bool = True
+    # Each light's shadow map is this many texels square (vis.quality.shadowsize).
+    shadow_size: int | None = None
+    # Multisampling of the offscreen buffer, for anti-aliasing (vis.quality.offsamples).
+    samples: int | None = None
+    # Reflective materials mirror the scene (mjRND_REFLECTION).
+    reflections: bool = True
+    # The skybox is drawn behind everything (mjRND_SKYBOX).
+    skybox: bool = True
+    # Materials show their textures (mjVIS_TEXTURE).
+    textures: bool = True
+    # The tone curve applied to a stage's linear light ("agx", "neutral", "linear", "none"); None: the stage's.
+    tone_map: str | None = None
+    # MuJoCo's headlight is on; None: on only when the stage brings no lights of its own.
+    headlight: bool | None = None
+
+    def apply_to_model(self, model: mujoco.MjModel) -> None:
+        """Set the knobs a GL context reads from the model when it is made."""
+        if self.shadow_size is not None:
+            model.vis.quality.shadowsize = self.shadow_size
+        if self.samples is not None:
+            model.vis.quality.offsamples = self.samples
+        if self.headlight is not None:
+            model.vis.headlight.active = int(self.headlight)
+
+
 class Renders:
     """Renders in this process, one GL context per image size."""
 
-    def __init__(self, model: mujoco.MjModel) -> None:
+    def __init__(self, model: mujoco.MjModel, quality: RenderQuality = RenderQuality()) -> None:
         self.model = model
+        self._quality = quality
+        self._options = mujoco.MjvOption()
+        self._options.flags[mujoco.mjtVisFlag.mjVIS_TEXTURE] = int(quality.textures)
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
 
     def render(
@@ -36,9 +71,14 @@ class Renders:
     ) -> NDArray[np.uint8]:
         """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight)."""
         if (width, height) not in self._renderers:
-            self._renderers[width, height] = mujoco.Renderer(self.model, height, width)
+            renderer = mujoco.Renderer(self.model, height, width)
+            flags = renderer.scene.flags
+            flags[mujoco.mjtRndFlag.mjRND_SHADOW] = int(self._quality.shadows)
+            flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = int(self._quality.reflections)
+            flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = int(self._quality.skybox)
+            self._renderers[width, height] = renderer
         renderer = self._renderers[width, height]
-        renderer.update_scene(data, camera=camera)
+        renderer.update_scene(data, camera=camera, scene_option=self._options)
         return renderer.render().copy()
 
     def close(self) -> None:
@@ -50,7 +90,7 @@ class Renders:
 class RenderProcess:
     """Renders in a process exec'd for it, sent the model once and each pose after."""
 
-    def __init__(self, model: mujoco.MjModel) -> None:
+    def __init__(self, model: mujoco.MjModel, quality: RenderQuality = RenderQuality()) -> None:
         ours, theirs = socket.socketpair()
         self._process = subprocess.Popen(
             # -I: the child imports MuJoCo and NumPy from the interpreter's own site-packages alone.
@@ -59,7 +99,8 @@ class RenderProcess:
         )
         theirs.close()
         self._connection = Connection(ours.detach())
-        self._connection.send(model)
+        # As plain fields: the child runs this file as __main__, where the class has another name.
+        self._connection.send((model, asdict(quality)))
 
     def render(
         self, data: mujoco.MjData, camera: str, width: int, height: int
@@ -79,7 +120,8 @@ class RenderProcess:
 
 def _serve(descriptor: int) -> None:
     connection = Connection(descriptor)
-    renders = Renders(connection.recv())
+    model, quality = connection.recv()
+    renders = Renders(model, RenderQuality(**quality))
     data = mujoco.MjData(renders.model)
     try:
         while True:
