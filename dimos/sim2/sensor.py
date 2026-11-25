@@ -28,7 +28,6 @@ from dimos.sim2.world_observations import WorldMirror
 
 
 class SimSensor(HardwareModule):
-    mount_shared = frozenset({"world_observations"})
     world: SimulatedWorldSpec
     world_observations: In[WorldObservations]
 
