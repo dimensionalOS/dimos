@@ -41,13 +41,35 @@ def test_the_office_camera_sees_the_room_as_its_lighting_notes_describe_it(rende
     view.close()
 
     floor = geom == model.geom("/office_555/Geometry/slab_ground/floor").id
-    # scene.usda: "measured in frame, the floor sits around 0.44 and no pixel falls into black at all"
-    assert np.median(brightness[floor]) == pytest.approx(0.44, abs=0.1)
+    walls = np.isin(
+        geom,
+        [
+            g
+            for g in range(model.ngeom)
+            if model.geom(g).name.endswith(("_g0",)) and "/box_" in model.geom(g).name
+        ],
+    )
+    desks = np.isin(
+        geom,
+        [
+            g
+            for g in range(model.ngeom)
+            if "/desk_" in model.geom(g).name and model.geom(g).name.endswith("_g0")
+        ],
+    )
+    # scene.usda's lights and albedos were sized so AgX shows the Controller's room: its walls at 0.83 and its floor at 0.41 (Jeff's screenshot).
+    assert np.median(brightness[walls]) == pytest.approx(0.83, abs=0.06)
+    assert np.median(brightness[floor]) == pytest.approx(0.41, abs=0.06)
+    # The sun through the skylights lights patches of floor as bright as the walls (0.84 in the screenshot).
+    assert np.percentile(brightness[floor], 97) > 0.75
+    # The desks keep their orange through AgX: red over green over blue, far apart.
+    desk = np.median(image[desks].astype(float), axis=0) / 255
+    assert desk[0] > desk[1] > desk[2] and (desk[0] - desk[2]) / desk[0] > 0.4
     black = (model.geom_rgba[:, :3].max(axis=1) == 0) & (model.geom_matid < 0)
     painted = (geom >= 0) & ~black[geom]
     assert brightness[painted].min() > 0.02, "only a surface authored black renders black"
-    # The stage's neutral tone curve rolls bright walls off below white rather than clipping them.
-    assert (image[geom >= 0] >= 254).any(axis=-1).mean() == 0
+    # AgX rolls even the sunlit floor off below white.
+    assert (image[geom >= 0] >= 254).all(axis=-1).mean() == 0
 
 
 @pytest.mark.self_hosted
@@ -67,7 +89,7 @@ def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
     camera.azimuth, camera.elevation, camera.distance = 90, 70, 5
     renderer = mujoco.Renderer(model, 120, 160)
     renderer.update_scene(data, camera=camera)
-    image = display(renderer.render(), view._headroom, "neutral")
+    image = display(renderer.render(), view._headroom, "agx")
     renderer.enable_segmentation_rendering()
     renderer.update_scene(data, camera=camera)
     sky = renderer.render()[..., 0] < 0
@@ -75,5 +97,5 @@ def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
     view.close()
 
     assert sky.mean() > 0.05, "the skylight is in frame"
-    # scene.usda's dome: color (1, 0.955, 0.895) at 1.9, which the neutral curve shows near white.
+    # scene.usda's dome: white at 2.5 (times the stage's 1.05 exposure), which AgX shows at 0.88.
     assert image[sky].min() > 200
