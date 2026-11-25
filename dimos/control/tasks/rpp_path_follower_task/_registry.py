@@ -20,6 +20,7 @@ TASK_FACTORIES = {
 
 TASK_CONSUMES = {
     "rpp_path_follower": {
+        "odometry": ("on_odometry", "direct"),
         "path": ("on_path", "direct"),
         "speed": ("on_speed", "direct"),
     },

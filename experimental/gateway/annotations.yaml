@@ -109,7 +109,6 @@ modules:
   basic-path-follower: {abilities: [navigation]}
   camera-mux-module: {abilities: [remote-teleop]}
   cartesian-motion-controller: {abilities: [arm-control]}
-  cloud-relocalization: {abilities: [relocalization]}
   collection-recorder: {abilities: [data-collection]}
   cost-mapper: {abilities: [costmap]}
   dan-holonomic-tc: {abilities: [navigation]}
@@ -125,7 +124,6 @@ modules:
   g1-collection-recorder: {abilities: [data-collection]}
   g1-manipulation-module: {abilities: [motion-planning]}
   g1-recorder: {abilities: [recording]}
-  g1-sim-connection: {abilities: [simulation]}
   go2-audio-bridge-module: {abilities: [remote-teleop]}
   go2-command-module: {abilities: [remote-teleop]}
   go2-l1-lidar: {abilities: [lidar-odometry]}
@@ -145,8 +143,6 @@ modules:
   keyboard-teleop: {abilities: [keyboard-teleop]}
   keyboard-teleop-module: {abilities: [keyboard-teleop]}
   le-robot-policy-module: {abilities: [learned-policy]}
-  lidar-window-relocalization: {abilities: [relocalization]}
-  local-map-relocalization: {abilities: [relocalization]}
   local-planner-native: {abilities: [navigation]}
   manipulation-module: {abilities: [arm-control, motion-planning]}
   manipulation-skills: {abilities: [grasping]}
@@ -177,6 +173,7 @@ modules:
   point-lio: {abilities: [lidar-odometry]}
   point-nav-skill-container: {abilities: [navigation]}
   pointlio-recorder: {abilities: [recording]}
+  premap-module: {abilities: [relocalization]}
   r1-pro-lio: {abilities: [lidar-odometry]}
   ray-tracing-voxel-map: {abilities: [mapping]}
   recorder: {abilities: [recording]}
@@ -310,10 +307,6 @@ robots:
           title: Go2 holonomic controller
           description: A standalone holonomic full-pose controller for a Go2, with keyboard driving.
           recommended_config: *robot_ip_only
-        unitree-go2-keyboard-teleop:
-          title: Go2 keyboard driving (DDS)
-          description: Drive a Go2 with the keyboard through the ControlCoordinator over DDS (SDK2).
-          recommended_config: *robot_ip_only
         unitree-go2-markers:
           title: Go2 with marker detection
           description: Map and navigation plus fiducial marker detection mirrored into TF.
@@ -414,6 +407,10 @@ robots:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
           recommended_config: []
+        go2-sim-patrol:
+          title: 'Go2 in simulation (patrol)'
+          description: 'The simulated Go2 patrolling waypoints and docking to recharge, run by an orchestration workflow. No robot needed.'
+          recommended_config: []
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
@@ -438,43 +435,10 @@ robots:
           required: true
           docs: https://docs.dimensional.org/platforms/humanoid/g1/#1-get-ssh-access
       blueprints:
-        unitree-g1-basic:
-          title: G1 basic
-          description: A G1's camera, a voxel map and a costmap, with frontier exploration. Needs the robot on this network.
-          starter: 7
-        unitree-g1-basic-sim:
-          title: G1 in simulation
-          description: 'The basic G1 stack against a simulated G1: no robot needed.'
-          starter: 8
-          recommended_config: []
         unitree-g1:
-          title: G1 with perception + memory
-          description: The basic G1 stack plus spatial memory and object tracking.
-          starter: 9
-        unitree-g1-agentic:
-          title: G1 with an agent
-          description: G1 with perception and memory, plus an AI agent with G1 skills (move, observe, speak).
-          starter: 10
-        unitree-g1-agentic-sim:
-          title: G1 agent in simulation
-          description: 'The G1 agent against a simulated G1: no robot needed.'
-          recommended_config: []
-        unitree-g1-sim:
-          title: G1 perception in simulation
-          description: G1 perception and memory against a simulated G1.
-          recommended_config: []
-        unitree-g1-coordinator:
-          title: G1 control coordinator
-          description: The G1's whole-body connection behind a ControlCoordinator servo task.
-        unitree-g1-detection:
-          title: G1 with 3D detection
-          description: The basic G1 stack plus person tracking and 3D detection.
-        unitree-g1-full:
-          title: G1 full
-          description: 'Everything: perception, memory, the agent with G1 skills, and keyboard driving.'
-        unitree-g1-groot-wbc:
-          title: G1 GR00T whole-body control
-          description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
+          title: G1
+          description: 'The default G1 stack: onboard sensors, the locomotion SDK and navigation, or GR00T whole-body control under --simulation mujoco.'
+          starter: 7
           recommended_config:
           - &robot_or_simulator
             label: Run it on
@@ -483,16 +447,21 @@ robots:
             - {label: Simulator, set: {simulation: mujoco}}
           - global: robot_ip
             when: {simulation: ''}
-        unitree-g1-joystick:
-          title: G1 keyboard driving
-          description: The basic G1 stack plus keyboard driving.
-        unitree-g1-nav-simple:
-          title: G1 simple navigation
-          description: Onboard sensors, a ray-traced costmap and A* replanning (needs the Unitree SDK).
-        unitree-g1-primitive-no-nav:
-          title: G1 primitive (building block)
-          description: The minimal G1 stack without navigation that bigger G1 blueprints build on.
-          hidden: true
+        unitree-g1-groot:
+          title: G1 GR00T + navigation
+          description: GR00T whole-body control plus Mid-360 Point-LIO and ray-traced A* navigation; on the robot or in MuJoCo.
+          starter: 8
+          recommended_config:
+          - *robot_or_simulator
+          - global: robot_ip
+            when: {simulation: ''}
+        unitree-g1-groot-wbc:
+          title: G1 GR00T whole-body control
+          description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
+          recommended_config:
+          - *robot_or_simulator
+          - global: robot_ip
+            when: {simulation: ''}
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
@@ -607,7 +576,7 @@ robots:
       dirs: [dimos/robot/diy/alfred]
       defaults:
         recommended_config:
-        - module: alfredhighlevel
+        - module: flowbaseconnection
           field: address
           label: Alfred address
       blueprints:
@@ -877,6 +846,12 @@ robots:
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
+        metal-calibrate:
+          title: Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: metalconnection, field: can_port, label: CAN port or USB serial}
     dual_makermods_metal:
       name: Dual MakerMods Metal
       description: Two Metal arms in one planning and collision world.
@@ -891,6 +866,13 @@ robots:
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
           description: Coordinated motion planning, execution, and Viser for two Metal arms.
+        dual-metal-calibrate:
+          title: Dual Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial}
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -939,6 +921,12 @@ robots:
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.
+        openyam-calibrate:
+          title: OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openyamconnection, field: can_port, label: CAN port or USB serial}
     dual_openyam:
       name: Dual OpenYAM
       description: Two OpenYAM arms as one robot.
@@ -967,6 +955,13 @@ robots:
         learning-collect-leader-dual-openyam:
           title: Dual OpenYAM leader demonstration recording
           description: Drive both OpenYAM arms from the leader arms and record demonstrations.
+        dual-openyam-calibrate:
+          title: Dual OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualopenyamconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualopenyamconnection, field: right_can_port, label: Right CAN port or USB serial}
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
@@ -1012,6 +1007,13 @@ robots:
         openarm-mini-follower-collection:
           title: OpenArm Mini follower recording
           description: Record demonstrations on the robot machine while the Mini leaders run on another.
+        openarm-calibrate:
+          title: OpenArm calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial}
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -1033,6 +1035,12 @@ robots:
         coordinator-seeed-b601-dm:
           title: B601-DM coordinator
           description: A B601-DM behind a ControlCoordinator (a building block).
+        b601-dm-calibrate:
+          title: B601-DM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: b601dmconnection, field: can_port, label: CAN port, placeholder: /dev/ttyACM0}
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
@@ -1172,7 +1180,7 @@ robots:
           recommended_config:
           - {module: recordingplayer, field: dataset, label: Recording, kind: recording, streams: [[pointlio_lidar], [tf]], placeholder: the SF office recording}
           # the map made from the player's default recording, so a launch with nothing filled in relocalizes
-          - {module: localmaprelocalization, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
+          - {module: premapmodule, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.

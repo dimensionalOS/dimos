@@ -155,8 +155,12 @@ def m20_relocalization(
         relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65, "threads": 1}),
         # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
         live_cloud="lidar",
+        # match the kept live map of the scans, not the preset's window of them
+        lidar_live_map=True,
         relocalize_once=False,
         new_map=True,
+        # attempts are paced by attempt_every_sweeps (a count), not a timer
+        match_interval_s=0.0,
         # a standing robot keeps ~6-7k live voxels at 0.2 m, so the first match waits for 2k, under the 20k default
         min_local_points=2_000,
         # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
@@ -264,7 +268,7 @@ def _airy(
                 (Airy, "joint_state", "coordinator_joint_state"),
             ]
         )
-        .namespace(frame + suffix, expose={lidar, imu, "coordinator_joint_state", "tf"})
+        .namespace(frame + suffix, shared={lidar, imu, "coordinator_joint_state"})
     )
 
 

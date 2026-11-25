@@ -221,7 +221,8 @@ program on the shell's PATH. Use `no_dimos` to keep dimOS off that path.
   Totals cover recorded assistant responses; interrupted requests may have
   unreported usage. Keep raw attempts when auditing spend.
 
-Errors stay in the summary denominator. An agent error preserves completed
+`mean_score` and `pass_rate` skip `error` rows; `n` and `errors` still count
+the whole suite. An agent error preserves completed
 steps, returns `ended_by=error`, and cannot pass. The runner saves a returned
 trajectory before environment teardown so teardown failures retain evidence.
 Raw requests preserve the actual tools/schemas used on each call; the ATIF
@@ -298,7 +299,8 @@ n=1 mean=1.0 pass_rate=1.0 errors=0
 ```
 
 That's the whole loop: environment -> agent -> trajectory + artifacts ->
-grade -> run dir.
+grade -> run dir. ``mean_score`` and ``pass_rate`` skip cases with ``error``
+(preflight, crash); ``n`` and ``errors`` still count the whole suite.
 
 To run your cases through the CLI, put them in an importable module with
 `SUITE: Suite = [case]`, importing `Suite` from `dimos.evals.types`.

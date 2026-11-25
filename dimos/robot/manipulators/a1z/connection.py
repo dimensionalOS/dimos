@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import contextlib
+from importlib import import_module
 import math
 from pathlib import Path
 import platform
@@ -156,6 +157,17 @@ class A1ZConnection(ConnectionModule):
 
     position_command: In[JointState]
     joint_state: Out[JointState]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        try:
+            import_module("a1z.robots.get_robot")
+        except ImportError as exc:
+            raise ImportError(
+                f"A1Z vendor SDK unavailable: {exc}. "
+                "Install the pinned SDK with `bin/hardware/a1z/setup` "
+                "(see docs/capabilities/manipulation/a1z.md)."
+            ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

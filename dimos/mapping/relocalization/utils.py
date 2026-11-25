@@ -17,15 +17,14 @@
 from __future__ import annotations
 
 from collections import deque
-from functools import reduce
 import math
-import operator
 from pathlib import Path
 import re
 import threading
 
 import numpy as np
 from reactivex import Observable, operators as ops
+from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.mapping.relocalization.cloud_relocalizer import RelocalizeConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -51,7 +50,14 @@ def window(scans: Observable[PointCloud2], cfg: RelocalizeConfig) -> Observable[
             # A snapshot, so the merge on the worker never sees the deque change under it
             ops.map(lambda _: tuple(held)),
         )
-    ).pipe(ops.map(lambda frames: reduce(operator.add, frames)))
+    ).pipe(ops.map(_merged))
+
+
+def _merged(frames: tuple[PointCloud2, ...]) -> PointCloud2:
+    points = np.concatenate([frame.points_f32().reshape(-1, 3) for frame in frames])
+    return PointCloud2.from_numpy(
+        points, frame_id=frames[0].frame_id, timestamp=max(frame.ts for frame in frames)
+    )
 
 
 _PREMAP_BIT = 1 << FLAG_NAMES.index("premap")
@@ -70,7 +76,19 @@ def _pack(points: np.ndarray, voxel: float) -> np.ndarray:
 def moved(points: np.ndarray, tf: Transform) -> np.ndarray:
     """*points* in tf's child frame, expressed in its parent frame."""
     matrix = tf.to_matrix()
-    return (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+    placed: np.ndarray = (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+    return placed
+
+
+def blend(start: Transform, end: Transform, weight: float) -> Transform:
+    """*start* moved *weight* (0-1) of the way to *end*."""
+    a, b = start.to_matrix(), end.to_matrix()
+    matrix = np.eye(4)
+    matrix[:3, :3] = Slerp([0.0, 1.0], Rotation.from_matrix([a[:3, :3], b[:3, :3]]))(
+        weight
+    ).as_matrix()
+    matrix[:3, 3] = (1.0 - weight) * a[:3, 3] + weight * b[:3, 3]
+    return Transform.from_matrix(matrix, frame_id=end.frame_id, child_frame_id=end.child_frame_id)
 
 
 class LiveMap:
@@ -102,8 +120,8 @@ class LiveMap:
             all_keys = np.concatenate([keys, self._keys])
             all_points = np.concatenate([points, self._points])
             # First occurrence wins, so a voxel's newest point is kept.
-            self._keys, first = np.unique(all_keys, return_index=True)
-            self._points = all_points[first]
+            unique_keys, first = np.unique(all_keys, return_index=True)
+            self._keys, self._points = unique_keys, all_points[first]
 
     def cloud(
         self, frame_id: str, center: tuple[float, float] | None, radius: float
@@ -211,7 +229,7 @@ def fix_error(fix: Transform, recorded: Transform) -> tuple[float, float]:
 
 
 def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:
-    """The locations in the last snapshot on *stream* of a .db or .mcap."""
+    """The last locations snapshot in a .db or .mcap, or none if the stream is absent."""
     from dimos.memory.cli.dataset import open_store
 
     if not Path(path).exists():
@@ -220,7 +238,6 @@ def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:
     with open_store(path, decode_metadata=True) as store:
         name = find_stream(store.list_streams(), stream)
         if name is None:
-            logger.warning(f"{path} has no {stream!r} stream, starting with no named locations")
             return {}
         last: InteractiveMarkerUpdate = store.stream(name).last().data
     return {named.name: pose_of(named) for named in last.poses}

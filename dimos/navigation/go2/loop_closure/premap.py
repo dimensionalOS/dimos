@@ -238,18 +238,22 @@ class Premap:
 
     @classmethod
     def load(cls, name: str | Path) -> Premap:
-        """A premap by path, stem, or LFS name; ``.map.db`` is appended if absent."""
-        with SqliteStore(path=str(resolve_named_path(name, MAP_SUFFIX)), must_exist=True) as store:
+        """Read a nonempty keyframe premap by path, stem, or LFS name without modifying it."""
+        path = resolve_named_path(name, MAP_SUFFIX)
+        with SqliteStore(path=str(path), read_only=True) as store:
+            streams = store.list_streams()
+            if KEYFRAMES not in streams or not store.stream(KEYFRAMES, PointCloud2).count():
+                raise ValueError(
+                    f"{path} is not a usable keyframe premap: no keyframes. "
+                    "For unitree-go2, use the .map.db written by 'dimos map global --export'. "
+                    "Cloud maps from --export-cloud are for relocalize-mid360."
+                )
             # by keyframe index, not stamp: a joint map's sessions can interleave in time
             loaded = [(o, o.data) for o in store.stream(KEYFRAMES, PointCloud2)]
             loaded.sort(key=lambda pair: _keyframe_index(pair[1].frame_id))
             kfs = [o for o, _ in loaded]
             scans = tuple(cloud.points_f32() for _, cloud in loaded)
-            odom = (
-                [o.data for o in store.stream(EDGES, Odometry)]
-                if EDGES in store.list_streams()
-                else []
-            )
+            odom = [o.data for o in store.stream(EDGES, Odometry)] if EDGES in streams else []
         poses = [pose_matrix(o.pose) for o in kfs if o.pose is not None]
         assert len(poses) == len(kfs), "every keyframe carries its pose"
         return cls(

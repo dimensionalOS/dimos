@@ -41,7 +41,10 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
 from dimos.robot.get_all_blueprints import get_by_name_or_exit
-from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.manipulators.a1z.connection import A1ZConnection
+from dimos.robot.manipulators.a750.connection import A750Connection
+from dimos.robot.manipulators.piper.connection import PiperConnection
+from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection
@@ -315,7 +318,13 @@ def stubbed_run(
 
         @classmethod
         def build(
-            cls, blueprint: Any, parsed_config: Any = None, *, remote_module_refs: Any = None
+            cls,
+            blueprint: Any,
+            parsed_config: Any = None,
+            *,
+            reserve_rpc_name: str | None = None,
+            module_rpc_namespace: str | None = None,
+            remote_module_refs: Any = None,
         ) -> "FakeCoordinator":
             recorded["blueprint"] = blueprint
             recorded["parsed_config"] = parsed_config
@@ -631,6 +640,39 @@ def test_run_reports_missing_dependency_before_starting(
     fork_daemon.assert_not_called()
 
 
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+@pytest.mark.parametrize(
+    ("module", "dependency", "hint"),
+    [
+        (A1ZConnection, "a1z.robots.get_robot", "bin/hardware/a1z/setup"),
+        (A750Connection, "a750_control", "uv pip install a750-control"),
+        (PiperConnection, "piper_sdk", "uv sync --extra control"),
+        (XArmConnection, "xarm.wrapper", "uv sync --extra control"),
+    ],
+)
+@pytest.mark.parametrize(
+    "import_error", [ModuleNotFoundError("SDK missing"), ImportError("undefined symbol: example")]
+)
+def test_run_reports_unavailable_arm_sdk_before_starting(
+    stubbed_run, mocker, run_options, module, dependency, hint, import_error
+) -> None:
+    # Exercise the arm's check without resolving hardware URDFs during config validation.
+    mocker.patch.object(RunModuleA, "check_dependencies", side_effect=module.check_dependencies)
+    import_sdk = mocker.patch(f"{module.__module__}.import_module", side_effect=import_error)
+    fork_daemon = mocker.patch.object(lifecycle, "fork_daemon")
+
+    result = CliRunner().invoke(main, ["run", "alpha", *run_options])
+
+    assert result.exit_code == 1, result.output
+    assert "SDK unavailable" in result.output
+    assert str(import_error) in result.output
+    assert result.output.count(hint) == 1
+    assert "Traceback" not in result.output
+    assert stubbed_run == {}
+    import_sdk.assert_called_once_with(dependency)
+    fork_daemon.assert_not_called()
+
+
 def test_run_leaves_hosted_dependency_checks_to_the_host(
     stubbed_run: dict[str, Any],
     mocker: MockerFixture,
@@ -653,6 +695,32 @@ def test_run_leaves_hosted_dependency_checks_to_the_host(
     assert "blueprint" not in stubbed_run
 
 
+def test_hosted_run_announces_host_discovery_before_waiting(
+    stubbed_run: dict[str, Any], mocker: MockerFixture
+) -> None:
+    mocker.patch.object(
+        get_all_blueprints,
+        "get_by_name_or_exit",
+        return_value=RunModuleA.blueprint().hosted(host="robot-host"),
+    )
+    mocker.patch("dimos.hosted.machine.local_host", return_value=None)
+    mocker.patch("dimos.hosted.client.root_rpc")
+    mocker.patch("signal.signal")
+    echo = mocker.spy(lifecycle.typer, "echo")
+
+    def wait_for_hosts(*args: Any, **kwargs: Any) -> None:
+        echo.assert_any_call("Waiting for Hosts...")
+        raise TimeoutError("no live Host named or identified by 'robot-host'")
+
+    mocker.patch("dimos.hosted.deploy.wait_for_hosts", side_effect=wait_for_hosts)
+
+    result = CliRunner().invoke(main, ["--zenoh-connect", "tcp/127.0.0.1:7447", "run", "alpha"])
+
+    assert result.exit_code == 1, result.output
+    assert "Waiting for Hosts..." in result.output
+    assert "Error: no live Host named or identified by 'robot-host'" in result.output
+
+
 @pytest.mark.parametrize(
     ("module", "options", "message"),
     [
@@ -661,7 +729,6 @@ def test_run_leaves_hosted_dependency_checks_to_the_host(
         (GO2Connection, ["--go2connection.ip", " "], "No robot IP specified"),
         (Go2FleetConnection, [], "No robot IPs specified"),
         (Go2FleetConnection, ["--go2fleetconnection.ips", "[]"], "No robot IPs specified"),
-        (G1Connection, [], "No robot IP specified"),
         (G1HighLevelWebRtc, [], "No robot IP specified"),
     ],
 )
@@ -879,6 +946,14 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert result.exit_code == 0, result.output
     assert stubbed_run["parsed_config"].module_kwargs("runmodulea")["entity_prefix"] == "hall"
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
+
+
+def test_run_help_without_blueprint(isolated_cache_locks: None) -> None:
+    result = CliRunner().invoke(main, ["run", "--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--daemon" in output_plain
 
 
 def test_run_help_lists_dynamic_flags_without_starting(
