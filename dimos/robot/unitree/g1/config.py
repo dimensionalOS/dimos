@@ -27,9 +27,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 
 G1_JOINT_NAMES = make_humanoid_joints("g1")
-G1_JOINT_MODEL = RobotModel.from_file(Path(__file__).parent / "g1.urdf").with_renamed_joints(
-    {f"{name.partition('/')[2]}_joint": name for name in G1_JOINT_NAMES}
-)
+# g1.urdf names its meshes meshes/<link>.STL, and they live in assets/meshes.
+G1_JOINT_MODEL = RobotModel.from_file(
+    Path(__file__).parent / "g1.urdf", asset_dir=Path(__file__).parent / "assets"
+).with_renamed_joints({f"{name.partition('/')[2]}_joint": name for name in G1_JOINT_NAMES})
 
 
 @dataclass(frozen=True)
