@@ -52,7 +52,6 @@ SPOTS = {
 # A room camera behind the robots, as an optical frame (z forward, y down): looking along +y, 25 degrees down.
 OVERVIEW = ((-0.1, -10.5, 2.2), (-(math.pi / 2 + math.radians(25)), 0.0, 0.0))
 DRIVEN = "main"
-WORLD = {"world_observations", "actions"}
 # GR00T was trained at 50 Hz.
 POLICY_HZ = 50.0
 
@@ -120,7 +119,7 @@ def _g1(spot: str) -> MetaBlueprint:
                 (LivoxSim, "imu", "lidar_imu"),
             ]
         )
-        .namespace(spot, shared=WORLD | ({"cmd_vel"} if spot == DRIVEN else set()))
+        .namespace(spot, shared={"cmd_vel"} if spot == DRIVEN else set())
     )
 
 

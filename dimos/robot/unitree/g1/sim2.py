@@ -54,7 +54,7 @@ from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, fetched_usd, until_it_stops
+from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror
@@ -111,7 +111,7 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
     imu: Out[Imu]
     odom: Out[PoseStamped]
     world_observations: In[WorldObservations]
-    actions: Out[WorldAction]
+    world_actions: Out[WorldAction]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -163,7 +163,7 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         scale = min(1.0, (now - self._soft_start) / duration) if duration > 0 else 1.0
         joints = self.joint_names
         names = tuple(_usd_joint(name) for name in joints)
-        self.actions.publish(
+        self.world_actions.publish(
             world_action(
                 self._world,
                 JointCommand(
@@ -184,7 +184,7 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         if not hasattr(self, "_world") or not self._world.ids:
             return
         names = tuple(_usd_joint(name) for name in self.joint_names)
-        self.actions.publish(
+        self.world_actions.publish(
             world_action(
                 self._world,
                 JointCommand(
@@ -232,9 +232,8 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         """A view of this G1 alone, mounted as in the world: its IMU reads its own body, and compiling the room for it costs seconds."""
         mount = self.mounted_on()
         assert mount is not None
-        # Its own files over its own hardware_file streams, as the world fetches them.
         alone = compose_usds(
-            [(frame_usd(mount, name="world").usd, None), (fetched_usd(self), mount)]
+            [(frame_usd(mount, name="world").usd, None), (self.local_usd(), mount)]
         )
         return open_view(
             layer_file(alone.usd, "g1"),
