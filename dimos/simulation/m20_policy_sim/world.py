@@ -83,10 +83,10 @@ def terrain_xml(t: Terrain) -> str:
             )
     if t.kind == "charge_dock":
         out = np.array([-math.cos(t.post_yaw), -math.sin(t.post_yaw)])
-        side = np.array([-out[1], out[0]])
+        across = np.array([-out[1], out[0]])
         mid = np.array([t.post_x, t.post_y])
         for k, sign in enumerate((-1, 1)):
-            x, y = mid + sign * t.post_spacing / 2 * side
+            x, y = mid + sign * t.post_spacing / 2 * across
             geoms.append(
                 f'<geom name="reflector{k}" type="cylinder" pos="{x} {y} {t.post_height / 2}" '
                 f'size="{t.post_radius} {t.post_height / 2}" rgba="0.95 0.95 0.95 1"/>'
@@ -151,7 +151,7 @@ class World:
     ) -> None:
         """Place the robot with joint pose `pose`, its lowest wheel touching the ground, and settle 0 s."""
         d = self.data
-        mujoco.mj_resetData(self.model, d)
+        mujoco.mj_resetData(self.model, d)  # type: ignore[attr-defined]  # missing from stubs/mujoco
         d.qpos[0:2] = xy
         d.qpos[3:7] = [np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]
         d.qpos[7:23] = pose
@@ -240,7 +240,7 @@ class World:
                 continue
             for j, py in enumerate(ys):
                 pt = np.array([base[0] + c * px - s * py, base[1] + s * px + c * py, 2.0])
-                dist = mujoco.mj_ray(
+                dist = mujoco.mj_ray(  # type: ignore[attr-defined]  # missing from stubs/mujoco
                     self.model, d, pt, np.array([0, 0, -1.0]), group, 1, -1, geomid
                 )
                 v = base[2] - (2.0 - dist if dist >= 0 else 0.0) - offset

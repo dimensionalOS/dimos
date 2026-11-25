@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 import numpy as np
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # Python 3.10: pyproject's tomli
+else:  # Python 3.10: pyproject's tomli
     import tomli as tomllib
 
 CONFIG_PATH = (
@@ -69,5 +70,5 @@ def tile(values: Any, n: int) -> np.ndarray:
 def runner_for_gait(cfg: dict[str, Any], gait: int) -> str | None:
     for name, runner in cfg["runners"].items():
         if gait in runner["gaits"]:
-            return name
+            return str(name)
     return None

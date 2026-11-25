@@ -27,6 +27,7 @@ import itertools
 import json
 from pathlib import Path
 import struct
+from typing import Any
 
 import numpy as np
 
@@ -60,7 +61,12 @@ RECORD = np.dtype(
 KP, Q, KD, DQ = range(4)
 
 
-def read_log(path: Path) -> tuple[dict, np.ndarray]:
+def on_bus(gains: np.ndarray) -> np.ndarray:
+    """kp / kd as the bus carries them, in 0.1 steps."""
+    return np.round(gains * 10.0)
+
+
+def read_log(path: Path) -> tuple[dict[str, Any], np.ndarray]:
     data = path.read_bytes()
     if data[:8] != MAGIC:
         raise ValueError(f"{path}: not a shadow log")
@@ -75,19 +81,15 @@ def read_log(path: Path) -> tuple[dict, np.ndarray]:
     return header, np.frombuffer(body[:usable], RECORD)
 
 
-def load(paths: list[Path]) -> tuple[dict, np.ndarray]:
+def load(paths: list[Path]) -> tuple[dict[str, Any], np.ndarray]:
     files = sorted(p for x in paths for p in (sorted(x.glob("*.m20shadow")) if x.is_dir() else [x]))
-    header, parts = None, []
-    for f in files:
-        h, r = read_log(f)
-        header = header or h
-        parts.append(r)
-    if not parts:
+    logs = [read_log(f) for f in files]
+    if not logs:
         raise SystemExit("no shadow logs found")
-    return header, np.concatenate(parts)
+    return logs[0][0], np.concatenate([r for _, r in logs])
 
 
-def phases(header: dict, rec: np.ndarray) -> list[tuple[str, int, int]]:
+def phases(header: dict[str, Any], rec: np.ndarray) -> list[tuple[str, int, int]]:
     """Runs of the same (state, runner) in the log."""
     key = rec["state"].astype(np.int64) * 256 + rec["runner"]
     edges = [0, *(np.where(np.diff(key) != 0)[0] + 1), len(rec)]
@@ -102,7 +104,7 @@ def phases(header: dict, rec: np.ndarray) -> list[tuple[str, int, int]]:
     return out
 
 
-def summarize(header: dict, rec: np.ndarray) -> list[dict]:
+def summarize(header: dict[str, Any], rec: np.ndarray) -> list[dict[str, Any]]:
     legs = np.arange(16) % 4 != 3
     report = []
     t0 = rec["t_ns"][0]
@@ -133,8 +135,7 @@ def summarize(header: dict, rec: np.ndarray) -> list[dict]:
             e["q_worst_joint_median"] = float(np.median(np.abs(dq).max(1)).round(5))
             e["q_worst_joint_p95"] = float(np.percentile(np.abs(dq).max(1), 95).round(5))
             e["wheel_dq_rms"] = np.sqrt(np.mean(w**2, 0)).round(4).tolist()
-            # the bus carries kp / kd in 0.1 steps: compare those steps
-            on_bus = lambda v: np.round(v * 10.0)  # noqa: E731
+            # compare the gains in the bus's 0.1 steps
             e["kp_match"] = float(
                 np.mean(np.all(on_bus(gain_quant(ours[:, KP])) == on_bus(rl[:, KP]), 1))
             )
@@ -146,7 +147,7 @@ def summarize(header: dict, rec: np.ndarray) -> list[dict]:
     return report
 
 
-def page(header: dict, rec: np.ndarray, report: list[dict], path: Path) -> None:
+def page(header: dict[str, Any], rec: np.ndarray, report: list[dict[str, Any]], path: Path) -> None:
     rows = np.arange(0, len(rec), 20)
     t = ((rec["t_ns"][rows] - rec["t_ns"][0]) / 1e9).round(3).tolist()
     series = {"t": t, "joints": JOINT_NAMES, "recorded": {}, "ours": {"shadow": {}}}

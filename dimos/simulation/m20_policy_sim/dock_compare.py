@@ -63,7 +63,7 @@ def main() -> None:
     vendor = [v for v in vendor_poses(sys.argv[2]) if ours[0][0] <= v[0] <= ours[-1][0] + 0.5]
     print(f"{len(ours)} sweeps with the dock, {len(vendor)} charge_manager poses in their span")
 
-    def nearest(t: float):
+    def nearest(t: float) -> tuple[float, float, float, float] | None:
         best = min(ours, key=lambda o: abs(o[0] - t))
         return best if abs(best[0] - t) < 0.06 else None
 

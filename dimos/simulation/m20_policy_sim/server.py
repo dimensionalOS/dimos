@@ -36,6 +36,7 @@ import json
 import math
 import socket
 import struct
+from typing import Any
 
 import numpy as np
 
@@ -64,15 +65,15 @@ def pack(values: np.ndarray) -> bytes:
 
 
 class Session:
-    def __init__(self, cfg: dict) -> None:
+    def __init__(self, cfg: dict[str, Any]) -> None:
         self.cfg = cfg
-        self.height_map: dict | None = None
+        self.height_map: dict[str, Any] | None = None
         self.rng: np.random.Generator | None = None
         self.seed: int | None = None
         self.world = World(Terrain(), torque_limit=np.tile(cfg["robot"]["torque_limit"], 4))
         self.reset({})
 
-    def reset(self, req: dict) -> None:
+    def reset(self, req: dict[str, Any]) -> None:
         terrain = Terrain(**req.get("terrain", {}))
         if terrain != self.world.terrain:
             self.world = World(terrain, torque_limit=np.tile(self.cfg["robot"]["torque_limit"], 4))
@@ -84,7 +85,7 @@ class Session:
         self.world.reset(np.asarray(pose, np.float64))
         self.height_map = req.get("height_map")
         self.ticks = 0
-        self.heights = None
+        self.heights: np.ndarray | None = None
 
     def state(self) -> bytes:
         s = self.world.state()
@@ -106,7 +107,7 @@ class Session:
         yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
         return pack(np.array([*pos, *v, tilt, contact, self.world.time, yaw]))
 
-    def lidar(self, req: dict) -> bytes:
+    def lidar(self, req: dict[str, Any]) -> bytes:
         if self.rng is None or ("seed" in req and req["seed"] != self.seed):
             self.seed = req.get("seed", 0)
             self.rng = np.random.default_rng(self.seed)

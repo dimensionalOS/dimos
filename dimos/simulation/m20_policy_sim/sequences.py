@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import math
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 
@@ -38,6 +38,8 @@ from dimos.simulation.m20_policy_sim.world import Terrain, World
 Drive = Callable[[RobotState, UserCommand], JointCommand]
 # closed-loop axes from the world (for docking), physical (vx, vy, wz)
 Steer = Callable[[World], np.ndarray]
+# a sequence's pass / fail checks over its log: name -> (value, passed)
+Checks = Callable[[World, list[dict[str, Any]]], dict[str, tuple[float, bool]]]
 
 # the base must be at least this high in the rl_control stand segment (lying is about 0.11 m)
 MIN_STAND_HEIGHT = 0.3
@@ -65,7 +67,7 @@ class Sequence:
     segments: list[Segment]
     terrain: Terrain = field(default_factory=Terrain)
     # extra pass checks on the finished world: name -> (value, ok)
-    checks: Callable[[World, list[dict[str, Any]]], dict[str, tuple[float, bool]]] | None = None
+    checks: Checks | None = None
     # max |error| / |command| allowed per tracked axis for a pass
     tracking_tolerance: float = 0.5
     # a known failure and why: reported as XFAIL, not counted against the run
@@ -84,7 +86,7 @@ def nearest_entry_gait(cfg: dict[str, Any], runner: str) -> int:
         d = float(np.linalg.norm(np.array(cfg["runners"][name]["default_pose"]) - pose))
         if d < best_d - 1e-9:
             best, best_d = gait, d
-    return best
+    return int(best)
 
 
 def entry_segments(cfg: dict[str, Any], runner: str) -> list[Segment]:
@@ -204,7 +206,19 @@ def run_sequence(
 
 # HeightGap's map as rl_deploy's HeightsSubCallback filters it [C]; the grid spacing, orientation and offset are not
 # in the binary (height_map_nav makes the image) [I]
-HEIGHT_MAP_GRID = dict(
+class HeightMapGrid(TypedDict):
+    """World.height_map's grid arguments past rows and cols."""
+
+    spacing_x: float
+    spacing_y: float
+    offset: float
+    min_value: float
+    fill: float
+    min_row: int
+    front_first: bool
+
+
+HEIGHT_MAP_GRID = HeightMapGrid(
     spacing_x=0.05,
     spacing_y=0.05,
     offset=0.1,

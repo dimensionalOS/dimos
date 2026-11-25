@@ -35,7 +35,7 @@ from pathlib import Path
 import re
 import struct
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -48,6 +48,15 @@ from dimos.simulation.m20_policy_sim.config import (
 )
 from dimos.simulation.m20_policy_sim.controller import Controller, UserCommand
 from dimos.simulation.m20_policy_sim.runner import RobotState, Runner
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+# journal.log / capture events by kind, each time-sorted with its time first: states (t, name), gaits (t, gait),
+# heights (t, scale), nav (t, x, y, yaw, z, roll, pitch, metric)
+Events = dict[str, list[tuple[Any, ...]]]
+# build_plan's state segments and policy steps, as plan.json carries them
+PlanEntry = dict[str, Any]
 
 JOINT_NAMES = [
     f"{leg}_{part}_joint"
@@ -107,11 +116,11 @@ def load_joints(session: Path, cache: Path) -> dict[str, np.ndarray]:
     out = {"t": df["t_ns"].to_numpy(np.int64)}
     for f in FIELDS:
         out[f] = np.stack([df[f"{j}.{f}"].to_numpy(np.float64) for j in JOINT_NAMES], 1)
-    np.savez(path, **out)
+    np.savez(path, allow_pickle=False, **out)
     return out
 
 
-def pcap_udp(path: Path):
+def pcap_udp(path: Path) -> Iterator[tuple[float, int, bytes]]:
     """(time s, dst port, payload) per IPv4 UDP packet of a pcap (Ethernet or Linux cooked capture)."""
     with open(path, "rb") as f:
         head = f.read(24)
@@ -131,7 +140,7 @@ def pcap_udp(path: Path):
             yield sec + frac * (1e-9 if nano else 1e-6), dport, d[off + ihl + 8 :]
 
 
-def rtps_data(payload: bytes):
+def rtps_data(payload: bytes) -> Iterator[bytes]:
     """Serialized payloads of the DATA submessages of one RTPS message."""
     if payload[:4] != b"RTPS":
         return
@@ -150,7 +159,7 @@ def load_imu(session: Path, cache: Path) -> dict[str, np.ndarray]:
     path = cache / "imu.npz"
     if path.exists():
         return dict(np.load(path))
-    rows: dict[float, tuple] = {}
+    rows: dict[float, tuple[float, ...]] = {}
     for t, _dport, p in pcap_udp(session / "net.pcap"):
         for d in rtps_data(p):
             if len(d) != IMU_SAMPLE_BYTES:
@@ -162,7 +171,7 @@ def load_imu(session: Path, cache: Path) -> dict[str, np.ndarray]:
     # none since 2026-11-21 (yesense hands /IMU_DATA to rl_deploy over shared memory, which no capture sees)
     a = np.array([rows[k] for k in sorted(rows)]).reshape(-1, 10)
     out = {"t": a[:, 0], "rpy_deg": a[:, 1:4], "gyro": a[:, 4:7], "accel": a[:, 7:10]}
-    np.savez(path, **out)
+    np.savez(path, allow_pickle=False, **out)
     return out
 
 
@@ -194,9 +203,11 @@ def load_commands(session: Path, cache: Path) -> np.ndarray:
     """(t, x, y, yaw, z, roll, pitch, metric) per command sample from either command writer, time-sorted."""
     path = cache / "commands_v3.npy"
     if path.exists():
-        return np.load(path)
+        cached: np.ndarray = np.load(path)
+        return cached
     writers = {bytes.fromhex(k): v for k, v in COMMAND_WRITERS.items()}
-    seen, rows = set(), []
+    seen: set[tuple[bytes, bytes]] = set()
+    rows: list[tuple[float, ...]] = []
     for t, _dport, p in pcap_udp(session / "net.pcap"):
         if p[:4] != b"RTPS":
             continue
@@ -225,9 +236,11 @@ def load_commands(session: Path, cache: Path) -> np.ndarray:
     return a
 
 
-def load_events(session: Path) -> dict[str, list]:
+def load_events(session: Path) -> Events:
     """rl_deploy's state transitions, actual gait switches and height inputs (journal.log)."""
-    states, gaits, heights = [], [], []
+    states: list[tuple[Any, ...]] = []
+    gaits: list[tuple[Any, ...]] = []
+    heights: list[tuple[Any, ...]] = []
     for line in (session / "journal.log").read_text().splitlines():
         if line.startswith("--"):
             continue
@@ -247,11 +260,11 @@ class Session:
     rec: dict[str, np.ndarray]  # recorded joint arrays (rows x 16)
     imu: dict[str, np.ndarray]
     imu_row: np.ndarray  # latest IMU sample index at or before each row
-    events: dict[str, list]
+    events: Events
 
     def missing_before(self, row: int) -> int:
         """Control ticks with no recorded frame between row - 1 and row."""
-        return max(0, round((self.t[row] - self.t[row - 1]) * 1000.0) - 1)
+        return max(0, round(float(self.t[row] - self.t[row - 1]) * 1000.0) - 1)
 
     def state(self, row: int) -> RobotState:
         row = max(row, 0)
@@ -282,7 +295,7 @@ def load_session(session: Path, cache: Path) -> Session:
 # ------------------------------------------------------------------------------------------------------- the plan
 
 
-def gains_runs(s: Session) -> list[tuple[int, int, tuple]]:
+def gains_runs(s: Session) -> list[tuple[int, int, tuple[float, ...]]]:
     """Runs of rows with the same (leg kp, leg kd, wheel kd, control word)."""
     g = np.nan_to_num(
         np.c_[s.rec["kp"][:, 1], s.rec["kd"][:, 1], s.rec["kd"][:, 3], s.rec["word"][:, 0]], nan=-1
@@ -291,7 +304,7 @@ def gains_runs(s: Session) -> list[tuple[int, int, tuple]]:
     return [(a, b, tuple(g[a])) for a, b in itertools.pairwise(edges)]
 
 
-def last_before(events: list, t: float, default: Any = None) -> Any:
+def last_before(events: list[tuple[Any, ...]], t: float, default: Any = None) -> Any:
     out = default
     for e in events:
         if e[0] > t:
@@ -318,11 +331,12 @@ def gains_match(s: Session, cfg: dict[str, Any], runner: str, row: int) -> bool:
 
 def build_plan(
     s: Session, cfg: dict[str, Any], lag: int, nav_normalized: bool | None, persist: bool = True
-):
+) -> tuple[list[PlanEntry], list[PlanEntry]]:
     """State segments (forced into the Controller at their first row) and policy steps (row, runner, inputs)."""
     rows_t = s.t
     enable_rows = [a for a, b, g in gains_runs(s) if g[3] == cfg["ecan_enable_word"]]
-    segments, steps = [], []
+    segments: list[PlanEntry] = []
+    steps: list[PlanEntry] = []
     # state segments start at the enable frames rl_deploy sends on entering a state, or at the recording's start
     starts = [0, *enable_rows]
     for k, a in enumerate(starts):
@@ -374,21 +388,25 @@ def build_plan(
             # settle_params until the handover
             if prev_gait != STAND_IN_GAIT:
                 stand_in_start = t
-            nxt = (
+            handover = (
                 (t, stand_in_for)
                 if stand_in_for
                 else next((e for e in s.events["gaits"] if e[0] > t), None)
             )
-            spec = next(
-                (
-                    si
-                    for si in cfg["states"]["rl_control"]["stand_in"]
-                    if nxt and si["gait"] == nxt[1]
-                ),
-                None,
+            spec = (
+                next(
+                    (
+                        si
+                        for si in cfg["states"]["rl_control"]["stand_in"]
+                        if si["gait"] == handover[1]
+                    ),
+                    None,
+                )
+                if handover is not None
+                else None
             )
-            if spec is not None:
-                first = spec["first_s"] if nxt[1] == 0x1001 else spec["later_s"]
+            if handover is not None and spec is not None:
+                first = spec["first_s"] if handover[1] == 0x1001 else spec["later_s"]
                 params.update(
                     spec["params"] if t - stand_in_start < first else spec["settle_params"]
                 )
@@ -459,7 +477,7 @@ def recorded_action(s: Session, spec: dict[str, Any], row: int) -> np.ndarray:
     return a
 
 
-def add_teacher_actions(s: Session, cfg: dict[str, Any], steps) -> None:
+def add_teacher_actions(s: Session, cfg: dict[str, Any], steps: list[PlanEntry]) -> None:
     """One-step mode: each step after the first of a run gets rl_deploy's previous action as its last action."""
     for k, st in enumerate(steps):
         prev = steps[k - 1] if k else None
@@ -469,14 +487,20 @@ def add_teacher_actions(s: Session, cfg: dict[str, Any], steps) -> None:
             ).tolist()
 
 
-def run_python(s: Session, cfg: dict[str, Any], segments, steps) -> dict[str, np.ndarray]:
+class ReplayController(Controller):
+    """The Controller with no faults: the recorded states are what rl_deploy did; faults are its business."""
+
+    def check_faults(self, s: RobotState, cmd: UserCommand) -> str:
+        return ""
+
+
+def run_python(
+    s: Session, cfg: dict[str, Any], segments: list[PlanEntry], steps: list[PlanEntry]
+) -> dict[str, np.ndarray]:
     n = len(s.t)
-    out = {f: np.full((n, JOINTS), np.nan) for f in ("kp", "q", "kd", "dq")}
+    out: dict[str, np.ndarray] = {f: np.full((n, JOINTS), np.nan) for f in ("kp", "q", "kd", "dq")}
     out["enable"] = np.zeros(n, bool)
-    controller = Controller(cfg, policy_dir())
-    controller.check_faults = (
-        lambda _state: ""
-    )  # the recorded states are what rl_deploy did; faults are its business
+    controller = ReplayController(cfg, policy_dir())
     targets_for = {
         "stand_up": "stand",
         "lie_down": "lie_down",
@@ -541,12 +565,22 @@ def run_python(s: Session, cfg: dict[str, Any], segments, steps) -> dict[str, np
     return out
 
 
-def store(out, row, kp, q, kd, dq, enable) -> None:
+def store(
+    out: dict[str, np.ndarray],
+    row: int,
+    kp: np.ndarray,
+    q: np.ndarray,
+    kd: np.ndarray,
+    dq: np.ndarray,
+    enable: bool,
+) -> None:
     out["kp"][row], out["q"][row], out["kd"][row], out["dq"][row] = kp, q, kd, dq
     out["enable"][row] = enable
 
 
-def export_for_rust(s: Session, cfg: dict[str, Any], segments, steps, path: Path) -> None:
+def export_for_rust(
+    s: Session, cfg: dict[str, Any], segments: list[PlanEntry], steps: list[PlanEntry], path: Path
+) -> None:
     """ticks.bin: per row f64 stamp, quat 4, gyro 3, accel 3, q 16, dq 16; plan.json: segments and steps."""
     path.mkdir(parents=True, exist_ok=True)
     rows = np.zeros((len(s.t), 43))
@@ -573,17 +607,23 @@ def load_rust(path: Path, n: int) -> dict[str, np.ndarray]:
 
 def gain_quant(v: np.ndarray) -> np.ndarray:
     """kp / kd as the bus carries them: x10, f32, truncated."""
-    return np.trunc(v.astype(np.float32) * np.float32(10.0)).astype(np.float64) / 10.0
+    return np.asarray(np.trunc(v.astype(np.float32) * np.float32(10.0)).astype(np.float64) / 10.0)
 
 
-def segment_label(seg, steps) -> str:
+def segment_label(seg: PlanEntry, steps: list[PlanEntry]) -> str:
     if seg["state"] != "rl_control":
-        return seg["state"]
+        return str(seg["state"])
     gaits = sorted({st["gait"] for st in steps if seg["start"] <= st["row"] < seg["end"]})
     return "rl_control " + "/".join(f"{g:#06x}" for g in gaits)
 
 
-def compare(s: Session, ours: dict[str, np.ndarray], segments, steps, cfg) -> list[dict[str, Any]]:
+def compare(
+    s: Session,
+    ours: dict[str, np.ndarray],
+    segments: list[PlanEntry],
+    steps: list[PlanEntry],
+    cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
     rec = s.rec
     rec_enable = rec["word"][:, 0] == cfg["ecan_enable_word"]
     report = []
@@ -654,7 +694,7 @@ def compare(s: Session, ours: dict[str, np.ndarray], segments, steps, cfg) -> li
 def write_page(
     s: Session,
     ours: dict[str, dict[str, np.ndarray]],
-    report,
+    report: list[dict[str, Any]],
     path: Path,
     title: str,
     summary: str = "",
@@ -688,13 +728,13 @@ def write_page(
     compose(sections, path, title)
 
 
-def compose(sections: list[dict], path: Path, title: str) -> None:
+def compose(sections: list[dict[str, Any]], path: Path, title: str) -> None:
     """One page, a session picker over each replay's plot, summary and table."""
     html = PAGE.replace("__TITLE__", title).replace("__DATA__", json.dumps(sections))
     path.write_text(html)
 
 
-def clean(a: np.ndarray) -> list:
+def clean(a: np.ndarray) -> list[float | None]:
     return [None if not np.isfinite(v) else round(float(v), 4) for v in a]
 
 

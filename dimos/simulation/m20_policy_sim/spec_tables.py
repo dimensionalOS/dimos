@@ -83,9 +83,11 @@ def obs_rows(spec: dict[str, Any]) -> list[str]:
                 if kind == "joint_pos"
                 else "joint velocity"
             )
-            scales = ", ".join(scale_text(b, k) for k in range(min(len(b.get("scale") or [1]), 4)))
+            scale_list = ", ".join(
+                scale_text(b, k) for k in range(min(len(b.get("scale") or [1]), 4))
+            )
             rows.append(
-                f"| {i}-{i + len(idx) - 1} | {what}: {names} | {'rad' if kind == 'joint_pos' else 'rad/s'} | {scales} |"
+                f"| {i}-{i + len(idx) - 1} | {what}: {names} | {'rad' if kind == 'joint_pos' else 'rad/s'} | {scale_list} |"
             )
             i += len(idx)
         elif kind == "height_map":

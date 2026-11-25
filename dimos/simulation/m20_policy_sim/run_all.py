@@ -33,8 +33,10 @@ import numpy as np
 from dimos.simulation.m20_policy_sim.config import load_config, policy_dir
 from dimos.simulation.m20_policy_sim.controller import Controller
 from dimos.simulation.m20_policy_sim.sequences import (
+    Checks,
     Segment,
     Sequence,
+    Steer,
     entry_segments,
     run_sequence,
     stand_only_segments,
@@ -73,13 +75,13 @@ def climbed(world: World, log: list[dict[str, Any]]) -> dict[str, tuple[float, b
     return {"reached_top_x": (best_x, best_x > x_top), "z_gain_m": (z_gain, z_gain > 0.8 * top)}
 
 
-def pose_checks(cfg: dict[str, Any], runner: str):
+def pose_checks(cfg: dict[str, Any], runner: str) -> Checks:
     """The stand policies follow the decoded pose inputs: height lowers the body, pitch / roll tilt it."""
     params = cfg["runners"][runner]["command_vector"]
 
     def gain_deg(name: str) -> float:
         e = next(e for e in params if isinstance(e, dict) and e.get("name") == name)
-        return e["scale_deg"] if "scale_deg" in e else math.degrees(e["scale"])
+        return float(e["scale_deg"]) if "scale_deg" in e else math.degrees(e["scale"])
 
     roll_gain = gain_deg("roll")
     pitch_gain = gain_deg("pitch")
@@ -118,7 +120,7 @@ def dock_sequence(cfg: dict[str, Any]) -> Sequence:
     docked_x = -terrain.dock_distance + DOCK["docked_clearance_m"]
     gain, vmax = DOCK["approach_gain"], DOCK["approach_speed"]
 
-    def toward(x_goal: float):
+    def toward(x_goal: float) -> Steer:
         def steer(world: World) -> np.ndarray:
             pos, quat = world.base_pose()
             w, _, _, z = quat

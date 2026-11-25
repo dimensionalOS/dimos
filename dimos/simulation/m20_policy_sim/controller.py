@@ -21,6 +21,7 @@ One call to `tick` per 1 ms control step returns the 16 joint commands. See SPEC
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import math
 from pathlib import Path
@@ -109,10 +110,13 @@ class StandIn:
     elapsed: float = 0.0
 
     def params(self) -> dict[str, float]:
-        return self.spec["params"] if self.elapsed < self.duration else self.spec["settle_params"]
+        params: dict[str, float] = (
+            self.spec["params"] if self.elapsed < self.duration else self.spec["settle_params"]
+        )
+        return params
 
     def done(self) -> bool:
-        return self.elapsed >= self.duration + self.spec["settle_s"]
+        return bool(self.elapsed >= self.duration + self.spec["settle_s"])
 
 
 class Controller:
@@ -297,7 +301,10 @@ class Controller:
         nxt = self.next_state(target)
         if nxt != self.state:
             self.enter(nxt, s, cmd)
-        out = getattr(self, "run_" + self.state)(s, cmd)
+        run_state: Callable[[RobotState, UserCommand], JointCommand] = getattr(
+            self, "run_" + self.state
+        )
+        out = run_state(s, cmd)
         if self.enable_left > 0:
             self.enable_left -= 1
             out = JointCommand.zero()
@@ -400,12 +407,16 @@ class Controller:
                 axes = np.divide(cmd.velocity, div, out=np.zeros(3), where=div > 0)
             self.targets = r.step(s, axes)
         self.policy_tick += 1
+        # a switch to a runner (policy_tick 0) always steps it, so its targets are set from here on
+        targets = self.targets
+        if targets is None:
+            raise RuntimeError(f"{self.current}: no policy targets yet")
         c = JointCommand.zero()
         # start-up gain scale on the legs only (the robot keeps the wheels' kd)
         scale = np.where(IS_WHEEL, 1.0, r.gain_scale())
         c.kp, c.kd = r.kp * scale, r.kd * scale
-        c.q = self.targets.q.copy()
+        c.q = targets.q.copy()
         c.q[IS_WHEEL] = 0.0
-        c.dq[IS_WHEEL] = self.targets.wheel_velocity
+        c.dq[IS_WHEEL] = targets.wheel_velocity
         c.kp[IS_WHEEL] = 0.0
         return c

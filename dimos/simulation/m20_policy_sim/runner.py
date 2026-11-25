@@ -61,7 +61,7 @@ def rotation(quat: np.ndarray) -> np.ndarray:
 
 
 def projected_gravity(quat: np.ndarray) -> np.ndarray:
-    return rotation(quat).T @ np.array([0.0, 0.0, -1.0])
+    return np.asarray(rotation(quat).T @ np.array([0.0, 0.0, -1.0]))
 
 
 def joint_limits(robot: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -225,7 +225,7 @@ class Runner:
     def gain_scale(self) -> float:
         """rl_deploy scales kp / kd for a runner's first steps after each switch to it (NaviCharge x1.3 for 29)."""
         if self.active_steps < self.spec.get("start_gain_steps", 0):
-            return self.spec["start_gain_scale"]
+            return float(self.spec["start_gain_scale"])
         return 1.0
 
     def update_command(self, axes: np.ndarray) -> np.ndarray:
@@ -294,7 +294,7 @@ class Runner:
             if "scale" in block:
                 v = v * tile(block["scale"], len(v))
             parts.append(v)
-        frame = np.concatenate(parts).astype(np.float32)
+        frame: np.ndarray = np.concatenate(parts).astype(np.float32)
         if len(frame) != self.spec["frame"]:
             raise ValueError(
                 f"{self.name}: frame is {len(frame)}, config says {self.spec['frame']}"
@@ -339,20 +339,22 @@ class Runner:
             return float(self.command[("vx", "vy", "wz").index(src)])
         if src == "param":
             k = math.radians(e["scale_deg"]) if "scale_deg" in e else e.get("scale", 1.0)
-            return self.params.get(e["name"], 0.0) * k + e.get("offset", 0.0)
+            return float(self.params.get(e["name"], 0.0) * k + e.get("offset", 0.0))
         if src == "stand_mode":
             return float(self.stand_mode.mode)
         if src == "gait":
-            return self.clock.fields(self.policy_dt)[e["field"]] * e.get("scale", 1.0)
+            if self.clock is None:
+                raise ValueError(f"{self.name}: a gait command entry needs a gait clock")
+            return float(self.clock.fields(self.policy_dt)[e["field"]] * e.get("scale", 1.0))
         if src == "foot":
             f = self.spec["feet"]
             nx, ny = f["nominal"][e["leg"]]
             if self.params.get("feet_fixed", 0.0):
-                return nx if e["axis"] == "x" else f["fixed_y"][e["leg"]]
+                return float(nx if e["axis"] == "x" else f["fixed_y"][e["leg"]])
             th = math.radians(f["yaw_deg"]) * self.params.get("yaw", 0.0)
             x = math.cos(th) * nx - math.sin(th) * ny + f["dx_scale"] * self.params.get("dx", 0.0)
             y = math.sin(th) * nx + math.cos(th) * ny + f["dy_scale"] * self.params.get("dy", 0.0)
-            return x if e["axis"] == "x" else y
+            return float(x if e["axis"] == "x" else y)
         raise ValueError(f"unknown command source {src}")
 
     def warmup(self, s: RobotState) -> Targets:
