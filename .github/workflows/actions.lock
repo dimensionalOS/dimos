@@ -63,6 +63,8 @@ workflows:
     '.github/workflows/message-codegen.yml':
         - 'actions/checkout@v7.0.1'
         - 'astral-sh/setup-uv@v10.0.1'
+    '.github/workflows/pr-description.yml':
+        - 'actions/checkout@v7.0.1'
     '.github/workflows/pr-labels.yml':
         - 'actions/github-script@v9.0.0'
     '.github/workflows/release-build-check.yml':

@@ -1,0 +1,30 @@
+name: Check PR description
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  merge_group:
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-description:
+    name: PR description
+    # Each PR is checked before it enters the merge queue.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test template and validator
+        run: python3 -m unittest discover -s .github/scripts -p test_pr_description.py
+      - name: Validate description
+        shell: bash
+        run: jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" | python3 .github/scripts/check_pr_description.py
