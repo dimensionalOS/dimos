@@ -411,8 +411,6 @@ def test_the_serial_body_imu_gets_the_m20s_uart_and_mount() -> None:
     assert (config.read_syscall, config.frame_sync_bytes) == (0x1CB, 0x31)
 
 
-# --- sim and sim-bench ---
-
 # The robot's connection gates nav velocity, the sim world takes it directly.
 _SIM = m20.solidify(choices={"M20Mode": "sim"})
 _SIM_BENCH = m20.solidify(choices={"M20Mode": "sim-bench"})

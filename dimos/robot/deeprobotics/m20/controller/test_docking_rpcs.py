@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.deeprobotics.m20.controller.module import M20ControllerApi
@@ -32,6 +33,7 @@ class FakeController(M20ControllerApi, Module):
 
     config: M20ControllerClientConfig
 
+    @rpc
     def start(self) -> None:
         self.watchers: dict[str, list[Callable[[Any], None]]] = {}
         self.sent: list[tuple[str, Any]] = []

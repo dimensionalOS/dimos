@@ -94,8 +94,6 @@ from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.simulation.m20_sim.world import SIM_M20, SimM20World
 from dimos.visualization.vis_module import vis_module
 
-# --- navigation and relocalization (as m20 ran them on the vendor's sensors) ---
-
 
 def m20_nav_stack(
     embodiment: Embodiment = M20,
@@ -173,9 +171,6 @@ def m20_relocalization(
     ).remappings([(PremapModule, "lidar", lidar)])
 
 
-# --- dimSLAM ---
-
-
 def m20_dim_slam(
     lidar_frames: tuple[str, ...] = ("front_lidar", "rear_lidar"),
     imu_frames: tuple[str, ...] = ("rear_lidar",),
@@ -221,8 +216,6 @@ def m20_dim_slam(
         **overrides,
     ).remappings([(DimSlam, "odometry", "slam_odom")])
 
-
-# --- real mode: the robot on its own drivers ---
 
 # The `dimos host` tags of the boards: AOS has the IMU, cameras and motor bus wired to it, NOS the lidars' network.
 AOS = {"board": "aos"}
@@ -545,8 +538,6 @@ _m20_real = autoconnect(
     transport="zenoh",
 )
 
-
-# --- the modes ---
 
 _m20_sim = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=m20_sim_rerun_config()),

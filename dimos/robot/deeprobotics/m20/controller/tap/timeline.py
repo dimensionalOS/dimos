@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     # (t_ns, source, event, detail): one timeline.csv row
     Event = tuple[int, str, str, str]
 
-# --- motor bus -----------------------------------------------------------------------------------------------------
 
 LEGS = ("fl", "fr", "hl", "hr")
 KINDS = ("hipx", "hipy", "knee", "wheel")
@@ -98,9 +97,6 @@ def joint_units(payload: bytes) -> dict[int, Unit]:
         if 0 <= leg < 4 and 0 <= kind < 4:
             out[leg * 4 + kind] = unit
     return out
-
-
-# --- captures ------------------------------------------------------------------------------------------------------
 
 
 def read_packets(path: str) -> Iterator[tuple[int, int, str | None, bytes]]:
@@ -199,8 +195,6 @@ def udp_tcp(packet: bytes) -> tuple[str, str, int, str, int, bytes, int | None] 
     return None
 
 
-# --- basic_server --------------------------------------------------------------------------------------------------
-
 APDU_MAGIC = bytes.fromhex("eb91eb90")
 APDU = struct.Struct("<4sHHB7s")
 # (Type, Command) as the APDU's JSON carries them
@@ -240,8 +234,6 @@ def apdus(stream: bytes) -> tuple[list[tuple[int, dict[str, Any], bytes]], bytes
         device = document.get("PatrolDevice", {}) if isinstance(document, dict) else {}
         messages.append((message_id, device, body))
 
-
-# --- DDS (RTPS) ----------------------------------------------------------------------------------------------------
 
 SEDP_WRITERS = (b"\x00\x00\x03\xc2", b"\x00\x00\x04\xc2")  # publications, subscriptions announcers
 
@@ -321,9 +313,6 @@ def int_sample(serialized: bytes, t_ns: int) -> int | None:
     if abs(sec - t_ns / 1e9) > 86400 or nsec >= 1_000_000_000:
         return None
     return int(value)
-
-
-# --- main ----------------------------------------------------------------------------------------------------------
 
 
 def iso(t_ns: int) -> str:
