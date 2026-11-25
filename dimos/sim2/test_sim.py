@@ -67,8 +67,8 @@ class _Running:
 
 
 def test_the_world_finds_its_hardware_and_robots_by_what_they_answer() -> None:
-    room = _Running("get_usd", "mounted_on", "get_namespace", "start")
-    dog = _Running("get_usd", "mounted_on", "get_namespace", "simulated_robot")
+    room = _Running("get_usd", "attached_to", "get_namespace", "start")
+    dog = _Running("get_usd", "attached_to", "get_namespace", "simulated_robot")
     other = _Running("get_usd", "describe")
     assert meeting(HardwareSpec, [room, dog, other]) == [room, dog]
     assert meeting(SimulatedRobotSpec, [room, dog, other]) == [dog]
