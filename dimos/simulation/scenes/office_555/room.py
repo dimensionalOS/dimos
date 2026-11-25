@@ -16,7 +16,5 @@
 from pathlib import Path
 
 # The layer is text, but every mesh it references is Git LFS, so a checkout made with
-# GIT_LFS_SKIP_SMUDGE=1 has pointer files here. Nothing fetches them on the way in: UsdManager
-# refuses a pointer by name (require_fetched_assets) so the failure says `git lfs checkout`
-# rather than arriving as unreadable geometry inside a physics engine.
+# GIT_LFS_SKIP_SMUDGE=1 has pointer files here; usd_layer fetches the ones a world names before a sim reads it.
 SCENE = Path(__file__).parent / "scene.usda"
