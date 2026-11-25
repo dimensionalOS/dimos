@@ -187,3 +187,23 @@ def test_a_namespace_is_a_prim_name_so_it_cannot_start_with_a_digit() -> None:
     with pytest.raises(ValueError, match="not starting with a digit"):
         _Edged.blueprint().namespace("2nd")
     assert _Edged.blueprint().namespace("_2nd").namespace("robot0")
+
+
+def test_a_module_that_is_not_hardware_cannot_fake_a_hardware_edge() -> None:
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    odometry = _Edged(
+        instance_name="odometry",
+        tf_frames_global={"odom": "odom", "base": "go2/base"},
+        tf_edges=[("odom", "base")],
+    )
+    try:
+        slashed = Transform(frame_id="odom", child_frame_id="/go2/base")
+        with pytest.raises(
+            ValueError, match=r"'/go2/base' with a leading '/'.*publish it as 'go2/base'"
+        ):
+            odometry.tf.publish(TFMessage(slashed))
+        with pytest.raises(ValueError, match="with a leading '/'"):
+            odometry._create_tfbuffer(None).publish(slashed)
+    finally:
+        odometry.stop()

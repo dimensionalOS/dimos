@@ -238,7 +238,8 @@ class HardwareModule(TfModule):
         return set(local) | ({MOUNT_ROLE} & set(shared))
 
     @cached_property
-    def _wire_frames(self) -> frozenset[str]:
+    def tf_wire_frames(self) -> frozenset[str]:  # type: ignore[override]
+        """Its own frames and its mount, which it puts on the wire with a leading "/"."""
         frames = self.tf_frames
         own = {frames[role] for role in self.config.tf_frames_local}
         if self.config.attached_to is not None:
@@ -247,7 +248,7 @@ class HardwareModule(TfModule):
 
     def on_wire(self, transforms: "Iterable[Transform]") -> list[Transform]:
         """``transforms`` as they go on the wire: each of this hardware's own frames (and its mount) with a leading "/"."""
-        own = self._wire_frames
+        own = self.tf_wire_frames
 
         def wire(frame: str) -> str:
             return f"/{frame}" if frame in own else frame

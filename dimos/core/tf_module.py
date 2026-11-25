@@ -71,7 +71,10 @@ class TfIO(IO[TFMessage]):
     def publish(self, msg: TFMessage) -> None:
         if not self.owner.config.skip_tf_checks:
             refuse_undeclared_edges(
-                self.owner.tf_edge_ids, self.owner.tf_owner_name, msg.transforms
+                self.owner.tf_edge_ids,
+                self.owner.tf_owner_name,
+                msg.transforms,
+                self.owner.tf_wire_frames,
             )
         super().publish(msg)
 
@@ -129,6 +132,11 @@ class TfModule(Module):
         """The declared edges as (parent frame id, child frame id)."""
         frames = self.tf_frames
         return frozenset((frames[parent], frames[child]) for parent, child in self.config.tf_edges)
+
+    @property
+    def tf_wire_frames(self) -> frozenset[str]:
+        """The frames this module may put on the wire with a leading "/" (a HardwareModule's own); none here."""
+        return frozenset()
 
     @cached_property
     def tf_frames(self) -> dict[str, str]:
@@ -254,6 +262,7 @@ class TfModule(Module):
             port,
             edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
             module_name=self.tf_owner_name,
+            slashed_frames=self.tf_wire_frames,
         )
 
 

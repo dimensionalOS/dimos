@@ -345,10 +345,12 @@ class TF(MultiTBuffer):
         *,
         edges: "Collection[tuple[str, str]] | None" = None,
         module_name: str = "TF",
+        slashed_frames: "Collection[str]" = frozenset(),
     ) -> None:
         super().__init__(buffer_size)
         self._stream = stream
         self._edges = None if edges is None else frozenset(edges)
+        self._slashed_frames = frozenset(slashed_frames)
         self._module_name = module_name
         self._unsubscribe: Callable[[], None] | None = None
         if stream is not None:
@@ -356,7 +358,9 @@ class TF(MultiTBuffer):
 
     def publish(self, *transforms: Transform) -> None:
         if self._edges is not None:
-            refuse_undeclared_edges(self._edges, self._module_name, transforms)
+            refuse_undeclared_edges(
+                self._edges, self._module_name, transforms, self._slashed_frames
+            )
         self.receive_transform(*transforms)
         if self._stream is not None:
             self._stream.publish(TFMessage(*transforms))
@@ -390,10 +394,20 @@ def normalized(transform: Transform) -> Transform:
 
 
 def refuse_undeclared_edges(
-    edges: "Collection[tuple[str, str]]", module_name: str, transforms: "Iterable[Transform]"
+    edges: "Collection[tuple[str, str]]",
+    module_name: str,
+    transforms: "Iterable[Transform]",
+    slashed_frames: "Collection[str]" = frozenset(),
 ) -> None:
-    """Raise if any transform's (parent, child) is not in *edges*."""
+    """Raise if any transform's (parent, child) is not in *edges*, or it slashes a frame not in *slashed_frames*."""
     for t in transforms:
+        for frame in (t.frame_id, t.child_frame_id):
+            # A leading "/" marks a HardwareModule's own frame (a hardware edge); only that module may add it.
+            if frame.startswith("/") and frame[1:] not in slashed_frames:
+                raise ValueError(
+                    f"{module_name} publishes the tf frame {frame!r} with a leading '/', which only "
+                    f"the HardwareModule owning {frame[1:]!r} puts on the wire; publish it as {frame[1:]!r}"
+                )
         if (normalize_frame_id(t.frame_id), normalize_frame_id(t.child_frame_id)) not in edges:
             raise ValueError(
                 f"{module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
