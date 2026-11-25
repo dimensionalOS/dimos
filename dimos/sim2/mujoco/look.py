@@ -62,6 +62,13 @@ def stage_tone_map(scene: Path) -> str | None:
     return curve
 
 
+def blank_textures(spec: mujoco.MjSpec) -> None:
+    """Make every texture in `spec` one blank pixel, for a view that never renders; deleting them takes ~14 ms each."""
+    for texture in spec.textures:
+        texture.file, texture.data, texture.builtin = "", b"", mujoco.mjtBuiltin.mjBUILTIN_FLAT
+        texture.width = texture.height = 1
+
+
 def linear_textures(spec: mujoco.MjSpec, scene: Path) -> int:
     """Have MuJoCo decode each texture by the color space its UsdUVTexture declares; the number changed."""
     from dimos.robot.assets.usd_utils.pxr import load_pxr
