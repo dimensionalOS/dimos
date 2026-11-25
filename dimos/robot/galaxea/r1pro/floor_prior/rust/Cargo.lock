@@ -738,7 +738,7 @@ name = "dimos-depth2depth-cloud"
 version = "0.1.0"
 dependencies = [
  "depth2depth",
- "dimos-module 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537a86f3a96884c77fb1)",
+ "dimos-module",
  "lcm-msgs",
  "nalgebra",
  "rayon",
@@ -766,28 +766,7 @@ source = "git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537
 dependencies = [
  "async-channel",
  "dimos-lcm",
- "dimos-module-macros 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537a86f3a96884c77fb1)",
- "lcm-msgs",
- "nalgebra",
- "rayon",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "validator",
- "zenoh",
-]
-
-[[package]]
-name = "dimos-module"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=ea9e4003a04967c629377006328bd48798c1353f#ea9e4003a04967c629377006328bd48798c1353f"
-dependencies = [
- "async-channel",
- "dimos-lcm",
- "dimos-module-macros 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=ea9e4003a04967c629377006328bd48798c1353f)",
+ "dimos-module-macros",
  "lcm-msgs",
  "nalgebra",
  "rayon",
@@ -813,22 +792,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-module-macros"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=ea9e4003a04967c629377006328bd48798c1353f#ea9e4003a04967c629377006328bd48798c1353f"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.4",
- "toml 1.1.4+spec-1.1.0",
-]
-
-[[package]]
 name = "dimos-r1pro-floor-prior"
 version = "0.1.0"
 dependencies = [
  "dimos-depth2depth-cloud",
- "dimos-module 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=ea9e4003a04967c629377006328bd48798c1353f)",
+ "dimos-module",
  "lcm-msgs",
  "nalgebra",
  "serde",

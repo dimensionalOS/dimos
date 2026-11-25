@@ -17,7 +17,7 @@ path = "src/bin/r1pro_head_depth.rs"
 
 [dependencies]
 dimos-depth2depth-cloud = { path = "../../../../../perception/depth2depth_cloud/rust" }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "ea9e4003a04967c629377006328bd48798c1353f" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
