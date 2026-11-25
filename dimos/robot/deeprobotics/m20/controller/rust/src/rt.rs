@@ -421,6 +421,7 @@ mod shutdown_tests {
                     wheel_velocity: [0.0; 4],
                     action: [0.0; crate::config::JOINTS],
                     velocity_estimate: None,
+                    command_zero: true,
                 }),
                 gain_scale: 1.0,
                 inference_s: 0.0,

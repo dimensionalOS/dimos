@@ -38,6 +38,8 @@ pub struct Targets {
     /// clipped network output: next step's last action
     pub action: [f64; JOINTS],
     pub velocity_estimate: Option<[f64; 3]>,
+    /// the runner's slewed command reached zero (limit_cmd_vel's state)
+    pub command_zero: bool,
 }
 
 /// rl_deploy's policy target clamp ranges (PolicyRunnerBase::limit_goal_pos_vel), f32, robot order: hipx widened by
@@ -384,6 +386,11 @@ impl Pipeline {
                 target[2] = target[2].clamp(-clamp, clamp);
             }
         }
+        if let Some(limit) = self.spec.command_limit {
+            for i in 0..3 {
+                target[i] = target[i].clamp(-limit[i], limit[i]);
+            }
+        }
         self.command = target;
     }
 
@@ -525,6 +532,7 @@ impl Pipeline {
             wheel_velocity: [0.0; 4],
             action: a,
             velocity_estimate: None,
+            command_zero: self.command_state == [0.0; 3],
         })
     }
 
@@ -710,6 +718,7 @@ impl Pipeline {
             wheel_velocity: wheel,
             action: a,
             velocity_estimate,
+            command_zero: self.command_state == [0.0; 3],
         })
     }
 }
@@ -835,6 +844,22 @@ impl Runner {
         for (k, [lo, hi]) in &self.pipeline.spec.param_limits {
             if let Some(v) = self.pipeline.params.get_mut(k) {
                 *v = v.clamp(*lo, *hi);
+            }
+        }
+        if let Some(b) = &self.pipeline.spec.param_budget {
+            let p = &mut self.pipeline.params;
+            let total: f64 = b
+                .names
+                .iter()
+                .filter_map(|k| p.get(k))
+                .map(|v| v.abs())
+                .sum();
+            if total > b.max {
+                for k in &b.names {
+                    if let Some(v) = p.get_mut(k) {
+                        *v *= b.max / total;
+                    }
+                }
             }
         }
         self.pipeline.update_command(axes);

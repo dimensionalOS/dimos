@@ -92,6 +92,10 @@ finite_commands = true
 # ours (rl_deploy: none): runners with no command_slew of their own get basic_stair's (bin M20BasicStairRunner ctor), so
 # an axis jumping from +1 to -1 ramps over 25 policy steps (sim matrix: basic_plat tipped 51 deg on that reversal)
 default_command_slew = [0.04, 0.04, 0.08]
+# ours (rl_deploy: each runner's command_max alone): every runner's command clamped to basic_server.toml's navigation
+# limits (the fastest maxSpeedX 2.0, [Nav.COMMON] maxSpeedY 1.0, maxTheta 1.0): at the full axes (1, -1, 1) extre
+# (3 m/s, 2 rad/s) and step_move stepped 1.6-1.9 rad and saturated in the sim
+command_limit = [2.0, 1.0, 1.0]
 
 # rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
 [states.enable]
@@ -119,6 +123,12 @@ kp = [0.0]
 kd = [4.0, 4.0, 4.0, 1.0]
 # back to passive after this long, or at once when the operator asks for anything else (and no fault is active)
 min_s = 2.0
+# ours (rl_deploy: false, damping at once): a fault the motors can still act on (tilt, temperatures, joint data, the
+# policy) stops and lies the robot down as a lie-down does, then damps; a driver status-word fault damps at once.
+# The sim matrix: damping at once from strafing tipped basic_flat, basic_plat and basic_stair over
+lie_down_first = true
+# ours (rl_deploy: false): the operator's joint damping (motion 2) lies down first too; the hardware e-stop is not this
+lie_down_first_on_command = true
 
 [states.stand_up]
 kp = [200.0, 200.0, 200.0, 0.0]
@@ -184,7 +194,8 @@ settle_params = {}
 [states.rl_control.safe_switch]
 # (from, to), "*" any: basic_flat's tall stance is outside navi_flat's distribution (SPEC "switch: basic_flat ->
 # navi_flat", the robot faulted at hr_hipy -2.688) and navi_orienteer's (sim: 2 rad target jump, 7 rad/s); basic_backknee's hind knees bend the other way from every other
-# runner's, so its switches swing the hind legs through; height_gap's stance (sim) is far from the rest
+# runner's, so its switches swing the hind legs through; height_gap's stance (sim) is far from the rest; step_move
+# steps from its first step (navi_flat -> step_move after strafing jumped 1.6 rad)
 bridge_pairs = [
     ["basic_flat", "navi_flat"],
     ["basic_flat", "navi_orienteer"],
@@ -192,6 +203,7 @@ bridge_pairs = [
     ["*", "basic_backknee"],
     ["height_gap", "*"],
     ["*", "height_gap"],
+    ["*", "step_move"],
 ]
 # the 0x3001 switch's stand-in above, as is
 bridge = { gait = 0, runner = "six_axis_stand", on_entry = false, on_switch = true, first_s = 1.5, later_s = 1.5, params = { mode_byte = 0.0, feet_fixed = 0.0, warm_hold = 0.0 }, settle_s = 0.0, settle_params = {} }
@@ -206,6 +218,17 @@ still = { wheel_radius_m = 0.09, wheel_m_s = 0.1, gyro_rad_s = 0.5 }
 # rl_deploy lies down at once: from 1-2 m/s that tipped extre, navi_flat, basic_plat and step_move over in the sim;
 # ours zeroes the command and lies once still
 lie_down_when_still = true
+# a lie-down also waits for every leg joint under this (rad/s): basic_plat lay down mid-step after strafing and fell;
+# standing, the sim's legs stay under 0.3 rad/s. Or it lies once the wheels stop slowing with the policy's command at
+# zero (a slope it cannot stop on), checked once per policy step
+lie_leg_rad_s = 0.5
+# where the robot cannot stop (a slope, height_gap's 0.15 m/s drift at a zero command in the sim) a switch or lie-down
+# goes ahead once the wheels stop slowing under this: height_gap lay down still decelerating from 2 m/s and fell
+settle_below_m_s = 0.3
+# stopping in the sim the wheels slow at 1-3.5 m/s^2; height_gap's drift fades at 0.05 m/s^2 and never ends
+settle_decel_m_s2 = 0.2
+# runners that step in place at a zero command stand on the bridge before lying (step_move tipped over lying mid-step)
+lie_bridge_from = ["step_move"]
 # rl_deploy loses a gait sent during a stand-in (SPEC; M20Connection resends): a 0x3001 sent between two others, or a
 # gait spam ending on one, left the sim robot on navi_charge; ours switches to the last gait sent once the stand-in ends
 keep_gait_during_stand_in = true
@@ -415,6 +438,9 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [80.0, 80.0, 120.0, 0.0]
 kd = [3.0, 3.0, 4.0, 0.6]
 command_max = [2.0, 0.5, 1.5]
+# ours: under safety.command_limit, basic_server.toml's AUTO NORMAL_SPEED 1.0 m/s: height_gap reversing from +2 to -2 m/s
+# fell in the sim
+command_limit = [1.0, 0.5, 1.0]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -475,6 +501,9 @@ command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, d
 # ours (rl_deploy's pose inputs come from the clipped /STEER axes, so stay in range): operator params clamped; outside them the sim
 # matrix fell (mode 5, height / roll / pitch / yaw / dx / dy at +-5)
 param_limits = { height = [0.0, 1.0], roll = [-1.0, 1.0], pitch = [-1.0, 1.0], yaw = [-1.0, 1.0], dx = [-1.0, 1.0], dy = [-1.0, 1.0], mode = [-1.0, 0.0] }
+# ours: roll, pitch, yaw, dx, dy share one range (sum of |p| at most 1): each alone at its end is calm in the sim, all
+# at +-1 together put a hipx on its stop for 3 s
+param_budget = { names = ["roll", "pitch", "yaw", "dx", "dy"], max = 1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 # feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x
 # and fixed_y (bin cal_command, UserCommand 0x6e)
@@ -536,6 +565,9 @@ command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, d
 # ours (rl_deploy's pose inputs come from the clipped /STEER axes, so stay in range): operator params clamped; outside them the sim
 # matrix fell (height / roll / pitch / yaw / dx / dy at +-5)
 param_limits = { height = [0.0, 1.0], roll = [-1.0, 1.0], pitch = [-1.0, 1.0], yaw = [-1.0, 1.0], dx = [-1.0, 1.0], dy = [-1.0, 1.0] }
+# ours: roll, pitch, yaw, dx, dy share one range (sum of |p| at most 1): each alone at its end is calm in the sim, all
+# at +-1 together put a hipx on its stop for 3 s
+param_budget = { names = ["roll", "pitch", "yaw", "dx", "dy"], max = 1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 # feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x
 # and fixed_y (bin cal_command, UserCommand 0x6e)
@@ -585,12 +617,17 @@ kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # wz max follows the speed: clamp(min(a / (vx + b) - c, d / (1 + e |vy|)), lo, hi); |axis| below deadband -> 0
 command_max = [3.9, 0.9, 1.0]
+# ours: under safety.command_limit, basic_server.toml's HIGH_SPEED 1.5 m/s and vy at half its 0.9: at the full axes
+# (-1, -1, -1) step_move put a hipx on its stop in the sim with (2, 0.9) and (2, 0.5)
+command_limit = [1.5, 0.5, 1.0]
 axis_deadband = [0.0, 0.0, 0.1]
 wz_speed_limit = { a = 10.8, b = 2.4, c = 0.15, d = 2.85, e = 0.5, lo = 1.0, hi = 3.0 }
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0 }
 # ours (rl_deploy's pose inputs come from the clipped /STEER axes, so stay in range): operator params clamped; outside them the sim
 # matrix fell (height / roll / pitch / yaw / dx / dy at +-5)
 param_limits = { height = [0.0, 1.0], roll = [-1.0, 1.0], pitch = [-1.0, 1.0], yaw = [-1.0, 1.0], dx = [-1.0, 1.0], dy = [-1.0, 1.0] }
+# ours: roll and pitch share one range (|roll| + |pitch| at most 1): all at +1 put a hipx on its stop in the sim
+param_budget = { names = ["roll", "pitch"], max = 1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 command_vector = [
     { src = "vx" }, { src = "vy" }, { src = "wz" },

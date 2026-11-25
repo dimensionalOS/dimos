@@ -169,6 +169,9 @@ pub struct Safety {
     /// ours: the command slew (normalized, per policy step) of runners rl_deploy gives none
     #[serde(default)]
     pub default_command_slew: Option<[f64; 3]>,
+    /// ours: every runner's scaled command (m/s, m/s, rad/s) clamped to this
+    #[serde(default)]
+    pub command_limit: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +192,12 @@ pub struct JointDamping {
     pub kp: Vec<f64>,
     pub kd: Vec<f64>,
     pub min_s: f64,
+    /// ours: a fault the motors can still act on lies the robot down first (stopping it, as a lie-down), then damps
+    #[serde(default)]
+    pub lie_down_first: bool,
+    /// ours: the operator's joint damping (motion 2, rl_deploy's soft e-stop) lies down first too
+    #[serde(default)]
+    pub lie_down_first_on_command: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -260,8 +269,22 @@ pub struct SafeSwitch {
     /// a gait switch (and, with lie_down_when_still, a lie-down) waits for the body to be still, not only the command
     pub still: Still,
     pub lie_down_when_still: bool,
+    /// a lie-down also waits for the legs to be still (rad/s); stepping runners stand on the bridge first
+    pub lie_leg_rad_s: f64,
+    /// a switch or lie-down also goes ahead once the wheels stop slowing under this, the command at zero (m/s)
+    pub settle_below_m_s: f64,
+    /// slowing by less than this (m/s^2, the wheels' mean over a policy step) is not slowing
+    pub settle_decel_m_s2: f64,
+    pub lie_bridge_from: Vec<String>,
     /// a gait written during a stand-in is kept and switched to after it (rl_deploy: lost)
     pub keep_gait_during_stand_in: bool,
+}
+
+/// Params that share one range (a pose: each alone may reach its end, together they share it).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ParamBudget {
+    pub names: Vec<String>,
+    pub max: f64,
 }
 
 /// The body is still: the wheels' mean rim speed and the body rate under these.
@@ -491,6 +514,12 @@ pub struct RunnerSpec {
     /// ours: the operator's params this runner reads, clamped to [lo, hi]
     #[serde(default)]
     pub param_limits: BTreeMap<String, [f64; 2]>,
+    /// ours: these params scaled down together so their absolute values sum to at most `max`
+    #[serde(default)]
+    pub param_budget: Option<ParamBudget>,
+    /// ours: |vx|, |vy|, |wz| of the scaled command clamped to these (safety.command_limit fills it)
+    #[serde(default)]
+    pub command_limit: Option<[f64; 3]>,
     #[serde(default)]
     pub wz_clamp: Option<f64>,
     #[serde(default)]
@@ -649,6 +678,11 @@ impl Config {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        if let Some(limit) = cfg.safety.command_limit {
+            for r in cfg.runners.values_mut() {
+                r.command_limit.get_or_insert(limit);
+            }
+        }
         if let Some(slew) = cfg.safety.default_command_slew {
             for (name, r) in cfg
                 .runners
@@ -787,6 +821,8 @@ impl Config {
     /// This config with every difference of ours from rl_deploy (ROBUSTNESS.md) off: replays of its recordings.
     pub fn rl_deploy(mut self) -> Config {
         self.states.rl_control.safe_switch = None;
+        self.states.joint_damping.lie_down_first = false;
+        self.states.joint_damping.lie_down_first_on_command = false;
         self.safety.finite_commands = false;
         self.safety.default_command_slew = None;
         for name in std::mem::take(&mut self.slew_defaulted) {
@@ -794,8 +830,11 @@ impl Config {
                 r.command_slew = None;
             }
         }
+        self.safety.command_limit = None;
         for r in self.runners.values_mut() {
             r.param_limits.clear();
+            r.command_limit = None;
+            r.param_budget = None;
         }
         self
     }
