@@ -18,6 +18,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from dimos.core.hardware_module import HardwareModuleConfig
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sim import until_it_stops
 
@@ -40,4 +41,16 @@ class SimScene(SimSensor):
 
     async def _publish(self) -> None:
         async for stamp in self._world.ticks(self.config.tf_rate_hz):
-            self.publish_usd_tf(ts=stamp)
+            self.tfbuffer.publish(*self.mount_transforms(ts=stamp))
+
+    def mount_transforms(self, ts: float | None = None) -> list[Transform]:
+        """The edges from the room's root to each mount: a real room publishes no furniture, and the world USD places it."""
+        transforms = self.usd_transforms(ts=ts)
+        parent_of = {t.child_frame_id: t.frame_id for t in transforms}
+        needed: set[str] = set()
+        for mount in self.mounts:
+            frame = self.usd_frame(mount)
+            while frame in parent_of and frame not in needed:
+                needed.add(frame)
+                frame = parent_of[frame]
+        return [t for t in transforms if t.child_frame_id in needed]
