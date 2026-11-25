@@ -233,7 +233,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         mount = self.attached_to()
         assert mount is not None
         alone = compose_usds(
-            [(frame_usd(mount, name="world").usd, None), (self.local_usd(), mount)]
+            [(frame_usd(mount, name="world").usd, None), (self._local_usd(), mount)]
         )
         return open_view(
             layer_file(alone.usd, "g1"),
