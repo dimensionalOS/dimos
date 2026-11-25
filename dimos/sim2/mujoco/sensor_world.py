@@ -60,6 +60,9 @@ class WorldView(Protocol):
     def imu(self, sensor: str) -> tuple[Vector, Vector, Vector]:
         pass
 
+    def twin(self) -> "WorldView":
+        pass
+
     def close(self) -> None: ...
 
 

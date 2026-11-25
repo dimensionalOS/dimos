@@ -14,6 +14,7 @@
 
 
 from collections.abc import Iterable, Sequence
+import copy
 from pathlib import Path
 import sys
 from typing import Any
@@ -211,6 +212,15 @@ class MujocoView:
                 return body
             body = parent
         return body
+
+    def twin(self) -> "MujocoView":
+        """This view's compiled world with poses of its own, which a loop can update while a thread casts against this one's."""
+        twin = copy.copy(self)
+        # The name and offset lookups are the model's, so the two share them.
+        twin.data = mujoco.MjData(self.model)
+        mujoco.mj_kinematics(self.model, twin.data)
+        twin._velocities_current, twin._renders, twin._previous = False, None, {}
+        return twin
 
     def close(self) -> None:
         if self._renders is not None:
