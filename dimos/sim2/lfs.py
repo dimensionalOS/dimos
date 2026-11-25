@@ -15,9 +15,32 @@
 
 from collections.abc import Iterable
 from pathlib import Path
+import re
 import subprocess
+from typing import TYPE_CHECKING
 
 from dimos.utils.data import _initialize_git_lfs, _is_lfs_pointer_file, get_project_root
+
+if TYPE_CHECKING:
+    from dimos.robot.assets.model import UsdModel
+
+# An asset path as usda writes one.
+_ASSET_PATH = re.compile(r"@([^@\n]+)@")
+
+
+def pull_usd_assets(layers: Iterable[str], root: Path | None = None) -> None:
+    """Fetch, in one pull, the files these usda layers name that are Git LFS pointers: absolute names, and relative ones under `root`."""
+    # Read off the text, not walked with pxr: a walk opens every layer the stage references, pointers or not.
+    named = {Path(asset) for layer in layers for asset in _ASSET_PATH.findall(layer)}
+    under = {root / path for path in named if not path.is_absolute()} if root is not None else set()
+    pull_lfs_files({path for path in named if path.is_absolute()} | under)
+
+
+def pull_model_assets(model: "UsdModel") -> None:
+    """Fetch the Git LFS pointers a model's own layer file names, before anything opens a stage of it."""
+    source = model.source_path
+    if source is not None and source.suffix == ".usda":
+        pull_usd_assets([source.read_text()], root=source.parent)
 
 
 def pull_lfs_files(paths: Iterable[Path]) -> None:

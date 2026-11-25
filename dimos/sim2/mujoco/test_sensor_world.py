@@ -199,6 +199,19 @@ def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed)
     assert again[0] == pytest.approx(0.9, abs=1e-3), "the next caster is still blind to the base"
 
 
+def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed):
+    view = open_view(composed, ["cat", "dog"], SensorMount("imu", "dog/imu", "dog/imu"))
+    world = _World()
+    world.writer.add("cat", model="cat.usda")
+    world.writer.add("cat/neck")
+    world.writer.position("cat", [9.0, 0.0, 1.0, 0, 0, 0, 1])
+    world.writer.joint("cat/neck", np.pi / 2, 0.0, 0.0)
+    view.update(world.at(1.0, 2.0, 0.0))
+    assert view.pose("dog/base")[0] == pytest.approx([2.0, 0.0, 1.0])
+    w, _, _, z = view.pose("dog/lidar")[1]
+    assert 2 * np.arctan2(z, w) == pytest.approx(0.0, abs=1e-6)
+
+
 def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(composed):
     view, world = _view(composed, "imu", "dog/imu"), _World()
     view.update(world.at(1.0, 0.0, 0.0))
