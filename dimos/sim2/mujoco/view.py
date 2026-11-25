@@ -26,17 +26,20 @@ from scipy.spatial.transform import Rotation
 
 from dimos.sim2.mujoco.lights import dome_sky
 from dimos.sim2.mujoco.look import (
+    ambient_headroom,
     blank_textures,
     display,
     light_headroom,
     linear_textures,
+    merged_light,
     scale_light,
     show_sky,
     stage_tone_map,
+    tone_mapped,
 )
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
-from dimos.sim2.mujoco.renders import RenderProcess, Renders
+from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
 from dimos.sim2.mujoco.world import USD_SUFFIXES, SensorMount, compile_world, mount_sensor
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 
@@ -51,8 +54,13 @@ def _open_stage(scene: Path) -> Any:
 
 class MujocoView:
     def __init__(
-        self, scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None
+        self,
+        scene: Path,
+        ids: Iterable[str] = (),
+        mount: SensorMount | None = None,
+        quality: RenderQuality = RenderQuality(),
     ) -> None:
+        self._quality = quality
         self._robots = set(ids)
         # Held while the view is built, so each reader of the scene below shares its parsed layers instead of reparsing them.
         stage = _open_stage(Path(scene)) if Path(scene).suffix.lower() in USD_SUFFIXES else None
@@ -63,17 +71,23 @@ class MujocoView:
             blank_textures(spec)
         if mount is not None:
             mount_sensor(spec, mount)
-        self._tone_map = stage_tone_map(Path(scene)) if stage is not None and self._draws else None
+        self._tone_map = (
+            (quality.tone_map or stage_tone_map(Path(scene)))
+            if stage is not None and self._draws
+            else None
+        )
         if self._tone_map is not None:
             linear_textures(spec, Path(scene))
         self.model = spec.compile()
-        self._headroom = 1.0
+        quality.apply_to_model(self.model)
+        self._headroom = self._full_headroom = 1.0
         if self._tone_map is not None:
             # MuJoCo writes linear light to 8 bits and clips at 1, so render it scaled to fit.
             sky = dome_sky(Path(scene))
-            self._headroom = max(
-                light_headroom(self.model), 0.0 if sky is None else float(sky.max())
-            )
+            skies = [] if sky is None else [float(sky.max())]
+            # Fitting a sun into 8 bits leaves the shade a code value or two, so the shade gets its own exposure.
+            self._headroom = max(ambient_headroom(self.model), *skies)
+            self._full_headroom = max(light_headroom(self.model), *skies)
             scale_light(self.model, 1.0 / self._headroom)
             if sky is not None:
                 show_sky(self.model, sky / self._headroom)
@@ -158,14 +172,22 @@ class MujocoView:
             raise ValueError("a lidar or imu view has no textures to render; open a camera view")
         if self._renders is None:
             # A worker is forked, and macOS's Metal compiles no shader there (see renders.py).
-            self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(self.model)
+            self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(
+                self.model, self._quality
+            )
         # Placed here as well as where it renders, as pose() reads the cameras this places.
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
-        rgb = self._renders.render(self.data, camera, width, height)
-        if self._tone_map is None:
-            return rgb
-        return display(rgb, self._headroom, self._tone_map)
+        if self._tone_map is None or self._full_headroom <= self._headroom:
+            rgb = self._renders.render(self.data, camera, width, height)
+            return rgb if self._tone_map is None else display(rgb, self._headroom, self._tone_map)
+        # MuJoCo clips each light's color at 1, so the shade renders alone at its own scale and the direct light at the full one.
+        dimmer = self._headroom / self._full_headroom
+        shade, lit = self._renders.render_each(
+            self.data, camera, width, height, [(1.0, False), (dimmer, True)]
+        )
+        linear = merged_light(shade, self._headroom, lit, self._full_headroom)
+        return tone_mapped(linear, self._tone_map)
 
     def raycaster(
         self,
