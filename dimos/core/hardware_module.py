@@ -20,10 +20,11 @@ mounted onto one of the robot's mount frames::
     autoconnect(Robot.blueprint(), Lidar.mount(Robot.mounts.lidar))
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
-the mount frame it sits on to its own frames. It serves its USD and every file it reaches on
-``hardware_file_request``/``hardware_file_response``, named relative to itself, so whatever needs
-the whole assembly (a simulator, on this machine or another) fetches them with
-``fetch_hardware_files`` and grafts them where ``mounted_on()`` says.
+the mount frame it sits on to its own frames. The edges that never move (fixed joints and the
+mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
+USD and every file it reaches on ``hardware_file_request``/``hardware_file_response``, named
+relative to itself, so whatever needs the whole assembly (a simulator, on this machine or another)
+fetches them with ``fetch_hardware_files`` and grafts them where ``mounted_on()`` says.
 """
 
 from collections import defaultdict
@@ -42,6 +43,7 @@ from dimos.msgs.files.FileInfo import FileInfo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import JointDescription, UsdModel
 from dimos.spec.utils import Spec
@@ -79,6 +81,8 @@ class HardwareModuleConfig(TfModuleConfig):
     usd: UsdModel
     # The mount frame of the hardware this sits on (set by HardwareModule.mount); None for the hardware everything mounts to.
     mount: str | None = None
+    # The edges that never move go out once on tf_static at start, then on tf this often (0: never on tf), for whatever joins later.
+    static_tf_rate_hz: float = 10.0
 
 
 # needed for sims to detect hardware modules on hosted systems
@@ -99,6 +103,8 @@ class HardwareModule(TfModule):
     hardware_file_request: In[FileInfo]
     # The reply (header only when the asker's sha256 is current), and the hardware.usda header announced at start.
     hardware_file_response: Out[FileInfo]
+    # The edges that never move, once at start (not latched: only what listens then gets them).
+    tf_static: Out[TFMessage]
 
     @classmethod
     def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
@@ -134,6 +140,21 @@ class HardwareModule(TfModule):
     def start(self) -> None:
         super().start()
         self.serve_hardware_files()
+        self.publish_static_tf()
+
+    def publish_static_tf(self) -> None:
+        """Publish the edges that never move once on tf_static, then on tf at static_tf_rate_hz; start() does this."""
+        if not self._static_edges:
+            return
+        self.tf_static.publish(TFMessage(*self.static_transforms(ts=self.time())))
+        if self.config.static_tf_rate_hz > 0:
+            republishing = self.spawn(self._republish_static_tf())
+            self.register_disposable(Disposable(republishing.cancel))
+
+    async def _republish_static_tf(self) -> None:
+        while True:
+            self.tfbuffer.publish(*self.static_transforms(ts=self.time()))
+            await self.sleep(1 / self.config.static_tf_rate_hz)
 
     def serve_hardware_files(self) -> None:
         """Answer hardware_file_request and announce hardware.usda; start() does this once its streams are wired."""
@@ -200,11 +221,41 @@ class HardwareModule(TfModule):
         self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
     ) -> list[Transform]:
         """Every edge of this hardware's own tf at ``joint_positions`` (missing joints sit at zero), plus its mount."""
-        positions = joint_positions or {}
-        edges = self._edges
+        return [*self.static_transforms(ts), *self.moving_transforms(joint_positions, ts)]
+
+    def static_transforms(self, ts: float | None = None) -> list[Transform]:
+        """The edges that never move (fixed joints and the mount), stamped ``ts``."""
+        return [
+            Transform(
+                translation=edge.translation,
+                rotation=edge.rotation,
+                ts=ts,
+                frame_id=edge.frame_id,
+                child_frame_id=edge.child_frame_id,
+            )
+            for edge in self._static_edges
+        ]
+
+    def moving_transforms(
+        self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
+    ) -> list[Transform]:
+        """The edges of joints that move, at ``joint_positions`` (missing joints sit at zero)."""
+        return self._edge_transforms(self._moving_edges, joint_positions or {}, ts)
+
+    def publish_usd_tf(
+        self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
+    ) -> None:
+        """Publish the edges that move at ``joint_positions``; the static ones go out on their own."""
+        transforms = self.moving_transforms(joint_positions, ts)
+        if transforms:
+            self.tfbuffer.publish(*transforms)
+
+    def _edge_transforms(
+        self, edges: "_JointEdges", positions: Mapping[str, float], ts: float | None
+    ) -> list[Transform]:
         at = np.array([_position(joint, positions) for joint in edges.joints], dtype=np.float64)
         translations, rotations = edges.at(at)
-        transforms = [
+        return [
             Transform(
                 translation=Vector3(*translation),
                 rotation=Quaternion(*rotation),
@@ -216,19 +267,6 @@ class HardwareModule(TfModule):
                 edges.links, translations.tolist(), rotations.tolist(), strict=True
             )
         ]
-        mounted_on = self.mounted_on()
-        if mounted_on is not None:
-            transforms.append(
-                Transform.from_matrix(
-                    np.eye(4), ts=ts, frame_id=mounted_on, child_frame_id=self.mounted_frame
-                )
-            )
-        return transforms
-
-    def publish_usd_tf(
-        self, joint_positions: Mapping[str, float] | None = None, ts: float | None = None
-    ) -> None:
-        self.tfbuffer.publish(*self.usd_transforms(joint_positions, ts))
 
     @cached_property
     def _posable_joints(self) -> tuple[JointDescription, ...]:
@@ -236,9 +274,23 @@ class HardwareModule(TfModule):
         return tuple(j for j in self.config.usd.joints if j.type != "floating")
 
     @cached_property
-    def _edges(self) -> "_JointEdges":
+    def _moving_edges(self) -> "_JointEdges":
         # Worked out once: a robot publishes these edges at every tick, and only the positions change.
-        return _JointEdges(self._posable_joints)
+        return _JointEdges(tuple(j for j in self._posable_joints if j.type != "fixed"))
+
+    @cached_property
+    def _static_edges(self) -> list[Transform]:
+        """The fixed joints and the mount, worked out once and only restamped; a subclass may narrow them."""
+        fixed = _JointEdges(tuple(j for j in self._posable_joints if j.type == "fixed"))
+        transforms = self._edge_transforms(fixed, {}, None)
+        mounted_on = self.mounted_on()
+        if mounted_on is not None:
+            transforms.append(
+                Transform.from_matrix(
+                    np.eye(4), frame_id=mounted_on, child_frame_id=self.mounted_frame
+                )
+            )
+        return transforms
 
     def _create_tfbuffer(self, port: Any) -> TF:
         if self.config.skip_tf_checks:
