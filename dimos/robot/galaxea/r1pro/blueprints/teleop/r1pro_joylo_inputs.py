@@ -80,10 +80,22 @@ _camera_transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
 }
 
 
-def _operator_blueprint(left_only: bool = False, *, require_leaders: bool = True) -> Blueprint:
+def _operator_blueprint(
+    left_only: bool = False,
+    *,
+    require_leaders: bool = True,
+    filter_cutoff_hz: float | None = None,
+) -> Blueprint:
+    """The leader arms and Joy-Cons on the operator's machine.
+
+    Args:
+        filter_cutoff_hz: Low-pass cutoff on the leader readings, in Hz, to smooth
+            hand tremor. None sends each reading as it is.
+    """
     return autoconnect(
         R1ProLeaderConnection.blueprint(
             enabled_sides=("left",) if left_only else ("left", "right"),
+            filter_cutoff_hz=filter_cutoff_hz,
             # Hardware keeps the module's own default: no serial port is an error.
             **({} if require_leaders else {"required": False}),
         ).remappings([(R1ProLeaderConnection, "joint_state", "leader_readings")]),

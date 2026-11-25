@@ -29,10 +29,10 @@ the Joy-Con samples (`joycon_sample`), JoyLo's joint command
 (`leader_joint_command`) and the laptop's external camera (`external_color`,
 640x480 JPEG; the device is `--r1proexternalcamera.device`).
 
-The simulation differs in three declared ways: its own tracking rates
-(1.5 rad/s arms, 0.5 rad/s torso), the sim2 robot model, and leaders that are
-optional. With no leader serial port the leader arms are not read, JoyLo stays
-paused, and the headset or a browser can drive. Hardware still fails at launch
+The simulation differs in four declared ways: its own tracking rates
+(1.5 rad/s arms, 0.5 rad/s torso), unfiltered leader readings, the sim2 robot
+model, and leaders that are optional. With no leader serial port the leader
+arms are not read, JoyLo stays paused, and the headset or a browser can drive. Hardware still fails at launch
 without a leader port.
 
 `r1pro-joylo-real` and `teleop-openarm-r1pro-joylo` remain as the two halves of
@@ -384,9 +384,14 @@ The operator launch needs both serial ports and the existing calibration root.
 The profile starts paused, captures measured joint positions, and requires a
 fresh X press to follow the leaders. Home pauses JoyLo. It uses 0.75 rad/s arm
 and 0.3 rad/s torso target slews, a 1.0 rad/s vendor tracking cap, and the same
-stick/gripper controls as sim. Joy-Con translation starts at 0.3 m/s (0.6 with
-boost), and yaw at 0.6 rad/s. The configured torso
-lengths are 0.40/0.30 m for this robot's installed R1 Pro description. CC's
+stick/gripper controls as sim. `r1pro-openarm-joylo-real` and
+`r1pro-openarm-joylo-collect` use 1.5 rad/s arm slews (ceiling 2.0 rad/s), the
+same torso slews, a 2.0 rad/s vendor tracking cap and a 10 Hz low-pass on the
+leader readings. `--controlcoordinator.arm-rate 0.75
+--controlcoordinator.arm-ceiling 1.0 --r1proconnection.tracking-speed 1.0
+--r1proleaderconnection.filter-cutoff-hz null` gives them the values above.
+Joy-Con translation starts at 0.3 m/s (0.6 with boost), and yaw at 0.6 rad/s.
+The configured torso lengths are 0.40/0.30 m for this robot's installed R1 Pro description. CC's
 control model supplies the joint limits; no model-based IK or dynamics runs
 in this hardware blueprint. Check the variant before using it on another robot.
 
@@ -406,8 +411,9 @@ and drive-axis bindings so Desktop needs no robot-specific names. Its matching
 limits; browser/RPC joint targets and leader targets obey the same tracking rate.
 The numeric inputs `arm_tracking_speed`, `torso_tracking_speed`, `drive_speed` and
 `turn_speed` update these same settings. Hardware ceilings are 1.0 rad/s for arm
-tracking, 0.5 rad/s for torso tracking, 0.5 m/s drive (1.0 with Joy-Con boost), and
-2.0 rad/s turning. Invalid/nonfinite requests are rejected. Zero freezes that
+tracking (2.0 rad/s in `r1pro-openarm-joylo-real` and `-collect`), 0.5 rad/s
+for torso tracking, 0.5 m/s drive (1.0 with Joy-Con boost), and 2.0 rad/s
+turning. Invalid/nonfinite requests are rejected. Zero freezes that
 rate. Settings do not enable motion and last for this run. Desktop reads them on
 opening the Control panel, uses acknowledged values for driving, and polls for
 changes from other clients while the panel is open.

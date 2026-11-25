@@ -44,6 +44,13 @@ from dimos.robot.galaxea.r1pro.joylo import UPPER
 from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialSensors
 from dimos.robot.usd_manager import UsdManager
 
+# Arm speed at start and the most the operator may raise it to, in rad/s.
+_ARM_RATE, _ARM_CEILING = 1.5, 2.0
+# Speed cap sent to the robot's own joint tracker, in rad/s.
+_TRACKING_SPEED = 2.0
+# Low-pass cutoff on the leader readings, in Hz, to smooth hand tremor.
+_LEADER_FILTER_CUTOFF_HZ = 10.0
+
 _vendor = CACHE_DIR / "r1pro-hardware/mobiman"
 _model = RobotModel.from_file(
     _vendor / "urdf/R1_PRO/urdf/r1_pro.urdf",
@@ -109,14 +116,24 @@ def make_joylo_desktop(*, recording: bool = False) -> Blueprint:
     collection = r1pro_collection(
         wrist_shape=HARDWARE_WRIST_SHAPE, extra_inputs={"external_color": CompressedImage}
     )
-    operator = autoconnect(_operator_blueprint(), *([_external_camera()] if recording else []))
+    operator = autoconnect(
+        _operator_blueprint(filter_cutoff_hz=_LEADER_FILTER_CUTOFF_HZ),
+        *([_external_camera()] if recording else []),
+    )
     return autoconnect(
         autoconnect(
             # When requested, the recorder starts first and shuts down last.
             *([collection] if recording else []),
             # Operator video uses head_*_color / wrist_*_color independently of
             # the paired, rectified RGB-D streams used by the mesh and recorder.
-            make_joylo_real(publish_odom_tf=True, enable_wrist_color=True, webxr=True),
+            make_joylo_real(
+                publish_odom_tf=True,
+                enable_wrist_color=True,
+                webxr=True,
+                arm_rate=_ARM_RATE,
+                arm_ceiling=_ARM_CEILING,
+                tracking_speed=_TRACKING_SPEED,
+            ),
             # Retarget beside feedback and IK, where headset poses arrive.
             _webxr_blueprint(),
             _webxr_joystick_blueprint(),

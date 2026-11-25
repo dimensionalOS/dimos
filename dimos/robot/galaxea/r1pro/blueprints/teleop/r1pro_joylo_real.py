@@ -44,10 +44,24 @@ _profile = JoyloConfig(
 
 
 def make_joylo_real(
-    *, publish_odom_tf: bool = True, enable_wrist_color: bool = True, webxr: bool = False
+    *,
+    publish_odom_tf: bool = True,
+    enable_wrist_color: bool = True,
+    webxr: bool = False,
+    arm_rate: float = 0.75,
+    arm_ceiling: float = 1.0,
+    tracking_speed: float = 1.0,
 ) -> Blueprint:
-    """Compose hardware control with an explicit owner for odometry and wrist video."""
-    declaration = _declaration.model_copy(update={"publish_odom_tf": publish_odom_tf})
+    """Compose hardware control with an explicit owner for odometry and wrist video.
+
+    Args:
+        arm_rate: Fastest each arm joint follows its target at start, in rad/s.
+        arm_ceiling: Highest arm_rate the operator may set while running, in rad/s.
+        tracking_speed: Speed cap sent to the robot's own joint tracker, in rad/s.
+    """
+    declaration = _declaration.model_copy(
+        update={"publish_odom_tf": publish_odom_tf, "tracking_speed": tracking_speed}
+    )
     connection = R1ProConnection.blueprint(**declaration.model_dump())
     if enable_wrist_color:
         # The connection no longer carries wrist video: each D405's colour comes
@@ -68,7 +82,7 @@ def make_joylo_real(
         R1ProConnection,
         _declaration,
         joylo=_profile.model_dump(),
-        motion_limits=motion_groups(),
+        motion_limits=motion_groups(arm_rate=arm_rate, arm_ceiling=arm_ceiling),
         velocity_limits={**dict.fromkeys(ARMS, 1.0), **dict.fromkeys(TORSO, 0.5)},
         webxr=webxr,
     ).global_config(viewer="none", transport="zenoh", n_workers=3)

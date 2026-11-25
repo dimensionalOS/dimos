@@ -18,8 +18,11 @@ import h5py
 import numpy as np
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.fields import validate_module_config
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import resolve_module_refs
+from dimos.core.global_config import GlobalConfig
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
@@ -139,6 +142,55 @@ def test_hardware_run_starts_without_recording_options():
     assert {"recorder", "episodes"}.isdisjoint(names)
     assert {"ControlCoordinator", "r1projoylo", "r1prowebxr"} <= names
     assert resolve_module_refs(blueprint)["ControlCoordinator", "_leader"] == "r1projoylo"
+
+
+def test_hardware_run_speeds_and_their_launch_options(tmp_path):
+    def speeds(blueprint, tokens=()):  # type: ignore[no-untyped-def]
+        blueprint = _solid(blueprint)
+        atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+        if "recorder" in atoms:
+            tokens = [*tokens, "--recorder.recording", str(tmp_path / "take")]
+            tokens += ["--episodes.task", "pick the cup"]
+        parsed = BlueprintConfigParser(blueprint).parse(list(tokens), environ={})
+        config = {
+            name: validate_module_config(atoms[name], parsed.module_kwargs(name), GlobalConfig())
+            for name in ("ControlCoordinator", "r1proconnection", "r1proleaderconnection")
+            if name in atoms
+        }
+        limits = config["ControlCoordinator"].motion_limits
+        return {
+            "arm": (limits["arm_rate"].rate, limits["arm_rate"].ceiling),
+            "torso": (limits["torso_rate"].rate, limits["torso_rate"].ceiling),
+            "tracking": getattr(config.get("r1proconnection"), "tracking_speed", None),
+            "filter": config["r1proleaderconnection"].filter_cutoff_hz,
+        }
+
+    fast = {"arm": (1.5, 2.0), "torso": (0.3, 0.5), "tracking": 2.0, "filter": 10.0}
+    assert speeds(r1pro_openarm_joylo_real) == fast
+    assert speeds(r1pro_openarm_joylo_collect) == fast
+    assert speeds(r1pro_openarm_joylo_sim2) == {
+        "arm": (1.5, 1.5),
+        "torso": (0.5, 0.5),
+        "tracking": None,
+        "filter": None,
+    }
+    options = {
+        "controlcoordinator.arm-rate": "0.75",
+        "controlcoordinator.arm-ceiling": "1.0",
+        "controlcoordinator.torso-rate": "0.4",
+        "controlcoordinator.torso-ceiling": "0.6",
+        "r1proconnection.tracking-speed": "1.0",
+        "r1proleaderconnection.filter-cutoff-hz": "null",
+    }
+    tokens = [token for key, value in options.items() for token in (f"--{key}", value)]
+    assert speeds(r1pro_openarm_joylo_real, tokens) == {
+        "arm": (0.75, 1.0),
+        "torso": (0.4, 0.6),
+        "tracking": 1.0,
+        "filter": None,
+    }
+    with pytest.raises(BlueprintConfigError, match="ceiling"):
+        speeds(r1pro_openarm_joylo_real, ["--controlcoordinator.arm-ceiling", "1.0"])
 
 
 def test_collect_run_is_the_hardware_run_recording_the_operator(tmp_path):

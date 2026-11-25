@@ -26,7 +26,11 @@ import threading
 import time
 from typing import Any, Literal, Protocol
 
+from pydantic import Field, model_validator
+from typing_extensions import Self
+
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
+from dimos.control.motion_limits import MotionGroup
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.core import rpc
 from dimos.core.stream import In
@@ -126,7 +130,43 @@ class LeaderPauseSpec(Spec, Protocol):
 
 
 class R1ProTeleopCoordinatorConfig(ControlCoordinatorConfig):
+    """The coordinator's settings, with launch options for the arm and torso speeds.
+
+    Each speed option left as None keeps the blueprint's value.
+
+    Attributes:
+        teleop_source: The device that moves the arms at start.
+        arm_rate: Fastest each arm joint follows its target at start, in rad/s.
+        arm_ceiling: Highest arm_rate the operator may set while running, in rad/s.
+        torso_rate: Fastest the torso follows its target at start, in rad/s.
+        torso_ceiling: Highest torso_rate the operator may set while running, in rad/s.
+    """
+
     teleop_source: TeleopSource = "leader"
+    arm_rate: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    arm_ceiling: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    torso_rate: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    torso_ceiling: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _apply_speed_options(self) -> Self:
+        for group, rate, ceiling in (
+            ("arm_rate", self.arm_rate, self.arm_ceiling),
+            ("torso_rate", self.torso_rate, self.torso_ceiling),
+        ):
+            updates = {
+                key: value
+                for key, value in (("rate", rate), ("ceiling", ceiling))
+                if value is not None
+            }
+            if not updates:
+                continue
+            if group not in self.motion_limits:
+                raise ValueError(f"this coordinator has no {group!r} motion group to change")
+            self.motion_limits[group] = MotionGroup.model_validate(
+                {**self.motion_limits[group].model_dump(), **updates}
+            )
+        return self
 
 
 class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
