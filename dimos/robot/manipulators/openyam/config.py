@@ -157,4 +157,5 @@ OPENYAM = DamiaoRobot(
     teach_kd=list(OPENYAM_TEACH_DAMPING),
     passive_grippers=frozenset({OPENYAM_GRIPPER_NAME}),
     home_joints=list(OPENYAM_HOME_JOINTS),
+    name="openyam",
 )

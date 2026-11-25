@@ -182,6 +182,7 @@ class DimosAgentAdapter(PiAdapter):
             **super()._build_process_env(paths),
             **self._mcp_env,
             "XDG_CONFIG_HOME": str(paths.config),
+            "XDG_DATA_HOME": str(paths.workspace / "agent-data"),
             "XDG_STATE_HOME": str(paths.workspace / "agent-state"),
             "XDG_CACHE_HOME": str(paths.cache),
             # `dimos agent` drops variables whose value it loaded from .env, the provider key included.

@@ -385,7 +385,7 @@ def test_factory_constructs_plain_pose_target_solver_by_default(
         },
     )
 
-    task = create_task(cfg, hardware={})
+    task = create_task(cfg)
 
     assert type(task._solver) is PinkPoseTargetSolver
     assert task._config.max_joint_velocity_rad_s == 5.0
@@ -409,8 +409,8 @@ def test_factory_constructs_fresh_custom_solver_for_each_task() -> None:
         },
     )
 
-    first = create_task(cfg, hardware={})
-    second = create_task(cfg, hardware={})
+    first = create_task(cfg)
+    second = create_task(cfg)
 
     assert len(_CustomPoseTargetSolver.instances) == 2
     assert first._solver is _CustomPoseTargetSolver.instances[0]

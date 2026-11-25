@@ -286,9 +286,7 @@ class RobotPlantProfile:
 
       * publish Twist on ``/cmd_vel`` (the coord's ``twist_command`` In)
       * subscribe JointState on ``/coordinator/joint_state`` (the
-        coord's published Out — joint *positions* carry ``[x, y, yaw]``
-        because ``positions = adapter.read_odometry()``; see
-        :class:`~dimos.control.hardware_interface.ConnectedTwistBase`).
+        coord's published Out).
 
     ``robot_id`` is provenance/cosmetic. ``joint_prefix`` is what the
     operator coord's hardware uses for joint names — Go2's coord uses

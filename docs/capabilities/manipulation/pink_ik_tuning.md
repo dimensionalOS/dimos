@@ -114,15 +114,18 @@ Pass the solver class, not an instance. The coordinator constructs one solver
 for each control task:
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import teleop_ik_task
+from dimos.control.coordinator import TaskConfig
 
-teleop_task = teleop_ik_task(
-    hardware,
+teleop_task = TaskConfig(
     name="teleop_arm",
-    robot_model=robot_model,
-    bindings=[{"hand": "right", "target_frame": "link6"}],
-    solver_type=YourArmPinkPoseTargetSolver,
-    params={"pink": pink},
+    type="teleop_ik",
+    joint_names=list(robot_model.joint_names),
+    params={
+        "robot_model": robot_model,
+        "bindings": [{"hand": "right", "target_frame": "link6"}],
+        "solver_type": YourArmPinkPoseTargetSolver,
+        "pink": pink,
+    },
 )
 ```
 
@@ -135,12 +138,13 @@ Teleoperation task parameters bound the QP output against the URDF and live
 hardware feedback. They are independent of the objective weights:
 
 ```python skip
-teleop_task = teleop_ik_task(
-    hardware,
+teleop_task = TaskConfig(
     name="teleop_arm",
-    robot_model=robot_model,
-    bindings=[{"hand": "right", "target_frame": "link6"}],
+    type="teleop_ik",
+    joint_names=list(robot_model.joint_names),
     params={
+        "robot_model": robot_model,
+        "bindings": [{"hand": "right", "target_frame": "link6"}],
         "pink": pink,
         "timeout": 0.5,
         "max_joint_velocity_rad_s": 2.0,

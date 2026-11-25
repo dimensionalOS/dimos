@@ -111,6 +111,7 @@ async function open(name: string, model: ReturnType<typeof scriptedModel>, repor
   });
   const inputs = new InputGate({
     harness,
+    skills: [],
     observer: new RuntimeObserver({
       harness,
       runtime: new RuntimeClient(connection),
