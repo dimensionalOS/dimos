@@ -39,7 +39,7 @@ class _RoomConfig(SimSceneConfig):
 
 class _Room(SimScene):
     config: _RoomConfig
-    mounts = Mounts("spot")
+    mounts = Mounts("room/room/aisle/spot")
 
 
 def test_a_scene_publishes_only_the_path_to_its_mounts() -> None:
@@ -49,7 +49,11 @@ def test_a_scene_publishes_only_the_path_to_its_mounts() -> None:
     finally:
         room.stop()
 
-    assert edges == {("room", "aisle"), ("aisle", "spot")}
+    assert edges == {
+        ("room", "room/room"),
+        ("room/room", "room/room/aisle"),
+        ("room/room/aisle", "room/room/aisle/spot"),
+    }
 
 
 def test_a_scene_works_its_edges_out_once_and_restamps_them(
@@ -58,13 +62,13 @@ def test_a_scene_works_its_edges_out_once_and_restamps_them(
     room = _Room()
     try:
         worked_out = []
-        edge_transforms = room._edge_transforms
+        namespaced = room._namespaced
 
         def working_out(*args: Any) -> list[Transform]:
             worked_out.append(1)
-            return edge_transforms(*args)
+            return namespaced(*args)
 
-        monkeypatch.setattr(room, "_edge_transforms", working_out)
+        monkeypatch.setattr(room, "_namespaced", working_out)
         stamps = [room.static_transforms(ts=float(tick)) for tick in range(3)]
     finally:
         room.stop()

@@ -21,6 +21,7 @@ from typing import Any, cast
 import uuid
 
 import mujoco
+import numpy as np
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -29,7 +30,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_frame_names
+from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.robot.assets.usd_utils.layers import graft_usd
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.assets.toy import toy_robot
@@ -64,9 +65,7 @@ def _scene(**spots: tuple[float, float, float]) -> UsdModel:
 
 def _composed(scene: UsdModel, robots: dict[str, UsdModel]) -> UsdModel:
     """Each robot grafted onto the scene's frame of its own name, as compose_world does."""
-    grafts = {
-        robot_id: prefix_usd_frames(robot.usd, robot_id) for robot_id, robot in robots.items()
-    }
+    grafts = {f"scene/{robot_id}": robot.usd for robot_id, robot in robots.items()}
     return UsdModel.from_layer(graft_usd(scene.usd, grafts))
 
 
@@ -96,7 +95,7 @@ def test_robots_grafted_into_a_scene_compile_into_one_world(robot_model):
 
 
 def test_a_robot_the_world_does_not_hold_is_refused(robot_model):
-    with pytest.raises(ValueError, match="no body 'base' in the world"):
+    with pytest.raises(ValueError, match=f"no body '{robot_model.root_link}' in the world"):
         compile_world(usd_layer(_scene()), [SimulatedRobot("dog", robot_model)])
 
 
@@ -319,6 +318,33 @@ def test_frames_report_robots_and_objects_and_actions_drive_them(world, robot_mo
     assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.5
 
 
+def test_a_falling_crate_is_seen_falling_and_a_landed_one_still(world, robot_model):
+    """Velocity and acceleration come from MuJoCo, linear then angular in world axes, without gravity."""
+    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
+    model, data, seen = backend.model, backend.data, _Collect()
+    lifted = model.jnt_qposadr[model.body_jntadr[backend._roots["crate"]]] + 2
+    data.qpos[lifted] += 1.0
+    mujoco.mj_forward(model, data)
+    falling_from = data.time
+    for _ in range(10):
+        mujoco.mj_step(model, data)
+    seen.offer(backend.frame())
+    crate = seen.world.entity("crate")
+    # A frame reads the state its last step started from: the velocity a step before data.time.
+    fallen_for = data.time - falling_from - model.opt.timestep
+    assert crate.velocity[:3] == pytest.approx(model.opt.gravity * fallen_for)
+    assert crate.acceleration[:3] == pytest.approx(model.opt.gravity, abs=1e-6)
+    assert crate.velocity[3:] == pytest.approx([0, 0, 0])
+    assert crate.acceleration[3:] == pytest.approx([0, 0, 0])
+
+    while data.time < falling_from + 2.0:
+        mujoco.mj_step(model, data)
+    seen.offer(backend.frame())
+    crate = seen.world.entity("crate")
+    assert crate.velocity == pytest.approx(np.zeros(6), abs=1e-3)
+    assert crate.acceleration == pytest.approx(np.zeros(6), abs=1e-2)
+
+
 def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(world, robot_model):
     backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
     seen = _Collect()
@@ -417,7 +443,7 @@ def test_frames_offered_while_one_is_in_flight_are_merged_not_lost() -> None:
     assert in_flight.wait(5), "the publisher thread never picked the frame up"
     writer.set("crate", "note", {"a": 1})
     publisher.offer(writer.end_frame(0.1))
-    writer.position("crate", [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    writer.body_state("crate", [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], [0.0] * 6, [0.0] * 6)
     publisher.offer(writer.end_frame(0.2))
     release.set()
     assert followed.wait(5), "the frames offered mid-publish were dropped"

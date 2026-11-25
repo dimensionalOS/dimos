@@ -40,7 +40,7 @@ class SimSensor(OnWorldTime, HardwareModule):
     @property
     def frame_id(self) -> str:
         """The sensor's frame: its USD's root link, under its namespace."""
-        return self.usd_frame(self.config.usd.root_link)
+        return self.tf_frames[self.config.usd.root_link]
 
     def mirror_world(self) -> WorldMirror:
         world = WorldMirror()

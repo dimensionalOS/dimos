@@ -24,7 +24,7 @@ import numpy as np
 
 from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.mujoco.drives import usd_with_mjc_servos
-from dimos.sim2.mujoco.names import resolved, short_names
+from dimos.sim2.mujoco.names import resolve, resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import ODOM_FRAME, Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
@@ -226,8 +226,10 @@ class MujocoBackend:
 
     def _entity_roots(self) -> dict[str, int]:
         model = self.model
+        bodies = [model.body(body).name for body in range(model.nbody)]
+        # A root link is its prim path (toy/Geometry/base); the world names it under its robot (dog/base).
         roots = {
-            robot_id: model.body(f"{robot_id}/{r.root_body}").id
+            robot_id: model.body(resolve(bodies, f"{robot_id}/{r.root_body}")).id
             for robot_id, r in self._robots.items()
         }
         robot_roots = set(roots.values())
@@ -262,12 +264,17 @@ class MujocoBackend:
         if not self._announced:
             self._announce()
             self._announced = True
+        # Body accelerations (cacc), which stepping leaves uncomputed.
+        mujoco.mj_rnePostConstraint(model, data)  # type: ignore[attr-defined]
         for name, body in self._roots.items():
             pose = np.array([*data.xpos[body], *_xyzw(data.xquat[body])])
+            velocity, acceleration = _motion(model, data, body)
+            # A body is sent when it moved or its velocity changed, so the last one sent of a body that stopped is still.
+            state = np.concatenate([pose, velocity])
             sent = self._sent.get(name)
-            if sent is None or not _close(sent, pose):
-                world.position(name, pose.tolist())
-                self._sent[name] = pose
+            if sent is None or not _close(sent, state):
+                world.body_state(name, pose.tolist(), velocity.tolist(), acceleration.tolist())
+                self._sent[name] = state
             joints, joint_names = self._joints[name]
             if joints:
                 rows = np.column_stack(
@@ -325,6 +332,18 @@ class MujocoBackend:
                 return True
             body = int(parents[body])
         return body == ancestor
+
+
+def _motion(model: mujoco.MjModel, data: mujoco.MjData, body: int) -> tuple[np.ndarray, np.ndarray]:
+    """The body's velocity and acceleration at its origin, linear then angular, world axes; acceleration without gravity."""
+    velocity, acceleration = np.zeros(6), np.zeros(6)
+    # Both come angular then linear; MuJoCo's linear acceleration carries gravity's reaction, as an accelerometer's does.
+    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_XBODY, body, velocity, 0)
+    mujoco.mj_objectAcceleration(model, data, mujoco.mjtObj.mjOBJ_XBODY, body, acceleration, 0)  # type: ignore[attr-defined]
+    return (
+        np.concatenate([velocity[3:], velocity[:3]]),
+        np.concatenate([acceleration[3:] + model.opt.gravity, acceleration[:3]]),
+    )
 
 
 def _close(a: np.ndarray, b: np.ndarray) -> bool:

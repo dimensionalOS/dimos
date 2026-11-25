@@ -20,7 +20,8 @@ import pytest
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.hardware_module import HardwareSpec
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_frame_names
+from dimos.robot.assets.usd_utils.frames import usd_frame_names
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sim import MujocoSim
@@ -36,20 +37,25 @@ def _room() -> str:
     )
 
 
+# The logistics room's frame a dog mounts on, and so the dog's namespace.
+_SPOT = "logistics/dog"
+
+
 def _dog() -> str:
-    return prefix_usd_frames(toy_robot().usd, "dog")
+    """The dog's USD as it serves it: its prims under its namespace."""
+    return usd_under_namespace(toy_robot().usd, _SPOT)
 
 
 def test_each_hardware_is_grafted_onto_the_frame_it_is_mounted_on() -> None:
-    world = compose_usds([(_room(), None), (_dog(), "dog")])
+    world = compose_usds([(_room(), None), (_dog(), _SPOT)])
     frames = usd_frame_names(world.usd)
-    assert "dog" in frames
-    assert any(frame.startswith("dog/") for frame in frames)
+    assert _SPOT in frames
+    assert f"{_SPOT}/{toy_robot().root_link}" in frames
 
 
 def test_a_world_needs_exactly_one_unmounted_usd() -> None:
     with pytest.raises(ValueError, match="exactly one unmounted"):
-        compose_usds([(_dog(), "dog")])
+        compose_usds([(_dog(), _SPOT)])
     with pytest.raises(ValueError, match="exactly one unmounted"):
         compose_usds([(_room(), None), (_room(), None)])
 

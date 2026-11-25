@@ -19,7 +19,6 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 from dimos.robot.assets.usd_utils.layers import graft_usd
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
@@ -40,20 +39,23 @@ SCENE = Path(__file__).parent / "assets" / "scene.usda"
 def composed() -> Path:
     robot = toy_robot().with_frames(
         {
-            "imu": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            "eye": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "imu": ("toy/Geometry/base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "eye": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         }
     )
     scene = UsdModel.from_file(SCENE).with_frames(
         {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
     )
-    layer = graft_usd(scene.usd, {"dog": prefix_usd_frames(robot.usd, "dog")})
+    layer = graft_usd(scene.usd, {"scene/dog": robot.usd})
     return layer_file(layer, called="sensor-world")
 
 
 def _view(composed: Path, kind: str = "lidar", frame: str = "dog/lidar"):
     return open_view(composed, ["dog"], SensorMount(kind, frame, frame))
+
+
+_STILL = [0.0] * 6
 
 
 class _World:
@@ -64,10 +66,11 @@ class _World:
         self.writer.add("dog", model="dog.usda")
         self.writer.add("dog/neck")
         self.writer.add("crate")
-        self.writer.position("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1])
+        self.writer.body_state("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1], _STILL, _STILL)
 
-    def at(self, sim_time: float, x: float, neck: float) -> WorldMirror:
-        self.writer.position("dog", [x, 0.0, 1.0, 0, 0, 0, 1])
+    def at(self, sim_time: float, x: float, neck: float, speed: float = 0.0) -> WorldMirror:
+        """The dog at ``x``, moving along x at ``speed``, its neck at ``neck``."""
+        self.writer.body_state("dog", [x, 0.0, 1.0, 0, 0, 0, 1], [speed, 0, 0, 0, 0, 0], _STILL)
         self.writer.joint("dog/neck", neck, 0.0, 0.0)
         self.mirror.apply(self.writer.end_frame(sim_time))
         return self.mirror
@@ -135,12 +138,14 @@ def Xform "housing"
 
 
 def test_a_sensor_does_not_see_the_housing_it_is_mounted_in():
-    robot = toy_robot().with_frames({"lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-    housed = graft_usd(robot.usd, {"lidar": _HOUSING})
+    robot = toy_robot().with_frames(
+        {"lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+    housed = graft_usd(robot.usd, {"toy/Geometry/base/head/lidar": _HOUSING})
     scene = UsdModel.from_file(SCENE).with_frames(
         {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
     )
-    layer = graft_usd(scene.usd, {"dog": prefix_usd_frames(housed, "dog")})
+    layer = graft_usd(scene.usd, {"scene/dog": housed})
     view = _view(layer_file(layer, called="housed-sensor-world"))
     view.update(_World().at(0.0, 0.0, 0.0))
     origin, _ = view.pose("dog/lidar")
@@ -204,7 +209,7 @@ def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed):
     world = _World()
     world.writer.add("cat", model="cat.usda")
     world.writer.add("cat/neck")
-    world.writer.position("cat", [9.0, 0.0, 1.0, 0, 0, 0, 1])
+    world.writer.body_state("cat", [9.0, 0.0, 1.0, 0, 0, 0, 1], _STILL, _STILL)
     world.writer.joint("cat/neck", np.pi / 2, 0.0, 0.0)
     view.update(world.at(1.0, 2.0, 0.0))
     assert view.pose("dog/base")[0] == pytest.approx([2.0, 0.0, 1.0])
@@ -212,13 +217,13 @@ def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed):
     assert 2 * np.arctan2(z, w) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(composed):
+def test_an_imu_reads_gravity_at_rest_and_acceleration_from_velocity_changes(composed):
     view, world = _view(composed, "imu", "dog/imu"), _World()
     view.update(world.at(1.0, 0.0, 0.0))
     gyro, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([0.0, 0.0, 9.81])
     assert gyro == pytest.approx([0.0, 0.0, 0.0])
-    view.update(world.at(1.5, 0.5, 0.0))
+    view.update(world.at(1.5, 0.5, 0.0, speed=1.0))
     _, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([2.0, 0.0, 9.81])
 
