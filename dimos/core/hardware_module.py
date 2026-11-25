@@ -324,18 +324,23 @@ class HardwareModule(TfModule):
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.attached_to is not None else None
 
-    @cached_property
-    def _hardware_files(self) -> HardwareFiles:
+    def _local_usd(self) -> str:
+        """This hardware's USD for its own process: prims under ``/<namespace>``, files as paths on this machine (``get_usd`` is the served one)."""
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
-        # Its prims under /<namespace> with files as paths on this machine; HardwareFiles makes them relative to serve.
         source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        usd = usd_under_namespace(
+        return usd_under_namespace(
             resolve_usd_assets(self.config.usd.usd, root), self.namespace, root or None
         )
-        return HardwareFiles(usd, source.stat().st_mtime if source and source.is_file() else None)
+
+    @cached_property
+    def _hardware_files(self) -> HardwareFiles:
+        source = self.config.usd.source_path
+        return HardwareFiles(
+            self._local_usd(), source.stat().st_mtime if source and source.is_file() else None
+        )
 
     def _on_hardware_file_request(self, request: FileInfo) -> None:
         # Answered on the request stream's own thread, so a burst (one per mesh) is never coalesced.
