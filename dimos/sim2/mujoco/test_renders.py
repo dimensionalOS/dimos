@@ -42,6 +42,8 @@ def _posed() -> tuple[mujoco.MjModel, mujoco.MjData]:
     data.qpos[:3] = [0.5, -0.4, 0.6]
     data.mocap_pos[0] = [-1.0, 0.5, 0.4]
     mujoco.mj_kinematics(model, data)
+    mujoco.mj_comPos(model, data)
+    mujoco.mj_camlight(model, data)
     return model, data
 
 
@@ -88,3 +90,14 @@ def test_a_view_renders_shadows_in_a_forked_worker(renders: None, tmp_path: Path
     worker.join()
     assert worker.exitcode == 0
     assert image.shape == (48, 64, 3) and image.std() > 0
+
+
+def test_a_view_places_its_cameras_where_it_renders_them(renders: None, tmp_path: Path) -> None:
+    scene = tmp_path / "shadowed.xml"
+    scene.write_text(SHADOWED)
+    view = MujocoView(scene)
+    try:
+        view.render("eye", 8, 8)
+        assert view.pose("eye")[0] == pytest.approx([0, -3, 2.5])
+    finally:
+        view.close()

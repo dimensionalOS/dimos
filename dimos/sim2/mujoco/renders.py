@@ -34,12 +34,10 @@ class Renders:
     def render(
         self, data: mujoco.MjData, camera: str, width: int, height: int
     ) -> NDArray[np.uint8]:
-        """`camera`'s image of `data`, whose kinematics are current."""
+        """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight)."""
         if (width, height) not in self._renderers:
             self._renderers[width, height] = mujoco.Renderer(self.model, height, width)
         renderer = self._renderers[width, height]
-        mujoco.mj_comPos(self.model, data)
-        mujoco.mj_camlight(self.model, data)
         renderer.update_scene(data, camera=camera)
         return renderer.render().copy()
 
@@ -66,7 +64,7 @@ class RenderProcess:
     def render(
         self, data: mujoco.MjData, camera: str, width: int, height: int
     ) -> NDArray[np.uint8]:
-        """`camera`'s image of `data`, whose kinematics are current."""
+        """`camera`'s image of `data`, whose cameras and lights are placed (mj_camlight)."""
         self._connection.send((data.qpos, data.mocap_pos, data.mocap_quat, camera, width, height))
         reply = self._connection.recv()
         if isinstance(reply, BaseException):
@@ -91,6 +89,8 @@ def _serve(descriptor: int) -> None:
                 return
             data.qpos[:], data.mocap_pos[:], data.mocap_quat[:] = qpos, mocap_pos, mocap_quat
             mujoco.mj_kinematics(renders.model, data)
+            mujoco.mj_comPos(renders.model, data)
+            mujoco.mj_camlight(renders.model, data)
             try:
                 connection.send(renders.render(data, camera, width, height))
             except Exception as error:
