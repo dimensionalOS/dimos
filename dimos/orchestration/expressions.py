@@ -21,7 +21,7 @@ from typing import Final, Literal, TypeAlias
 
 from cel_expr_python import cel
 
-Plain: TypeAlias = None | bool | int | float | str | list["Plain"] | dict[str, "Plain"]
+Plain: TypeAlias = bool | int | float | str | list["Plain"] | dict[str, "Plain"] | None
 
 
 class Marker(Enum):

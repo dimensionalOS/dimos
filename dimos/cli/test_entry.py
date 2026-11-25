@@ -20,7 +20,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.global_config import global_config
-import dimos.visualization.rerun.bridge as bridge
+from dimos.visualization.rerun import bridge
 
 
 @pytest.fixture

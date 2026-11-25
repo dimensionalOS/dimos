@@ -412,9 +412,7 @@ class ModuleBase(Configurable, CompositeResource):
             origin = get_origin(hint)
             if origin is stream_type:
                 return True
-            if isinstance(hint, type) and issubclass(hint, stream_type):
-                return True
-            return False
+            return bool(isinstance(hint, type) and issubclass(hint, stream_type))
 
         def format_stream(name: str, hint: type) -> str:
             args = get_args(hint)
@@ -462,9 +460,7 @@ class ModuleBase(Configurable, CompositeResource):
             origin = get_origin(hint)
             if origin is stream_type:
                 return True
-            if isinstance(hint, type) and issubclass(hint, stream_type):
-                return True
-            return False
+            return bool(isinstance(hint, type) and issubclass(hint, stream_type))
 
         def format_stream(name: str, hint: type) -> str:
             args = get_args(hint)

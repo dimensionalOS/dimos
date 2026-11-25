@@ -30,9 +30,9 @@ import zenoh
 from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.protocol.service.zenoh_wire import (
-    ALL_INTERFACES as ALL_INTERFACES,
-    LOOPBACK_INTERFACE as LOOPBACK_INTERFACE,
-    LOOPBACK_LISTEN as LOOPBACK_LISTEN,
+    ALL_INTERFACES,
+    LOOPBACK_INTERFACE,
+    LOOPBACK_LISTEN,
     make_zenoh_config,
 )
 from dimos.utils.logging_config import setup_logger

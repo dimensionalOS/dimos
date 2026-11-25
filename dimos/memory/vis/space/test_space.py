@@ -23,7 +23,7 @@ from dimos.memory.vis.space.space import Space
 from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path as Path
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 

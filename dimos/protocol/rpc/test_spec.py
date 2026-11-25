@@ -40,8 +40,6 @@ from dimos.protocol.service.zenohservice import ZenohSessionPool
 class CustomTestError(Exception):
     """Custom exception for testing."""
 
-    pass
-
 
 # Build testdata list with available implementations
 testdata: list[tuple[Callable[[], Any], str]] = []

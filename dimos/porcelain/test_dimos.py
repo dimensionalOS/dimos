@@ -117,8 +117,10 @@ def test_run_adds_streams_to_active_recording(recording_app, tmp_path: Path, rem
                 wait_until(lambda: "odom" in store.list_streams(), timeout=5)
                 target.run(RuntimeRecordingSource)
                 wait_until(
-                    lambda: "runtime_pose" in store.list_streams()
-                    and store.stream("odom", PoseStamped).count() >= 2,
+                    lambda: (
+                        "runtime_pose" in store.list_streams()
+                        and store.stream("odom", PoseStamped).count() >= 2
+                    ),
                     timeout=5,
                 )
 

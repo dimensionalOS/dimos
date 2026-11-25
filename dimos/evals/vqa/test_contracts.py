@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 from pydantic import ValidationError
 import pytest
+from typing_extensions import Self
 
 from dimos.constants import STATE_DIR
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -846,7 +847,7 @@ def test_generate_dataset_forwards_quality_window_indices(
             self.image_count = 200
             self.images = object()
 
-        def __enter__(self) -> _FakeLoader:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *_args: object) -> None:

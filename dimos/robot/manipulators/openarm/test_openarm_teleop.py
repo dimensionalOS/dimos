@@ -99,9 +99,9 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
         "openarm_left_grasp_frame",
         "openarm_right_grasp_frame",
     }
-    assert {joint for gripper in grippers for joint in gripper.joint_names} == set(
-        [f"arm/{name}" for name in OpenArmConnection.robot.gripper_joints.values()]
-    )
+    assert {joint for gripper in grippers for joint in gripper.joint_names} == {
+        f"arm/{name}" for name in OpenArmConnection.robot.gripper_joints.values()
+    }
     assert {gripper.stream_bind["gripper_command"] for gripper in grippers} == {
         "left_gripper_command",
         "right_gripper_command",

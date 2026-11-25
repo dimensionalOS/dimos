@@ -147,8 +147,10 @@ UNBOUND: list[tuple[str, str, str]] = [
     (
         'activity = "mark"',
         'activity = "mark"\nresult = "job.goal"',
-        "key `job.goal` is written by `Going` and `Arrived`, and their `start` RPCs return "
-        "different shapes",
+        (
+            "key `job.goal` is written by `Going` and `Arrived`, and their `start` RPCs return "
+            "different shapes"
+        ),
     ),
 ]
 

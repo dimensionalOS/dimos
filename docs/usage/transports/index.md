@@ -88,7 +88,15 @@ from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
 
 blueprint = blueprint.transports(
-    {("image", WebcamModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+    {
+        ("image", WebcamModule): ZenohTransport(
+            Topic(
+                "dimos/image",
+                Image,
+                qos=ZenohQoS(reliability="best_effort", congestion_control="drop"),
+            )
+        )
+    }
 )
 ```
 
@@ -196,8 +204,10 @@ from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
+
 class TickerCameraConfig(ModuleConfig):
     frequency_hz: float = 2.0
+
 
 class TickerCameraModule(Module):
     """Publish synthetic frames so this example runs without a webcam."""
@@ -220,11 +230,13 @@ class TickerCameraModule(Module):
         period = 1.0 / max(self.config.frequency_hz, 0.1)
         self.register_disposable(rx.interval(period).subscribe(emit))
 
+
 class ImageListener(Module):
     image: In[Image]
 
     async def handle_image(self, img: Image) -> None:
         print(f"Received: {img.shape}")
+
 
 if __name__ == "__main__":
     # Start local cluster and deploy modules to separate processes
@@ -366,6 +378,7 @@ lcm.subscribe(topic, lambda msg, t: received.append(msg))
 lcm.publish(topic, Vector3(1.0, 0.0, 0.5))
 
 import time
+
 time.sleep(0.1)
 
 print(f"Received velocity: x={received[0].x}, y={received[0].y}, z={received[0].z}")
@@ -390,9 +403,11 @@ from cyclonedds.idl import IdlStruct
 
 from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic
 
+
 @dataclass
 class SensorReading(IdlStruct):
     value: float
+
 
 dds = DDS()
 dds.start()
@@ -404,6 +419,7 @@ dds.subscribe(sensor_topic, lambda msg, t: received.append(msg))
 dds.publish(sensor_topic, SensorReading(value=22.5))
 
 import time
+
 time.sleep(0.1)
 
 print(f"Received: {received}")
@@ -466,6 +482,7 @@ import json
 
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 
+
 class JsonEncoderMixin(PubSubEncoderMixin[str, dict, bytes]):
     def encode(self, msg: dict, topic: str) -> bytes:
         return json.dumps(msg).encode("utf-8")
@@ -479,6 +496,7 @@ Combine with a pubsub implementation via multiple inheritance:
 ```python session=jsonencoder no-result
 from dimos.protocol.pubsub.impl.memory import Memory
 
+
 class MyJsonPubSub(JsonEncoderMixin, Memory):
     pass
 ```
@@ -488,6 +506,7 @@ Swap serialization by changing the mixin:
 ```python session=jsonencoder no-result
 from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
+
 
 class MyCborPubSub(CborEncoderMixin, Memory):
     pass

@@ -32,8 +32,10 @@ def ensure_playwright_chromium(deno_path: str) -> None:
             deno_path,
             "eval",
             "--quiet",
-            f'import {{ chromium }} from "{_PLAYWRIGHT_PACKAGE}"; '
-            "console.log(chromium.executablePath());",
+            (
+                f'import {{ chromium }} from "{_PLAYWRIGHT_PACKAGE}"; '
+                "console.log(chromium.executablePath());"
+            ),
         ],
         text=True,
     ).strip()

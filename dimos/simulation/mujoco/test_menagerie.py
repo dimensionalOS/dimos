@@ -86,9 +86,11 @@ def test_playground_helper_finishes_on_a_detached_head(tmp_path: Path) -> None:
         [
             sys.executable,
             "-c",
-            "import sys\n"
-            "from mujoco_playground._src import mjx_env\n"
-            "mjx_env._clone_with_progress(*sys.argv[1:])",
+            (
+                "import sys\n"
+                "from mujoco_playground._src import mjx_env\n"
+                "mjx_env._clone_with_progress(*sys.argv[1:])"
+            ),
             str(tmp_path / "source"),
             str(checkout),
             commit.hexsha,

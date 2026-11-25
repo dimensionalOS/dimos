@@ -29,7 +29,6 @@ class AbstractAudioEmitter(ABC):
         Returns:
             Observable emitting audio frames
         """
-        pass
 
 
 class AbstractAudioConsumer(ABC):
@@ -45,7 +44,6 @@ class AbstractAudioConsumer(ABC):
         Returns:
             Self for method chaining
         """
-        pass
 
 
 class AbstractAudioTransform(AbstractAudioConsumer, AbstractAudioEmitter):
@@ -53,8 +51,6 @@ class AbstractAudioTransform(AbstractAudioConsumer, AbstractAudioEmitter):
 
     This represents a transform in an audio processing pipeline.
     """
-
-    pass
 
 
 class AudioEvent:

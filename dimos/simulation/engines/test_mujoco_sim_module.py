@@ -21,7 +21,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
-import mujoco.viewer as viewer
+from mujoco import viewer
 import numpy as np
 import pytest
 

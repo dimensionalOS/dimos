@@ -226,11 +226,10 @@ class GstreamerCameraModule(Module):
         elif t == Gst.MessageType.WARNING:
             warn, debug = message.parse_warning()
             logger.warning(f"GStreamer warning: {warn}, {debug}")
-        elif t == Gst.MessageType.STATE_CHANGED:
-            if message.src == self.pipeline:
-                _old_state, new_state, _pending_state = message.parse_state_changed()
-                if new_state == Gst.State.PLAYING:
-                    logger.info("Pipeline is now playing - connected to TCP server")
+        elif t == Gst.MessageType.STATE_CHANGED and message.src == self.pipeline:
+            _old_state, new_state, _pending_state = message.parse_state_changed()
+            if new_state == Gst.State.PLAYING:
+                logger.info("Pipeline is now playing - connected to TCP server")
 
     def _on_new_sample(self, appsink):  # type: ignore[no-untyped-def]
         """Handle new video samples from the appsink."""

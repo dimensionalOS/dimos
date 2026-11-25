@@ -17,10 +17,11 @@ class Observation(Generic[T]):
     _data: T | _Unloaded = ...
     _loader: Callable[[], T] | None = None  # lazy loading via blob store
 
+
 @dataclass
 class EmbeddedObservation(Observation[T]):
-    embedding: Embedding | None = None       # populated by Embed transformer
-    similarity: float | None = None          # populated by .search()
+    embedding: Embedding | None = None  # populated by Embed transformer
+    similarity: float | None = None  # populated by .search()
 ```
 
 `EmbeddedObservation` is a subclass — passes anywhere `Observation` is accepted (LSP).
@@ -60,11 +61,13 @@ results = images.transform(Embed(clip)).search(query_vec, k=20).to_list()
 # results[0].similarity → 0.93
 
 # Chainable with other filters
-results = images.transform(Embed(clip)) \
-    .search(query_vec, k=50) \
-    .after(one_hour_ago) \
-    .near(kitchen_pose, 5.0) \
+results = (
+    images.transform(Embed(clip))
+    .search(query_vec, k=50)
+    .after(one_hour_ago)
+    .near(kitchen_pose, 5.0)
     .to_list()
+)
 ```
 
 ## Backend Handles Storage Strategy
@@ -87,8 +90,8 @@ When a downstream transform replaces `.data` (e.g., Image → Detection), use te
 
 ```python
 detection = detections.first()
-detection.data              # → Detection
-detection.ts                # → timestamp preserved by derive()
+detection.data  # → Detection
+detection.ts  # → timestamp preserved by derive()
 
 # Get the source image via temporal join
 source_image = images.at(detection.ts).first()
@@ -102,12 +105,10 @@ source_image = images.at(detection.ts).first()
 unified = store.stream("clip_unified")
 
 for obs in images.transform(Embed(clip.vision)):
-    unified.append(obs.data, ts=obs.ts,
-                   tags={"modality": "image"}, embedding=obs.embedding)
+    unified.append(obs.data, ts=obs.ts, tags={"modality": "image"}, embedding=obs.embedding)
 
 for obs in logs.transform(Embed(clip.text)):
-    unified.append(obs.data, ts=obs.ts,
-                   tags={"modality": "text"}, embedding=obs.embedding)
+    unified.append(obs.data, ts=obs.ts, tags={"modality": "text"}, embedding=obs.embedding)
 
 results = unified.search(query_vec, k=20).to_list()
 # results[i].tags["modality"] tells you what it is
@@ -120,10 +121,11 @@ results = unified.search(query_vec, k=20).to_list()
 ```python
 smoke_query = clip.embed_text("smoke or fire")
 
-detections = images.transform(Embed(clip)) \
-    .search(smoke_query, k=100) \
-    .transform(ExpensiveVLMDetector())
+detections = (
+    images.transform(Embed(clip)).search(smoke_query, k=100).transform(ExpensiveVLMDetector())
+)
 # VLM only runs on 100 most promising frames
+
 
 # Smart transformer can use embedding directly
 class SmartDetector(Transformer[Image, Detection]):

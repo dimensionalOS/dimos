@@ -634,11 +634,15 @@ def derive_config(
 
     caveats.extend(
         [
-            f"Valid only for surface={provenance.surface!r}, "
-            f"mode={provenance.mode!r}, {provenance.sim_or_hw}. Re-run "
-            f"characterization on any surface or gait-mode change.",
-            f"Plant fitted from {provenance.characterization_session_dir or 'n/a'} "
-            f"on {provenance.date} (git {provenance.git_sha}).",
+            (
+                f"Valid only for surface={provenance.surface!r}, "
+                f"mode={provenance.mode!r}, {provenance.sim_or_hw}. Re-run "
+                f"characterization on any surface or gait-mode change."
+            ),
+            (
+                f"Plant fitted from {provenance.characterization_session_dir or 'n/a'} "
+                f"on {provenance.date} (git {provenance.git_sha})."
+            ),
         ]
     )
     valid_for_tuning = provenance.sim_or_hw == "hw"

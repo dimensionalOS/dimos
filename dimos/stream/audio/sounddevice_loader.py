@@ -53,7 +53,7 @@ def _defer_initialization(backend: Any) -> None:
 
 
 try:
-    import sounddevice as sounddevice  # type: ignore[import-untyped]
+    import sounddevice  # type: ignore[import-untyped]
 except Exception as error:
     if type(error).__name__ != "PortAudioError":
         raise

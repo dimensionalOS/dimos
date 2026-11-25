@@ -11,7 +11,7 @@ class _Camera:
     azimuth: float
     elevation: float
 
-class Handle(AbstractContextManager["Handle"]):
+class Handle(AbstractContextManager[Handle]):
     cam: _Camera
     opt: MjvOption
     def is_running(self) -> bool: ...

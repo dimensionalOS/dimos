@@ -291,8 +291,10 @@ class PerceptionLocalize(Module):
         results, (lo, hi, first, head, frames) = self._localize(queries, start, duration, overrides)
 
         lines: list[str] = [
-            f"window {lo - first:.1f}s to {hi - first:.1f}s of "
-            f"{head - first:.1f}s of feed, {frames} frames"
+            (
+                f"window {lo - first:.1f}s to {hi - first:.1f}s of "
+                f"{head - first:.1f}s of feed, {frames} frames"
+            )
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:

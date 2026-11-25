@@ -829,8 +829,10 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     launcher = [
         sys.executable,
         "-c",
-        "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); "
-        "os.execv(sys.argv[1], sys.argv[1:])",
+        (
+            "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+            "os.execv(sys.argv[1], sys.argv[1:])"
+        ),
     ]
     # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.
     return subprocess.Popen(

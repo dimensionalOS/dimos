@@ -21,14 +21,3 @@ use. Import its names from here, so that sounddevice_loader runs first.
 import dimos.stream.audio.sounddevice_loader  # noqa: F401
 
 # isort: split
-from unitree_webrtc_connect.constants import (
-    AUDIO_API as AUDIO_API,
-    DATA_CHANNEL_TYPE as DATA_CHANNEL_TYPE,
-    RTC_TOPIC as RTC_TOPIC,
-    SPORT_CMD as SPORT_CMD,
-    VUI_COLOR as VUI_COLOR,
-)
-from unitree_webrtc_connect.webrtc_driver import (
-    UnitreeWebRTCConnection as UnitreeWebRTCConnection,
-    WebRTCConnectionMethod as WebRTCConnectionMethod,
-)

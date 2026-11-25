@@ -29,7 +29,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
@@ -90,9 +90,6 @@ class WebXRTeleopConfig(ModuleConfig):
     body_tracking_mode: BodyTrackingMode = "off"
     # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
     zero_button: str | None = None
-
-
-_Config = TypeVar("_Config", bound=WebXRTeleopConfig)
 
 
 class WebXRTeleopModule(Module):

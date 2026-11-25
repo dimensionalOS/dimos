@@ -79,6 +79,7 @@ class MyArmAdapter:  # No inheritance needed - just match the Protocol
     def disconnect(self) -> None: ...
     def read_joint_positions(self) -> list[float]: ...
     def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool: ...
+
     # ... implement other Protocol methods
 ```
 
@@ -103,8 +104,15 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.coordinator import ControlCoordinator
 
 coordinator_myarm = ControlCoordinator.blueprint(
-    hardware=[HardwareComponent(hardware_id="arm", hardware_type=HardwareType.MANIPULATOR,
-                                joints=make_joints("arm", 6), adapter_type="myarm", address="192.168.1.100")],
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="myarm",
+            address="192.168.1.100",
+        )
+    ],
 )
 ```
 

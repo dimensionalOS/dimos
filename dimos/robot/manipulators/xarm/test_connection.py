@@ -161,10 +161,14 @@ def xarm_like_model(tmp_path: Path, dof: int, gripper: bool) -> RobotModel:
         grip = '<limit lower="0" upper="0.85" velocity="2" effort="50"/>'
         links += ['<link name="knuckle"/>', '<link name="finger"/>']
         joints += [
-            f'<joint name="drive_joint" type="revolute"><parent link="link{dof}"/>'
-            f'<child link="knuckle"/>{grip}</joint>',
-            f'<joint name="finger_joint" type="revolute"><parent link="link{dof}"/>'
-            f'<child link="finger"/>{grip}<mimic joint="drive_joint"/></joint>',
+            (
+                f'<joint name="drive_joint" type="revolute"><parent link="link{dof}"/>'
+                f'<child link="knuckle"/>{grip}</joint>'
+            ),
+            (
+                f'<joint name="finger_joint" type="revolute"><parent link="link{dof}"/>'
+                f'<child link="finger"/>{grip}<mimic joint="drive_joint"/></joint>'
+            ),
         ]
     path = tmp_path / f"xarm{dof}{'_gripper' if gripper else ''}.urdf"
     path.write_text(f'<robot name="xarm">{"".join(links)}{"".join(joints)}</robot>')

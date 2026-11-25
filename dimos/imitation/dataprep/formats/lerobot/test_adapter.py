@@ -94,21 +94,25 @@ def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.Mocke
         ("", "Downloading torch\nerror: download failed\n", "error: download failed"),
         (
             "",
-            "Creating virtual environment\n"
-            "  \u00d7 No solution found when resolving dependencies:\n"
-            "  ╰─▶ Because required-package was not found in the cache\n"
-            "      and your project depends on required-package, we can\n"
-            "      conclude that your project's requirements are unsatisfiable.\n"
-            "\n"
-            "      hint: Packages were unavailable because the network was disabled. When\n"
-            "      the network is disabled, registry packages may only be read from the\n"
-            "      cache.\n",
-            "\u00d7 No solution found when resolving dependencies: "
-            "╰─▶ Because required-package was not found in the cache "
-            "and your project depends on required-package, we can "
-            "conclude that your project's requirements are unsatisfiable. "
-            "hint: Packages were unavailable because the network was disabled. When "
-            "the network is disabled, registry packages may only be read from the cache.",
+            (
+                "Creating virtual environment\n"
+                "  \u00d7 No solution found when resolving dependencies:\n"
+                "  ╰─▶ Because required-package was not found in the cache\n"
+                "      and your project depends on required-package, we can\n"
+                "      conclude that your project's requirements are unsatisfiable.\n"
+                "\n"
+                "      hint: Packages were unavailable because the network was disabled. When\n"
+                "      the network is disabled, registry packages may only be read from the\n"
+                "      cache.\n"
+            ),
+            (
+                "\u00d7 No solution found when resolving dependencies: "
+                "╰─▶ Because required-package was not found in the cache "
+                "and your project depends on required-package, we can "
+                "conclude that your project's requirements are unsatisfiable. "
+                "hint: Packages were unavailable because the network was disabled. When "
+                "the network is disabled, registry packages may only be read from the cache."
+            ),
         ),
         (
             "",
@@ -117,15 +121,19 @@ def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.Mocke
         ),
         (
             "",
-            "Installed 157 packages\n"
-            "Traceback (most recent call last):\n"
-            '  File "dataprep.py", line 191, in main\n'
-            "    request = REQUEST_ADAPTER.validate_json(sys.stdin.read())\n"
-            "pydantic_core.ValidationError: 1 validation error for BuildRequest\n"
-            "config.output.path\n"
-            "  Field required [type=missing, input_value={}, input_type=dict]\n",
-            "pydantic_core.ValidationError: 1 validation error for BuildRequest "
-            "config.output.path Field required [type=missing, input_value={}, input_type=dict]",
+            (
+                "Installed 157 packages\n"
+                "Traceback (most recent call last):\n"
+                '  File "dataprep.py", line 191, in main\n'
+                "    request = REQUEST_ADAPTER.validate_json(sys.stdin.read())\n"
+                "pydantic_core.ValidationError: 1 validation error for BuildRequest\n"
+                "config.output.path\n"
+                "  Field required [type=missing, input_value={}, input_type=dict]\n"
+            ),
+            (
+                "pydantic_core.ValidationError: 1 validation error for BuildRequest "
+                "config.output.path Field required [type=missing, input_value={}, input_type=dict]"
+            ),
         ),
         (
             ErrorResult(error="No successful episodes.\nUse explicit ranges.").model_dump_json(),
@@ -222,8 +230,10 @@ def test_streamed_installer_failure_retains_diagnostic_summary(tmp_path, mocker,
         return_value=[
             sys.executable,
             "-c",
-            "import sys; sys.stdin.read(); "
-            "sys.stderr.write('Downloading package\\nerror: download failed\\n'); sys.exit(9)",
+            (
+                "import sys; sys.stdin.read(); "
+                "sys.stderr.write('Downloading package\\nerror: download failed\\n'); sys.exit(9)"
+            ),
         ],
     )
 

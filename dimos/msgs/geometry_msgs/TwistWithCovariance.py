@@ -110,9 +110,8 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
 
     def __setattr__(self, name: str, value) -> None:  # type: ignore[no-untyped-def]
         """Override to ensure covariance is stored as numpy array."""
-        if name == "covariance":
-            if not isinstance(value, np.ndarray):
-                value = np.array(value, dtype=float).reshape(36)
+        if name == "covariance" and not isinstance(value, np.ndarray):
+            value = np.array(value, dtype=float).reshape(36)
         super().__setattr__(name, value)
 
     @property

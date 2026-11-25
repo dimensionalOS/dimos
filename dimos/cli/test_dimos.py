@@ -23,23 +23,19 @@ import pytest
 from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
-import dimos.cli.commands.info as info
-import dimos.cli.commands.lifecycle as lifecycle
+from dimos.cli.commands import info, lifecycle, mcp
 from dimos.cli.commands.lifecycle import _with_relay_bridge
-import dimos.cli.commands.mcp as mcp
 from dimos.cli.dimos import main, normalize_argv
-import dimos.cli.spy.run_spy as run_spy
+from dimos.cli.spy import run_spy
+from dimos.core import run_registry
+from dimos.core.coordination import module_coordinator, process_lifecycle
 from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
-import dimos.core.coordination.module_coordinator as module_coordinator
-import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.daemon as core_daemon
 from dimos.core.daemon import install_signal_handlers
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-import dimos.core.run_registry as run_registry
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot import external_blueprints as external
-import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.robot import external_blueprints as external, get_all_blueprints
 from dimos.robot.get_all_blueprints import get_by_name_or_exit
 from dimos.robot.manipulators.a1z.connection import A1ZConnection
 from dimos.robot.manipulators.a750.connection import A750Connection
@@ -48,8 +44,8 @@ from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection
+from dimos.utils import logging_config
 import dimos.utils.cache as cache_utils
-import dimos.utils.logging_config as logging_config
 
 
 class RunConfigA(ModuleConfig):
@@ -198,7 +194,7 @@ def test_show_config_redacts_secrets_including_nested_settings(mocker: MockerFix
 def test_rerun_bridge_resolves_its_settings_like_a_blueprint_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import dimos.visualization.rerun.bridge as bridge
+    from dimos.visualization.rerun import bridge
 
     recorded: dict[str, Any] = {}
     monkeypatch.setattr(bridge, "run_bridge", lambda **config: recorded.update(config))
@@ -223,7 +219,7 @@ def test_rerun_bridge_resolves_its_settings_like_a_blueprint_module(
 def test_rerun_bridge_applies_global_options_given_after_the_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import dimos.visualization.rerun.bridge as bridge
+    from dimos.visualization.rerun import bridge
 
     seen: list[str] = []
     monkeypatch.setattr(bridge, "run_bridge", lambda **config: seen.append(global_config.transport))
@@ -273,7 +269,7 @@ def test_list_blueprints_groups_builtin_and_external(monkeypatch: pytest.MonkeyP
 
 
 def test_list_blueprints_without_external_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(external, "list_external_blueprint_names", lambda: [])
+    monkeypatch.setattr(external, "list_external_blueprint_names", list)
 
     result = CliRunner().invoke(main, ["list"])
 

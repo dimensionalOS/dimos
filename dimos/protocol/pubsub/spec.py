@@ -49,7 +49,7 @@ class PubSubBaseMixin(Generic[TopicT, MsgT]):
         def __enter__(self) -> "PubSubBaseMixin._Subscription":
             return self
 
-        def __exit__(self, *exc: Any) -> None:
+        def __exit__(self, *exc: object) -> None:
             self.unsubscribe()
 
     def sub(self, topic: TopicT, cb: Callable[[MsgT, TopicT], None]) -> "_Subscription":

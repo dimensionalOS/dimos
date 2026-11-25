@@ -17,7 +17,6 @@
 import math
 import threading
 import time
-from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -327,7 +326,7 @@ class TestMultiTBuffer:
                 self.depth += 1
                 return acquired
 
-            def __exit__(self, *args: Any) -> None:
+            def __exit__(self, *args: object) -> None:
                 self.depth -= 1
                 super().__exit__(*args)
                 if self.depth == 0 and not self.published:

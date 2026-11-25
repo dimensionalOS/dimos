@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from typing_extensions import Self
 
 # --- model / data -----------------------------------------------------
 
@@ -66,7 +67,7 @@ class MjvScene:
 
 class Renderer:
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
-    def __enter__(self) -> Renderer: ...
+    def __enter__(self) -> Self: ...
     def __exit__(self, *args: object) -> None: ...
     @property
     def scene(self) -> MjvScene: ...

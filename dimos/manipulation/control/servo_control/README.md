@@ -78,26 +78,30 @@ import time
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.manipulation.control.servo_control.cartesian_motion_controller import CartesianMotionController
+from dimos.manipulation.control.servo_control.cartesian_motion_controller import (
+    CartesianMotionController,
+)
 
 # Workers import this script again, so build and drive modules under the guard.
 if __name__ == "__main__":
     # 1. Build your driver and controller; autoconnect connects their streams by name
-    coordinator = ModuleCoordinator.build(autoconnect(
-        MyArmDriver.blueprint(),
-        CartesianMotionController.blueprint(
-            control_frequency=20.0,
-            position_kp=1.0,
-            max_linear_velocity=0.15,  # m/s
-        ),
-    ))
+    coordinator = ModuleCoordinator.build(
+        autoconnect(
+            MyArmDriver.blueprint(),
+            CartesianMotionController.blueprint(
+                control_frequency=20.0,
+                position_kp=1.0,
+                max_linear_velocity=0.15,  # m/s
+            ),
+        )
+    )
     try:
         controller = coordinator.get_instance(CartesianMotionController)
 
         # 2. Send an absolute Cartesian goal
         controller.set_target_pose(
             position=[0.3, 0.0, 0.5],  # xyz in meters
-            orientation=[0, 0, 0],     # roll, pitch, yaw in radians
+            orientation=[0, 0, 0],  # roll, pitch, yaw in radians
             frame_id="world",
         )
 
@@ -135,14 +139,11 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 target = PoseStamped(
     frame_id="world",
     position=[0.3, 0.2, 0.5],
-    orientation=[0, 0, 0, 1]  # quaternion
+    orientation=[0, 0, 0, 1],  # quaternion
 )
 
 # Option 1: Via RPC
-controller.set_target_pose(
-    position=list(target.position),
-    orientation=list(target.orientation)
-)
+controller.set_target_pose(position=list(target.position), orientation=list(target.orientation))
 
 # Option 2: Via topic (if connected)
 controller.target_pose.publish(target)
@@ -158,25 +159,26 @@ Target poses can be published to the controller's `/target_pose` topic on the ac
 ```python
 from dimos.core.module import ModuleConfig
 
+
 class CartesianMotionControllerConfig(ModuleConfig):
     # Control loop
     control_frequency: float = 20.0  # Hz (recommend 10-50Hz)
-    command_timeout: float = 30.0    # seconds - timeout for stale targets
+    command_timeout: float = 30.0  # seconds - timeout for stale targets
 
     # PID gains (position)
-    position_kp: float = 5.0   # m/s per meter of error
-    position_ki: float = 0.1   # Integral gain
-    position_kd: float = 0.1   # Derivative gain (damping)
+    position_kp: float = 5.0  # m/s per meter of error
+    position_ki: float = 0.1  # Integral gain
+    position_kd: float = 0.1  # Derivative gain (damping)
 
     # PID gains (orientation)
-    orientation_kp: float = 2.0   # rad/s per radian of error
+    orientation_kp: float = 2.0  # rad/s per radian of error
     orientation_ki: float = 0.0
     orientation_kd: float = 0.2
 
     # Safety limits
-    max_linear_velocity: float = 0.2   # m/s
+    max_linear_velocity: float = 0.2  # m/s
     max_angular_velocity: float = 1.0  # rad/s
-    max_position_error: float = 0.7    # m (emergency stop threshold)
+    max_position_error: float = 0.7  # m (emergency stop threshold)
     max_orientation_error: float = 6.28  # rad (~360°, allows any orientation)
 
     # Convergence
@@ -200,11 +202,14 @@ from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.spec.utils import Spec
 
+
 # The RPCs are ArmDriverSpec (dimos/manipulation/control/arm_driver_spec.py); the topics are what autoconnect connects
 class ArmDriverSpec(Spec, Protocol):
     # Required RPC methods
     def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]: ...
-    def get_forward_kinematics(self, joint_positions: list[float]) -> tuple[int, list[float] | None]: ...
+    def get_forward_kinematics(
+        self, joint_positions: list[float]
+    ) -> tuple[int, list[float] | None]: ...
 
     # Required topics
     joint_state: Out[JointState]
@@ -223,6 +228,7 @@ class ArmDriverSpec(Spec, Protocol):
    from dimos.msgs.sensor_msgs.JointState import JointState
    from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 
+
    class MyArmDriver(Module):
        joint_state: Out[JointState]
        joint_position_command: In[JointCommand]
@@ -233,7 +239,9 @@ class ArmDriverSpec(Spec, Protocol):
            return (0, joint_angles)
 
        @rpc
-       def get_forward_kinematics(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
+       def get_forward_kinematics(
+           self, joint_positions: list[float]
+       ) -> tuple[int, list[float] | None]:
            # Your FK implementation; return the pose in the same units as IK's
            return (0, tcp_pose)
    ```

@@ -181,10 +181,13 @@ perception failure even though fewer than six results is valid.
 ```python skip
 # The can sits at roughly (0.57, 0.00). Require a unique verified target there.
 can_candidates = [
-    obj for obj in objects
+    obj
+    for obj in objects
     if abs(obj["position"][0] - 0.57) < 0.05 and abs(obj["position"][1]) < 0.05
 ]
-assert len(can_candidates) == 1, "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+assert len(can_candidates) == 1, (
+    "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+)
 pick = app.PickAndPlaceModule.pick_object(can_candidates[0]["id"])
 print(pick)
 
@@ -209,7 +212,7 @@ on the provider directly:
 
 ```python skip
 cloud = localize.get_pointcloud("<object_id>")
-candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
+candidates = app.GraspGenXModule.propose_grasps(cloud)  # HeuristicGraspModule in the base blueprint
 print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 ```
 

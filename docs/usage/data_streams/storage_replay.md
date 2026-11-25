@@ -163,9 +163,9 @@ form shown above.
 # Stream at 2x with seeking
 subscription = replay.stream(
     speed=2.0,
-    seek=10.0,      # Start 10s in
+    seek=10.0,  # Start 10s in
     duration=30.0,  # Play for 30s
-    loop=True       # Loop forever
+    loop=True,  # Loop forever
 ).subscribe(process)
 
 try:

@@ -158,7 +158,7 @@ class Detection2DBBox(Detection2D):
         ]
 
         # Add any extra fields (e.g., points for Detection3D)
-        extra_keys = [k for k in d.keys() if k not in ["class"]]
+        extra_keys = [k for k in d if k not in ["class"]]
         for key in extra_keys:
             if d[key] == "None":
                 parts.append(Text(f"{key}={d[key]}", style="dim"))

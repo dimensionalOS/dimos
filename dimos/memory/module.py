@@ -43,10 +43,6 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import Out
-    from dimos.memory.semantic_search import (
-        SemanticSearch as SemanticSearch,
-        SemanticSearchConfig as SemanticSearchConfig,
-    )
     from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
@@ -76,7 +72,7 @@ def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
     """
 
     def _on_error(e: Exception) -> None:
-        logger.error("stream_to_port() pipeline error: %s", e, exc_info=True)
+        logger.error("stream_to_port() pipeline error: %s", e)
 
     return stream.observable().subscribe(
         on_next=lambda obs: out.publish(obs.data),

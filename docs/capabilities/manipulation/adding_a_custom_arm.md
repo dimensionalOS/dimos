@@ -238,7 +238,6 @@ class YourArmAdapter:
         self._sdk: YourArmSDK | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
 
-
     def connect(self) -> bool:
         """Connect to hardware. Returns True on success."""
         try:
@@ -271,7 +270,6 @@ class YourArmAdapter:
         """Gracefully stop commanded motion before disconnect()."""
         return self.write_stop()
 
-
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
         return ManipulatorInfo(
@@ -279,7 +277,7 @@ class YourArmAdapter:
             model="YourModel",
             dof=self._dof,
             firmware_version=None,  # Optional: query from SDK if available
-            serial_number=None,     # Optional: query from SDK if available
+            serial_number=None,  # Optional: query from SDK if available
         )
 
     def get_dof(self) -> int:
@@ -292,11 +290,11 @@ class YourArmAdapter:
         Either hardcode known limits or query them from the SDK.
         """
         return JointLimits(
-            position_lower=[-math.pi] * self._arm_dof + [0.0] * self._gripper_dof,  # radians, gripper meters
+            position_lower=[-math.pi] * self._arm_dof
+            + [0.0] * self._gripper_dof,  # radians, gripper meters
             position_upper=[math.pi] * self._arm_dof + [GRIPPER_MAX_OPENING] * self._gripper_dof,
             velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,  # rad/s
         )
-
 
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set control mode.
@@ -308,9 +306,9 @@ class YourArmAdapter:
             return False
 
         mode_map = {
-            ControlMode.POSITION: 0,        # Your SDK's position mode code
-            ControlMode.SERVO_POSITION: 1,   # High-frequency servo mode
-            ControlMode.VELOCITY: 4,         # Velocity mode
+            ControlMode.POSITION: 0,  # Your SDK's position mode code
+            ControlMode.SERVO_POSITION: 1,  # High-frequency servo mode
+            ControlMode.VELOCITY: 4,  # Velocity mode
             # Add other supported modes...
         }
 
@@ -327,7 +325,6 @@ class YourArmAdapter:
         """Get current control mode."""
         return self._control_mode
 
-
     def read_joint_positions(self) -> list[float]:
         """Read current joint positions: the arm's in radians, then the gripper's.
 
@@ -336,7 +333,7 @@ class YourArmAdapter:
         if not self._sdk:
             raise RuntimeError("Not connected")
         raw_positions = self._sdk.get_joint_positions()
-        positions = [math.radians(p) for p in raw_positions[:self._arm_dof]]
+        positions = [math.radians(p) for p in raw_positions[: self._arm_dof]]
         if self._gripper_dof:
             positions.append(self._sdk.get_gripper_position() * MM_TO_M)
         return positions
@@ -383,7 +380,6 @@ class YourArmAdapter:
             return 0, ""
         return code, f"YourArm error {code}"
 
-
     def write_joint_positions(
         self,
         positions: list[float],
@@ -399,7 +395,7 @@ class YourArmAdapter:
         """
         if not self._sdk or len(positions) != self._dof:
             return False
-        arm, gripper = positions[:self._arm_dof], positions[self._arm_dof:]
+        arm, gripper = positions[: self._arm_dof], positions[self._arm_dof :]
         ok = self._sdk.set_joint_positions([math.degrees(p) for p in arm])
         if gripper:
             ok = self._sdk.set_gripper_position(gripper[0] * M_TO_MM) and ok
@@ -410,9 +406,9 @@ class YourArmAdapter:
 
         Return False if velocity control is not supported.
         """
-        if not self._sdk or len(velocities) != self._dof or any(velocities[self._arm_dof:]):
+        if not self._sdk or len(velocities) != self._dof or any(velocities[self._arm_dof :]):
             return False  # a gripper velocity may be ignored only when it is zero (spec.py)
-        sdk_velocities = [math.degrees(v) for v in velocities[:self._arm_dof]]
+        sdk_velocities = [math.degrees(v) for v in velocities[: self._arm_dof]]
         return self._sdk.set_joint_velocities(sdk_velocities)
 
     def write_stop(self) -> bool:
@@ -420,7 +416,6 @@ class YourArmAdapter:
         if not self._sdk:
             return False
         return self._sdk.emergency_stop()
-
 
     def write_enable(self, enable: bool) -> bool:
         """Enable or disable servos."""
@@ -440,7 +435,6 @@ class YourArmAdapter:
             return False
         return self._sdk.clear_errors()
 
-
     def read_cartesian_position(self) -> dict[str, float] | None:
         """Read end-effector pose.
 
@@ -456,7 +450,6 @@ class YourArmAdapter:
     ) -> bool:
         """Command end-effector pose. Return False if not supported."""
         return False
-
 
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
@@ -495,6 +488,7 @@ You can verify discovery works:
 
 ```python skip
 from dimos.hardware.manipulators.registry import adapter_registry
+
 print(adapter_registry.available())  # Should include "yourarm"
 ```
 
@@ -543,25 +537,23 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 
 # YourArm (6-DOF), real hardware
 coordinator_yourarm = ControlCoordinator.blueprint(
-    tick_rate=100.0,                    # Control loop frequency (Hz)
-    publish_joint_state=True,           # Publish aggregated joint state
+    tick_rate=100.0,  # Control loop frequency (Hz)
+    publish_joint_state=True,  # Publish aggregated joint state
     joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
-            hardware_id="arm",                        # Unique ID for this hardware
+            hardware_id="arm",  # Unique ID for this hardware
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),             # Creates ["arm/joint1", ..., "arm/joint6"]
-            adapter_type="yourarm",                   # Must match registry name
-            address="192.168.1.100",                  # Passed to adapter __init__
-            auto_enable=True,                         # Auto-enable servos on start
+            joints=make_joints("arm", 6),  # Creates ["arm/joint1", ..., "arm/joint6"]
+            adapter_type="yourarm",  # Must match registry name
+            address="192.168.1.100",  # Passed to adapter __init__
+            auto_enable=True,  # Auto-enable servos on start
         ),
     ],
     tasks=[
         joint_trajectory_task(make_joints("arm", 6)),
     ],
 )
-
-
 ```
 
 If your arm has a gripper, list its joint last (`joints=[*make_joints("arm", 6), "arm/gripper"]`), pass
@@ -727,9 +719,9 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
             )
         ],
         base_pose=_make_base_pose(y=y_offset),  # world -> base_link placement
-        base_link="base_link",                 # Robot-scoped placement/weld/strip link
-        collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
-        auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
+        base_link="base_link",  # Robot-scoped placement/weld/strip link
+        collision_exclusion_pairs=[],  # Pairs of links that can touch (e.g., gripper fingers)
+        auto_convert_meshes=True,  # Convert DAE/STL meshes for Drake
     )
     # Match the arm/joint1... names make_joints("arm", 6) gives the coordinator.
     return named_for_robot(config, "arm")
@@ -896,6 +888,7 @@ import pytest
 from unittest.mock import MagicMock
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
+
 @pytest.fixture
 def mock_adapter():
     adapter = MagicMock(spec=ManipulatorAdapter)
@@ -910,8 +903,10 @@ def mock_adapter():
     adapter.is_connected.return_value = True
     return adapter
 
+
 def test_read_positions(mock_adapter):
     assert mock_adapter.read_joint_positions() == [0.0] * 6
+
 
 def test_write_positions(mock_adapter):
     target = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]

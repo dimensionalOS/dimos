@@ -299,8 +299,8 @@ def _input_devices(devices_file: Path = _DEVICES_FILE) -> dict[str, str]:
     except OSError:
         return paths
     for block in text.split("\n\n"):
-        name = re.search(r'^N: Name="(.*)"$', block, re.M)
-        handlers = re.search(r"^H: Handlers=(.*)$", block, re.M)
+        name = re.search(r'^N: Name="(.*)"$', block, re.MULTILINE)
+        handlers = re.search(r"^H: Handlers=(.*)$", block, re.MULTILINE)
         event = re.search(r"\bevent\d+\b", handlers.group(1)) if handlers else None
         if name and event:
             paths[name.group(1)] = f"/dev/input/{event.group(0)}"

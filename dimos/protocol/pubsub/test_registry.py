@@ -38,7 +38,7 @@ from dimos.protocol.pubsub.registry import (
     subscribe_pubsub_uri,
     supported_protos,
 )
-import dimos.protocol.service.zenohservice as zenohservice
+from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 

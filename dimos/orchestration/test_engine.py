@@ -493,8 +493,10 @@ CASES = [
         "an `after` that is not a finite number is a fault",
         NEVER,
         [
-            "fault at Wait on startup: an expression error: "
-            "`1.0 / rate` gave inf, not a finite number",
+            (
+                "fault at Wait on startup: an expression error: "
+                "`1.0 / rate` gave inf, not a finite number"
+            ),
         ],
         [],
     ),
@@ -508,8 +510,10 @@ CASES = [
                 ("message", "Panel.ok", {"ok": "yes"}),
                 [
                     "clear timer Wait 2.0",
-                    "fault at Wait on Panel.ok: an expression error: "
-                    "`ok` gave 'yes', and true or false is needed",
+                    (
+                        "fault at Wait on Panel.ok: an expression error: "
+                        "`ok` gave 'yes', and true or false is needed"
+                    ),
                 ],
             ),
         ],

@@ -59,17 +59,12 @@ from dimos.utils.logging_config import setup_logger
 # redundant aliases mark them as such for mypy) so protocol consumers keep a
 # single import surface, mirroring protocol.ts.
 from dimos.web.relay_bridge.manifest import (
-    MAX_MANIFEST_ID_LEN as MAX_MANIFEST_ID_LEN,
-    RESERVED_CHANNEL_PREFIX as RESERVED_CHANNEL_PREFIX,
-    ChannelSpec as ChannelSpec,
-    Delivery as Delivery,
-    Dir as Dir,
-    PanelSpec as PanelSpec,
-    Publish as Publish,
+    MAX_MANIFEST_ID_LEN,
+    Delivery,
 )
 from dimos.web.relay_bridge.topic_protocol import (
-    MAX_MID_LEN as MAX_MID_LEN,
-    MAX_SDP_LEN as MAX_SDP_LEN,
+    MAX_MID_LEN,
+    MAX_SDP_LEN,
     TopicCapabilities,
     TopicCount,
     TopicMsg,

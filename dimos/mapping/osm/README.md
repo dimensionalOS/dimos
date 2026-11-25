@@ -32,12 +32,12 @@ curr_map = CurrentLocationMap(QwenVlModel())
 curr_map.update_position(LatLon(lat=..., lon=...))
 
 # If you want to get back a GPS position of a feature (Qwen gets your current position).
-curr_map.query_for_one_position('Where is the closest farmacy?')
+curr_map.query_for_one_position("Where is the closest farmacy?")
 # Returns:
 #     LatLon(lat=..., lon=...)
 
 # If you also want to get back a description of the result.
-curr_map.query_for_one_position_and_context('Where is the closest pharmacy?')
+curr_map.query_for_one_position_and_context("Where is the closest pharmacy?")
 # Returns:
 #     (LatLon(lat=..., lon=...), "Lloyd's Pharmacy on Main Street")
 ```
