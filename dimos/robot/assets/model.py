@@ -137,10 +137,15 @@ class UsdModel:
     def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
         # A frame added again replaces the earlier one where it stood, so joints and the layer
         # agree on it and frames hung off it still come after it.
-        merged = {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames}
-        merged.update(frames)
-        added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in merged.items())
-        return replace(self, _added_frames=added)
+        # A frame is its path (parent/name), so the same name under another parent is another frame.
+        merged = {
+            f"{parent}/{name}": (name, parent, xyz, rpy)
+            for name, parent, xyz, rpy in (
+                *self._added_frames,
+                *((name, *spec) for name, spec in frames.items()),
+            )
+        }
+        return replace(self, _added_frames=tuple(merged.values()))
 
     @classmethod
     def from_layer(
@@ -214,15 +219,54 @@ class UsdModel:
         # The URDF knows nothing of frames added to the USD, and reading them back out of the
         # layer would mean putting the whole description through USD and back for an answer we
         # already hold: usd_with_frames welds each one exactly here.
-        return self._urdf.joints + self._added_frame_joints()
+        paths = self._urdf_link_paths
+        urdf_joints = tuple(
+            replace(joint, parent_link=paths[joint.parent_link], child_link=paths[joint.child_link])
+            for joint in self._urdf.joints
+            if joint.parent_link in paths and joint.child_link in paths
+        )
+        return urdf_joints + self._added_frame_joints()
 
     @property
     def root_link(self) -> str:
+        """The root link's frame: its prim path without the leading "/", e.g. ``go2/base``."""
         if self._urdf is not None:
-            return self._urdf.root_link
+            return self._urdf_link_paths[self._urdf.root_link]
         from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
         return usd_root_link(self.usd, self._asset_root())
+
+    @property
+    def top_frame(self) -> str:
+        """The frame of the USD's top (default) prim, which every other frame is under."""
+        if self._urdf is not None:
+            return self.root_link.partition("/")[0]
+        from dimos.robot.assets.usd_utils.frames import usd_top_frame
+
+        return usd_top_frame(self.usd, self._asset_root())
+
+    @property
+    def prim_edges(self) -> tuple[JointDescription, ...]:
+        """The frame edges no joint makes, as fixed joints: a frame on its path-parent where its own prim transform puts it."""
+        if self._urdf is not None:
+            # urdf_to_usd writes the root link at the top prim's origin, and every other link is a joint's child.
+            return (_fixed_edge(self.top_frame, self.root_link, np.eye(4)),)
+        from dimos.robot.assets.usd_utils.frames import usd_frame_edges
+
+        # A floating joint's child keeps its rest pose here; what moves it (odometry) is another parent.
+        jointed = {joint.child_link for joint in self.joints if joint.type != "floating"}
+        return tuple(
+            _fixed_edge(parent, child, transform)
+            for parent, child, transform in usd_frame_edges(self.usd, self._asset_root())
+            if child not in jointed
+        )
+
+    @cached_property
+    def _urdf_link_paths(self) -> dict[str, str]:
+        from dimos.robot.assets.usd_utils.from_urdf import urdf_link_paths
+
+        assert self._urdf is not None
+        return urdf_link_paths(self._urdf)
 
     def get_joint(self, name: str) -> JointDescription | None:
         return next((joint for joint in self.joints if joint.name == name), None)
@@ -235,10 +279,8 @@ class UsdModel:
             from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
             return usd_frame_names(self.usd, self._asset_root())
-        names = {self._urdf.root_link}
-        for joint in (*self._urdf.joints, *self._added_frame_joints()):
-            names |= {joint.name, joint.parent_link, joint.child_link}
-        return names
+        added = {f"{parent}/{name}" for name, parent, _, _ in self._added_frames}
+        return {self.top_frame, *self._urdf_link_paths.values(), *added}
 
     def _added_frame_joints(self) -> tuple[JointDescription, ...]:
         """The frames with_frames added, as the fixed joints the layer welds them on."""
@@ -247,7 +289,7 @@ class UsdModel:
                 name=_FixedFrame(name, parent, xyz, rpy).joint_name,
                 type="fixed",
                 parent_link=parent,
-                child_link=name,
+                child_link=f"{parent}/{name}",
                 origin_xyz=xyz,
                 origin_rpy=rpy,
             )
@@ -266,6 +308,22 @@ class UsdModel:
 
 
 _USD_SUFFIXES = frozenset({".usd", ".usda"})
+
+
+def _fixed_edge(parent: str, child: str, transform: NDArray[np.float64]) -> JointDescription:
+    """A prim edge as the fixed joint it amounts to, named for the frame it holds."""
+    x, y, z = (float(value) for value in transform[:3, 3])
+    roll, pitch, yaw = (
+        float(value) for value in Rotation.from_matrix(transform[:3, :3]).as_euler("xyz")
+    )
+    return JointDescription(
+        name=child,
+        type="fixed",
+        parent_link=parent,
+        child_link=child,
+        origin_xyz=(x, y, z),
+        origin_rpy=(roll, pitch, yaw),
+    )
 
 
 @dataclass(frozen=True)

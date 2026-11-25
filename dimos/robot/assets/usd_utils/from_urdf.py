@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dimos.protocol.tf.frame_paths import check_frame_path
 from dimos.robot.assets.usd_utils.assets import write_asset_info
 from dimos.robot.assets.usd_utils.pxr import (
     Prim,
@@ -69,15 +70,14 @@ def urdf_to_usd(
     include_collision: bool = True,
 ) -> str:
     pxr = load_pxr()
-    root_element = ET.fromstring(model.xml)
-    name = name or root_element.get("name") or "robot"
+    name = _robot_name(model, name)
     links = _urdf_links_of(model.xml, include_collision=include_collision)
     children = _children_by_parent(model.joints)
 
     stage = pxr.Usd.Stage.CreateInMemory(f"{name}.usda")
     pxr.UsdGeom.SetStageUpAxis(stage, pxr.UsdGeom.Tokens.z)
     pxr.UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-    root = pxr.UsdGeom.Xform.Define(stage, f"/{prim_identifier(pxr, name)}")
+    root = pxr.UsdGeom.Xform.Define(stage, f"/{name}")
     stage.SetDefaultPrim(root.GetPrim())
 
     link_extras, joint_extras = _urdf_extras(model.xml)
@@ -104,6 +104,39 @@ def urdf_to_usd(
         extras=joint_extras,
     )
     return str(stage.GetRootLayer().ExportToString())
+
+
+def urdf_link_paths(model: LoadedRobotModel, name: str | None = None) -> dict[str, str]:
+    """Each URDF link's frame in the USD urdf_to_usd writes: ``<robot>/<root link>/.../<link>``."""
+    top = _robot_name(model, name)
+    children = _children_by_parent(model.joints)
+    paths: dict[str, str] = {}
+    stack = [(model.root_link, top)]
+    while stack:
+        link, parent_path = stack.pop()
+        if link in paths:
+            continue
+        paths[link] = f"{parent_path}/{_link_segment(link)}"
+        # Reversed onto the stack so links are visited in the order _write_link_tree writes them.
+        stack.extend((joint.child_link, paths[link]) for joint in reversed(children.get(link, ())))
+    return paths
+
+
+def _robot_name(model: LoadedRobotModel, name: str | None) -> str:
+    """The USD's top prim, which is the first segment of every frame: the URDF robot's name."""
+    name = name or ET.fromstring(model.xml).get("name") or "robot"
+    if "/" in name:
+        raise ValueError(f"the robot name {name!r} cannot be a USD prim name: it has a '/'")
+    check_frame_path(name, "the robot name")
+    return name
+
+
+def _link_segment(link: str) -> str:
+    """The prim name of a URDF link: the link name itself, refused if it cannot be one."""
+    if "/" in link:
+        raise ValueError(f"the URDF link {link!r} cannot be a USD prim name: it has a '/'")
+    check_frame_path(link, "the URDF link")
+    return link
 
 
 def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
@@ -164,14 +197,18 @@ def _write_link_tree(
     inertials: Mapping[str, tuple[float, np.ndarray, np.ndarray]] | None = None,
     joint: JointDescription | None = None,
 ) -> None:
-    prim_path = f"{parent_path}/{_free_identifier(pxr, stage, parent_path, link)}"
     if link in paths:
         logger.warning(f"URDF link {link!r} is reached more than once; ignoring the later edge")
         return
+    prim_path = f"{parent_path}/{_link_segment(link)}"
+    if stage.GetPrimAtPath(prim_path):
+        raise ValueError(
+            f"the URDF link {link!r} would be the prim {prim_path}, which its parent's geometry "
+            f"already is; rename the link"
+        )
     xform = pxr.UsdGeom.Xform.Define(stage, prim_path)
     prim = xform.GetPrim()
     paths[link] = prim_path
-    prim.SetDisplayName(link)
     _set_passthrough(pxr, prim, extras.get(link))
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
     inertial = (inertials or {}).get(link)
@@ -206,12 +243,11 @@ def _write_link_tree(
 
 
 def _free_identifier(pxr: Pxr, stage: Stage, parent_path: str, name: str) -> str:
-    """A USD identifier for `name` that nothing under `parent_path` has taken yet.
+    """A USD identifier for the joint `name` that nothing under `parent_path` has taken yet.
 
     Tf.MakeValidIdentifier is not injective -- `arm-1` and `arm_1` both come out `arm_1` -- so
-    two siblings URDF considers distinct would otherwise define the same prim, and the second
-    would fail on adding a transform op the first already has. The real name is in displayName
-    either way, which is what every reader here maps back from.
+    two joints URDF considers distinct would otherwise define the same prim. A joint's real name
+    is in displayName, which is what every reader here maps back from (links are named by path).
     """
     identifier = prim_identifier(pxr, name)
     tries = itertools.chain([identifier], (f"{identifier}_{n}" for n in itertools.count(2)))
@@ -300,6 +336,11 @@ def _write_joints(
     paths: Mapping[str, str],
     extras: Mapping[str, Sequence[str]],
 ) -> None:
+    if stage.GetPrimAtPath(f"{root_path}/joints"):
+        raise ValueError(
+            f"the URDF root link is named 'joints', which is the prim {root_path}/joints that "
+            f"holds the joints; rename the link"
+        )
     scope = pxr.UsdGeom.Scope.Define(stage, f"{root_path}/joints")
     for joint in joints:
         parent = paths.get(joint.parent_link)

@@ -58,9 +58,8 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | Non
         if root_stage.GetPrimAtPath(target):
             raise ValueError(
                 f"cannot attach a subtree at {frame_id!r}: {target} is taken. Two copies of one "
-                f"description mount under the same prim name, because prefixing renames frames "
-                f"and not prims -- so grafting both would keep only the last, silently. Give "
-                f"the scene a frame per copy."
+                f"description mount under the same prim name, and a frame is its prim path -- so "
+                f"grafting both would keep only the last, silently. Give the scene a frame per copy."
             )
         # One recomposition, once its references are carried: copied alone, they would compose against the scene's prims of the same name.
         with pxr.Sdf.ChangeBlock():
