@@ -358,7 +358,7 @@ coordinator does not republish their per-robot view.
 Choose by what the consumer is, not by how many robots the deployment has.
 
 Consumers that capture or model whatever is present read the aggregate:
-`CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
+`CollectionModule`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
 reads `/g1/joints`, and the Go2 controller blueprints pin the connection's
