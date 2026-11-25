@@ -59,7 +59,7 @@ the planner.
 To jog the arm from the keyboard, with the same planner:
 
 ```bash skip
-dimos run keyboard-teleop-seeed-b601-dm --can-port /dev/ttyACM0
+dimos run keyboard-teleop-seeed-b601-dm-planner --can-port /dev/ttyACM0
 ```
 
 Hold W, S, A, D, Q or E in the pygame window to move the tool link at 0.05 m/s

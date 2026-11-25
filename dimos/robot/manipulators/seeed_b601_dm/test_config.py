@@ -44,7 +44,9 @@ from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
     seeed_b601_dm_control,
     seeed_b601_dm_planner_coordinator,
 )
-from dimos.robot.manipulators.seeed_b601_dm.blueprints.teleop import keyboard_teleop_seeed_b601_dm
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.teleop import (
+    keyboard_teleop_seeed_b601_dm_planner,
+)
 from dimos.robot.manipulators.seeed_b601_dm.config import (
     B601_DM,
     B601_DM_JOINT2_LIMITS,
@@ -53,7 +55,6 @@ from dimos.robot.manipulators.seeed_b601_dm.config import (
     GRIPPER_CALIBRATION_TRAVEL_RAD,
     GRIPPER_CURRENT,
     b601_dm_gripper_task,
-    b601_dm_jog_task,
     b601_dm_model_config,
 )
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
@@ -204,16 +205,8 @@ def test_arm_joints_move_at_up_to_2_rad_s() -> None:
     assert B601_DM_VELOCITY_LIMITS == dict.fromkeys(B601_DM_ARM_JOINTS, 2.0)
 
 
-def test_jog_task_moves_the_tool_link_with_the_planning_model() -> None:
-    task = b601_dm_jog_task()
-
-    assert task.type == "eef_twist"
-    assert task.joint_names == [f"arm/{name}" for name in B601_DM_ARM_JOINTS]
-    assert task.params == {"robot_model": B601_DM_PLANNING_MODEL, "target_frame": "end_link"}
-
-
-def test_keyboard_teleop_exposes_jog_planner_and_gripper() -> None:
-    blueprint = keyboard_teleop_seeed_b601_dm.solidify()
+def test_keyboard_teleop_planner_jogs_the_tool_link_over_planned_trajectories() -> None:
+    blueprint = keyboard_teleop_seeed_b601_dm_planner.solidify()
     modules = {atom.module for atom in blueprint.blueprints}
     tasks = next(
         atom.kwargs["tasks"]
@@ -224,15 +217,16 @@ def test_keyboard_teleop_exposes_jog_planner_and_gripper() -> None:
     trajectory = next(task for task in tasks if task.type == "trajectory")
 
     assert {KeyboardTeleopModule, ManipulationModule, B601DMConnection} <= modules
-    assert eef_twist == b601_dm_jog_task()
+    assert eef_twist.joint_names == [f"arm/{name}" for name in B601_DM_ARM_JOINTS]
+    assert eef_twist.params == {"robot_model": B601_DM_PLANNING_MODEL, "target_frame": "end_link"}
     assert eef_twist.priority > trajectory.priority
     assert b601_dm_gripper_task() in tasks
 
 
-def test_keyboard_teleop_task_bindings_have_coordinator_inputs() -> None:
+def test_keyboard_teleop_planner_task_bindings_have_coordinator_inputs() -> None:
     atom = next(
         atom
-        for atom in keyboard_teleop_seeed_b601_dm.solidify().blueprints
+        for atom in keyboard_teleop_seeed_b601_dm_planner.solidify().blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     annotations = get_type_hints(atom.module)

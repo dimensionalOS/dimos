@@ -100,7 +100,7 @@ all_blueprints = {
     "keyboard-teleop-openyam": "dimos.robot.manipulators.openyam.blueprints.teleop:keyboard_teleop_openyam",
     "keyboard-teleop-openyam-planner": "dimos.robot.manipulators.openyam.blueprints.teleop:keyboard_teleop_openyam_planner",
     "keyboard-teleop-piper": "dimos.robot.manipulators.piper.blueprints.teleop:keyboard_teleop_piper",
-    "keyboard-teleop-seeed-b601-dm": "dimos.robot.manipulators.seeed_b601_dm.blueprints.teleop:keyboard_teleop_seeed_b601_dm",
+    "keyboard-teleop-seeed-b601-dm-planner": "dimos.robot.manipulators.seeed_b601_dm.blueprints.teleop:keyboard_teleop_seeed_b601_dm_planner",
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
     "learning-collect-leader-dual-openyam": "dimos.robot.manipulators.dual_openyam.blueprints.leader_collection:learning_collect_leader_dual_openyam",

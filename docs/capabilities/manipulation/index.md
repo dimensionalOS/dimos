@@ -521,7 +521,7 @@ planner is locked for its whole native call.
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-seeed-b601-dm` | Seeed reBot B601-DM keyboard teleop with planning, gripper, and hardware control |
+| `keyboard-teleop-seeed-b601-dm-planner` | Seeed reBot B601-DM keyboard teleop with planning, gripper, and hardware control |
 | `seeed-b601-dm-planner-coordinator` | Seeed reBot B601-DM planning, gripper, and hardware control |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |

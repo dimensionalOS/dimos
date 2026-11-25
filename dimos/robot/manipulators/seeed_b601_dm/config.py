@@ -22,7 +22,6 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import named_for_robot
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.damiao.robot import (
     DamiaoBus,
     DamiaoGripper,
@@ -54,11 +53,7 @@ B601_DM_SOURCE = RobotDescriptionSource(
 # the planner's start state out of bounds.
 B601_DM_JOINT2_LIMITS = (-3.14, 0.02)
 B601_DM_ACCELERATION_LIMIT = 0.5
-#: Every arm joint's velocity limit, rad/s, for planning and jogging, in place
-#: of the vendor URDF's 50 to 200 rad/s. Streaming tasks low-pass each joint
-#: step after their solver has bounded it by this limit, which keeps 27 percent
-#: of it at 100 Hz: a jog moves a joint at up to 0.54 rad/s, enough for 5 cm/s
-#: at the hand. Planned motions stay limited by B601_DM_ACCELERATION_LIMIT.
+# Replace the vendor's 50-200 rad/s limits for planning and jogging.
 B601_DM_VELOCITY_LIMITS = dict.fromkeys(B601_DM_ARM_JOINTS, 2.0)
 # Lazy: the description repository is fetched on first load, not on import.
 B601_DM_MODEL = (
@@ -79,22 +74,6 @@ def b601_dm_gripper_task() -> TaskConfig:
         joint_names=[B601_DM_GRIPPER_JOINT],
         priority=20,
         params={"open_at": "upper"},
-    )
-
-
-def b601_dm_jog_task(*, priority: int = 20) -> TaskConfig:
-    """Move ``end_link`` at the twist on ``ee_twist_command``, e.g. a keyboard jog.
-
-    Args:
-        priority: Higher wins a joint shared with another task.
-    """
-    model = b601_dm_model_config(robot="arm")
-    return TaskConfig(
-        name=EEF_TWIST_TASK_NAME,
-        type="eef_twist",
-        joint_names=list(model.joint_names),
-        priority=priority,
-        params={"robot_model": model, "target_frame": "end_link"},
     )
 
 

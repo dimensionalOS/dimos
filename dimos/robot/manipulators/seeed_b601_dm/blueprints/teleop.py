@@ -21,9 +21,11 @@ never opens a bus.
 
 from __future__ import annotations
 
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTwistCoordinator,
     arm_connection,
@@ -31,13 +33,24 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_remaps,
 )
 from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import B601_DM_PLANNING_MODEL
-from dimos.robot.manipulators.seeed_b601_dm.config import b601_dm_gripper_task, b601_dm_jog_task
+from dimos.robot.manipulators.seeed_b601_dm.config import b601_dm_gripper_task
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
+
+def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
+    return TaskConfig(
+        name=EEF_TWIST_TASK_NAME,
+        type="eef_twist",
+        joint_names=list(B601_DM_PLANNING_MODEL.joint_names),
+        priority=priority,
+        params={"robot_model": B601_DM_PLANNING_MODEL, "target_frame": "end_link"},
+    )
+
+
 # The jog (priority 20) preempts a planned trajectory (10) while a key is held.
-keyboard_teleop_seeed_b601_dm = autoconnect(
+keyboard_teleop_seeed_b601_dm_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
     planner(
         model=B601_DM_PLANNING_MODEL,
@@ -50,7 +63,7 @@ keyboard_teleop_seeed_b601_dm = autoconnect(
             instance_name="ControlCoordinator",
             connections=[arm_declaration(B601DMConnection)],
             tasks=[
-                b601_dm_jog_task(priority=20),
+                _eef_twist_task(priority=20),
                 joint_trajectory_task([f"arm/{name}" for name in B601_DM_ARM_JOINTS], priority=10),
                 b601_dm_gripper_task(),
             ],
