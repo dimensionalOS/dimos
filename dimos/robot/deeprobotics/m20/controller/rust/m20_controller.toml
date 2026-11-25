@@ -66,6 +66,9 @@ policy_decimation = 20
 # stamp being seconds since the bus opened (rl_deploy: since it started), so the targets step at that f32's resolution
 # (under 1 ms for 4.5 h, 15.6 ms from 1.5 days; robot 2026-11-24). false: control ticks
 f32_state_clock = true
+# ours (rl_deploy: false): the stand / StepMove gait clocks' f32 step counter restarts at each period's wrap; rl_deploy's
+# grows while it stands until at 2^24 steps (93 h in one gait) +1 is lost and the gait clock freezes
+gait_clock_wrap = true
 # rl_deploy's f32 is seconds since it started, so its splines step 1/64 s after 1.5 days and 1/16 s after 6 (its
 # stand-up / lie-down stutter until a restart; up 11.2 days on 2026-11-17). false: the f32 counts from the state's entry
 f32_state_clock_from_start = false
@@ -145,6 +148,9 @@ sensor_fault_lies_down = true
 [states.stand_up]
 kp = [200.0, 200.0, 200.0, 0.0]
 kd = [4.0, 4.0, 4.0, 2.0]
+# ours (rl_deploy: false, its start-up state sends all-zero gains): a controller that starts with the legs above
+# crouch_height (a restart while the motors still hold a stand) lies them down from where they are, then the usual states
+lie_down_at_start_when_up = true
 # phase 1: per-joint cubic from the current pose to the leg-IK pose for crouch_height; phase 2: cubic height ramp
 # crouch_height -> stand_height through the IK; each phase lasts phase_s; leaving is allowed after both
 crouch_height = 0.12
@@ -869,6 +875,9 @@ detector_service = false
 # ours (the vendor retries a command 3 more times, 5-6 s each, 0xe4): a stand-up, gait switch or lie-down not done
 # in this long fails the sequence
 transition_limit_s = 21.0
+# ours (charge_manager: no fault input, a retry or an undock stands the robot up after one): a controller fault or a
+# joint damping docking did not ask for ends docking in its error state (0x10f0, ours), passive; charging keeps going
+abort_on_fault = true
 
 [inference]
 # rl_deploy runs the policies on ONNX Runtime 1.20 (one intra-op thread, all graph optimizations): its library on AOS
@@ -895,6 +904,17 @@ checks = 7
 check_period_s = 1.0
 accel_z = 9.0
 height_m = 0.4
+
+# rl_deploy's battery levels (SafeController::IsBatteryNormal 0x174e30, every pack): a pack at or under 54 V is in
+# voltage error until back at 58 V; under 21 % a warning, under 6 % (or every pack in voltage error) an error. rl_deploy
+# only reports them; ours (act_on_error, rl_deploy: false): at the error level stand-ups are refused and a standing robot
+# stops and lies down (the lie-down's settle rules)
+[battery]
+voltage_error_v = 54.0
+voltage_clear_v = 58.0
+warning_percent = 21
+error_percent = 6
+act_on_error = true
 
 # DdsInterface::HandlerVel 0x163710: /REAL_STEER (m/s, m/s, rad/s) over these by the commanded gait (UC+0x10) on receipt
 [real_steer]

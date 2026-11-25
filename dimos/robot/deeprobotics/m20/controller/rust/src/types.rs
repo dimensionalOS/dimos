@@ -44,6 +44,8 @@ pub struct RobotState {
     pub drivers: Option<Drivers>,
     /// how old the IMU sample in this state is (s), when the source knows
     pub imu_age_s: Option<f64>,
+    /// the battery level from the newest battery report, when the source has them
+    pub battery: Option<crate::battery::BatteryLevel>,
 }
 
 /// Per joint (robot order) what the motor board reports besides the joint state.

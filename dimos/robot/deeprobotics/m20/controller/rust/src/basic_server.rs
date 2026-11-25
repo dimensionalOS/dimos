@@ -451,8 +451,11 @@ mod tests {
                 ..Default::default()
             },
         );
+        // lying (a start with the legs up lies down first)
+        let lying = c.config().states.lie_down.lie_height;
         let state = crate::types::RobotState {
             quat: [1.0, 0.0, 0.0, 0.0],
+            q: crate::state_machine::leg_pose_for_height(&c.config().robot, lying, 0.0),
             ..Default::default()
         };
         let mut policy = crate::policy::InlinePolicy::new(crate::policy::RunnerSet::empty());

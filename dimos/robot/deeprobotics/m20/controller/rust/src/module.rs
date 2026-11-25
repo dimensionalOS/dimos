@@ -735,6 +735,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             return;
         }
     };
+    hardware.set_battery(cfg.battery.clone());
     if let Err(error) = rt::control_realtime(&cfg.realtime) {
         tracing::error!(
             error = format!("{error:#}"),
@@ -1168,6 +1169,42 @@ mod tests {
         let body =
             m20_ecan::frame::encode(0, 6, 0x21, m20_ecan::FrameType::Battery, &payload).unwrap();
         m20_ecan::ethernet::wrap([2, 0, 0, 0, 0, 1], &body)
+    }
+
+    /// battery_frame at `level` % and `volts` V a pack.
+    fn battery_at(level: u8, volts: f64) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for _ in 0..2 {
+            let mut record = [0u8; m20_ecan::message::BATTERY_PACK_LEN];
+            record[0..2].copy_from_slice(&((volts * 100.0) as u16).to_le_bytes());
+            record[19] = level;
+            payload.extend_from_slice(&record);
+        }
+        let body =
+            m20_ecan::frame::encode(0, 6, 0x21, m20_ecan::FrameType::Battery, &payload).unwrap();
+        m20_ecan::ethernet::wrap([2, 0, 0, 0, 0, 1], &body)
+    }
+
+    #[test]
+    fn the_battery_frames_give_rl_deploy_s_levels() {
+        use crate::battery::{BatteryFeed, BatteryLevel};
+        let cfg = crate::config::Config::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml"),
+        )
+        .unwrap();
+        let mut feed = BatteryFeed::new(cfg.battery);
+        assert_eq!(feed.level, None);
+        for (level, volts, want) in [
+            (90, 83.0, BatteryLevel::Normal),
+            (20, 83.0, BatteryLevel::Warning),
+            (5, 83.0, BatteryLevel::Error),
+            (90, 54.0, BatteryLevel::Error),
+            (90, 57.0, BatteryLevel::Error),
+            (90, 58.0, BatteryLevel::Normal),
+        ] {
+            feed.on_frame(&battery_at(level, volts));
+            assert_eq!(feed.level, Some(want), "{level} % {volts} V");
+        }
     }
 
     #[test]

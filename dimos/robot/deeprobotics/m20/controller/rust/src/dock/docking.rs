@@ -183,6 +183,8 @@ pub const STAND_UP_FAILED: u32 = 0x1006;
 pub const NO_CHARGE_PLUG: u32 = 0x1007;
 pub const OBSTACLE_TIMEOUT: u32 = 0x1009;
 pub const EXIT_PILE_TIMEOUT: u32 = 0x100a;
+/// ours (dock.sequence.abort_on_fault), not a charge_manager code: docking ended on a controller fault
+pub const CONTROLLER_FAULT: u32 = 0x10f0;
 
 /// What charge_manager writes to rl_deploy (DDS /MOTION_STATE, /GAIT, /CHARGE_CMD, /BATTERY_CHARGE_ENABLE), written by
 /// this sequence where and in the order charge_manager writes it; the commands it sends the controller follow from
@@ -1240,6 +1242,14 @@ impl Docking {
             return sit.then(|| self.output(None));
         }
         self.ticks_in_phase += 1;
+        // ours: a fault or a damping docking did not ask for ends it, passive, until the operator asks again
+        let damping =
+            view.state == Some(State::JointDamping) && self.target != Target::JointDamping;
+        if self.seq.abort_on_fault && self.phase != Phase::Charging && (view.fault || damping) {
+            let out = self.finish(Target::Passive, "a controller fault ended docking", true);
+            self.error_code = Some(CONTROLLER_FAULT);
+            return out;
+        }
         // charge_manager has no fault input: a fault reaches it only as /MOTION_INFO's state (JointDamping 2)
         let limit = (self.seq.transition_limit_s * self.hz).round() as u64;
         match self.phase {

@@ -1236,3 +1236,36 @@ fn fixed_cases_stay_calm() {
         );
     }
 }
+
+/// stand_up.lie_down_at_start_when_up: a controller started while the sim robot stands lies it down from there.
+#[test]
+fn a_start_while_standing_lies_down() {
+    let (Some(dir), Some(python)) = (common::policy_dir(), sim_python()) else {
+        return;
+    };
+    let cfg = common::config();
+    let (_server, mut sim) = start_sim(&python);
+    let mut state = sim
+        .reset(&serde_json::json!({"pose": standing_pose(&cfg)}))
+        .unwrap();
+    let mut policy = InlinePolicy::new(RunnerSet::load(&cfg, &dir).unwrap());
+    let mut c = Controller::new(cfg.clone());
+    let mut worst_tilt = 0.0f64;
+    while c.time() < 6.0 {
+        let cmd = c.tick(&state, &UserCommand::default(), &mut policy);
+        state = sim.exchange(&cmd).unwrap();
+        worst_tilt = worst_tilt.max(sim.truth().unwrap().tilt);
+    }
+    let truth = sim.truth().unwrap();
+    println!(
+        "transitions {:?}, tilt {worst_tilt:.3} rad, z {:.3}",
+        c.transitions, truth.position[2]
+    );
+    assert_eq!(c.transitions.first().map(|t| t.2), Some(State::LieDown));
+    assert!(worst_tilt < 0.3, "tilted {worst_tilt:.2} rad");
+    assert!(
+        truth.position[2] < 0.25,
+        "not lying: z {:.3}",
+        truth.position[2]
+    );
+}

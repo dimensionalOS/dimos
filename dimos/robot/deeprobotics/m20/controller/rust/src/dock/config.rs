@@ -171,6 +171,9 @@ pub struct SequenceConfig {
     pub detector_service: bool,
     /// ours: a stand-up / gait switch / lie-down not done in this long (s) fails the sequence
     pub transition_limit_s: f64,
+    /// ours: a controller fault or an unasked damping ends docking in its error state (charging excepted)
+    #[serde(default)]
+    pub abort_on_fault: bool,
 }
 
 fn positive(name: &str, v: f64) -> Result<()> {

@@ -135,7 +135,7 @@ fn a_missing_pose_stops_the_robot_and_resumes() {
 
 #[test]
 fn a_fault_alone_changes_nothing_but_leaving_rl_control_ends_it() {
-    let cfg = cfg();
+    let cfg = cfg().rl_deploy();
     let v = vendor();
     let mut k = Docking::new(&cfg, true, Some(&v));
     let view = standing("navi_charge");
@@ -740,4 +740,63 @@ fn charge_lost_while_standing_goes_idle_not_error() {
     b.run_as(&standing, 30_000, None, 0, 20_000);
     assert_eq!(b.k.phase(), Phase::Idle);
     assert!(!b.k.status().error && !b.k.status().no_plug);
+}
+
+/// abort_on_fault (ours): a fault during the approach ends docking passive, and nothing it writes after stands.
+#[test]
+fn a_fault_during_the_approach_ends_docking_with_no_stand_up() {
+    let cfg = cfg();
+    let v = vendor();
+    let mut k = Docking::new(&cfg, true, Some(&v));
+    let view = standing("navi_charge");
+    k.request(Request::Dock, &view).unwrap();
+    let mut seq = 0;
+    run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+    k.record_writes();
+    let mut tilted = view.clone();
+    tilted.fault = true;
+    tilted.state = Some(State::LieDown);
+    for t in 0..60_000u64 {
+        if t % 100 == 0 {
+            seq += 1;
+        }
+        k.step(&tilted, Some((facing(2.0), seq)), None);
+    }
+    assert!(!k.active() && k.status().error);
+    assert_eq!(k.status().error_code, Some(CONTROLLER_FAULT));
+    let writes = k.take_writes();
+    assert!(
+        !writes.iter().any(|(_, w)| matches!(
+            w,
+            Write::MotionState(MOTION_STAND) | Write::MotionState(MOTION_RL_CONTROL)
+        )),
+        "{writes:?}"
+    );
+}
+
+/// abort_on_fault: a fault while confirming the charge (lying, no charge yet) ends docking: no retry stands it up.
+#[test]
+fn a_fault_while_confirming_the_charge_never_stands() {
+    let cfg = cfg();
+    let v = vendor();
+    for fault in [false, true] {
+        let mut k = Docking::new(&cfg, true, Some(&v));
+        let view = standing("navi_charge");
+        k.request(Request::Dock, &view).unwrap();
+        let mut seq = 0;
+        run_until(&mut k, &view, 2.0, &mut seq, Phase::Approach, 10_000);
+        k.set_phase(Phase::ConfirmCharge);
+        let mut lying = lying();
+        lying.fault = fault;
+        k.record_writes();
+        for _ in 0..60_000 {
+            k.step(&lying, None, None);
+        }
+        let stood = k
+            .take_writes()
+            .iter()
+            .any(|(_, w)| matches!(w, Write::MotionState(MOTION_STAND)));
+        // without the fault charge_manager's retry stands it up; with one nothing does
+        assert_eq!(stood, !fault, "fault {fault}");
+    }
 }

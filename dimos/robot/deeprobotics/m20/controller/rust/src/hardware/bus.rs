@@ -139,6 +139,7 @@ pub struct BusHardware {
     started: std::time::Instant,
     last: Option<RobotState>,
     lag: ReplyLag<RobotState>,
+    battery: Option<crate::battery::BatteryFeed>,
 }
 
 #[cfg(target_os = "linux")]
@@ -164,7 +165,13 @@ impl BusHardware {
             started: std::time::Instant::now(),
             last: None,
             lag: ReplyLag::default(),
+            battery: None,
         })
+    }
+
+    /// The battery frames give RobotState::battery (rl_deploy's IsBatteryNormal levels).
+    pub fn set_battery(&mut self, cfg: crate::config::BatteryConfig) {
+        self.battery = Some(crate::battery::BatteryFeed::new(cfg));
     }
 
     /// A charge-enable request from the dock sequence (charge_manager's /BATTERY_CHARGE_ENABLE 1), as rl_deploy sends
@@ -193,6 +200,9 @@ impl BusHardware {
 
     fn see(&mut self, t: u64, direction: Direction, frame: &[u8]) -> Option<RobotState> {
         (self.sink)(t, direction, frame);
+        if let (Some(b), Direction::FromBoard) = (self.battery.as_mut(), direction) {
+            b.on_frame(frame);
+        }
         if let Some(charge) = self.charge.as_mut() {
             if charge.on_frame(direction, frame) && self.charge_rule {
                 self.bus.owner.queue_charge_enable();
@@ -265,6 +275,7 @@ impl BusHardware {
         s.accel = imu.accel;
         s.imu_rpy_deg = imu.rpy_deg;
         s.imu_age_s = imu.age_s;
+        s.battery = self.battery.as_ref().and_then(|b| b.level);
         Ok(s)
     }
 }

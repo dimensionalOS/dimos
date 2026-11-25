@@ -65,6 +65,8 @@ pub struct ControllerStatus {
     pub max_tick_ms: f64,
     pub dock_active: bool,
     pub charging: bool,
+    /// rl_deploy's battery level (normal, warning under 21 %, error under 6 % or at 54 V); none before a report
+    pub battery: Option<crate::battery::BatteryLevel>,
 }
 
 /// Each leg's hip-to-axle depth from its joints, as obstacle::body_height averages it.
@@ -119,6 +121,7 @@ impl ControllerStatus {
             max_tick_ms: round(tick.stats.max_tick_s * 1e3),
             dock_active: dock.is_some_and(|d| d.active),
             charging: dock.is_some_and(|d| d.charging),
+            battery: tick.state.battery,
         }
     }
 
@@ -139,6 +142,7 @@ impl ControllerStatus {
                 self.usage_mode,
             ),
             self.hard_stop,
+            self.battery,
         )
     }
 }
@@ -279,6 +283,7 @@ mod tests {
             max_tick_ms: Default::default(),
             dock_active: false,
             charging: false,
+            battery: None,
         };
         let mut log = StatusLog::new(0.01);
         assert!(log.changed(&base));

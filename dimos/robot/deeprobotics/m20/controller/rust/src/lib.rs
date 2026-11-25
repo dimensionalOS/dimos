@@ -23,6 +23,7 @@
 )]
 
 pub mod basic_server;
+pub mod battery;
 pub mod commands;
 pub mod config;
 pub mod dock;

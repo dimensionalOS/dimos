@@ -259,3 +259,30 @@ fn a_joint_data_fault_lies_down_without_the_stop() {
     assert!(c.fault.as_deref().is_some_and(|f| f.contains("range")));
     assert_eq!(c.state, State::LieDown);
 }
+
+#[test]
+fn a_battery_at_its_error_level_lies_down_and_refuses_a_stand() {
+    use crate::battery::BatteryLevel;
+    let cfg = config();
+    // standing: a stop, then the lie-down
+    let (mut c, mut s, mut p, cmd) = standing_in_rl(cfg.clone());
+    s.battery = Some(BatteryLevel::Warning);
+    run(&mut c, &mut s, &cmd, 100, &mut p);
+    assert_eq!(c.state, State::RlControl, "a warning only reports");
+    s.battery = Some(BatteryLevel::Error);
+    run(&mut c, &mut s, &cmd, 1, &mut p);
+    assert_eq!(c.state, State::LieDown);
+    // lying: a stand is refused
+    let stand = UserCommand {
+        target: Target::Stand,
+        ..Default::default()
+    };
+    let lie_ticks = (2.0 * cfg.states.lie_down.phase_s * 1000.0) as usize + 10;
+    run(&mut c, &mut s, &stand, lie_ticks, &mut p);
+    assert_eq!(c.state, State::LieDown);
+    // rl_deploy's: it only reports
+    let (mut c, mut s, mut p, cmd) = standing_in_rl(cfg.rl_deploy());
+    s.battery = Some(BatteryLevel::Error);
+    run(&mut c, &mut s, &cmd, 100, &mut p);
+    assert_eq!(c.state, State::RlControl);
+}

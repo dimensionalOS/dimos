@@ -72,6 +72,19 @@ stalled IMU (`safety.imu_timeout_s` 0.1 s: rl_deploy only sets a status bit past
 policy thread silent for `safety.policy_missed_steps` 5 periods. Only a temperature fault stops first; a driver
 status-word fault damps at once. rl_deploy has none of the three new faults (Config::rl_deploy turns them off).
 
+## Around the walking (ours; rl_deploy() turns each off)
+
+- Docking (`dock.sequence.abort_on_fault`): charge_manager has no fault input, so after a fault a retry or an undock
+  would stand the robot up unasked; a controller fault or a joint damping docking did not ask for ends docking in its
+  error state (0x10f0, ours), passive, charging excepted; nothing stands until the operator asks.
+- A start with the legs up (`stand_up.lie_down_at_start_when_up`): rl_deploy's start-up state sends zero gains, so a
+  restart while the motors hold a stand drops it; ours lies down from the current pose (sim: lies without tilting).
+- A panic in the tick: the loop catches it and sends joint_damping's gains for the shutdown's damping ticks.
+- Battery (`[battery]`, IsBatteryNormal 0x174e30's levels in controller_report): rl_deploy only reports them; at the
+  error level (every pack under 6 %, or at 54 V until 58 V) ours refuses stand-ups and lies a standing robot down.
+- The gait clocks (`timing.gait_clock_wrap`): rl_deploy's f32 step counter grows while it stands until +1 is lost at
+  2^24 steps (93 h) and the clock freezes; ours restarts it at each period's wrap (the same values until then).
+
 ## height_gap
 
 Its height map was the sim's guess (it fell walking on its own). rl_deploy's HeightsSubCallback (0x176bf0) and the

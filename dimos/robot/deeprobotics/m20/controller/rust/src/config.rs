@@ -43,6 +43,9 @@ pub struct Config {
     pub basic_server: BasicServerConfig,
     /// rl_deploy's metric velocity command to normalized axes (DdsInterface::HandlerVel)
     pub real_steer: RealSteer,
+    /// rl_deploy's battery levels (SafeController::IsBatteryNormal) and what ours does at the error level
+    #[serde(default)]
+    pub battery: BatteryConfig,
     /// the runners safety.default_command_slew gave a slew (rl_deploy's have none)
     #[serde(skip)]
     pub slew_defaulted: Vec<String>,
@@ -154,6 +157,9 @@ pub struct Timing {
     /// its stand-up / lie-down stutter); false: seconds since the state's entry, the same arithmetic without the steps
     #[serde(default)]
     pub f32_state_clock_from_start: bool,
+    /// ours: the gait clocks' f32 counters restart at each period's wrap (rl_deploy's grows, losing f32 resolution)
+    #[serde(default)]
+    pub gait_clock_wrap: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -216,6 +222,9 @@ pub struct JointDamping {
 pub struct StandUp {
     pub kp: Vec<f64>,
     pub kd: Vec<f64>,
+    /// ours: a controller that starts (in passive) with the legs above crouch_height lies them down first
+    #[serde(default)]
+    pub lie_down_at_start_when_up: bool,
     pub crouch_height: f64,
     pub stand_height: f64,
     pub phase_s: f64,
@@ -302,6 +311,18 @@ pub struct SafeSwitch {
     pub lie_bridge_from: Vec<String>,
     /// a gait written during a stand-in is kept and switched to after it (rl_deploy: lost)
     pub keep_gait_during_stand_in: bool,
+}
+
+/// rl_deploy's IsBatteryNormal thresholds; `act_on_error` is ours.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BatteryConfig {
+    pub voltage_error_v: f64,
+    pub voltage_clear_v: f64,
+    pub warning_percent: u8,
+    pub error_percent: u8,
+    /// ours: at the error level stand-ups are refused and a standing robot stops and lies down
+    #[serde(default)]
+    pub act_on_error: bool,
 }
 
 /// Params that share one range (a pose: each alone may reach its end, together they share it).
@@ -498,6 +519,9 @@ pub struct GaitClockSpec {
     pub wz_gain: f64,
     pub vx_gain: f64,
     pub vy_gain: f64,
+    /// ours (timing.gait_clock_wrap fills it): the counter restarts at each period's wrap
+    #[serde(default)]
+    pub wrap: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -702,6 +726,14 @@ impl Config {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let wrap = cfg.timing.gait_clock_wrap;
+        for g in cfg
+            .runners
+            .values_mut()
+            .filter_map(|r| r.gait_clock.as_mut())
+        {
+            g.wrap = wrap;
+        }
         if let Some(limit) = cfg.safety.command_limit {
             for r in cfg.runners.values_mut() {
                 r.command_limit.get_or_insert(limit);
@@ -846,6 +878,9 @@ impl Config {
     pub fn rl_deploy(mut self) -> Config {
         self.states.rl_control.safe_switch = None;
         self.states.rl_control.zero_command = ZeroCommand::default();
+        self.dock.sequence.abort_on_fault = false;
+        self.battery.act_on_error = false;
+        self.states.stand_up.lie_down_at_start_when_up = false;
         self.states.joint_damping.lie_down_first = false;
         self.states.joint_damping.lie_down_first_on_command = false;
         self.safety.finite_commands = false;
@@ -856,6 +891,14 @@ impl Config {
             }
         }
         self.safety.command_limit = None;
+        self.timing.gait_clock_wrap = false;
+        for g in self
+            .runners
+            .values_mut()
+            .filter_map(|r| r.gait_clock.as_mut())
+        {
+            g.wrap = false;
+        }
         self.safety.imu_timeout_s = None;
         self.safety.missed_replies = None;
         self.safety.policy_missed_steps = None;

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::commands::CommandSource;
-use crate::config::{Config, Realtime};
+use crate::config::{tile, Config, Realtime};
 use crate::hardware::Hardware;
 use crate::policy::PolicyService;
 use crate::state_machine::Controller;
@@ -236,6 +236,7 @@ pub fn run<H: Hardware + ?Sized>(
     let mut user = UserCommand::default();
     let mut last_command_at = 0.0f64;
     let mut deadline = Instant::now() + period;
+    let mut panicked = false;
     while !stop.load(Ordering::Relaxed) {
         let tick_start = Instant::now();
         // command time is controller time (ticks), which is wall time whenever the loop keeps up
@@ -250,7 +251,14 @@ pub fn run<H: Hardware + ?Sized>(
             // a metric velocity (cmd_vel) expires the same way
             effective.velocity = effective.velocity.map(|_| [0.0; 3]);
         }
-        let cmd = controller.tick(&state, &effective, policy);
+        // ours: a panic in the tick (a bug) damps the joints instead of leaving the motors on their last command
+        let tick = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            controller.tick(&state, &effective, policy)
+        }));
+        let Ok(cmd) = tick else {
+            panicked = true;
+            break;
+        };
         commands.observe(controller);
         match hardware.exchange(&cmd) {
             Ok(s) => {
@@ -297,6 +305,27 @@ pub fn run<H: Hardware + ?Sized>(
         gait: user.gait,
         ..Default::default()
     };
+    if panicked {
+        // the controller cannot be trusted to tick again: joint_damping's gains straight to the motors
+        let jd = &cfg.states.joint_damping;
+        let damp = JointCommand {
+            kp: tile(&jd.kp, crate::config::JOINTS)?
+                .try_into()
+                .unwrap_or([0.0; crate::config::JOINTS]),
+            kd: tile(&jd.kd, crate::config::JOINTS)?
+                .try_into()
+                .unwrap_or([0.0; crate::config::JOINTS]),
+            ..Default::default()
+        };
+        for _ in 0..cfg.safety.shutdown_damping_ticks {
+            let _ = hardware.exchange(&damp);
+            if pacing == Pacing::Realtime {
+                sleep_until(deadline, slack);
+                deadline += period;
+            }
+        }
+        anyhow::bail!("the controller panicked; the joints were damped");
+    }
     let lie_ticks = (cfg.safety.shutdown_lie_down_max_s / cfg.control_dt()) as u64;
     for _ in 0..lie_ticks {
         if controller.at_rest() {
@@ -601,5 +630,112 @@ mod shutdown_tests {
             "{faults:?} (limit {n})"
         );
         assert!(states.contains(&State::LieDown), "{states:?}");
+    }
+
+    /// Follow, keeping every command sent.
+    struct Recording {
+        inner: Follow,
+        sent: Vec<JointCommand>,
+    }
+
+    impl Hardware for Recording {
+        fn read_state(&mut self) -> Result<RobotState> {
+            self.inner.read_state()
+        }
+        fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {
+            self.sent.push(*cmd);
+            self.inner.exchange(cmd)
+        }
+    }
+
+    /// Hold, but its `panic_at`th answer panics (a bug in the tick).
+    struct PanicAt(Hold, u64, u64);
+
+    impl crate::policy::PolicyService for PanicAt {
+        fn offer(&mut self, request: PolicyRequest) -> bool {
+            self.0.offer(request)
+        }
+        fn take_result(&mut self) -> Option<PolicyResult> {
+            let r = self.0.take_result();
+            if r.is_some() {
+                self.1 += 1;
+                assert!(self.1 < self.2, "injected panic");
+            }
+            r
+        }
+        fn dropped(&self) -> u64 {
+            0
+        }
+    }
+
+    /// A panic in the tick: the loop ends, the joints get joint_damping's gains to the end, run reports it.
+    #[test]
+    fn a_panic_in_the_tick_damps_the_joints() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        let cfg = Config::load(&path).unwrap();
+        let mut s = RobotState {
+            quat: [1.0, 0.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        s.q = crate::state_machine::leg_pose_for_height(&cfg.robot, 0.03, 0.0);
+        let mut hw = Recording {
+            inner: Follow(s),
+            sent: vec![],
+        };
+        let mut c = Controller::new(cfg.clone());
+        c.set_time(10.0);
+        let stop = AtomicBool::new(false);
+        let never = AtomicBool::new(false);
+        let mut commands = StandThenStop {
+            sent: 0,
+            stand_s: f64::INFINITY,
+            stop: &never,
+        };
+        let mut policy = PanicAt(Hold(None), 0, 100);
+        let result = run(
+            &cfg,
+            &mut hw,
+            &mut c,
+            &mut policy,
+            &mut commands,
+            Pacing::Free,
+            &stop,
+            |_, _| {},
+        );
+        assert!(result.is_err());
+        assert_eq!(c.state, State::RlControl, "it panicked standing");
+        let tail = &hw.sent[hw.sent.len() - cfg.safety.shutdown_damping_ticks as usize..];
+        let kd = tile(&cfg.states.joint_damping.kd, crate::config::JOINTS).unwrap();
+        assert!(tail
+            .iter()
+            .all(|c| c.kp == [0.0; crate::config::JOINTS] && c.kd.to_vec() == kd));
+    }
+
+    /// A start with the legs up (a restart while the motors hold a stand): the first state is a lie-down.
+    #[test]
+    fn a_start_standing_lies_down_first() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        for (cfg, lies) in [
+            (Config::load(&path).unwrap(), true),
+            (Config::load(&path).unwrap().rl_deploy(), false),
+        ] {
+            let mut s = RobotState {
+                quat: [1.0, 0.0, 0.0, 0.0],
+                ..Default::default()
+            };
+            s.q = crate::state_machine::leg_pose_for_height(
+                &cfg.robot,
+                cfg.states.stand_up.stand_height,
+                0.0,
+            );
+            let mut c = Controller::new(cfg.clone());
+            let mut policy = Hold(None);
+            for _ in 0..10 {
+                s.stamp += 0.001;
+                s.tau = [s.stamp; crate::config::JOINTS];
+                c.tick(&s, &UserCommand::default(), &mut policy);
+            }
+            assert_eq!(c.state == State::LieDown, lies);
+        }
     }
 }

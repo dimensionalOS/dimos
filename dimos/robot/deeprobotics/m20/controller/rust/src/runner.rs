@@ -154,6 +154,9 @@ impl GaitClock {
                 self.omega = (f as f64 * PI * 2.0) as f32;
                 self.counter = ((1.0 / f) * (next / period)) / dt;
                 self.frequency = f;
+            } else if g.wrap {
+                // ours: the step's tick lands on the phase past the wrap, so the counter stays under a period
+                self.counter = next / dt - 1.0;
             }
         }
     }
@@ -161,6 +164,69 @@ impl GaitClock {
     /// The step's end
     pub fn tick(&mut self) {
         self.counter += 1.0;
+    }
+}
+
+#[cfg(test)]
+mod gait_clock_tests {
+    use super::*;
+
+    fn spec(wrap: bool) -> GaitClockSpec {
+        GaitClockSpec {
+            frequency: 1.0,
+            min_frequency: 1.0,
+            max_frequency: 1.5,
+            wz_gain: 12.0,
+            vx_gain: 15.0,
+            vy_gain: 3.5,
+            wrap,
+        }
+    }
+
+    /// 1e6 steps: the wrapped clock matches f64 and stays under a period; rl_deploy's freezes at 2^24 steps.
+    #[test]
+    fn a_wrapped_gait_clock_keeps_its_phase() {
+        let dt = 0.02;
+        let mut c = GaitClock::new(&spec(true));
+        let mut most = 0.0f32;
+        for k in 1..=1_000_000u64 {
+            c.update(dt, &[0.0; 3]);
+            c.tick();
+            most = most.max(c.counter);
+            if k % 99_991 == 0 {
+                let t = k as f64 * dt;
+                let rem = 0.5 - t % 0.5;
+                let rem = if rem > 0.5 - 1e-6 { 0.0 } else { rem };
+                let (_, _, r) = c.fields(dt);
+                assert!((r as f64 - rem).abs() < 1e-4, "step {k}: {r} vs {rem}");
+            }
+        }
+        assert!(most <= (1.0 / dt) as f32, "counter reached {most}");
+        let mut frozen = GaitClock::new(&spec(false));
+        frozen.counter = 16_777_216.0;
+        let before = frozen.fields(dt);
+        frozen.update(dt, &[0.0; 3]);
+        frozen.tick();
+        assert_eq!(frozen.counter, 16_777_216.0);
+        assert_eq!(
+            frozen.fields(dt),
+            before,
+            "rl_deploy's clock no longer moves"
+        );
+    }
+
+    /// Within the first periods the wrapped clock is rl_deploy's to the bit.
+    #[test]
+    fn the_first_period_is_rl_deploy_s() {
+        let dt = 0.02;
+        let (mut a, mut b) = (GaitClock::new(&spec(true)), GaitClock::new(&spec(false)));
+        for _ in 0..49 {
+            assert_eq!(a.fields(dt), b.fields(dt));
+            a.update(dt, &[0.0; 3]);
+            b.update(dt, &[0.0; 3]);
+            a.tick();
+            b.tick();
+        }
     }
 }
 
