@@ -55,5 +55,6 @@ dimos run teleop-webxr-piper --piperconnection.can-port can0
 ```
 
 `coordinator-piper`, `keyboard-teleop-piper` and `teleop-webxr-piper` also run a
-simulated Piper in MuJoCo with `dimos --simulation run ...`, with no CAN port. `coordinator-cartesian-ik-mock`
+simulated Piper in MuJoCo with `dimos --simulation run ...`, with no CAN port, or on a mock Piper
+with `--choice arm=mock` instead of the CAN port. `coordinator-cartesian-ik-mock`
 runs Cartesian IK on a mock Piper.

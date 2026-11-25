@@ -138,4 +138,4 @@ webxr/
 └── web/static/index.html # WebXR client
 ```
 
-An xArm's address is `--xarmconnection.ip`. Other arms' device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
+An xArm's address is `--xarmconnection.ip`; `--choice arm=mock` runs the xArm and Piper blueprints on a mock arm instead. Other arms' device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
