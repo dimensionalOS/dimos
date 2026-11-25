@@ -385,6 +385,13 @@ def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
     assert np.allclose(placed, expected, atol=1e-6), "the frame hangs where it was added"
 
 
+def _link(joint: Any, end: str) -> str:
+    """The link named at one end ("parent" or "child") of a URDF joint element."""
+    element = joint.find(end)
+    assert element is not None, f"a joint with no {end}"
+    return str(element.attrib["link"])
+
+
 def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: Any) -> None:
     import xml.etree.ElementTree as ElementTree
 
@@ -394,19 +401,15 @@ def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: 
 
     urdf = ElementTree.fromstring(usd_to_urdf(scene))
     links = {link.get("name") for link in urdf.findall("link")}
-    parent_of = {
-        joint.find("child").get("link"): joint.find("parent").get("link")
-        for joint in urdf.findall("joint")
-    }
+    parent_of = {_link(joint, "child"): _link(joint, "parent") for joint in urdf.findall("joint")}
 
     assert "toy" in links, "the scene root is a link even though it is not a rigid body"
     assert parent_of["spot"] == "toy", "a body0-less weld hangs off the scene root"
     origin = next(
-        joint.find("origin")
-        for joint in urdf.findall("joint")
-        if joint.find("child").get("link") == "spot"
+        joint.find("origin") for joint in urdf.findall("joint") if _link(joint, "child") == "spot"
     )
-    assert [float(value) for value in origin.get("xyz").split()] == [0.3, 0.0, 0.7], (
+    assert origin is not None
+    assert [float(value) for value in origin.attrib["xyz"].split()] == [0.3, 0.0, 0.7], (
         "the weld carries where the frame actually sits, not the joint's zero offset"
     )
     assert "spot" not in {name for name in links if name not in parent_of}, (
