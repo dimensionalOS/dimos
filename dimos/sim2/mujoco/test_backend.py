@@ -255,6 +255,29 @@ def test_backend_steps_physics_and_takes_commands(world, robot_model):
     assert world_seen.entity("dog").velocity is not None
 
 
+def test_a_held_robot_stands_still_on_a_running_clock_until_it_is_commanded(world, robot_model):
+    """A policy commands on fresh readings, which tick on world time, so a held world keeps its clock running."""
+    held = SimulatedRobot("dog", robot_model, held_until_commanded=True)
+    backend = MujocoBackend(world, [held])
+    published = _Collect()
+
+    async def hold_then_drive() -> tuple[float, float, float]:
+        async with _looping(backend, published) as sim_module:
+            sim_module._held = {"dog"}
+            await _ran_for(backend, published, 0.0)
+            standing = published.world.entity("dog").pose[2]
+            await _ran_for(backend, published, 0.3)
+            still = published.world.entity("dog").pose[2]
+            command = JointCommand("dog", ("neck",), effort=(0.0,))
+            sim_module._on_actions(world_action(published.world, command))
+            await _ran_for(backend, published, 0.85)
+            return standing, still, published.world.entity("dog").pose[2]
+
+    standing, still, fallen = asyncio.run(hold_then_drive())
+    assert still == pytest.approx(standing)
+    assert fallen < 0.3
+
+
 def test_frames_report_robots_and_objects_and_actions_drive_them(world, robot_model):
     backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
     backend.apply([JointCommand("dog", ("neck",), effort=(0.5,))])
