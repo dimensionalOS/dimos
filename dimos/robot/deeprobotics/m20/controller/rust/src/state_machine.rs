@@ -509,6 +509,8 @@ pub struct Controller {
     finite_q: [f64; JOINTS],
     /// zero_command's wheel positions held since the command went to zero
     wheel_hold: Option<[f64; 4]>,
+    /// zero_command's stand_runners: standing on the bridge until the next command
+    zero_standing: bool,
     /// this tick's fault leaves the joints, IMU, replies and tilt readable (a stop can read them)
     sensors_ok: bool,
     /// rl_control ticks since the last policy result (safety.policy_missed_steps)
@@ -575,6 +577,7 @@ impl Controller {
             lie_bridged: false,
             finite_q: [0.0; JOINTS],
             wheel_hold: None,
+            zero_standing: false,
             sensors_ok: true,
             since_result: 0,
         }
@@ -593,9 +596,9 @@ impl Controller {
         self.gait
     }
 
-    /// A stand-in policy is running (rl_control's entry or a gait switch's), before the gait's own runner.
+    /// A stand-in policy is running (rl_control's entry, a gait switch's, or zero_command's stand), not the gait's runner.
     pub fn in_stand_in(&self) -> bool {
-        self.stand_in.is_some()
+        self.stand_in.is_some() || self.zero_standing
     }
 
     pub fn last_targets(&self) -> Option<&Targets> {
@@ -785,6 +788,7 @@ impl Controller {
             self.blend_from = None;
             self.stop_rim = (0.0, 0, None, false);
             self.wheel_hold = None;
+            self.zero_standing = false;
             self.since_result = 0;
             self.entry_pending = true;
             self.targets = None;
@@ -1274,6 +1278,47 @@ impl Controller {
         wheels && rate
     }
 
+    /// zero_command's stand_runners (ours): still at a zero command, stand on the held bridge until a command or gait.
+    fn zero_command_stand(&mut self, s: &RobotState, cmd: &UserCommand, write: bool) {
+        let Some(ss) = self.cfg.states.rl_control.safe_switch.clone() else {
+            return;
+        };
+        // a gait written while standing is kept, as during a bridge
+        if write && self.zero_standing {
+            self.target_gait = cmd.gait;
+        }
+        let runner = self.cfg.runner_for_gait(self.gait).to_string();
+        let zero = self.axes_for(&runner, cmd).iter().all(|a| *a == 0.0);
+        let listed = self
+            .cfg
+            .states
+            .rl_control
+            .zero_command
+            .stand_runners
+            .contains(&runner);
+        let stay = zero && listed && self.target_gait == self.gait;
+        if self.zero_standing && !stay {
+            self.zero_standing = false;
+            self.stand_in = None;
+        }
+        let start = !self.zero_standing
+            && stay
+            && !write
+            && self.stand_in.is_none()
+            && self.runner.as_deref() == Some(runner.as_str())
+            && self.targets.as_ref().is_some_and(|t| t.command_zero)
+            && self.still_enough(s);
+        self.zero_standing |= start;
+        if self.zero_standing && self.stand_in.is_none() {
+            self.stand_in = Some(ActiveStandIn {
+                spec: ss.bridge.clone(),
+                duration: ss.bridge.first_s,
+                elapsed: ss.bridge.first_s,
+                bridge: true,
+            });
+        }
+    }
+
     /// safe_switch (ours): settled with planted legs, a stepping runner on the bridge first: lie down.
     fn stopped(&mut self, s: &RobotState) -> bool {
         let Some(ss) = self.cfg.states.rl_control.safe_switch.clone() else {
@@ -1330,6 +1375,7 @@ impl Controller {
             self.target_gait = cmd.gait;
         }
         self.overheat_rest(s, cmd);
+        self.zero_command_stand(s, cmd, write);
         let (wanted, params) = match &mut self.stand_in {
             Some(si) => {
                 // runs as gait 0xf001, written over the gait slot: a gait sent meanwhile is lost (update_policy_ptr)

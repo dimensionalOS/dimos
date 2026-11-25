@@ -14,7 +14,7 @@
 
 //! Zero-command drift (ROBUSTNESS.md "Drift") against the MuJoCo sim: standing at a zero command the robot stays put
 //! with zero_command on and creeps with rl_deploy's behavior; a shove, a stop from walking and a start from rest; the
-//! same on 10-15 deg slopes, across and facing up, in every rolling gait.
+//! same on 10-15 deg slopes, across and facing up, in every rolling gait; extre standing on the bridge.
 //! Needs the extracted policies and a sim Python (M20_SIM_PYTHON); skips otherwise.
 
 mod common;
@@ -129,7 +129,18 @@ fn run(cfg: &Config, plan: &Plan) -> Option<Vec<(f64, Truth)>> {
         }
     }
     assert_eq!(c.state, State::RlControl);
-    assert_eq!(c.current_runner(), Some(cfg.runner_for_gait(plan.gait)));
+    // zero_command's stand_runners end standing on the bridge
+    let bridge = cfg
+        .states
+        .rl_control
+        .safe_switch
+        .as_ref()
+        .map(|ss| ss.bridge.runner.as_str());
+    let runner = c.current_runner();
+    assert!(
+        runner == Some(cfg.runner_for_gait(plan.gait)) || runner == bridge,
+        "ended on {runner:?}"
+    );
     Some(trace)
 }
 
@@ -326,4 +337,78 @@ fn a_command_on_a_slope_starts_at_once() {
             vx(&b, t)
         );
     }
+}
+
+/// Extre (each gait): 15 s of zero command on flat moves under 2 cm (it stands on the bridge once still).
+#[test]
+fn extre_holds_still() {
+    let cfg = common::config();
+    let mut worst = Vec::new();
+    for gait in [0x2001, 0x2002, 0x2003, 0x2004] {
+        let Some(trace) = run(&cfg, &hold(gait)) else {
+            return;
+        };
+        let (dx, _) = drift(&trace, 5.0, 20.0);
+        println!("{gait:#x}: moved {dx:.4} m");
+        if dx >= 0.02 {
+            worst.push(format!("{gait:#x}: {dx:.3} m"));
+        }
+    }
+    assert!(worst.is_empty(), "rolled: {worst:?}");
+}
+
+/// rl_deploy's behavior: extre's zero command rolls (what the stand stops).
+#[test]
+fn without_it_extre_rolls() {
+    let cfg = common::config().rl_deploy();
+    let Some(trace) = run(&cfg, &hold(0x2001)) else {
+        return;
+    };
+    let (dx, _) = drift(&trace, 5.0, 20.0);
+    println!("rl_deploy 0x2001: moved {dx:.3} m");
+    assert!(dx > 0.2, "moved {dx:.3} m");
+}
+
+/// Extre across and up a 15 deg slope, and stopped from 0.75 m/s: still within 2 cm once standing.
+#[test]
+fn extre_holds_on_a_slope_and_after_a_stop() {
+    let cfg = common::config();
+    let mut worst = Vec::new();
+    for yaw in [90.0, -90.0, 0.0] {
+        let Some(trace) = run(&cfg, &on_slope(0x2001, 15.0, yaw)) else {
+            return;
+        };
+        let (dx, _) = drift(&trace, 5.0, 20.0);
+        println!("extre slope 15 yaw {yaw}: moved {dx:.4} m");
+        if dx >= 0.02 {
+            worst.push(format!("slope yaw {yaw}: {dx:.3} m"));
+        }
+    }
+    let mut plan = hold(0x2001);
+    plan.axes = vec![(3.0, [0.25, 0.0, 0.0]), (8.0, [0.0; 3])];
+    plan.seconds = 25.0;
+    let Some(trace) = run(&cfg, &plan) else {
+        return;
+    };
+    // the command hands the stand back to extre: walking within 1 s (its 0.74 s warm-up), no lurch back
+    let vx = |t: f64| trace.iter().find(|(s, _)| *s >= t).unwrap().1.velocity[0];
+    let back = trace
+        .iter()
+        .filter(|(s, _)| (3.0..8.0).contains(s))
+        .map(|(_, tr)| tr.velocity[0])
+        .fold(f64::INFINITY, f64::min);
+    println!(
+        "extre from the stand: {:+.3} m/s at 4 s, min {back:+.3}",
+        vx(4.0)
+    );
+    if vx(4.0) < 0.3 || back < -0.1 {
+        worst.push(format!("start: {:.3} m/s at 4 s, min {back:.3}", vx(4.0)));
+    }
+    let (stop, _) = drift(&trace, 8.0, 10.0);
+    let (dx, _) = drift(&trace, 10.0, 25.0);
+    println!("extre stopped: {stop:.3} m to a stop, then {dx:.4} m");
+    if stop >= 0.3 || dx >= 0.02 {
+        worst.push(format!("stop: {stop:.3} m, then {dx:.3} m"));
+    }
+    assert!(worst.is_empty(), "rolled: {worst:?}");
 }

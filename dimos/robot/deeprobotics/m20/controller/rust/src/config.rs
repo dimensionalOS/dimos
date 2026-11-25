@@ -330,6 +330,9 @@ pub struct ZeroCommand {
     /// runners that get the cancel but not the hold
     #[serde(default)]
     pub no_hold_runners: Vec<String>,
+    /// runners that stand on safe_switch's bridge once still at a zero command, until the next command or gait
+    #[serde(default)]
+    pub stand_runners: Vec<String>,
 }
 
 /// The wheel positions zero_command's hold springs back to.

@@ -786,7 +786,26 @@ impl Outcome {
         if c.start == "lying" || want.is_empty() {
             return None;
         }
-        Some(self.runners.last().map(String::as_str) == Some(want))
+        // zero_command's stand_runners end standing on the bridge
+        let bridge = cfg
+            .states
+            .rl_control
+            .safe_switch
+            .as_ref()
+            .map(|ss| ss.bridge.runner.as_str());
+        let stands = cfg
+            .states
+            .rl_control
+            .zero_command
+            .stand_runners
+            .iter()
+            .any(|r| r == want);
+        let n = self.runners.len();
+        let standing = stands
+            && n >= 2
+            && self.runners[n - 2] == want
+            && self.runners.last().map(String::as_str) == bridge;
+        Some(self.runners.last().map(String::as_str) == Some(want) || standing)
     }
 
     fn setup_ok(&self) -> bool {

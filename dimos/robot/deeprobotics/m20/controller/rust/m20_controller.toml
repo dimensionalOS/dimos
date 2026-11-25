@@ -183,14 +183,18 @@ overheat = { rest_c = 70.0, abort_motor_c = 100.0, abort_driver_c = 90.0, still_
 # along-heading gravity rolls them: sim (noslip contact), 15 deg across, basic_stair 10-23 cm in 15 s, navi_flat 20-38,
 # navi_orienteer 15-21; hold_kp springs the 4 wheels' mean position back to where it was at the stop (sim-tuned: 10
 # keeps every rolling gait under 1.2 cm at 10-15 deg across and facing up, 3 under 1.7; "wheels" / "sides" hold more
-# and made navi_flat / basic_plat slide or turn 1-10 cm). navi_charge (a stepping phase) slides 23 cm on flat with the
-# cancel, 3 without; extre's zero command rolls 0.2-2.7 m with or without either and the hold made it worse (sim)
+# and made navi_flat / basic_plat slide or turn 1-10 cm). navi_charge steps in place and extre re-poses and brakes with
+# the wheels' common mode, so both are left their own wheels (sim: the cancel slid navi_charge 23 cm, 3 without, and kept
+# extre rolling 1.2 m after a 0.75 m/s stop; no cancel, hold or cycle-averaged cancel kept extre's zero command from
+# rolling 0.1-2.7 m). Once still (safe_switch.still) extre stands on safe_switch's bridge until the next command or gait
+# (sim, 15 s: 0.2-1.7 m -> 1-3 mm flat and across 15 deg); navi_charge does not (standing it held it to 0-3 mm, but every
+# switch out of it then starts from the bridge: navi_flat slid 48 cm across 15 deg after one)
 [states.rl_control.zero_command]
 cancel_wheel_drift = true
 hold_kp = 10.0
 hold = "common"
-off_runners = ["navi_charge"]
-no_hold_runners = ["extre"]
+off_runners = ["navi_charge", "extre"]
+stand_runners = ["extre"]
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner

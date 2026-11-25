@@ -109,12 +109,21 @@ left to the policy; every rolling gait (0x1001 / 1002 / 3003 / 1004 / 3002 / 300
 across 10-15 deg and facing up 15 deg (`a_zero_command_holds_on_a_slope`), and a command on the slope starts as it does
 without the hold. A hold of each wheel or of each side made navi_flat / basic_plat slide or turn 1-10 cm. These sims
 use MuJoCo's noslip contact: its default soft contact lets a held wheel creep 4 cm in 15 s on 15 deg with no
-controller at all (the earlier "the hold is worse facing up" was that creep). navi_charge (a stepping phase at zero
-command) is left as rl_deploy runs it (`off_runners`: the cancel made it slide 23 cm on flat, 3 without); extre's zero
-command rolls 0.2-2.7 m with or without either and the hold made it worse (`no_hold_runners`).
+controller at all (the earlier "the hold is worse facing up" was that creep).
+
+navi_charge steps in place at a zero command and extre re-poses its legs (into a lopsided stance, one wheel nearly
+unloaded) and brakes with the wheels' common mode, so neither takes the cancel or the hold (`off_runners`; sim: the
+cancel slid navi_charge 23 cm in 15 s, 3.5 without, and kept extre rolling 1.2 m after a 0.75 m/s stop that rl_deploy
+ends in 0.2 s; no cancel, hold, per-wheel hold or cycle-averaged cancel kept extre from rolling 0.1-2.7 m, and the
+per-wheel hold tilted it 45 deg across a slope). Once still (`safe_switch.still`) at a zero command extre stands on
+safe_switch's bridge until the next command or gait (`stand_runners`): 15 s on 0x2001-0x2004 moves 1-3 mm on flat and
+across 15 deg, and a stop from 0.75 m/s ends 6.5 cm on and moves under 1 cm after (`tests/drift.rs`). A command from the stand restarts
+extre: its 37-step warm-up holds it 0.74 s before it moves. navi_charge still drifts as rl_deploy's does (3.5 cm in
+15 s on flat, 8.7 cm across 15 deg): standing it on the bridge held it to 0-3 mm, but then every switch out of it
+starts from the bridge (navi_flat slid 48 cm across 15 deg after one), and docking stands and steers on it.
 
 ## Not covered
 
 Steps, stairs and gaps (all flat or sloped ground), payloads, IMU / joint noise and bus dropouts, the real robot's
 numbers for `still` and `settle_*`, docking during these events, recovery after a fall, the hardware e-stop, and
-extre's (0x2001-0x2004) roll at zero cmd_vel (0.2 m in 15 s on flat, up to 2.7 m across 15 deg in the sim).
+navi_charge's zero-command drift (3.5 cm in 15 s on flat, 8.7 cm across 15 deg in the sim).
