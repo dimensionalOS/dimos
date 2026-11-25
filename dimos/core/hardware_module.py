@@ -20,28 +20,37 @@ mounted onto one of the robot's mount frames::
     autoconnect(Robot.blueprint(), Lidar.mount(Robot.mounts.lidar))
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
-the mount frame it sits on to its own frames. Whatever needs the whole assembly (a simulator)
-asks every module meeting ``HardwareSpec`` for ``get_usd()`` and ``mounted_on()`` and grafts them.
+the mount frame it sits on to its own frames. It serves its USD and every file it reaches on
+``hardware_file_request``/``hardware_file_response``, named relative to itself, so whatever needs
+the whole assembly (a simulator, on this machine or another) fetches them with
+``fetch_hardware_files`` and grafts them where ``mounted_on()`` says.
 """
 
 from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 import numpy as np
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
+from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles
+from dimos.core.stream import In, Out
 from dimos.core.tf_module import TfModule, TfModuleConfig
+from dimos.msgs.files.FileInfo import FileInfo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import JointDescription, UsdModel
 from dimos.spec.utils import Spec
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+
+logger = setup_logger()
 
 
 class Mounts:
@@ -75,6 +84,7 @@ class HardwareModuleConfig(TfModuleConfig):
 class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     def mounted_on(self) -> str | None: ...
+    def hardware_namespace(self) -> str: ...
 
 
 class HardwareModule(TfModule):
@@ -85,6 +95,10 @@ class HardwareModule(TfModule):
     mounts: ClassVar[Mounts] = Mounts()
     # Streams a mounted copy keeps unprefixed, so they still reach whatever is outside its mount's namespace.
     mount_shared: ClassVar[frozenset[str]] = frozenset()
+    # A FileInfo naming a file this hardware serves, with the sha256 the asker already has.
+    hardware_file_request: In[FileInfo]
+    # The reply (header only when the asker's sha256 is current), and the hardware.usda header announced at start.
+    hardware_file_response: Out[FileInfo]
 
     @classmethod
     def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
@@ -95,10 +109,11 @@ class HardwareModule(TfModule):
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse a namespace with more than one unmounted HardwareModule."""
+        """Refuse a namespace with more than one unmounted HardwareModule, and mounts that do not form a tree."""
+        hardware = [atom for atom in atoms if issubclass(atom.module, HardwareModule)]
         unmounted: dict[str, list[str]] = defaultdict(list)
-        for atom in atoms:
-            if issubclass(atom.module, HardwareModule) and atom.kwargs.get("mount") is None:
+        for atom in hardware:
+            if atom.kwargs.get("mount") is None:
                 unmounted[atom.name.rpartition("/")[0]].append(atom.name)
         errors = [
             f"    - {namespace or 'the top level'}: {', '.join(sorted(names))}"
@@ -115,23 +130,62 @@ class HardwareModule(TfModule):
                     ]
                 )
             )
+        _check_mount_tree(hardware)
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(self.hardware_file_request.subscribe(self._on_hardware_file_request))
+        )
+        try:
+            files = self._hardware_files
+        except ImportError as error:
+            logger.warning(f"{self.config.instance_name} serves no hardware files: {error}")
+            return
+        self.hardware_file_response.publish(files.announcement())
 
     @rpc
     def get_usd(self) -> str:
-        """This hardware's USD layer, its frames named as they are on tf and its assets as absolute paths."""
-        usd = self.config.usd
-        from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
-        from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
-
-        root = str(usd.source_path.parent) if usd.source_path is not None else ""
-        return prefix_usd_frames(
-            resolve_usd_assets(usd.usd, root), self.frame_id_prefix, root or None
-        )
+        """This hardware's USD exactly as served as hardware.usda: frames named as on tf, files relative to it."""
+        return self._hardware_files.usd
 
     @rpc
     def mounted_on(self) -> str | None:
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.mount is not None else None
+
+    @rpc
+    def hardware_namespace(self) -> str:
+        """The namespace its hardware_file_request and hardware_file_response are under."""
+        return self.namespace
+
+    @cached_property
+    def _hardware_files(self) -> HardwareFiles:
+        usd = self.config.usd
+        from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+        from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+
+        source = usd.source_path
+        root = str(source.parent) if source is not None else ""
+        absolute = prefix_usd_frames(
+            resolve_usd_assets(usd.usd, root), self.frame_id_prefix, root or None
+        )
+        return HardwareFiles(
+            absolute, source.stat().st_mtime if source and source.is_file() else None
+        )
+
+    def _on_hardware_file_request(self, request: FileInfo) -> None:
+        # Answered on the request stream's own thread, so a burst (one per mesh) is never coalesced.
+        try:
+            files = self._hardware_files
+        except ImportError:
+            if request.uri == HARDWARE_USD:
+                self.hardware_file_response.publish(FileInfo(HARDWARE_USD))
+            return
+        reply = files.reply(request)
+        if reply is not None:
+            self.hardware_file_response.publish(reply)
 
     def usd_frame(self, name: str) -> str:
         """The tf frame id of the frame ``name`` in this hardware's USD."""
@@ -196,6 +250,50 @@ class HardwareModule(TfModule):
             port,
             edges=declared | own,
             module_name=self.config.instance_name or type(self).__name__,
+        )
+
+
+def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
+    """Refuse a mount no other HardwareModule offers under its real namespace, and two HardwareModules answering on one namespace."""
+    by_namespace: dict[str, list[str]] = defaultdict(list)
+    offered_by: dict[str, list[str]] = defaultdict(list)
+    for atom in hardware:
+        namespace = atom.name.rpartition("/")[0]
+        by_namespace[namespace].append(atom.name)
+        prefix = "/".join(part for part in (namespace, atom.kwargs.get("frame_id_prefix")) if part)
+        for mount in cast("type[HardwareModule]", atom.module).mounts:
+            offered_by[f"{prefix}/{mount}" if prefix else mount].append(atom.name)
+    errors = [
+        f"    - {namespace or 'the top level'} holds {', '.join(sorted(names))}, whose "
+        f"hardware_file streams would answer each other's requests"
+        for namespace, names in sorted(by_namespace.items())
+        if len(names) > 1
+    ]
+    errors += [
+        f"    - '{frame}' is offered by several HardwareModules: {', '.join(sorted(names))}"
+        for frame, names in sorted(offered_by.items())
+        if len(names) > 1
+    ]
+    for atom in sorted(hardware, key=lambda atom: atom.name):
+        if atom.kwargs.get("mount") is None:
+            continue
+        # A mounted module sits on the frame named by its namespace (mounted_on).
+        frame = atom.name.rpartition("/")[0]
+        if frame not in offered_by:
+            errors.append(
+                f"    - {atom.name} is mounted on '{frame}', which no other HardwareModule in the "
+                f"blueprint offers (is it namespaced apart from the hardware it mounts on?)"
+            )
+    if errors:
+        offered = ", ".join(f"'{frame}'" for frame in sorted(offered_by)) or "none"
+        raise ValueError(
+            "\n".join(
+                [
+                    "Blueprint cannot start: its HardwareModules' mounts do not form a tree "
+                    f"(mount frames offered: {offered}).",
+                    *errors,
+                ]
+            )
         )
 
 
