@@ -16,12 +16,14 @@
 
 import importlib
 import math
+from typing import get_type_hints
 
 import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -40,7 +42,6 @@ def test_go2_shipped_connections_and_tasks(name):
     )
     atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
     config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
-    assert not config.hardware
     (declaration,) = config.connections
     source = ConnectionSource(declaration, ["velocity_command"], ["joint_state"], 0.2)
     assert source.joint_names == list(GO2_BASE_JOINTS)
@@ -57,6 +58,7 @@ def test_go2_shipped_connections_and_tasks(name):
 def test_g1_shipped_groot_backends(simulation, monkeypatch):
     from dimos.core.global_config import global_config
     from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import G1WholeBodyConnection
+    from dimos.simulation.engines.mujoco_g1_connection import MujocoG1Connection
     from dimos.utils.data import LfsPath
 
     def no_download(self):
@@ -76,20 +78,26 @@ def test_g1_shipped_groot_backends(simulation, monkeypatch):
             )
             atom = next(a for a in bp.blueprints if issubclass(a.module, ControlCoordinator))
             config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
-            if simulation == "mujoco" and name == "groot_wbc":
-                assert not config.connections
-                assert config.hardware[0].adapter_type == "sim_mujoco_g1"
-                assert not any(a.module is G1WholeBodyConnection for a in bp.blueprints)
-            else:
-                assert not config.hardware
-                source = ConnectionSource(
-                    config.connections[0], ["position_command"], ["joint_state", "imu"], 0.2
-                )
-                assert len(source.joint_names) == 29
-                assert any(a.module is G1WholeBodyConnection for a in bp.blueprints)
-                if name == "groot_wbc":
-                    assert config.tasks[0].params["hardware_id"] == "g1"
-                    assert config.tasks[0].params["auto_dry_run"] is True
+            source = ConnectionSource(
+                config.connections[0], ["position_command"], ["joint_state", "imu"], 0.2
+            )
+            assert len(source.joint_names) == 29
+            # Sim and hardware present the same connection; only the module behind it differs.
+            connection = MujocoG1Connection if simulation else G1WholeBodyConnection
+            conn_atom = next(a for a in bp.blueprints if a.module is connection)
+            # Built the way the worker builds it: blueprint kwargs, then parsed config on top.
+            config_type = get_type_hints(connection)["config"]
+            conn_config = config_type(
+                **{**conn_atom.kwargs, **parsed.module_kwargs(conn_atom.name)}
+            )
+            declaration = config.connections[0]
+            assert conn_config.source == declaration.source
+            assert conn_config.model == declaration.model
+            assert conn_config.joint_commands == declaration.joint_commands
+            assert conn_config.kp == tuple(G1_GROOT_KP)
+            assert conn_config.kd == tuple(G1_GROOT_KD)
+            assert config.tasks[0].params["hardware_id"] == "g1"
+            assert config.tasks[0].params["auto_dry_run"] is (not simulation)
     # Leave import-time backend selection consistent with the restored globals.
     importlib.reload(module)
 

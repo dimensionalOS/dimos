@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -107,6 +108,81 @@ def make_test_robot() -> DamiaoRobot:
 
 #: The shared robot the Damiao fixtures deploy; tests clone it with overrides.
 TEST_ROBOT = make_test_robot()
+
+
+def mass_test_model() -> RobotModel:
+    """``TEST_ROBOT``'s three arm joints with mass: 1 kg links, 0.2 m apart.
+
+    Every joint turns about y and every link reaches along x at zero, so
+    gravity loads all three; link3 alone loads joint3.
+    """
+    inertia = 'ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"'
+    links = '<link name="link0"/>' + "".join(
+        f'<link name="link{i}"><inertial><origin xyz="0.1 0 0"/><mass value="1.0"/>'
+        f"<inertia {inertia}/></inertial></link>"
+        for i in range(1, 4)
+    )
+    limit = 'lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"'
+    chain = "".join(
+        f'<joint name="joint{i}" type="revolute"><parent link="link{i - 1}"/>'
+        f'<child link="link{i}"/><origin xyz="{0.0 if i == 1 else 0.2} 0 0"/>'
+        f'<axis xyz="0 1 0"/><limit {limit}/></joint>'
+        for i in range(1, 4)
+    )
+    return RobotModel.from_urdf_string(f'<robot name="rig">{links}{chain}</robot>')
+
+
+def make_calibrated_test_robot() -> DamiaoRobot:
+    """``TEST_ROBOT`` named "rig", with gravity on and masses: arms "rig/left" and "rig/right"."""
+    return replace(TEST_ROBOT, name="rig", gravity=True, gravity_model=mass_test_model())
+
+
+def drive_and_record(module: Any, native: FakeRobot, pose: Sequence[float]) -> dict[str, Any]:
+    """Drive a started Damiao connection through a fixed sequence; return all it sent.
+
+    Puts the arms at ``pose`` (every arm joint, bus order), commands the first
+    arm joint 0.05 rad past it and every jaw 30 % open, halts, moves every arm
+    joint 0.1 rad as a hand would, reads once and stops the connection. The
+    connection must read no more on its own (a very low ``state_rate_hz``).
+
+    Uses only what the connection had before calibration existed, so the same
+    sequence recorded from that code (``damiao_rows_before_calibration.json``)
+    still applies: each arm's MIT rows, each jaw's openings and passive frames,
+    the mode and enable calls, and every native call in order.
+    """
+    robot = type(module).robot
+    offset = 0
+    for bus in robot.buses:
+        arm = native.groups[bus.name]
+        assert isinstance(arm, FakeArm)
+        arm.q = np.asarray(pose[offset : offset + len(bus.arm)], dtype=np.float64)
+        offset += len(bus.arm)
+    source = module.config.source
+    targets = {f"{source}/{robot.arm_joint_names[0]}/position": float(pose[0]) + 0.05}
+    for gripper in robot.grippers:
+        closed, opened = robot.gripper_travel()[gripper.joint]
+        targets[f"{source}/{gripper.joint}/position"] = closed + 0.3 * (opened - closed)
+    module.command(targets)
+    module.halt()
+    for bus in robot.buses:
+        arm = native.groups[bus.name]
+        assert isinstance(arm, FakeArm)
+        arm.q = arm.q + 0.1
+    module._arm.read()
+    module.stop()
+    sent: dict[str, Any] = {"events": list(native.events)}
+    for name, group in native.groups.items():
+        if isinstance(group, FakeArm):
+            sent[name] = {"rows": [rows.tolist() for rows in group.commands], "modes": group.modes}
+        else:
+            sent[name] = {
+                "openings": list(group.commands),
+                "mit": [list(frame) for frame in group.mit_commands],
+                "modes": group.modes,
+                "enabled": group.enable_count,
+                "disabled": group.disable_count,
+            }
+    return sent
 
 
 class LocalTransport:

@@ -292,7 +292,7 @@ class NavigationSkillContainer(Module):
         self._object_tracking.stop_track()
         # The tracker's last goal stays with the planner and nothing records it in
         # _active, so cancel it before this call can return and release the hold.
-        self._navigation.cancel_goal()
+        self._navigation.cancel_goal(reason="NavigationSkillContainer: object tracking timed out")
         return None
 
     def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
@@ -339,7 +339,9 @@ class NavigationSkillContainer(Module):
         return "Stopped"
 
     def _cancel_goal_and_stop(self) -> None:
-        self._navigation.cancel_goal()
+        self._navigation.cancel_goal(
+            reason="NavigationSkillContainer.stop_navigation: stop requested"
+        )
 
     def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
