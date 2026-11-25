@@ -133,7 +133,7 @@ async fn record(out: &str, seconds: f64, domain: u16, topic_name: &str) -> Resul
         )
         .map_err(|e| format!("{out}: {e}"))?;
         count += 1;
-        if count % 2000 == 0 {
+        if count.is_multiple_of(2000) {
             file.flush().map_err(|e| format!("{out}: {e}"))?;
         }
     }

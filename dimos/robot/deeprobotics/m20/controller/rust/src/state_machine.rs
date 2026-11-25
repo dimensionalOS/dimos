@@ -242,6 +242,7 @@ fn gains(kp: &[f64], kd: &[f64]) -> ([f64; JOINTS], [f64; JOINTS]) {
 }
 
 /// SafeController::Run's tilt limits for a UserCommand target and gait (f32 rad angles, compared as f64, strictly).
+#[allow(clippy::approx_constant)] // the vendor's rounded limits (0.7854, 1.5708), not pi / 4 and pi / 2
 pub fn tilt_fault(target: Target, gait: u32, roll: f32, pitch: f32) -> Option<String> {
     let (roll, pitch) = (roll.abs() as f64, pitch.abs() as f64);
     let (max_roll, max_pitch) = match target {
@@ -943,8 +944,8 @@ impl Controller {
         let (hipy_next, knee_next) = vendor_leg_ik(robot, h_next, None);
         let q = vendor_pose(hipx, hipy, knee);
         let (dhipy, dknee) = ((hipy_next - hipy) / step, (knee_next - knee) / step);
-        for i in 0..JOINTS {
-            c.q[i] = q[i] as f64;
+        for (i, &qi) in q.iter().enumerate() {
+            c.q[i] = qi as f64;
             // hipx and the wheels: 0 (not mirrored); hind hipy / knee negated
             c.dq[i] = match (i % 4, i >= 8) {
                 (1, false) => dhipy as f64,

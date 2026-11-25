@@ -151,10 +151,11 @@ impl RunnerSet {
             if let Some(r) = self.current.as_ref().and_then(|c| self.runners.get(c)) {
                 r.pipeline.on_exit(&mut self.handover);
             }
-            let r = self.runners.get_mut(&req.runner).expect("checked");
-            let per_leg = r.pipeline.spec.action.layout == crate::config::ActionLayout::PerLeg;
-            r.pipeline.on_enter(&mut self.handover, per_leg);
-            self.current = Some(req.runner.clone());
+            if let Some(r) = self.runners.get_mut(&req.runner) {
+                let per_leg = r.pipeline.spec.action.layout == crate::config::ActionLayout::PerLeg;
+                r.pipeline.on_enter(&mut self.handover, per_leg);
+                self.current = Some(req.runner.clone());
+            }
         }
         let targets = match self.runners.get_mut(&req.runner) {
             None => Err(format!("no runner {}", req.runner)),

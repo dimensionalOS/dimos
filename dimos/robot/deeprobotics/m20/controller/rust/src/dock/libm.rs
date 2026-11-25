@@ -17,18 +17,21 @@
 //! (read from its disassembly). The platform's own atan2f / sinf differ by an ulp now and then, which moves a post's
 //! centre by ~3 nm and so flips a printed sixth decimal.
 
+#[allow(clippy::excessive_precision)] // fdlibm's table as glibc writes it; each literal rounds to the same f32
 const ATAN_HI: [f32; 4] = [
     4.6364760399e-01,
     7.8539812565e-01,
     9.8279368877e-01,
     1.5707962513e+00,
 ];
+#[allow(clippy::excessive_precision)] // fdlibm's table as glibc writes it; each literal rounds to the same f32
 const ATAN_LO: [f32; 4] = [
     5.0121582440e-09,
     3.7748947079e-08,
     3.4473217170e-08,
     7.5497894159e-08,
 ];
+#[allow(clippy::excessive_precision)] // fdlibm's table as glibc writes it; each literal rounds to the same f32
 const AT: [f32; 11] = [
     3.3333334327e-01,
     -2.0000000298e-01,
@@ -105,6 +108,7 @@ pub fn atanf(x: f32) -> f32 {
 }
 
 /// e_atan2f.c's __ieee754_atan2f.
+#[allow(clippy::excessive_precision)] // e_atan2f.c's constants as written; each literal rounds to the same f32
 pub fn atan2f(y: f32, x: f32) -> f32 {
     const PI_O_4: f32 = 7.8539818525e-01;
     const PI_O_2: f32 = 1.5707963705e+00;
@@ -286,26 +290,28 @@ mod tests {
             .read_to_end(&mut bytes)
             .unwrap();
         bytes
-            .chunks_exact(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| u32::from_le_bytes(*b))
             .collect()
     }
 
     #[test]
     fn atan2f_is_glibcs_to_the_bit() {
         let w = words("glibc231_atan2f.bin.gz");
-        for t in w.chunks_exact(3) {
-            let (y, x) = (f32::from_bits(t[0]), f32::from_bits(t[1]));
-            assert_eq!(atan2f(y, x).to_bits(), t[2], "atan2f({y:e}, {x:e})");
+        for &[y, x, want] in w.as_chunks::<3>().0 {
+            let (y, x) = (f32::from_bits(y), f32::from_bits(x));
+            assert_eq!(atan2f(y, x).to_bits(), want, "atan2f({y:e}, {x:e})");
         }
     }
 
     #[test]
     fn sinf_is_glibcs_to_the_bit() {
         let w = words("glibc231_sinf.bin.gz");
-        for t in w.chunks_exact(2) {
-            let v = f32::from_bits(t[0]);
-            assert_eq!(sinf(v).to_bits(), t[1], "sinf({v:e})");
+        for &[v, want] in w.as_chunks::<2>().0 {
+            let v = f32::from_bits(v);
+            assert_eq!(sinf(v).to_bits(), want, "sinf({v:e})");
         }
     }
 }

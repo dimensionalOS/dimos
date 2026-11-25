@@ -519,10 +519,9 @@ impl Docking {
             self.open12v = None;
             return false;
         }
-        if self.core.is_none() {
+        let Some(p) = self.params().cloned() else {
             return false;
-        }
-        let p = self.params().cloned().expect("core");
+        };
         let powered = self.pump_open12v();
         match self.startup {
             Some(Startup::Detect { started }) => {
@@ -812,7 +811,7 @@ impl Docking {
 
     /// BatteryStatusCallback's flag: packs with a level all (all_battery_charge; none: true) or any with charge MOS on
     fn charged(&self, r: &ChargeReading) -> bool {
-        let all = self.params().map_or(true, |p| p.all_battery_charge);
+        let all = self.params().is_none_or(|p| p.all_battery_charge);
         if all {
             r.packs_charge_mos_on >= r.packs_present
         } else {
@@ -1417,7 +1416,9 @@ impl Docking {
                 }
                 let p = self.params()?.clone();
                 let elapsed = self.phase_ms();
-                if elapsed < self.seq.power_on_ms && elapsed % self.seq.charge_sleep_ms == 0 {
+                if elapsed < self.seq.power_on_ms
+                    && elapsed.is_multiple_of(self.seq.charge_sleep_ms)
+                {
                     self.write(Write::ChargeEnable(1));
                 }
                 if elapsed >= self.seq.power_on_ms {

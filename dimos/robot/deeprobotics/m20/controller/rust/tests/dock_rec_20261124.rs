@@ -36,9 +36,12 @@ use m20_controller::dock::vendor::{ChargeManagerToml, Steer};
 use m20_controller::dock::{ChargeReading, DockPose};
 use m20_controller::state_machine::State;
 
+/// What our detector found on a sweep: reflective_column_node's position as ours computes it, and our dock pose.
+type SweepPose = ([f64; 3], DockPose);
+
 /// The replay's tick 0 on the NOS clock (Unix s): charge_manager's charging loop wrote a charge-enable then
 /// (1795470616.210740 on the wire), the last before the undock's request.
-const T0: f64 = 1795470616.210740;
+const T0: f64 = 1795470616.21074;
 /// The replay's end: the DDS capture's.
 const T_END: f64 = 1795470712.5;
 /// The logs' clock: China Standard Time.
@@ -163,7 +166,7 @@ fn battery(all: &[Sample]) -> Vec<(f64, u8, u8)> {
                 o += 4 + 4 * temps + 32;
                 if level != 0 {
                     present += 1;
-                    mos += (mos_state & 1) as u8;
+                    mos += mos_state & 1;
                 }
             }
             (s.t, present, mos)
@@ -314,7 +317,7 @@ fn service_replies() -> Vec<f64> {
 struct Sweep {
     t_step1: f64,
     t_capture: f64,
-    found: Option<([f64; 3], DockPose)>,
+    found: Option<SweepPose>,
 }
 
 fn sweep_line(s: &Sweep) -> String {
@@ -419,7 +422,7 @@ fn sweeps_are_the_detector_on_the_capture() {
     });
     let rc = rc_log();
     let (first, last) = (rc[0].t_step1 - 1.0, rc[rc.len() - 1].t_step1 + 1.0);
-    let mut ours: Vec<(f64, Option<([f64; 3], DockPose)>)> = Vec::new();
+    let mut ours: Vec<(f64, Option<SweepPose>)> = Vec::new();
     for g in robosense_airy::pcap::read_udp(&pcap)
         .unwrap()
         .iter()
@@ -454,12 +457,11 @@ fn sweeps_are_the_detector_on_the_capture() {
     let made: Vec<Sweep> = rc
         .iter()
         .map(|r| {
-            let (t, found) = ours
+            let &(t, found) = ours
                 .iter()
                 .rev()
                 .find(|(t, _)| *t < r.t_step1 && r.t_step1 - t < 0.06)
-                .unwrap_or_else(|| panic!("no captured sweep for the one logged at {}", r.t_step1))
-                .clone();
+                .unwrap_or_else(|| panic!("no captured sweep for the one logged at {}", r.t_step1));
             Sweep {
                 t_step1: r.t_step1,
                 t_capture: t,
@@ -836,8 +838,7 @@ fn the_dock_derives_charge_managers_start_point() {
     let text = log_text();
     let line = text
         .lines()
-        .filter(|l| l.contains("mInitX:"))
-        .last()
+        .rfind(|l| l.contains("mInitX:"))
         .expect("the dock's mInit line");
     let printed = format!(
         "mInitX:{:.6},mInitY:{:.6},mInitYaw:{:.6}",

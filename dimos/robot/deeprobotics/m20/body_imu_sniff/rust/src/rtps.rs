@@ -317,7 +317,7 @@ mod tests {
             .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
             .collect();
         let [roll, _, _] = decode_imu_data(&bytes).unwrap();
-        assert_eq!(roll, -1.6981430053710938);
+        assert_eq!(roll, -1.698143);
         assert!(decode_imu_data(&bytes[..55]).is_none());
         assert!(decode_imu_data(IMU).is_none());
     }

@@ -95,7 +95,7 @@ where
         let cy = ((iy as f64 + 0.5) * g.grid_size) as f32;
         let cx = ((ix as f64 + 0.5) * g.grid_size) as f32 - from;
         let d = cy.mul_add(cy, cx * cx).sqrt();
-        if nearest.map_or(true, |m| d < m) {
+        if nearest.is_none_or(|m| d < m) {
             nearest = Some(d);
         }
     }

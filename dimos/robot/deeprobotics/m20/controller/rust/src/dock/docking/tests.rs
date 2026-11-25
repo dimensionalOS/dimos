@@ -309,7 +309,7 @@ impl Boot {
         while self.tick < until_ms {
             let mut feed_pose = None;
             let mut feed_charge = None;
-            if self.tick % 100 == 0 {
+            if self.tick.is_multiple_of(100) {
                 self.seq += 1;
                 feed_pose = pose.map(|p| (p, self.seq));
                 let on = if self.tick >= charge_at_ms && self.tick < charge_off_ms {

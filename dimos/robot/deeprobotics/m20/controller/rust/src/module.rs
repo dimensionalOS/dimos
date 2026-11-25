@@ -515,7 +515,7 @@ impl M20Controller {
             .usage
             .request
             .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some(msg.data as i32);
+            .unwrap_or_else(|p| p.into_inner()) = Some(msg.data);
     }
 
     async fn on_dock_pose(&mut self, msg: PoseStamped) {
@@ -628,6 +628,7 @@ fn forward_status(
 }
 
 /// What the policy loop publishes through.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // read only by the Linux run_policy
 struct Publishers {
     status: watch::Sender<Option<Status>>,
     dock_status: watch::Sender<Option<std_msgs::String>>,
@@ -817,7 +818,11 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             }
             let height =
                 obstacle::body_height(&cfg.robot, &tick.state.q, cfg.dock.obstacle.wheel_radius_m);
-            if !((height - last_height).abs() < cfg.dock.obstacle.body_height_step_m) {
+            if (height - last_height)
+                .abs()
+                .partial_cmp(&cfg.dock.obstacle.body_height_step_m)
+                .is_none_or(std::cmp::Ordering::is_ge)
+            {
                 last_height = height;
                 body_height.send_replace(Some(Float32 {
                     data: height as f32,

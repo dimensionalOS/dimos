@@ -23,6 +23,8 @@
 //! - [`ReflectorFilter`]: what reflective_column_node does to its per-sweep pose before publishing it (range gate,
 //!   15-sweep start filter, 0.8 m jump gate).
 
+use std::cmp::Ordering;
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +110,7 @@ impl ChargeManagerToml {
         {
             bail!("charge_manager.toml: tag_receive_timeout > 0, first_detection_current_timeout and adjust_posture_times >= 0");
         }
-        if !(t.grid_size > 0.0) || t.grid_occu_num < 1 {
+        if t.grid_size.is_nan() || t.grid_size <= 0.0 || t.grid_occu_num < 1 {
             bail!("charge_manager.toml: grid_size > 0 and grid_occu_num >= 1");
         }
         Ok(t)
@@ -395,7 +397,7 @@ impl ChargeCore {
                 Pid::new(seq.pid_y),
                 Pid::new(seq.pid_yaw),
             ],
-            seq: seq.clone(),
+            seq: *seq,
             mode: Mode::Idle,
             start_point: [0.0; 3],
             waits: 0,
@@ -536,7 +538,12 @@ impl ChargeCore {
 
     fn blocked(&self, obstacle: Option<f32>) -> Option<f32> {
         // `ObstacleAvoidDis <= distance` is clear
-        obstacle.filter(|d| !(self.params.obstacle_avoid_dis <= *d))
+        obstacle.filter(|d| {
+            self.params
+                .obstacle_avoid_dis
+                .partial_cmp(d)
+                .is_none_or(Ordering::is_gt)
+        })
     }
 
     fn dock_pose(
@@ -567,14 +574,14 @@ impl ChargeCore {
         if !navigating {
             return Self::fail(true, Failure::NotNavigating);
         }
-        let s = self.seq.clone();
+        let s = self.seq;
         let c = &self.params;
         let x = c.compensation_x - p.x;
         let y = -p.y;
         let yaw = p.yaw;
         let mut out = Outcome::default();
         if !a.started {
-            if !(0.0 < x) {
+            if x.partial_cmp(&0.0).is_none_or(Ordering::is_le) {
                 return out;
             }
             if a.samples <= s.start_samples {
@@ -703,7 +710,7 @@ impl ChargeCore {
         navigating: bool,
         obstacle: Option<f32>,
     ) -> Outcome {
-        let s = self.seq.clone();
+        let s = self.seq;
         let mut out = Outcome::default();
         if e.t0_ms + s.exit_limit_ms < now {
             return Self::fail(true, Failure::ExitTimeout);

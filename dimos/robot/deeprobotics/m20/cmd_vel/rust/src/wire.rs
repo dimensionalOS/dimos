@@ -101,8 +101,8 @@ mod tests {
             rustdds::cdr_encoding::from_bytes::<ImuData, byteorder::LittleEndian>(&bytes[4..])
                 .unwrap();
         assert_eq!((imu.header.sec, imu.header.nsec), (1795155363, 434145207));
-        assert_eq!(imu.roll, -1.6981430053710938);
-        assert_eq!(imu.acc_z, 9.834623336791992);
+        assert_eq!(imu.roll, -1.698143);
+        assert_eq!(imu.acc_z, 9.834623);
         assert_eq!(cdr(&imu), bytes[4..]);
     }
 

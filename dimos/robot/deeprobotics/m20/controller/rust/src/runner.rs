@@ -310,8 +310,8 @@ impl Pipeline {
                 a[4 * leg + 3] = h.wheels[leg];
             }
         } else {
-            for k in 0..12 {
-                a[k] = h.legs[3 * (k % 4) + k / 4];
+            for (k, ak) in a[..12].iter_mut().enumerate() {
+                *ak = h.legs[3 * (k % 4) + k / 4];
             }
             a[12..].copy_from_slice(&h.wheels);
         }
@@ -372,10 +372,9 @@ impl Pipeline {
                 None => a,
             };
         }
-        let mut target = [0.0; 3];
-        for i in 0..3 {
-            target[i] = (self.command_state[i] * self.spec.command_max[i] as f32) as f64;
-        }
+        let mut target: [f64; 3] = std::array::from_fn(|i| {
+            (self.command_state[i] * self.spec.command_max[i] as f32) as f64
+        });
         if let Some(w) = &self.spec.wz_speed_limit {
             let w_max = (w.a / (target[0] + w.b) - w.c).min(w.d / (1.0 + w.e * target[1].abs()));
             target[2] = self.command_state[2] as f64 * w_max.clamp(w.lo, w.hi);

@@ -932,7 +932,7 @@ fn try_run(sim: &mut MujocoSim, cfg: &Config, dir: &Path, case: &Case) -> anyhow
                 runners.push(r.to_string());
             }
         }
-        if ticks % 20 == 0 {
+        if ticks.is_multiple_of(20) {
             let truth = sim.truth()?;
             let tracker = if now < case.event_at {
                 &mut before
