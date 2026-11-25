@@ -475,7 +475,7 @@ def test_a_mount_its_usd_does_not_have_is_refused_in_the_blueprint() -> None:
         mounts = Mounts("arm/base/nowhere")
 
     with pytest.raises(ValueError, match="the mount 'arm/base/nowhere' is not a frame of the USD"):
-        _check_tf(Elsewhere.blueprint())
+        _check_tf(autoconnect(Elsewhere.blueprint()))
 
 
 def _check_tf(blueprint: MetaBlueprint) -> None:
