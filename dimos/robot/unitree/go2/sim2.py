@@ -43,6 +43,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.lfs import pull_model_assets
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
@@ -128,6 +129,8 @@ class Go2Sim(HardwareModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # Before its drives are written, which opens a stage of every mesh layer it references.
+        pull_model_assets(self.config.usd)
         self._policy = load_policy(self.config.policy)
         self.config.usd = with_policy_drives(self.config.usd, self._policy)
         self._desired = np.zeros(3)
