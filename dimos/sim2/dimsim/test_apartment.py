@@ -28,6 +28,7 @@ from dimos.sim2.dimsim.backend import ACTION, ACTIONS, DimSimBackend
 from dimos.sim2.dimsim.dimsim_scene import DIMSIM_SCENES, STATE
 from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
+from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sim import compose_world
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import REFUSED, WorldMirror, geometry
@@ -119,10 +120,12 @@ def test_every_action_in_the_scene_runs(apartment: _Apartment) -> None:
 
 
 def _rays_around(usd: str, mirror: WorldMirror, name: str) -> np.ndarray:
-    """How far a sensor's view of the world ``usd`` sees, out from the object ``name``, all ways round."""
+    """How far a lidar's view of the world ``usd`` sees, out from the object ``name``, all ways round."""
     entity = mirror.entity(name)
     assert entity is not None and entity.pose is not None
-    view = open_view(layer_file(usd, "world"), robot_ids(mirror))
+    view = open_view(
+        layer_file(usd, "world"), robot_ids(mirror), SensorMount("lidar", "world", "lidar")
+    )
     try:
         turns = np.linspace(0, 2 * np.pi, 72, endpoint=False)
         directions = np.stack([np.cos(turns), np.sin(turns), np.zeros_like(turns)], axis=1)
