@@ -50,8 +50,8 @@ else:
 logger = setup_logger()
 
 
-# Shared by every namespace: the simulated world that each robot and sensor reads and acts on.
-ALWAYS_SHARED = frozenset({"world_observations", "world_actions"})
+# Shared by every namespace: the simulated world that each robot and sensor reads and acts on, and tf_static (frame ids are namespaced instead).
+ALWAYS_SHARED = frozenset({"world_observations", "world_actions", "tf_static"})
 
 
 class DisabledModuleProxy:
