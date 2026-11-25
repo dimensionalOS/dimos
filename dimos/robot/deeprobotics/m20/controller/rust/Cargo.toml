@@ -109,6 +109,7 @@ dock_state = "std_msgs.String"
 body_height = "std_msgs.Float32"
 controller_report = "std_msgs.String"
 hes_status = "std_msgs.Int32"
+hardware_estop = "std_msgs.Bool"
 
 [package.metadata.dimos.module.m20_dock_detector]
 path = "m20_controller::dock::detector_module::M20DockDetector"

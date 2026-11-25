@@ -16,7 +16,7 @@
 //! tap) or frames this module's owner exchanged.
 
 use lcm_msgs::sensor_msgs::{BatteryState, JointState};
-use lcm_msgs::std_msgs::Int32;
+use lcm_msgs::std_msgs::{Bool, Int32};
 use m20_battery::BatteryReport;
 use m20_ecan::{decode_ethernet, Calibration, Direction, Message};
 
@@ -48,6 +48,13 @@ impl Published {
             Published::Battery(b) => vec![b.left.encode(), b.right.encode(), b.combined.encode()],
             Published::HardStop(m) => vec![m.encode()],
         }
+    }
+}
+
+/// hardware_estop from a /HES_STATUS: true while the hard-stop byte is non-zero.
+pub fn hardware_estop(hes_status: &Int32) -> Bool {
+    Bool {
+        data: hes_status.data != 0,
     }
 }
 
@@ -115,12 +122,18 @@ mod tests {
     #[test]
     fn each_ecan_status_frame_publishes_its_hard_stop_byte() {
         let handler = FrameHandler::new("base_link");
-        for value in [0, 1, 0] {
+        for value in [0, 1, 0, 2] {
             let frame = ecan_status_frame(value);
+            let published = handler.handle(0, Direction::FromBoard, &frame);
             assert_eq!(
-                handler.handle(0, Direction::FromBoard, &frame),
+                published,
                 Ok(Some(Published::HardStop(Int32 { data: value as i32 })))
             );
+            // hardware_estop: pressed on any non-zero byte
+            let Ok(Some(Published::HardStop(hes))) = published else {
+                unreachable!()
+            };
+            assert_eq!(hardware_estop(&hes).data, value != 0);
         }
     }
 }

@@ -164,6 +164,9 @@ pub struct M20Controller {
     /// /HES_STATUS as rl_deploy writes it: the ECAN board's hard-stop byte on every 0x8a frame (0 clear, 1 pressed)
     #[output(encode = Int32::encode)]
     hes_status: Output<Int32>,
+    /// true while the ECAN board's hard-stop byte is non-zero, on every 0x8a frame (hes_status as a Bool)
+    #[output(encode = Bool::encode)]
+    hardware_estop: Output<Bool>,
 
     #[config]
     config: Config,
@@ -291,6 +294,7 @@ struct Latest {
     left: watch::Sender<Option<BatteryState>>,
     right: watch::Sender<Option<BatteryState>>,
     hes_status: watch::Sender<Option<Int32>>,
+    hardware_estop: watch::Sender<Option<Bool>>,
     hard_stop: Arc<crate::commands::HardStop>,
     handler: FrameHandler,
 }
@@ -312,6 +316,8 @@ impl Latest {
             }
             Ok(Some(Published::HardStop(m))) => {
                 self.hard_stop.set(m.data as u8);
+                self.hardware_estop
+                    .send_replace(Some(crate::publish::frames::hardware_estop(&m)));
                 self.hes_status.send_replace(Some(m));
             }
             Ok(None) => {}
@@ -338,6 +344,12 @@ impl M20Controller {
         let (right, right_rx) = watch::channel(None);
         let (hes_status, hes_status_rx) = watch::channel(None);
         forward(hes_status_rx, self.hes_status.clone(), "hes_status");
+        let (hardware_estop, hardware_estop_rx) = watch::channel(None);
+        forward(
+            hardware_estop_rx,
+            self.hardware_estop.clone(),
+            "hardware_estop",
+        );
         let (status, status_rx) = watch::channel(None::<Status>);
         forward(joint_state_rx, self.joint_state.clone(), "joint_state");
         forward(
@@ -388,6 +400,7 @@ impl M20Controller {
             left,
             right,
             hes_status,
+            hardware_estop,
             hard_stop: self.shared.hard_stop.clone(),
             handler: FrameHandler::new(&config.frame_id),
         };

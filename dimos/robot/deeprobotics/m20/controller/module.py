@@ -214,6 +214,8 @@ class M20ControllerApi:
     controller_report: Out[String]
     # /HES_STATUS as rl_deploy writes it: the ECAN board's hard-stop byte (0 clear, 1 pressed)
     hes_status: Out[Int32]
+    # true while the ECAN board's hard-stop byte is non-zero (hes_status as a Bool)
+    hardware_estop: Out[Bool]
     # nav goal cancels around docking (M20Connection's)
     goal: Out[PoseStamped]
 
