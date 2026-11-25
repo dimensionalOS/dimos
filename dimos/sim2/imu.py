@@ -64,3 +64,4 @@ class SimImu(SimSensor):
                     ts=stamp,
                 )
             )
+            self.publish_usd_tf(ts=stamp)
