@@ -372,9 +372,14 @@ class HardwareModule(TfModule):
         self, positions: Mapping[str, float] | None = None, ts: float | None = None
     ) -> list[Transform]:
         """The USD's edges that move, at ``positions`` (the USD's own names; one not named sits at zero)."""
-        return self._namespaced(self.config.usd.moving_transforms(positions), ts)
+        return self._usd_edges_as_namespaced_transforms(
+            self.config.usd.moving_transforms(positions), ts
+        )
 
-    def _namespaced(self, edges: "list[TfEdge]", ts: float | None) -> list[Transform]:
+    def _usd_edges_as_namespaced_transforms(
+        self, edges: "list[TfEdge]", ts: float | None
+    ) -> list[Transform]:
+        """The USD's ``edges`` as Transforms stamped ``ts``, between this hardware's tf frame ids (its namespace in front)."""
         return [
             Transform(
                 translation=Vector3(*edge.translation),
@@ -389,7 +394,9 @@ class HardwareModule(TfModule):
     @cached_property
     def _static_edges(self) -> list[Transform]:
         """The USD's static edges and the mount, worked out once and only restamped; a subclass may narrow them."""
-        transforms = self._namespaced(self.config.usd.static_transforms(), None)
+        transforms = self._usd_edges_as_namespaced_transforms(
+            self.config.usd.static_transforms(), None
+        )
         if self.config.attached_to is not None:
             transforms.append(
                 Transform.from_matrix(
