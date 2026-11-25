@@ -261,7 +261,8 @@ def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_fi
         from pxr import Usd
 
         stage = Usd.Stage.Open(str(usd))
-        forearm = stage.GetPrimAtPath("/robot/arm/forearm")
+        # Served under the namespace, so the prim path is the tf frame.
+        forearm = stage.GetPrimAtPath(f"/{namespace}/robot/arm/forearm")
         assert forearm, "the part layer resolved from the cache"
         skin = forearm.GetAttribute("skin").Get().resolvedPath
         assert Path(skin).read_bytes() == b"png"
@@ -313,6 +314,6 @@ def Xform "robot"
     try:
         module.start()
         usd = fetch_hardware_files(namespace, tmp_path / "cache")
-        assert Usd.Stage.Open(str(usd)).GetPrimAtPath("/robot/base")
+        assert Usd.Stage.Open(str(usd)).GetPrimAtPath(f"/{namespace}/robot/base")
     finally:
         module.stop()
