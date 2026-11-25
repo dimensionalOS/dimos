@@ -124,15 +124,16 @@ def _prim_specs(layer: Layer) -> Iterator[Spec]:
 def _rename_spec_assets(pxr: Pxr, spec: Spec, rename: AssetRename) -> bool:
     where = str(spec.path.StripAllVariantSelections())
     changed = False
-    for has_arcs, list_name in (
-        (spec.hasReferences, "referenceList"),
-        (spec.hasPayloads, "payloadList"),
+    for has_arcs, key, list_name in (
+        (spec.hasReferences, "references", "referenceList"),
+        (spec.hasPayloads, "payload", "payloadList"),
     ):
         if not has_arcs:
             continue
-        arcs = getattr(spec, list_name)
+        # Read as a list op value: each field read through the spec's list editor costs ~0.1 ms, and a scene has thousands.
+        stated = spec.GetInfo(key)
         for field in _LISTED_ARC_FIELDS + _MATCHING_ARC_FIELDS:
-            items = list(getattr(arcs, field))
+            items = list(getattr(stated, field))
             moved = []
             for arc in items:
                 renamed = (
@@ -144,7 +145,7 @@ def _rename_spec_assets(pxr: Pxr, spec: Spec, rename: AssetRename) -> bool:
                     arc if renamed is None else repointed_arc(pxr, arc, renamed, arc.primPath)
                 )
             if moved != items:
-                setattr(arcs, field, moved)
+                setattr(getattr(spec, list_name), field, moved)
                 changed = True
     identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
     renamed_identifier = _renamed_value(pxr, identifier, where, rename)

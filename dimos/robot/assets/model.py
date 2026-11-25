@@ -367,12 +367,14 @@ class RobotModel:
         *,
         package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
         xacro_args: Mapping[str, str] | None = None,
+        asset_dir: Path | str | os.PathLike[str] | None = None,
     ) -> RobotModel:
-        """Create a lazy model from a URDF or Xacro source."""
+        """Create a lazy model from a URDF or Xacro source; relative mesh paths also resolve against `asset_dir`."""
         return cls(
             _source_path=source_path,
             _package_paths=tuple((package_paths or {}).items()),
             _xacro_args=tuple((xacro_args or {}).items()),
+            _asset_dir=asset_dir,
         )
 
     @classmethod
