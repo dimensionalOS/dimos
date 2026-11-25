@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Frames: the display names dimos treats as a robot's links and joints, and the prims that
-carry them. A frame is a prim with RigidBodyAPI or a physics joint, named by its display name."""
+"""Frames: the prims dimos treats as tf frames, each named by its prim path (``frame_path``).
+
+A frame is the default prim, a prim with RigidBodyAPI or named by a joint, or a prim on the path
+between them (a ``Geometry`` scope, say), so every frame's path-parent is a frame too."""
 
 from __future__ import annotations
 
@@ -24,11 +26,13 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.protocol.tf.frame_paths import check_frame_path
 from dimos.robot.assets.usd_utils.pxr import (
     Prim,
     Pxr,
     Stage,
     Vector,
+    frame_path,
     layer_from,
     load_pxr,
     prim_identifier,
@@ -36,9 +40,28 @@ from dimos.robot.assets.usd_utils.pxr import (
 )
 
 
-def carries_a_frame(pxr: Pxr, prim: Prim) -> bool:
-    """Whether this prim is one of the frames dimos names: a rigid body or a physics joint."""
-    return bool(prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint))
+def frame_prims(stage: Stage) -> list[Prim]:
+    """Every prim that carries a frame, parents before children."""
+    pxr = load_pxr()
+    framed = set()
+    default = stage.GetDefaultPrim()
+    if default:
+        framed.add(default.GetPath())
+    bodies = []
+    for prim in stage.Traverse():
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            bodies.append(prim)
+        elif prim.IsA(pxr.UsdPhysics.Joint):
+            # A joint's bodies are frames even when static (no RigidBodyAPI): the joint is an edge between them.
+            for relationship in ("physics:body0", "physics:body1"):
+                bodies += [
+                    stage.GetPrimAtPath(t) for t in prim.GetRelationship(relationship).GetTargets()
+                ]
+    for prim in bodies:
+        while prim and prim.GetPath() != pxr.Sdf.Path.absoluteRootPath:
+            framed.add(prim.GetPath())
+            prim = prim.GetParent()
+    return [prim for prim in stage.Traverse() if prim.GetPath() in framed]
 
 
 def usd_with_frames(
@@ -50,6 +73,12 @@ def usd_with_frames(
     layer = layer_from(pxr, usd, "a scene", root)
     stage = pxr.Usd.Stage.Open(layer)
     for name, (parent, xyz, rpy) in frames.items():
+        if "/" in name:
+            raise ValueError(
+                f"cannot add the frame {name!r}: a frame is named on its own and hung off its "
+                f"parent ({parent!r}), so its name has no '/'"
+            )
+        check_frame_path(name, "the added frame")
         by_link = link_prim_paths(stage)
         parent_path = by_link.get(parent)
         if parent_path is None:
@@ -57,12 +86,11 @@ def usd_with_frames(
                 f"cannot add the frame {name!r}: the layer has no frame {parent!r} to hang it "
                 f"off (it has {sorted(by_link)[:8]}...)"
             )
-        path = pxr.Sdf.Path(parent_path).AppendChild(prim_identifier(pxr, name))
+        path = pxr.Sdf.Path(parent_path).AppendChild(name)
         if stage.GetPrimAtPath(path):
             raise ValueError(f"cannot add the frame {name!r}: {path} is taken")
         prim = pxr.UsdGeom.Xform.Define(stage, path)
         pxr.UsdPhysics.RigidBodyAPI.Apply(prim.GetPrim())
-        prim.GetPrim().SetDisplayName(name)
         transform = np.eye(4)
         transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
         transform[:3, 3] = xyz
@@ -96,31 +124,43 @@ def _weld_frame(
     joint.GetPrim().SetDisplayName(f"{name}_joint")
 
 
-def prefix_usd_frames(usd: str, prefix: str, root: Path | str | None = None) -> str:
-    if not prefix:
-        return usd
-    pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a subtree", root)
-    stage = pxr.Usd.Stage.Open(layer)
-    root = stage.GetDefaultPrim()
-    for prim in stage.Traverse():
-        if carries_a_frame(pxr, prim) or (root and prim == root):
-            prim.SetDisplayName(f"{prefix}/{prim.GetDisplayName() or prim.GetName()}")
-    return str(layer.ExportToString())
-
-
 def usd_frame_names(usd: str, root: Path | str | None = None) -> set[str]:
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
-    names = {
-        prim.GetDisplayName() or prim.GetName()
-        for prim in stage.Traverse()
-        if carries_a_frame(pxr, prim)
-    }
+    return {frame_path(prim) for prim in frame_prims(stage)}
+
+
+def usd_top_frame(usd: str, root: Path | str | None = None) -> str:
+    """The frame of the layer's default prim, the top of every frame in it."""
+    pxr = load_pxr()
+    # The stage is kept in a name: a prim of a stage already collected reads as absent.
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
     default = stage.GetDefaultPrim()
-    if default:
-        names.add(default.GetDisplayName() or default.GetName())
-    return names
+    if not default:
+        raise ValueError("the layer declares no defaultPrim, so it has no top frame")
+    return frame_path(default)
+
+
+def usd_frame_edges(
+    usd: str, root: Path | str | None = None
+) -> list[tuple[str, str, NDArray[np.float64]]]:
+    """Every frame's (path-parent, frame, 4x4 local transform): where its own prim transform puts it."""
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
+    framed = frame_prims(stage)
+    paths = {prim.GetPath() for prim in framed}
+    edges = []
+    for prim in framed:
+        parent = prim.GetParent()
+        if parent.GetPath() not in paths:
+            continue
+        local = np.eye(4)
+        if prim.IsA(pxr.UsdGeom.Xformable):
+            matrix = pxr.UsdGeom.Xformable(prim).GetLocalTransformation(pxr.Usd.TimeCode.Default())
+            # Gf matrices are row-vector, so transposed.
+            local = np.array(matrix, dtype=np.float64).T
+        edges.append((frame_path(parent), frame_path(prim), local))
+    return edges
 
 
 def usd_frame_pose(usd: str, frame: str, root: Path | str | None = None) -> NDArray[np.float64]:
@@ -133,32 +173,6 @@ def usd_frame_pose(usd: str, frame: str, root: Path | str | None = None) -> NDAr
     return np.array(pose, dtype=np.float64).T
 
 
-def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | None = None) -> str:
-    if not renames:
-        return usd
-    pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a subtree", root)
-    stage = pxr.Usd.Stage.Open(layer)
-    frames = [prim for prim in stage.Traverse() if carries_a_frame(pxr, prim)]
-    default = stage.GetDefaultPrim()
-    if default and default not in frames:
-        frames.append(default)
-    named = [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]
-    changed = False
-    for prim, name in named:
-        if name in renames:
-            prim.SetDisplayName(renames[name])
-            changed = True
-    return str(layer.ExportToString()) if changed else usd
-
-
 def link_prim_paths(stage: Stage) -> dict[str, str]:
-    pxr = load_pxr()
-    paths: dict[str, str] = {}
-    for prim in stage.Traverse():
-        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
-            paths[prim.GetDisplayName() or prim.GetName()] = str(prim.GetPath())
-    root = stage.GetDefaultPrim()
-    if root:
-        paths.setdefault(root.GetDisplayName() or root.GetName(), str(root.GetPath()))
-    return paths
+    """Each frame's name (its path without the leading "/") -> its prim path."""
+    return {frame_path(prim): str(prim.GetPath()) for prim in frame_prims(stage)}

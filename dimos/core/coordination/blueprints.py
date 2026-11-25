@@ -50,8 +50,8 @@ else:
 logger = setup_logger()
 
 
-# Shared by every namespace: the simulated world that each robot and sensor reads and acts on.
-ALWAYS_SHARED = frozenset({"world_observations", "world_actions"})
+# Shared unless share_sim=False: the simulated world that each robot and sensor reads and acts on.
+SIM_STREAMS = frozenset({"world_observations", "world_actions"})
 
 
 class DisabledModuleProxy:
@@ -232,6 +232,7 @@ class BlueprintProtocol(Protocol):
         *,
         shared: Iterable[str] = (),
         share_tf: bool = True,
+        share_sim: bool = True,
     ) -> Self: ...
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
@@ -385,6 +386,7 @@ class Blueprint(BlueprintProtocol):
         *,
         shared: Iterable[str] = (),
         share_tf: bool = True,
+        share_sim: bool = True,
     ) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
@@ -397,8 +399,8 @@ class Blueprint(BlueprintProtocol):
         globally by the usual (name, type) matching.  That is how data crosses the
         namespace boundary. ``tf`` and ``tf_static`` are shared too unless ``share_tf=False``, so every
         robot's transforms land in one tf tree (their frame ids are namespaced instead).
-        ``world_observations`` and ``world_actions`` are always shared, so every namespaced
-        robot and sensor reaches the one simulated world:
+        ``world_observations`` and ``world_actions`` are shared too unless ``share_sim=False``,
+        so every namespaced robot and sensor reaches the one simulated world:
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
@@ -408,16 +410,23 @@ class Blueprint(BlueprintProtocol):
                 ],
             )
         """
-        if not re.fullmatch(r"[A-Za-z0-9_]+", prefix):
+        # A namespace is a segment of tf frame ids, which are USD prim paths: no leading digit.
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prefix):
             raise ValueError(
-                f"Invalid namespace prefix {prefix!r}; use letters, digits and underscores "
-                f"(nest namespaces by composition, not with '/')."
+                f"Invalid namespace prefix {prefix!r}; use letters, digits and underscores, "
+                f"not starting with a digit (nest namespaces by composition, not with '/')."
             )
 
         listed = frozenset(shared)
         if "tf" in listed and not share_tf:
             raise ValueError("shared lists 'tf' but share_tf=False")
-        shared_set = listed | ALWAYS_SHARED | ({"tf", "tf_static"} if share_tf else set())
+        if listed & SIM_STREAMS and not share_sim:
+            raise ValueError(f"shared lists {sorted(listed & SIM_STREAMS)} but share_sim=False")
+        shared_set = (
+            listed
+            | ({"tf", "tf_static"} if share_tf else set())
+            | (SIM_STREAMS if share_sim else set())
+        )
 
         effective_names = set()
         for atom in self.blueprints:
@@ -604,12 +613,14 @@ class MetaBlueprint(BlueprintProtocol):
         *,
         shared: Iterable[str] = (),
         share_tf: bool = True,
+        share_sim: bool = True,
     ) -> Self:
         return self._defer(
             Blueprint.namespace,
             prefix,
             shared=tuple(shared),
             share_tf=share_tf,
+            share_sim=share_sim,
         )
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self:

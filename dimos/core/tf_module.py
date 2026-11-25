@@ -14,17 +14,19 @@
 
 """A module whose tf frames are declared in its config, so a blueprint can namespace and check them."""
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from functools import cached_property
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
 
 from pydantic import Field, model_validator
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import TF
+from dimos.protocol.tf.frame_paths import is_hardware_edge
+from dimos.protocol.tf.tf import TF, refuse_undeclared_edges
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -61,11 +63,74 @@ class TfModuleConfig(ModuleConfig):
         return self
 
 
+class TfIO(IO[TFMessage]):
+    """A TfModule's tf port: ``publish`` refuses undeclared edges, ``get`` refuses undeclared frames."""
+
+    owner: "TfModule"
+
+    def publish(self, msg: TFMessage) -> None:
+        if not self.owner.config.skip_tf_checks:
+            refuse_undeclared_edges(
+                self.owner.tf_edge_ids, self.owner.tf_owner_name, msg.transforms
+            )
+        super().publish(msg)
+
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+        warn: bool = True,
+    ) -> Transform | None:
+        """Look ``parent_frame -> child_frame`` up in the module's tfbuffer; both must be declared frames."""
+        if not self.owner.config.skip_tf_checks:
+            declared = set(self.owner.tf_frames.values())
+            for frame in (parent_frame, child_frame):
+                if frame not in declared:
+                    raise ValueError(
+                        f"{self.owner.tf_owner_name} looks up undeclared tf frame {frame!r} "
+                        f"(declared: {sorted(declared)}); add it to tf_frames_local or tf_frames_global"
+                    )
+        return self.owner.tfbuffer.get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+            warn=warn,
+        )
+
+
 class TfModule(Module):
-    """Its ``tfbuffer`` publishes only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
+    """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-    tf: IO[TFMessage]
+    # Whether every edge it declares is hardware (a HardwareModule's: its USD's and its mount).
+    tf_edges_are_hardware: ClassVar[bool] = False
+    if TYPE_CHECKING:
+        tf: TfIO
+    else:
+        # Module binds ports from the runtime annotation, so it stays a plain IO.
+        tf: IO[TFMessage]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # Same name and type as the port Module bound, so wiring and topics are unchanged.
+        self.tf = TfIO(TFMessage, "tf", self)
+
+    @property
+    def tf_owner_name(self) -> str:
+        """The name tf errors give for this module."""
+        return self.config.instance_name or type(self).__name__
+
+    @cached_property
+    def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
+        """The declared edges as (parent frame id, child frame id)."""
+        frames = self.tf_frames
+        return frozenset((frames[parent], frames[child]) for parent, child in self.config.tf_edges)
 
     @cached_property
     def tf_frames(self) -> dict[str, str]:
@@ -79,58 +144,78 @@ class TfModule(Module):
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse a frame with two parents or declared edges that form a cycle; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out."""
-        publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        """Refuse declared edges that close a loop, or a frame with two parents of one kind; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
+
+        A frame may have one hardware parent (an edge a HardwareModule declares) and one imaginary
+        parent (an estimate, a localization): lookups search the tree both ways. Two imaginary parents
+        are refused, since each says where the frame is and nothing says which wins.
+        """
+        owners: dict[tuple[str, str], list[str]] = defaultdict(list)
+        hardware_ids: set[tuple[str, str]] = set()
         for atom in atoms:
             if not _is_checked(atom):
                 continue
+            module = cast("type[TfModule]", atom.module)
             frames = _frame_ids(
                 atom.kwargs["tf_frames_local"],
                 atom.kwargs["tf_frames_global"],
                 atom.name.rpartition("/")[0],
             )
             for parent_role, child_role in atom.kwargs["tf_edges"]:
-                publishers[frames[child_role]][frames[parent_role]].append(atom.name)
-        if not publishers:
+                edge = frames[parent_role], frames[child_role]
+                owners[edge].append(atom.name)
+                if module.tf_edges_are_hardware:
+                    hardware_ids.add(edge)
+
+        if not owners:
             return
 
         errors = []
-        for child, parents in sorted(publishers.items()):
-            if len(parents) > 1:
-                listed = ", ".join(
-                    f"{parent} (from {', '.join(names)})"
-                    for parent, names in sorted(parents.items())
+        parents: dict[tuple[str, bool], list[str]] = defaultdict(list)
+        for (parent, child), names in sorted(owners.items()):
+            parents[child, is_hardware_edge(parent, child, hardware_ids)].append(
+                f"{parent} (from {', '.join(names)})"
+            )
+            if len(names) > 1:
+                logger.warning(
+                    f"tf edge '{parent}' -> '{child}' is declared by several modules "
+                    f"({', '.join(names)}); only one module should own an edge"
                 )
-                errors.append(f"    - '{child}' has several parents: {listed}")
-            for parent, names in parents.items():
-                if len(names) > 1:
-                    logger.warning(
-                        f"tf edge '{parent}' -> '{child}' is declared by several modules "
-                        f"({', '.join(names)}); only one module should own an edge"
-                    )
+        for (child, hardware), listed in sorted(parents.items()):
+            if len(listed) > 1:
+                kind = "hardware" if hardware else "imaginary"
+                errors.append(
+                    f"    - '{child}' has several parents: {', '.join(listed)} (all {kind}; a "
+                    f"frame has at most one hardware and one imaginary parent)"
+                )
 
-        # Union-find over the declared edges: one component per tree.
+        # Union-find over the declared edges, undirected: an edge between two frames already joined closes a loop.
         component: dict[str, str] = {}
+        neighbours: dict[str, set[str]] = defaultdict(set)
 
         def root_of(frame: str) -> str:
             while component.setdefault(frame, frame) != frame:
                 frame = component[frame]
             return frame
 
-        for child, parents in publishers.items():
-            for parent in parents:
-                component[root_of(child)] = root_of(parent)
+        for parent, child in sorted(owners):
+            if root_of(parent) == root_of(child):
+                path = _path_between(neighbours, child, parent)
+                errors.append(
+                    f"    - frames {sorted(path)} form a cycle: '{parent}' -> '{child}' closes "
+                    f"the loop {' -> '.join([*path, parent])}"
+                )
+                continue
+            component[root_of(child)] = root_of(parent)
+            neighbours[parent].add(child)
+            neighbours[child].add(parent)
         trees: dict[str, set[str]] = defaultdict(set)
         for frame in list(component):
             trees[root_of(frame)].add(frame)
-        for tree in trees.values():
-            if not tree - publishers.keys():
-                errors.append(f"    - frames {sorted(tree)} form a cycle (none of them is a root)")
 
         if len(trees) > 1:
-            roots = sorted(
-                sorted(tree - publishers.keys()) or sorted(tree)[:1] for tree in trees.values()
-            )
+            children = {child for _, child in owners}
+            roots = sorted(sorted(tree - children) or sorted(tree)[:1] for tree in trees.values())
             # Only a warning: separate robots' odometry stays disconnected until something localizes them.
             undeclared_publishers = sorted(
                 atom.name
@@ -153,20 +238,41 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
-        frames = self.tf_frames
         return TF(
             port,
-            edges=None
-            if self.config.skip_tf_checks
-            else {(frames[parent], frames[child]) for parent, child in self.config.tf_edges},
-            module_name=self.config.instance_name or type(self).__name__,
+            edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
+            module_name=self.tf_owner_name,
         )
 
 
 def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
+    # A local frame "" is the namespace frame itself (a HardwareModule's mount).
+    if "" in local.values() and not prefix:
+        roles = sorted(role for role, frame in local.items() if not frame)
+        raise ValueError(
+            f"tf_frames_local {roles} name the frame '' (the namespace frame), but the module has no namespace"
+        )
     if prefix:
-        local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
+        local = {role: f"{prefix}/{frame}" if frame else prefix for role, frame in local.items()}
     return {**shared, **local}
+
+
+def _path_between(neighbours: dict[str, set[str]], start: str, end: str) -> list[str]:
+    """The frames from ``start`` to ``end`` along edges already joined (a tree, so the one path)."""
+    came_from: dict[str, str | None] = {start: None}
+    queue = deque([start])
+    while queue:
+        frame = queue.popleft()
+        for neighbour in neighbours[frame]:
+            if neighbour not in came_from:
+                came_from[neighbour] = frame
+                queue.append(neighbour)
+    path: list[str] = []
+    step: str | None = end
+    while step is not None:
+        path.append(step)
+        step = came_from[step]
+    return path
 
 
 def _is_checked(atom: "BlueprintAtom") -> bool:

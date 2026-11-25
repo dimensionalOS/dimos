@@ -525,7 +525,7 @@ class HolonomicPoseFollowerTaskParams(BaseConfig):
     stale_pose_timeout: float = 0.3
 
 
-def create_task(cfg: Any, hardware: Any) -> HolonomicPoseFollowerTask:
+def create_task(cfg: Any) -> HolonomicPoseFollowerTask:
     params = HolonomicPoseFollowerTaskParams.model_validate(cfg.params)
     return HolonomicPoseFollowerTask(
         cfg.name,

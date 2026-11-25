@@ -24,7 +24,7 @@ from dimos.robot.assets.usd_utils.assets import (
     referenced_asset_paths,
     resolve_usd_assets,
 )
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import graft_usd, usd_under_namespace
 
 pytest.importorskip("pxr")
 
@@ -307,3 +307,86 @@ def test_grafting_a_subtree_with_no_arcs_opens_no_list_editor_for_them(
     stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
 
     assert stage.GetPrimAtPath("/room/arm/shell")
+
+
+_BOUND_ARM = """#usda 1.0
+(
+    defaultPrim = "arm"
+    upAxis = "Z"
+)
+
+def Xform "arm"
+{
+    def Xform "base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Looks/paint>
+        float level.connect = </arm/tip.level>
+    }
+
+    def Xform "tip" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        prepend references = </arm/base>
+    )
+    {
+        float level
+    }
+
+    def PhysicsFixedJoint "weld"
+    {
+        rel physics:body0 = </arm/base>
+        rel physics:body1 = </arm/tip>
+    }
+}
+
+def Scope "Looks"
+{
+    def Material "paint"
+    {
+    }
+}
+"""
+
+
+@pytest.mark.parametrize("namespace", ["left", "fleet/robot0", "arm"])
+def test_a_layer_nested_under_a_namespace_names_each_frame_as_on_tf(namespace: str) -> None:
+    from dimos.robot.assets.usd_utils.frames import usd_frame_names
+
+    nested = usd_under_namespace(_BOUND_ARM, namespace)
+    stage = _stage(nested)
+
+    under = {f"{namespace}/{frame}" for frame in usd_frame_names(_BOUND_ARM)}
+    ancestors = {"/".join(namespace.split("/")[: n + 1]) for n in range(namespace.count("/") + 1)}
+    assert usd_frame_names(nested) == under | ancestors
+    assert str(stage.GetDefaultPrim().GetPath()) == f"/{namespace.partition('/')[0]}"
+    assert stage.GetMetadata("upAxis") == "Z"
+    base = stage.GetPrimAtPath(f"/{namespace}/arm/base")
+    assert [str(t) for t in base.GetRelationship("material:binding").GetTargets()] == [
+        f"/{namespace}/Looks/paint"
+    ]
+    assert [str(c) for c in base.GetAttribute("level").GetConnections()] == [
+        f"/{namespace}/arm/tip.level"
+    ]
+    weld = stage.GetPrimAtPath(f"/{namespace}/arm/weld")
+    assert [str(t) for t in weld.GetRelationship("physics:body1").GetTargets()] == [
+        f"/{namespace}/arm/tip"
+    ]
+    tip = stage.GetPrimAtPath(f"/{namespace}/arm/tip")
+    assert tip.HasAPI(_rigid_body_api()), "the internal reference still composes"
+    assert not stage.GetPrimAtPath("/arm/base") or namespace == "arm"
+
+
+def _rigid_body_api() -> Any:
+    from pxr import UsdPhysics
+
+    return UsdPhysics.RigidBodyAPI
+
+
+def test_no_namespace_leaves_the_layer_alone() -> None:
+    assert usd_under_namespace(_BOUND_ARM, "") == _BOUND_ARM
+
+
+def test_a_namespace_that_cannot_be_a_prim_path_is_refused() -> None:
+    with pytest.raises(ValueError, match="'2nd' starts with '2'"):
+        usd_under_namespace(_BOUND_ARM, "fleet/2nd")
