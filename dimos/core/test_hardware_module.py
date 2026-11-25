@@ -30,6 +30,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.joint_transforms import joint_position
 from dimos.robot.assets.model import RobotModel, UsdModel
 
 _ARM_URDF = """<robot name="arm">
@@ -349,14 +350,12 @@ class Linkage(HardwareModule):
 
 
 def test_every_edge_is_where_its_joint_puts_it_at_any_position() -> None:
-    from dimos.core.hardware_module import _position
-
     linkage = Linkage(instance_name="linkage")
     try:
         for positions in ({}, {"hinge": 2.9, "slide": -0.7}, {"hinge": -1.3, "slide": 0.4}):
             edges = {t.child_frame_id: t.to_matrix() for t in linkage.usd_transforms(positions)}
             for joint in linkage._posable_joints:
-                expected = joint.parent_from_child(_position(joint, positions))
+                expected = joint.parent_from_child(joint_position(joint, positions))
                 np.testing.assert_allclose(edges[joint.child_link], expected, atol=1e-9)
     finally:
         linkage.stop()

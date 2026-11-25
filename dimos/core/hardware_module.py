@@ -45,6 +45,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
+from dimos.robot.assets.joint_transforms import JointTransforms
 from dimos.robot.assets.model import JointDescription, UsdModel
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
@@ -251,10 +252,9 @@ class HardwareModule(TfModule):
             self.tfbuffer.publish(*transforms)
 
     def _edge_transforms(
-        self, edges: "_JointEdges", positions: Mapping[str, float], ts: float | None
+        self, edges: JointTransforms, positions: Mapping[str, float], ts: float | None
     ) -> list[Transform]:
-        at = np.array([_position(joint, positions) for joint in edges.joints], dtype=np.float64)
-        translations, rotations = edges.at(at)
+        translations, rotations = edges.at(positions)
         return [
             Transform(
                 translation=Vector3(*translation),
@@ -274,14 +274,14 @@ class HardwareModule(TfModule):
         return tuple(j for j in self.config.usd.joints if j.type != "floating")
 
     @cached_property
-    def _moving_edges(self) -> "_JointEdges":
+    def _moving_edges(self) -> JointTransforms:
         # Worked out once: a robot publishes these edges at every tick, and only the positions change.
-        return _JointEdges(tuple(j for j in self._posable_joints if j.type != "fixed"))
+        return JointTransforms(tuple(j for j in self._posable_joints if j.type != "fixed"))
 
     @cached_property
     def _static_edges(self) -> list[Transform]:
         """The fixed joints and the mount, worked out once and only restamped; a subclass may narrow them."""
-        fixed = _JointEdges(tuple(j for j in self._posable_joints if j.type == "fixed"))
+        fixed = JointTransforms(tuple(j for j in self._posable_joints if j.type == "fixed"))
         transforms = self._edge_transforms(fixed, {}, None)
         attached_to = self.attached_to()
         if attached_to is not None:
@@ -347,72 +347,3 @@ def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
                 ]
             )
         )
-
-
-class _JointEdges:
-    """A hardware's posable joints as arrays, so every edge of its tf is worked out in one step."""
-
-    def __init__(self, joints: tuple[JointDescription, ...]) -> None:
-        self.joints = joints
-        self.links = [(joint.parent_link, joint.child_link) for joint in joints]
-        origins = np.array([joint.origin() for joint in joints]).reshape(-1, 4, 4)
-        self._origin_rotation = origins[:, :3, :3]
-        self._origin_translation = origins[:, :3, 3]
-        self._origin_quaternion = _quaternions(self._origin_rotation)
-        axes = np.array([joint.axis for joint in joints], dtype=np.float64).reshape(-1, 3)
-        self._axis = axes / np.linalg.norm(axes, axis=1, keepdims=True)
-        kinds = [joint.type for joint in joints]
-        unknown = sorted(
-            {k for k in kinds if k not in ("fixed", "revolute", "continuous", "prismatic")}
-        )
-        if unknown:
-            raise ValueError(f"joints of type {unknown} have no single position")
-        self._turns = np.array([k in ("revolute", "continuous") for k in kinds], dtype=bool)
-        self._slides = np.array([k == "prismatic" for k in kinds], dtype=bool)
-
-    def at(self, positions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Each edge's translation and its rotation as an x, y, z, w quaternion, at these joint positions."""
-        turned = np.where(self._turns, positions, 0.0)
-        half = turned / 2.0
-        motion = np.concatenate([self._axis * np.sin(half)[:, None], np.cos(half)[:, None]], axis=1)
-        rotations = _canonical(_multiply(self._origin_quaternion, motion))
-        slid = self._axis * np.where(self._slides, positions, 0.0)[:, None]
-        translations = self._origin_translation + np.einsum(
-            "nij,nj->ni", self._origin_rotation, slid
-        )
-        return translations, rotations
-
-
-def _multiply(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Row-wise Hamilton product of x, y, z, w quaternions."""
-    ax, ay, az, aw = a.T
-    bx, by, bz, bw = b.T
-    return np.stack(
-        [
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-            aw * bw - ax * bx - ay * by - az * bz,
-        ],
-        axis=1,
-    )
-
-
-def _canonical(quaternions: np.ndarray) -> np.ndarray:
-    return np.where(quaternions[:, 3:4] < 0.0, -quaternions, quaternions)
-
-
-def _quaternions(rotations: np.ndarray) -> np.ndarray:
-    """x, y, z, w quaternions of rotation matrices, once at setup."""
-    if not len(rotations):
-        return np.zeros((0, 4))
-    from scipy.spatial.transform import Rotation
-
-    return _canonical(np.asarray(Rotation.from_matrix(rotations).as_quat()).reshape(-1, 4))
-
-
-def _position(joint: JointDescription, positions: Mapping[str, float]) -> float:
-    if joint.mimic is not None:
-        leader, multiplier, offset = joint.mimic
-        return multiplier * positions.get(leader, 0.0) + offset
-    return positions.get(joint.name, 0.0)
