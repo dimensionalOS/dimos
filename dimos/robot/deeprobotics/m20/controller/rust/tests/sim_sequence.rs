@@ -378,11 +378,21 @@ fn standup_rpc(mode: Mode, gait: u32, runner: &str) {
             }
             v
         });
-    assert_eq!(
-        runners,
-        ["six_axis_stand", "basic_flat", runner],
-        "runner sequence"
-    );
+    // rl_deploy loses the gait sent during the stand-in (basic_flat until the resend); safe_switch keeps it
+    let keeps = run
+        .controller
+        .config()
+        .states
+        .rl_control
+        .safe_switch
+        .as_ref()
+        .is_some_and(|ss| ss.keep_gait_during_stand_in);
+    let expected: &[&str] = if keeps {
+        &["six_axis_stand", runner]
+    } else {
+        &["six_axis_stand", "basic_flat", runner]
+    };
+    assert_eq!(runners, expected, "runner sequence");
     check(mode, &run, (14.5, 19.0), 0.5, runner);
 }
 

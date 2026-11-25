@@ -108,6 +108,16 @@ pub fn imu_roll_pitch(s: &RobotState) -> (f32, f32) {
 /// The gait that enters RL control straight from Idle (basic_server's aligningBodyPosture, SixAxisStand).
 pub const ALIGN_GAIT: u32 = 0xf003;
 
+/// safety.finite_commands (ours): non-finite axes / velocity -> 0, axes clipped, non-finite params dropped.
+pub fn finite_command(cmd: &UserCommand) -> UserCommand {
+    let zero = |v: f64| if v.is_finite() { v } else { 0.0 };
+    let mut c = cmd.clone();
+    c.axes = c.axes.map(|a| zero(a).clamp(-1.0, 1.0));
+    c.velocity = c.velocity.map(|v| v.map(zero));
+    c.params.retain(|_, v| v.is_finite());
+    c
+}
+
 /// Hermite cubic from (p0, v0) at 0 to (p1, v1) at T (rl_deploy's GetCubicSplinePos/Vel); holds p1 past T.
 pub fn cubic(p0: f64, v0: f64, p1: f64, v1: f64, t: f64, total: f64) -> (f64, f64) {
     if t >= total {
@@ -409,6 +419,8 @@ struct ActiveStandIn {
     spec: StandIn,
     duration: f64,
     elapsed: f64,
+    /// safe_switch's bridge (ours): gait writes during it are kept and a lie-down is not refused
+    bridge: bool,
 }
 
 impl ActiveStandIn {
@@ -478,6 +490,12 @@ pub struct Controller {
     pub last_q: [f64; JOINTS],
     /// the last tick's IMU roll and pitch (rad, f32 as rl_deploy's GetImuRpy)
     pub last_roll_pitch: [f32; 2],
+    /// safe_switch's blend (ours): the leg targets it starts from and how far in it is (s)
+    blend_from: Option<([f64; JOINTS], f64)>,
+    /// rl_control's last leg position command
+    last_leg_q: [f64; JOINTS],
+    /// a lie-down asked from rl_control may go ahead (safe_switch: the body is still)
+    lie_down_ready: bool,
 }
 
 impl Controller {
@@ -531,6 +549,9 @@ impl Controller {
             last_accel: [0.0; 3],
             last_q: [0.0; JOINTS],
             last_roll_pitch: [0.0; 2],
+            blend_from: None,
+            last_leg_q: [0.0; JOINTS],
+            lie_down_ready: true,
         }
     }
 
@@ -654,7 +675,11 @@ impl Controller {
             },
             // RLControlState: only a lie-down leaves it (not during a stand-in)
             State::RlControl => match target {
-                Target::LieDown if self.stand_in.is_none() => State::LieDown,
+                Target::LieDown
+                    if self.stand_in.as_ref().is_none_or(|si| si.bridge) && self.lie_down_ready =>
+                {
+                    State::LieDown
+                }
                 _ => State::RlControl,
             },
             // LieDownState: a stand after both phases
@@ -699,6 +724,7 @@ impl Controller {
                 rl.entry_fallback_gait
             };
             self.runner = None;
+            self.blend_from = None;
             self.entry_pending = true;
             self.targets = None;
             self.targets_runner = None;
@@ -724,8 +750,28 @@ impl Controller {
                 duration: if first { si.first_s } else { si.later_s },
                 spec: si,
                 elapsed: 0.0,
+                bridge: false,
             }
         });
+    }
+
+    /// safe_switch (ours): a bridged switch from runner `from` runs the bridge stand policy first.
+    fn start_bridge(&mut self, from: Option<&str>) {
+        let Some(ss) = &self.cfg.states.rl_control.safe_switch else {
+            return;
+        };
+        let to = self.cfg.runner_for_gait(self.gait);
+        let Some(from) = from else {
+            return;
+        };
+        if from != ss.bridge.runner && ss.bridged(from, to) {
+            self.stand_in = Some(ActiveStandIn {
+                spec: ss.bridge.clone(),
+                duration: ss.bridge.first_s,
+                elapsed: 0.0,
+                bridge: true,
+            });
+        }
     }
 
     pub fn tick(
@@ -734,6 +780,13 @@ impl Controller {
         cmd: &UserCommand,
         policy: &mut dyn PolicyService,
     ) -> JointCommand {
+        let finite;
+        let cmd = if self.cfg.safety.finite_commands {
+            finite = finite_command(cmd);
+            &finite
+        } else {
+            cmd
+        };
         let fault = self.check_faults(s, cmd);
         if fault.is_some()
             || self
@@ -751,6 +804,27 @@ impl Controller {
         self.last_q = s.q;
         self.last_roll_pitch = imu_roll_pitch(s).into();
         let target = self.effective_target(cmd);
+        // safe_switch (ours): a lie-down from rl_control stops the robot first and lies once it is still
+        let lie_wait = self.state == State::RlControl
+            && target == Target::LieDown
+            && self
+                .cfg
+                .states
+                .rl_control
+                .safe_switch
+                .as_ref()
+                .is_some_and(|ss| ss.lie_down_when_still);
+        self.lie_down_ready = !lie_wait || self.still_enough(s);
+        let stopped;
+        let cmd = if lie_wait {
+            let mut c = cmd.clone();
+            c.axes = [0.0; 3];
+            c.velocity = None;
+            stopped = c;
+            &stopped
+        } else {
+            cmd
+        };
         let next = self.next_state(target, cmd.gait);
         if next != self.state {
             self.enter(next, s, cmd);
@@ -1040,6 +1114,19 @@ impl Controller {
         }
     }
 
+    /// safe_switch (ours): the body is still enough for a gait switch or a lie-down (always without safe_switch).
+    fn still_enough(&self, s: &RobotState) -> bool {
+        let Some(ss) = &self.cfg.states.rl_control.safe_switch else {
+            return true;
+        };
+        let st = &ss.still;
+        // the wheels' mean rim speed: the body rolling (step_move's stepping in place spins them either way)
+        let rim = (3..JOINTS).step_by(4).map(|i| s.dq[i]).sum::<f64>() / 4.0 * st.wheel_radius_m;
+        let wheels = rim.abs() < st.wheel_m_s;
+        let rate = s.gyro.iter().map(|g| g * g).sum::<f64>().sqrt() < st.gyro_rad_s;
+        wheels && rate
+    }
+
     fn rl_control(
         &mut self,
         s: &RobotState,
@@ -1048,6 +1135,17 @@ impl Controller {
     ) -> JointCommand {
         let write = (cmd.gait, cmd.gait_seq) != self.seen_gait;
         self.seen_gait = (cmd.gait, cmd.gait_seq);
+        let keep = self
+            .cfg
+            .states
+            .rl_control
+            .safe_switch
+            .as_ref()
+            .is_some_and(|ss| ss.keep_gait_during_stand_in);
+        // ours: a gait written during a bridge (or, with keep_gait_during_stand_in, any stand-in) waits for its end
+        if write && self.stand_in.as_ref().is_some_and(|si| si.bridge || keep) {
+            self.target_gait = cmd.gait;
+        }
         self.overheat_rest(s, cmd);
         let (wanted, params) = match &mut self.stand_in {
             Some(si) => {
@@ -1070,9 +1168,14 @@ impl Controller {
                 let speed: f64 = self.axes_for(&runner, cmd).iter().map(|a| a.abs()).sum();
                 if self.target_gait != self.gait
                     && speed < self.cfg.states.rl_control.switch_below_speed
+                    && self.still_enough(s)
                 {
                     self.gait = self.target_gait;
                     self.start_stand_in(self.gait, false);
+                    if self.stand_in.is_none() {
+                        let from = self.runner.clone();
+                        self.start_bridge(from.as_deref());
+                    }
                 }
                 // a forced runner the config does not have is ignored (the gait's runner runs)
                 let name = cmd
@@ -1082,7 +1185,16 @@ impl Controller {
                     .unwrap_or_else(|| self.cfg.runner_for_gait(self.gait).to_string());
                 let mut params = cmd.params.clone();
                 params.insert("gait".into(), self.gait as f64);
-                (name, params)
+                match &mut self.stand_in {
+                    // a bridge started this tick runs from this tick (ours; no tick of the gait's runner first)
+                    Some(si) if si.bridge => {
+                        let mut params = si.params().clone();
+                        params.insert("gait".into(), 0xf001 as f64);
+                        si.elapsed += self.dt;
+                        (si.spec.runner.clone(), params)
+                    }
+                    _ => (name, params),
+                }
             }
         };
         if self.runner.as_deref() != Some(wanted.as_str()) {
@@ -1102,6 +1214,22 @@ impl Controller {
             if result.runner == wanted {
                 match result.targets {
                     Ok(t) => {
+                        // safe_switch (ours): a new runner's first targets blend in from the last command
+                        let blend = self
+                            .cfg
+                            .states
+                            .rl_control
+                            .safe_switch
+                            .as_ref()
+                            .map_or(0.0, |ss| ss.blend_s);
+                        if blend > 0.0
+                            && self
+                                .targets_runner
+                                .as_ref()
+                                .is_some_and(|r| *r != result.runner)
+                        {
+                            self.blend_from = Some((self.last_leg_q, 0.0));
+                        }
                         self.targets = Some(t);
                         self.targets_runner = Some(result.runner.clone());
                         self.gain_scale = result.gain_scale;
@@ -1163,6 +1291,27 @@ impl Controller {
                 for (k, i) in (3..JOINTS).step_by(4).enumerate() {
                     c.dq[i] = t.wheel_velocity[k];
                 }
+                if let Some((from, elapsed)) = &mut self.blend_from {
+                    let total = self
+                        .cfg
+                        .states
+                        .rl_control
+                        .safe_switch
+                        .as_ref()
+                        .map_or(0.0, |ss| ss.blend_s);
+                    let k = if total > 0.0 {
+                        (*elapsed / total).min(1.0)
+                    } else {
+                        1.0
+                    };
+                    for i in (0..JOINTS).filter(|i| i % 4 != 3) {
+                        c.q[i] = from[i] + (c.q[i] - from[i]) * k;
+                    }
+                    *elapsed += self.dt;
+                    if k >= 1.0 {
+                        self.blend_from = None;
+                    }
+                }
             }
             // until the first policy step lands: hold the pose rl_control started from
             None => c.q = self.enter_q,
@@ -1171,6 +1320,7 @@ impl Controller {
             c.kp[i] = 0.0;
             c.q[i] = 0.0;
         }
+        self.last_leg_q = c.q;
         c
     }
 }
@@ -1308,7 +1458,8 @@ mod tests {
 
     #[test]
     fn a_gait_sent_during_the_stand_in_is_lost_and_a_resend_switches() {
-        let cfg = config();
+        let mut cfg = config();
+        cfg.states.rl_control.safe_switch = None;
         let mut s = standing_state(&cfg);
         let mut c = Controller::new(cfg);
         c.set_time(10.0);
@@ -1589,5 +1740,110 @@ mod tests {
         assert!(tilt_fault(Target::RlControl, 0xf003, deg(80.0), deg(80.0)).is_none());
         assert!(tilt_fault(Target::LieDown, 0, deg(80.0), deg(80.0)).is_none());
         assert!(tilt_fault(Target::JointDamping, 0, deg(80.0), deg(80.0)).is_none());
+    }
+
+    #[test]
+    fn non_finite_commands_are_zero_and_axes_clipped() {
+        let mut cmd = UserCommand {
+            axes: [f64::NAN, 5.0, f64::NEG_INFINITY],
+            velocity: Some([f64::INFINITY, 0.3, f64::NAN]),
+            ..Default::default()
+        };
+        cmd.params.insert("height".into(), f64::NAN);
+        cmd.params.insert("roll".into(), 0.5);
+        let c = finite_command(&cmd);
+        assert_eq!(c.axes, [0.0, 1.0, 0.0]);
+        assert_eq!(c.velocity, Some([0.0, 0.3, 0.0]));
+        assert!(!c.params.contains_key("height"));
+        assert_eq!(c.params["roll"], 0.5);
+    }
+
+    #[test]
+    fn safe_switch_keeps_a_gait_sent_during_the_stand_in() {
+        let cfg = config();
+        let mut s = standing_state(&cfg);
+        let mut c = Controller::new(cfg);
+        c.set_time(10.0);
+        let mut p = HoldPolicy(None);
+        let mut cmd = UserCommand {
+            target: Target::RlControl,
+            gait: 0x1001,
+            ..Default::default()
+        };
+        c.force(State::RlControl, &s, &cmd, false);
+        c.stand_in = None;
+        c.start_stand_in(0x1001, true);
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        cmd.gait = 0x3003;
+        cmd.gait_seq += 1;
+        run(&mut c, &mut s, &cmd, 4000, &mut p);
+        assert!(!c.in_stand_in());
+        assert_eq!(c.current_runner(), Some("basic_stair"));
+    }
+
+    #[test]
+    fn safe_switch_bridges_the_listed_pairs_and_waits_for_a_still_body() {
+        let cfg = config();
+        let ss = cfg
+            .states
+            .rl_control
+            .safe_switch
+            .clone()
+            .expect("safe_switch on");
+        assert!(ss.bridged("basic_flat", "navi_flat"));
+        assert!(ss.bridged("navi_flat", "basic_backknee"));
+        assert!(ss.bridged("basic_backknee", "extre"));
+        assert!(!ss.bridged("navi_flat", "basic_flat"));
+        assert!(!ss.bridged("basic_stair", "navi_flat"));
+        // a lie-down while rolling: the command is zeroed and the lie waits for the wheels to stop
+        let mut s = standing_state(&cfg);
+        let mut c = Controller::new(cfg.clone());
+        c.set_time(10.0);
+        let mut p = HoldPolicy(None);
+        let mut cmd = UserCommand {
+            target: Target::RlControl,
+            gait: 0x3002,
+            ..Default::default()
+        };
+        c.force(State::RlControl, &s, &cmd, false);
+        c.stand_in = None;
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        let rolling = ss.still.wheel_m_s / ss.still.wheel_radius_m * 2.0;
+        for i in (3..JOINTS).step_by(4) {
+            s.dq[i] = rolling;
+        }
+        cmd.target = Target::LieDown;
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        assert_eq!(c.state, State::RlControl, "still rolling");
+        // wheels spinning against each other are not rolling (step_move stepping in place)
+        for (k, i) in (3..JOINTS).step_by(4).enumerate() {
+            s.dq[i] = if k % 2 == 0 { rolling } else { -rolling };
+        }
+        run(&mut c, &mut s, &cmd, 1, &mut p);
+        assert_eq!(c.state, State::LieDown);
+        // a bridged switch runs the stand policy from its first tick, then the gait's runner
+        let mut c = Controller::new(cfg.clone());
+        c.set_time(10.0);
+        let mut cmd = UserCommand {
+            target: Target::RlControl,
+            gait: 0x1001,
+            ..Default::default()
+        };
+        c.force(State::RlControl, &s, &cmd, false);
+        c.stand_in = None;
+        run(&mut c, &mut s, &cmd, 100, &mut p);
+        assert_eq!(c.current_runner(), Some("basic_flat"));
+        cmd.gait = 0x3002;
+        cmd.gait_seq += 1;
+        run(&mut c, &mut s, &cmd, 1, &mut p);
+        assert_eq!(c.current_runner(), Some(ss.bridge.runner.as_str()));
+        run(
+            &mut c,
+            &mut s,
+            &cmd,
+            (ss.bridge.first_s * 1000.0) as usize + 1,
+            &mut p,
+        );
+        assert_eq!(c.current_runner(), Some("navi_flat"));
     }
 }

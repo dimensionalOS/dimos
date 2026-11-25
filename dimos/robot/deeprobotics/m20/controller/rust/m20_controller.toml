@@ -86,6 +86,12 @@ command_timeout_s = 0.155
 shutdown_damping_ticks = 500
 # ours, on exit: stand-up 3 s + the 0x1001 stand-in 3.5 s (no lie-down in either) + lie-down 4 s, rounded up
 shutdown_lie_down_max_s = 11.0
+# ours (rl_deploy: false): a NaN / inf axis, velocity or param from the operator is 0 (a param: ignored) and axes are
+# clipped to [-1, 1] on receipt; rl_deploy clips the axes in the runner, where a NaN survives into the policy
+finite_commands = true
+# ours (rl_deploy: none): runners with no command_slew of their own get basic_stair's (bin M20BasicStairRunner ctor), so
+# an axis jumping from +1 to -1 ramps over 25 policy steps (sim matrix: basic_plat tipped 51 deg on that reversal)
+default_command_slew = [0.04, 0.04, 0.08]
 
 # rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
 [states.enable]
@@ -171,6 +177,38 @@ later_s = 1.5
 params = { mode_byte = 0.0, feet_fixed = 0.0, warm_hold = 0.0 }
 settle_s = 0.0
 settle_params = {}
+
+# ours, not rl_deploy's (ROBUSTNESS.md; remove the table for rl_deploy's switch): the runner switches the sim matrix
+# (tests/robustness.rs) showed upsetting the robot run `bridge` first, the stand policy rl_deploy itself runs before
+# NaviCharge; then every runner switch blends the leg targets from the last command over blend_s
+[states.rl_control.safe_switch]
+# (from, to), "*" any: basic_flat's tall stance is outside navi_flat's distribution (SPEC "switch: basic_flat ->
+# navi_flat", the robot faulted at hr_hipy -2.688) and navi_orienteer's (sim: 2 rad target jump, 7 rad/s); basic_backknee's hind knees bend the other way from every other
+# runner's, so its switches swing the hind legs through; height_gap's stance (sim) is far from the rest
+bridge_pairs = [
+    ["basic_flat", "navi_flat"],
+    ["basic_flat", "navi_orienteer"],
+    ["basic_backknee", "*"],
+    ["*", "basic_backknee"],
+    ["height_gap", "*"],
+    ["*", "height_gap"],
+]
+# the 0x3001 switch's stand-in above, as is
+bridge = { gait = 0, runner = "six_axis_stand", on_entry = false, on_switch = true, first_s = 1.5, later_s = 1.5, params = { mode_byte = 0.0, feet_fixed = 0.0, warm_hold = 0.0 }, settle_s = 0.0, settle_params = {} }
+# sim matrix: rl_deploy's first-step jumps at a switch reach 1.0-1.4 rad (basic_flat -> extre 1.25); 0.1 s (5 policy
+# steps) takes them under the walking runners' own 0.6 rad per step
+blend_s = 0.1
+# a switch (rl_deploy: once the command is still) also waits for the body: in the sim matrix switching to a stand gait
+# (0x3001's stand-in, 0x3004, 0xf001, 0xf002, extre) while still rolling at 1-2 m/s fell; standing in any runner the
+# sim's wheels' mean rim speed stays under 0.05 m/s and the body under 0.3 rad/s at least a tick at a time (step_move
+# steps in place: its legs and single wheels never stop). Wheel radius: GetBodyHeight's 0.09
+still = { wheel_radius_m = 0.09, wheel_m_s = 0.1, gyro_rad_s = 0.5 }
+# rl_deploy lies down at once: from 1-2 m/s that tipped extre, navi_flat, basic_plat and step_move over in the sim;
+# ours zeroes the command and lies once still
+lie_down_when_still = true
+# rl_deploy loses a gait sent during a stand-in (SPEC; M20Connection resends): a 0x3001 sent between two others, or a
+# gait spam ending on one, left the sim robot on navi_charge; ours switches to the last gait sent once the stand-in ends
+keep_gait_during_stand_in = true
 
 # ---------------------------------------------------------------------------------------------------------------
 # Policy runners (a metric velocity command becomes the normalized axes by [real_steer], per commanded gait).
@@ -404,6 +442,8 @@ kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [3.0, 1.0, 2.0]
 command_params = { mode = 0.0 }
+# ours: the operator's mode clamped to 0, the only value the sim walks on (SPEC [U]: -2 tall stance, +-1 and 5 fall over)
+param_limits = { mode = [0.0, 0.0] }
 command_vector = [{ src = "vx" }, { src = "vy" }, { src = "wz" }, 0.0, { src = "param", name = "mode" }]
 obs = [
     { kind = "accel", divisor = 9.81 },
@@ -432,6 +472,9 @@ kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [0.0, 0.0, 0.0]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
+# ours (rl_deploy's pose inputs come from the clipped /STEER axes, so stay in range): operator params clamped; outside them the sim
+# matrix fell (mode 5, height / roll / pitch / yaw / dx / dy at +-5)
+param_limits = { height = [0.0, 1.0], roll = [-1.0, 1.0], pitch = [-1.0, 1.0], yaw = [-1.0, 1.0], dx = [-1.0, 1.0], dy = [-1.0, 1.0], mode = [-1.0, 0.0] }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 # feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x
 # and fixed_y (bin cal_command, UserCommand 0x6e)
@@ -490,6 +533,9 @@ command_max = [0.0, 0.0, 0.0]
 # stand gaits: mode_byte unless the 0x3001 stand-in or rl_control's first stand-in phase runs, feet_fixed in rl_control's
 # stand-in); gait: the commanded gait (0xf003 re-arms the stand mode)
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode_byte = 1.0, feet_fixed = 0.0, warm_hold = 0.0, gait = 61441.0 }
+# ours (rl_deploy's pose inputs come from the clipped /STEER axes, so stay in range): operator params clamped; outside them the sim
+# matrix fell (height / roll / pitch / yaw / dx / dy at +-5)
+param_limits = { height = [0.0, 1.0], roll = [-1.0, 1.0], pitch = [-1.0, 1.0], yaw = [-1.0, 1.0], dx = [-1.0, 1.0], dy = [-1.0, 1.0] }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 # feet: Rz(yaw x yaw_deg) nominal + (dx_scale dx, dy_scale dy); with feet_fixed (rl_control's stand-in) the nominal x
 # and fixed_y (bin cal_command, UserCommand 0x6e)
@@ -542,6 +588,9 @@ command_max = [3.9, 0.9, 1.0]
 axis_deadband = [0.0, 0.0, 0.1]
 wz_speed_limit = { a = 10.8, b = 2.4, c = 0.15, d = 2.85, e = 0.5, lo = 1.0, hi = 3.0 }
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0 }
+# ours (rl_deploy's pose inputs come from the clipped /STEER axes, so stay in range): operator params clamped; outside them the sim
+# matrix fell (height / roll / pitch / yaw / dx / dy at +-5)
+param_limits = { height = [0.0, 1.0], roll = [-1.0, 1.0], pitch = [-1.0, 1.0], yaw = [-1.0, 1.0], dx = [-1.0, 1.0], dy = [-1.0, 1.0] }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
 command_vector = [
     { src = "vx" }, { src = "vy" }, { src = "wz" },

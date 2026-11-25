@@ -160,6 +160,12 @@ pub struct Safety {
     pub shutdown_damping_ticks: u64,
     /// at most this long lying a standing robot down on shutdown, before the damping ticks
     pub shutdown_lie_down_max_s: f64,
+    /// ours: a non-finite axis, velocity or param is 0 and axes are clipped to [-1, 1] before anything reads them
+    #[serde(default)]
+    pub finite_commands: bool,
+    /// ours: the command slew (normalized, per policy step) of runners rl_deploy gives none
+    #[serde(default)]
+    pub default_command_slew: Option<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,6 +240,45 @@ pub struct RlControl {
     pub overheat: Overheat,
     #[serde(default)]
     pub stand_in: Vec<StandIn>,
+    /// ours, not rl_deploy's: what keeps a gait switch calm (absent: rl_deploy's switch)
+    #[serde(default)]
+    pub safe_switch: Option<SafeSwitch>,
+}
+
+/// Ours (ROBUSTNESS.md): bridged switches, a still body before a switch or lie-down, a target blend.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SafeSwitch {
+    /// (from runner, to runner) switches that run `bridge` first; "*" matches any runner
+    pub bridge_pairs: Vec<[String; 2]>,
+    /// the stand policy a bridged switch runs (its gait field unused)
+    pub bridge: StandIn,
+    /// after a runner switch the leg targets move from the last command to the new runner's over this long (s)
+    pub blend_s: f64,
+    /// a gait switch (and, with lie_down_when_still, a lie-down) waits for the body to be still, not only the command
+    pub still: Still,
+    pub lie_down_when_still: bool,
+    /// a gait written during a stand-in is kept and switched to after it (rl_deploy: lost)
+    pub keep_gait_during_stand_in: bool,
+}
+
+/// The body is still: the wheels' mean rim speed and the body rate under these.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Still {
+    pub wheel_radius_m: f64,
+    pub wheel_m_s: f64,
+    pub gyro_rad_s: f64,
+}
+
+impl SafeSwitch {
+    /// Whether a switch from runner `from` to `to` is bridged.
+    pub fn bridged(&self, from: &str, to: &str) -> bool {
+        let m = |p: &str, r: &str| p == "*" || p == r;
+        from != to
+            && self
+                .bridge_pairs
+                .iter()
+                .any(|[f, t]| m(f, from) && m(t, to))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -440,6 +485,9 @@ pub struct RunnerSpec {
     pub command_max: [f64; 3],
     #[serde(default)]
     pub command_slew: Option<[f64; 3]>,
+    /// ours: the operator's params this runner reads, clamped to [lo, hi]
+    #[serde(default)]
+    pub param_limits: BTreeMap<String, [f64; 2]>,
     #[serde(default)]
     pub wz_clamp: Option<f64>,
     #[serde(default)]
@@ -596,8 +644,13 @@ impl Config {
     pub fn load(path: &Path) -> Result<Config> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let cfg: Config =
+        let mut cfg: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        if let Some(slew) = cfg.safety.default_command_slew {
+            for r in cfg.runners.values_mut() {
+                r.command_slew.get_or_insert(slew);
+            }
+        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -671,6 +724,11 @@ impl Config {
                     si.gait,
                     si.runner
                 );
+            }
+        }
+        if let Some(ss) = &self.states.rl_control.safe_switch {
+            if !self.runners.contains_key(&ss.bridge.runner) {
+                bail!("safe_switch.bridge names no runner {}", ss.bridge.runner);
             }
         }
         for (name, r) in &self.runners {

@@ -833,6 +833,11 @@ impl Runner {
         self.pipeline
             .params
             .extend(params.iter().map(|(k, v)| (k.clone(), *v)));
+        for (k, [lo, hi]) in &self.pipeline.spec.param_limits {
+            if let Some(v) = self.pipeline.params.get_mut(k) {
+                *v = v.clamp(*lo, *hi);
+            }
+        }
         self.pipeline.update_command(axes);
         self.pipeline.gravity_z = Pipeline::gravity(s)[2];
         let spec = &self.pipeline.spec;
