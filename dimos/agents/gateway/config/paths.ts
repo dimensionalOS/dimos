@@ -26,7 +26,7 @@ export type AgentPaths = {
 
 export function agentPaths(env: NodeJS.ProcessEnv): AgentPaths {
   const home = env.HOME || homedir();
-  const xdg = (name: "XDG_CONFIG_HOME" | "XDG_STATE_HOME" | "XDG_CACHE_HOME", fallback: string) =>
+  const xdg = (name: "XDG_CONFIG_HOME" | "XDG_DATA_HOME" | "XDG_STATE_HOME" | "XDG_CACHE_HOME", fallback: string) =>
     env[name] || join(home, fallback);
   const configDir = join(xdg("XDG_CONFIG_HOME", ".config"), "dimos", "agent");
   const stateDir = join(xdg("XDG_STATE_HOME", ".local/state"), "dimos", "agent");
@@ -36,7 +36,7 @@ export function agentPaths(env: NodeJS.ProcessEnv): AgentPaths {
     authFile: join(configDir, "auth.json"),
     configFile: join(configDir, "config.json"),
     modelsFile: join(configDir, "models.json"),
-    userSkillsDir: join(configDir, "skills"),
+    userSkillsDir: join(xdg("XDG_DATA_HOME", ".local/share"), "dimos", "agent", "skills"),
     stateDir,
     storeFile: join(stateDir, "agent.sqlite"),
     toolResultsDir: join(stateDir, "tool-results"),
