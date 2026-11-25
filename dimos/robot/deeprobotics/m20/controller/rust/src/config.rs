@@ -107,13 +107,14 @@ pub struct AppServerConfig {
     pub bind: String,
     pub udp_port: u16,
     pub tcp_port: u16,
-    pub heartbeat_timeout_s: f64,
+    /// the 1 kHz loop's snapshot period (s): one report tick each
     pub report_period_s: f64,
+    /// report ticks between the device / basic reports
     pub slow_report_every: u64,
-    /// ours: how often the server's threads look at the stop flag (s)
-    pub poll_s: f64,
-    /// the error report's period (s)
-    pub error_report_period_s: f64,
+    /// report ticks between heartbeat checks
+    pub heartbeat_check_every: u64,
+    /// report ticks between error reports
+    pub error_report_every: u64,
     /// the robot's serial number for GetSn ("" when it has none, as DeviceControl::getDeviceSn)
     pub sn: String,
     /// GetReleaseNote's file
@@ -794,18 +795,17 @@ impl Config {
             }
         }
         let app = &self.app_server;
+        let every = [
+            app.slow_report_every,
+            app.heartbeat_check_every,
+            app.error_report_every,
+        ];
         if app.enabled
-            && !([
-                app.heartbeat_timeout_s,
-                app.report_period_s,
-                app.error_report_period_s,
-                app.poll_s,
-            ]
-            .iter()
-            .all(|v| v.is_finite() && *v > 0.0)
-                && app.slow_report_every > 0)
+            && !(app.report_period_s.is_finite()
+                && app.report_period_s > 0.0
+                && every.iter().all(|&n| n > 0))
         {
-            bail!("app_server: the periods and slow_report_every must be positive");
+            bail!("app_server: report_period_s and the *_every counts must be positive");
         }
         if self.timing.policy_decimation == 0 {
             bail!("timing.policy_decimation must be at least 1");

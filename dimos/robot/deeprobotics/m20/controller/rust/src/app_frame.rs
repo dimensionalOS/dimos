@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! basic_server's frames (CmdHandle::PackingHeaderWithData 0x17f7c0, ParseHeader 0x182ce8): a 16-byte header
-//! [eb, 90 + client class, eb 90, payload length LE16, message id LE16, format, 7 zeros], then the JSON (or XML) text.
+//! basic_server's frames (PackingHeaderWithData 0x17f7c0, ParseHeader 0x182ce8): a 16-byte header, then the text.
 
 pub const HEADER_SIZE: usize = 16;
 /// header byte 8 (& 3): the payload's format
@@ -106,8 +105,7 @@ pub fn decode_datagram(b: &[u8]) -> Option<Frame> {
     }
 }
 
-/// A TCP stream's frames: split and merged frames reassembled (basic_server 1.2.37 / 1.2.42); bytes that start no
-/// frame are skipped up to the next 0xeb (basic_server drops its whole buffer; its 1460-byte buffer is not copied).
+/// A TCP stream's frames reassembled (basic_server 1.2.37 / 1.2.42); bytes before a header are skipped.
 #[derive(Debug, Default)]
 pub struct Stream {
     buf: Vec<u8>,

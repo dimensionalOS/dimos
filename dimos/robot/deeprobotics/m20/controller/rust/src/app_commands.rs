@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! basic_server's command table (CmdHandle::init 0x1863a8, ParseData 0x18f1c0) on our stack: each app command into
-//! the operator's command path (crate::operator, basic_server's usage mode, docking's request slot), answered as
-//! buildResponseWithErrorCode (0x189b18) does. Commands are answered at once: basic_server's handlers block until the
-//! stand (5 s), gait switch (3 x 3 s) or fall recovery (7 s) ends, ours return when the command is handed over.
+//! basic_server's command table (CmdHandle::init 0x1863a8) into the operator's command path, replies at once.
 
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -68,25 +64,20 @@ pub mod error {
     }
 }
 
-/// The (Type, Command)s basic_server serves that ours answers with "Unsupported function" (0xe00a) for now.
-/// TODO(jeff): decide each. The LEDs and device power (1101/2, 1101/3: the m20-ctrlmcu crate could drive them), sleep
-/// / wake and its config (1101/6, 1101/7: ctrlmcu's power rails plus a lie-down / wake in the controller), the joint
-/// zero reset (1101/8: AutoSetHome needs the motor bus, which the controller owns). The vendor navigation tasks
-/// (1003/1-2, 1004/1, 1007/1-2, 2101/1) get basic_server's own answer for a build without navigation (0xe00a);
-/// 2002/1 has no such check in basic_server. dimos navigation replaces them.
+/// TODO(jeff): decide each; until then basic_server's "Unsupported function" (0xe00a).
 pub const UNSUPPORTED: [(i64, i64); 12] = [
-    (1101, 2),
-    (1101, 3),
-    (1101, 6),
-    (1101, 7),
-    (1101, 8),
-    (1003, 1),
-    (1003, 2),
-    (1004, 1),
-    (1007, 1),
-    (1007, 2),
-    (2101, 1),
-    (2002, 1),
+    (1101, 2), // LED: the m20-ctrlmcu crate could drive it
+    (1101, 3), // SetDevice power rails: m20-ctrlmcu
+    (1101, 6), // SetSleep: ctrlmcu power rails plus a lie-down / wake in the controller
+    (1101, 7), // GetSleepConfig
+    (1101, 8), // ResetJointsZero: AutoSetHome needs the motor bus the controller owns
+    (1003, 1), // NavTasks: dimos navigation instead (0xe00a is basic_server's own no-nav answer)
+    (1003, 2), // NavTasks
+    (1004, 1), // CancelNavTask
+    (1007, 1), // GetNavTaskStatus
+    (1007, 2), // GetLocationStatus
+    (2101, 1), // InitLocation
+    (2002, 1), // GetNavExecStatus
 ];
 
 /// What the commands reach.
@@ -177,7 +168,7 @@ impl App {
 
     /// One frame from `from`; the reply, if any (ParseData's, with its message id, client class and format).
     pub fn handle(&self, frame: &Frame, from: SocketAddr, clients: &Clients) -> Option<Frame> {
-        clients.activity(Instant::now());
+        clients.activity();
         let plain = |text: &str| Some(Frame::answering(frame, frame.message_id, text));
         if frame.format != FORMAT_JSON {
             // basic_server converts XML to JSON (tinyxml2); ours serves JSON only
@@ -259,10 +250,7 @@ impl App {
         self.links.snapshots.robot().unwrap_or_default()
     }
 
-    /// cmdHandle_Steer (0x18a340) / cmdHandle_RealSteer (0x18a990): X, Y, Yaw into the operator's steer (normalized,
-    /// clamped to 1, x and y reversed by Direction 1) or twist (m/s); Z, Roll and Pitch go nowhere on ours. A key
-    /// missing: 0xe004; X a string: 0xe005; X not a float (an integer: m20tool's "X":0 gotcha) a zero steer. Taken:
-    /// no reply. The usage mode gates them in crate::basic_server (Steer in 0, RealSteer in 1 and 2), silently.
+    /// cmdHandle_Steer 0x18a340 / cmdHandle_RealSteer 0x18a990: X, Y, Yaw to the operator; taken without a reply.
     fn steer(&self, items: &Value, metric: bool) -> Answer {
         if ["X", "Y", "Z", "Roll", "Pitch", "Yaw"]
             .iter()
@@ -273,6 +261,7 @@ impl App {
         if items["X"].is_string() {
             return Answer::Code(error::MISMATCHED_TYPE);
         }
+        // X not a float (m20tool's "X":0 gotcha) is a zero steer
         let axis = |key: &str| items[key].as_f64().unwrap_or(0.0);
         let v = if items["X"].is_f64() {
             [axis("X"), axis("Y"), axis("Yaw")]
@@ -302,9 +291,7 @@ impl App {
         Ok(())
     }
 
-    /// cmdHandle_Gait (0x18b430): an Extre gait (0x2001-0x2004) is 0xe007 (the M20's authority_code.toml is empty);
-    /// a non-0x3xxx gait during a vendor navigation task is 0xe008 (ours runs none); SwitchGait drops an unknown code
-    /// and the reply is still 0.
+    /// cmdHandle_Gait 0x18b430: Extre is 0xe007 (empty authority_code.toml); an unknown code is dropped, answered 0.
     fn gait(&self, items: &Value) -> Result<(), i32> {
         let gait = u32::try_from(integer(items, "GaitParam")?).unwrap_or(0);
         if extre_gait(gait) {
@@ -321,8 +308,7 @@ impl App {
         Ok(())
     }
 
-    /// cmdHandle_Charge (0x18b870): /CHARGE_CMD's 1 (dock) or 0 (undock) into docking's request slot; any value is
-    /// answered 0.
+    /// cmdHandle_Charge 0x18b870: 1 dock, 0 undock into docking's request slot; any value is answered 0.
     fn charge(&self, items: &Value) -> Result<(), i32> {
         let request = match integer(items, "Charge")? {
             1 => Request::Dock,
@@ -373,8 +359,7 @@ impl App {
         Ok(())
     }
 
-    /// cmdHandle_AligningBodyPosture (0x18e630): fails (0xe009) unless idle; the recovery then runs in
-    /// crate::basic_server.
+    /// cmdHandle_AligningBodyPosture 0x18e630: 0xe009 unless idle; crate::basic_server runs the recovery.
     fn align(&self) -> Result<(), i32> {
         if self.robot().state != Some(crate::state_machine::State::Passive) {
             return Err(error::FAILED);

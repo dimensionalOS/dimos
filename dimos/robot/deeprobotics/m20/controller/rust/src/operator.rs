@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The operator's command, as the module's inputs and the vendor app server both change it, and the slot the 1 kHz
-//! loop polls (one path, so the app's commands meet every check cmd_vel / motion_cmd / gait_cmd meet).
+//! The operator's command, changed by the module's inputs and the app server alike, and the slot the loop polls.
 
 use std::sync::Mutex;
 
@@ -43,8 +42,7 @@ impl Operator {
         }
     }
 
-    /// A metric twist (m/s, m/s, rad/s): the vendor bridge's NaN guard (a non-finite twist is a zero one), then each
-    /// axis clamped to `limits`.
+    /// A metric twist (m/s, m/s, rad/s): non-finite is zero (the vendor bridge's guard), each axis clamped to `limits`.
     pub fn velocity(&self, v: [f64; 3], limits: [f64; 3]) {
         let v = if v.iter().all(|x| x.is_finite()) {
             std::array::from_fn(|i| v[i].clamp(-limits[i], limits[i]))

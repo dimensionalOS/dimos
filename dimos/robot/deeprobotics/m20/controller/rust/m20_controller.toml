@@ -913,17 +913,14 @@ enabled = true
 bind = "0.0.0.0"
 udp_port = 30000
 tcp_port = 30001
-# heratBeat::heartbeatCheckThread, every 2 s: a client with no heartbeat since the last check is dropped, and every
-# client when no frame at all came in the last 2 s
-heartbeat_timeout_s = 2.0
-# CmdHandle::UploadThread: the motion report every 100 ms, the device and basic reports every 5th (2 Hz), counting
-# only periods with a client
+# CmdHandle::UploadThread's 100 ms: the 1 kHz loop hands the server a snapshot this often, each one a report tick
 report_period_s = 0.1
+# UploadThread: the motion report each tick, the device and basic reports every 5th (2 Hz)
 slow_report_every = 5
-# ExceptionHandle::uploadThead: the error list every 0.5 s
-error_report_period_s = 0.5
-# ours: the server threads' read timeout, how soon they see a stop
-poll_s = 0.05
+# heratBeat::heartbeatCheckThread's 2 s (20 ticks): a client with no heartbeat since the last check is dropped
+heartbeat_check_every = 20
+# ExceptionHandle::uploadThead's 0.5 s (5 ticks): the error list
+error_report_every = 5
 # GetSn (3001/0): the robot's serial number (DeviceControl::getDeviceSn; "" when it has none)
 sn = ""
 # GetReleaseNote (2003/1): the file basic_server reads

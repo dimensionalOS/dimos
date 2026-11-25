@@ -12,28 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The vendor phone app's server in place of basic_server's ([app_server] in m20_controller.toml): the UDP and TCP
-//! listeners (UdpServer / TcpServer), heratBeat's client list, each command into the operator's command path
-//! (crate::app_commands), and UploadThread's reports (crate::app_reports) pushed to every live client. Its threads
-//! only read what the 1 kHz loop hands over (Snapshots, written there with try_lock) and write the operator's slots.
-//! Not served: basic_server's HTTP command port (30002).
+//! basic_server's app side ([app_server]): UDP / TCP listeners, heratBeat's clients, reports on the loop's ticks.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::io::Read;
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
 use crate::app_commands::{App, Links};
-use crate::app_frame::{decode_datagram, Frame, Stream};
+use crate::app_frame::{decode_datagram, Frame, Stream, HEADER_SIZE};
+use crate::app_reports::Snapshots;
 use crate::config::AppServerConfig;
 
-/// A TCP connection's writing half: replies and reports take turns on it, so frames never interleave.
-pub type TcpWriter = Arc<Mutex<TcpStream>>;
+/// The largest frame the 16-bit length allows.
+const MAX_FRAME: usize = HEADER_SIZE + u16::MAX as usize;
+
+/// One whole write without waiting (MSG_DONTWAIT): a client whose socket is full is dropped, never waited on.
+fn send_now(stream: &TcpStream, bytes: &[u8]) -> bool {
+    // SAFETY: send reads `bytes` only, on a socket this stream owns
+    let n = unsafe {
+        libc::send(
+            stream.as_raw_fd(),
+            bytes.as_ptr().cast(),
+            bytes.len(),
+            libc::MSG_DONTWAIT,
+        )
+    };
+    n == bytes.len() as isize
+}
 
 struct Client {
     /// a heartbeat (100/100) since the last check
@@ -47,9 +58,9 @@ struct ClientList {
     /// keyed by ip and port alone: a UDP and a TCP client on one address are one client
     clients: HashMap<SocketAddr, Client>,
     /// the open TCP connections: a client on one gets its reports there, else from the UDP socket
-    tcp: HashMap<SocketAddr, TcpWriter>,
-    /// the last frame from anyone
-    last_frame: Option<Instant>,
+    tcp: HashMap<SocketAddr, TcpStream>,
+    /// a frame from anyone since the last check
+    heard: bool,
     /// "Heartbeat timeout!" logged for this silence
     silence_logged: bool,
 }
@@ -66,9 +77,9 @@ impl Clients {
     }
 
     /// ParseData: any frame with a good header counts as activity.
-    pub fn activity(&self, now: Instant) {
+    pub fn activity(&self) {
         let mut l = self.lock();
-        l.last_frame = Some(now);
+        l.heard = true;
         l.silence_logged = false;
     }
 
@@ -87,14 +98,10 @@ impl Clients {
             .alive = true;
     }
 
-    /// heartbeatCheckThread: with a frame from anyone within `period`, drop the clients with no heartbeat since the
-    /// last check; with none, drop them all.
-    pub fn check(&self, now: Instant, period: Duration) {
+    /// heartbeatCheckThread: after any frame, drop the clients with no heartbeat since the last check; else all.
+    pub fn check(&self) {
         let mut l = self.lock();
-        let heard = l
-            .last_frame
-            .is_some_and(|t| now.saturating_duration_since(t) <= period);
-        if heard {
+        if std::mem::take(&mut l.heard) {
             l.clients.retain(|from, c| {
                 if !c.alive {
                     info!(client = %from, "app client missed its heartbeat");
@@ -114,56 +121,66 @@ impl Clients {
         self.lock().clients.keys().copied().collect()
     }
 
-    fn connected(&self, from: SocketAddr, writer: &TcpWriter) {
-        self.lock().tcp.insert(from, writer.clone());
+    fn connected(&self, from: SocketAddr, stream: TcpStream) {
+        self.lock().tcp.insert(from, stream);
     }
 
     fn disconnected(&self, from: SocketAddr) {
         self.lock().tcp.remove(&from);
     }
 
-    /// netSend: each client its report, on its TCP connection if it has one, else from the UDP socket; a client
-    /// whose send fails is dropped (DeleteClient).
+    /// Close every connection (their readers see the end).
+    fn close_all(&self) {
+        for stream in self.lock().tcp.values() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// netSend: each client its report, on its TCP connection or from the UDP socket; a failed send drops it.
     fn broadcast(&self, udp: &UdpSocket, payload: &[u8]) {
         let mut l = self.lock();
         let ClientList { clients, tcp, .. } = &mut *l;
         clients.retain(|from, c| {
             let bytes = Frame::answering(&c.like, 0, payload).encode();
             match tcp.get(from) {
-                Some(stream) => stream
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .write_all(&bytes)
-                    .is_ok(),
+                Some(stream) if send_now(stream, &bytes) => true,
+                Some(stream) => {
+                    // a frame cut short would garble the stream: the connection ends
+                    let _ = stream.shutdown(Shutdown::Both);
+                    false
+                }
                 None => udp.send_to(&bytes, from).is_ok(),
             }
         });
     }
 }
 
-/// The running server: its threads stop when the flag is set (each looks at it once per poll_s).
+/// The running server; stop() wakes each thread from its blocking wait.
 pub struct AppServer {
     stop: Arc<AtomicBool>,
     threads: Vec<std::thread::JoinHandle<()>>,
+    snapshots: Arc<Snapshots>,
     pub udp_addr: SocketAddr,
     pub tcp_addr: SocketAddr,
     pub clients: Arc<Clients>,
 }
 
 impl AppServer {
-    /// Bind both listeners and start serving.
+    /// Bind both listeners and start serving; the reports follow the snapshots' ticks.
     pub fn start(cfg: &AppServerConfig, links: Links) -> Result<AppServer> {
+        let ticks = links
+            .snapshots
+            .take_ticks()
+            .context("the snapshots' ticks are taken by another server")?;
         let udp = UdpSocket::bind((cfg.bind.as_str(), cfg.udp_port))
             .with_context(|| format!("binding UDP {}:{}", cfg.bind, cfg.udp_port))?;
         let tcp = TcpListener::bind((cfg.bind.as_str(), cfg.tcp_port))
             .with_context(|| format!("binding TCP {}:{}", cfg.bind, cfg.tcp_port))?;
-        let poll = Duration::from_secs_f64(cfg.poll_s);
-        udp.set_read_timeout(Some(poll))?;
-        tcp.set_nonblocking(true)?;
         let (udp_addr, tcp_addr) = (udp.local_addr()?, tcp.local_addr()?);
         let udp = Arc::new(udp);
         let stop = Arc::new(AtomicBool::new(false));
         let clients = Arc::new(Clients::default());
+        let snapshots = links.snapshots.clone();
         let app = Arc::new(App::new(cfg.clone(), links));
         let mut threads = Vec::new();
         let spawn = |name: &str, f: Box<dyn FnOnce() + Send>| {
@@ -184,7 +201,7 @@ impl AppServer {
             let (stop, clients, app) = (stop.clone(), clients.clone(), app.clone());
             threads.push(spawn(
                 "m20-app-tcp",
-                Box::new(move || serve_tcp(&tcp, &stop, &clients, &app, poll)),
+                Box::new(move || serve_tcp(&tcp, &stop, &clients, &app)),
             )?);
         }
         {
@@ -192,13 +209,14 @@ impl AppServer {
             let cfg = cfg.clone();
             threads.push(spawn(
                 "m20-app-reports",
-                Box::new(move || report_loop(&cfg, &udp, &stop, &clients, &app)),
+                Box::new(move || report_loop(&cfg, &ticks, &udp, &stop, &clients, &app)),
             )?);
         }
         info!(%udp_addr, %tcp_addr, "vendor app server listening");
         Ok(AppServer {
             stop,
             threads,
+            snapshots,
             udp_addr,
             tcp_addr,
             clients,
@@ -207,6 +225,21 @@ impl AppServer {
 
     pub fn stop(mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        // each blocking wait gets the event it waits for
+        let local = |a: SocketAddr| {
+            let ip = if a.ip().is_unspecified() {
+                Ipv4Addr::LOCALHOST.into()
+            } else {
+                a.ip()
+            };
+            SocketAddr::new(ip, a.port())
+        };
+        if let Ok(s) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)) {
+            let _ = s.send_to(&[], local(self.udp_addr));
+        }
+        let _ = TcpStream::connect(local(self.tcp_addr));
+        self.clients.close_all();
+        self.snapshots.wake();
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
@@ -215,9 +248,8 @@ impl AppServer {
 
 /// Each datagram's frame, answered to its sender from this socket.
 fn serve_udp(udp: &UdpSocket, stop: &AtomicBool, clients: &Clients, app: &App) {
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u8; MAX_FRAME];
     while !stop.load(Ordering::Relaxed) {
-        // a timeout (or EINTR) only ends this wait
         let Ok((n, from)) = udp.recv_from(&mut buf) else {
             continue;
         };
@@ -236,22 +268,22 @@ fn serve_tcp(
     stop: &Arc<AtomicBool>,
     clients: &Arc<Clients>,
     app: &Arc<App>,
-    poll: Duration,
 ) {
     let mut connections = Vec::new();
-    while !stop.load(Ordering::Relaxed) {
-        match listener.accept() {
-            Ok((stream, from)) => {
-                let (stop, clients, app) = (stop.clone(), clients.clone(), app.clone());
-                let spawned = std::thread::Builder::new()
-                    .name("m20-app-tcp-client".into())
-                    .spawn(move || serve_connection(stream, from, &stop, &clients, &app, poll));
-                match spawned {
-                    Ok(t) => connections.push(t),
-                    Err(error) => warn!(%error, "cannot serve an app connection"),
-                }
-            }
-            Err(_) => std::thread::sleep(poll),
+    for accepted in listener.incoming() {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let Ok(stream) = accepted else {
+            continue;
+        };
+        let (stop, clients, app) = (stop.clone(), clients.clone(), app.clone());
+        let spawned = std::thread::Builder::new()
+            .name("m20-app-tcp-client".into())
+            .spawn(move || serve_connection(stream, &stop, &clients, &app));
+        match spawned {
+            Ok(t) => connections.push(t),
+            Err(error) => warn!(%error, "cannot serve an app connection"),
         }
         connections.retain(|t| !t.is_finished());
     }
@@ -260,26 +292,18 @@ fn serve_tcp(
     }
 }
 
-fn serve_connection(
-    mut stream: TcpStream,
-    from: SocketAddr,
-    stop: &AtomicBool,
-    clients: &Clients,
-    app: &App,
-    poll: Duration,
-) {
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_read_timeout(Some(poll));
+fn serve_connection(mut stream: TcpStream, stop: &AtomicBool, clients: &Clients, app: &App) {
+    let Ok(from) = stream.peer_addr() else {
+        return;
+    };
     let _ = stream.set_nodelay(true);
-    // a client that stops reading costs one poll per send, then is dropped
-    let _ = stream.set_write_timeout(Some(poll));
-    let Ok(writer) = stream.try_clone().map(|s| Arc::new(Mutex::new(s))) else {
+    let Ok(writer) = stream.try_clone() else {
         return;
     };
     info!(client = %from, "app TCP connection");
-    clients.connected(from, &writer);
+    clients.connected(from, writer);
     let mut frames = Stream::default();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u8; MAX_FRAME];
     'read: while !stop.load(Ordering::Relaxed) {
         match stream.read(&mut buf) {
             Ok(0) => break,
@@ -288,66 +312,68 @@ fn serve_connection(
                     let Some(reply) = app.handle(&frame, from, clients) else {
                         continue;
                     };
-                    let sent = writer
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .write_all(&reply.encode());
-                    if sent.is_err() {
+                    if !send_now(&stream, &reply.encode()) {
                         break 'read;
                     }
                 }
             }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock
-                        | std::io::ErrorKind::TimedOut
-                        | std::io::ErrorKind::Interrupted
-                ) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => break,
         }
     }
+    let _ = stream.shutdown(Shutdown::Both);
     clients.disconnected(from);
 }
 
-/// UploadThread: each period with a client the motion report, every slow_report_every-th the device and basic ones;
-/// ExceptionHandle's error list each error_report_period_s; heartbeatCheckThread's check each heartbeat_timeout_s.
+/// UploadThread on the loop's snapshot ticks: motion each, device / basic, heartbeat checks and errors every n-th.
 fn report_loop(
     cfg: &AppServerConfig,
+    ticks: &std::sync::mpsc::Receiver<()>,
     udp: &UdpSocket,
     stop: &AtomicBool,
     clients: &Clients,
     app: &App,
 ) {
-    let period = Duration::from_secs_f64(cfg.report_period_s);
-    let check = Duration::from_secs_f64(cfg.heartbeat_timeout_s);
-    let errors = Duration::from_secs_f64(cfg.error_report_period_s);
-    let start = Instant::now();
-    let (mut next, mut next_check, mut next_errors) = (start, start + check, start + errors);
     let mut tick = 0u64;
-    while !stop.load(Ordering::Relaxed) {
-        next += period;
-        let now = Instant::now();
-        match next.checked_duration_since(now) {
-            Some(wait) => std::thread::sleep(wait),
-            None => next = now,
-        }
-        let now = Instant::now();
-        if now >= next_check {
-            next_check += check;
-            clients.check(now, check);
-        }
-        if now >= next_errors {
-            next_errors += errors;
-            clients.broadcast(udp, &app.error_report());
+    while ticks.recv().is_ok() && !stop.load(Ordering::Relaxed) {
+        tick += 1;
+        if tick.is_multiple_of(cfg.heartbeat_check_every) {
+            clients.check();
         }
         if clients.live().is_empty() {
             continue;
         }
-        let slow = tick.is_multiple_of(cfg.slow_report_every);
-        for payload in app.reports(slow) {
+        if tick.is_multiple_of(cfg.error_report_every) {
+            clients.broadcast(udp, &app.error_report());
+        }
+        for payload in app.reports(tick.is_multiple_of(cfg.slow_report_every)) {
             clients.broadcast(udp, &payload);
         }
-        tick += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_check_drops_the_silent_clients_and_all_of_them_when_nobody_sent_anything() {
+        let c = Clients::default();
+        let (a, b): (SocketAddr, SocketAddr) =
+            ("10.0.0.1:1".parse().unwrap(), "10.0.0.2:2".parse().unwrap());
+        let like = Frame::json(0, "");
+        c.activity();
+        c.heartbeat(a, &like);
+        c.heartbeat(b, &like);
+        c.check();
+        assert_eq!(c.live().len(), 2);
+        // only a's heartbeat since: b is dropped
+        c.activity();
+        c.heartbeat(a, &like);
+        c.check();
+        assert_eq!(c.live(), [a]);
+        // no frame at all since the last check: all dropped
+        c.check();
+        assert!(c.live().is_empty());
     }
 }

@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The robot as the 1 kHz loop hands it to the app server (Snapshots), and basic_server's pushed reports built from
-//! it: T1002 C4 motion (UpdateMotionStatus 0x17fa88, UpdateMotorStatus 0x17ff38), C5 device (UpdateBatteryStatus
-//! 0x181db0), C6 basic (UpdateBasicStatus 0x1812f0) and C3 errors (ExceptionHandle::updateErrorResponseJSON 0x2483f8).
-//! Fields our stack has no source for (GPS, CPU, the power rails, payload, mileage) are sent as zeros.
+//! The 1 kHz loop's snapshot for the app server, and basic_server's T1002 reports from it (fields we lack are 0).
 
 use std::sync::Mutex;
 
@@ -64,12 +61,25 @@ pub struct PackView {
     pub serial: String,
 }
 
-/// What the 1 kHz loop hands over: written with try_lock (a slot the server holds is skipped this time).
-#[derive(Default)]
+/// What the 1 kHz loop hands over (try_lock), each robot snapshot also a report tick for the server.
 pub struct Snapshots {
     pub robot: Mutex<Option<RobotView>>,
     /// left, right
     pub packs: Mutex<Option<[PackView; 2]>>,
+    tick: std::sync::mpsc::SyncSender<()>,
+    ticks: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl Default for Snapshots {
+    fn default() -> Self {
+        let (tick, ticks) = std::sync::mpsc::sync_channel(1);
+        Snapshots {
+            robot: Mutex::default(),
+            packs: Mutex::default(),
+            tick,
+            ticks: Mutex::new(Some(ticks)),
+        }
+    }
 }
 
 impl Snapshots {
@@ -78,6 +88,17 @@ impl Snapshots {
         if let Ok(mut slot) = self.robot.try_lock() {
             *slot = Some(view);
         }
+        self.wake();
+    }
+
+    /// A report tick for the server (a tick it has not taken yet stands for this one too).
+    pub fn wake(&self) {
+        let _ = self.tick.try_send(());
+    }
+
+    /// The report ticks, for the one server that takes them.
+    pub fn take_ticks(&self) -> Option<std::sync::mpsc::Receiver<()>> {
+        self.ticks.lock().unwrap_or_else(|p| p.into_inner()).take()
     }
 
     pub fn offer_packs(&self, packs: [PackView; 2]) {
@@ -195,8 +216,7 @@ impl RobotView {
     }
 }
 
-/// /MOTION_INFO's motion state as basic_server reports it (m20tool's MOTION table): 0 idle, 1 standing, 2 soft
-/// e-stop, 3 power-on damping, 4 sitting, 17 RL control; -1 before the controller runs (1.2.32's default).
+/// /MOTION_INFO's motion state (m20tool's MOTION table); -1 before the controller runs (1.2.32's default).
 pub fn motion_state(state: Option<State>) -> i32 {
     match state {
         None => -1,
@@ -524,7 +544,7 @@ pub struct ErrorItems<'a> {
     list: &'a [ErrorEntry],
 }
 
-/// T1002/C3's Items (pushed every error_report_period_s, and GetError's reply).
+/// T1002/C3's Items (pushed every error_report_every ticks, and GetError's reply).
 pub fn error_items(r: &RobotView) -> ErrorItems<'_> {
     ErrorItems { list: &r.errors }
 }

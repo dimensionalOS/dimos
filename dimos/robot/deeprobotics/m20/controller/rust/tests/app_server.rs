@@ -12,40 +12,71 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The vendor app server on loopback with a fake app: m20tool's frames over UDP and TCP, the replies, the pushed
-//! reports, the heartbeat timeout, and the commands reaching the operator's slot.
+//! The vendor app server on loopback with a fake app over UDP and TCP.
 
 mod common;
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use m20_controller::app_commands::{error, Links};
 use m20_controller::app_frame::{decode_datagram, Frame, Stream};
+use m20_controller::app_reports::{RobotView, Snapshots};
 use m20_controller::app_server::AppServer;
 use m20_controller::config::AppServerConfig;
 use m20_controller::operator::Operator;
 use m20_controller::types::Target;
 use serde_json::Value;
 
-/// The TOML's server on loopback, on ports the OS picks, with a short heartbeat timeout.
-fn server() -> (AppServer, Arc<Operator>, AppServerConfig) {
+/// The 1 kHz loop's snapshots, one report tick every TICK.
+const TICK: Duration = Duration::from_millis(10);
+
+struct FakeLoop {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for FakeLoop {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// The TOML's server on loopback, on ports the OS picks, its ticks from a fake loop.
+fn server() -> (AppServer, Arc<Operator>, AppServerConfig, FakeLoop) {
     let mut cfg = common::config().app_server;
     cfg.bind = "127.0.0.1".into();
     cfg.udp_port = 0;
     cfg.tcp_port = 0;
-    cfg.heartbeat_timeout_s = 0.5;
     let operator = Arc::new(Operator::default());
+    let snapshots = Arc::new(Snapshots::default());
     let links = Links {
         operator: operator.clone(),
         usage: Arc::default(),
         dock: Arc::default(),
-        snapshots: Arc::default(),
+        snapshots: snapshots.clone(),
         velocity_limits: [2.0, 1.0, 2.0],
     };
-    (AppServer::start(&cfg, links).unwrap(), operator, cfg)
+    let server = AppServer::start(&cfg, links).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let thread = std::thread::spawn(move || {
+        while !flag.load(Ordering::Relaxed) {
+            snapshots.offer_robot(RobotView::default());
+            std::thread::sleep(TICK);
+        }
+    });
+    let fake = FakeLoop {
+        stop,
+        thread: Some(thread),
+    };
+    (server, operator, cfg, fake)
 }
 
 /// m20tool's commandFrame: the JSON with the float fields written with a decimal point.
@@ -63,7 +94,7 @@ fn device(frame: &Frame) -> Value {
 /// UDP frames until `want` matches one or the time runs out.
 fn udp_until(sock: &UdpSocket, wait: Duration, want: impl Fn(&Frame) -> bool) -> Option<Frame> {
     let end = Instant::now() + wait;
-    let mut buf = [0u8; 65536];
+    let mut buf = vec![0u8; 65536];
     while Instant::now() < end {
         if let Ok(n) = sock.recv(&mut buf) {
             if let Some(f) = decode_datagram(&buf[..n]).filter(&want) {
@@ -76,13 +107,23 @@ fn udp_until(sock: &UdpSocket, wait: Duration, want: impl Fn(&Frame) -> bool) ->
 
 #[test]
 fn a_udp_client_s_heartbeat_gets_reports_until_it_stops() {
-    let (srv, operator, cfg) = server();
+    let (srv, operator, cfg, _loop) = server();
     let app = UdpSocket::bind("127.0.0.1:0").unwrap();
     app.set_read_timeout(Some(Duration::from_millis(20)))
         .unwrap();
     app.connect(srv.udp_addr).unwrap();
     app.send(&command(100, 100, "{}", 9)).unwrap();
     let reply = udp_until(&app, Duration::from_secs(1), |f| device(f)["Type"] == 100).unwrap();
+    // a heartbeat each check, as the app sends them
+    let beat = app.try_clone().unwrap();
+    let beating = Arc::new(AtomicBool::new(true));
+    let still = beating.clone();
+    let beats = std::thread::spawn(move || {
+        while still.load(Ordering::Relaxed) {
+            let _ = beat.send(&command(100, 100, "{}", 11));
+            std::thread::sleep(TICK * 5);
+        }
+    });
     let d = device(&reply);
     assert_eq!(
         (d["Type"].as_i64(), d["Command"].as_i64()),
@@ -101,7 +142,6 @@ fn a_udp_client_s_heartbeat_gets_reports_until_it_stops() {
     let basic = udp_until(&app, Duration::from_secs(1), |f| device(f)["Command"] == 6).unwrap();
     assert!(device(&basic)["Items"]["BasicStatus"].is_object());
     // a Steer reaches the operator (normalized, as the app's joystick)
-    app.send(&command(100, 100, "{}", 11)).unwrap();
     app.send(&command(
         2,
         21,
@@ -119,9 +159,15 @@ fn a_udp_client_s_heartbeat_gets_reports_until_it_stops() {
         std::thread::sleep(Duration::from_millis(5));
     };
     assert_eq!((c.velocity, c.steer), (Some([0.5, 0.0, -0.25]), true));
-    // silent past the heartbeat timeout: dropped, no more reports
-    std::thread::sleep(Duration::from_secs_f64(cfg.heartbeat_timeout_s * 3.0));
-    assert!(srv.clients.live().is_empty());
+    assert_eq!(srv.clients.live().len(), 1, "kept by its heartbeats");
+    beating.store(false, Ordering::Relaxed);
+    beats.join().unwrap();
+    // silent past two heartbeat checks: dropped (the fake loop's ticks may lag under load), no more reports
+    let end = Instant::now() + TICK * (30 * cfg.heartbeat_check_every as u32);
+    while !srv.clients.live().is_empty() {
+        assert!(Instant::now() < end, "a silent client was never dropped");
+        std::thread::sleep(TICK);
+    }
     while app.recv(&mut [0u8; 65536]).is_ok() {}
     assert!(udp_until(&app, Duration::from_millis(300), |_| true).is_none());
     srv.stop();
@@ -129,7 +175,7 @@ fn a_udp_client_s_heartbeat_gets_reports_until_it_stops() {
 
 #[test]
 fn a_tcp_client_s_split_and_merged_frames_are_answered_on_its_stream() {
-    let (srv, operator, _) = server();
+    let (srv, operator, _, _loop) = server();
     let mut app = TcpStream::connect(srv.tcp_addr).unwrap();
     app.set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
@@ -143,7 +189,7 @@ fn a_tcp_client_s_split_and_merged_frames_are_answered_on_its_stream() {
     let mut stream = Stream::default();
     let mut replies = Vec::new();
     let end = Instant::now() + Duration::from_secs(2);
-    let mut buf = [0u8; 65536];
+    let mut buf = vec![0u8; 65536];
     while replies.len() < 3 && Instant::now() < end {
         if let Ok(n) = app.read(&mut buf) {
             let frames = stream.push(&buf[..n]);
