@@ -42,7 +42,6 @@ def test_go2_shipped_connections_and_tasks(name):
     )
     atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
     config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
-    assert not config.hardware
     (declaration,) = config.connections
     source = ConnectionSource(declaration, ["velocity_command"], ["joint_state"], 0.2)
     assert source.joint_names == list(GO2_BASE_JOINTS)
@@ -79,7 +78,6 @@ def test_g1_shipped_groot_backends(simulation, monkeypatch):
             )
             atom = next(a for a in bp.blueprints if issubclass(a.module, ControlCoordinator))
             config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
-            assert not config.hardware
             source = ConnectionSource(
                 config.connections[0], ["position_command"], ["joint_state", "imu"], 0.2
             )

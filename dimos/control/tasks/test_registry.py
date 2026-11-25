@@ -339,11 +339,11 @@ class _HandledTask(_HandlerlessTask):
         return True
 
 
-def _make_handlerless_task(cfg: Any, hardware: Any) -> _HandlerlessTask:
+def _make_handlerless_task(cfg: Any) -> _HandlerlessTask:
     return _HandlerlessTask()
 
 
-def _make_handled_task(cfg: Any, hardware: Any) -> _HandledTask:
+def _make_handled_task(cfg: Any) -> _HandledTask:
     return _HandledTask()
 
 

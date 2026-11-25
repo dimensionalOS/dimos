@@ -322,11 +322,12 @@ def test_reset_runtime_state_clears_policy_state_and_rearms(
     assert task.state_snapshot()["armed"]
 
 
-def test_factory_resolves_canonical_connection_and_preserves_sim_imu(patched_ort, joints_29):
+def test_factory_resolves_canonical_connection_and_reads_only_its_robots_imu(
+    patched_ort, joints_29
+):
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.coordinator import TaskConfig
     from dimos.control.tasks.registry import control_task_registry
-    from dimos.hardware.whole_body.spec import IMUState
     from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
         G1WholeBodyConnectionConfig,
     )
@@ -351,17 +352,13 @@ def test_factory_resolves_canonical_connection_and_preserves_sim_imu(patched_ort
     try:
         task.start()
         state = _state_at(10.0, joints_29)
-        state.sensors.readings.clear()
-        state.imu = {"other": IMUState()}
+        imu = state.sensors.readings.pop("g1/imu")
+        state.sensors.readings["other/imu"] = imu
         assert task.compute(state) is None
         assert patched_ort == []
-        state.imu["g1"] = IMUState()
+        state.sensors.readings["g1/imu"] = imu
         assert task.compute(state) is not None
         assert patched_ort == ["balance"]
-        state.imu.clear()
-        state.sensors = _state_at(11.0, joints_29).sensors
-        assert task.compute(state) is not None
-        assert patched_ort == ["balance", "balance"]
     finally:
         task.stop()
 

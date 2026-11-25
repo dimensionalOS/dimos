@@ -13,13 +13,19 @@
 # limitations under the License.
 
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import numpy as np
 from pytest_mock import MockerFixture
 import rerun as rr
 
-from dimos.memory.cli.render import _frame_first_seen, _pair_camera_infos, render_store
+from dimos.memory.cli.render import (
+    _frame_first_seen,
+    _open_viewer,
+    _pair_camera_infos,
+    render_store,
+)
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -29,6 +35,21 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.spec import NO_HEADING
+
+
+def test_open_viewer_detaches_from_terminal(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.memory.cli.render.find_executable", return_value="/venv/bin/rerun")
+    launch = mocker.patch.object(subprocess, "Popen")
+
+    _open_viewer("recording with spaces.rrd")
+
+    launch.assert_called_once_with(
+        ["/venv/bin/rerun", "recording with spaces.rrd"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def test_render_store_logs_no_heading_goal_with_valid_rotation(

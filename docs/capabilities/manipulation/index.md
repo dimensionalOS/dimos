@@ -270,20 +270,25 @@ velocity limits, and holds the measured position when a solve cannot produce a
 safe command. This local control path is separate from manipulation planning and
 does not use `WorldSpec` or provide world-obstacle avoidance.
 
-For a custom robot, pass the typed model configuration to the helper:
+For a custom robot, pass the typed model configuration in the task's params:
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
+from dimos.control.coordinator import TaskConfig
 
-task = cartesian_ik_task(
-    hardware,
-    robot_model=robot_model,
+task = TaskConfig(
+    name="cartesian_ik_arm",
+    type="cartesian_ik",
+    joint_names=list(robot_model.joint_names),
+    params={"robot_model": robot_model, "target_frame": "link6"},
 )
-teleop_task = teleop_ik_task(
-    hardware,
+teleop_task = TaskConfig(
     name="teleop_arm",
-    hand="right",
-    robot_model=robot_model,
+    type="teleop_ik",
+    joint_names=list(robot_model.joint_names),
+    params={
+        "robot_model": robot_model,
+        "bindings": [{"hand": "right", "target_frame": "link6"}],
+    },
 )
 ```
 
@@ -459,7 +464,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 ```
 
 - **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
-- **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
+- **ControlCoordinator**: 100Hz control loop driving the arm's connection module
 - **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
 
 A manipulation stack that plans around a camera-built voxel map adds
@@ -545,7 +550,7 @@ planner is locked for its whole native call.
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
+| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared planner and mapping helpers |
 | [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and coordinator connection config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |
@@ -558,4 +563,4 @@ planner is locked for its whole native call.
 | [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
 
-An xArm's address is `--xarmconnection.ip`. Other arms' device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
+An xArm's address is `--xarmconnection.ip`. Each arm's connection takes its own address; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
