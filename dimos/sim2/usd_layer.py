@@ -16,6 +16,7 @@
 from collections.abc import Callable
 import hashlib
 from pathlib import Path
+import re
 import tempfile
 from typing import Any
 
@@ -28,6 +29,8 @@ logger = setup_logger()
 # Under this user's cache, not the shared temp dir: these files are loaded as scene content.
 _CACHE = CACHE_DIR / "sim2-usd"
 _ASSETS = CACHE_DIR / "usd-assets"
+# An asset path as usda writes one.
+_ASSET_PATH = re.compile(r"@([^@\n]+)@")
 
 
 def usd_layer(model: UsdModel, transform: Callable[[str], str] | None = None) -> Path:
@@ -38,7 +41,17 @@ def usd_layer(model: UsdModel, transform: Callable[[str], str] | None = None) ->
     layer = resolve_usd_assets(model.usd, str(source.parent) if source is not None else "")
     if transform is not None:
         layer = transform(layer)
+    _fetch_lfs_assets(layer)
     return layer_file(layer, called=_name_of(model))
+
+
+def _fetch_lfs_assets(layer: str) -> None:
+    """Fetch the files this layer names by absolute path that are Git LFS pointers, which MuJoCo reads as empty meshes."""
+    from dimos.sim2.lfs import pull_lfs_files
+
+    # Read off the text, not walked with pxr: the walk takes ~2 s on the office's world.
+    named = {Path(asset) for asset in _ASSET_PATH.findall(layer)}
+    pull_lfs_files(path for path in named if path.is_absolute())
 
 
 def layer_file(layer: str, called: str = "layer") -> Path:
