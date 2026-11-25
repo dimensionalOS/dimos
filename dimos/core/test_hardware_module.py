@@ -602,7 +602,7 @@ class WorldReader(Module):
     tf_static: Out[TFMessage]
 
 
-def test_the_simulated_world_stays_global_under_any_namespace() -> None:
+def test_the_simulated_world_is_shared_by_default_under_any_namespace() -> None:
     blueprint = WorldReader.blueprint().namespace("lidar").namespace("robot1")
 
     for stream in ("world_observations", "world_actions"):
@@ -615,6 +615,15 @@ def test_the_simulated_world_stays_global_under_any_namespace() -> None:
 
     private = WorldReader.blueprint().namespace("lidar", share_tf=False)
     assert private.remapping_map[("lidar/worldreader", "tf_static")] == "lidar/tf_static"
+
+
+def test_share_sim_false_keeps_the_simulated_world_inside_the_namespace() -> None:
+    private = WorldReader.blueprint().namespace("lidar", share_sim=False)
+    for stream in ("world_observations", "world_actions"):
+        assert private.remapping_map[("lidar/worldreader", stream)] == f"lidar/{stream}"
+
+    with pytest.raises(ValueError, match="share_sim=False"):
+        WorldReader.blueprint().namespace("lidar", shared={"world_observations"}, share_sim=False)
 
 
 def test_a_module_names_its_namespace_over_rpc() -> None:
