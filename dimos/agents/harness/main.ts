@@ -72,8 +72,8 @@ type AgentOptions = {
 export type Agent = {
   /** pi-durable, for watching, aborting and configuring conversations. Inputs go through `inputs`, never `submit()`. */
   readonly harness: Harness;
-  /** The store's scan of a conversation's submissions, settled ones included, which the harness does not offer. */
-  readonly storage: Pick<Storage, "scanSubmissions">;
+  /** Stored conversation outcomes and image entries. */
+  readonly storage: Pick<Storage, "scanSubmissions" | "entry">;
   readonly inputs: InputGate;
   readonly skills: readonly SkillSummary[];
   readonly conversations: Conversations;

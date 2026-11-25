@@ -14,6 +14,7 @@ import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contr
 import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import { createHost, webSocketLink } from "@earendil-works/chord";
 import { createServer } from "node:net";
+import { json } from "node:stream/consumers";
 import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -161,6 +162,35 @@ async function startGateway(
     }
   }
 }
+
+test("sdk CLI prints JSON for successful requests and refused arguments", { timeout: 30_000 }, async (t) => {
+  const { root, paths, remove } = await scratch();
+  const scripted = scriptedModel();
+  const faux = scripted.models.getProvider("faux");
+  assert(faux);
+  await startGateway(t, root, paths, faux, scripted.model);
+  t.after(remove);
+
+  const call = (body: object, ...args: string[]) => {
+    const child = spawn(process.execPath, [join(PACKAGE, "cli/main.ts"), "sdk", ...args], {
+      env: { ...process.env, XDG_RUNTIME_DIR: dirname(paths.socket) },
+      stdio: ["pipe", "pipe", "inherit"],
+      signal: t.signal,
+    });
+    child.stdin.end(JSON.stringify(body));
+    return json(child.stdout);
+  };
+  assert.deepEqual(await call({}, "createConversation"), {
+    refusal: "invalid",
+    error: "createConversation: invalid arguments",
+  });
+  const created = (await call({ request: newActionRequest(), cwd: root }, "createConversation")) as {
+    value: { conversation: number };
+  };
+  assert.deepEqual(await call({}, "conversation", String(created.value.conversation)), {
+    value: { transcript: { items: [], omitted: 0 }, turn: null },
+  });
+});
 
 test("file and stream references reach the model as ordinary text", { timeout: 120_000 }, async (t) => {
   const { root, paths, remove } = await scratch();

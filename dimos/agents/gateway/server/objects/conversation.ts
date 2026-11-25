@@ -24,20 +24,21 @@ function isNotice(item: TranscriptItem): boolean {
 
 /** One conversation for one principal, with methods limited by the requested role and the principal's grant. */
 export const serveConversation: ServeObject = (host, deps) =>
-  host.serve(ConversationContract, ({ conversation, role }, principal, self) => {
+  host.serve(ConversationContract, ({ conversation, role, markSeen = true }, principal, self) => {
     const room = self.get(ConversationRoom, { conversation });
     const store = self.get(GatewayStore, {});
     const state = forward(room, SHARED);
     const owner = role === "owner" && grantOf(principal) === "owner";
-    self.on("seen", room.transcript, (transcript, ctx) => {
-      const newest = transcript.items.findLast(isNotice);
-      if (newest === undefined) return;
-      return deps.agent.conversations.markSeen(
-        conversation,
-        newest.entry,
-        withAbortSignal(ctx.signal, BACKGROUND_CONTEXT),
-      );
-    });
+    if (markSeen)
+      self.on("seen", room.transcript, (transcript, ctx) => {
+        const newest = transcript.items.findLast(isNotice);
+        if (newest === undefined) return;
+        return deps.agent.conversations.markSeen(
+          conversation,
+          newest.entry,
+          withAbortSignal(ctx.signal, BACKGROUND_CONTEXT),
+        );
+      });
     const standing = (): Standing => ({
       role: owner ? "owner" : "viewer",
       link: store.link.value,
@@ -96,7 +97,8 @@ export const serveConversation: ServeObject = (host, deps) =>
       },
       stopBackground: async ({ call: target }) =>
         agent.detacher.stop(conversation, target) ? done(null) : refused({ code: "not_running", call: target }),
-      image: async ({ at }, call) => imageAt(await agent.harness.commit((tx) => tx.entry(at.entry), call.context), at),
+      image: async ({ at }, { context }) =>
+        imageAt((await agent.storage.entry(conversation, at.entry, context))?.entry, at),
     };
     if (!owner)
       return {

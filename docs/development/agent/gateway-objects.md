@@ -477,8 +477,8 @@ export const serveConversation: ServeObject = (host, deps) =>
             },
             stopBackground: async ({ call: target }) =>
                 agent.detacher.stop(conversation, target) ? done(null) : refused({ code: "not_running", call: target }),
-            image: async ({ at }, call) =>
-                imageAt(await agent.harness.commit((tx) => tx.entry(at.entry), call.context), at),
+            image: async ({ at }, { context }) =>
+                imageAt((await agent.storage.entry(conversation, at.entry, context))?.entry, at),
         };
         if (!owner)
             return {
