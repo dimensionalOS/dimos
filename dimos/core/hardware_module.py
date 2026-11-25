@@ -19,8 +19,13 @@ mounted onto one of the robot's mount frames::
 
     autoconnect(Robot.blueprint(), Lidar.attach(Robot.mounts.lidar))
 
+A frame is named by its prim path, with the namespace in front: the Go2's ``/go2/head`` is
+``go2/head``, and a lidar whose USD holds ``/lidar/imu``, attached at ``go2/head``, is
+``go2/head/lidar/imu`` -- the path ``graft_usd`` puts that prim at. The USD fills the module's
+``tf_frames_local`` (role = frame path) and ``tf_edges``, so TfModule's checks see every edge.
+
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
-the mount frame it sits on to its own frames. The edges that never move (fixed joints and the
+the mount frame it sits on to its top prim. The edges that never move (fixed joints and the
 mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
 USD and every file it reaches on ``hardware_file_request``/``hardware_file_response``, named
 relative to itself, so whatever needs the whole assembly (a simulator, on this machine or another)
@@ -33,6 +38,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 import numpy as np
+from pydantic import model_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -44,6 +50,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.frame_paths import check_frame_path
 from dimos.robot.assets.joint_transforms import JointTransforms
 from dimos.robot.assets.model import JointDescription, UsdModel
 from dimos.spec.utils import Spec
@@ -56,23 +63,36 @@ logger = setup_logger()
 
 
 class Mounts:
-    """The frames of a HardwareModule's USD that other hardware mounts onto: ``Robot.mounts.lidar``."""
+    """The frames of a HardwareModule's USD that other hardware mounts onto, by last segment: ``Robot.mounts.lidar`` is ``go2/base/lidar``."""
 
     def __init__(self, *frames: str) -> None:
-        self._frames = frozenset(frames)
+        self._frames: dict[str, str] = {}
+        for frame in frames:
+            check_frame_path(frame, "the mount")
+            name = frame.rpartition("/")[2]
+            if name in self._frames:
+                raise ValueError(
+                    f"the mounts {self._frames[name]!r} and {frame!r} both end in {name!r}, "
+                    f"which is how a mount is named"
+                )
+            self._frames[name] = frame
 
-    def __getattr__(self, frame: str) -> str:
-        if frame.startswith("_"):
-            raise AttributeError(frame)
-        if frame not in self._frames:
-            raise AttributeError(f"no mount {frame!r}; the mounts are {sorted(self._frames)}")
-        return frame
+    def __getattr__(self, name: str) -> str:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name not in self._frames:
+            raise AttributeError(f"no mount {name!r}; the mounts are {sorted(self._frames)}")
+        return self._frames[name]
 
     def __iter__(self) -> Iterator[str]:
-        return iter(sorted(self._frames))
+        return iter(sorted(self._frames.values()))
 
     def __contains__(self, frame: object) -> bool:
-        return frame in self._frames
+        return frame in self._frames.values()
+
+
+# The role of the frame a mounted HardwareModule sits on: its namespace, another module's frame.
+MOUNT_ROLE = "mount"
 
 
 class HardwareModuleConfig(TfModuleConfig):
@@ -83,6 +103,75 @@ class HardwareModuleConfig(TfModuleConfig):
     attached_to: str | None = None
     # The edges that never move go out once on tf_static at start, then on tf this often (0: never on tf), for whatever joins later.
     static_tf_rate_hz: float = 10.0
+
+    @model_validator(mode="after")
+    def _check_roles(self) -> "HardwareModuleConfig":
+        # Filled before TfModuleConfig's role check runs, so tf_edges may name the USD's frames.
+        self.tf_frames_local, self.tf_frames_global, self.tf_edges = usd_tf(
+            self, (self.instance_name or "").rpartition("/")[0]
+        )
+        TfModuleConfig._check_roles(self)
+        return self
+
+
+def usd_tf(
+    config: Any, namespace: str, mounts: "Mounts | None" = None
+) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
+    """A HardwareModule's tf: its USD's frames (role = frame path) and edges, its mount edge, then what its config adds.
+
+    ``config`` is a HardwareModuleConfig or a blueprint atom's kwargs (read the same way).
+    """
+    read = config.get if isinstance(config, Mapping) else lambda name: getattr(config, name)
+    usd: UsdModel | None = read("usd")
+    if usd is None:
+        raise ValueError(
+            "a HardwareModule needs a usd: hardware without one is not a HardwareModule"
+        )
+    if read("frame_id_prefix"):
+        raise ValueError(
+            "a HardwareModule's tf frames are its namespace and its USD's prim paths, so "
+            "frame_id_prefix (which would name them apart from the USD) is refused; namespace "
+            "the blueprint instead"
+        )
+    frames = usd.frame_names()
+    for mount in mounts or ():
+        if mount not in frames:
+            raise ValueError(
+                f"the mount {mount!r} is not a frame of the USD (its frames: {sorted(frames)})"
+            )
+    # A floating joint has no single position: what moves its child (odometry) is another parent.
+    joints = [joint for joint in usd.joints if joint.type != "floating"]
+    edges = [(edge.parent_link, edge.child_link) for edge in (*joints, *usd.prim_edges)]
+    # A joint may name a frame no prim carries: the anchor usd_to_urdf adds off a child's origin.
+    local = {frame: frame for frame in sorted({*frames, *(f for edge in edges for f in edge)})}
+    shared: dict[str, str] = {}
+    attached_to = read("attached_to")
+    if attached_to is not None:
+        check_frame_path(attached_to, "attached_to")
+        if namespace != attached_to and not namespace.endswith(f"/{attached_to}"):
+            raise ValueError(
+                f"attached_to is {attached_to!r} but the namespace is {namespace!r}; a mounted "
+                f"HardwareModule sits under its mount's namespace (use .attach(mount))"
+            )
+        shared[MOUNT_ROLE] = namespace
+        edges.append((MOUNT_ROLE, usd.top_frame))
+    for role, frame in read("tf_frames_local").items():
+        if frame not in local:
+            raise ValueError(
+                f"tf_frames_local[{role!r}] is {frame!r}, which is not a frame of this hardware's "
+                f"USD (its frames: {sorted(frames)})"
+            )
+        if local.setdefault(role, frame) != frame:
+            raise ValueError(
+                f"tf_frames_local[{role!r}] is {frame!r}, but the USD's frame {role!r} is that role"
+            )
+    for role, frame in read("tf_frames_global").items():
+        check_frame_path(frame, f"tf_frames_global[{role!r}]")
+        if shared.setdefault(role, frame) != frame:
+            raise ValueError(
+                f"tf_frames_global[{role!r}] is {frame!r}, but {role!r} is the mount's role"
+            )
+    return local, shared, list(dict.fromkeys([*edges, *read("tf_edges")]))
 
 
 # needed for sims to detect hardware modules on hosted systems
@@ -108,8 +197,20 @@ class HardwareModule(TfModule):
 
     @classmethod
     def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
-        """This hardware on the mount frame ``mount_frame``, under the namespace of the same name."""
-        return cls.blueprint(attached_to=mount_frame, **kwargs).namespace(mount_frame)
+        """This hardware on the mount frame ``mount_frame``, under the namespace of the same path (``a/b/c/<module>``)."""
+        check_frame_path(mount_frame, "the mount frame")
+        blueprint = cls.blueprint(attached_to=mount_frame, **kwargs)
+        # namespace() puts its prefix in front, so the last segment goes on first.
+        for segment in reversed(mount_frame.split("/")):
+            blueprint = blueprint.namespace(segment)
+        return blueprint
+
+    @classmethod
+    def blueprint_tf(
+        cls, atom: "BlueprintAtom"
+    ) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
+        """The tf this hardware's USD and config declare, as its config would fill it in."""
+        return usd_tf(atom.kwargs, atom.name.rpartition("/")[0], cls.mounts)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -179,15 +280,12 @@ class HardwareModule(TfModule):
         return self.namespace if self.config.attached_to is not None else None
 
     def local_usd(self) -> str:
-        """This hardware's USD for its own use: frames named as on tf, files as paths on this machine."""
+        """This hardware's USD for its own use: its prims as they are (tf adds the namespace), files as paths on this machine."""
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
-        from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 
         source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        return prefix_usd_frames(
-            resolve_usd_assets(self.config.usd.usd, root), self.frame_id_prefix, root or None
-        )
+        return resolve_usd_assets(self.config.usd.usd, root)
 
     @cached_property
     def _hardware_files(self) -> HardwareFiles:
@@ -208,14 +306,10 @@ class HardwareModule(TfModule):
         if reply is not None:
             self.hardware_file_response.publish(reply)
 
-    def usd_frame(self, name: str) -> str:
-        """The tf frame id of the frame ``name`` in this hardware's USD."""
-        return f"{self.frame_id_prefix}/{name}" if self.frame_id_prefix else name
-
     @property
     def attach_frame(self) -> str:
-        """The frame the mount holds this hardware by; a mobile robot holds by its odometry frame instead."""
-        return self.usd_frame(self.config.usd.root_link)
+        """The frame the mount holds this hardware by: its USD's top prim, whose path-parent the mount is."""
+        return self.tf_frames[self.config.usd.top_frame]
 
     def static_transforms(self, ts: float | None = None) -> list[Transform]:
         """The edges that never move (fixed joints and the mount), stamped ``ts``."""
@@ -245,8 +339,8 @@ class HardwareModule(TfModule):
                 translation=Vector3(*translation),
                 rotation=Quaternion(*rotation),
                 ts=ts,
-                frame_id=self.usd_frame(parent),
-                child_frame_id=self.usd_frame(child),
+                frame_id=self.tf_frames[parent],
+                child_frame_id=self.tf_frames[child],
             )
             for (parent, child), translation, rotation in zip(
                 edges.links, translations.tolist(), rotations.tolist(), strict=True
@@ -265,23 +359,20 @@ class HardwareModule(TfModule):
 
     @cached_property
     def _static_edges(self) -> list[Transform]:
-        """The fixed joints and the mount, worked out once and only restamped; a subclass may narrow them."""
-        fixed = JointTransforms(tuple(j for j in self._posable_joints if j.type == "fixed"))
-        transforms = self._edge_transforms(fixed, {}, None)
-        attached_to = self.attached_to()
-        if attached_to is not None:
+        """The fixed joints, the prim edges and the mount, worked out once and only restamped; a subclass may narrow them."""
+        fixed = tuple(j for j in self._posable_joints if j.type == "fixed")
+        transforms = self._edge_transforms(
+            JointTransforms((*fixed, *self.config.usd.prim_edges)), {}, None
+        )
+        if self.config.attached_to is not None:
             transforms.append(
                 Transform.from_matrix(
-                    np.eye(4), frame_id=attached_to, child_frame_id=self.attach_frame
+                    np.eye(4),
+                    frame_id=self.tf_frames[MOUNT_ROLE],
+                    child_frame_id=self.attach_frame,
                 )
             )
         return transforms
-
-    @cached_property
-    def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
-        """The declared edges plus this hardware's own USD edges, static and moving."""
-        own = [*self.static_transforms(), *self.moving_transforms()]
-        return super().tf_edge_ids | {(t.frame_id, t.child_frame_id) for t in own}
 
 
 def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
@@ -291,9 +382,8 @@ def _check_mount_tree(hardware: "list[BlueprintAtom]") -> None:
     for atom in hardware:
         namespace = atom.name.rpartition("/")[0]
         by_namespace[namespace].append(atom.name)
-        prefix = "/".join(part for part in (namespace, atom.kwargs.get("frame_id_prefix")) if part)
         for mount in cast("type[HardwareModule]", atom.module).mounts:
-            offered_by[f"{prefix}/{mount}" if prefix else mount].append(atom.name)
+            offered_by[f"{namespace}/{mount}" if namespace else mount].append(atom.name)
     errors = [
         f"    - {namespace or 'the top level'} holds {', '.join(sorted(names))}, whose "
         f"hardware_file streams would answer each other's requests"
