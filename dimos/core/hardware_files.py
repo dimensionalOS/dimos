@@ -49,6 +49,12 @@ class _Layer:
     mtime: float | None
 
 
+def hardware_file_topics(namespace: str) -> tuple[str, str]:
+    """The request and response topics of the HardwareModule in ``namespace``, as a blueprint names them."""
+    prefix = f"/{namespace}/" if namespace else "/"
+    return f"{prefix}hardware_file_request", f"{prefix}hardware_file_response"
+
+
 def is_relative_uri(uri: str) -> bool:
     """Whether a uri stays inside the module: not absolute, and never stepping up with ``..``."""
     return bool(uri) and not uri.startswith("/") and ".." not in uri.split("/")

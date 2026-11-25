@@ -135,6 +135,10 @@ class HardwareModule(TfModule):
     @rpc
     def start(self) -> None:
         super().start()
+        self.serve_hardware_files()
+
+    def serve_hardware_files(self) -> None:
+        """Answer hardware_file_request and announce hardware.usda; start() does this once its streams are wired."""
         self.register_disposable(
             Disposable(self.hardware_file_request.subscribe(self._on_hardware_file_request))
         )
