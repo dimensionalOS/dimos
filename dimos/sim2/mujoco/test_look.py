@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import mujoco
 import numpy as np
@@ -87,6 +91,67 @@ def test_agx_is_blenders_agx_view():
         [0.9249, 0.7555, 0.639],
     ]
     assert agx(linear) == pytest.approx(np.array(blender), abs=2e-4)
+
+
+def test_the_agx_lut_is_fetched_from_git_lfs_when_the_clone_has_its_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dimos.sim2 import lfs
+    from dimos.sim2.mujoco import look
+
+    pulled: list[list[Path]] = []
+    monkeypatch.setattr(lfs, "pull_lfs_files", lambda paths: pulled.append(list(paths)))
+    look._agx_base.cache_clear()
+    try:
+        look._agx_base()
+    finally:
+        look._agx_base.cache_clear()
+    assert pulled == [[look._AGX]]
+
+
+@pytest.mark.skipif(
+    not (shutil.which("git-lfs") and shutil.which("jq")), reason="needs git-lfs and jq"
+)
+def test_hosted_cis_git_lfs_guard_lets_the_agx_lut_through(tmp_path: Path) -> None:
+    from dimos.sim2.mujoco import look
+    from dimos.utils.data import get_project_root
+
+    root = get_project_root()
+    lut = str(look._AGX.relative_to(root))
+    # The real git-lfs behind the guard, but as a clone with nothing downloaded sees it, and recording a pull rather than fetching.
+    real = tmp_path / "git-lfs.orig"
+    real.write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1" = pull ]; then echo "$@" > {tmp_path}/pulled; exit 0; fi\n'
+        f"{shutil.which('git-lfs')} \"$@\" | jq '.files[].downloaded = false'\n"
+    )
+    real.chmod(0o755)
+    size = json.loads(
+        subprocess.run(
+            ["git-lfs", "ls-files", "--json", "--size", "--include", lut],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )["files"][0]["size"]
+
+    def pull(limit: int) -> subprocess.CompletedProcess[str]:
+        guard = root / "bin" / "git-lfs-guard"
+        env = {
+            **os.environ,
+            "DIMOS_LFS_GUARD_REAL": str(real),
+            "DIMOS_LFS_GUARD_LIMIT_BYTES": str(limit),
+        }
+        command = [str(guard), "pull", "--include", lut, "--exclude="]
+        return subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+
+    # CI's default cap (bin/git-lfs-guard): the LUT's pull goes through to git-lfs.
+    assert pull(1024 * 1024).returncode == 0
+    assert (tmp_path / "pulled").read_text().split() == ["pull", "--include", lut, "--exclude="]
+    # One byte under its size, the same guard refuses it, so the pass above was the cap and not a guard that lets anything by.
+    refused = pull(size - 1)
+    assert refused.returncode != 0 and "blocked pull" in refused.stderr
 
 
 def test_srgb_encoding_is_the_standard_transfer_curve():

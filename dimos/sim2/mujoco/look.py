@@ -187,6 +187,10 @@ _AGX = Path(__file__).parent / "assets" / "agx_base_srgb.npz"
 @functools.cache
 def _agx_base() -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
     """Blender's "AgX Base sRGB" LUT (57^3, [r, g, b] -> Rec.1886 code value), its Linear Rec.709 -> E-Gamut matrix and lg2 range."""
+    from dimos.sim2.lfs import pull_lfs_files
+
+    # A clone that skips LFS smudging has the LUT as a pointer; 336 KiB is under hosted CI's 1 MiB pull cap.
+    pull_lfs_files([_AGX])
     stored = np.load(_AGX)
     return (
         stored["lut"].astype(np.float32) / np.float32(65535),
