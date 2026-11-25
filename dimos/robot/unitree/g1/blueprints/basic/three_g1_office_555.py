@@ -19,6 +19,7 @@ and `right` stand under their own policies. A G1 is driven joint by joint, so it
 """
 
 import math
+from typing import ClassVar
 
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.coordinator import TaskConfig
@@ -69,6 +70,8 @@ class Office555(SimScene):
 
 
 class _G1Walker(TeleopControlCoordinator):
+    # Its 50 Hz policy tick shares no GIL with the sim: a sensor compiling its view stalled it past the G1's deadman.
+    dedicated_worker: ClassVar[bool] = True
     cmd_vel: In[Twist]
     g1_position_command: Out[JointState]
     g1_joint_state: In[JointState]

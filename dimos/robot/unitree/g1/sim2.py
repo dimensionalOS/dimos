@@ -50,9 +50,10 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
 )
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.mount_odometry import MountOdometry
-from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.sensor_usd import frame_usd
+from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror
@@ -220,15 +221,29 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         view = None
         async for _ in self._world.ticks(self.config.publish_rate_hz):
             if view is None:
-                layer = await asyncio.to_thread(
-                    lambda: layer_file(self.world.get_world_usd(), "world")
-                )
-                ids = robot_ids(self._world)
-                view = await asyncio.to_thread(
-                    open_view, layer, ids, SensorMount("imu", imu_frame, imu_frame)
-                )
+                view = await asyncio.to_thread(self._own_view, imu_frame)
             # Off the event loop: it is the loop that keeps the connection's deadman fed.
             await asyncio.to_thread(self._publish_tick, view, imu_frame)
+
+    def _own_view(self, imu_frame: str) -> WorldView:
+        """A view of this G1 alone, mounted as in the world: its IMU reads its own body, and compiling the room for it costs seconds."""
+        from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+
+        mount = self.mounted_on()
+        assert mount is not None
+        usd, pxr = self.get_usd(), load_pxr()
+        room = layer_from(pxr, frame_usd(mount, name="world").usd, "a G1's room", None)
+        own = layer_from(pxr, usd, "a G1", None)
+        # The material prototypes it references are in the room first, as the office has its own: a graft composes before carrying them.
+        for prim in own.rootPrims:
+            if prim.specifier == pxr.Sdf.SpecifierOver:
+                pxr.Sdf.CopySpec(own, prim.path, room, prim.path)
+        alone = compose_usds([(str(room.ExportToString()), None), (usd, mount)])
+        return open_view(
+            layer_file(alone.usd, "g1"),
+            robot_ids(self._world),
+            SensorMount("imu", imu_frame, imu_frame),
+        )
 
     def _publish_tick(self, view: Any, imu_frame: str) -> None:
         world = self._world

@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2 import lfs
 
 _POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:0\n"
@@ -52,3 +53,18 @@ def test_a_pointer_it_could_not_fetch_is_named(mocker: MockerFixture, tmp_path: 
     with pytest.raises(RuntimeError, match="a.usdc"):
         lfs.pull_lfs_files([pointer])
     run.assert_not_called()
+
+
+def test_a_layers_relative_asset_names_are_fetched_from_beside_it(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    (tmp_path / "meshes").mkdir()
+    hull = tmp_path / "meshes" / "hull.usdc"
+    hull.write_text(_POINTER)
+    scene = tmp_path / "scene.usda"
+    scene.write_text('#usda 1.0\ndef Xform "room" (prepend references = @meshes/hull.usdc@) {}\n')
+    pull = mocker.patch.object(lfs, "pull_lfs_files")
+
+    lfs.pull_model_assets(UsdModel.from_file(scene))
+
+    assert set(pull.call_args.args[0]) == {hull}
