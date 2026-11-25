@@ -225,6 +225,7 @@ def _run_in_docker(
 
 @app.command("list")
 def list_() -> None:
+    """List the eval suites."""
     from dimos.evals.module import list_suites
 
     for name in list_suites():

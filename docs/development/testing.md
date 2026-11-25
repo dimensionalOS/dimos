@@ -66,7 +66,13 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 
 (Shortcut for `pytest -m 'not self_hosted_large' dimos`: runs the default suite *and* self-hosted tests, excluding only `self_hosted_large`.)
 
-Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies.
+Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies. It uses `cargo`, `npm` and `nix` when they are installed, and warns about the ones that are missing.
+
+The installer does not set up three packages that these tests need. Without `cmake` and `libsqlite3-dev` the native test builds fail, and without `ffmpeg` Firefox cannot decode the test video:
+
+```sh skip
+sudo apt-get install -y cmake libsqlite3-dev ffmpeg
+```
 
 This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
@@ -78,11 +84,11 @@ pytest -m self_hosted dimos/path/to/test_something.py
 
 ## Testing on a fresh Ubuntu install
 
-Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](#test-a-checkout-locally).
+Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04/26.04 containers on x86_64 and ARM64. On a pull request, library mode builds and installs a wheel from the PR's source distribution. Developer mode installs the checkout. Both render the Go2 graph without an audio server. To check the latest published PyPI package, run the **Test installation script** workflow manually. See [local installation checks](#test-a-checkout-locally).
 
 The application test suite uses pre-built images and cached dependencies. For additional application tests, the
 [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness runs its install and test flow inside a fresh, official,
-**unmodified** Ubuntu Desktop 24.04 VM (VirtualBox).
+**unmodified** Ubuntu Desktop 26.04 VM (VirtualBox).
 
 It's intended to be executed locally.
 

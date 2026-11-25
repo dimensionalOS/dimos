@@ -21,7 +21,7 @@ Usage:
     from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 
     adapter = twist_base_adapter_registry.create("mock_twist_base", dof=3)
-    print(twist_base_adapter_registry.available())  # ["flowbase", "mock_twist_base", ...]
+    print(twist_base_adapter_registry.available())  # ["mock_twist_base", ...]
 """
 
 from __future__ import annotations

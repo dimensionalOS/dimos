@@ -101,6 +101,7 @@ impl MLSPlanner {
             // Unused here. Only the binary's replan loop reads the goal tolerances and timeouts.
             goal_tolerance: 1.0,
             goal_z_tolerance: 1.0,
+            goal_yaw_tolerance: 1.0,
             blocked_timeout_s: 0.0,
             progress_timeout_s: 0.0,
             progress_min_m: 1.0,

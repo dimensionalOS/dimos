@@ -40,6 +40,7 @@ from dimos.experimental.robot.bosdyn.spot.config import (
     FRONT_CAMERA_ROTATE_UPRIGHT,
 )
 from dimos.memory.replay import resolve_db_path
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -144,7 +145,6 @@ class SpotReplay(Module):
 
     async def main(self) -> AsyncIterator[None]:
         db_path = self._resolve_db_path()
-        logger.info(f"Replaying Spot recording from {db_path}")
 
         store = SqliteStore(path=str(db_path), must_exist=True)
         subscriptions = CompositeDisposable()
@@ -160,18 +160,27 @@ class SpotReplay(Module):
             duration=self.config.duration,
         )
         available = set(replay.list_streams())
+        progress = ReplayProgress(str(db_path))
+        progress.start(
+            replay, (replay.stream(n) for n in [*_PLAYBACK_STREAMS, "tf"] if n in available)
+        )
 
         for name in _PLAYBACK_STREAMS:
             if name not in available:
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
                 continue
             subscriptions.add(
-                replay.stream(name).observable().subscribe(getattr(self, name).publish)
+                progress.track(replay.stream(name).observable()).subscribe(
+                    getattr(self, name).publish
+                )
             )
 
         if "tf" in available:
-            subscriptions.add(replay.stream("tf").observable().subscribe(self._republish_tf))
+            subscriptions.add(
+                progress.track(replay.stream("tf").observable()).subscribe(self._republish_tf)
+            )
         else:
             logger.warning("Spot replay: no tf stream in recording; 3D frames will be missing")
 
+        progress.seal()
         yield

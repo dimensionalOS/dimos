@@ -41,7 +41,7 @@ def test_each_eye_defaults_to_its_own_node_at_the_sensor_mode() -> None:
 
 
 def test_head_colour_is_jpeg_under_the_old_names() -> None:
-    blueprint = r1pro_control()
+    blueprint = r1pro_control().solidify()
 
     assert {"head_left_color", "head_right_color"} <= set(blueprint.remapping_map.values())
     assert ("head_left_color", CompressedImage) in blueprint.transport_map
@@ -95,6 +95,6 @@ def test_each_eye_gets_its_own_intrinsics_from_the_factory_calibration(tmp_path:
 
 
 def test_r1pro_control_publishes_both_eyes_intrinsics() -> None:
-    blueprint = r1pro_control()
+    blueprint = r1pro_control().solidify()
 
     assert {"head_left_info", "head_right_info"} <= set(blueprint.remapping_map.values())

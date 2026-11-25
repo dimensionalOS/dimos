@@ -72,7 +72,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -195,10 +194,6 @@ class ControlCoordinator(Module):
 
     config: ControlCoordinatorConfig
 
-    # Injected when the blueprint has a MujocoSimModule: the scene that
-    # simulated manipulator adapters without one of their own attach to.
-    _mujoco_sim: MujocoSimSpec | None = None
-
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
     # Intended position-command updates for recording.
@@ -294,21 +289,13 @@ class ControlCoordinator(Module):
 
         A device address configured by hardware id applies on hardware, not in
         simulation. A component still without an address runs its mock
-        stand-in when it has one. A simulated manipulator without a scene
-        attaches to the blueprint's MujocoSimModule.
+        stand-in when it has one.
         """
         address = component.address
         if not self.config.g.simulation:
             address = self.config.addresses.get(component.hardware_id, address)
         if address is None and component.mock_limits is not None:
             return replace(component, adapter_type="mock", limits=component.mock_limits)
-        if address is None and component.adapter_type == "sim_mujoco":
-            if self._mujoco_sim is None:
-                raise RuntimeError(
-                    f"Hardware {component.hardware_id!r} simulates an arm but the blueprint "
-                    "has no MujocoSimModule to attach to; add one or set the scene as its address"
-                )
-            address = str(self._mujoco_sim.scene_path())
         return replace(component, address=address)
 
     def _setup_hardware(self, component: HardwareComponent) -> None:

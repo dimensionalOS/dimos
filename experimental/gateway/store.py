@@ -131,7 +131,8 @@ def git(dimos_dir: Path, *args: str) -> str | None:
         done = subprocess.run(["git", "-C", str(dimos_dir), *args], capture_output=True, text=True)
     except OSError:
         return None
-    return done.stdout.strip() or None if done.returncode == 0 else None
+    # only the end is stripped: git status starts an unstaged change's line with a space (` M path`)
+    return done.stdout.rstrip() or None if done.returncode == 0 else None
 
 
 def _git_dirs(dimos_dir: Path) -> tuple[Path, Path]:

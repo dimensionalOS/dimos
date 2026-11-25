@@ -3,7 +3,7 @@
 ## Requirements
 
 - Unitree G1 EDU (need SDK/SSH access)
-- Laptop/Desktop with Ubuntu 22.04/24.04 with CUDA GPU (recommended), or macOS (experimental)
+- Laptop/Desktop with Ubuntu 22.04/24.04/26.04 with CUDA GPU (recommended), or macOS (experimental)
 
 ## 1. Get SSH Access
 
@@ -110,7 +110,7 @@ self-signed certificate.
 
 | Input | Operation |
 |---|---|
-| Hold X + A | Engage both arms from a shared reference pose |
+| Hold both grips | Engage both arms from a shared reference pose |
 | B | Start or save a recording episode |
 | Y | Discard the current episode |
 
@@ -155,7 +155,7 @@ On your laptop:
 ```sh skip
 # install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv --python "3.14"
+uv venv --python "3.12"
 # use uv to get the dimos viewer
 uvx dimos-viewer --version
 
@@ -174,7 +174,7 @@ Pinocchio loads the system copy. On affected systems, start the blueprint with
 both libraries preloaded:
 
 ```bash
-ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.14/site-packages/roboplan.libs" \
+ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
   -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
 test -n "$ROBOPLAN_GOMP" || {
   echo "RoboPlan's bundled libgomp was not found"
