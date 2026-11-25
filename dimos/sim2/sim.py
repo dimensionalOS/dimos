@@ -18,7 +18,7 @@
 There is no simulation module: a backend (MuJoCo, DimSim) is a module that meets ``PhysicsBackend``.
 It asks every running HardwareModule (from ``on_system_modules``) for its USD and what it is
 mounted on, grafts them into one world, steps it, and publishes it as ``world_observations``.
-Robots and sensors are HardwareModules that read those observations and send ``actions`` back.
+Robots and sensors are HardwareModules that read those observations and send ``world_actions`` back.
 """
 
 import asyncio
@@ -55,7 +55,7 @@ class SimulatedRobotSpec(HardwareSpec, Protocol):
 class PhysicsBackend(SimulatedWorldSpec, Protocol):
     """What a simulator module implements; the ``sim`` choice picks one."""
 
-    actions: In[WorldAction]
+    world_actions: In[WorldAction]
     world_observations: Out[WorldObservations]
 
     def describe(self) -> dict[str, Any]: ...
@@ -84,7 +84,7 @@ def fetched_usd(part: HardwareSpec) -> str:
     from dimos.core.hardware_file_client import fetch_hardware_files
     from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 
-    local = fetch_hardware_files(part.hardware_namespace())
+    local = fetch_hardware_files(part.get_namespace())
     return resolve_usd_assets(local.read_text(), str(local.parent))
 
 
