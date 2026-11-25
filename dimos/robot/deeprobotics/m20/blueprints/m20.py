@@ -241,7 +241,7 @@ def _airy(
     suffix: str = "",
     publish_mount: bool = True,
     **settings: Any,
-) -> MetaBlueprint:
+) -> Blueprint:
     """One of the M20's Airys onto `lidar` and `imu`, namespaced by its frame + `suffix` (tf and the joint state global)."""
     msop_port, difop_port, imu_port = ports
     return (
@@ -299,7 +299,7 @@ def _airys(front: dict[str, Any], rear: dict[str, Any], **both: Any) -> MetaBlue
     )
 
 
-def _dim_slam_on_nos() -> Blueprint:
+def _dim_slam_on_nos() -> MetaBlueprint:
     """dimSLAM on NOS, next to its own pair of Airy drivers. NOS's lidar NIC gets the multicast as early as AOS (13.8 ms
     after the lidar's stamp on both), so the slices never cross a board, and each 10 ms slice is fused as soon as it is
     measured instead of after the whole 100 ms sweep (walk #2 replay: 198 poses/s at the same CPU and accuracy as full
@@ -328,13 +328,13 @@ def _dim_slam_on_nos() -> Blueprint:
     )
 
 
-def _dock_detector_on_nos() -> Blueprint:
+def _dock_detector_on_nos() -> MetaBlueprint:
     """The controller's dock pose and obstacle check: drivers of both Airys of their own (the shared stream drops
     intensity, which the reflector posts are found by, and voxels away the points charge_manager's obstacle check
     counts), out to the detector's range, and the detector beside them, so their full sweeps never leave NOS; only ~10
     small poses and obstacle readings a second cross to the controller on AOS."""
     c = constants
-    dock_driver = {
+    dock_driver: dict[str, Any] = {
         "lidar": "dock_lidar",
         "imu": "dock_lidar_imu",
         "suffix": "_dock",
@@ -384,7 +384,7 @@ def _python_body_filter(**config: Any) -> Blueprint:
     )
 
 
-def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
+def _lidars_and_body_filter(joints: str) -> MetaBlueprint:
     """Both lidars and where the body is cut out of their scans, for one joint source (standing or controller)."""
     controller = M20ControllerClient if joints == "service" else M20Controller
     joint_source: Blueprint = (
@@ -420,14 +420,17 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
         if joints == "standing"
         else _python_body_filter(),
     )
-    return ChoiceAtom(
-        name="M20BodyFilter",
-        default="lidar",
-        choices={
-            # cut in each lidar's driver on AOS before publishing: no extra hop
-            "lidar": autoconnect(joint_source, in_driver),
-            "python": python,
-        },
+    # in autoconnect: a choice's options are blueprints, so a nested choice goes in one
+    return autoconnect(
+        ChoiceAtom(
+            name="M20BodyFilter",
+            default="lidar",
+            choices={
+                # cut in each lidar's driver on AOS before publishing: no extra hop
+                "lidar": autoconnect(joint_source, in_driver),
+                "python": python,
+            },
+        )
     )
 
 

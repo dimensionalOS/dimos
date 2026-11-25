@@ -31,6 +31,7 @@ step u8 reset, u8 activate, 3 f32 axes; u32 steps, per step 3 f32 axes, 16 f32 q
 yaw (deg), 3 f32 gyro, 3 f32 accel, 16 f32 commanded motor positions and 4 f32 wheel velocity commands as sent.
 """
 
+from collections.abc import Callable
 import gzip
 import json
 import os
@@ -38,11 +39,12 @@ import struct
 import sys
 
 import numpy as np
+from numpy.typing import NDArray
 
 COMMAND_LEAD_S = 0.0015
 
 
-def ecan_records(path):
+def ecan_records(path: str) -> tuple[NDArray[np.float32], NDArray[np.uint64], NDArray[np.float32]]:
     """examples/ecan_dump.rs's records: the states (16 x q, dq, tau) and the commands' times and (16 x q, dq, tau)."""
     b = open(path, "rb").read()
     o, st, cm_t, cmq = 0, [], [], []
@@ -60,7 +62,9 @@ def ecan_records(path):
     return np.array(st), np.array(cm_t), np.array(cmq)
 
 
-def windows(plan_path, imu_path, dump_path, joints_path, out_path, *windows):
+def windows(
+    plan_path: str, imu_path: str, dump_path: str, joints_path: str, out_path: str, *windows: str
+) -> None:
     steps = json.load(open(plan_path))["steps"]
     imu = np.load(imu_path)
     j = np.load(joints_path)
@@ -70,8 +74,8 @@ def windows(plan_path, imu_path, dump_path, joints_path, out_path, *windows):
     out = bytearray(b"M20PS1")
     out += struct.pack("<I", len(windows))
     for w in windows:
-        name, first, n = w.split(":")
-        first, n = int(first), int(n)
+        name, first_row, count = w.split(":")
+        first, n = int(first_row), int(count)
         mine = [s for s in steps if s["runner"] == name]
         k0 = next(i for i, s in enumerate(mine) if s["row"] >= first)
         start = k0 - 5
@@ -106,7 +110,9 @@ def windows(plan_path, imu_path, dump_path, joints_path, out_path, *windows):
     print(f"{len(out)} bytes")
 
 
-def session(session_dir, dump_path, cache, out_path, net_offset_s="0"):
+def session(
+    session_dir: str, dump_path: str, cache: str, out_path: str, net_offset_s: str = "0"
+) -> None:
     """Layout (little-endian): "M20SS2"; u32 rows, f64 time (s) per joint-frame row; u32 IMU samples, per sample f64
     arrival time (s), 9 f32 (roll / pitch / yaw deg, gyro, accel); u32 segments, per segment u8 name length, name, u32
     start row, u32 end row; u32 steps, per step u8 runner length, runner, u32 row, u32 state row, u32 gait, u8 reset, u8 activate,
@@ -182,4 +188,5 @@ def session(session_dir, dump_path, cache, out_path, net_offset_s="0"):
 
 
 if __name__ == "__main__":
-    {"windows": windows, "session": session}[sys.argv[1]](*sys.argv[2:])
+    commands: dict[str, Callable[..., None]] = {"windows": windows, "session": session}
+    commands[sys.argv[1]](*sys.argv[2:])

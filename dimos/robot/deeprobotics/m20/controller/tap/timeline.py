@@ -27,16 +27,27 @@ writes into SESSION_DIR:
   dds_writers.csv  every DDS writer seen: host, writer GUID, topic (when its discovery was captured), samples, sizes
 """
 
+from __future__ import annotations
+
 import argparse
 import collections
 import csv
+from dataclasses import dataclass, field
 import datetime
 import json
 import math
 import os
 import re
 import struct
-import sys
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    # one struct-unpacked joint unit (JOINT's fields)
+    Unit = tuple[Any, ...]
+    # (t_ns, source, event, detail): one timeline.csv row
+    Event = tuple[int, str, str, str]
 
 # --- motor bus -----------------------------------------------------------------------------------------------------
 
@@ -64,14 +75,14 @@ TYPES = {
 }
 
 
-def urdf(index, motor):
+def urdf(index: int, motor: float) -> float:
     value = motor * DIRECTION[index] + OFFSET_RAD[index]
     if index % 4 == 3:
         return value
     return math.remainder(value, math.tau)
 
 
-def ecan_frame(frame):
+def ecan_frame(frame: bytes) -> tuple[int, bytes] | None:
     """(frame type, payload) of an Ethernet frame, or None."""
     if len(frame) < 24 or frame[12:14] != b"\x44\x52":
         return None
@@ -79,8 +90,8 @@ def ecan_frame(frame):
     return frame[19], frame[24 : 24 + length]
 
 
-def joint_units(payload):
-    out = {}
+def joint_units(payload: bytes) -> dict[int, Unit]:
+    out: dict[int, Unit] = {}
     for at in range(0, len(payload) - 23, 24):
         unit = JOINT.unpack_from(payload, at)
         leg, kind = unit[1], unit[2] - 2
@@ -92,7 +103,7 @@ def joint_units(payload):
 # --- captures ------------------------------------------------------------------------------------------------------
 
 
-def read_packets(path):
+def read_packets(path: str) -> Iterator[tuple[int, int, str | None, bytes]]:
     """(t_ns, linktype, direction, bytes) from a pcap or pcapng file; direction 'rx'/'tx'/None (pcapng epb_flags)."""
     data = open(path, "rb").read()
     if len(data) < 24:
@@ -114,7 +125,7 @@ def read_packets(path):
         return
     if magic != 0x0A0D0D0A:
         raise ValueError(f"{path}: not pcap or pcapng")
-    interfaces = []
+    interfaces: list[tuple[int, int]] = []
     at = 0
     while at + 12 <= len(data):
         block_type, block_len = struct.unpack_from("<II", data, at)
@@ -137,7 +148,7 @@ def read_packets(path):
             interface, high, low, caplen = struct.unpack_from("<IIII", data, at + 8)
             frame = data[at + 28 : at + 28 + caplen]
             option = at + 28 + ((caplen + 3) & ~3)
-            direction = None
+            direction: str | None = None
             while option + 4 <= at + block_len - 4:
                 code, length = struct.unpack_from("<HH", data, option)
                 if code == 0:
@@ -153,7 +164,7 @@ def read_packets(path):
         at += block_len
 
 
-def ip_packet(linktype, frame):
+def ip_packet(linktype: int, frame: bytes) -> bytes | None:
     """The IPv4 packet inside a link-layer frame."""
     if linktype == 1:
         ethertype, offset = struct.unpack_from(">H", frame, 12)[0], 14
@@ -168,7 +179,7 @@ def ip_packet(linktype, frame):
     return frame[offset:] if ethertype == 0x0800 else None
 
 
-def udp_tcp(packet):
+def udp_tcp(packet: bytes) -> tuple[str, str, int, str, int, bytes, int | None] | None:
     """(protocol, src, sport, dst, dport, payload, tcp seq) of an IPv4 UDP/TCP packet."""
     if len(packet) < 20 or packet[0] >> 4 != 4:
         return None
@@ -192,7 +203,8 @@ def udp_tcp(packet):
 
 APDU_MAGIC = bytes.fromhex("eb91eb90")
 APDU = struct.Struct("<4sHHB7s")
-BASIC_NAMES = {
+# (Type, Command) as the APDU's JSON carries them
+BASIC_NAMES: dict[tuple[object, object], str] = {
     (100, 100): "heartbeat",
     (2, 21): "axis command",
     (2, 22): "motion state",
@@ -206,9 +218,9 @@ BASIC_NAMES = {
 }
 
 
-def apdus(stream):
+def apdus(stream: bytes) -> tuple[list[tuple[int, dict[str, Any], bytes]], bytes]:
     """Complete APDUs at the front of a byte buffer; returns (messages, unconsumed bytes)."""
-    messages = []
+    messages: list[tuple[int, dict[str, Any], bytes]] = []
     while True:
         start = stream.find(APDU_MAGIC)
         if start < 0:
@@ -222,13 +234,10 @@ def apdus(stream):
         body = stream[APDU.size : APDU.size + length]
         stream = stream[APDU.size + length :]
         try:
-            device = (
-                json.loads(body.decode("utf-8", "replace")).get("PatrolDevice", {})
-                if encoding == 1
-                else {}
-            )
+            document = json.loads(body.decode("utf-8", "replace")) if encoding == 1 else {}
         except ValueError:
-            device = {}
+            document = {}
+        device = document.get("PatrolDevice", {}) if isinstance(document, dict) else {}
         messages.append((message_id, device, body))
 
 
@@ -237,7 +246,7 @@ def apdus(stream):
 SEDP_WRITERS = (b"\x00\x00\x03\xc2", b"\x00\x00\x04\xc2")  # publications, subscriptions announcers
 
 
-def rtps_samples(payload):
+def rtps_samples(payload: bytes) -> Iterator[tuple[bytes, bytes, bytes, bool]]:
     """(guid prefix, writer id, serialized payload, is_sedp) for every DATA submessage."""
     if len(payload) < 20 or payload[:4] != b"RTPS":
         return
@@ -267,12 +276,12 @@ def rtps_samples(payload):
         at += 4 + length
 
 
-def parameter_list(serialized):
-    """{pid: value} of a PL_CDR payload."""
+def parameter_list(serialized: bytes) -> tuple[dict[int, bytes], str] | None:
+    """({pid: value}, struct endian) of a PL_CDR payload, or None."""
     if len(serialized) < 4:
-        return {}
+        return None
     endian = "<" if serialized[1] in (1, 3) else ">"
-    out = {}
+    out: dict[int, bytes] = {}
     at = 4
     while at + 4 <= len(serialized):
         pid, length = struct.unpack_from(endian + "HH", serialized, at)
@@ -283,14 +292,14 @@ def parameter_list(serialized):
     return out, endian
 
 
-def cdr_string(value, endian):
+def cdr_string(value: bytes, endian: str) -> str:
     if len(value) < 4:
         return ""
     length = struct.unpack_from(endian + "I", value, 0)[0]
     return value[4 : 4 + length].rstrip(b"\x00").decode("utf-8", "replace")
 
 
-def nav_cmd(serialized, t_ns):
+def nav_cmd(serialized: bytes, t_ns: int) -> tuple[float, float, float] | None:
     """(x, y, yaw) of a drdds NavCmd sample (u64 frame_id, i32 sec, u32 nsec, 3 f32), or None."""
     if len(serialized) != 32 or serialized[:2] not in (b"\x00\x01", b"\x00\x07"):
         return None
@@ -301,30 +310,30 @@ def nav_cmd(serialized, t_ns):
         or not all(map(math.isfinite, (x, y, yaw)))
     ):
         return None
-    return x, y, yaw
+    return float(x), float(y), float(yaw)
 
 
-def int_sample(serialized, t_ns):
+def int_sample(serialized: bytes, t_ns: int) -> int | None:
     """The value of a drdds header + int32 sample (MotionState, Gait), or None."""
     if len(serialized) != 24 or serialized[:2] not in (b"\x00\x01", b"\x00\x07"):
         return None
     _, sec, nsec, value = struct.unpack_from("<QiIi", serialized, 4)
     if abs(sec - t_ns / 1e9) > 86400 or nsec >= 1_000_000_000:
         return None
-    return value
+    return int(value)
 
 
 # --- main ----------------------------------------------------------------------------------------------------------
 
 
-def iso(t_ns):
+def iso(t_ns: int) -> str:
     return datetime.datetime.fromtimestamp(t_ns / 1e9).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 LOG_LINE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.(\d{3})\.(\d{3})\]\s*(.*)$")
 
 
-def log_events(path, source):
+def log_events(path: str, source: str) -> Iterator[Event]:
     if not os.path.exists(path):
         return
     for line in open(path, encoding="utf-8", errors="replace"):
@@ -340,7 +349,18 @@ def log_events(path, source):
         yield t_ns, source, "log", match.group(4).strip()
 
 
-def main():
+@dataclass
+class WriterStats:
+    """One DDS writer's samples, for dds_writers.csv."""
+
+    first: int
+    last: int
+    count: int = 0
+    sizes: collections.Counter[int] = field(default_factory=collections.Counter)
+    dst: set[str] = field(default_factory=set)
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -353,7 +373,7 @@ def main():
     )
     args = parser.parse_args()
     session = args.session
-    events = []
+    events: list[Event] = []
 
     # motor bus
     joints_out = csv.writer(open(os.path.join(session, "joints.csv"), "w", newline=""))
@@ -375,22 +395,24 @@ def main():
             )
         ]
     joints_out.writerow(header)
-    last_command = {}
-    last_mode = None
-    last_status = None
-    last_tx = None
-    counts = collections.Counter()
+    last_command: dict[int, Unit] = {}
+    last_mode: tuple[tuple[Any, Any, Any], ...] | None = None
+    last_status: tuple[Any, ...] | None = None
+    last_tx: int | None = None
+    # (direction, frame type name) -> frames; "-" when the capture recorded no direction
+    counts: collections.Counter[tuple[str, str]] = collections.Counter()
     ecan_path = os.path.join(session, "ecan.pcapng")
-    first = last = None
+    first: int | None = None
+    last: int | None = None
     if os.path.exists(ecan_path):
         for t_ns, _, direction, frame in read_packets(ecan_path):
-            parsed = ecan_frame(frame)
-            if parsed is None:
+            ecan = ecan_frame(frame)
+            if ecan is None:
                 continue
             first = first if first is not None else t_ns
             last = t_ns
-            frame_type, payload = parsed
-            counts[(direction, TYPES.get(frame_type, hex(frame_type)))] += 1
+            frame_type, payload = ecan
+            counts[(direction or "-", TYPES.get(frame_type, hex(frame_type)))] += 1
             seq = frame[16]
             if frame_type == 0x89 and direction == "tx":
                 units = joint_units(payload)
@@ -430,10 +452,10 @@ def main():
                         )
                     )
                     last_status = status
-                row = [t_ns, seq]
+                row: list[object] = [t_ns, seq]
                 for i in range(16):
                     state = units.get(i)
-                    command = last_command.get(i)
+                    sent = last_command.get(i)
                     row += (
                         [
                             f"{urdf(i, state[3]):.5f}",
@@ -446,14 +468,14 @@ def main():
                     )
                     row += (
                         [
-                            f"{urdf(i, command[3]):.5f}",
-                            f"{command[4] * DIRECTION[i]:.5f}",
-                            f"{command[5] * DIRECTION[i]:.5f}",
-                            command[6] / 10,
-                            command[7] / 10,
-                            command[8],
+                            f"{urdf(i, sent[3]):.5f}",
+                            f"{sent[4] * DIRECTION[i]:.5f}",
+                            f"{sent[5] * DIRECTION[i]:.5f}",
+                            sent[6] / 10,
+                            sent[7] / 10,
+                            sent[8],
                         ]
-                        if command
+                        if sent
                         else [""] * 6
                     )
                 joints_out.writerow(row)
@@ -477,7 +499,7 @@ def main():
                         payload[:32].hex(),
                     )
                 )
-        if first is not None:
+        if first is not None and last is not None:
             events.append((first, "ecan", "first frame", ""))
             events.append(
                 (
@@ -489,11 +511,14 @@ def main():
             )
 
     # network: basic_server, m20tool notes, DDS
-    tcp_buffers = collections.defaultdict(bytes)
-    topics = {}
-    writers = collections.OrderedDict()
+    tcp_buffers: collections.defaultdict[tuple[str, str, int, str, int], bytes] = (
+        collections.defaultdict(bytes)
+    )
+    # writer GUID -> (topic name, type name), from the captured discovery
+    topics: dict[bytes, tuple[str, str]] = {}
+    writers: dict[tuple[str, str], WriterStats] = {}
     net_path = os.path.join(session, "net.pcap")
-    pending_dds = []
+    pending_dds: list[tuple[int, str, bytes, bytes]] = []
     if os.path.exists(net_path):
         for t_ns, linktype, _, frame in read_packets(net_path):
             packet = ip_packet(linktype, frame)
@@ -507,17 +532,19 @@ def main():
                 )
                 continue
             if 30000 in (sport, dport) or 30001 in (sport, dport):
-                key = (protocol, src, sport, dst, dport)
+                stream = (protocol, src, sport, dst, dport)
                 if protocol == "tcp":
-                    tcp_buffers[key] += payload
-                    messages, tcp_buffers[key] = apdus(tcp_buffers[key])
+                    tcp_buffers[stream] += payload
+                    messages, tcp_buffers[stream] = apdus(tcp_buffers[stream])
                 else:
                     messages, _ = apdus(payload)
                 to_robot = dport in (30000, 30001)
                 for message_id, device, _body in messages:
-                    kind = (device.get("Type"), device.get("Command"))
-                    name = BASIC_NAMES.get(kind, f"type {kind[0]} command {kind[1]}")
-                    if args.no_heartbeats and (kind == (100, 100) or kind[0] == 1002):
+                    basic_kind = (device.get("Type"), device.get("Command"))
+                    name = BASIC_NAMES.get(
+                        basic_kind, f"type {basic_kind[0]} command {basic_kind[1]}"
+                    )
+                    if args.no_heartbeats and (basic_kind == (100, 100) or basic_kind[0] == 1002):
                         continue
                     items = json.dumps(device.get("Items", {}), separators=(",", ":"))
                     if len(items) > 400:
@@ -538,29 +565,21 @@ def main():
                         parameters = parameter_list(serialized)
                         if parameters:
                             values, endian = parameters
-                            guid = values.get(0x5A)
+                            announced = values.get(0x5A)
                             name = cdr_string(values.get(0x05, b""), endian)
-                            if guid and name:
-                                topics[guid[:16]] = (
+                            if announced and name:
+                                topics[announced[:16]] = (
                                     name,
                                     cdr_string(values.get(0x07, b""), endian),
                                 )
                         continue
-                    key = (src, (prefix + writer).hex())
                     info = writers.setdefault(
-                        key,
-                        {
-                            "count": 0,
-                            "sizes": collections.Counter(),
-                            "first": t_ns,
-                            "last": t_ns,
-                            "dst": set(),
-                        },
+                        (src, (prefix + writer).hex()), WriterStats(first=t_ns, last=t_ns)
                     )
-                    info["count"] += 1
-                    info["sizes"][len(serialized)] += 1
-                    info["last"] = t_ns
-                    info["dst"].add(f"{dst}:{dport}")
+                    info.count += 1
+                    info.sizes[len(serialized)] += 1
+                    info.last = t_ns
+                    info.dst.add(f"{dst}:{dport}")
                     pending_dds.append((t_ns, src, prefix + writer, serialized))
 
     # DDS samples, decoded once every captured discovery is known
@@ -568,7 +587,7 @@ def main():
         topic = topics.get(guid, ("", ""))[0]
         if topic in ("", "/NAV_CMD", "rt/NAV_CMD"):
             command = nav_cmd(serialized, t_ns)
-            if command:
+            if command is not None:
                 label = "NAV_CMD" if topic else "NAV_CMD? (layout match, no discovery captured)"
                 events.append(
                     (
@@ -597,20 +616,20 @@ def main():
                 "destinations",
             ]
         )
-        for (src, guid), info in writers.items():
-            topic, type_name = topics.get(bytes.fromhex(guid), ("", ""))
-            span = max(info["last"] - info["first"], 1) / 1e9
-            sizes = " ".join(f"{size}x{n}" for size, n in info["sizes"].most_common(4))
+        for (src, guid_hex), info in writers.items():
+            topic, type_name = topics.get(bytes.fromhex(guid_hex), ("", ""))
+            span = max(info.last - info.first, 1) / 1e9
+            sizes = " ".join(f"{size}x{n}" for size, n in info.sizes.most_common(4))
             table.writerow(
                 [
                     src,
-                    guid,
+                    guid_hex,
                     topic,
                     type_name,
-                    info["count"],
-                    f"{info['count'] / span:.1f}",
+                    info.count,
+                    f"{info.count / span:.1f}",
                     sizes,
-                    " ".join(sorted(info["dst"])),
+                    " ".join(sorted(info.dst)),
                 ]
             )
 
@@ -642,4 +661,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

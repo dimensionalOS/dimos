@@ -36,6 +36,7 @@ calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
 from __future__ import annotations
 
 from collections.abc import Callable
+import functools
 import json
 import threading
 import time
@@ -46,6 +47,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -179,7 +181,7 @@ class M20ControllerConfig(NativeModuleConfig):
         return {k: v for k, v in super().to_config_dict().items() if k not in _PYTHON_ONLY}
 
 
-class M20ControllerApi:
+class M20ControllerApi(CompositeResource):
     """The ports and RPCs of the controller, over `_send` / `_watch` (the native process's topics, or the service's)."""
 
     config: Any
@@ -241,9 +243,9 @@ class M20ControllerApi:
         )
         for name in ("battery", "battery_left", "battery_right"):
             self.register_disposable(
-                Disposable(self._watch(name, lambda msg, name=name: self._on_battery(name, msg)))
+                Disposable(self._watch(name, functools.partial(self._on_battery, name)))
             )
-        super().start()  # type: ignore[misc]
+        super().start()
 
     def _on_dock_state(self, msg: String) -> None:
         try:

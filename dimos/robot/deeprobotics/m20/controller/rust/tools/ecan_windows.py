@@ -28,13 +28,14 @@ a command) its sequence number is not the previous plus one.
 """
 
 import argparse
+from collections.abc import Iterator
 import gzip
 import struct
 
 CST_NS = 8 * 3600 * 10**9
 
 
-def packets(data: bytes):
+def packets(data: bytes) -> Iterator[tuple[int, int, bytes]]:
     """(time ns, epb_flags direction, frame) per enhanced packet block (nanosecond interface)."""
     i = 0
     while i + 12 <= len(data):
@@ -59,7 +60,8 @@ def windows(spec: str, day_ns: int) -> list[tuple[int, int]]:
         h, m, s = hms.split(":")
         return day_ns + (int(h) * 3600 + int(m) * 60) * 10**9 + round(float(s) * 1e9) - CST_NS
 
-    return [tuple(at(x) for x in w.split("-")) for w in spec.split(",") if w]
+    bounds = [w.split("-") for w in spec.split(",") if w]
+    return [(at(start), at(end)) for start, end in bounds]
 
 
 def main() -> None:
@@ -104,6 +106,8 @@ def main() -> None:
             base = prev_units or bytes(len(frame) - 24)
             units += bytes(x ^ y for x, y in zip(frame[24:], base, strict=False))
             prev_units = frame[24:]
+    if header is None:
+        raise SystemExit("no joint command in the KEEP windows, so no command header to write")
     n = sum(k in b"SsBCr" for k in kinds)
     blob = struct.pack("<I", len(kinds)) + header + kinds + times + side + units
     with open(a.out, "wb") as f:

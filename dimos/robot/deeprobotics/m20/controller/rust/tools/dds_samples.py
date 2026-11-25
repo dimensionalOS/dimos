@@ -22,11 +22,12 @@ header included). Each sample reaches several readers and interfaces; only its f
     python tools/dds_samples.py CAPTURE.pcap [WRITER_GUID_PREFIX ...] | gzip -9 > samples.txt.gz
 """
 
+from collections.abc import Iterator
 import struct
 import sys
 
 
-def udp_payloads(path):
+def udp_payloads(path: str) -> Iterator[tuple[int, str, bytes]]:
     """(capture time ns, source ip, udp payload) per IPv4 UDP packet (Ethernet or Linux cooked capture)."""
     with open(path, "rb") as f:
         head = f.read(24)
@@ -46,9 +47,9 @@ def udp_payloads(path):
             yield sec * 10**9 + frac * (1 if nano else 1000), src, d[off + ihl + 8 :]
 
 
-def main():
+def main() -> None:
     path, keep = sys.argv[1], sys.argv[2:]
-    seen = set()
+    seen: set[tuple[str, int]] = set()
     for t, src, p in udp_payloads(path):
         if p[:4] != b"RTPS":
             continue

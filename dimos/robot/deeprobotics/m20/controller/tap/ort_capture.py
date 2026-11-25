@@ -65,17 +65,19 @@ def read(path: str) -> tuple[dict[int, str], list[Run]]:
         if kind == 1:
             sessions[struct.unpack_from("<I", body)[0]] = body[4:].decode(errors="replace")
         elif kind == 2:
-            head = struct.unpack_from("<QIIQQQQQiII", body)
-            run = Run(*head[:8], failed=bool(head[8]))
+            seq, session, thread, before, after, realtime, frames, last_rx, failed, n_in, n_out = (
+                struct.unpack_from("<QIIQQQQQiII", body)
+            )
+            run = Run(seq, session, thread, before, after, realtime, frames, last_rx, bool(failed))
             p = struct.calcsize("<QIIQQQQQiII")
-            for k in range(head[9] + head[10]):
+            for k in range(n_in + n_out):
                 name = body[p : p + NAME_BYTES].split(b"\0")[0].decode()
                 dims = struct.unpack_from("<I", body, p + NAME_BYTES)[0]
                 shape = struct.unpack_from(f"<{MAX_DIMS}q", body, p + NAME_BYTES + 4)[:dims]
                 floats = struct.unpack_from("<I", body, p + NAME_BYTES + 4 + 8 * MAX_DIMS)[0]
                 q = p + NAME_BYTES + 8 + 8 * MAX_DIMS
                 t = Tensor(name, tuple(shape), np.frombuffer(body, "<f4", floats, q).copy())
-                (run.inputs if k < head[9] else run.outputs).append(t)
+                (run.inputs if k < n_in else run.outputs).append(t)
                 p = q + 4 * floats
             runs.append(run)
     return sessions, runs

@@ -21,6 +21,7 @@ import sys
 import time
 
 import numpy as np
+from numpy.typing import NDArray
 
 
 def gen(out: Path, voxel: float) -> None:
@@ -66,7 +67,7 @@ def gen(out: Path, voxel: float) -> None:
     (out / "config.json").write_text(json.dumps(cfg, indent=1))
 
 
-def read_scans(path: Path):
+def read_scans(path: Path) -> list[tuple[str, float, NDArray[np.float32]]]:
     b = path.read_bytes()
     at = 0
     out = []
@@ -83,7 +84,7 @@ def read_scans(path: Path):
     return out
 
 
-def read_masks(path: Path):
+def read_masks(path: Path) -> list[tuple[int, float, NDArray[np.bool_]]]:
     b = path.read_bytes()
     at = 0
     out = []
@@ -120,13 +121,16 @@ def compare(out: Path) -> None:
     diff_scans = 0
     py_ms = []
     rs_ms = []
-    per_set = {}
+    # joint set -> [scans, python-removed points, mismatched points]
+    per_set: dict[int, list[int]] = {}
     worst = []
     for (frame, stamp, pts), (s, ms, rust_on_body) in zip(scans, masks, strict=False):
         T = mounts[frame]
         base = np.asarray(pts @ T[:3, :3].T + T[:3, 3], dtype=np.float64)
         t0 = time.perf_counter()
         keep = rp.keep_mask(base, cfg["joint_sets"][s], {})
+        if keep is None:
+            raise SystemExit(f"joint set {s}: RoboPlan has no configuration for it")
         py_ms.append((time.perf_counter() - t0) * 1e3)
         py_on_body = ~keep
         d = int(np.count_nonzero(py_on_body != rust_on_body))
@@ -200,7 +204,10 @@ def fixture(src: Path, dest: Path) -> None:
         frame, stamp, pts = scans[i]
         T = mounts[frame]
         joints = cfg["joint_sets"][masks[i][0]]
-        body = ~rp.keep_mask(np.asarray(pts @ T[:3, :3].T + T[:3, 3], dtype=np.float64), joints, {})
+        keep = rp.keep_mask(np.asarray(pts @ T[:3, :3].T + T[:3, 3], dtype=np.float64), joints, {})
+        if keep is None:
+            raise SystemExit(f"joint set {masks[i][0]}: RoboPlan has no configuration for it")
+        body = ~keep
         # every body point, a fortieth of the others within 1 m of the lidar, a sparse sample of the rest
         index = np.arange(len(pts))
         sel = body | ((np.linalg.norm(pts, axis=1) < 1.0) & (index % 40 == 0)) | (index % 2000 == 0)
@@ -236,7 +243,7 @@ def synthetic(src: Path, dest: Path) -> None:
     desc = M20_MODEL.load()
     joints = {j.child_link: j for j in desc.joints}
 
-    def root_from(link):
+    def root_from(link: str) -> NDArray[np.float64]:
         if link not in joints:
             return np.eye(4)
         j = joints[link]
@@ -249,7 +256,10 @@ def synthetic(src: Path, dest: Path) -> None:
     for link in ET.fromstring(desc.xml).iter("link"):
         for c in link.findall("collision"):
             o = c.find("origin")
-            g = c.find("geometry")[0]
+            geometry = c.find("geometry")
+            if geometry is None or len(geometry) == 0:
+                raise ValueError(f"{link.attrib['name']}: a collision without a geometry")
+            g = geometry[0]
             T = np.eye(4)
             if o is not None:
                 T[:3, :3] = Rotation.from_euler(
@@ -258,12 +268,12 @@ def synthetic(src: Path, dest: Path) -> None:
                 T[:3, 3] = [float(v) for v in o.get("xyz", "0 0 0").split()]
             u = rng.uniform(-1, 1, size=(100, 3)) * 0.999
             if g.tag == "box":
-                local = u * np.array([float(v) for v in g.get("size").split()]) / 2
+                local = u * np.array([float(v) for v in g.attrib["size"].split()]) / 2
             else:
-                r, half = float(g.get("radius")), float(g.get("length")) / 2
+                r, half = float(g.attrib["radius"]), float(g.attrib["length"]) / 2
                 u = u[np.linalg.norm(u[:, :2], axis=1) <= 1]
                 local = np.c_[u[:, 0] * r, u[:, 1] * r, u[:, 2] * half]
-            W = root_from(link.get("name")) @ T
+            W = root_from(link.attrib["name"]) @ T
             body.append(local @ W[:3, :3].T + W[:3, 3])
     body = np.concatenate(body)
     out = bytearray()
