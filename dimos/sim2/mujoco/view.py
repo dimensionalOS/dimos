@@ -121,7 +121,9 @@ class MujocoView:
                         data.qpos[model.jnt_qposadr[joint]] = entity.joint[0]
                         data.qvel[model.jnt_dofadr[joint]] = entity.joint[1]
                 elif entity.path in self._robots:
-                    self._pose_entity(entity, self._root(entity.path))
+                    root = self._root(entity.path)
+                    if root >= 0:
+                        self._pose_entity(entity, root)
                 else:
                     body = self._object_body(entity.path)
                     if body >= 0:
@@ -201,7 +203,8 @@ class MujocoView:
         for frame in [*blind_to, *([] if mounted_at is None else [mounted_at])]:
             blind |= {self._mount(frame), *self._carried_by(frame)}
         for robot in blind_to_robots:
-            blind |= set(self._under(self._root(robot)))
+            if self._root(robot) >= 0:
+                blind |= set(self._under(self._root(robot)))
         return RayScene(self.model, self.data, groups, blind)
 
     def _under(self, root: int) -> list[int]:
@@ -343,12 +346,13 @@ class MujocoView:
                 if (model.body(body).name or "").startswith(prefix)
                 and not (model.body(int(model.body_parentid[body])).name or "").startswith(prefix)
             ]
-            if len(under) != 1:
+            # A view of part of the world, as of one robot alone, holds none of the others.
+            if len(under) > 1:
                 raise KeyError(
                     f"{robot_id!r} has {len(under)} root bodies in this world: "
                     f"{[model.body(b).name for b in under]}"
                 )
-            self._robot_roots[robot_id] = under[0]
+            self._robot_roots[robot_id] = under[0] if under else -1
         return self._robot_roots[robot_id]
 
     def _pose_entity(self, entity: Entity, body: int) -> None:
