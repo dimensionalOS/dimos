@@ -26,13 +26,10 @@ from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareSpec
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.files.File import File
-from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import JointCommand, read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, until_it_stops
 from dimos.sim2.spec import validate
-from dimos.sim2.world_files import WorldFiles
 from dimos.sim2.world_observations import merged
 from dimos.utils.logging_config import setup_logger
 
@@ -49,13 +46,10 @@ class MujocoSim(Module):
     config: MujocoSimConfig
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
-    render_file_request: In[String]
-    file_info: Out[File]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._backend: MujocoBackend | None = None
-        self._files: WorldFiles | None = None
         self._publisher: _LatestPublisher | None = None
         self._composed = Event()
         self._world_usd = ""
@@ -131,14 +125,6 @@ class MujocoSim(Module):
             self._commanded |= {a.entity for a in actions if isinstance(a, JointCommand)}
             if self._held <= self._commanded:
                 self._all_commanded.set()
-
-    async def handle_render_file_request(self, request: String) -> None:
-        backend = self._backend
-        if backend is None:
-            return
-        if self._files is None:
-            self._files = WorldFiles(backend.usd, backend.assets())
-        await self._files.answer(request.data, self.file_info.publish)
 
     @rpc
     def describe(self) -> dict[str, Any]:

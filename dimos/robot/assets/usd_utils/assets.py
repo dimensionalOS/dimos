@@ -29,16 +29,6 @@ logger = setup_logger()
 
 
 _HASH_ALGORITHM = "sha256"
-_ASSET_ROOT_PREFIX = "/dimos/assets/"
-
-
-def is_published_asset(path: str) -> bool:
-    """Whether this asset name is one publish_usd_assets minted for the bus, not a file path.
-
-    A published name says nothing about where the file is; only the module that published it
-    can still hand over the bytes.
-    """
-    return path.startswith(_ASSET_ROOT_PREFIX)
 
 
 def resolve_usd_assets(usd: str, root: str) -> str:
@@ -55,6 +45,7 @@ def resolve_usd_assets(usd: str, root: str) -> str:
 
 
 def publish_usd_assets(usd: str, root: Path | str | None = None) -> tuple[str, dict[str, str]]:
+    """The layer with each file it needs renamed `<prim path>/<file>`, relative so no host path leaves, and name -> path."""
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a scene", root)
     public: dict[str, str] = {}
@@ -184,7 +175,7 @@ def _renamed_value(pxr: Pxr, value: Any, where: str, rename: AssetRename) -> Any
 
 def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
     where = prim_path.strip("/")
-    stem = f"{_ASSET_ROOT_PREFIX}{where + '/' if where else ''}{Path(real).name}"
+    stem = f"{where + '/' if where else ''}{Path(real).name}"
     if stem not in taken:
         return stem
     base, dot, extension = stem.rpartition(".")
@@ -239,8 +230,6 @@ def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
     unopenable: dict[str, str] = {}
     base = Path(root) if root else None
     for asset in referenced_asset_paths(usd, root):
-        if is_published_asset(asset):
-            continue
         path = Path(asset)
         if not path.is_absolute():
             if base is None:
@@ -303,7 +292,11 @@ def _common_parent(assets: Mapping[str, str], root: Path | str | None) -> str:
 
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a layer", root)
+    return layer_asset_paths(pxr, layer_from(pxr, usd, "a layer", root))
+
+
+def layer_asset_paths(pxr: Pxr, layer: Layer) -> set[str]:
+    """The files an open layer needs, as it names them."""
     return {asset for asset, _ in _required_assets(pxr, layer)}
 
 

@@ -33,16 +33,17 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it() -> None:
     from dimos.robot.assets.usd_utils.layers import graft_usd
     from dimos.robot.unitree.g1.sim2 import G1_USD, G1Sim
     from dimos.sim2.mujoco.backend import MujocoBackend
+    from dimos.sim2.sim import fetched_usd
     from dimos.sim2.spec import SimulatedRobot
     from dimos.sim2.world_observations import WorldMirror
+    from dimos.utils.testing.hardware_files import serving_hardware_files
 
     scene = UsdModel.from_file(SCENE).with_frames(
         {"g1": ("scene", MOUNT_XYZ, (0.0, 0.0, MOUNT_YAW))}
     )
     sim = G1Sim(mount="g1", instance_name="g1/G1Sim")
     try:
-        g1 = sim.get_usd()
-        assert g1 is not None
+        g1 = fetched_usd(serving_hardware_files(sim))
         world = UsdModel.from_layer(graft_usd(scene.usd, {"g1": g1}))
         backend = MujocoBackend(world, [SimulatedRobot("g1", G1_USD)])
         sim._world = WorldMirror()

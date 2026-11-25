@@ -25,6 +25,7 @@ from dimos.core.hardware_module import HardwareModule
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.sim2.sensor import SimSensor
 from dimos.sim2.sim import compose_world
+from dimos.utils.testing.hardware_files import serving_hardware_files
 
 pytest.importorskip("pxr")
 
@@ -62,7 +63,9 @@ def test_each_namespace_has_one_unmounted_hardware(name: str) -> None:
 @pytest.mark.parametrize("name", _BLUEPRINTS)
 def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
     with _hardware(name) as hardware:
-        frames = usd_frame_names(compose_world(hardware).usd)
+        frames = usd_frame_names(
+            compose_world([serving_hardware_files(module) for module in hardware]).usd
+        )
         # The scene is a SimSensor too, but the only unmounted one.
         sensed = {
             module.frame_id
