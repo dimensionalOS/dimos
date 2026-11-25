@@ -287,7 +287,7 @@ class UsdModel:
             from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
             return usd_frame_names(self.usd, self._asset_root())
-        added = {f"{parent}/{name}" for name, parent, _, _ in self._added_frames}
+        added = {joint.child_link for joint in self._added_frame_joints()}
         return {self.top_frame, *self._urdf_link_paths.values(), *added}
 
     def _added_frame_joints(self) -> tuple[JointDescription, ...]:
