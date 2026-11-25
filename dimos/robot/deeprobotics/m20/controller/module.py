@@ -55,6 +55,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.navigation.spec import cancel_goal
@@ -211,6 +212,8 @@ class M20ControllerApi:
     dock_state: Out[String]
     body_height: Out[Float32]
     controller_report: Out[String]
+    # /HES_STATUS as rl_deploy writes it: the ECAN board's hard-stop byte (0 clear, 1 pressed)
+    hes_status: Out[Int32]
     # nav goal cancels around docking (M20Connection's)
     goal: Out[PoseStamped]
 

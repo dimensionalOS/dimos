@@ -56,6 +56,8 @@ pub struct ControllerStatus {
     pub motion_info_height_m: f64,
     /// the newest IMU sample's age at this tick (ms; none before the first): what the policy step reads
     pub imu_age_ms: Option<f64>,
+    /// /HES_STATUS: the ECAN board's hard-stop byte (0 clear, 1 pressed; none before the first 0x8a frame)
+    pub hard_stop: Option<u8>,
     /// the 1 kHz loop's overruns so far and its slowest tick (ms)
     pub overruns: u64,
     pub max_tick_ms: f64,
@@ -109,6 +111,7 @@ impl ControllerStatus {
             charger_state: dock.map(crate::basic_server::charger_state_of),
             motion_info_height_m: round(c.motion_info_height() as f64),
             imu_age_ms: None,
+            hard_stop: None,
             overruns: tick.stats.overruns,
             max_tick_ms: round(tick.stats.max_tick_s * 1e3),
             dock_active: dock.is_some_and(|d| d.active),
@@ -132,6 +135,7 @@ impl ControllerStatus {
                 self.charging,
                 self.usage_mode,
             ),
+            self.hard_stop,
         )
     }
 }
@@ -266,6 +270,7 @@ mod tests {
             charger_state: None,
             motion_info_height_m: Default::default(),
             imu_age_ms: None,
+            hard_stop: None,
             overruns: 0,
             max_tick_ms: Default::default(),
             dock_active: false,

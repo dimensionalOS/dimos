@@ -16,6 +16,7 @@
 //! tap) or frames this module's owner exchanged.
 
 use lcm_msgs::sensor_msgs::{BatteryState, JointState};
+use lcm_msgs::std_msgs::Int32;
 use m20_battery::BatteryReport;
 use m20_ecan::{decode_ethernet, Calibration, Direction, Message};
 
@@ -35,6 +36,8 @@ pub enum Published {
     JointState(JointState),
     JointCommand(JointState),
     Battery(Box<Batteries>),
+    /// /HES_STATUS: the 0x8a frame's hard-stop byte on every frame (rl_deploy handlEcanStatus 0x197c78)
+    HardStop(Int32),
 }
 
 impl Published {
@@ -43,6 +46,7 @@ impl Published {
         match self {
             Published::JointState(m) | Published::JointCommand(m) => vec![m.encode()],
             Published::Battery(b) => vec![b.left.encode(), b.right.encode(), b.combined.encode()],
+            Published::HardStop(m) => vec![m.encode()],
         }
     }
 }
@@ -87,8 +91,36 @@ impl FrameHandler {
                     ),
                 }))))
             }
+            Ok((_, Message::EcanStatus(status))) => Ok(Some(Published::HardStop(Int32 {
+                data: status.hard_stop as i32,
+            }))),
             Ok(_) => Ok(None),
             Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ecan_status_frame(hard_stop: u8) -> Vec<u8> {
+        let mut payload = vec![0u8; m20_ecan::message::ECAN_STATUS_LEN];
+        payload[0] = hard_stop;
+        let body =
+            m20_ecan::frame::encode(0, 6, 0x21, m20_ecan::FrameType::EcanStatus, &payload).unwrap();
+        m20_ecan::ethernet::wrap([2, 0, 0, 0, 0, 1], &body)
+    }
+
+    #[test]
+    fn each_ecan_status_frame_publishes_its_hard_stop_byte() {
+        let handler = FrameHandler::new("base_link");
+        for value in [0, 1, 0] {
+            let frame = ecan_status_frame(value);
+            assert_eq!(
+                handler.handle(0, Direction::FromBoard, &frame),
+                Ok(Some(Published::HardStop(Int32 { data: value as i32 })))
+            );
         }
     }
 }

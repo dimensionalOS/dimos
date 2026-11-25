@@ -88,8 +88,8 @@ S5 walking (any gait, cmd_vel nonzero) · S6 damping / fault · S7 e-stop presse
 | 38 | driver fault / overheat | any | status word != 1; motor 120 / driver 100 deg C latched | same (sm 204) | same | driver_faults_are_rl_deploy_s |
 | 39 | overheat soft fallback | S5 | motor >= 100 / driver >= 90, still, > 70 C for 1 s -> 0xf001 stand | **not implemented** | **differs** | TODO |
 | 40 | fault recovery | S6 | stays in damping while the fault holds; target reset to 2 | stays; requires a different request | same | state_machine |
-| 41 | e-stop press | any | **unknown**: remote e-stop -> motion 2? hardware button cuts joint power -> driver status fault | driver status fault only | **unknown** | TODO record |
-| 42 | e-stop release | S7 | **unknown** (needs a new stand?) | needs a new stand | **unknown** | TODO record |
+| 41 | e-stop press | any | the ECAN board's 0x8a byte 0 -> /HES_STATUS 1 (handlEcanStatus 0x197c78); no state change on it (inferred: the button cuts joint power -> driver status fault -> damping); bridge zeroes cmd_vel and command_ready; 0x84 motor config 0x11 / 0x17 on a change into motion 0 or 2 (0x197d38) | /HES_STATUS published, NavBridge and command_ready gate on it; driver status fault; **no 0x84 config frames** (none in any capture) | **partial** | the_hard_stop_zeroes_each_cycle_while_set..., each_ecan_status_frame_publishes_its_hard_stop_byte; TODO record a press
+| 42 | e-stop release | S7 | /HES_STATUS 0; the bridge passes the twist again; leaving damping is passive, so walking needs a new stand (inferred) | same | same (inferred) | TODO record a release
 | 43 | IMU stale / NaN | S5 | status bits only, no fault | same | same | fault_replay |
 | 44 | missed motor replies | S5 | no fault | no fault (5aa0a98c2d) | same | reply_census |
 | 45 | inference failure | S5 | Ort throws: process exits (dog drops) | fault -> JointDamping | **differs** (safer, deliberate) | unknown_forced_runner_does_not_panic |
@@ -109,7 +109,7 @@ confirm: done (pending commit). 4 module stop: lie-down safety net (7a3d455252),
 done (pending). 7 / 8 undock and failed dock end with M20Connection's _stand(), 9 dock() / undock() block and raise, 10 goal cancel
 around docking (on dock start, and every 1 s while velocity arrives during docking / on the dock), 14 NaN zeroing,
 0.4 s timeout, 2 / 1 / 2 clamp, 15 command_ready at 10 Hz: done (pending commit). **Open: 5, 6, 11 (dock agent:
-docking.rs), 15's /HES_STATUS e-stop input (no e-stop source in our stack yet), 18 charge_status() type, 19 move(),
+docking.rs), 18 charge_status() type, 19 move(),
 21 odom, 22 motion_state / gait_state topics.**
 
 ## Order of fixes

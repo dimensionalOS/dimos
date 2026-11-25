@@ -36,7 +36,7 @@ use std::time::Duration;
 use dimos_module::{native_config, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{PoseStamped, Twist, Vector3};
 use lcm_msgs::sensor_msgs::{BatteryState, Imu, JointState};
-use lcm_msgs::std_msgs::{self, Bool, Float32, UInt32};
+use lcm_msgs::std_msgs::{self, Bool, Float32, Int32, UInt32};
 use m20_ecan::tap::{TapRecord, TapSocket};
 use m20_ecan::Direction;
 use tokio::sync::watch;
@@ -161,6 +161,9 @@ pub struct M20Controller {
     /// policy: crate::status::ControllerStatus as JSON, on every change and once a second
     #[output(encode = std_msgs::String::encode)]
     controller_report: Output<std_msgs::String>,
+    /// /HES_STATUS as rl_deploy writes it: the ECAN board's hard-stop byte on every 0x8a frame (0 clear, 1 pressed)
+    #[output(encode = Int32::encode)]
+    hes_status: Output<Int32>,
 
     #[config]
     config: Config,
@@ -189,6 +192,8 @@ pub struct Shared {
     vendor_read: AtomicBool,
     /// basic_server's usage mode (requests in, the current mode out)
     usage: Arc<crate::basic_server::UsageMode>,
+    /// the newest hard-stop byte off the bus (the bridge's /HES_STATUS gate)
+    hard_stop: Arc<crate::commands::HardStop>,
 }
 
 /// The body IMU as the loop reads it: the newest sample that arrived, however old (rl_deploy's, which never ages one
@@ -285,6 +290,8 @@ struct Latest {
     battery: watch::Sender<Option<BatteryState>>,
     left: watch::Sender<Option<BatteryState>>,
     right: watch::Sender<Option<BatteryState>>,
+    hes_status: watch::Sender<Option<Int32>>,
+    hard_stop: Arc<crate::commands::HardStop>,
     handler: FrameHandler,
 }
 
@@ -302,6 +309,10 @@ impl Latest {
                 self.left.send_replace(Some(left));
                 self.right.send_replace(Some(right));
                 self.battery.send_replace(Some(combined));
+            }
+            Ok(Some(Published::HardStop(m))) => {
+                self.hard_stop.set(m.data as u8);
+                self.hes_status.send_replace(Some(m));
             }
             Ok(None) => {}
             Err(error) => warn!(%error, "bad motor-bus frame"),
@@ -325,6 +336,8 @@ impl M20Controller {
         let (battery, battery_rx) = watch::channel(None);
         let (left, left_rx) = watch::channel(None);
         let (right, right_rx) = watch::channel(None);
+        let (hes_status, hes_status_rx) = watch::channel(None);
+        forward(hes_status_rx, self.hes_status.clone(), "hes_status");
         let (status, status_rx) = watch::channel(None::<Status>);
         forward(joint_state_rx, self.joint_state.clone(), "joint_state");
         forward(
@@ -374,6 +387,8 @@ impl M20Controller {
             battery,
             left,
             right,
+            hes_status,
+            hard_stop: self.shared.hard_stop.clone(),
             handler: FrameHandler::new(&config.frame_id),
         };
         if config.policy && config.mode != "owner" {
@@ -726,6 +741,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             SharedCommands {
                 shared: shared.clone(),
             },
+            shared.hard_stop.clone(),
             config.command_ready_hz,
             cfg.safety.command_timeout_s,
         ),
@@ -795,6 +811,10 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             let dock = dock_latest.lock().ok().and_then(|d| d.clone());
             let mode = usage.current.load(Ordering::Relaxed);
             let mut full = crate::status::ControllerStatus::of(&cfg, tick, dock.as_ref(), mode);
+            // the bridge's command_ready also needs the hard stop clear (main.cpp robot_ready)
+            let hard_stop_clear = imu_seen.hard_stop.clear();
+            full.hard_stop = imu_seen.hard_stop.get();
+            full.ready &= hard_stop_clear;
             full.imu_age_ms = imu_seen.imu.try_lock().ok().and_then(|i| {
                 i.as_ref()
                     .map(|(_, at)| (at.elapsed().as_secs_f64() * 1e4).round() / 10.0)
@@ -822,7 +842,7 @@ fn run_policy(config: &Config, latest: Latest, shared: Arc<Shared>, publish: Pub
             }
             let c = tick.controller;
             let now = Status {
-                ready: c.state == State::RlControl && c.fault.is_none(),
+                ready: c.state == State::RlControl && c.fault.is_none() && hard_stop_clear,
                 state: match &c.fault {
                     Some(fault) => format!("{:?} (fault: {fault})", c.state),
                     None => format!("{:?}", c.state),
