@@ -24,23 +24,10 @@ from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_frame_nam
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sim import MujocoSim
-from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, sim
+from dimos.sim2.sim import SimulatedRobotSpec, compose_usds, meeting, sim
 from dimos.sim2.spec import SimulatedRobot, validate
 
 pytest.importorskip("pxr")
-
-
-class _Part:
-    """What compose_world asks of a HardwareModule: its USD and the frame it is mounted on."""
-
-    def __init__(self, usd: str, mounted_on: str | None) -> None:
-        self._usd, self._mounted_on = usd, mounted_on
-
-    def get_usd(self) -> str:
-        return self._usd
-
-    def mounted_on(self) -> str | None:
-        return self._mounted_on
 
 
 def _room() -> str:
@@ -54,7 +41,7 @@ def _dog() -> str:
 
 
 def test_each_hardware_is_grafted_onto_the_frame_it_is_mounted_on() -> None:
-    world = compose_world([_Part(_room(), None), _Part(_dog(), "dog")])
+    world = compose_usds([(_room(), None), (_dog(), "dog")])
     frames = usd_frame_names(world.usd)
     assert "dog" in frames
     assert any(frame.startswith("dog/") for frame in frames)
@@ -62,14 +49,14 @@ def test_each_hardware_is_grafted_onto_the_frame_it_is_mounted_on() -> None:
 
 def test_a_world_needs_exactly_one_unmounted_usd() -> None:
     with pytest.raises(ValueError, match="exactly one unmounted"):
-        compose_world([_Part(_dog(), "dog")])
+        compose_usds([(_dog(), "dog")])
     with pytest.raises(ValueError, match="exactly one unmounted"):
-        compose_world([_Part(_room(), None), _Part(_room(), None)])
+        compose_usds([(_room(), None), (_room(), None)])
 
 
 def test_a_mount_frame_nothing_has_is_refused() -> None:
     with pytest.raises(ValueError, match="mount frames \\['cat'\\]"):
-        compose_world([_Part(_room(), None), _Part(_dog(), "cat")])
+        compose_usds([(_room(), None), (_dog(), "cat")])
 
 
 class _Running:
@@ -80,8 +67,8 @@ class _Running:
 
 
 def test_the_world_finds_its_hardware_and_robots_by_what_they_answer() -> None:
-    room = _Running("get_usd", "mounted_on", "start")
-    dog = _Running("get_usd", "mounted_on", "simulated_robot")
+    room = _Running("get_usd", "mounted_on", "hardware_namespace", "start")
+    dog = _Running("get_usd", "mounted_on", "hardware_namespace", "simulated_robot")
     other = _Running("get_usd", "describe")
     assert meeting(HardwareSpec, [room, dog, other]) == [room, dog]
     assert meeting(SimulatedRobotSpec, [room, dog, other]) == [dog]

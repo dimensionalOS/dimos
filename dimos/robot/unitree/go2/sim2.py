@@ -31,6 +31,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
 from dimos.robot.unitree.go2.connection import GO2_MODEL, ConnectionConfig
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
@@ -43,7 +44,6 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.lfs import pull_model_assets
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops

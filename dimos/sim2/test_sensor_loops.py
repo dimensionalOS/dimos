@@ -276,20 +276,11 @@ def _toy_world(sensor: Any, mount: str) -> Any:
     from dimos.robot.assets.model import UsdModel
     from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
     from dimos.sim2.assets.toy import toy_robot
-    from dimos.sim2.sim import compose_world
+    from dimos.sim2.sim import compose_usds, fetched_usd
     from dimos.sim2.spec import ODOM_FRAME
     from dimos.sim2.usd_layer import layer_file
     from dimos.sim2.world_observations import WorldMirror, WorldWriter
-
-    class _Part:
-        def __init__(self, usd: str, mounted_on: str | None) -> None:
-            self.usd, self.on = usd, mounted_on
-
-        def get_usd(self) -> str:
-            return self.usd
-
-        def mounted_on(self) -> str | None:
-            return self.on
+    from dimos.utils.testing.hardware_files import serving_hardware_files
 
     scene = Path(__file__).parent / "mujoco" / "assets" / "scene.usda"
     room = UsdModel.from_file(scene).with_frames(
@@ -302,11 +293,12 @@ def _toy_world(sensor: Any, mount: str) -> Any:
             "l1_up": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         }
     )
-    world_usd = compose_world(
+    world_usd = compose_usds(
         [
-            _Part(room.usd, None),
-            _Part(prefix_usd_frames(dog.usd, "dog"), "dog"),
-            _Part(sensor.get_usd(), mount),
+            (room.usd, None),
+            (prefix_usd_frames(dog.usd, "dog"), "dog"),
+            # The sensor's own files come over its hardware_file streams, as in a running blueprint.
+            (fetched_usd(serving_hardware_files(sensor)), mount),
         ]
     ).usd
     writer, mirror = WorldWriter(), WorldMirror()
