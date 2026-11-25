@@ -92,10 +92,6 @@ class Mounts:
         return frame in self._frames.values()
 
 
-# The role of the frame a mounted HardwareModule sits on: its namespace, another module's frame.
-MOUNT_ROLE = "mount"
-
-
 class HardwareModuleConfig(TfModuleConfig):
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
     # Required: hardware without a USD is not a HardwareModule.
@@ -155,8 +151,9 @@ def usd_tf(
                 f"attached_to is {attached_to!r} but the namespace is {namespace!r}; a mounted "
                 f"HardwareModule sits under its mount's namespace (use .attach(mount))"
             )
-        shared[MOUNT_ROLE] = namespace
-        edges.append((MOUNT_ROLE, usd.top_frame))
+        # The mount is the namespace frame itself (local ""), which the served USD has as a prim.
+        local[""] = ""
+        edges.append(("", usd.top_frame))
     for role, frame in values["tf_frames_local"].items():
         if frame not in local:
             raise ValueError(
@@ -221,11 +218,27 @@ class HardwareModule(TfModule):
     def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same path (``a/b/c/<module>``)."""
         check_frame_path(mount_frame, "the mount frame")
-        blueprint = cls.blueprint(attached_to=mount_frame, **kwargs)
+        blueprint = cls.blueprint(attached_to=mount_frame, **cls._mount_tf(kwargs))
         # namespace() puts its prefix in front, so the last segment goes on first.
         for segment in reversed(mount_frame.split("/")):
             blueprint = blueprint.namespace(segment)
         return blueprint
+
+    @classmethod
+    def _mount_tf(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """``kwargs`` with the mount added: the namespace frame (local "") and its edge to the USD's top prim."""
+        from dimos.core.coordination.blueprints import config_defaults
+
+        defaults = config_defaults(cls)
+        usd: UsdModel = kwargs.get("usd", defaults.get("usd"))
+        return {
+            **kwargs,
+            "tf_frames_local": {
+                **kwargs.get("tf_frames_local", defaults["tf_frames_local"]),
+                "": "",
+            },
+            "tf_edges": [*kwargs.get("tf_edges", defaults["tf_edges"]), ("", usd.top_frame)],
+        }
 
     @classmethod
     def blueprint_tf(
@@ -398,7 +411,7 @@ class HardwareModule(TfModule):
             transforms.append(
                 Transform.from_matrix(
                     np.eye(4),
-                    frame_id=self.tf_frames[MOUNT_ROLE],
+                    frame_id=self.tf_frames[""],
                     child_frame_id=self.attach_frame,
                 )
             )
