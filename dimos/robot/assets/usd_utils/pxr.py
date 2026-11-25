@@ -86,7 +86,13 @@ class Pxr:
 
 
 def frame_name(prim: Prim) -> str:
+    """A joint's name: its displayName, else its prim name (links are named by frame_path)."""
     return str(prim.GetDisplayName() or prim.GetName())
+
+
+def frame_path(prim: Prim) -> str:
+    """The tf frame a prim carries: its path without the leading "/" (the namespace goes in front)."""
+    return str(prim.GetPath())[1:]
 
 
 def warm_usd() -> None:
