@@ -109,3 +109,22 @@ def test_a_view_renders_linear_light_only_for_a_stage_that_asks_for_a_tone_map()
     assert MujocoView(plain).model.light_ambient[0] == pytest.approx([3, 3, 3])
     # Scaled into MuJoCo's 8 bits, to be scaled back up after the read.
     assert MujocoView(toned).model.light_ambient[0] == pytest.approx([1, 1, 1])
+
+
+def test_a_tone_mapped_view_shows_the_domes_sky_as_blender_would():
+    from dimos.sim2.mujoco.view import MujocoView
+
+    toned = layer_file(
+        SCENE.read_text() + '\ndef DomeLight "sky"\n{\n    color3f inputs:color = (1, 0.5, 0.25)\n'
+        "    float inputs:intensity = 3\n}\n"
+        'def RenderSettings "look"\n{\n    uniform token dimos:look:toneMap = "neutral"\n}\n',
+        called="look",
+    )
+    view = MujocoView(toned)
+    model = view.model
+    sky = model.tex_data[model.tex_adr[0] : model.tex_adr[0] + 3].reshape(1, 1, 3)
+    # MuJoCo draws a skybox's texels unlit, so the render of the sky is its texel, read back up.
+    expected = srgb_bytes(pbr_neutral(np.array([[[3, 1.5, 0.75]]], np.float32)))
+    # The sky (3) is the brightest light here, so it sets the headroom.
+    assert display(sky, 3.0, "neutral").astype(int) == pytest.approx(expected, abs=2)
+    assert sky.max() == 255
