@@ -32,7 +32,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.dimsim.backend import BASE_JOINTS, MOUNTED_AT
-from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.sim import SimulatedWorldSpec, fetched_usd, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
 
@@ -68,7 +68,7 @@ class SimKinematicBase(HardwareModule):
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
         return SimulatedRobot(
-            self.namespace, UsdModel.from_layer(self.get_usd()), odom_frame=self.frame.odom
+            self.namespace, UsdModel.from_layer(fetched_usd(self)), odom_frame=self.frame.odom
         )
 
     async def main(self) -> AsyncIterator[None]:

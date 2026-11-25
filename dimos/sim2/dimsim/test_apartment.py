@@ -32,6 +32,7 @@ from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sim import compose_world
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import REFUSED, WorldMirror, geometry
+from dimos.utils.testing.hardware_files import serving_hardware_files
 
 pytest.importorskip("pxr")
 
@@ -51,7 +52,10 @@ def apartment() -> Iterator[_Apartment]:
         usd=UsdModel.from_file(_GO2), mount="go2", instance_name="go2/SimKinematicBase"
     )
     try:
-        world, robot = compose_world([scene, go2]), go2.simulated_robot()
+        world, robot = (
+            compose_world([serving_hardware_files(scene), serving_hardware_files(go2)]),
+            go2.simulated_robot(),
+        )
     finally:
         scene.stop()
         go2.stop()

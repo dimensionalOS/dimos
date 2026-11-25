@@ -27,6 +27,7 @@ from dimos.sim2.scene import SimScene
 from dimos.sim2.sim import compose_world
 from dimos.sim2.spec import ODOM_FRAME
 from dimos.sim2.world_observations import REFUSED, WorldMirror
+from dimos.utils.testing.hardware_files import serving_hardware_files
 
 pytest.importorskip("pxr")
 
@@ -144,7 +145,10 @@ def backend() -> Iterator[_Stepped]:
     )
     bot = _bot()
     try:
-        world, robot = compose_world([room, bot]), bot.simulated_robot()
+        world, robot = (
+            compose_world([serving_hardware_files(room), serving_hardware_files(bot)]),
+            bot.simulated_robot(),
+        )
     finally:
         room.stop()
         bot.stop()
@@ -230,9 +234,11 @@ def test_an_object_out_of_reach_or_not_pickable_is_refused(backend: _Stepped) ->
 
 
 def test_the_robot_is_named_by_its_namespace() -> None:
-    bot = _bot()
-    robot = bot.simulated_robot()
-    bot.stop()
+    bot = serving_hardware_files(_bot())
+    try:
+        robot = bot.simulated_robot()
+    finally:
+        bot.stop()
     assert robot.robot_id == "bot"
     assert robot.root_body == "bot/base"
 
@@ -269,7 +275,7 @@ def test_a_usd_request_is_answered_with_the_world_as_it_is_now() -> None:
     try:
         backend = SimpleNamespace(usd=_ROOM, close=lambda: None)
         sim._backend = backend  # type: ignore[assignment]
-        sim.file_info.publish = published.append  # type: ignore[method-assign]
+        sim.file_info.publish = published.append  # type: ignore[method-assign,assignment]
         asyncio.run(sim.handle_render_file_request(String("*.usd")))
         # An action that reshapes the world hands the backend a new USD.
         backend.usd = _ROOM.replace('"wall"', '"door"')

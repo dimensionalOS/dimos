@@ -30,7 +30,7 @@ from typing import Any
 import numpy as np
 
 from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
-from dimos.sim2.lfs import pull_lfs_files
+from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
 
 DIMSIM_SCENES = DIMOS_PROJECT_ROOT / "misc" / "DimSim" / "scenes"
 INTERACTIVE = "interactive"
