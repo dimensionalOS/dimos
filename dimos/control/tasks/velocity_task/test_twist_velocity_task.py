@@ -14,6 +14,9 @@
 
 import math
 
+import pytest
+from pytest_mock import MockerFixture
+
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.velocity_task.twist_velocity_task import TwistVelocityTask
 from dimos.control.tasks.velocity_task.velocity_task import JointVelocityTaskConfig
@@ -73,3 +76,53 @@ def test_nonfinite_input_never_activates_task() -> None:
     t = task()
     assert not t.on_twist_command(Twist(linear=[math.nan, 0.0, 0.0]), 1.0)
     assert not t.is_active()
+
+
+def test_key_release_stops_quietly_through_repeated_idle_periods(mocker: MockerFixture) -> None:
+    warning = mocker.patch("dimos.control.tasks.velocity_task.velocity_task.logger.warning")
+    t = task()
+    t.start()
+    assert t.compute(state(1.0)) is None
+
+    for start in (2.0, 5.0, 8.0):
+        assert t.on_twist_command(Twist(linear=[0.4, 0.0, 0.0]), start)
+        out = t.compute(state(start))
+        assert out is not None and out.velocities == [0.4, 0.0, 0.0]
+        assert t.is_streaming()
+
+        # Keyboard teleop sends one zero Twist on release, then stays silent.
+        assert t.on_twist_command(Twist(), start + 0.1)
+        for elapsed in (0.1, 0.4, 1.0, 2.0):
+            out = t.compute(state(start + elapsed))
+            assert out is not None and out.velocities == [0.0, 0.0, 0.0]
+        assert not t.is_streaming()
+
+    warning.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        Twist(linear=[0.4, 0.0, 0.0]),
+        Twist(linear=[0.0, -0.2, 0.0]),
+        Twist(angular=[0.0, 0.0, 0.3]),
+        Twist(linear=[1e-10, 0.0, 0.0]),
+    ],
+)
+def test_missing_motion_updates_warn_once_and_stop_after_idle(
+    command: Twist, mocker: MockerFixture
+) -> None:
+    warning = mocker.patch("dimos.control.tasks.velocity_task.velocity_task.logger.warning")
+    t = task()
+    assert t.on_twist_command(Twist(), 1.0)
+    t.compute(state(1.5))
+    warning.assert_not_called()
+
+    for start in (2.0, 4.0):
+        warning.reset_mock()
+        assert t.on_twist_command(command, start)
+        for elapsed in (0.5, 1.0):
+            out = t.compute(state(start + elapsed))
+            assert out is not None and out.velocities == [0.0, 0.0, 0.0]
+        assert not t.is_streaming()
+        warning.assert_called_once_with("JointVelocityTask input timed out (no update for 0.500s)")

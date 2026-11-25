@@ -42,8 +42,7 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
 from dimos.control.contract.limits import Limits, limits as limits_of
-from dimos.control.task import JointStateSnapshot
-from dimos.hardware.manipulators.spec import ControlMode
+from dimos.control.task import ControlMode, JointStateSnapshot
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray

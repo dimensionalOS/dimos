@@ -85,7 +85,6 @@ unitree_go2_holonomic_controller = (
         _Go2HolonomicCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_state=True,
-            publish_robot_joint_states=True,
             connections=[go2_joint_connection()],
             tasks=[
                 # Idle/teleop velocity task. Priority 20 so a held WASD key
