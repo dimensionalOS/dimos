@@ -112,7 +112,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
-    _followups: list[BaseMessage] | None
+    _artefacts: list[BaseMessage]
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
@@ -131,7 +131,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             daemon=True,
         )
         self._stop_event = Event()
-        self._followups = None  # the turns of the infer() call in progress
+        self._artefacts = []  # images the tools of the turn in progress returned
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
@@ -344,14 +344,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         with self._lock:
             if self._state_graph is None or self._stop_event.is_set():
                 raise RuntimeError("Agent is not running; it starts with the blueprint")
-            # An image a tool returns is a follow-up message; it belongs to this turn.
-            turns: list[BaseMessage] = [x]
-            self._followups = turns
-            try:
-                while turns:
-                    self._process_message(self._state_graph, turns.pop(0))
-            finally:
-                self._followups = None
+            self._process_message(self._state_graph, x)
             answer = self._history[-1]
         if not isinstance(answer, AIMessage) or TURN_FAILED_KEY in answer.additional_kwargs:
             raise RuntimeError(str(answer.text))
@@ -466,6 +459,10 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
                 )
             )
 
+        # The model sees an image a tool returned as the next message, before the turn ends.
+        while self._artefacts:
+            self._process_message(state_graph, self._artefacts.pop(0))
+
         if self._message_queue.empty():
             self.agent_idle.publish(True)
 
@@ -488,17 +485,15 @@ def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
 
 def _append_image_to_history(agent: Agent, func_name: str, uuid_: str, result: Any) -> None:
     # Tagged with its tool, or chat UIs would show this user turn as typed input.
-    message = HumanMessage(
-        content=[
-            {
-                "type": "text",
-                "text": f"This is the artefact for the '{func_name}' tool with UUID:={uuid_}.",
-            },
-            result,
-        ],
-        additional_kwargs={TOOL_ORIGIN_KEY: func_name},
+    agent._artefacts.append(
+        HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": f"This is the artefact for the '{func_name}' tool with UUID:={uuid_}.",
+                },
+                result,
+            ],
+            additional_kwargs={TOOL_ORIGIN_KEY: func_name},
+        )
     )
-    if agent._followups is None:
-        agent.add_message(message)
-    else:
-        agent._followups.append(message)
