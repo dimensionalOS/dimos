@@ -218,11 +218,7 @@ fn center_gap(a: &Trace, b: &Trace) -> f64 {
 #[test]
 fn every_logged_sweep_matches_reflective_column_node() {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    let fixture = |name: &str| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
-            .join(name)
-    };
+    let fixture = |name: &str| common::crate_dir().join("tests/fixtures").join(name);
     let mut cases = vec![
         (
             home.join("datasets/m20/recording_20261120_163604/lidar_raw.pcap"),

@@ -45,7 +45,7 @@ impl Drop for Server {
 }
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    common::crate_dir()
         .join("../../../../../..")
         .canonicalize()
         .unwrap()
@@ -491,7 +491,7 @@ fn rear_mount() -> ([f64; 3], [f64; 3]) {
 
 /// NOS's charge_manager.toml (tests/fixtures).
 fn vendor() -> ChargeManagerToml {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/charge_manager.toml");
+    let path = common::crate_dir().join("tests/fixtures/charge_manager.toml");
     ChargeManagerToml::load(path.to_str().unwrap()).unwrap().0
 }
 

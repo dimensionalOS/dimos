@@ -20,8 +20,22 @@ use std::path::PathBuf;
 
 use m20_controller::config::Config;
 
+/// The crate's directory as cargo gives it when the test runs (a cached build can carry another checkout's path).
+pub fn crate_dir() -> PathBuf {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
+/// A file in tests/fixtures, which must be there (a missing one says where it was looked for).
+pub fn fixture(name: &str) -> PathBuf {
+    let path = crate_dir().join("tests/fixtures").join(name);
+    assert!(path.exists(), "fixture missing: {}", path.display());
+    path
+}
+
 pub fn config_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml")
+    crate_dir().join("m20_controller.toml")
 }
 
 pub fn config() -> Config {

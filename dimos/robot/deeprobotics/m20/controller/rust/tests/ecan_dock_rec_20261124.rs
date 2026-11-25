@@ -63,9 +63,7 @@ const CLOCK_REF: &str = "05:50:00";
 const CLOCK_BASE_S: f64 = 196608.0;
 
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
+    common::fixture(name)
 }
 
 /// (capture time ns, direction, frame)

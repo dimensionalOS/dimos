@@ -73,8 +73,7 @@ impl Reader {
 }
 
 fn windows() -> Vec<Window> {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/policy_20261120_141603.bin.gz");
+    let path = common::crate_dir().join("tests/fixtures/policy_20261120_141603.bin.gz");
     let mut bytes = Vec::new();
     flate2::read::GzDecoder::new(std::fs::File::open(path).unwrap())
         .read_to_end(&mut bytes)

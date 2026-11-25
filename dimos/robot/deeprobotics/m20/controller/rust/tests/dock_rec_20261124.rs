@@ -54,9 +54,7 @@ const MOTION_INFO: &str = "00001603";
 const BATTERY_DATA: &str = "00000c03";
 
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
+    common::crate_dir().join("tests/fixtures").join(name)
 }
 
 fn read_gz(path: &PathBuf) -> String {

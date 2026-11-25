@@ -25,9 +25,7 @@ use m20_controller::dock::vendor::{ChargeCore, ChargeManagerToml, ChargeParams};
 use m20_controller::dock::vendor_log::{replay, Report};
 
 fn fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
+    common::crate_dir().join("tests/fixtures").join(name)
 }
 
 /// A fixture's text, gunzipped when it ends in .gz.
