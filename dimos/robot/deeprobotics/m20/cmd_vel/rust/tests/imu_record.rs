@@ -27,8 +27,9 @@ fn sample(k: u32) -> ImuData {
     ImuData {
         header: Header {
             frame_id: 0,
+            // sec tells the checked samples (k < 1000) from the warm-up ones; nsec stays below a second (k * 5 ms overflowed u32)
             sec: 1_795_470_600 + k as i32,
-            nsec: k * 5_000_000,
+            nsec: (k % 200) * 5_000_000,
         },
         roll: f(-1.698143),
         pitch: f(-0.576693),
