@@ -514,4 +514,92 @@ mod shutdown_tests {
             assert!(height < 0.1, "stop after {stand_s} s: hip-to-axle {height}");
         }
     }
+
+    /// Follow with replies dropped where `drop(tick)` says (the exchange errs; the motors still get the command).
+    struct Dropping {
+        inner: Follow,
+        tick: u64,
+        drop: fn(u64) -> bool,
+    }
+
+    impl Hardware for Dropping {
+        fn read_state(&mut self) -> Result<RobotState> {
+            self.inner.read_state()
+        }
+        fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {
+            self.tick += 1;
+            let s = self.inner.exchange(cmd)?;
+            if (self.drop)(self.tick) {
+                anyhow::bail!("no reply")
+            }
+            Ok(s)
+        }
+    }
+
+    /// Stands into rl_control under the drop pattern for 14 s; the transitions and the faults seen.
+    fn stand_with_drops(drop: fn(u64) -> bool) -> (Vec<State>, Vec<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml");
+        let cfg = Config::load(&path).unwrap();
+        let mut s = RobotState {
+            quat: [1.0, 0.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        s.q = crate::state_machine::leg_pose_for_height(&cfg.robot, 0.03, 0.0);
+        let mut hw = Dropping {
+            inner: Follow(s),
+            tick: 0,
+            drop,
+        };
+        let mut c = Controller::new(cfg.clone());
+        c.set_time(10.0);
+        let stop = AtomicBool::new(false);
+        let never = AtomicBool::new(false);
+        let mut commands = StandThenStop {
+            sent: 0,
+            stand_s: f64::INFINITY,
+            stop: &never,
+        };
+        let mut faults = Vec::new();
+        let _ = run(
+            &cfg,
+            &mut hw,
+            &mut c,
+            &mut Hold(None),
+            &mut commands,
+            Pacing::Free,
+            &stop,
+            |_, tick| {
+                if let Some(f) = &tick.controller.fault {
+                    if faults.last() != Some(f) {
+                        faults.push(f.clone());
+                    }
+                }
+                if tick.controller.time() > 24.0 {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        (c.transitions.iter().map(|t| t.2).collect(), faults)
+    }
+
+    /// safety.missed_replies: scattered misses pass, a run of them lies the robot down.
+    #[test]
+    fn a_run_of_missed_replies_faults_and_lies_down() {
+        let cfg = Config::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("m20_controller.toml"),
+        )
+        .unwrap();
+        let n = cfg.safety.missed_replies.expect("missed_replies on");
+        // every other reply missing for the whole run: never n in a row
+        let (states, faults) = stand_with_drops(|t| t % 2 == 0);
+        assert!(faults.is_empty(), "{faults:?}");
+        assert_eq!(states[..2], [State::StandUp, State::RlControl]);
+        // a 60 ms gap 10 s in, in rl_control
+        let (states, faults) = stand_with_drops(|t| (10_000..10_060).contains(&t));
+        assert!(
+            faults.iter().any(|f| f.contains("replies missed")),
+            "{faults:?} (limit {n})"
+        );
+        assert!(states.contains(&State::LieDown), "{states:?}");
+    }
 }

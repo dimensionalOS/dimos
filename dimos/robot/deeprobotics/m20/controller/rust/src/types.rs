@@ -42,6 +42,8 @@ pub struct RobotState {
     /// the drivers' status words and motor / driver temperatures (deg C) when the source has them (the motor bus):
     /// rl_deploy's SafeController faults on them
     pub drivers: Option<Drivers>,
+    /// how old the IMU sample in this state is (s), when the source knows
+    pub imu_age_s: Option<f64>,
 }
 
 /// Per joint (robot order) what the motor board reports besides the joint state.

@@ -175,3 +175,87 @@ fn joint_damping_lies_down_first_unless_the_drivers_fault() {
     assert!(c.fault.is_some());
     assert_eq!(c.state, State::LieDown);
 }
+
+/// A policy that takes every request and never answers (a stalled thread).
+struct Silent;
+
+impl PolicyService for Silent {
+    fn offer(&mut self, _: PolicyRequest) -> bool {
+        true
+    }
+    fn take_result(&mut self) -> Option<crate::policy::PolicyResult> {
+        None
+    }
+    fn dropped(&self) -> u64 {
+        0
+    }
+}
+
+#[test]
+fn a_stalled_imu_or_policy_lies_down_at_once() {
+    let cfg = config();
+    let timeout = cfg.safety.imu_timeout_s.expect("imu_timeout_s on");
+    let roll = |s: &mut RobotState| {
+        for i in (3..JOINTS).step_by(4) {
+            s.dq[i] = 20.0;
+        }
+    };
+    // a stale IMU while rolling: no stop first, the lie-down starts at once
+    let (mut c, mut s, mut p, cmd) = standing_in_rl(cfg.clone());
+    roll(&mut s);
+    s.imu_age_s = Some(2.0 * timeout);
+    run(&mut c, &mut s, &cmd, 1, &mut p);
+    assert!(c.fault.as_deref().is_some_and(|f| f.contains("imu")));
+    assert_eq!(c.state, State::LieDown);
+    // sensor_fault_lies_down off: damping at once
+    let mut damp = cfg.clone();
+    damp.states.joint_damping.sensor_fault_lies_down = false;
+    let (mut c, mut s, mut p, cmd) = standing_in_rl(damp);
+    s.imu_age_s = Some(2.0 * timeout);
+    run(&mut c, &mut s, &cmd, 1, &mut p);
+    assert_eq!(c.state, State::JointDamping);
+    // rl_deploy's: no IMU fault
+    let (mut c, mut s, mut p, cmd) = standing_in_rl(cfg.clone().rl_deploy());
+    s.imu_age_s = Some(2.0 * timeout);
+    run(&mut c, &mut s, &cmd, 100, &mut p);
+    assert_eq!(c.state, State::RlControl);
+    // a policy that stops answering: a policy fault after policy_missed_steps periods, then the lie-down
+    let n = cfg
+        .safety
+        .policy_missed_steps
+        .expect("policy_missed_steps on");
+    let period = cfg.timing.policy_decimation as usize;
+    let (mut c, mut s, _, cmd) = standing_in_rl(cfg);
+    let mut silent = Silent;
+    // the last result landed up to a period before
+    for _ in 0..((n as usize - 1) * period) {
+        s.stamp += 0.001;
+        s.tau = [s.stamp; JOINTS];
+        c.tick(&s, &cmd, &mut silent);
+    }
+    assert_eq!(c.state, State::RlControl, "within its periods");
+    for _ in 0..(2 * period) {
+        s.stamp += 0.001;
+        s.tau = [s.stamp; JOINTS];
+        c.tick(&s, &cmd, &mut silent);
+    }
+    assert!(c
+        .fault
+        .as_deref()
+        .is_some_and(|f| f.starts_with("policy stalled")));
+    assert_eq!(c.state, State::LieDown);
+}
+
+#[test]
+fn a_joint_data_fault_lies_down_without_the_stop() {
+    let cfg = config();
+    let (mut c, mut s, mut p, cmd) = standing_in_rl(cfg);
+    // rolling (no stop would end) with a hipy past its range
+    for i in (3..JOINTS).step_by(4) {
+        s.dq[i] = 20.0;
+    }
+    s.q[1] = c.cfg.robot.joint_upper[1] + 1.0;
+    run(&mut c, &mut s, &cmd, 40, &mut p);
+    assert!(c.fault.as_deref().is_some_and(|f| f.contains("range")));
+    assert_eq!(c.state, State::LieDown);
+}

@@ -509,6 +509,10 @@ pub struct Controller {
     finite_q: [f64; JOINTS],
     /// zero_command's wheel positions held since the command went to zero
     wheel_hold: Option<[f64; 4]>,
+    /// this tick's fault leaves the joints, IMU, replies and tilt readable (a stop can read them)
+    sensors_ok: bool,
+    /// rl_control ticks since the last policy result (safety.policy_missed_steps)
+    since_result: u64,
 }
 
 impl Controller {
@@ -571,6 +575,8 @@ impl Controller {
             lie_bridged: false,
             finite_q: [0.0; JOINTS],
             wheel_hold: None,
+            sensors_ok: true,
+            since_result: 0,
         }
     }
 
@@ -619,7 +625,21 @@ impl Controller {
         if !self.fault_checks {
             return None;
         }
-        drivers.or(joints).or_else(|| self.tilt_fault(s, cmd))
+        // ours (safety.imu_timeout_s, missed_replies): a stalled IMU, a motor board that stopped answering
+        let safety = &self.cfg.safety;
+        let imu = safety
+            .imu_timeout_s
+            .zip(s.imu_age_s)
+            .filter(|(limit, age)| age > limit)
+            .map(|(_, age)| format!("imu stale ({:.0} ms)", age * 1e3));
+        let replies = safety
+            .missed_replies
+            .filter(|n| self.stale_run >= *n)
+            .map(|n| format!("motor board: {n} replies missed"));
+        self.sensors_ok = joints.is_none() && imu.is_none() && replies.is_none();
+        let tilt = self.tilt_fault(s, cmd);
+        self.sensors_ok &= tilt.is_none();
+        drivers.or(joints).or(imu).or(replies).or(tilt)
     }
 
     /// rl_deploy's tilt fault (SafeController::Run, 0x183980, every 1 ms, no debounce): |roll| or |pitch| of the IMU's
@@ -765,6 +785,7 @@ impl Controller {
             self.blend_from = None;
             self.stop_rim = (0.0, 0, None, false);
             self.wheel_hold = None;
+            self.since_result = 0;
             self.entry_pending = true;
             self.targets = None;
             self.targets_runner = None;
@@ -863,10 +884,15 @@ impl Controller {
             } else {
                 jd.lie_down_first_on_command
             };
+        // a stop reads the policy and the sensors: on a fault in them the lie-down starts at once (or damps)
         let policy_ok = !self
             .fault
             .as_deref()
             .is_some_and(|f| f.starts_with("policy"));
+        let readable = policy_ok && self.sensors_ok;
+        if self.lie_first && self.fault.is_some() && !readable && !jd.sensor_fault_lies_down {
+            self.lie_first = false;
+        }
         let when_still = self
             .cfg
             .states
@@ -876,7 +902,7 @@ impl Controller {
             .is_some_and(|ss| ss.lie_down_when_still);
         // safe_switch (ours): a lie-down from rl_control stops the robot first and lies once it is still
         let lie_wait = self.state == State::RlControl
-            && ((target == Target::LieDown && when_still) || (self.lie_first && policy_ok));
+            && ((target == Target::LieDown && when_still) || (self.lie_first && readable));
         self.lie_down_ready = if lie_wait {
             self.stopped(s)
         } else {
@@ -1336,7 +1362,15 @@ impl Controller {
             self.runner = Some(wanted.clone());
             self.activate_pending = true;
         }
+        // ours (safety.policy_missed_steps): a policy thread that stopped answering is a policy fault
+        self.since_result += 1;
+        if let Some(n) = self.cfg.safety.policy_missed_steps {
+            if self.since_result > n * self.cfg.timing.policy_decimation && self.fault.is_none() {
+                self.fault = Some(format!("policy stalled: no result for {n} policy periods"));
+            }
+        }
         if let Some(result) = policy.take_result() {
+            self.since_result = 0;
             if result.runner == wanted {
                 match result.targets {
                     Ok(t) => {

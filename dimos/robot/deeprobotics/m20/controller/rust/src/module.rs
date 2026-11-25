@@ -203,7 +203,7 @@ pub struct Shared {
 /// out); while a receiver holds its lock, the one read last.
 pub struct SharedImu {
     shared: Arc<Shared>,
-    sample: Option<ImuSample>,
+    sample: Option<(ImuSample, std::time::Instant)>,
     rpy: Option<[f32; 3]>,
 }
 
@@ -213,11 +213,13 @@ impl ImuSource for SharedImu {
         if let Some(rpy) = crate::rt::try_read(&self.shared.imu_rpy, skips, |r| *r) {
             self.rpy = rpy;
         }
-        if let Some(sample) = crate::rt::try_read(&self.shared.imu, skips, |i| i.map(|(s, _)| s)) {
+        if let Some(sample) = crate::rt::try_read(&self.shared.imu, skips, |i| *i) {
             self.sample = sample;
         }
-        self.sample.map(|sample| ImuSample {
+        // the age keeps growing while no new sample arrives (the controller faults on a stalled IMU)
+        self.sample.map(|(sample, at)| ImuSample {
             rpy_deg: self.rpy,
+            age_s: Some(at.elapsed().as_secs_f64()),
             ..sample
         })
     }
@@ -250,6 +252,7 @@ pub fn imu_sample(msg: &Imu) -> ImuSample {
         accel: [a.x, a.y, a.z],
         stamp: msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 * 1e-9,
         rpy_deg: None,
+        age_s: None,
     }
 }
 
@@ -1085,6 +1088,7 @@ mod tests {
             accel: [0.0, 0.0, 9.8],
             stamp,
             rpy_deg: None,
+            age_s: None,
         };
         let mut imu = SharedImu {
             shared: shared.clone(),

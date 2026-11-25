@@ -63,6 +63,15 @@ replays and the golden test run on it).
 | pose params out of range / NaN, extre mode 5; all pose inputs at +-1 together: hipx on its stop 3 s | ours are params, not clipped axes | `param_limits`, `param_budget` (roll, pitch, yaw, dx, dy share one range) |
 | extre / basic_flat / step_move at the full axes: 1.6-1.9 rad steps, saturation; basic_plat's +1 -> -1 reversal tipped 51 deg | command_max up to 3.9 m/s; no slew on most runners | `safety.command_limit` (basic_server.toml's 2.0 / 1.0 / 1.0), step_move and height_gap tighter; `default_command_slew` = basic_stair's |
 
+## Faults the stop cannot trust
+
+A lie-down first stops the robot with the policy and the sensors; when they are what faulted it lies down at once
+(`joint_damping.sensor_fault_lies_down`; false: damps at once): joint data (NaN, frozen, out of range), the tilt, a
+stalled IMU (`safety.imu_timeout_s` 0.1 s: rl_deploy only sets a status bit past 20 ms), the motor board missing
+`safety.missed_replies` 50 replies in a row (rl_deploy's "joint data not updated for 50 ms"), a policy error or a
+policy thread silent for `safety.policy_missed_steps` 5 periods. Only a temperature fault stops first; a driver
+status-word fault damps at once. rl_deploy has none of the three new faults (Config::rl_deploy turns them off).
+
 ## height_gap
 
 Its height map was the sim's guess (it fell walking on its own). rl_deploy's HeightsSubCallback (0x176bf0) and the

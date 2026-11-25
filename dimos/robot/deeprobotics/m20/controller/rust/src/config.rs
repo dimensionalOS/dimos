@@ -172,6 +172,15 @@ pub struct Safety {
     /// ours: every runner's scaled command (m/s, m/s, rad/s) clamped to this
     #[serde(default)]
     pub command_limit: Option<[f64; 3]>,
+    /// ours: a fault when the newest IMU sample is older than this (s)
+    #[serde(default)]
+    pub imu_timeout_s: Option<f64>,
+    /// ours: a fault after this many motor-board replies missed in a row
+    #[serde(default)]
+    pub missed_replies: Option<u64>,
+    /// ours: a policy fault after this many policy periods with no result
+    #[serde(default)]
+    pub policy_missed_steps: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -198,6 +207,9 @@ pub struct JointDamping {
     /// ours: the operator's joint damping (motion 2, rl_deploy's soft e-stop) lies down first too
     #[serde(default)]
     pub lie_down_first_on_command: bool,
+    /// ours: a fault in what the stop reads (joints, IMU, replies, policy, tilt) lies down at once, not damps
+    #[serde(default)]
+    pub sensor_fault_lies_down: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -844,6 +856,9 @@ impl Config {
             }
         }
         self.safety.command_limit = None;
+        self.safety.imu_timeout_s = None;
+        self.safety.missed_replies = None;
+        self.safety.policy_missed_steps = None;
         for r in self.runners.values_mut() {
             r.param_limits.clear();
             r.command_limit = None;

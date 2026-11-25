@@ -96,6 +96,15 @@ default_command_slew = [0.04, 0.04, 0.08]
 # limits (the fastest maxSpeedX 2.0, [Nav.COMMON] maxSpeedY 1.0, maxTheta 1.0): at the full axes (1, -1, 1) extre
 # (3 m/s, 2 rad/s) and step_move stepped 1.6-1.9 rad and saturated in the sim
 command_limit = [2.0, 1.0, 1.0]
+# ours (rl_deploy: only a status bit past 20 ms, SafeController's IMU check): a fault when the newest IMU sample is
+# older than 5 policy periods (the policies run that long on one gravity reading; a late DDS sample alone is not one)
+imu_timeout_s = 0.1
+# ours (rl_deploy: none): a fault after this many motor-board replies missed in a row, PubMotionStatus's "joint data
+# not updated for 50 ms" (关节数据50ms未更新) at 1 kHz
+missed_replies = 50
+# ours (rl_deploy: none): a policy fault after this many policy periods (20 ms) with no result; the robot's worker
+# answers within a tick or two
+policy_missed_steps = 5
 
 # rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
 [states.enable]
@@ -129,6 +138,9 @@ min_s = 2.0
 lie_down_first = true
 # ours (rl_deploy: false): the operator's joint damping (motion 2) lies down first too; the hardware e-stop is not this
 lie_down_first_on_command = true
+# ours: a fault in what a stop reads (the joint data, the IMU, the motor board's replies, the policy, the tilt) lies down
+# at once, no stop first; false: damps at once
+sensor_fault_lies_down = true
 
 [states.stand_up]
 kp = [200.0, 200.0, 200.0, 0.0]

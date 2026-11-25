@@ -37,6 +37,8 @@ pub struct ImuSample {
     pub stamp: f64,
     /// yesense_node's rt/IMU_DATA roll, pitch, yaw (deg), when the source has them
     pub rpy_deg: Option<[f32; 3]>,
+    /// how long ago it arrived (s), when the source knows
+    pub age_s: Option<f64>,
 }
 
 pub trait ImuSource: Send {
@@ -354,6 +356,7 @@ impl EcanBus {
         s.gyro = imu.gyro;
         s.accel = imu.accel;
         s.imu_rpy_deg = imu.rpy_deg;
+        s.imu_age_s = imu.age_s;
         Ok(s)
     }
 }

@@ -264,6 +264,7 @@ impl BusHardware {
         s.gyro = imu.gyro;
         s.accel = imu.accel;
         s.imu_rpy_deg = imu.rpy_deg;
+        s.imu_age_s = imu.age_s;
         Ok(s)
     }
 }
