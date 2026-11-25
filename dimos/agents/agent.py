@@ -112,7 +112,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
-    _artefacts: list[BaseMessage]
+    _artifacts: list[BaseMessage]
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
@@ -131,7 +131,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             daemon=True,
         )
         self._stop_event = Event()
-        self._artefacts = []  # images the tools of the turn in progress returned
+        self._artifacts = []  # images the tools of the turn in progress returned
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
@@ -460,8 +460,8 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             )
 
         # The model sees an image a tool returned as the next message, before the turn ends.
-        while self._artefacts:
-            self._process_message(state_graph, self._artefacts.pop(0))
+        while self._artifacts:
+            self._process_message(state_graph, self._artifacts.pop(0))
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)
@@ -485,7 +485,7 @@ def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
 
 def _append_image_to_history(agent: Agent, func_name: str, uuid_: str, result: Any) -> None:
     # Tagged with its tool, or chat UIs would show this user turn as typed input.
-    agent._artefacts.append(
+    agent._artifacts.append(
         HumanMessage(
             content=[
                 {

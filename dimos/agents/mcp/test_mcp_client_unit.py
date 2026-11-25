@@ -181,7 +181,7 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> N
     greet_tool = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
 
     reply = greet_tool.func(name="Alice")
-    msg: BaseMessage = mcp_client._artefacts.pop()
+    msg: BaseMessage = mcp_client._artifacts.pop()
 
     assert reply.startswith("Tool call started with UUID: ")
     uuid_ = reply.removeprefix("Tool call started with UUID: ").split(".")[0]
@@ -674,4 +674,4 @@ def test_infer_answers_after_the_image_its_tool_returned(
         "no image yet",
         "it is red",
     ]
-    assert running_agent._message_queue.empty() and running_agent._artefacts == []
+    assert running_agent._message_queue.empty() and running_agent._artifacts == []
