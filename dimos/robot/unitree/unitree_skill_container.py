@@ -293,6 +293,10 @@ class UnitreeSkillContainer(Module):
             elif idle_since is None:
                 idle_since = time.monotonic()
             elif time.monotonic() - idle_since > settle:
+                reason = self._navigation.get_goal_cancel_reason()
+                if reason is not None:
+                    outcome = "cancelled" if self._navigation.is_goal_cancelled() else "failed"
+                    return f"Navigation {outcome}: {reason}"
                 return "Navigation was cancelled or failed"
             time.sleep(0.1)
         return "Navigation timed out"

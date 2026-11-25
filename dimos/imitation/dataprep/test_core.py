@@ -58,7 +58,6 @@ from dimos.imitation.dataprep.schema import (
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.manipulators.xarm.config import xarm7_hardware
 
 
 @pytest.mark.parametrize(
@@ -1034,8 +1033,12 @@ print(json.dumps(inspect_recording(sys.argv[1])))
 # -- example config -----------------------------------------------------------
 
 
+# The joints the WebXR xArm7 teleop's coordinator reports.
+_WEBXR_XARM7_JOINTS = [*(f"arm/joint{i}" for i in range(1, 8)), "arm/drive_joint"]
+
+
 def _webxr_xarm7_recording(*, jitter_s: float) -> _FakeStore:
-    joints = xarm7_hardware("arm", gripper=True).joints
+    joints = _WEBXR_XARM7_JOINTS
     image = {"data": np.zeros((480, 640, 3), dtype=np.uint8)}
     images = [_Obs(10.0 + k / 28.0, image) for k in range(57)]
     images[2] = _Obs(images[2].ts + jitter_s, image)
@@ -1065,7 +1068,7 @@ def _example_config(tmp_path: Path) -> DataPrepConfig:
 
 def test_example_config_names_match_the_webxr_xarm7_recording(tmp_path: Path) -> None:
     config = _example_config(tmp_path)
-    joints = xarm7_hardware("arm", gripper=True).joints
+    joints = _WEBXR_XARM7_JOINTS
 
     assert config.recording_schema.observation["joint_state"].names == joints
     assert config.recording_schema.action["joint_target"].names == joints

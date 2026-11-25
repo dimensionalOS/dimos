@@ -109,7 +109,6 @@ modules:
   basic-path-follower: {abilities: [navigation]}
   camera-mux-module: {abilities: [remote-teleop]}
   cartesian-motion-controller: {abilities: [arm-control]}
-  cloud-relocalization: {abilities: [relocalization]}
   collection-recorder: {abilities: [data-collection]}
   cost-mapper: {abilities: [costmap]}
   dan-holonomic-tc: {abilities: [navigation]}
@@ -144,8 +143,6 @@ modules:
   keyboard-teleop: {abilities: [keyboard-teleop]}
   keyboard-teleop-module: {abilities: [keyboard-teleop]}
   le-robot-policy-module: {abilities: [learned-policy]}
-  lidar-window-relocalization: {abilities: [relocalization]}
-  local-map-relocalization: {abilities: [relocalization]}
   local-planner-native: {abilities: [navigation]}
   manipulation-module: {abilities: [arm-control, motion-planning]}
   manipulation-skills: {abilities: [grasping]}
@@ -176,6 +173,7 @@ modules:
   point-lio: {abilities: [lidar-odometry]}
   point-nav-skill-container: {abilities: [navigation]}
   pointlio-recorder: {abilities: [recording]}
+  premap-module: {abilities: [relocalization]}
   r1-pro-lio: {abilities: [lidar-odometry]}
   ray-tracing-voxel-map: {abilities: [mapping]}
   recorder: {abilities: [recording]}
@@ -587,7 +585,7 @@ robots:
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
-          - module: localmaprelocalization
+          - module: premapmodule
             field: map_file
             label: Premap (.db/.mcap)
         m20-sim-nav:
@@ -628,13 +626,9 @@ robots:
       manufacturer: UFactory
       dirs: [dimos/robot/manipulators/xarm]
       defaults:
-        recommended_config:
+        recommended_config: &xarm7_connection_config
         - *robot_or_simulator
-        - module: controlcoordinator
-          field: addresses.arm
-          label: xArm7 IP
-          placeholder: 192.168.1.185
-          required: false
+        - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
           when: {simulation: ''}
       blueprints:
         xarm-perception-sim:
@@ -646,10 +640,7 @@ robots:
           title: xArm pick and place
           description: Perception, grasping and pick-and-place on a real xArm with a RealSense.
           starter: 18
-          recommended_config: &xarm7_connection_config
-          - *robot_or_simulator
-          - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
-            when: {simulation: ''}
+          recommended_config: *xarm7_connection_config
         keyboard-teleop-xarm7:
           title: xArm7 keyboard driving
           description: Move an xArm7 with this computer's keyboard.
@@ -660,19 +651,14 @@ robots:
           recommended_config: &xarm6_config
           - *robot_or_simulator
           - &xarm6_ip
-            <<: &xarm6_ip_anywhere {module: controlcoordinator, field: addresses.arm, label: xArm6 IP, placeholder: 192.168.1.185, required: false}
+            <<: &xarm6_ip_anywhere {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
             when: {simulation: ''}
         keyboard-teleop-lite6:
           title: Lite6 keyboard driving
           description: Move a UFactory Lite6 with this computer's keyboard.
+          # The Lite 6 has no MuJoCo scene, so it always needs its address.
           recommended_config: &lite6_config
-          - *robot_or_simulator
-          - module: controlcoordinator
-            field: addresses.arm
-            label: Lite6 IP
-            placeholder: 192.168.1.185
-            required: false
-            when: {simulation: ''}
+          - {module: xarmconnection, field: ip, label: Lite6 IP, placeholder: 192.168.1.185, required: true}
         xarm7-teleop:
           title: xArm7 teleop
           description: Move a real xArm7's end and its gripper from the Desktop Manipulation app, through XArmConnection.
@@ -750,35 +736,27 @@ robots:
         coordinator-dual-xarm:
           title: Dual xArm coordinator
           description: Two xArms behind one ControlCoordinator (a building block).
-          recommended_config: [*robot_or_simulator]
-        coordinator-combined-xarm6:
-          title: xArm6 combined coordinator
-          description: xArm6 with trajectory and velocity tasks in one coordinator (a building block).
-          recommended_config: *xarm6_config
+          recommended_config:
+          - {module: left_arm, field: ip, label: Left xArm7 IP, placeholder: 192.168.1.185, required: true}
+          - {module: right_arm, field: ip, label: Right xArm6 IP, placeholder: 192.168.1.186, required: true}
         coordinator-teleop-xarm6:
           title: xArm6 teleop coordinator
           description: The xArm6 teleop coordinator (a building block).
-          recommended_config: &teleop_xarm6_config
-          - *robot_or_simulator
-          - {<<: *xarm6_ip, module: teleopcontrolcoordinator}
+          recommended_config: *xarm6_config
         coordinator-teleop-xarm7:
           title: xArm7 teleop coordinator
           description: The xArm7 teleop coordinator (a building block).
-        coordinator-trajectory-xarm6:
-          title: xArm6 trajectory coordinator
-          description: xArm6 with a trajectory task (a building block).
-          recommended_config: *xarm6_config
         coordinator-velocity-xarm6:
           title: xArm6 velocity coordinator
           description: xArm6 with a velocity task (a building block).
-          recommended_config: *xarm6_config
+          recommended_config: [*xarm6_ip_anywhere]
         teleop-webxr-xarm7:
           title: xArm7 VR teleop
           description: Move an xArm7 with a VR headset's right controller (simulated with the simulator).
         teleop-webxr-xarm6:
           title: xArm6 VR teleop
           description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
-          recommended_config: *teleop_xarm6_config
+          recommended_config: *xarm6_config
         teleop-webxr-hand-xarm7:
           title: xArm7 VR hand teleop
           description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'
@@ -788,15 +766,15 @@ robots:
         teleop-hosted-xarm6:
           title: xArm6 remote teleop
           description: Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.
-          recommended_config: [{<<: *xarm6_ip_anywhere, module: teleopcontrolcoordinator}]
+          recommended_config: [*xarm6_ip_anywhere]
         teleop-hosted-xarm7:
           title: xArm7 remote teleop
           description: Move an xArm7 from anywhere through the hosted (Cloudflare) teleop broker.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+          recommended_config: [*xarm7_connection_ip]
         learning-collect-webxr-xarm7:
           title: xArm7 demonstration recording
           description: Teleoperate an xArm7 in VR and record episodes for imitation learning.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+          recommended_config: [*xarm7_connection_ip]
         xarm-feed:
           title: xArm camera feed (recording)
           description: A depth-camera recording published at wall-clock pace, as if live.
@@ -812,6 +790,7 @@ robots:
         xarm-sim:
           title: 'xArm7 in simulation (robot only)'
           description: 'A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo.'
+          recommended_config: []
     piper:
       name: AgileX Piper
       description: AgileX's 6-axis arm, over CAN.
@@ -819,14 +798,9 @@ robots:
       manufacturer: AgileX
       dirs: [dimos/robot/manipulators/piper]
       defaults:
-        recommended_config: &can_arm_config
+        recommended_config:
         - *robot_or_simulator
-        - &can_port
-          module: controlcoordinator
-          field: addresses.arm
-          label: CAN port
-          placeholder: can0
-          when: {simulation: ''}
+        - &piper_can_port {module: piperconnection, field: can_port, label: CAN port, placeholder: can0, required: true, when: {simulation: ''}}
       blueprints:
         keyboard-teleop-piper:
           title: Piper keyboard driving
@@ -840,6 +814,7 @@ robots:
         coordinator-cartesian-ik-piper:
           title: Piper Cartesian IK
           description: Cartesian pose control of a Piper through IK.
+          recommended_config: [{<<: *piper_can_port, required: false}]
         coordinator-cartesian-ik-mock:
           title: Cartesian IK (mock arm)
           description: 'Cartesian IK on a mock Piper: no robot needed.'
@@ -850,7 +825,7 @@ robots:
         learning-collect-webxr-piper:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
-          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+          recommended_config: [*piper_can_port]
         piper-teleop:
           title: Piper teleop
           description: Move a real Piper's end and its gripper from the Desktop Manipulation app, through PiperConnection.
@@ -875,6 +850,12 @@ robots:
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
+        metal-calibrate:
+          title: Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: metalconnection, field: can_port, label: CAN port or USB serial}
     dual_makermods_metal:
       name: Dual MakerMods Metal
       description: Two Metal arms in one planning and collision world.
@@ -889,6 +870,13 @@ robots:
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
           description: Coordinated motion planning, execution, and Viser for two Metal arms.
+        dual-metal-calibrate:
+          title: Dual Metal calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial}
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -937,6 +925,12 @@ robots:
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.
+        openyam-calibrate:
+          title: OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openyamconnection, field: can_port, label: CAN port or USB serial}
     dual_openyam:
       name: Dual OpenYAM
       description: Two OpenYAM arms as one robot.
@@ -965,6 +959,13 @@ robots:
         learning-collect-leader-dual-openyam:
           title: Dual OpenYAM leader demonstration recording
           description: Drive both OpenYAM arms from the leader arms and record demonstrations.
+        dual-openyam-calibrate:
+          title: Dual OpenYAM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: dualopenyamconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: dualopenyamconnection, field: right_can_port, label: Right CAN port or USB serial}
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
@@ -1010,6 +1011,13 @@ robots:
         openarm-mini-follower-collection:
           title: OpenArm Mini follower recording
           description: Record demonstrations on the robot machine while the Mini leaders run on another.
+        openarm-calibrate:
+          title: OpenArm calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial}
+          - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial}
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -1031,6 +1039,12 @@ robots:
         coordinator-seeed-b601-dm:
           title: B601-DM coordinator
           description: A B601-DM behind a ControlCoordinator (a building block).
+        b601-dm-calibrate:
+          title: B601-DM calibration
+          description: Gravity and gain calibration on the real arm.
+          hidden: true
+          recommended_config:
+          - {module: b601dmconnection, field: can_port, label: CAN port, placeholder: /dev/ttyACM0}
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
@@ -1038,7 +1052,9 @@ robots:
       manufacturer: Galaxea
       dirs: [dimos/robot/manipulators/a1z]
       defaults:
-        recommended_config: *can_arm_config
+        recommended_config:
+        - *robot_or_simulator
+        - {module: a1zconnection, field: can_port, label: CAN port, placeholder: a1zcan, when: {simulation: ''}}
       blueprints:
         a1z-planner-coordinator:
           title: A1Z motion planning
@@ -1088,9 +1104,8 @@ robots:
           title: Piper + xArm6 coordinator
           description: A Piper and an xArm6 behind one coordinator.
           recommended_config: &piper_xarm6_config
-          - *robot_or_simulator
-          - {<<: *xarm6_ip, field: addresses.xarm_arm}
-          - {<<: *can_port, field: addresses.piper_arm}
+          - {<<: *xarm6_ip_anywhere, module: xarm_arm}
+          - {module: piper_arm, field: can_port, label: CAN port, placeholder: can0}
         coordinator-teleop-dual:
           title: Dual-arm teleop coordinator
           description: Teleop coordinator for a Piper and an xArm6 together (a building block).
@@ -1170,7 +1185,7 @@ robots:
           recommended_config:
           - {module: recordingplayer, field: dataset, label: Recording, kind: recording, streams: [[pointlio_lidar], [tf]], placeholder: the SF office recording}
           # the map made from the player's default recording, so a launch with nothing filled in relocalizes
-          - {module: localmaprelocalization, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
+          - {module: premapmodule, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.

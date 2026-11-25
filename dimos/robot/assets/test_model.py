@@ -837,7 +837,7 @@ def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
     model = _urdf(tmp_path).to_usd()
 
     assert [joint.name for joint in model.joints] == ["shoulder"]
-    assert model.root_link == "base"
+    assert model.root_link == "box_robot/base"
     assert model.source_path == tmp_path / "robot.urdf"
     assert model.referenced_files() == {
         str(tmp_path / "meshes/arm.stl"),
@@ -921,8 +921,8 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
     (joint,) = model.joints
     assert joint.name == "shoulder"
     assert joint.type == "revolute"
-    assert joint.parent_link == "base"
-    assert joint.child_link == "forearm"
+    assert joint.parent_link == "arm/base"
+    assert joint.child_link == "arm/base/forearm"
     assert model.get_joint("shoulder") is joint
 
 
@@ -999,14 +999,18 @@ def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> Non
     model = (
         robot_model.RobotModel.from_file(source)
         .to_usd()
-        .with_frames({"tool": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
+        .with_frames({"tool": ("arm/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
     )
 
     joint = model.get_joint("tool_joint")
     assert joint is not None, "the added frame is welded in the layer but absent from joints"
-    assert (joint.type, joint.parent_link, joint.child_link) == ("fixed", "base_link", "tool")
+    assert (joint.type, joint.parent_link, joint.child_link) == (
+        "fixed",
+        "arm/base_link",
+        "arm/base_link/tool",
+    )
     assert joint.origin_xyz == (0.1, 0.0, 0.2)
-    assert {"tool", "tool_joint"} <= model.frame_names()
+    assert model.frame_names() == {"arm", "arm/base_link", "arm/base_link/tool"}
 
 
 def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
@@ -1023,4 +1027,4 @@ def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path
     )
     pytest.importorskip("pxr")
 
-    assert 'displayName = "spot"' in model.usd
+    assert 'def Xform "spot"' in model.usd
