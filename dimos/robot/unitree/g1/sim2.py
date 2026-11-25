@@ -57,7 +57,7 @@ from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import layer_file
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import OnWorldTime, WorldMirror
 
 G1_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_frames(
     {"lidar": ("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))}
@@ -100,7 +100,7 @@ class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
 
 
 # ConnectionModule.frame(name) and TfModule.frame (by role) share a name; G1Sim uses neither, only tf_frames.
-class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
+class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc]
     """A G1 in a simulated world; mount it on a frame of the scene, which is where it starts."""
 
     config: G1SimConfig
@@ -289,5 +289,5 @@ class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
         positions = {joint: float(row[0]) for joint, row in zip(names, rows, strict=True)}
         self.tfbuffer.publish(
             Transform.from_pose(self.tf_frames["body"], odom),
-            *self.usd_transforms(positions, ts=stamp),
+            *self.moving_transforms(positions, ts=stamp),
         )
