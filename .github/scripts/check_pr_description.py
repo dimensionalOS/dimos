@@ -25,14 +25,7 @@ CLA = re.compile(
     r"(?:CLA|\[CLA\]\([^)]+\))\.?[ \t]*",
     re.IGNORECASE,
 )
-TEST_COMMAND = re.compile(
-    # Match an invocation (including a pasted command), but allow prose about pytest.
-    r"(?:^[ \t]*(?:[-*] |\d+[.)] )?|[`$] *|/bin/|\brun +|-m +)"
-    r"pytest(?:-slow)?(?=$|[\s`;]|[.,](?:\s|$))"
-    r"|\bpytest +(?:[-./]|[\w.-]+/)"
-    r"|\b(?:cargo|deno|go|npm|pnpm|yarn|bun) (?:run )?test\b|\bpython[\d.]* -m unittest\b",
-    re.IGNORECASE | re.MULTILINE,
-)
+PLACEHOLDERS = {"", "n/a", "na", "none", "tbd", "todo"}
 
 
 def check_description(body: str) -> list[str]:
@@ -65,19 +58,15 @@ def check_description(body: str) -> list[str]:
             continue
         sections[section].append(line)
 
-    for current, previous in (
-        ("Why do we need this?", "Problem"),
-        ("What is this feature?", "Solution"),
-    ):
-        lines = sections[current.lower().rstrip("?")] + sections[previous.lower()]
-        answer = "\n".join(lines).strip(string.whitespace + string.punctuation).lower()
-        if answer in {"", "n/a", "na", "none", "tbd", "todo", "closes dim-xxx"}:
-            errors.append(f'Fill in "## {current}" (or "## {previous}").')
+    for required in ("Why do we need this?", "What is this feature?"):
+        answer = "\n".join(sections[required.lower().rstrip("?")])
+        if answer.strip(string.whitespace + string.punctuation).lower() in PLACEHOLDERS:
+            errors.append(f'Fill in "## {required}".')
 
-    manual = sections["how to manually run this"] + sections["how to test"]
-    if TEST_COMMAND.search("\n".join(manual)):
+    if re.search(r"\bpytest\b", "\n".join(sections["how to manually run this"]), re.IGNORECASE):
         errors.append(
-            "Give manual verification steps or leave the section empty. Move automated test commands out of it."
+            'Remove pytest commands from "## How to manually run this". '
+            "Give manual verification steps or leave the section empty."
         )
     if not checked_cla:
         errors.append("Check the template's CLA acknowledgment with [x].")

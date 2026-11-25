@@ -19,7 +19,9 @@ from check_pr_description import MAX_LENGTH, check_description
 
 TEMPLATE = (Path(__file__).resolve().parents[1] / "pull_request_template.md").read_text()
 CLA = "- [x] I have read and approved the CLA."
-LEGACY = f"## Problem\n#42\n## Solution\nPin protobuf.\n## Contributor License Agreement\n{CLA}"
+VALID = (
+    f"## Why do we need this?\n#42\n## What is this feature?\nPin protobuf.\n## Checklist\n{CLA}"
+)
 
 
 class TestPrDescription(unittest.TestCase):
@@ -32,26 +34,23 @@ class TestPrDescription(unittest.TestCase):
         self.assertEqual(check_description(filled.replace("[ ]", "[X]")), [])
 
     def test_length_and_punctuation_ignore_comments(self) -> None:
-        body = LEGACY + "\n" + "x" * (MAX_LENGTH - len(LEGACY) - 1)
-        self.assertEqual(check_description(body + "<!--\n\u2014\n-->"), [])
-        self.assertEqual(len(check_description(body + "\u2014")), 2)
+        body = VALID + "\n" + "x" * (MAX_LENGTH - len(VALID) - 1)
+        self.assertEqual(check_description(body + "<!--\n—\n-->"), [])
+        self.assertEqual(len(check_description(body + "—")), 2)
 
     def test_require_real_answers_and_cla(self) -> None:
-        self.assertEqual(check_description(LEGACY), [])
-        empty = LEGACY.replace("#42", "Closes DIM-XXX").replace("Pin protobuf.", "<!-- TODO -->")
+        self.assertEqual(check_description(VALID), [])
+        empty = VALID.replace("#42", "N/A").replace("Pin protobuf.", "<!-- TODO -->")
         for fake_cla in ("- [x] I ran tests.", f"<!-- {CLA} -->", f"```md\n{CLA}\n```"):
             with self.subTest(fake_cla=fake_cla):
                 self.assertEqual(len(check_description(empty.replace(CLA, fake_cla))), 3)
-        self.assertEqual(len(check_description(f"~~~~md\n{LEGACY}\n~~~~")), 3)
+        self.assertEqual(len(check_description(f"~~~~md\n{VALID}\n~~~~")), 3)
 
-    def test_automated_commands_only_in_manual_steps(self) -> None:
-        for heading in ("How to manually run this", "How to Test"):
-            manual = f"\n## {heading}\nOpen the viewer and confirm the image appears.\n"
-            self.assertEqual(
-                check_description(LEGACY + manual + "CI also has pytest coverage."), []
-            )
-            for command in ("pytest", "uv run pytest -q", "python3 -m pytest", "cargo test"):
-                with self.subTest(heading=heading, command=command):
-                    block = f"```sh\n## A shell comment\n{command}\n```"
-                    self.assertEqual(len(check_description(LEGACY + manual + block)), 1)
-                    self.assertEqual(check_description(LEGACY + manual + "## CI\n" + block), [])
+    def test_pytest_only_in_manual_steps(self) -> None:
+        manual = "\n## How to manually run this\nOpen the viewer and confirm the image appears.\n"
+        self.assertEqual(check_description(VALID + manual), [])
+        for command in ("pytest", "uv run pytest -q", "python3 -m pytest", "./bin/pytest-slow"):
+            with self.subTest(command=command):
+                block = f"```sh\n## A shell comment\n{command}\n```"
+                self.assertEqual(len(check_description(VALID + manual + block)), 1)
+                self.assertEqual(check_description(VALID + manual + "## CI\n" + block), [])
