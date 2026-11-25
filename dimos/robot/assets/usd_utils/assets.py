@@ -292,7 +292,11 @@ def _common_parent(assets: Mapping[str, str], root: Path | str | None) -> str:
 
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a layer", root)
+    return layer_asset_paths(pxr, layer_from(pxr, usd, "a layer", root))
+
+
+def layer_asset_paths(pxr: Pxr, layer: Layer) -> set[str]:
+    """The files an open layer needs, as it names them."""
     return {asset for asset, _ in _required_assets(pxr, layer)}
 
 
