@@ -20,7 +20,7 @@ manipulation, and the dimos.imitation data-collection stack. ``--simulation
 mujoco`` and ``--scene-package`` remain supported. Put on the headset, open
 ``https://<host>:8443/teleop``, and:
 
-    X + A             hold to track both arms from a shared reference
+    Both grips        hold to track both arms from a shared reference
     B                 start / save an episode
     Y                 discard the in-progress episode
 

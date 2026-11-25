@@ -7,7 +7,7 @@ planning from conversion to an executable timed trajectory.
 
 ```bash
 # 1. Verify manipulation dependencies with mock hardware:
-dimos run xarm7-planner-coordinator
+dimos run lite6-planner-coordinator
 
 # Plan for the mobile, bimanual R1 Pro with fake hardware:
 dimos run r1pro-planar-preview
@@ -16,7 +16,7 @@ dimos run r1pro-planar-preview
 dimos run keyboard-teleop-xarm7
 
 # 3. SDK and RPCs in the generic Python shell:
-dimos run xarm7-planner-coordinator  # terminal 1
+dimos run lite6-planner-coordinator  # terminal 1
 dimos shell                         # terminal 2
 ```
 
