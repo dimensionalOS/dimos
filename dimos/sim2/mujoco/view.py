@@ -15,21 +15,25 @@
 
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+import sys
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.lights import dome_sky
 from dimos.sim2.mujoco.look import (
     display,
     light_headroom,
     linear_textures,
     scale_light,
+    show_sky,
     stage_tone_map,
 )
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
+from dimos.sim2.mujoco.renders import RenderProcess, Renders
 from dimos.sim2.mujoco.world import USD_SUFFIXES, SensorMount, compile_world, mount_sensor
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 
@@ -52,8 +56,13 @@ class MujocoView:
         self._headroom = 1.0
         if self._tone_map is not None:
             # MuJoCo writes linear light to 8 bits and clips at 1, so render it scaled to fit.
-            self._headroom = light_headroom(self.model)
+            sky = dome_sky(Path(scene))
+            self._headroom = max(
+                light_headroom(self.model), 0.0 if sky is None else float(sky.max())
+            )
             scale_light(self.model, 1.0 / self._headroom)
+            if sky is not None:
+                show_sky(self.model, sky / self._headroom)
         self._joints: dict[str, int] = {}
         self._robot_roots: dict[str, int] = {}
         self._object_bodies: dict[str, int] = {}
@@ -62,7 +71,7 @@ class MujocoView:
         self._frames: dict[str, tuple[int, int]] = {}
         self._names: dict[int, list[str]] = {}
         self._velocities_current = False
-        self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
+        self._renders: Renders | RenderProcess | None = None
         self._previous: dict[str, tuple[float, NDArray[np.float64]]] = {}
         self._offsets: dict[int, tuple[NDArray[np.float64], Rotation]] = {}
 
@@ -131,15 +140,13 @@ class MujocoView:
         return angular_linear[3:], angular_linear[:3]
 
     def render(self, camera: str, width: int, height: int) -> NDArray[np.uint8]:
-        if (width, height) not in self._renderers:
-            self._renderers[width, height] = mujoco.Renderer(self.model, height, width)
-        renderer = self._renderers[width, height]
-        mujoco.mj_comPos(self.model, self.data)
-        mujoco.mj_camlight(self.model, self.data)
-        renderer.update_scene(self.data, camera=camera)
+        if self._renders is None:
+            # A worker is forked, and macOS's Metal compiles no shader there (see renders.py).
+            self._renders = (RenderProcess if sys.platform == "darwin" else Renders)(self.model)
+        rgb = self._renders.render(self.data, camera, width, height)
         if self._tone_map is None:
-            return renderer.render().copy()
-        return display(renderer.render(), self._headroom, self._tone_map)
+            return rgb
+        return display(rgb, self._headroom, self._tone_map)
 
     def raycaster(
         self,
@@ -195,9 +202,9 @@ class MujocoView:
         return body
 
     def close(self) -> None:
-        for renderer in self._renderers.values():
-            renderer.close()
-        self._renderers.clear()
+        if self._renders is not None:
+            self._renders.close()
+            self._renders = None
 
     def imu(
         self, sensor: str

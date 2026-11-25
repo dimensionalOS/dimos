@@ -20,6 +20,7 @@ from typing import Any
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.utils.logging_config import setup_logger
 
@@ -53,7 +54,7 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
     center = np.array(bounds.GetMidpoint()) * meters
     reach = float(np.linalg.norm(bounds.GetSize())) * meters / 2
     scale = _camera_exposure_scale(pxr, stage)
-    added = 0
+    added, skied = 0, False
     for prim in lights:
         light = UsdLux.LightAPI(prim)
         radiance = _radiance(UsdLux, light) * scale
@@ -80,9 +81,14 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
                 ambient=np.zeros(3),
                 castshadow=bool(_value(UsdLux.ShadowAPI(prim).GetShadowEnableAttr(), True)),
             )
-        elif prim.IsA(UsdLux.DomeLight):
+        elif _is_dome(UsdLux, prim):
             if _value(prim.GetAttribute("inputs:texture:file"), None):
-                logger.warning(f"sim2: {name} lights with a texture; MuJoCo takes its color only")
+                logger.warning(
+                    f"sim2: {name}'s texture shows as the sky; its light takes the color only"
+                )
+            if not skied:
+                add_sky(spec, _sky(pxr, stage, prim, radiance))
+                skied = True
             # Blender's World strength is sky radiance L, and a Lambert surface sends back a·L.
             spec.worldbody.add_light(
                 name=name,
@@ -105,6 +111,131 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
         # Blender has no headlight, so a stage that brings its own lights turns MuJoCo's off.
         spec.visual.headlight.active = 0
     return added
+
+
+def dome_sky(scene: Path) -> NDArray[np.float32] | None:
+    """The sky the stage's dome shows, as `add_sky` gives it the model but unclipped; None with no dome."""
+    from dimos.robot.assets.usd_utils.pxr import load_pxr
+
+    pxr = load_pxr()
+    from pxr import UsdLux
+
+    stage = pxr.Usd.Stage.Open(str(scene))
+    for prim in stage.Traverse() if stage else []:
+        if (
+            _is_dome(UsdLux, prim)
+            and pxr.UsdGeom.Imageable(prim).ComputeVisibility() != pxr.UsdGeom.Tokens.invisible
+        ):
+            radiance = _radiance(UsdLux, UsdLux.LightAPI(prim)) * _camera_exposure_scale(pxr, stage)
+            return _sky(pxr, stage, prim, radiance)
+    return None
+
+
+def add_sky(spec: mujoco.MjSpec, sky: NDArray[np.float32]) -> None:
+    """Give `spec` the skybox `sky` (MuJoCo's six faces stacked, 6N x N x 3, linear light), clipped at 1."""
+    width = sky.shape[1]
+    spec.add_texture(
+        name="dome_sky",
+        type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+        width=width,
+        height=6 * width,
+        nchannel=3,
+        colorspace=mujoco.mjtColorSpace.mjCOLORSPACE_LINEAR,
+    ).data = sky_bytes(sky).tobytes()
+
+
+def sky_bytes(sky: NDArray[np.float32]) -> NDArray[np.uint8]:
+    """Linear light as the 8 bits MuJoCo draws a skybox with, unlit and unencoded, as it writes linear light."""
+    return np.rint(np.clip(sky, 0.0, 1.0) * 255).astype(np.uint8)
+
+
+# Each skybox face's outward axis, then the directions its columns and its rows run, as MuJoCo draws them.
+_FACES = np.array(
+    [
+        [[1, 0, 0], [0, 1, 0], [0, 0, -1]],
+        [[-1, 0, 0], [0, -1, 0], [0, 0, -1]],
+        [[0, 0, 1], [1, 0, 0], [0, -1, 0]],
+        [[0, 0, -1], [1, 0, 0], [0, 1, 0]],
+        [[0, -1, 0], [1, 0, 0], [0, 0, -1]],
+        [[0, 1, 0], [-1, 0, 0], [0, 0, -1]],
+    ],
+    dtype=float,
+)
+
+
+def _is_dome(UsdLux: Any, prim: Any) -> bool:
+    return bool(prim.IsA(UsdLux.DomeLight) or prim.IsA(UsdLux.DomeLight_1))
+
+
+def _sky(pxr: Any, stage: Any, prim: Any, radiance: np.ndarray) -> NDArray[np.float32]:
+    """The dome's radiance in every direction as MuJoCo skybox faces: its texture times its color, else its color."""
+    uniform = np.broadcast_to(radiance.astype(np.float32), (6, 1, 3)).copy()
+    asset = _value(prim.GetAttribute("inputs:texture:file"), None)
+    if asset is None:
+        return uniform
+    name, layout = (
+        str(prim.GetPath()),
+        str(_value(prim.GetAttribute("inputs:texture:format"), "automatic")),
+    )
+    image = _linear_image(Path(asset.resolvedPath)) if asset.resolvedPath else None
+    if image is None:
+        logger.warning(f"sim2: {name}'s texture {asset.path} does not load; its sky is its color")
+        return uniform
+    if layout not in ("automatic", "latlong"):
+        logger.warning(f"sim2: {name}'s {layout} texture is not implemented; its sky is its color")
+        return uniform
+    size = max(1, image.shape[0] // 2)
+    # A face spans 90 degrees, as half the height of a latlong spans, so each keeps the image's resolution.
+    across = (np.arange(size) + 0.5) / size * 2 - 1
+    rows, columns = np.meshgrid(across, across, indexing="ij")
+    directions = (
+        _FACES[:, None, None, 0]
+        + columns[None, ..., None] * _FACES[:, None, None, 1]
+        + rows[None, ..., None] * _FACES[:, None, None, 2]
+    )
+    to_world = np.array(
+        pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
+    )[:3, :3]
+    # USD matrices are row-vector, so a world direction maps back to the dome's through the inverse.
+    local = directions.reshape(-1, 3) @ np.linalg.inv(to_world)
+    local /= np.linalg.norm(local, axis=1, keepdims=True)
+    pole = str(_value(prim.GetAttribute("poleAxis"), "Y"))
+    if pole == "Z" or (pole == "scene" and pxr.UsdGeom.GetStageUpAxis(stage) == "Z"):
+        # A Z pole is the Y pole turned down onto the horizon, as Hydra turns it.
+        local = np.stack([local[:, 0], local[:, 2], -local[:, 1]], axis=1)
+    # Hydra Storm's latlong: u = 0.5 looks down +Z, v = 0 is the +Y pole at the image's top row.
+    u = (np.arctan2(local[:, 2], local[:, 0]) + 0.5 * np.pi) / (2 * np.pi) % 1.0
+    v = np.arccos(np.clip(local[:, 1], -1.0, 1.0)) / np.pi
+    height, width = image.shape[:2]
+    # One column wrapped onto each side, so a sample across the seam blends both edges.
+    wrapped = np.concatenate([image[:, -1:], image, image[:, :1]], axis=1)
+    import cv2
+
+    sampled = cv2.remap(
+        wrapped,
+        (u * width + 0.5).astype(np.float32).reshape(6 * size, size),
+        (v * height - 0.5).astype(np.float32).reshape(6 * size, size),
+        cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    return (sampled * radiance).astype(np.float32)
+
+
+def _linear_image(path: Path) -> NDArray[np.float32] | None:
+    """An image file as linear RGB: float files as they are, integer ones decoded from sRGB."""
+    import cv2
+
+    raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if raw is None:
+        return None
+    color = raw[..., None].repeat(3, axis=2) if raw.ndim == 2 else raw[..., 2::-1]
+    if np.issubdtype(color.dtype, np.floating):
+        return np.ascontiguousarray(color, dtype=np.float32)
+    encoded = color.astype(np.float32) / np.iinfo(color.dtype).max
+    # The sRGB transfer curve as IEC 61966-2-1 defines it, inverted.
+    return np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4).astype(
+        np.float32
+    )
 
 
 def _radiance(UsdLux: Any, light: Any) -> np.ndarray:
