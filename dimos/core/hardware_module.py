@@ -33,7 +33,7 @@ fetches them with ``fetch_hardware_files`` and grafts them where ``attached_to()
 """
 
 from collections import defaultdict
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
@@ -110,7 +110,8 @@ class HardwareModuleConfig(TfModuleConfig):
         self.tf_frames_local, self.tf_frames_global, self.tf_edges = usd_tf(
             self, (self.instance_name or "").rpartition("/")[0]
         )
-        TfModuleConfig._check_roles(self)
+        # The parent's validator is a plain function at runtime; mypy sees pydantic's decorator proxy.
+        cast("Callable[[TfModuleConfig], TfModuleConfig]", TfModuleConfig._check_roles)(self)
         return self
 
 
@@ -121,13 +122,13 @@ def usd_tf(
 
     ``config`` is a HardwareModuleConfig or a blueprint atom's kwargs (read the same way).
     """
-    read = config.get if isinstance(config, Mapping) else lambda name: getattr(config, name)
-    usd: UsdModel | None = read("usd")
+    values: Mapping[str, Any] = config if isinstance(config, Mapping) else vars(config)
+    usd: UsdModel | None = values.get("usd")
     if usd is None:
         raise ValueError(
             "a HardwareModule needs a usd: hardware without one is not a HardwareModule"
         )
-    if read("frame_id_prefix"):
+    if values.get("frame_id_prefix"):
         raise ValueError(
             "a HardwareModule's tf frames are its namespace and its USD's prim paths, so "
             "frame_id_prefix (which would name them apart from the USD) is refused; namespace "
@@ -145,7 +146,7 @@ def usd_tf(
     # A joint may name a frame no prim carries: the anchor usd_to_urdf adds off a child's origin.
     local = {frame: frame for frame in sorted({*frames, *(f for edge in edges for f in edge)})}
     shared: dict[str, str] = {}
-    attached_to = read("attached_to")
+    attached_to: str | None = values.get("attached_to")
     if attached_to is not None:
         check_frame_path(attached_to, "attached_to")
         if namespace != attached_to and not namespace.endswith(f"/{attached_to}"):
@@ -155,7 +156,7 @@ def usd_tf(
             )
         shared[MOUNT_ROLE] = namespace
         edges.append((MOUNT_ROLE, usd.top_frame))
-    for role, frame in read("tf_frames_local").items():
+    for role, frame in values["tf_frames_local"].items():
         if frame not in local:
             raise ValueError(
                 f"tf_frames_local[{role!r}] is {frame!r}, which is not a frame of this hardware's "
@@ -165,13 +166,13 @@ def usd_tf(
             raise ValueError(
                 f"tf_frames_local[{role!r}] is {frame!r}, but the USD's frame {role!r} is that role"
             )
-    for role, frame in read("tf_frames_global").items():
+    for role, frame in values["tf_frames_global"].items():
         check_frame_path(frame, f"tf_frames_global[{role!r}]")
         if shared.setdefault(role, frame) != frame:
             raise ValueError(
                 f"tf_frames_global[{role!r}] is {frame!r}, but {role!r} is the mount's role"
             )
-    return local, shared, list(dict.fromkeys([*edges, *read("tf_edges")]))
+    return local, shared, list(dict.fromkeys([*edges, *values["tf_edges"]]))
 
 
 # needed for sims to detect hardware modules on hosted systems

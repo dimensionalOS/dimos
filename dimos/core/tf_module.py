@@ -255,10 +255,11 @@ def _path_between(neighbours: dict[str, set[str]], start: str, end: str) -> list
             if neighbour not in came_from:
                 came_from[neighbour] = frame
                 queue.append(neighbour)
-    path, frame = [], end
-    while frame is not None:
-        path.append(frame)
-        frame = came_from[frame]
+    path: list[str] = []
+    step: str | None = end
+    while step is not None:
+        path.append(step)
+        step = came_from[step]
     return path
 
 
