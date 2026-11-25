@@ -65,7 +65,7 @@ to check multicast filtering and client isolation, or retry on a network that
 permits discovery. These are possible causes, not a diagnosis of the network.
 
 You can isolate the LAN scan with `dimos go2tool discover --lan -t 30`. A longer
-timeout cannot fix blocked multicast. DimOS currently has no direct IP-to-serial
+timeout cannot fix blocked multicast. dimOS currently has no direct IP-to-serial
 lookup when discovery receives no reply. If you obtain an IP through the Unitree
 app or network administrator, verify that it belongs to the intended serial
 before setting `ROBOT_IP`. A successful ping alone does not identify the robot.
