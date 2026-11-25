@@ -44,7 +44,7 @@ class MujocoSimConfig(ModuleConfig):
 
 class MujocoSim(Module):
     config: MujocoSimConfig
-    actions: In[WorldAction]
+    world_actions: In[WorldAction]
     world_observations: Out[WorldObservations]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -59,7 +59,7 @@ class MujocoSim(Module):
         self._all_commanded = Event()
 
     async def main(self) -> AsyncIterator[None]:
-        self.actions.subscribe(self._on_actions)
+        self.world_actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
         running = asyncio.create_task(until_it_stops("the world", self._run()))
         yield
