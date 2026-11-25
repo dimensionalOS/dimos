@@ -34,6 +34,7 @@ from dimos.robot.assets.model import UsdModel
 from dimos.sim2.spec import SimulatedRobot
 from dimos.spec.utils import Spec, get_protocol_method_signatures
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 logger = setup_logger()
 
@@ -73,25 +74,35 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
 
 def compose_world(hardware: Sequence[HardwareSpec]) -> UsdModel:
     """Graft every hardware's USD onto the frame it is mounted on, into the one unmounted USD."""
+    # Asked all at once: each part works its USD out in its own module.
+    described = safe_thread_map(list(hardware), lambda part: (part.get_usd(), part.mounted_on()))
+    return compose_usds(described)
+
+
+def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
+    """Graft each USD onto the frame it names, into the one USD that names none."""
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
     from dimos.robot.assets.usd_utils.layers import graft_usd
+    from dimos.sim2.lfs import pull_usd_assets
 
-    described = [(part.get_usd(), part.mounted_on()) for part in hardware]
     roots = [usd for usd, mounted_on in described if mounted_on is None]
     if len(roots) != 1:
         raise ValueError(
             f"a simulated world needs exactly one unmounted HardwareModule (the scene "
             f"everything else mounts onto), and this blueprint has {len(roots)}"
         )
+    # Before any stage is opened on them: a stage opens every layer they reference, such as a scene's hulls.
+    pull_usd_assets(usd for usd, _ in described)
     mounted = [(usd, mounted_on) for usd, mounted_on in described if mounted_on is not None]
+    placed: set[str] = set()
 
     def grafted(usd: str) -> str:
         frames = usd_frame_names(usd)
+        placed.update(frames)
         children = {frame: grafted(child) for child, frame in mounted if frame in frames}
         return graft_usd(usd, children) if children else usd
 
     world = grafted(roots[0])
-    placed = usd_frame_names(world)
     unplaced = sorted(frame for _, frame in mounted if frame not in placed)
     if unplaced:
         raise ValueError(f"no hardware in the world has the mount frames {unplaced}")

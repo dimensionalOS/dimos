@@ -25,12 +25,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, frame_name, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, frame_name, layer_from, load_pxr
 
 
 def usd_drives(usd: str, root: Path | str | None = None) -> dict[str, tuple[float, float, float]]:
     pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a robot", root))
+    return _stage_drives(pxr, pxr.Usd.Stage.Open(layer_from(pxr, usd, "a robot", root)))
+
+
+def _stage_drives(pxr: Pxr, stage: Stage) -> dict[str, tuple[float, float, float]]:
     drives: dict[str, tuple[float, float, float]] = {}
     for prim in stage.Traverse():
         if not prim.IsA(pxr.UsdPhysics.Joint):
@@ -59,12 +62,13 @@ def usd_with_mjc_servos(usd: str, root: Path | str | None = None) -> str:
     default gain, and the backend then refuses to give it gains because its bias is not affine.
     Converting here keeps the asset in standard USD and lets MuJoCo see a servo.
     """
-    drives = usd_drives(usd, root)
-    if not drives:
-        return usd
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a robot", root)
+    # One stage for reading the drives and writing the servos: opening a room's takes most of a second.
     stage = pxr.Usd.Stage.Open(layer)
+    drives = _stage_drives(pxr, stage)
+    if not drives:
+        return usd
     actuators = {
         str(targets[0]): prim
         for prim in stage.Traverse()
