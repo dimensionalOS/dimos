@@ -100,7 +100,7 @@ class MultiTBuffer:
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
-            for transform in args:
+            for transform in map(normalized, args):
                 key = (transform.frame_id, transform.child_frame_id)
                 if key not in self.buffers:
                     self.buffers[key] = TBuffer(self.buffer_size)
@@ -367,12 +367,34 @@ class TF(MultiTBuffer):
             self._unsubscribe = None
 
 
+def normalize_frame_id(frame_id: str) -> str:
+    """The frame id code uses: one leading "/" (a HardwareModule's frame on the wire) dropped, like Foxglove's normalizeFrameId."""
+    return frame_id[1:] if frame_id.startswith("/") else frame_id
+
+
+def normalized(transform: Transform) -> Transform:
+    """``transform`` with normalized frame ids; a copy, so other subscribers still see the wire's."""
+    frame_id, child_frame_id = (
+        normalize_frame_id(transform.frame_id),
+        normalize_frame_id(transform.child_frame_id),
+    )
+    if (frame_id, child_frame_id) == (transform.frame_id, transform.child_frame_id):
+        return transform
+    return Transform(
+        translation=transform.translation,
+        rotation=transform.rotation,
+        frame_id=frame_id,
+        child_frame_id=child_frame_id,
+        ts=transform.ts,
+    )
+
+
 def refuse_undeclared_edges(
     edges: "Collection[tuple[str, str]]", module_name: str, transforms: "Iterable[Transform]"
 ) -> None:
     """Raise if any transform's (parent, child) is not in *edges*."""
     for t in transforms:
-        if (t.frame_id, t.child_frame_id) not in edges:
+        if (normalize_frame_id(t.frame_id), normalize_frame_id(t.child_frame_id)) not in edges:
             raise ValueError(
                 f"{module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
             )

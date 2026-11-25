@@ -15,6 +15,7 @@
 """tf frame ids as paths: ``go2_A/go2/base`` is the prim ``/go2/base`` under the namespace ``go2_A``.
 
 Each "/"-separated segment is a USD prim name, so a frame id is a prim path without its leading "/".
+On the wire a HardwareModule's frames keep the "/" (``/go2_A/go2/base``), which the tf buffer drops.
 """
 
 import re
@@ -55,6 +56,6 @@ def check_frame_path(path: str, what: str) -> None:
 
 
 def is_hardware_edge(parent: str, child: str) -> bool:
-    """Whether ``parent -> child`` is a hardware edge (the child's path-parent), not an imaginary one (an estimate, a localization)."""
-    # An imaginary frame whose name happens to be the child's path-parent is misclassified; rare enough to ignore.
-    return child.rpartition("/")[0] == parent
+    """Whether a wire edge (raw frame ids) is a hardware edge, not an imaginary one (an estimate, a localization)."""
+    # A HardwareModule's own frames (and its mount) go on the wire with one leading "/"; no other frame does.
+    return parent.startswith("/") and child.startswith("/")

@@ -34,7 +34,7 @@ fetches them with ``fetch_hardware_files`` and composes them (each already sits 
 """
 
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
@@ -45,7 +45,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles
 from dimos.core.stream import In, Out
-from dimos.core.tf_module import TfModule, TfModuleConfig
+from dimos.core.tf_module import TfIO, TfModule, TfModuleConfig
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -184,8 +184,21 @@ class HardwareSpec(Spec, Protocol):
     def get_namespace(self) -> str: ...
 
 
+class _HardwareTfIO(TfIO):
+    """A HardwareModule's tf port: its own frames (and its mount) go on the wire with a leading "/"."""
+
+    owner: "HardwareModule"
+
+    def publish(self, msg: TFMessage) -> None:
+        super().publish(TFMessage(*self.owner.on_wire(msg.transforms)))
+
+
 class HardwareModule(TfModule):
-    """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted."""
+    """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted.
+
+    On the wire its own frames (and its mount) carry one leading "/" (``/go2_A/go2/base``), which says
+    an edge between two of them is hardware; the tf buffer drops it, so code never sees it.
+    """
 
     config: HardwareModuleConfig
     # Frames of this hardware's USD that other hardware can mount onto.
@@ -196,6 +209,10 @@ class HardwareModule(TfModule):
     hardware_file_response: Out[FileInfo]
     # The edges that never move, once at start (not latched: only what listens then gets them).
     tf_static: Out[TFMessage]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.tf = _HardwareTfIO(TFMessage, "tf", self)
 
     @classmethod
     def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
@@ -213,6 +230,38 @@ class HardwareModule(TfModule):
     ) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
         """The tf this hardware's USD and config declare, as its config would fill it in."""
         return usd_tf(atom.kwargs, atom.name.rpartition("/")[0], cls.mounts)
+
+    @classmethod
+    def blueprint_wire_roles(cls, atom: "BlueprintAtom") -> set[str]:
+        """Its own frames and its mount, which go on the wire with a leading "/"."""
+        local, shared, _ = cls.blueprint_tf(atom)
+        return set(local) | ({MOUNT_ROLE} & set(shared))
+
+    @cached_property
+    def _wire_frames(self) -> frozenset[str]:
+        frames = self.tf_frames
+        own = {frames[role] for role in self.config.tf_frames_local}
+        if self.config.attached_to is not None:
+            own.add(frames[MOUNT_ROLE])
+        return frozenset(own)
+
+    def on_wire(self, transforms: "Iterable[Transform]") -> list[Transform]:
+        """``transforms`` as they go on the wire: each of this hardware's own frames (and its mount) with a leading "/"."""
+        own = self._wire_frames
+
+        def wire(frame: str) -> str:
+            return f"/{frame}" if frame in own else frame
+
+        return [
+            Transform(
+                translation=t.translation,
+                rotation=t.rotation,
+                frame_id=wire(t.frame_id),
+                child_frame_id=wire(t.child_frame_id),
+                ts=t.ts,
+            )
+            for t in transforms
+        ]
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -249,14 +298,14 @@ class HardwareModule(TfModule):
         """Publish the edges that never move once on tf_static, then on tf at static_tf_rate_hz; start() does this."""
         if not self._static_edges:
             return
-        self.tf_static.publish(TFMessage(*self.static_transforms(ts=self.time())))
+        self.tf_static.publish(TFMessage(*self.on_wire(self.static_transforms(ts=self.time()))))
         if self.config.static_tf_rate_hz > 0:
             republishing = self.spawn(self._republish_static_tf())
             self.register_disposable(Disposable(republishing.cancel))
 
     async def _republish_static_tf(self) -> None:
         while True:
-            self.tfbuffer.publish(*self.static_transforms(ts=self.time()))
+            self.tfbuffer.publish(*self.on_wire(self.static_transforms(ts=self.time())))
             await self.sleep(1 / self.config.static_tf_rate_hz)
 
     def serve_hardware_files(self) -> None:

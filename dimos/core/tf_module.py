@@ -151,29 +151,41 @@ class TfModule(Module):
             atom.kwargs["tf_edges"],
         )
 
+    @classmethod
+    def blueprint_wire_roles(cls, atom: "BlueprintAtom") -> set[str]:
+        """The roles whose frames this module puts on the wire with a leading "/" (a HardwareModule's own); none here."""
+        return set()
+
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
         """Refuse declared edges that close a loop, or a frame with two parents of one kind; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
 
-        A frame may have one hardware parent (its path-parent) and one imaginary parent (an estimate, a
-        localization): lookups search the tree both ways. Two imaginary parents are refused, since each says
-        where the frame is and nothing says which wins.
+        A frame may have one hardware parent (both ends are HardwareModule frames) and one imaginary
+        parent (an estimate, a localization): lookups search the tree both ways. Two imaginary parents
+        are refused, since each says where the frame is and nothing says which wins.
         """
         owners: dict[tuple[str, str], list[str]] = defaultdict(list)
+        on_wire_with_slash: set[str] = set()
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            local, shared, edges = cast("type[TfModule]", atom.module).blueprint_tf(atom)
+            module = cast("type[TfModule]", atom.module)
+            local, shared, edges = module.blueprint_tf(atom)
             frames = _frame_ids(local, shared, atom.name.rpartition("/")[0])
+            on_wire_with_slash |= {frames[role] for role in module.blueprint_wire_roles(atom)}
             for parent_role, child_role in edges:
                 owners[frames[parent_role], frames[child_role]].append(atom.name)
+
+        def wire(frame: str) -> str:
+            return f"/{frame}" if frame in on_wire_with_slash else frame
+
         if not owners:
             return
 
         errors = []
         parents: dict[tuple[str, bool], list[str]] = defaultdict(list)
         for (parent, child), names in sorted(owners.items()):
-            parents[child, is_hardware_edge(parent, child)].append(
+            parents[child, is_hardware_edge(wire(parent), wire(child))].append(
                 f"{parent} (from {', '.join(names)})"
             )
             if len(names) > 1:
