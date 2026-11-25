@@ -57,6 +57,7 @@ def test_launch_flags(monkeypatch):
         "--record-topics",
         "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom",
     ]
+    assert proc.extra_env["PEEK_HIDDEN_STREAMS"] == "body_poses"
 
     proc = DimosCliCall()
     environment().configure_launch(proc)
