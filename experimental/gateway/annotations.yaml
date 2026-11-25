@@ -665,6 +665,18 @@ robots:
           title: xArm pick and place with operator hold, recording (sim)
           description: The simulated xArm7 operator-hold stack that also records the wrist camera and joint positions into episodes.
           recommended_config: []
+        policy-teleop-sim:
+          title: xArm7 shared policy and keyboard control (sim)
+          description: Blend a synthetic joint-sweep policy with keyboard end-effector control on a simulated xArm7 in MuJoCo.
+          recommended_config: []
+        demo-policy-teleop-human-sim:
+          title: xArm7 operator control demo (sim)
+          description: Run the shared-control simulation with full operator authority over the synthetic joint-sweep policy.
+          recommended_config: []
+        demo-policy-teleop-policy-sim:
+          title: xArm7 policy control demo (sim)
+          description: Run the shared-control simulation with full authority for the synthetic joint-sweep policy.
+          recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
           description: Pick-and-place on a real xArm plus an AI agent with manipulation skills.
