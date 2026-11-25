@@ -20,7 +20,7 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.mujoco.lights import render_settings
+from dimos.sim2.mujoco.lights import render_settings, sky_bytes
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -115,6 +115,13 @@ def scale_light(model: mujoco.MjModel, factor: float) -> None:
         headlight.diffuse * factor,
         headlight.specular * factor,
     )
+
+
+def show_sky(model: mujoco.MjModel, sky: NDArray[np.float32]) -> None:
+    """Redraw the model's skybox as `sky`, the linear light `add_sky` takes, so it scales as its lights did."""
+    texture = int(np.flatnonzero(model.tex_type == mujoco.mjtTexture.mjTEXTURE_SKYBOX)[0])
+    start = int(model.tex_adr[texture])
+    model.tex_data[start : start + sky.size] = sky_bytes(sky).ravel()
 
 
 def pbr_neutral(color: NDArray[np.float32]) -> NDArray[np.float32]:

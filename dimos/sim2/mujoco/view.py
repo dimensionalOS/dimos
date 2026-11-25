@@ -22,11 +22,13 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.lights import dome_sky
 from dimos.sim2.mujoco.look import (
     display,
     light_headroom,
     linear_textures,
     scale_light,
+    show_sky,
     stage_tone_map,
 )
 from dimos.sim2.mujoco.names import resolved
@@ -54,8 +56,13 @@ class MujocoView:
         self._headroom = 1.0
         if self._tone_map is not None:
             # MuJoCo writes linear light to 8 bits and clips at 1, so render it scaled to fit.
-            self._headroom = light_headroom(self.model)
+            sky = dome_sky(Path(scene))
+            self._headroom = max(
+                light_headroom(self.model), 0.0 if sky is None else float(sky.max())
+            )
             scale_light(self.model, 1.0 / self._headroom)
+            if sky is not None:
+                show_sky(self.model, sky / self._headroom)
         self._joints: dict[str, int] = {}
         self._robot_roots: dict[str, int] = {}
         self._object_bodies: dict[str, int] = {}
