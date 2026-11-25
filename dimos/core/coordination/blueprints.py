@@ -408,10 +408,11 @@ class Blueprint(BlueprintProtocol):
                 ],
             )
         """
-        if not re.fullmatch(r"[A-Za-z0-9_]+", prefix):
+        # A namespace is a segment of tf frame ids, which are USD prim paths: no leading digit.
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prefix):
             raise ValueError(
-                f"Invalid namespace prefix {prefix!r}; use letters, digits and underscores "
-                f"(nest namespaces by composition, not with '/')."
+                f"Invalid namespace prefix {prefix!r}; use letters, digits and underscores, "
+                f"not starting with a digit (nest namespaces by composition, not with '/')."
             )
 
         listed = frozenset(shared)

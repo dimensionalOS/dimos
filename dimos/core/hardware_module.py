@@ -21,7 +21,8 @@ mounted onto one of the robot's mount frames::
 
 A frame is named by its prim path, with the namespace in front: the Go2's ``/go2/head`` is
 ``go2/head``, and a lidar whose USD holds ``/lidar/imu``, attached at ``go2/head``, is
-``go2/head/lidar/imu`` -- the path ``graft_usd`` puts that prim at. The USD fills the module's
+``go2/head/lidar/imu``. ``get_usd()`` serves the prims nested under the namespace, so every served
+prim path is already its tf frame and the layers of an assembly overlay each other as they are. The USD fills the module's
 ``tf_frames_local`` (role = frame path) and ``tf_edges``, so TfModule's checks see every edge.
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
@@ -29,7 +30,7 @@ the mount frame it sits on to its top prim. The edges that never move (fixed joi
 mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
 USD and every file it reaches on ``hardware_file_request``/``hardware_file_response``, named
 relative to itself, so whatever needs the whole assembly (a simulator, on this machine or another)
-fetches them with ``fetch_hardware_files`` and grafts them where ``attached_to()`` says.
+fetches them with ``fetch_hardware_files`` and composes them (each already sits at its tf frames).
 """
 
 from collections import defaultdict
@@ -272,7 +273,7 @@ class HardwareModule(TfModule):
 
     @rpc
     def get_usd(self) -> str:
-        """This hardware's USD exactly as served as hardware.usda: frames named as on tf, files relative to it."""
+        """This hardware's USD exactly as served as hardware.usda: prims under the namespace, so each frame's prim path is its tf frame; files relative to it."""
         return self._hardware_files.usd
 
     @rpc
@@ -281,12 +282,15 @@ class HardwareModule(TfModule):
         return self.namespace if self.config.attached_to is not None else None
 
     def local_usd(self) -> str:
-        """This hardware's USD for its own use: its prims as they are (tf adds the namespace), files as paths on this machine."""
+        """This hardware's USD for its own use: its prims under ``/<namespace>``, so each frame's prim path is its tf frame; files as paths on this machine."""
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+        from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
         source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        return resolve_usd_assets(self.config.usd.usd, root)
+        return usd_under_namespace(
+            resolve_usd_assets(self.config.usd.usd, root), self.namespace, root or None
+        )
 
     @cached_property
     def _hardware_files(self) -> HardwareFiles:

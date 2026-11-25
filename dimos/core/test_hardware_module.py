@@ -219,13 +219,19 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
         camera = coordinator.get_instance("left/arm/base/forearm/wrist/wristcamera")
         assert arm.attached_to() is None
         assert camera.attached_to() == "left/arm/base/forearm/wrist"
-        # Served as the prims are: tf puts the namespace in front.
-        arm_frames = usd_frame_names(arm.get_usd())
-        assert arm_frames == {"arm", "arm/base", "arm/base/forearm", "arm/base/forearm/wrist"}
+        # Served under the namespace, so each frame's prim path is its tf frame.
+        arm_frames = {"left/arm", "left/arm/base", "left/arm/base/forearm", _WRIST}
+        assert usd_frame_names(arm.get_usd()) == {"left", *arm_frames}
+        camera_frames = {
+            f"{_WRIST}/camera",
+            f"{_WRIST}/camera/camera_link",
+            f"{_WRIST}/camera/camera_link/optical",
+        }
         assert usd_frame_names(camera.get_usd()) == {
-            "camera",
-            "camera/camera_link",
-            "camera/camera_link/optical",
+            "left",
+            *(arm_frames - {_WRIST}),
+            _WRIST,
+            *camera_frames,
         }
     finally:
         coordinator.stop()
@@ -492,20 +498,28 @@ def test_an_attached_assembly_is_one_tf_tree() -> None:
     _check_tf(autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist)).namespace("left"))
 
 
-def test_every_frame_on_tf_is_its_prim_path_in_the_grafted_usd() -> None:
-    """The sim grafts each attached USD at attached_to(): every frame published is a prim there, and every frame prim is published."""
+def test_every_frame_on_tf_is_its_prim_path_in_the_composed_usd() -> None:
+    """Served layers overlay as they are: every frame published is a prim of the assembly, and every frame prim is published (bar the namespace's own)."""
     pytest.importorskip("pxr")
-    from dimos.robot.assets.usd_utils.frames import usd_frame_names
-    from dimos.robot.assets.usd_utils.layers import graft_usd
+    from pxr import Sdf, Usd
 
-    arm = Arm(instance_name="arm")
+    from dimos.robot.assets.usd_utils.frames import frame_prims
+    from dimos.robot.assets.usd_utils.pxr import frame_path
+
+    arm = Arm(instance_name="left/arm")
     camera = WristCamera(
-        attached_to="arm/base/forearm/wrist", instance_name="arm/base/forearm/wrist/wristcamera"
+        attached_to="arm/base/forearm/wrist", instance_name=f"{_WRIST}/wristcamera"
     )
     try:
-        mount = camera.attached_to()
-        assert mount is not None
-        composed = graft_usd(arm.get_usd(), {mount: camera.get_usd()})
+        layers = []
+        for module in (arm, camera):
+            layer = Sdf.Layer.CreateAnonymous(".usda")
+            assert layer.ImportFromString(module.get_usd())
+            layers.append(layer)
+        assembly = Usd.Stage.CreateInMemory()
+        assembly.GetRootLayer().subLayerPaths = [layer.identifier for layer in layers]
+        assembly.SetDefaultPrim(assembly.GetPrimAtPath("/left"))
+        composed = {frame_path(prim) for prim in frame_prims(assembly)}
         published = {
             frame
             for module in (arm, camera)
@@ -516,8 +530,8 @@ def test_every_frame_on_tf_is_its_prim_path_in_the_grafted_usd() -> None:
         arm.stop()
         camera.stop()
 
-    assert "arm/base/forearm/wrist/camera/camera_link/optical" in published
-    assert published == usd_frame_names(composed)
+    assert f"{_WRIST}/camera/camera_link/optical" in published
+    assert composed == published | {"left"}
 
 
 def test_hardware_without_a_usd_is_refused() -> None:
