@@ -85,7 +85,7 @@ class HardwareModuleConfig(TfModuleConfig):
 class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     def mounted_on(self) -> str | None: ...
-    def hardware_namespace(self) -> str: ...
+    def get_namespace(self) -> str: ...
 
 
 class HardwareModule(TfModule):
@@ -155,11 +155,6 @@ class HardwareModule(TfModule):
     def mounted_on(self) -> str | None:
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.mount is not None else None
-
-    @rpc
-    def hardware_namespace(self) -> str:
-        """The namespace its hardware_file_request and hardware_file_response are under."""
-        return self.namespace
 
     @cached_property
     def _hardware_files(self) -> HardwareFiles:
