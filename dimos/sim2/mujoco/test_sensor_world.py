@@ -270,8 +270,8 @@ _TEXTURED = """<mujoco>
 def test_only_a_camera_view_loads_the_textures_and_a_lidar_still_sees_the_textured_box(tmp_path):
     scene = tmp_path / "textured.xml"
     scene.write_text(_TEXTURED)
-    lidar = open_view(scene, attached_to=SensorMount("lidar", "world", "lidar"))
-    camera = open_view(scene, attached_to=SensorMount("camera", "world", "eye"))
+    lidar = open_view(scene, mount=SensorMount("lidar", "world", "lidar"))
+    camera = open_view(scene, mount=SensorMount("camera", "world", "eye"))
 
     distance, _ = lidar.raycaster((0,)).cast(np.zeros(3), np.array([[1.0, 0.0, 0.0]]), 10.0)
 

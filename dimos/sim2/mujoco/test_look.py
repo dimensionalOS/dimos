@@ -239,7 +239,7 @@ def test_a_lidar_view_opens_on_a_dome_sky_given_as_pixels():
 
     sky = '\ndef DomeLight "sky"\n{\n    color3f inputs:color = (1, 0.5, 0.25)\n}\n'
     scene = layer_file(SCENE.read_text() + sky, called="look")
-    lidar = MujocoView(scene, attached_to=SensorMount("lidar", "world", "lidar"))
+    lidar = MujocoView(scene, mount=SensorMount("lidar", "world", "lidar"))
     assert lidar.model.tex_type.tolist() == [mujoco.mjtTexture.mjTEXTURE_SKYBOX]
 
 
