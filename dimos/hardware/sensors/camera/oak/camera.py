@@ -328,7 +328,12 @@ def _wall_time(dai: Any, frame: Any) -> float:
 
 
 def _camera_info(transformation: Any, frame_id: str) -> CameraInfo:
-    """The pinhole model DepthAI reports for an undistorted (or aligned) frame."""
+    """The pinhole model DepthAI reports for an undistorted (or aligned) frame.
+
+    Read from the frames, not from ``readCalibration().getCameraIntrinsics(CAM_A, w, h)``:
+    on an OAK-D S2 that call assumes the colour sensor's 3840-wide crop, while a 1280x720
+    output is cropped from the full 4056-wide sensor, so its fx is 5.6 % off for these frames.
+    """
     width, height = transformation.getSize()
     k = transformation.getIntrinsicMatrix()
     fx, fy, cx, cy = k[0][0], k[1][1], k[0][2], k[1][2]
