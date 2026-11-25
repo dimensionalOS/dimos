@@ -54,7 +54,7 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
     center = np.array(bounds.GetMidpoint()) * meters
     reach = float(np.linalg.norm(bounds.GetSize())) * meters / 2
     scale = _camera_exposure_scale(pxr, stage)
-    added, skied = 0, False
+    added, skied, left_out = 0, False, []
     for prim in lights:
         light = UsdLux.LightAPI(prim)
         radiance = _radiance(UsdLux, light) * scale
@@ -100,12 +100,14 @@ def apply_lights(spec: mujoco.MjSpec, scene: Path) -> int:
                 castshadow=False,
             )
         else:
-            logger.warning(
-                f"sim2: {name} is a {prim.GetTypeName()}, which MuJoCo's render does not get; "
-                f"only distant and dome lights are carried across"
-            )
+            left_out.append(name)
             continue
         added += 1
+    if left_out:
+        # MuJoCo lights a mesh at its vertices and draws 8 lights, so a lamp's pool of light is left to renderers that can draw it.
+        logger.info(
+            f"sim2: {len(left_out)} lamp(s) not drawn, only distant and dome lights are: {left_out[:3]}"
+        )
     if added:
         # Blender has no headlight, so a stage that brings its own lights turns MuJoCo's off.
         spec.visual.headlight.active = 0
