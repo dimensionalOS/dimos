@@ -257,6 +257,29 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
         coordinator.stop()
 
 
+def test_a_usd_with_no_source_path_is_served_and_published() -> None:
+    pytest.importorskip("pxr")
+    from dimos.robot.assets.usd_utils.frames import usd_frame_names
+
+    # A layer handed over as text: no file it came from, so no folder its assets resolve from.
+    usd = UsdModel.from_layer(_arm_usd().usd)
+    assert usd.source_path is None
+    coordinator = _build(autoconnect(Arm.blueprint(usd=usd)))
+    try:
+        arm = coordinator.get_instance("arm")
+        assert usd_frame_names(arm.get_usd()) == {
+            "arm",
+            "arm/base",
+            "arm/base/forearm",
+            "arm/base/forearm/wrist",
+        }
+        assert ("arm/base", "arm/base/forearm") in {
+            tuple(edge) for edge in arm.get_hardware_transform_ids()
+        }
+    finally:
+        coordinator.stop()
+
+
 def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
     camera = WristCamera(
         attached_to="arm/base/forearm/wrist",
