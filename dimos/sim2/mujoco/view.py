@@ -16,6 +16,7 @@
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 import sys
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -40,16 +41,23 @@ from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 _GRAVITY = np.array([0.0, 0.0, -9.81])
 
 
+def _open_stage(scene: Path) -> Any:
+    from dimos.robot.assets.usd_utils.pxr import load_pxr
+
+    return load_pxr().Usd.Stage.Open(str(scene))
+
+
 class MujocoView:
     def __init__(
         self, scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None
     ) -> None:
         self._robots = set(ids)
+        # Held while the view is built, so each reader of the scene below shares its parsed layers instead of reparsing them.
+        stage = _open_stage(Path(scene)) if Path(scene).suffix.lower() in USD_SUFFIXES else None
         spec = compile_world(scene, ids=self._robots)
         if mount is not None:
             mount_sensor(spec, mount)
-        is_usd = Path(scene).suffix.lower() in USD_SUFFIXES
-        self._tone_map = stage_tone_map(Path(scene)) if is_usd else None
+        self._tone_map = stage_tone_map(Path(scene)) if stage is not None else None
         if self._tone_map is not None:
             linear_textures(spec, Path(scene))
         self.model = spec.compile()

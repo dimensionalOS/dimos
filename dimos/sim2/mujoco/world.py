@@ -164,6 +164,12 @@ def _configure(spec: mujoco.MjSpec, robot: SimulatedRobot, *, root: Any) -> None
 
 def mount_sensor(spec: mujoco.MjSpec, sensor: SensorMount) -> None:
     frame = sensor.frame_id
+    # A lidar or imu named as a site the world already has reads that site, so there is nothing to place.
+    if (
+        sensor.kind != "camera"
+        and resolved([s.name for s in spec.sites], sensor.name) == sensor.name
+    ):
+        return
     site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
     if frame != "world":
         site_name = resolved([s.name for s in spec.sites], frame)
