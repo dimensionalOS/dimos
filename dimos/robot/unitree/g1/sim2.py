@@ -123,7 +123,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         return make_humanoid_joints(self.config.source)
 
     @property
-    def mounted_frame(self) -> str:
+    def attach_frame(self) -> str:
         return self.tf_frames["odom"]
 
     @rpc
@@ -230,7 +230,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
 
     def _own_view(self, imu_frame: str) -> WorldView:
         """A view of this G1 alone, mounted as in the world: its IMU reads its own body, and compiling the room for it costs seconds."""
-        mount = self.mounted_on()
+        mount = self.attached_to()
         assert mount is not None
         alone = compose_usds(
             [(frame_usd(mount, name="world").usd, None), (self.local_usd(), mount)]

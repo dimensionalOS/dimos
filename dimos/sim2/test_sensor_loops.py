@@ -277,7 +277,7 @@ def test_a_livox_lidar_and_imu_rebuild_one_view_when_the_world_changes_shape(
 def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.livox import LivoxSim
 
-    livox = LivoxSim(instance_name="dog/lidar/livox", mount="dog/lidar")
+    livox = LivoxSim(instance_name="dog/lidar/livox", attached_to="dog/lidar")
     opened: list[Any] = []
     clouds: list[Any] = []
     readings: list[Any] = []
@@ -364,7 +364,7 @@ def _toy_world(sensor: Any, mount: str) -> Any:
 def test_a_livox_in_its_housing_sees_past_the_housing() -> None:
     from dimos.sim2.livox import LivoxSim
 
-    livox = LivoxSim(instance_name="dog/lidar/livox", mount="dog/lidar")
+    livox = LivoxSim(instance_name="dog/lidar/livox", attached_to="dog/lidar")
     published: list[Any] = []
     try:
         _toy_world(livox, "dog/lidar")
@@ -378,7 +378,7 @@ def test_a_livox_in_its_housing_sees_past_the_housing() -> None:
 def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides() -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name="dog/l1/l1", mount="dog/l1")
+    l1 = SimL1(instance_name="dog/l1/l1", attached_to="dog/l1")
     published: list[Any] = []
     try:
         _toy_world(l1, "dog/l1")
@@ -399,7 +399,7 @@ def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides() -> None:
 def test_an_l1_maps_none_of_the_robot_it_rides() -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name="dog/l1_up/l1", mount="dog/l1_up")
+    l1 = SimL1(instance_name="dog/l1_up/l1", attached_to="dog/l1_up")
     published: list[Any] = []
     try:
         _toy_world(l1, "dog/l1_up")
@@ -417,7 +417,7 @@ def test_an_l1_maps_none_of_the_robot_it_rides() -> None:
 def test_a_sensor_stamps_and_sleeps_in_the_world_s_time() -> None:
     from dimos.sim2.imu import SimImu
 
-    imu = SimImu(instance_name="dog/imu/simimu", mount="dog/imu")
+    imu = SimImu(instance_name="dog/imu/simimu", attached_to="dog/imu")
     world = _World()
     try:
         imu._world = world  # type: ignore[assignment]

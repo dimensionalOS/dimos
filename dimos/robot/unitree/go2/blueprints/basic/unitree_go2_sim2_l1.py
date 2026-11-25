@@ -53,8 +53,8 @@ unitree_go2_sim2_l1 = autoconnect(
     ),
     Logistics.blueprint(),
     autoconnect(
-        SimL1.mount(Go2Sim.mounts.l1),
-        SimCamera.mount(Go2Sim.mounts.camera),
+        SimL1.attach(Go2Sim.mounts.l1),
+        SimCamera.attach(Go2Sim.mounts.camera),
     ).namespace(ROBOT),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")
