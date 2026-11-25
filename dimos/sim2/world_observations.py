@@ -313,3 +313,15 @@ class WorldMirror:
             if self.time >= due:
                 # Busy past its next tick: the missed ones are skipped, and none comes within a period of this one.
                 due = max(self.time, ticked + period)
+
+
+class OnWorldTime:
+    """Mixed into a module ahead of Module: its time() and sleep() are the sim time of the world its main() mirrors."""
+
+    _world: WorldMirror
+
+    def time(self) -> float:
+        return self._world.stamp()
+
+    async def sleep(self, seconds: float) -> None:
+        await self._world.reached(self.time() + seconds)
