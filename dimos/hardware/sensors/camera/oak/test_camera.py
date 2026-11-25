@@ -18,11 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from datetime import timedelta
+import os
 from pathlib import Path
 import queue
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -36,7 +38,8 @@ from dimos.hardware.sensors.camera.oak.camera import (
     OAK_UNBOOTED_USB_PRODUCT,
     OakCamera,
     call_within,
-    oak_usb_products,
+    oak_usb_devices,
+    usb_permission_problem,
     wait_for_unbooted_oak,
 )
 from dimos.hardware.sensors.camera.spec import OPTICAL_ROTATION
@@ -120,8 +123,12 @@ class FakeQueue:
 class FakeOak:
     """A fake ``depthai`` module. Each bring-up follows the next entry of ``attempts``:
     "ok", "not-found" (Device() raises), "hang-open" (Device() does not return),
-    "no-pipeline" (the device opens, Pipeline() raises) or "hang-start" (the device opens,
-    pipeline.start() does not return)."""
+    "no-pipeline" (the device opens, Pipeline() raises), "odd-error" (Pipeline() raises
+    something that is not a DepthAI error), "hang-start" (pipeline.start() does not return),
+    or a camera that cannot run the pipeline: "no-stereo", "rvc4", "small-sensor".
+
+    As documented for DepthAI 3.12 with reconnection off (``setMaxReconnectionAttempts(0)``)
+    and ``setStopOnDeviceLoss(True)``, an unplugged camera's pipeline stops at once."""
 
     def __init__(self, attempts: list[str]) -> None:
         self.attempts = attempts
@@ -137,6 +144,7 @@ class FakeOak:
         dai.Clock.now.return_value = timedelta(seconds=DEVICE_CLOCK_S)
         dai.Device.side_effect = self._open
         dai.Pipeline.side_effect = self._pipeline
+        dai.Device.getAllAvailableDevices.return_value = []
         self.dai = dai
 
     def _open(self, *device_info: Any) -> MagicMock:
@@ -149,12 +157,26 @@ class FakeOak:
         device.getDeviceName.return_value = "OAK-D-S2"
         device.getUsbSpeed.return_value = "UsbSpeed.HIGH"
         device.behaviour = behaviour
+        socket = self.dai.CameraBoardSocket
+        sensors = {socket.CAM_A: (4056, 3040), socket.CAM_B: (1280, 800), socket.CAM_C: (1280, 800)}
+        if behaviour == "no-stereo":
+            del sensors[socket.CAM_B], sensors[socket.CAM_C]
+        if behaviour == "small-sensor":
+            sensors[socket.CAM_A] = (640, 480)
+        device.getConnectedCameraFeatures.return_value = [
+            SimpleNamespace(socket=key, width=w, height=h) for key, (w, h) in sensors.items()
+        ]
+        device.getPlatform.return_value = (
+            self.dai.Platform.RVC4 if behaviour == "rvc4" else self.dai.Platform.RVC2
+        )
         self.devices.append(device)
         return device
 
     def _pipeline(self, device: MagicMock) -> MagicMock:
         if device.behaviour == "no-pipeline":
             raise RuntimeError("X_LINK_ERROR")
+        if device.behaviour == "odd-error":
+            raise ValueError("not a DepthAI error")
         node = self.dai.node
         self.nodes = {
             node.Camera: MagicMock(),
@@ -246,22 +268,58 @@ def start_camera(fake_oak: FakeOak) -> Iterator[Callable[..., tuple[OakCamera, R
         camera.stop()
 
 
+def closed(fake_oak: FakeOak, index: int) -> bool:
+    return len(fake_oak.devices) > index and fake_oak.devices[index].close.called
+
+
 def feed(fake_oak: FakeOak, k: list[list[float]] = K) -> None:
     fake_oak.color.put(jpeg_frame(k))
     fake_oak.depth.put(depth_frame(k))
 
 
-def test_usb_products_are_read_from_sysfs(tmp_path: Path) -> None:
-    for name, vendor, product in (
-        ("1-1", "03e7", "2485"),
-        ("1-2", "8086", "0b3a"),
-        ("3-1", "03e7", "f63b"),
+def fake_sysfs(tmp_path: Path, mode: int = 0o666) -> tuple[Path, Path]:
+    """A sysfs USB tree with two OAKs and an Intel device, and their device nodes."""
+    sysfs, dev = tmp_path / "sys", tmp_path / "dev"
+    for name, vendor, product, bus, number in (
+        ("1-1", "03e7", "2485", 1, 5),
+        ("1-2", "8086", "0b3a", 1, 6),
+        ("3-1", "03e7", "f63b", 3, 2),
     ):
-        (tmp_path / name).mkdir()
-        (tmp_path / name / "idVendor").write_text(vendor + "\n")
-        (tmp_path / name / "idProduct").write_text(product + "\n")
+        folder = sysfs / name
+        folder.mkdir(parents=True)
+        for key, value in (
+            ("idVendor", vendor),
+            ("idProduct", product),
+            ("busnum", bus),
+            ("devnum", number),
+        ):
+            (folder / key).write_text(f"{value}\n")
+        node = dev / f"{bus:03d}" / f"{number:03d}"
+        node.parent.mkdir(parents=True, exist_ok=True)
+        node.touch(mode=mode)
+    return sysfs, dev
 
-    assert sorted(oak_usb_products(tmp_path)) == ["2485", "f63b"]
+
+def test_usb_devices_are_read_from_sysfs(tmp_path: Path) -> None:
+    sysfs, dev = fake_sysfs(tmp_path)
+
+    devices = sorted(oak_usb_devices(sysfs, dev), key=lambda d: d.product)
+
+    assert [(d.product, d.node) for d in devices] == [
+        ("2485", dev / "001" / "005"),
+        ("f63b", dev / "003" / "002"),
+    ]
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root opens any device node")
+def test_a_device_node_this_user_cannot_open_names_the_udev_rule(tmp_path: Path) -> None:
+    sysfs, dev = fake_sysfs(tmp_path, mode=0o444)
+    open_sysfs, open_dev = fake_sysfs(tmp_path / "open")
+
+    problem = usb_permission_problem(oak_usb_devices(sysfs, dev))
+
+    assert problem is not None and "udev rule" in problem and str(dev / "001" / "005") in problem
+    assert usb_permission_problem(oak_usb_devices(open_sysfs, open_dev)) is None
 
 
 class FakeClock:
@@ -448,8 +506,11 @@ def test_a_camera_that_stops_streaming_is_brought_up_again(
     received.wait("color_image")
     received.events["color_image"].clear()
 
+    # Reconnecting is the module's: DepthAI's own is off, so the lost device stops the pipeline.
+    fake_oak.devices[0].setMaxReconnectionAttempts.assert_called_once_with(0)
+    fake_oak.pipelines[0].setStopOnDeviceLoss.assert_called_once_with(True)
     fake_oak.pipelines[0].unplug()
-    wait_until(lambda: fake_oak.devices[0].close.called, timeout=10.0)
+    wait_until(lambda: closed(fake_oak, 0), timeout=10.0)
     # Another OAK, another calibration: its own intrinsics are published, not the first one's.
     feed(fake_oak, OTHER_K)
 
@@ -531,3 +592,117 @@ def test_missing_sdk_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ImportError, match="uv sync --extra oak"):
         OakCamera.check_dependencies()
+
+
+def capture_ended() -> bool:
+    return not any(t.name == "oak-camera" and t.is_alive() for t in threading.enumerate())
+
+
+def test_a_camera_that_sends_nothing_is_brought_up_again(
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+) -> None:
+    # The pipeline runs, but no picture comes: what the prototype once saw after a relaunch.
+    _, received = start_camera(stall_timeout=0.5)
+
+    wait_until(lambda: closed(fake_oak, 0), timeout=10.0)
+    feed(fake_oak)
+
+    received.wait("color_image")
+    assert len(fake_oak.devices) == 2
+
+
+@pytest.mark.parametrize(
+    "fake_oak, reason",
+    [
+        (["no-stereo"], "no stereo pair"),
+        (["rvc4"], "not an RVC2"),
+        (["small-sensor"], "larger than"),
+    ],
+    indirect=["fake_oak"],
+)
+def test_a_camera_that_cannot_run_the_pipeline_is_reported_and_not_retried(
+    fake_oak: FakeOak,
+    reason: str,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+    mocker: Any,
+) -> None:
+    error = mocker.patch.object(oak.logger, "error")
+
+    start_camera()
+
+    wait_until(capture_ended, timeout=10.0)
+    wait_until(lambda: closed(fake_oak, 0), timeout=10.0)
+    assert fake_oak.dai.Device.call_count == 1
+    assert reason in error.call_args.kwargs["reason"]
+
+
+def test_a_device_id_that_is_not_there_is_reported_after_three_tries(
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+    mocker: Any,
+) -> None:
+    fake_oak.dai.Device.getAllAvailableDevices.return_value = [
+        SimpleNamespace(deviceId="18443010C1", name="1.3")
+    ]
+    error = mocker.patch.object(oak.logger, "error")
+
+    start_camera(device_id="WRONG")
+
+    wait_until(capture_ended, timeout=10.0)
+    assert fake_oak.dai.Device.getAllAvailableDevices.call_count == 3
+    fake_oak.dai.Device.assert_not_called()
+    assert "18443010C1" in error.call_args.kwargs["reason"]
+
+
+@pytest.mark.parametrize("fake_oak", [["odd-error"]], indirect=True)
+def test_any_other_bring_up_error_is_tried_again(
+    fake_oak: FakeOak, start_camera: Callable[..., tuple[OakCamera, Received]]
+) -> None:
+    feed(fake_oak)
+
+    _, received = start_camera()
+
+    received.wait("color_image")
+    assert len(fake_oak.devices) == 2
+
+
+class BrokenFrame(FakeFrame):
+    def getTransformation(self) -> FakeTransformation:
+        raise ValueError("a frame without a transformation")
+
+
+def test_an_error_while_streaming_brings_the_camera_up_again(
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+) -> None:
+    fake_oak.color.put(BrokenFrame(jpeg_frame().getData()))
+
+    _, received = start_camera()
+    wait_until(lambda: closed(fake_oak, 0), timeout=10.0)
+    feed(fake_oak)
+
+    received.wait("color_image")
+    assert len(fake_oak.devices) == 2
+
+
+def test_color_only_without_depth(
+    fake_oak: FakeOak,
+    start_camera: Callable[..., tuple[OakCamera, Received]],
+    wait_until: Callable[..., None],
+) -> None:
+    feed(fake_oak)
+
+    _, received = start_camera(enable_depth=False)
+    received.wait("color_image", "camera_info")
+    wait_until(lambda: len(received.messages["camera_info"]) >= 10, timeout=10.0)
+
+    created = [call.args[0] for call in fake_oak.pipelines[0].create.call_args_list]
+    assert fake_oak.dai.node.StereoDepth not in created
+    assert created.count(fake_oak.dai.node.Camera) == 1
+    assert received.messages["depth_image"] == []
+    assert received.messages["depth_camera_info"] == []

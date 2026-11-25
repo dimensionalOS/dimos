@@ -1,6 +1,6 @@
 # 9. Hardware checks
 
-The Go2 checks require a connected robot and room to perform the described movements. Agentic checks need the configured credentials. Audio checks need a microphone and speakers. The camera checks need a webcam and a RealSense. Follow the [Go2 setup guide](../../docs/platforms/quadruped/go2/index.md) and the shared setup in the release testing plan.
+The Go2 checks require a connected robot and room to perform the described movements. Agentic checks need the configured credentials. Audio checks need a microphone and speakers. The camera checks need a webcam, a RealSense and a Luxonis OAK-D. Follow the [Go2 setup guide](../../docs/platforms/quadruped/go2/index.md) and the shared setup in the release testing plan.
 
 Run each foreground blueprint separately. Use another terminal for commands that interact with it, and stop it before moving to the next check.
 
@@ -135,3 +135,15 @@ uv run dimos run real-sense-camera-vis --enable-pointcloud true
 ```
 
 Expected result: Rerun shows live Color, Depth, ir_left and ir_right panes, and the 3D view shows the colored point cloud in front of the camera. If no camera is found, the log shows "RealSense start: Config cannot be resolved by any active devices / stream combinations." and the blueprint keeps running with an empty viewer.
+
+## 9.13 OAK camera
+
+Needs a Luxonis OAK-D (RVC2, for example an OAK-D S2) and the `oak` extra. On Linux the user needs the Luxonis udev rule (see `dimos/hardware/sensors/camera/oak/README.md`).
+
+```bash
+uv run dimos run oak-camera-vis --enable-pointcloud true
+```
+
+* Stop it with Ctrl+C and run the same command again at once.
+
+Expected result: the log shows "OAK streaming" with the device name and the USB speed, and Rerun shows live Color and Depth panes and the colored point cloud in front of the camera in 3D. Run again right after the stop, it streams again within a minute. If no camera is found, the log repeats "OAK not ready, trying again" and the blueprint keeps running with an empty viewer.

@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Luxonis OAK cameras (DepthAI v3): colour, depth aligned to colour, intrinsics and tf.
+"""Luxonis OAK cameras on DepthAI v3: colour, depth aligned to colour, intrinsics and tf.
 
-Colour is undistorted and MJPEG-encoded on the camera, and depth is aligned to it there, so both
-images share one pinhole model and the stream fits a USB 2 link. ``dimos run oak-camera-vis``
-shows the camera in Rerun; README.md says what to install.
+RVC2 cameras only (the OAK-D family). Colour is undistorted and MJPEG-encoded on the camera, and
+depth is aligned to it there, so both images share one pinhole model and the stream fits a USB 2
+link. ``dimos run oak-camera-vis`` shows the camera in Rerun; README.md says what to install.
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ from datetime import timedelta
 from functools import partial
 from importlib import import_module
 import ipaddress
+import os
 from pathlib import Path
 import queue
 import threading
 import time
 from typing import Any, Literal, TypeVar, cast
 
-import cv2
 from pydantic import Field
 import reactivex as rx
 
@@ -60,6 +60,7 @@ LUXONIS_USB_VENDOR = "03e7"
 # An OAK enumerates with this product id until DepthAI boots it, and with another while it runs.
 OAK_UNBOOTED_USB_PRODUCT = "2485"
 SYS_USB_DEVICES = Path("/sys/bus/usb/devices")
+DEV_USB = Path("/dev/bus/usb")
 # How long an unbooted OAK must stay on the bus before it is opened, and the longest wait for that.
 USB_SETTLE_S = 2.0
 USB_SETTLE_TIMEOUT_S = 20.0
@@ -70,9 +71,14 @@ MONO_SIZE = (640, 400)
 DEPTH_SCALE = 0.001
 _FRAME_WAIT = timedelta(seconds=0.2)
 _STOP_POLL_S = 0.2
+# A gap in colour this long is logged; `stall_timeout` brings the camera up again.
+_SILENCE_WARN_S = 1.0
+# Attempts in a row that find other OAKs but not `device_id` before giving up.
+_DEVICE_ID_MISSES = 3
 # Closing the device takes a few seconds; a stop waits this long for it.
 _CLOSE_WAIT_S = 8.0
 _POINTCLOUD_VOXEL_M = 0.005
+_UDEV_HINT = "Linux needs the Luxonis udev rule (dimos/hardware/sensors/camera/oak/README.md)"
 
 
 class OakCameraConfig(ModuleConfig, DepthCameraConfig):
@@ -86,11 +92,14 @@ class OakCameraConfig(ModuleConfig, DepthCameraConfig):
             with ``_link`` dropped: ``camera_link`` -> ``camera_color_optical_frame``.
         depth_fps: Rate of the stereo pair, and so of depth.
         align_depth_to_color: Depth is always aligned to colour on the camera.
-        device_id: The DepthAI device id (MxId) or USB port name; None opens the first OAK.
+        device_id: The DepthAI device id (MxId), USB port name or IP address; None opens the
+            first OAK.
         mjpeg_quality: JPEG quality of the colour stream (1 to 100).
         open_timeout: Seconds that opening the device, building the pipeline and starting it
             may take together before the attempt is abandoned and tried again.
         retry_interval: Seconds between attempts to bring the camera up.
+        stall_timeout: Seconds without a colour picture after which the camera is closed and
+            brought up again.
     """
 
     width: int = Field(default=1280, gt=0)
@@ -107,19 +116,56 @@ class OakCameraConfig(ModuleConfig, DepthCameraConfig):
     mjpeg_quality: int = Field(default=90, ge=1, le=100)
     open_timeout: float = Field(default=40.0, gt=0.0)
     retry_interval: float = Field(default=4.0, ge=0.0)
+    stall_timeout: float = Field(default=10.0, gt=0.0)
+
+
+class OakSetupError(Exception):
+    """The camera or this machine cannot run the configured pipeline: trying again cannot help."""
+
+
+class DeviceIdNotFoundError(OakSetupError):
+    """Other OAKs are there, but not the configured one."""
+
+
+@dataclass(frozen=True)
+class OakUsbDevice:
+    product: str
+    node: Path
+
+
+def oak_usb_devices(devices: Path = SYS_USB_DEVICES, dev_usb: Path = DEV_USB) -> list[OakUsbDevice]:
+    """The Luxonis devices on the USB bus and their device nodes, read from Linux sysfs."""
+    found = []
+    for vendor in devices.glob("*/idVendor"):
+        folder = vendor.parent
+        try:
+            if vendor.read_text().strip() != LUXONIS_USB_VENDOR:
+                continue
+            product = (folder / "idProduct").read_text().strip()
+            bus = int((folder / "busnum").read_text())
+            number = int((folder / "devnum").read_text())
+        except (OSError, ValueError):
+            # The device left the bus between the glob and the read.
+            continue
+        found.append(OakUsbDevice(product, dev_usb / f"{bus:03d}" / f"{number:03d}"))
+    return found
 
 
 def oak_usb_products(devices: Path = SYS_USB_DEVICES) -> list[str]:
-    """The USB product ids of the Luxonis devices on the bus, read from Linux sysfs."""
-    products = []
-    for vendor in devices.glob("*/idVendor"):
-        try:
-            if vendor.read_text().strip() == LUXONIS_USB_VENDOR:
-                products.append((vendor.parent / "idProduct").read_text().strip())
-        except OSError:
-            # The device left the bus between the glob and the read.
-            continue
-    return products
+    """The USB product ids of the Luxonis devices on the bus."""
+    return [device.product for device in oak_usb_devices(devices)]
+
+
+def usb_permission_problem(devices: list[OakUsbDevice]) -> str | None:
+    """Why this user cannot open the OAKs on the bus, or None when it can."""
+    blocked = [
+        str(device.node)
+        for device in devices
+        if device.node.exists() and not os.access(device.node, os.R_OK | os.W_OK)
+    ]
+    if not blocked:
+        return None
+    return f"no permission to open the OAK at {', '.join(blocked)}: {_UDEV_HINT}, then replug it"
 
 
 def wait_for_unbooted_oak(
@@ -243,6 +289,38 @@ def _is_ip_address(device_id: str | None) -> bool:
     return True
 
 
+def _check_device_id(dai: Any, device_id: str) -> None:
+    available = dai.Device.getAllAvailableDevices()
+    if available and not any(device_id in (info.deviceId, info.name) for info in available):
+        found = ", ".join(f"{info.deviceId} ({info.name})" for info in available)
+        raise DeviceIdNotFoundError(
+            f"no OAK with device_id {device_id!r}; found {found} "
+            "(an OAK in use by another process is not listed)"
+        )
+
+
+def _check_device(dai: Any, device: Any, config: OakCameraConfig) -> None:
+    """Refuse a camera that cannot run the configured pipeline."""
+    if device.getPlatform() != dai.Platform.RVC2:
+        raise OakSetupError(
+            f"{device.getDeviceName()} is not an RVC2 OAK; only the RVC2 family (OAK-D) is supported"
+        )
+    sensors = {feature.socket: feature for feature in device.getConnectedCameraFeatures()}
+    color = sensors.get(dai.CameraBoardSocket.CAM_A)
+    if color is None:
+        raise OakSetupError("this OAK has no colour camera on CAM_A")
+    if config.width > color.width or config.height > color.height:
+        raise OakSetupError(
+            f"{config.width}x{config.height} is larger than the colour sensor's "
+            f"{color.width}x{color.height}"
+        )
+    stereo = {dai.CameraBoardSocket.CAM_B, dai.CameraBoardSocket.CAM_C}
+    if config.enable_depth and not stereo <= sensors.keys():
+        raise OakSetupError(
+            "this OAK has no stereo pair on CAM_B and CAM_C: set enable_depth to false"
+        )
+
+
 def _wall_time(dai: Any, frame: Any) -> float:
     # Device timestamps are on the host's steady clock.
     age: float = (dai.Clock.now() - frame.getTimestamp()).total_seconds()
@@ -271,7 +349,9 @@ class OakCamera(Module, perception.DepthCamera):
 
     Brings the camera up on a thread of its own and keeps trying until it streams: after a
     relaunch the OAK is still re-enumerating on USB, and a DepthAI open at that moment fails
-    or hangs. A camera that stops streaming (unplugged, crashed) is brought up again.
+    or hangs. A camera that is lost or stops sending pictures is brought up again. A camera
+    or machine that cannot run the pipeline (no stereo pair, no permission, ...) is reported
+    once and not retried.
     """
 
     config: OakCameraConfig
@@ -352,66 +432,77 @@ class OakCamera(Module, perception.DepthCamera):
 
         # A PoE OAK (device_id an IP address) is not on the USB bus.
         usb = SYS_USB_DEVICES.is_dir() and not _is_ip_address(self.config.device_id)
-        attempt = 0
+        attempt = misses = 0
         while not stop.is_set():
             attempt += 1
-            if usb:
-                wait_for_unbooted_oak(stop)
+            if usb and not wait_for_unbooted_oak(stop) and not stop.is_set():
+                logger.warning(
+                    "No idle OAK on the USB bus (unplugged, or held by another process?); "
+                    "opening anyway",
+                    waited_s=USB_SETTLE_TIMEOUT_S,
+                )
             if stop.is_set():
                 return
             session = _Session()
             try:
-                call_within(self.config.open_timeout, partial(self._bring_up, dai, session), stop)
-            except (RuntimeError, TimeoutError) as error:
+                call_within(
+                    self.config.open_timeout, partial(self._bring_up, dai, session, usb), stop
+                )
+            except OakSetupError as error:
+                session.abandon()
+                misses = (
+                    misses + 1 if isinstance(error, DeviceIdNotFoundError) else _DEVICE_ID_MISSES
+                )
+                if misses >= _DEVICE_ID_MISSES:
+                    logger.error("OAK camera not started", reason=str(error))
+                    return
+                logger.warning("OAK not found, trying again", error=str(error), attempt=attempt)
+                stop.wait(self.config.retry_interval)
+                continue
+            except Exception as error:
+                # DepthAI reports a camera that is not ready as RuntimeError; anything else
+                # is retried as well, with its traceback.
                 session.abandon()
                 if stop.is_set():
                     return
-                logger.warning(
-                    "OAK not ready, trying again",
-                    attempt=attempt,
-                    stage=session.stage,
-                    error=str(error),
-                    retry_in_s=self.config.retry_interval,
-                )
+                fields = {"attempt": attempt, "stage": session.stage, "error": str(error)}
+                if isinstance(error, (RuntimeError, TimeoutError)):
+                    logger.warning("OAK not ready, trying again", **fields)
+                else:
+                    logger.exception("OAK bring-up failed, trying again", **fields)
                 stop.wait(self.config.retry_interval)
                 continue
-            except Exception:
-                logger.exception("OAK bring-up failed", stage=session.stage)
-                session.abandon()
-                return
-            logger.info(
-                "OAK streaming",
-                device=session.name,
-                usb=session.usb_speed,
-                depthai=dai.__version__,
-                width=self.config.width,
-                height=self.config.height,
-                fps=self.config.fps,
-                depth_fps=self.config.depth_fps if self.config.enable_depth else 0.0,
-                attempt=attempt,
-            )
+            misses = 0
             try:
-                self._stream(dai, session, stop)
+                ended = self._stream(dai, session, stop, attempt)
             except Exception:
-                logger.exception("OAK capture failed")
-                session.abandon()
-                return
+                logger.exception("OAK capture failed, bringing it up again")
+                ended = "failed"
             finally:
                 self._forget_frames()
             if stop.is_set():
                 session.close()
                 return
-            logger.error("OAK stopped streaming (unplugged or crashed), bringing it up again")
+            if ended != "failed":
+                logger.error("OAK stopped streaming, bringing it up again", reason=ended)
             session.abandon()
 
-    def _bring_up(self, dai: Any, session: _Session) -> None:
-        """Open the OAK, build the pipeline and start it, recording each step in ``session``."""
+    def _bring_up(self, dai: Any, session: _Session, usb: bool) -> None:
+        """Open the OAK, check it, build the pipeline and start it, recording each step in
+        ``session``."""
         config = self.config
+        if usb and (problem := usb_permission_problem(oak_usb_devices())):
+            raise OakSetupError(problem)
         if config.device_id:
+            _check_device_id(dai, config.device_id)
             device = dai.Device(dai.DeviceInfo(config.device_id))
         else:
             device = dai.Device()
-        session.advance("building the pipeline", device=device)
+        session.advance("checking the camera", device=device)
+        # Reconnecting is ours: DepthAI's own would keep the pipeline running with idle
+        # streams while it retries, without the USB wait and the time limit used here.
+        device.setMaxReconnectionAttempts(0)
+        _check_device(dai, device, config)
         session.advance(
             "building the pipeline",
             name=device.getDeviceName(),
@@ -419,6 +510,8 @@ class OakCamera(Module, perception.DepthCamera):
         )
         pipeline = dai.Pipeline(device)
         session.advance("building the pipeline", pipeline=pipeline)
+        # With reconnection off, a lost device stops the pipeline at once.
+        pipeline.setStopOnDeviceLoss(True)
         color = (
             pipeline.create(dai.node.Camera)
             .build(dai.CameraBoardSocket.CAM_A)
@@ -454,21 +547,51 @@ class OakCamera(Module, perception.DepthCamera):
         pipeline.start()
         session.advance("streaming", color=color_queue, depth=depth_queue)
 
-    def _stream(self, dai: Any, session: _Session, stop: threading.Event) -> None:
-        """Publish frames until the module stops or the pipeline does."""
+    def _stream(self, dai: Any, session: _Session, stop: threading.Event, attempt: int) -> str:
+        """Publish frames until the module stops or the camera does; returns why it ended."""
+        started = last_color = time.monotonic()
+        streaming = warned = False
         while not stop.is_set():
             try:
                 if not session.pipeline.isRunning():
-                    return
+                    return "pipeline stopped (device lost)"
                 color = session.color.get(_FRAME_WAIT)
                 depths = session.depth.tryGetAll() if session.depth is not None else []
-            except (dai.MessageQueue.QueueException, RuntimeError):
+            except (dai.MessageQueue.QueueException, RuntimeError) as error:
                 # The pipeline and its queues fail once the device goes away.
-                return
-            if color is not None:
+                return f"lost the device ({error})"
+            now = time.monotonic()
+            if color is None:
+                silent = now - last_color
+                if silent >= self.config.stall_timeout:
+                    return f"sent no colour picture for {silent:.0f} s"
+                if silent >= _SILENCE_WARN_S and not warned:
+                    logger.warning(
+                        "OAK sends no colour pictures",
+                        silent_s=round(silent, 1),
+                        restart_after_s=self.config.stall_timeout,
+                    )
+                    warned = True
+            else:
+                if not streaming:
+                    streaming = True
+                    logger.info(
+                        "OAK streaming",
+                        device=session.name,
+                        usb=session.usb_speed,
+                        depthai=dai.__version__,
+                        width=self.config.width,
+                        height=self.config.height,
+                        fps=self.config.fps,
+                        depth_fps=self.config.depth_fps if self.config.enable_depth else 0.0,
+                        first_picture_s=round(now - started, 2),
+                        attempt=attempt,
+                    )
+                last_color, warned = now, False
                 self._on_color(color, _wall_time(dai, color))
             for depth in depths:
                 self._on_depth(depth, _wall_time(dai, depth))
+        return "stopped"
 
     def _forget_frames(self) -> None:
         """Drop what the last session saw: a camera brought up again may be another OAK."""
@@ -477,6 +600,9 @@ class OakCamera(Module, perception.DepthCamera):
             self._latest_color = self._latest_depth = None
 
     def _on_color(self, frame: Any, ts: float) -> None:
+        # A heavy native library: imported where it is used, as DimOS keeps cv2 off module level.
+        import cv2
+
         try:
             bgr = cv2.imdecode(frame.getData(), cv2.IMREAD_COLOR)
         except cv2.error:
