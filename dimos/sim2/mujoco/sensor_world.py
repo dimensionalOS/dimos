@@ -21,6 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
@@ -75,7 +76,12 @@ def robot_ids(world: WorldMirror) -> list[str]:
         return sorted(entity.path for entity in world.entities.values() if "model" in entity.cbor)
 
 
-def open_view(scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None) -> WorldView:
+def open_view(
+    scene: Path,
+    ids: Iterable[str] = (),
+    mount: SensorMount | None = None,
+    quality: RenderQuality = RenderQuality(),
+) -> WorldView:
     from dimos.sim2.mujoco.view import MujocoView
 
-    return MujocoView(scene, ids, mount)
+    return MujocoView(scene, ids, mount, quality)
