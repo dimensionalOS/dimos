@@ -127,8 +127,12 @@ mapping with `weights` per joint, `operator_present` joint names and
 
 The `policy-teleop-sim` blueprint contains `eef_twist`, `joint_trajectory` and
 `policy_teleop`. Keyboard commands reach `ee_twist_command`. `JointPolicyDemo`
-submits an out-and-back joint trajectory through `execute_trajectory` after the
-first measured feedback, using the same RPC as `LeRobotPolicyModule`. There is
+submits a repeated sinusoidal base-joint sweep through `execute_trajectory` after
+the first measured feedback, using the same RPC as `LeRobotPolicyModule`. The
+default excursion is 0.6 rad on each side, with 20 twelve-second cycles in one
+four-minute trajectory. Other arm joints retain their starting targets. The
+keyboard uses 0.12 m/s translation and 0.8 rad/s rotation so operator intervention
+is visible. Cancelling or e-stopping the trajectory does not restart it. There is
 no TCP feedback adapter or twist-publishing policy. `alpha` is 0.5; the two demo
 variants set it to zero or one while both sources are present.
 

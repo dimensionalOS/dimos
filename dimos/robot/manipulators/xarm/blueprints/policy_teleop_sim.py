@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import math
 
 from pydantic import Field
 
@@ -46,16 +47,26 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
 class JointPolicyDemoConfig(ModuleConfig):
+    """Repeated base sweeps around the first measured joint configuration.
+
+    Attributes:
+        amplitude_rad: First joint's excursion on each side of its start.
+        duration_s: Seconds per complete left-right sweep.
+        cycles: Number of sweeps in the single submitted trajectory.
+    """
+
     joint_names: list[str] = Field(min_length=1)
-    amplitude_rad: float = Field(default=0.15, gt=0, allow_inf_nan=False)
-    duration_s: float = Field(default=8.0, gt=0, allow_inf_nan=False)
+    amplitude_rad: float = Field(default=0.6, gt=0, allow_inf_nan=False)
+    duration_s: float = Field(default=12.0, gt=0, allow_inf_nan=False)
+    cycles: int = Field(default=20, ge=1)
 
 
 class JointPolicyDemo(Module):
-    """Submit one gentle out-and-back joint trajectory, using the real policy RPC.
+    """Submit a repeated left-right joint sweep, using the real policy RPC.
 
     This synthetic policy needs no checkpoint. It starts after measured joint
     feedback arrives; operator commands can join at any time during execution.
+    All cycles are one trajectory, so cancellation and e-stop do not restart it.
     """
 
     config: JointPolicyDemoConfig
@@ -74,15 +85,21 @@ class JointPolicyDemo(Module):
         if not measured.keys() >= set(self.config.joint_names):
             return
         positions = [measured[joint] for joint in self.config.joint_names]
-        target = positions.copy()
-        target[0] += self.config.amplitude_rad
+        samples_per_cycle = 32
+        points: list[TrajectoryPoint] = []
+        for sample in range(self.config.cycles * samples_per_cycle + 1):
+            phase = 2 * math.pi * (sample % samples_per_cycle) / samples_per_cycle
+            target = positions.copy()
+            target[0] += self.config.amplitude_rad * math.sin(phase)
+            points.append(
+                TrajectoryPoint(
+                    time_from_start=sample * self.config.duration_s / samples_per_cycle,
+                    positions=target,
+                )
+            )
         trajectory = JointTrajectory(
             joint_names=self.config.joint_names,
-            points=[
-                TrajectoryPoint(positions=positions),
-                TrajectoryPoint(time_from_start=self.config.duration_s / 2, positions=target),
-                TrajectoryPoint(time_from_start=self.config.duration_s, positions=positions),
-            ],
+            points=points,
         )
         result = self._control.execute_trajectory(trajectory)
         self._submitted = result.status is TrajectoryExecutionStatus.ACCEPTED
@@ -115,7 +132,7 @@ def _make_policy_teleop_sim(alpha: float) -> Blueprint:
             cls=ArmTwistCoordinator,
             instance_name="ControlCoordinator",
         ),
-        KeyboardTeleopModule.blueprint(),
+        KeyboardTeleopModule.blueprint(linear_speed=0.12, angular_speed=0.8),
         JointPolicyDemo.blueprint(joint_names=list(model.joint_names)),
     )
 

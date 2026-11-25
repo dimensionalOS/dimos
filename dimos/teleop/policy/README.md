@@ -79,12 +79,32 @@ uv run dimos run demo-policy-teleop-policy-sim
 uv run dimos run policy-teleop-sim --mujocosimmodule.headless=true
 ```
 
-The synthetic policy submits an eight-second joint out-and-back trajectory
-after initial feedback. Use the keyboard window to supply EEF twists during
-that trajectory. W/S, A/D and Q/E translate; R/F, T/G and Y/H rotate. The
-variants set policy share to 0 or 1 when both sides are present. With only one
-source present that source still commands the arm. Gripper teleoperation is
-not configured in this minimal example. Stop a blueprint before starting another.
+After initial feedback, the synthetic policy sweeps the base joint left and
+right by 0.6 rad (about 34 degrees) around its starting position. One cycle takes
+12 seconds; 20 cycles give four minutes to try the controls. Other arm joints
+keep their starting targets. The sampled sinusoidal path returns to its center
+each cycle without drifting. It is submitted as one trajectory, so e-stop or
+cancellation does not automatically restart the demo.
+
+Click the separate **Keyboard Teleop** window to give it keyboard focus. The
+MuJoCo viewer and the terminal do not forward keys to teleoperation. The keyboard
+window shows a focus hint; while holding Q its green linear-twist display should
+read `Z=0.120 m/s`. If it stays at zero, the device has not received the key.
+
+Use the keyboard window to supply EEF twists. Hold Q/E for a second or two to
+raise/lower the tip while the policy sweeps sideways, or A/D to push along/against
+the lateral motion. Release the key to fade back to the policy's path. W/S moves
+along X; R/F, T/G and Y/H rotate. This demo sets keyboard speeds to 0.12 m/s and
+0.8 rad/s to make the intervention visible. The variants set policy share to 0
+or 1 when both sides are present. With only one source present that source still
+commands the arm. Gripper teleoperation is not configured in this minimal example.
+Stop a blueprint before starting another.
+
+Tune the sweep with module configuration, for example:
+
+```bash
+uv run dimos run policy-teleop-sim --jointpolicydemo.amplitude_rad=0.8 --jointpolicydemo.duration_s=16 --jointpolicydemo.cycles=10
+```
 
 The curve helpers and Cartesian examples in this directory remain available
 for offline illustration:

@@ -68,7 +68,9 @@ async def policy(mocker):
     for method in ("start", "serve_module_rpc", "stop"):
         mocker.patch.object(rpc_backend(), method)
     with ExitStack() as stack:
-        module = JointPolicyDemo(joint_names=["j1", "j2"], amplitude_rad=0.1, duration_s=8)
+        module = JointPolicyDemo(
+            joint_names=["j1", "j2"], amplitude_rad=0.6, duration_s=12, cycles=2
+        )
         stack.callback(module.stop)
         control = mocker.Mock(spec=PolicyControlSpec)
         control.execute_trajectory.return_value = TrajectoryExecutionResult(
@@ -89,10 +91,15 @@ async def test_demo_policy_submits_joint_trajectory_from_measured_feedback_once(
     control.execute_trajectory.assert_called_once()
     trajectory = control.execute_trajectory.call_args.args[0]
     assert trajectory.joint_names == ["j1", "j2"]
-    assert [point.time_from_start for point in trajectory.points] == [0, 4, 8]
+    assert trajectory.duration == 24
     assert trajectory.points[0].positions == [0.2, 0.4]
-    assert trajectory.points[1].positions == pytest.approx([0.3, 0.4])
-    assert trajectory.points[2].positions == [0.2, 0.4]
+    # Repeated sweeps stay centered on the first measurement, without drift.
+    assert trajectory.sample(3)[0] == pytest.approx([0.8, 0.4])
+    assert trajectory.sample(9)[0] == pytest.approx([-0.4, 0.4])
+    assert trajectory.sample(12)[0] == pytest.approx([0.2, 0.4])
+    assert trajectory.sample(15)[0] == pytest.approx([0.8, 0.4])
+    assert trajectory.sample(21)[0] == pytest.approx([-0.4, 0.4])
+    assert trajectory.points[-1].positions == [0.2, 0.4]
 
 
 async def test_demo_policy_retries_submission_after_a_rejected_start(policy):
