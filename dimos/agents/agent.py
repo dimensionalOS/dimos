@@ -344,9 +344,9 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
         with self._lock:
             if self._state_graph is None or self._stop_event.is_set():
                 raise RuntimeError("Agent is not running; it starts with the blueprint")
-            self._process_message(self._state_graph, x)
-            answer = self._history[-1]
-        if not isinstance(answer, AIMessage) or TURN_FAILED_KEY in answer.additional_kwargs:
+            turn = self._process_message(self._state_graph, x)
+        answer = next(m for m in reversed(turn) if isinstance(m, AIMessage))
+        if TURN_FAILED_KEY in answer.additional_kwargs:
             raise RuntimeError(str(answer.text))
         return answer
 
@@ -423,7 +423,8 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
-    ) -> None:
+    ) -> list[BaseMessage]:
+        """Run one turn on message and return every message the turn added to the history."""
         self.agent_idle.publish(False)
         turn_start = len(self._history)
         self._record(message)
@@ -465,6 +466,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)
+        return self._history[turn_start:]
 
     def _record(self, message: BaseMessage) -> None:
         self._history.append(message)
