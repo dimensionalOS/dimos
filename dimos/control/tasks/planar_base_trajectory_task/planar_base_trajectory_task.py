@@ -384,7 +384,7 @@ class PlanarBaseTrajectoryTaskParams(BaseConfig):
     stale_pose_timeout: PositiveFloat = 0.3
 
 
-def create_task(cfg: Any, hardware: Any) -> PlanarBaseTrajectoryTask:
+def create_task(cfg: Any) -> PlanarBaseTrajectoryTask:
     params = PlanarBaseTrajectoryTaskParams.model_validate(cfg.params)
     return PlanarBaseTrajectoryTask(
         cfg.name,

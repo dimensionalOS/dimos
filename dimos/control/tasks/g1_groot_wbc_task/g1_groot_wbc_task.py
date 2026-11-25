@@ -26,6 +26,7 @@ from the behavior the policies were trained for.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
@@ -37,7 +38,6 @@ import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.connection_source import ConnectionSource
-from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -218,7 +218,7 @@ class G1GrootWBCTaskConfig:
             False - safe for real hardware; the blueprint sets True for
             simulation.
         auto_dry_run: Enter dry-run mode on ``start()``.  Policy still
-            runs but outputs are not emitted to the adapter - useful for
+            runs but outputs are not sent to the robot - useful for
             verifying on real hardware without commanding motors.
         default_ramp_seconds: Duration of the arming ramp (current pose
             -> ``default_15``) when ``arm()`` is called without an
@@ -493,17 +493,13 @@ class G1GrootWBCTask(BaseControlTask):
         # Select this robot explicitly: neither another robot's IMU nor an
         # assumed identity orientation is a valid policy observation.
         reading = state.sensors.readings.get(f"{self._hardware_id}/imu")
-        if reading is not None:
-            try:
-                quaternion = tuple(reading[key] for key in ("qw", "qx", "qy", "qz"))
-                gyroscope = tuple(reading[key] for key in ("gx", "gy", "gz"))
-            except KeyError:
-                return None
-        else:
-            imu = state.imu.get(self._hardware_id)
-            if imu is None:
-                return None
-            quaternion, gyroscope = imu.quaternion, imu.gyroscope
+        if reading is None:
+            return None
+        try:
+            quaternion = tuple(reading[key] for key in ("qw", "qx", "qy", "qz"))
+            gyroscope = tuple(reading[key] for key in ("gx", "gy", "gz"))
+        except KeyError:
+            return None
         gyro = np.asarray(gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(quaternion)
 
@@ -719,7 +715,7 @@ class G1GrootWBCTask(BaseControlTask):
 
         In dry-run the policy still runs (obs history stays hot) but
         ``compute()`` returns ``None``, so the coordinator forwards no
-        command to the adapter.  Use to verify policy sanity on real
+        command to the robot.  Use to verify policy sanity on real
         hardware before committing motor torques.
         """
         new_val = bool(enabled)
@@ -794,22 +790,13 @@ class G1GrootWBCTaskParams(BaseConfig):
     decimation: int | None = None
 
 
-def create_task(cfg: Any, hardware: Any, connections: Any = None) -> G1GrootWBCTask:
+def create_task(cfg: Any, connections: Mapping[str, ConnectionSource]) -> G1GrootWBCTask:
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
-    hw = (connections or {}).get(params.hardware_id)
-    if hw is None:
-        hw = hardware.get(params.hardware_id) if hardware else None
+    hw = connections.get(params.hardware_id)
     if hw is None:
         raise ValueError(
-            f"G1GrootWBCTask {cfg.name!r} references unknown hardware "
-            f"{params.hardware_id!r}. Declare the hardware before the task "
-            f"in the blueprint config."
-        )
-    if not isinstance(hw, (ConnectedWholeBody, ConnectionSource)):
-        raise TypeError(
-            f"G1GrootWBCTask {cfg.name!r} requires a WHOLE_BODY hardware "
-            f"component for {params.hardware_id!r}, got {type(hw).__name__}. "
-            f"Set hardware_type=HardwareType.WHOLE_BODY."
+            f"G1GrootWBCTask {cfg.name!r} references robot {params.hardware_id!r}, which "
+            "has no connection declaration on this coordinator."
         )
 
     model_dir = Path(params.model_path)
