@@ -28,7 +28,7 @@ import threading
 import uuid
 
 from dimos.constants import CACHE_DIR
-from dimos.core.hardware_files import HARDWARE_USD, is_relative_uri
+from dimos.core.hardware_files import HARDWARE_USD, hardware_file_topics, is_relative_uri
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.usd_utils.assets import asset_hash, is_asset_hash, rename_assets
@@ -42,9 +42,9 @@ HARDWARE_FILES_CACHE = CACHE_DIR / "hardware_files"
 
 def fetch_hardware_files(namespace: str, cache: Path = HARDWARE_FILES_CACHE) -> Path:
     """The local ``hardware.usda`` of the HardwareModule in ``namespace``, with every file it reaches beside it."""
-    prefix = f"/{namespace}/" if namespace else "/"
-    requests = make_transport(f"{prefix}hardware_file_request", FileInfo)
-    responses = make_transport(f"{prefix}hardware_file_response", FileInfo)
+    request_topic, response_topic = hardware_file_topics(namespace)
+    requests = make_transport(request_topic, FileInfo)
+    responses = make_transport(response_topic, FileInfo)
     requests.start()
     responses.start()
     try:
