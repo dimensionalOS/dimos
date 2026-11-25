@@ -89,12 +89,33 @@ def file_hash(path: Path) -> tuple[str, float]:
     return known, stat.st_mtime
 
 
+def inline_meshes(pxr: Pxr, usd: str) -> list[str]:
+    """The Mesh prims whose points are written in ``usd`` itself rather than in a file it references."""
+    layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
+    layer.ImportFromString(usd)
+    found: list[str] = []
+
+    def visit(path: object) -> None:
+        spec = layer.GetPrimAtPath(path)
+        if spec is not None and spec.typeName == "Mesh" and "points" in spec.attributes:
+            found.append(str(path))
+
+    layer.Traverse(layer.pseudoRoot.path, visit)
+    return found
+
+
 class HardwareFiles:
     def __init__(self, usd: str, mtime: float | None = None) -> None:
         """``usd`` names its files by absolute path; what is served names them relative to it."""
         # Before any layer is opened or hashed: a clone without LFS smudging has pointers, not meshes.
         pull_usd_assets([usd])
         served, published = publish_usd_assets(usd)
+        inline = inline_meshes(load_pxr(), served)
+        if inline:
+            logger.warning(
+                f"{HARDWARE_USD} holds mesh geometry itself ({', '.join(inline)}); keep it to "
+                f"links, joints and sensors and reference meshes from their own files"
+            )
         self._usd = _written_layer(served, HARDWARE_USD, mtime)
         # None: named by a served layer but not servable, which is said in a header with no sha256.
         self._files: dict[str, Path | _Layer | None] = {}
