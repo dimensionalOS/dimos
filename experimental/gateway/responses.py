@@ -657,7 +657,7 @@ class AgentTranscript(Body):
 
 class AgentTurn(Body):
     run: dict[str, Any]
-    messageTimestamp: int | None = None
+    messageTimestamp: int | None
     text: str
 
 

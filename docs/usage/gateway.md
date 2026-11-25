@@ -32,7 +32,7 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
-| `/agent` | On-robot DimOS Agent conversations, submissions, images, and scheduled jobs |
+| `/agent` | On-robot dimOS Agent conversations, submissions, images, and scheduled jobs |
 | views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
@@ -67,7 +67,7 @@ const odom = decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes) // byt
 const twist = geometry_msgs.Twist.encode({ linear: { x: 0.3 }, angular: { z: 0.5 } }) // a Uint8Array to publish
 ```
 
-## On-robot DimOS Agent
+## On-robot dimOS Agent
 
 From the checkout the gateway serves, build the pi-durable agent with `dimos agent version` and start it with
 `dimos agent gateway --daemon`.
