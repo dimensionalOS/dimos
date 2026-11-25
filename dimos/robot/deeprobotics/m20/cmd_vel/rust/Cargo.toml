@@ -34,7 +34,7 @@ motion_state = "std_msgs.Int32"
 gait_state = "std_msgs.UInt32"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "16957513ebc78c67c95bbbc866135e4a8d9ec0dc" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time"] }
 futures = "0.3"

@@ -25,7 +25,7 @@ imu = "sensor_msgs.Imu"
 imu_rpy = "geometry_msgs.Vector3"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "16957513ebc78c67c95bbbc866135e4a8d9ec0dc" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 yesense-imu = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

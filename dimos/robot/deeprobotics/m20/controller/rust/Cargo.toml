@@ -60,7 +60,7 @@ toml = "0.8"
 tract-onnx = "0.23"
 m20-ecan = { version = "0.3.2", optional = true }
 m20-battery = { version = "0.3.2", optional = true }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "16957513ebc78c67c95bbbc866135e4a8d9ec0dc", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"], optional = true }
 tracing = { version = "0.1", optional = true }
