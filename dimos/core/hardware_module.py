@@ -54,6 +54,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.frame_paths import check_frame_path
 from dimos.robot.assets.model import TfEdge, UsdModel
 from dimos.spec.utils import Spec
+from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -103,16 +104,15 @@ class HardwareModuleConfig(TfModuleConfig):
     @model_validator(mode="after")
     def _check_roles(self) -> "HardwareModuleConfig":
         # Filled before TfModuleConfig's role check runs, so tf_edges may name the USD's frames.
-        self.tf_frames_local, self.tf_frames_global, self.tf_edges = usd_tf(
-            self, (self.instance_name or "").rpartition("/")[0]
-        )
+        self.tf_frames_local, self.tf_frames_global, self.tf_edges = usd_tf(self)
+        check_attached_namespace(self.attached_to, (self.instance_name or "").rpartition("/")[0])
         # The parent's validator is a plain function at runtime; mypy sees pydantic's decorator proxy.
         cast("Callable[[TfModuleConfig], TfModuleConfig]", TfModuleConfig._check_roles)(self)
         return self
 
 
 def usd_tf(
-    config: Any, namespace: str, mounts: "Mounts | None" = None
+    config: Any, mounts: "Mounts | None" = None
 ) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
     """A HardwareModule's tf: its USD's frames (role = frame path) and edges, its mount edge, then what its config adds.
 
@@ -142,11 +142,6 @@ def usd_tf(
     attached_to: str | None = values.get("attached_to")
     if attached_to is not None:
         check_frame_path(attached_to, "attached_to")
-        if namespace != attached_to and not namespace.endswith(f"/{attached_to}"):
-            raise ValueError(
-                f"attached_to is {attached_to!r} but the namespace is {namespace!r}; a mounted "
-                f"HardwareModule sits under its mount's namespace (use .attach(mount))"
-            )
         # The mount is the namespace frame itself (local ""), which the served USD has as a prim.
         local[""] = ""
         edges.append(("", usd.top_frame))
@@ -184,6 +179,19 @@ def usd_tf(
     return local, shared, list(dict.fromkeys([*edges, *values["tf_edges"]]))
 
 
+def check_attached_namespace(attached_to: str | None, namespace: str) -> None:
+    """Refuse a mounted HardwareModule that is not under its mount's namespace."""
+    if (
+        attached_to is not None
+        and namespace != attached_to
+        and not namespace.endswith(f"/{attached_to}")
+    ):
+        raise ValueError(
+            f"attached_to is {attached_to!r} but the namespace is {namespace!r}; a mounted "
+            f"HardwareModule sits under its mount's namespace (use .attach(mount))"
+        )
+
+
 # needed for sims to detect hardware modules on hosted systems
 class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
@@ -210,38 +218,38 @@ class HardwareModule(TfModule):
     tf_static: Out[TFMessage]
     tf_edges_are_hardware: ClassVar[bool] = True
 
+    @classproperty
+    def blueprint(self) -> "Callable[..., Blueprint]":
+        """A blueprint of this hardware with its tf filled in from its USD (and its mount, when attached), so the build check reads it as-is."""
+        from dimos.core.coordination.blueprints import Blueprint, config_defaults
+
+        # A classproperty, as on Module, so ``self`` is the class.
+        cls = cast("type[HardwareModule]", self)
+
+        def create(**kwargs: Any) -> Blueprint:
+            values = {**config_defaults(cls), **kwargs}
+            local, shared, edges = usd_tf(values, cls.mounts)
+            return Blueprint.create(
+                cls,
+                **{
+                    **kwargs,
+                    "tf_frames_local": local,
+                    "tf_frames_global": shared,
+                    "tf_edges": edges,
+                },
+            )
+
+        return create
+
     @classmethod
     def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same path (``a/b/c/<module>``)."""
         check_frame_path(mount_frame, "the mount frame")
-        blueprint = cls.blueprint(attached_to=mount_frame, **cls._mount_tf(kwargs))
+        blueprint = cls.blueprint(**kwargs, attached_to=mount_frame)
         # namespace() puts its prefix in front, so the last segment goes on first.
         for segment in reversed(mount_frame.split("/")):
             blueprint = blueprint.namespace(segment)
         return blueprint
-
-    @classmethod
-    def _mount_tf(cls, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """``kwargs`` with the mount added: the namespace frame (local "") and its edge to the USD's top prim."""
-        from dimos.core.coordination.blueprints import config_defaults
-
-        defaults = config_defaults(cls)
-        usd = cast("UsdModel", kwargs.get("usd", defaults.get("usd")))
-        return {
-            **kwargs,
-            "tf_frames_local": {
-                **kwargs.get("tf_frames_local", defaults["tf_frames_local"]),
-                "": "",
-            },
-            "tf_edges": [*kwargs.get("tf_edges", defaults["tf_edges"]), ("", usd.top_frame)],
-        }
-
-    @classmethod
-    def blueprint_tf(
-        cls, atom: "BlueprintAtom"
-    ) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
-        """The tf this hardware's USD and config declare, as its config would fill it in."""
-        return usd_tf(atom.kwargs, atom.name.rpartition("/")[0], cls.mounts)
 
     @rpc
     def get_hardware_transform_ids(self) -> list[tuple[str, str]]:
@@ -254,6 +262,7 @@ class HardwareModule(TfModule):
         hardware = [atom for atom in atoms if issubclass(atom.module, HardwareModule)]
         unmounted: dict[str, list[str]] = defaultdict(list)
         for atom in hardware:
+            check_attached_namespace(atom.kwargs.get("attached_to"), atom.name.rpartition("/")[0])
             if atom.kwargs.get("attached_to") is None:
                 unmounted[atom.name.rpartition("/")[0]].append(atom.name)
         errors = [
@@ -315,23 +324,18 @@ class HardwareModule(TfModule):
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.attached_to is not None else None
 
-    def local_usd(self) -> str:
-        """This hardware's USD for its own use: its prims under ``/<namespace>``, so each frame's prim path is its tf frame; files as paths on this machine."""
+    @cached_property
+    def _hardware_files(self) -> HardwareFiles:
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
+        # Its prims under /<namespace> with files as paths on this machine; HardwareFiles makes them relative to serve.
         source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        return usd_under_namespace(
+        usd = usd_under_namespace(
             resolve_usd_assets(self.config.usd.usd, root), self.namespace, root or None
         )
-
-    @cached_property
-    def _hardware_files(self) -> HardwareFiles:
-        source = self.config.usd.source_path
-        return HardwareFiles(
-            self.local_usd(), source.stat().st_mtime if source and source.is_file() else None
-        )
+        return HardwareFiles(usd, source.stat().st_mtime if source and source.is_file() else None)
 
     def _on_hardware_file_request(self, request: FileInfo) -> None:
         # Answered on the request stream's own thread, so a burst (one per mesh) is never coalesced.

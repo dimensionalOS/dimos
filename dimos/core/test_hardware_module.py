@@ -16,13 +16,18 @@ import asyncio
 from dataclasses import replace
 import math
 import threading
-from typing import Any
+from typing import Any, TypeVar
 
 import numpy as np
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
+from dimos.core.coordination.blueprints import (
+    BlueprintProtocol,
+    MetaBlueprint,
+    autoconnect,
+    config_defaults,
+)
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.module import Module
@@ -96,9 +101,10 @@ def test_mount_namespaces_under_the_mount_name() -> None:
     (atom,) = WristCamera.attach(Arm.mounts.wrist).active_blueprints
     assert atom.name == "arm/base/forearm/wrist/wristcamera"
     assert atom.kwargs["attached_to"] == "arm/base/forearm/wrist"
-    # The mount is the namespace frame itself (role and frame ""), hung over the USD's top prim.
-    assert atom.kwargs["tf_frames_local"] == {"": ""}
-    assert atom.kwargs["tf_edges"] == [("", "camera")]
+    # blueprint() fills in the USD's frames, plus the mount: the namespace frame itself (role and frame ""), hung over the USD's top prim.
+    assert atom.kwargs["tf_frames_local"][""] == ""
+    assert "camera/camera_link/optical" in atom.kwargs["tf_frames_local"]
+    assert ("", "camera") in atom.kwargs["tf_edges"]
 
 
 def test_the_mount_frame_is_the_namespace_and_needs_one() -> None:
@@ -167,7 +173,10 @@ class Palm(HardwareModule):
     mounts = Mounts("camera/camera_link/finger")
 
 
-def _under(blueprint: MetaBlueprint, path: str) -> MetaBlueprint:
+BP = TypeVar("BP", bound=BlueprintProtocol)
+
+
+def _under(blueprint: BP, path: str) -> BP:
     """``blueprint`` under the namespace ``path``, one segment at a time (namespace() takes no '/')."""
     for segment in reversed(path.split("/")):
         blueprint = blueprint.namespace(segment)

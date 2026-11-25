@@ -142,17 +142,6 @@ class TfModule(Module):
         """Frame ids by role, local and global together: ``self.frame.body``."""
         return SimpleNamespace(**self.tf_frames)
 
-    @classmethod
-    def blueprint_tf(
-        cls, atom: "BlueprintAtom"
-    ) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
-        """The (tf_frames_local, tf_frames_global, tf_edges) a blueprint atom declares; a subclass whose config fills them in says so here."""
-        return (
-            atom.kwargs["tf_frames_local"],
-            atom.kwargs["tf_frames_global"],
-            atom.kwargs["tf_edges"],
-        )
-
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
         """Refuse declared edges that close a loop, or a frame with two parents of one kind; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
@@ -167,9 +156,12 @@ class TfModule(Module):
             if not _is_checked(atom):
                 continue
             module = cast("type[TfModule]", atom.module)
-            local, shared, edges = module.blueprint_tf(atom)
-            frames = _frame_ids(local, shared, atom.name.rpartition("/")[0])
-            for parent_role, child_role in edges:
+            frames = _frame_ids(
+                atom.kwargs["tf_frames_local"],
+                atom.kwargs["tf_frames_global"],
+                atom.name.rpartition("/")[0],
+            )
+            for parent_role, child_role in atom.kwargs["tf_edges"]:
                 edge = frames[parent_role], frames[child_role]
                 owners[edge].append(atom.name)
                 if module.tf_edges_are_hardware:
