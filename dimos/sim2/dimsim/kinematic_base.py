@@ -34,7 +34,7 @@ from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.dimsim.backend import BASE_JOINTS, MOUNTED_AT
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import OnWorldTime, WorldMirror
 
 
 class SimKinematicBaseConfig(HardwareModuleConfig):
@@ -46,7 +46,7 @@ class SimKinematicBaseConfig(HardwareModuleConfig):
     tf_edges: list[tuple[str, str]] = [("odom", "body")]
 
 
-class SimKinematicBase(HardwareModule):
+class SimKinematicBase(OnWorldTime, HardwareModule):
     """Mount it on a frame of the scene, which is where it starts; its robot id is its namespace."""
 
     config: SimKinematicBaseConfig
@@ -96,7 +96,7 @@ class SimKinematicBase(HardwareModule):
                 continue
             self.odom.publish(odom)
             self.tfbuffer.publish(
-                Transform.from_pose(self.frame.body, odom), *self.usd_transforms(ts=stamp)
+                Transform.from_pose(self.frame.body, odom), *self.moving_transforms(ts=stamp)
             )
 
     def _odom(self, stamp: float) -> PoseStamped | None:

@@ -263,7 +263,6 @@ def test_a_livox_lidar_and_imu_rebuild_one_view_when_the_world_changes_shape(
     monkeypatch.setattr(livox, "_open", open_view)
     for stream, stamps in published.items():
         monkeypatch.setattr(getattr(livox, stream), "publish", lambda m, s=stamps: s.append(m.ts))
-    monkeypatch.setattr(livox, "publish_usd_tf", lambda ts=None: None)
 
     async def both() -> None:
         await asyncio.gather(livox._scan(), livox._read_imu())
