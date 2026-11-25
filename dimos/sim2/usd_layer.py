@@ -21,7 +21,7 @@ from typing import Any
 
 from dimos.constants import CACHE_DIR
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.lfs import pull_usd_assets
+from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

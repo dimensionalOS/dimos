@@ -74,16 +74,25 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
 
 def compose_world(hardware: Sequence[HardwareSpec]) -> UsdModel:
     """Graft every hardware's USD onto the frame it is mounted on, into the one unmounted USD."""
-    # Asked all at once: each part works its USD out in its own module.
-    described = safe_thread_map(list(hardware), lambda part: (part.get_usd(), part.mounted_on()))
+    # Asked all at once: each part serves its own files, from this machine or another.
+    described = safe_thread_map(list(hardware), lambda part: (fetched_usd(part), part.mounted_on()))
     return compose_usds(described)
+
+
+def fetched_usd(part: HardwareSpec) -> str:
+    """The part's USD fetched over its hardware_file streams, its files named where this machine keeps them."""
+    from dimos.core.hardware_file_client import fetch_hardware_files
+    from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+
+    local = fetch_hardware_files(part.hardware_namespace())
+    return resolve_usd_assets(local.read_text(), str(local.parent))
 
 
 def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
     """Graft each USD onto the frame it names, into the one USD that names none."""
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
     from dimos.robot.assets.usd_utils.layers import graft_usd
-    from dimos.sim2.lfs import pull_usd_assets
+    from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
 
     roots = [usd for usd, mounted_on in described if mounted_on is None]
     if len(roots) != 1:

@@ -21,7 +21,7 @@ from dimos_lcm.world_msgs import WorldObservations
 from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule
 from dimos.core.stream import In
-from dimos.sim2.lfs import pull_model_assets
+from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.sim2.sim import SimulatedWorldSpec
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror

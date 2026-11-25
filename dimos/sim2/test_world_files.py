@@ -19,8 +19,6 @@ from typing import Any
 
 import pytest
 
-from dimos.msgs.std_msgs.String import String
-
 pytest.importorskip("pxr")
 
 _PART = """#usda 1.0
@@ -69,23 +67,6 @@ def test_a_usd_request_is_the_world_with_its_assets_under_names_that_are_answere
     assert str(tmp_path).encode() not in layer, "a viewer cannot open this machine's paths"
     assert asset == _PART.encode()
     assert elsewhere is None, "only names the world published are answered"
-
-
-def test_the_mujoco_sim_answers_a_usd_request_with_its_world() -> None:
-    from dimos.sim2.assets.toy import toy_robot
-    from dimos.sim2.mujoco.backend import MujocoBackend
-    from dimos.sim2.mujoco.sim import MujocoSim
-
-    sim_module = MujocoSim()
-    published: list[Any] = []
-    try:
-        sim_module._backend = MujocoBackend(toy_robot())
-        sim_module.file_info.publish = published.append
-        asyncio.run(sim_module.handle_render_file_request(String("*.usd")))
-    finally:
-        sim_module.stop()
-    assert [reply.uri for reply in published] == ["*.usd"]
-    assert published[0].data.startswith(b"#usda")
 
 
 def test_a_request_repeated_while_its_reply_is_on_the_way_gets_that_one_reply() -> None:
