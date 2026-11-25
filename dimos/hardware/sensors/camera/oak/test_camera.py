@@ -51,7 +51,6 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 WIDTH, HEIGHT = 8, 4
 K = [[500.0, 0.0, 4.0], [0.0, 501.0, 2.0], [0.0, 0.0, 1.0]]
 OTHER_K = [[600.0, 0.0, 4.0], [0.0, 601.0, 2.0], [0.0, 0.0, 1.0]]
-DEVICE_CLOCK_S = 100.0
 FRAME_AGE_S = 0.5
 # Solid BGR colour of the fake camera's picture.
 BGR = (10, 120, 230)
@@ -75,10 +74,12 @@ class FakeFrame:
     ) -> None:
         self._data = data
         self._k = k
-        self._age_s = age_s
+        # Captured age_s before it was made, on the device clock (the fake's monotonic time):
+        # its wall time does not depend on when the module happens to read it.
+        self._captured = time.monotonic() - age_s
 
     def getTimestamp(self) -> timedelta:
-        return timedelta(seconds=DEVICE_CLOCK_S - self._age_s)
+        return timedelta(seconds=self._captured)
 
     def getTransformation(self) -> FakeTransformation:
         return FakeTransformation(self._k)
@@ -141,13 +142,15 @@ class FakeOak:
         self.release = threading.Event()
         self.devices: list[MagicMock] = []
         self.pipelines: list[MagicMock] = []
+        # (device, pipeline) of each bring-up whose pipeline started, in order.
+        self.started: list[tuple[MagicMock, MagicMock]] = []
         self.nodes: dict[Any, MagicMock] = {}
         self.color = FakeQueue()
         self.depth = FakeQueue()
         dai = MagicMock(name="depthai")
         dai.__version__ = "3.12.1"
         dai.MessageQueue.QueueException = type("QueueException", (RuntimeError,), {})
-        dai.Clock.now.return_value = timedelta(seconds=DEVICE_CLOCK_S)
+        dai.Clock.now.side_effect = lambda: timedelta(seconds=time.monotonic())
         dai.Device.side_effect = self._open
         dai.Pipeline.side_effect = self._pipeline
         dai.Device.getAllAvailableDevices.return_value = []
@@ -201,6 +204,8 @@ class FakeOak:
         pipeline.create.side_effect = self.nodes.__getitem__
         if device.behaviour == "hang-start":
             pipeline.start.side_effect = self.release.wait
+        else:
+            pipeline.start.side_effect = lambda: self.started.append((device, pipeline))
         unplugged = threading.Event()
         pipeline.unplug = unplugged.set
         pipeline.isRunning.side_effect = lambda: not (unplugged.is_set() or pipeline.stop.called)
@@ -265,8 +270,16 @@ def start_camera(fake_oak: FakeOak) -> Iterator[Callable[..., tuple[OakCamera, R
     cameras: list[OakCamera] = []
 
     def start(**config: Any) -> tuple[OakCamera, Received]:
+        # Limits far above what a fake bring-up or a test takes, so a slow test runner never
+        # gives a normal bring-up up; the tests about the limits set short ones.
         camera = OakCamera(
-            **{"open_timeout": 1.0, "retry_interval": 0.0, "camera_info_fps": 50.0, **config}
+            **{
+                "open_timeout": 30.0,
+                "stall_timeout": 60.0,
+                "retry_interval": 0.0,
+                "camera_info_fps": 50.0,
+                **config,
+            }
         )
         cameras.append(camera)
         received = Received(camera)
@@ -276,6 +289,17 @@ def start_camera(fake_oak: FakeOak) -> Iterator[Callable[..., tuple[OakCamera, R
     yield start
     for camera in cameras:
         camera.stop()
+
+
+def streaming(fake_oak: FakeOak) -> tuple[MagicMock, MagicMock]:
+    """The device and pipeline the camera streams from: the last bring-up that started."""
+    return fake_oak.started[-1]
+
+
+def with_behaviour(fake_oak: FakeOak, behaviour: str) -> MagicMock:
+    """The device of the bring-up scripted with ``behaviour``."""
+    (device,) = [device for device in fake_oak.devices if device.behaviour == behaviour]
+    return device
 
 
 def closed(fake_oak: FakeOak, index: int) -> bool:
@@ -394,10 +418,10 @@ def test_gives_up_waiting_when_no_unbooted_oak_shows() -> None:
 def test_call_within_returns_reraises_and_gives_up() -> None:
     stop, hang = threading.Event(), threading.Event()
     try:
-        assert call_within(1.0, lambda: "device", stop) == "device"
+        assert call_within(30.0, lambda: "device", stop) == "device"
         with pytest.raises(RuntimeError, match="X_LINK_DEVICE_NOT_FOUND"):
             call_within(
-                1.0, lambda: (_ for _ in ()).throw(RuntimeError("X_LINK_DEVICE_NOT_FOUND")), stop
+                30.0, lambda: (_ for _ in ()).throw(RuntimeError("X_LINK_DEVICE_NOT_FOUND")), stop
             )
         with pytest.raises(TimeoutError, match="not done within 0.3 s"):
             call_within(0.3, hang.wait, stop)
@@ -411,8 +435,9 @@ def test_call_within_returns_reraises_and_gives_up() -> None:
 def test_publishes_color_depth_intrinsics_and_tf(
     fake_oak: FakeOak, start_camera: Callable[..., tuple[OakCamera, Received]]
 ) -> None:
-    feed(fake_oak)
     before = time.time()
+    feed(fake_oak)
+    after = time.time()
 
     _, received = start_camera(frame_id="wrist_link", frame_id_prefix="arm")
     received.wait("color_image", "depth_image", "camera_info", "depth_camera_info", "tf")
@@ -425,7 +450,8 @@ def test_publishes_color_depth_intrinsics_and_tf(
         (HEIGHT, WIDTH, 3),
     )
     assert np.abs(color.data.astype(int) - BGR[::-1]).max() <= 3
-    assert before - FRAME_AGE_S - 0.1 <= color.ts <= time.time() - FRAME_AGE_S + 0.1
+    # Stamped with its capture time, FRAME_AGE_S before the fake made it.
+    assert before - FRAME_AGE_S - 0.01 <= color.ts <= after - FRAME_AGE_S + 0.01
     depth: Image = received.messages["depth_image"][0]
     assert (depth.format, depth.frame_id) == (ImageFormat.DEPTH16, optical)
     assert depth.data.tolist() == [[DEPTH_MM] * WIDTH] * HEIGHT
@@ -488,16 +514,17 @@ def test_an_open_that_never_returns_is_given_up_and_tried_again(
 ) -> None:
     feed(fake_oak)
 
-    _, received = start_camera()
+    _, received = start_camera(open_timeout=1.0)
     received.wait("color_image")
-    streaming = fake_oak.devices[0]
+    device, _ = streaming(fake_oak)
     fake_oak.release.set()
 
     # The first open comes back late with its own device: it is closed, not kept.
     wait_until(
-        lambda: len(fake_oak.devices) == 2 and fake_oak.devices[1].close.called, timeout=10.0
+        lambda: any(d.behaviour == "hang-open" and d.close.called for d in fake_oak.devices),
+        timeout=10.0,
     )
-    streaming.close.assert_not_called()
+    device.close.assert_not_called()
 
 
 @pytest.mark.parametrize("fake_oak", [["hang-start"]], indirect=True)
@@ -508,12 +535,12 @@ def test_a_bring_up_that_hangs_after_opening_releases_the_device(
 ) -> None:
     feed(fake_oak)
 
-    _, received = start_camera()
+    _, received = start_camera(open_timeout=1.0)
 
     received.wait("color_image")
-    hung, streaming = fake_oak.devices
+    hung = with_behaviour(fake_oak, "hang-start")
     wait_until(lambda: hung.close.called, timeout=10.0)
-    streaming.close.assert_not_called()
+    streaming(fake_oak)[0].close.assert_not_called()
 
 
 def test_a_camera_that_stops_streaming_is_brought_up_again(
@@ -527,15 +554,16 @@ def test_a_camera_that_stops_streaming_is_brought_up_again(
     received.events["color_image"].clear()
 
     # Reconnecting is the module's: DepthAI's own is off, so the lost device stops the pipeline.
-    fake_oak.devices[0].setMaxReconnectionAttempts.assert_called_once_with(0)
-    fake_oak.pipelines[0].setStopOnDeviceLoss.assert_called_once_with(True)
-    fake_oak.pipelines[0].unplug()
-    wait_until(lambda: closed(fake_oak, 0), timeout=10.0)
+    device, pipeline = streaming(fake_oak)
+    device.setMaxReconnectionAttempts.assert_called_once_with(0)
+    pipeline.setStopOnDeviceLoss.assert_called_once_with(True)
+    pipeline.unplug()
+    wait_until(lambda: device.close.called, timeout=10.0)
     # Another OAK, another calibration: its own intrinsics are published, not the first one's.
     feed(fake_oak, OTHER_K)
 
     received.wait("color_image")
-    assert len(fake_oak.devices) == 2
+    assert streaming(fake_oak)[0] is not device
     wait_until(lambda: received.messages["camera_info"][-1].K[0] == OTHER_K[0][0], timeout=10.0)
 
 
@@ -550,9 +578,9 @@ def test_a_device_whose_pipeline_fails_is_released_and_tried_again(
     _, received = start_camera()
 
     received.wait("color_image")
-    failed, streaming = fake_oak.devices
+    failed = with_behaviour(fake_oak, "no-pipeline")
     wait_until(lambda: failed.close.called, timeout=10.0)
-    streaming.close.assert_not_called()
+    streaming(fake_oak)[0].close.assert_not_called()
 
 
 def test_a_poe_oak_is_opened_without_waiting_for_usb(
@@ -577,11 +605,12 @@ def test_stop_closes_the_pipeline_and_the_device(
     feed(fake_oak)
     camera, received = start_camera()
     received.wait("color_image")
+    device, pipeline = streaming(fake_oak)
 
     camera.stop()
 
-    fake_oak.pipelines[0].stop.assert_called_once_with()
-    fake_oak.devices[0].close.assert_called_once_with()
+    pipeline.stop.assert_called_once_with()
+    device.close.assert_called_once_with()
 
 
 def test_pointcloud_from_depth_aligned_to_color(
@@ -630,7 +659,8 @@ def test_a_camera_that_sends_nothing_is_brought_up_again(
     feed(fake_oak)
 
     received.wait("color_image")
-    assert len(fake_oak.devices) == 2
+    # Brought up again (more than once, should a slow runner let a second one stall as well).
+    assert streaming(fake_oak)[0] is not fake_oak.devices[0]
 
 
 @pytest.mark.parametrize(
@@ -707,7 +737,7 @@ def test_an_error_while_streaming_brings_the_camera_up_again(
     feed(fake_oak)
 
     received.wait("color_image")
-    assert len(fake_oak.devices) == 2
+    assert streaming(fake_oak)[0] is not fake_oak.devices[0]
 
 
 def test_color_only_without_depth(
@@ -721,7 +751,8 @@ def test_color_only_without_depth(
     received.wait("color_image", "camera_info")
     wait_until(lambda: len(received.messages["camera_info"]) >= 10, timeout=10.0)
 
-    created = [call.args[0] for call in fake_oak.pipelines[0].create.call_args_list]
+    _, pipeline = streaming(fake_oak)
+    created = [call.args[0] for call in pipeline.create.call_args_list]
     assert fake_oak.dai.node.StereoDepth not in created
     assert created.count(fake_oak.dai.node.Camera) == 1
     assert received.messages["depth_image"] == []
