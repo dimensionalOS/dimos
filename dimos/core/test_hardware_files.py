@@ -124,6 +124,30 @@ def test_rewritten_layers_are_served_from_disk_not_held_in_memory(tmp_path: Path
             assert content in kept.values(), uri
 
 
+def test_only_meshes_written_inside_the_layer_count_as_inline() -> None:
+    from dimos.core.hardware_files import inline_meshes
+    from dimos.robot.assets.usd_utils.pxr import load_pxr
+
+    usd = """#usda 1.0
+def Xform "robot"
+{
+    def Mesh "inline"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+    def Mesh "referenced" (
+        prepend references = @meshes/hull.usda@
+    )
+    {
+    }
+    def Xform "link"
+    {
+    }
+}
+"""
+    assert inline_meshes(load_pxr(), usd) == ["/robot/inline"]
+
+
 def test_a_request_holding_the_current_sha256_gets_only_the_header(tmp_path: Path) -> None:
     files = _files(tmp_path)
     for uri in files.uris:
