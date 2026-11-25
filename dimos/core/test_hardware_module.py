@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from dataclasses import replace
 import math
+import threading
+from typing import Any
 
 import numpy as np
 import pytest
@@ -24,7 +27,9 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel, UsdModel
 
 _ARM_URDF = """<robot name="arm">
@@ -211,6 +216,102 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
     finally:
         arm.stop()
         camera.stop()
+
+
+class _ClockedCamera(WristCamera):
+    """A camera on a clock that moves only when slept on, and stops on its third sleep."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.now = 100.0
+        self.slept: list[float] = []
+        self.stopped = threading.Event()
+
+    def time(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+        if len(self.slept) == 3:
+            self.stopped.set()
+            await asyncio.Future()
+
+
+def _listening(module: HardwareModule) -> tuple[list[TFMessage], list[list[Transform]]]:
+    """What ``module`` publishes on tf_static, and on tf (through its own tfbuffer)."""
+    module._tf = module._create_tfbuffer(None)
+    on_static: list[TFMessage] = []
+    on_tf: list[list[Transform]] = []
+    module.tf_static.subscribe(on_static.append)
+    publish = module._tf.publish
+
+    def recorded(*transforms: Transform) -> None:
+        on_tf.append(list(transforms))
+        publish(*transforms)
+
+    module._tf.publish = recorded  # type: ignore[method-assign]
+    return on_static, on_tf
+
+
+_CAMERA_STATIC_EDGES = {
+    ("left/wrist/camera_link", "left/wrist/optical"),
+    ("left/wrist", "left/wrist/camera_link"),
+}
+
+
+def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
+    camera = _ClockedCamera(
+        mount="wrist", instance_name="left/wrist/wristcamera", static_tf_rate_hz=4.0
+    )
+    try:
+        on_static, on_tf = _listening(camera)
+        camera.publish_static_tf()
+        assert camera.stopped.wait(5.0)
+    finally:
+        camera.stop()
+
+    (static,) = on_static
+    assert {(t.frame_id, t.child_frame_id) for t in static.transforms} == _CAMERA_STATIC_EDGES
+    assert {t.ts for t in static.transforms} == {100.0}
+    assert camera.slept == [0.25, 0.25, 0.25]
+    assert [{t.ts for t in published} for published in on_tf] == [{100.0}, {100.25}, {100.5}]
+    assert all(
+        {(t.frame_id, t.child_frame_id) for t in published} == _CAMERA_STATIC_EDGES
+        for published in on_tf
+    )
+
+
+def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> None:
+    camera = _ClockedCamera(
+        mount="wrist", instance_name="left/wrist/wristcamera", static_tf_rate_hz=0.0
+    )
+    try:
+        on_static, on_tf = _listening(camera)
+        camera.publish_static_tf()
+    finally:
+        camera.stop()
+
+    assert len(on_static) == 1
+    assert on_tf == []
+    assert camera.slept == []
+
+
+def test_publish_usd_tf_publishes_only_the_edges_that_move() -> None:
+    arm = Arm(instance_name="left/arm")
+    camera = WristCamera(mount="wrist", instance_name="left/wrist/wristcamera")
+    try:
+        _, arm_tf = _listening(arm)
+        _, camera_tf = _listening(camera)
+        arm.publish_usd_tf({"elbow": 1.0}, ts=2.0)
+        camera.publish_usd_tf(ts=2.0)
+    finally:
+        arm.stop()
+        camera.stop()
+
+    ((elbow,),) = arm_tf
+    assert (elbow.frame_id, elbow.child_frame_id, elbow.ts) == ("left/base", "left/forearm", 2.0)
+    assert camera_tf == []
 
 
 _LINKAGE_URDF = """<robot name="linkage">
