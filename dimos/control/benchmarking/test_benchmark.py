@@ -19,12 +19,14 @@ driven against the FOPDT sim plant -> benchmark records odom -> completion fires
 
 from __future__ import annotations
 
+from itertools import count
 from types import SimpleNamespace
 
 import pytest
 
 from dimos.control.benchmarking.benchmark import (
     BATTERIES,
+    Benchmarker,
     CompletionMonitor,
     OdomRecorder,
     RunRecording,
@@ -37,7 +39,7 @@ from dimos.control.benchmarking.plant import (
     TwistBasePlantParams,
     TwistBasePlantSim,
 )
-from dimos.control.benchmarking.score import score_dir
+from dimos.control.benchmarking.score import load_recordings, score_dir, score_recordings
 from dimos.control.benchmarking.tuning import TuningConfig
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
@@ -123,6 +125,99 @@ def test_malformed_recording_is_skipped_not_fatal(tmp_path):
     )
     opm = score_dir(tmp_path, tolerances_cm=[10], plots=False)
     assert len(opm.points) == 1
+
+
+def test_operator_stopped_run_is_excluded_from_scores(tmp_path, mocker):
+    for reason, speed in (("goal+stop", 0.5), ("timeout", 0.7), ("operator_stopped", 0.3)):
+        path = tmp_path / f"{reason}.json"
+        _write_recording(
+            path,
+            name=reason,
+            ticks=[[i * 0.1, i * 0.1, 0.0, 0.0, 0.5, 0.0, 0.0] for i in range(20)],
+        )
+        rec = RunRecording.from_json(path)
+        rec.reason = reason
+        rec.arrived = reason == "goal+stop"
+        rec.speed = speed
+        rec.to_json(path)
+
+    opm, runs = score_recordings(load_recordings(tmp_path), tolerances_cm=[10])
+    assert [(p.path, p.arrived) for p in opm.points] == [
+        ("goal+stop", True),
+        ("timeout", False),
+    ]
+    assert [run["reason"] for run in runs] == ["goal+stop", "timeout"]
+    assert opm.speeds == [0.5, 0.7]
+
+    log = mocker.patch("dimos.control.benchmarking.score.logger.info")
+    assert score_dir(tmp_path, tolerances_cm=[10], plots=False) == opm
+    log.assert_any_call(f"scored 2 run(s) -> {tmp_path / 'go2_benchmark_scores.json'}")
+
+
+@pytest.fixture(params=["stream", "auto"])
+def benchmark(mocker, request):
+    bench = Benchmarker(speed_settle_s=0.0, gate_source=request.param)
+    callbacks = {}
+    for name, port in bench.inputs.items():
+        mocker.patch.object(
+            port,
+            "subscribe",
+            side_effect=lambda cb, name=name: (callbacks.update({name: cb}), mocker.Mock())[1],
+        )
+    mocker.patch.object(bench, "_run")
+    mocker.patch.object(bench.speed, "publish")
+    mocker.patch.object(bench.path, "publish")
+    clock = mocker.patch("dimos.control.benchmarking.benchmark.time", autospec=True)
+    clock.perf_counter.side_effect = count(step=0.05)
+    bench.start()
+    callbacks["odom"](_pose())
+    yield bench, callbacks, clock
+    bench.stop()
+
+
+@pytest.mark.parametrize("operator_speed", [0.0, 0.3])
+def test_operator_override_ends_run_without_waiting_for_timeout(benchmark, mocker, operator_speed):
+    bench, callbacks, clock = benchmark
+    mocker.patch.object(
+        bench.path,
+        "publish",
+        side_effect=lambda path: callbacks["twist_command"](
+            Twist(linear=Vector3(operator_speed, 0.0, 0.0))
+        ),
+    )
+
+    rec = bench._run_one("go2", "straight_line", straight_line(), 0.5)
+
+    assert (rec.arrived, rec.reason) == (False, "operator_stopped")
+    # Only the pre-path speed-settling sleep, no polling until the run timeout.
+    clock.sleep.assert_called_once_with(0.0)
+
+
+def test_previous_operator_override_and_controller_stop_do_not_interrupt_new_run(benchmark, mocker):
+    bench, callbacks, _ = benchmark
+    callbacks["twist_command"](Twist())
+    mocker.patch.object(
+        bench.path, "publish", side_effect=lambda path: callbacks["cmd_vel"](Twist())
+    )
+
+    rec = bench._run_one("go2", "straight_line", straight_line(), 0.5)
+
+    assert (rec.arrived, rec.reason) == (False, "timeout")
+
+
+def test_operator_stop_during_speed_settling_cancels_run_before_path(benchmark):
+    bench, callbacks, clock = benchmark
+
+    def stop_during_settle(delay):
+        callbacks["twist_command"](Twist())
+        clock.sleep.side_effect = None
+
+    clock.sleep.side_effect = stop_during_settle
+
+    rec = bench._run_one("go2", "straight_line", straight_line(), 0.5)
+
+    assert (rec.arrived, rec.reason) == (False, "operator_stopped")
+    bench.path.publish.assert_not_called()
 
 
 @pytest.mark.parametrize(

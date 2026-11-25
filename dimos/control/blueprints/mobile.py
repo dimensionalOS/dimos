@@ -34,8 +34,8 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.flowbase.connection import (
     FLOWBASE_BASE_JOINTS,
-    FlowBaseConfig,
     FlowBaseConnection,
+    flowbase_joint_connection,
 )
 from dimos.robot.manipulators.common.mock import mock_arm
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -87,7 +87,7 @@ def _flowbase_coordinator() -> Blueprint:
     return autoconnect(
         FlowBaseCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            connections=[FlowBaseConfig()],
+            connections=[flowbase_joint_connection()],
             tasks=[
                 TaskConfig(
                     name="vel_base",

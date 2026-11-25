@@ -26,6 +26,12 @@ from typing import Any
 
 import pytest
 
+from dimos.control.blueprints.mobile import (
+    coordinator_flowbase,
+    coordinator_flowbase_keyboard_teleop,
+)
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -214,3 +220,12 @@ def test_body_speeds_between_two_poses(
     speeds: tuple[float, float, float],
 ) -> None:
     assert _body_speeds(start, end, 0.1) == pytest.approx(speeds, abs=1e-9)
+
+
+@pytest.mark.parametrize("blueprint", [coordinator_flowbase, coordinator_flowbase_keyboard_teleop])
+def test_coordinator_blueprints_pass_config_validation(blueprint: Blueprint) -> None:
+    # The check `dimos run` makes before starting any module; nothing connects.
+    parsed = BlueprintConfigParser(blueprint.solidify()).parse(environ={})
+    (connection,) = parsed.module_kwargs("ControlCoordinator")["connections"]
+    assert connection["source"] == "base"
+    assert list(connection["joint_commands"]) == list(FLOWBASE_BASE_JOINTS)

@@ -26,7 +26,8 @@ Real hardware (default):
     trajectory task.
 
 Sim (``--simulation``):
-    MujocoSimModule (in-process MuJoCo + SHM) + sim_mujoco_g1 adapter.
+    MujocoSimModule (in-process MuJoCo + SHM) + MujocoG1Connection, which has
+    the same ports, joint names and gains as G1WholeBodyConnection.
     50 Hz tick (matches the rate the policy was trained at). No arming
     ramp and no dry-run. The same bounded arm-command path is available in
     simulation and on hardware.
@@ -49,7 +50,6 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
-from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.connection.connection_module import ConnectionConfig as JointConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
@@ -61,11 +61,10 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
@@ -89,6 +88,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
 )
 from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
+from dimos.simulation.engines.mujoco_g1_connection import MujocoG1Connection
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -102,7 +102,6 @@ _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 _ROBOT_ONLY_MJCF_PATH = Path(__file__).resolve().parents[2] / "assets" / "g1_29dof.xml"
 _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
 
-_adapter_address: str | Path
 _cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
 _MUJOCO_LIDAR_CAMERAS = (
     "lidar_front_camera",
@@ -143,18 +142,12 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 class _G1GrootCoordinator(TeleopControlCoordinator):
     g1_joints: Out[JointState]
-
-
-class _G1ConnectedGrootCoordinator(_G1GrootCoordinator):
     g1_position_command: Out[JointState]
     g1_joint_state: In[JointState]
     g1_imu: In[Imu]
 
 
 _g1_declaration = G1WholeBodyConnectionConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD))
-_coordinator_cls = (
-    _G1GrootCoordinator if global_config.simulation == "mujoco" else _G1ConnectedGrootCoordinator
-)
 
 
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
@@ -217,59 +210,50 @@ if global_config.simulation == "mujoco":
             robot_sim_spec=_g1_sim_spec,
         )
 
-    def _scene_mujoco_backend() -> tuple[Any, str | Path]:
+    def _scene_mujoco_backend() -> Any:
         if global_config.scene_package is None:
-            return _legacy_mujoco_backend(), _MJCF_PATH
+            return _legacy_mujoco_backend()
 
         scene_path = Path(str(global_config.scene_package)).expanduser()
         if scene_path.suffix.lower() == ".mjb":
             if not scene_path.exists():
                 raise FileNotFoundError(f"MuJoCo binary scene not found: {scene_path}")
-            return (
-                MujocoSimModule.blueprint(
-                    address=scene_path,
-                    headless=True,
-                    dof=_G1_NUM_MOTORS,
-                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                    robot_sim_spec=_g1_sim_spec,
-                ),
-                scene_path,
+            return MujocoSimModule.blueprint(
+                address=scene_path,
+                headless=True,
+                dof=_G1_NUM_MOTORS,
+                **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
+                robot_sim_spec=_g1_sim_spec,
             )
 
         from dimos.simulation.scenes.catalog import resolve_scene_package
 
         package = resolve_scene_package(global_config.scene_package)
         if package is None:
-            return _legacy_mujoco_backend(), _MJCF_PATH
+            return _legacy_mujoco_backend()
         if package.mujoco_scene_path is None:
             raise ValueError(f"scene package has no MuJoCo scene artifact: {package.metadata_path}")
 
         composed_scene = _precomposed_g1_scene(package)
         if composed_scene is not None:
-            return (
-                MujocoSimModule.blueprint(
-                    address=composed_scene,
-                    headless=True,
-                    dof=_G1_NUM_MOTORS,
-                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                    robot_sim_spec=_g1_sim_spec,
-                ),
-                composed_scene,
-            )
-
-        return (
-            MujocoSimModule.blueprint(
-                scene_xml=package.mujoco_scene_path,
-                robot_mjcf=_ROBOT_ONLY_MJCF_PATH,
-                robot_meshdir=_ROBOT_MESHDIR,
-                robot_id="",
-                scene_entities=package.entities,
+            return MujocoSimModule.blueprint(
+                address=composed_scene,
                 headless=True,
                 dof=_G1_NUM_MOTORS,
                 **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
                 robot_sim_spec=_g1_sim_spec,
-            ),
-            _ROBOT_ONLY_MJCF_PATH,
+            )
+
+        return MujocoSimModule.blueprint(
+            scene_xml=package.mujoco_scene_path,
+            robot_mjcf=_ROBOT_ONLY_MJCF_PATH,
+            robot_meshdir=_ROBOT_MESHDIR,
+            robot_id="",
+            scene_entities=package.entities,
+            headless=True,
+            dof=_G1_NUM_MOTORS,
+            **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
+            robot_sim_spec=_g1_sim_spec,
         )
 
     def _precomposed_g1_scene(package: ScenePackage) -> Path | None:
@@ -286,8 +270,16 @@ if global_config.simulation == "mujoco":
             )
         return candidate
 
-    # Sim backend: MuJoCo engine via SHM.
-    _backend, _adapter_address = _scene_mujoco_backend()
+    # Sim backend: MuJoCo engine, and the G1 in it behind the same ports as the real one.
+    _backend: Blueprint = autoconnect(
+        _scene_mujoco_backend(),
+        MujocoG1Connection.blueprint(kp=_g1_declaration.kp, kd=_g1_declaration.kd),
+    )
+    _backend_remappings: list[Any] = [
+        (MujocoG1Connection, "position_command", "g1_position_command"),
+        # The connection publishes the G1's IMU, as on hardware; the sim's own copy moves off it.
+        (MujocoSimModule, "imu", "sim_imu"),
+    ]
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for
     # base pose (read_odom was dropped from the Protocol). autoconnect
@@ -323,8 +315,8 @@ else:
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 
     # Real hardware owns DDS conversion and PD gains; coordinator sends joint positions.
-    _backend = G1WholeBodyConnection.blueprint(**_g1_declaration.model_dump())
-    _adapter_address = ""
+    _backend = G1WholeBodyConnection.blueprint(kp=_g1_declaration.kp, kd=_g1_declaration.kd)
+    _backend_remappings = [(G1WholeBodyConnection, "position_command", "g1_position_command")]
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
@@ -509,29 +501,15 @@ def _viewer() -> Any:
     return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
-_coordinator = _coordinator_cls.blueprint(
+_coordinator = _G1GrootCoordinator.blueprint(
     instance_name="ControlCoordinator",
     publish_robot_joint_states=True,
     tick_rate=_tick_rate,
-    connections=[]
-    if global_config.simulation == "mujoco"
-    else [
+    connections=[
         JointConnectionConfig(
             **_g1_declaration.model_dump(include=set(JointConnectionConfig.model_fields))
         )
     ],
-    hardware=[
-        HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=g1_joints,
-            adapter_type="sim_mujoco_g1",
-            address=_adapter_address,
-            wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
-        ),
-    ]
-    if global_config.simulation == "mujoco"
-    else [],
     tasks=[
         TaskConfig(
             name="groot_wbc",
@@ -584,19 +562,10 @@ _unitree_g1_groot_wbc_core = (
     autoconnect(_backend, _coordinator)
     .remappings(
         [
-            (_coordinator_cls, "twist_command", "cmd_vel"),
-            *cast(
-                "Any",
-                (
-                    []
-                    if global_config.simulation == "mujoco"
-                    else [
-                        (G1WholeBodyConnection, "position_command", "g1_position_command"),
-                        (_G1ConnectedGrootCoordinator, "g1_joint_state", "joint_state"),
-                        (_G1ConnectedGrootCoordinator, "g1_imu", "imu"),
-                    ]
-                ),
-            ),
+            (_G1GrootCoordinator, "twist_command", "cmd_vel"),
+            (_G1GrootCoordinator, "g1_joint_state", "joint_state"),
+            (_G1GrootCoordinator, "g1_imu", "imu"),
+            *_backend_remappings,
         ]
     )
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)

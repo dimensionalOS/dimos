@@ -949,6 +949,14 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
 
 
+def test_run_help_without_blueprint(isolated_cache_locks: None) -> None:
+    result = CliRunner().invoke(main, ["run", "--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--daemon" in output_plain
+
+
 def test_run_help_lists_dynamic_flags_without_starting(
     stubbed_run: dict[str, Any], mocker: MockerFixture
 ) -> None:
