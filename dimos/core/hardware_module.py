@@ -84,8 +84,9 @@ class HardwareModuleConfig(TfModuleConfig):
 # needed for sims to detect hardware modules on hosted systems
 class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
+    # possible to have a namespace without being mounted, this differentiates that
     def mounted_on(self) -> str | None: ...
-    def hardware_namespace(self) -> str: ...
+    def get_namespace(self) -> str: ...
 
 
 class HardwareModule(TfModule):
@@ -94,8 +95,6 @@ class HardwareModule(TfModule):
     config: HardwareModuleConfig
     # Frames of this hardware's USD that other hardware can mount onto.
     mounts: ClassVar[Mounts] = Mounts()
-    # Streams a mounted copy keeps unprefixed, so they still reach whatever is outside its mount's namespace.
-    mount_shared: ClassVar[frozenset[str]] = frozenset()
     # A FileInfo naming a file this hardware serves, with the sha256 the asker already has.
     hardware_file_request: In[FileInfo]
     # The reply (header only when the asker's sha256 is current), and the hardware.usda header announced at start.
@@ -104,9 +103,7 @@ class HardwareModule(TfModule):
     @classmethod
     def mount(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
         """This hardware on the mount frame ``mount_frame``, under the namespace of the same name."""
-        return cls.blueprint(mount=mount_frame, **kwargs).namespace(
-            mount_frame, shared=cls.mount_shared
-        )
+        return cls.blueprint(mount=mount_frame, **kwargs).namespace(mount_frame)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -160,24 +157,22 @@ class HardwareModule(TfModule):
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.mount is not None else None
 
-    @rpc
-    def hardware_namespace(self) -> str:
-        """The namespace its hardware_file_request and hardware_file_response are under."""
-        return self.namespace
-
-    @cached_property
-    def _hardware_files(self) -> HardwareFiles:
-        usd = self.config.usd
+    def local_usd(self) -> str:
+        """This hardware's USD for its own use: frames named as on tf, files as paths on this machine."""
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
 
-        source = usd.source_path
+        source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        absolute = prefix_usd_frames(
-            resolve_usd_assets(usd.usd, root), self.frame_id_prefix, root or None
+        return prefix_usd_frames(
+            resolve_usd_assets(self.config.usd.usd, root), self.frame_id_prefix, root or None
         )
+
+    @cached_property
+    def _hardware_files(self) -> HardwareFiles:
+        source = self.config.usd.source_path
         return HardwareFiles(
-            absolute, source.stat().st_mtime if source and source.is_file() else None
+            self.local_usd(), source.stat().st_mtime if source and source.is_file() else None
         )
 
     def _on_hardware_file_request(self, request: FileInfo) -> None:
