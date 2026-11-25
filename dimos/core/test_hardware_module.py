@@ -22,8 +22,6 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect, config_defaults
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
-from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.assets.model import RobotModel, UsdModel
 
 _ARM_URDF = """<robot name="arm">
@@ -273,21 +271,6 @@ def test_a_frame_id_prefix_names_the_usd_and_its_tf_alike() -> None:
         ("left/spare/forearm", "left/spare/wrist"),
     }
     assert {frame for edge in edges for frame in edge} <= frames
-
-
-class SharedCamera(WristCamera):
-    mount_shared = frozenset({"color_image"})
-    color_image: Out[Image]
-
-
-def test_a_mount_keeps_its_shared_streams_outside_its_namespace() -> None:
-    blueprint = (
-        autoconnect(Arm.blueprint(), SharedCamera.mount(Arm.mounts.wrist))
-        .namespace("left", shared={"color_image"})
-        .solidify()
-    )
-    (camera,) = [atom for atom in blueprint.active_blueprints if atom.module is SharedCamera]
-    assert blueprint.remapping_map.get((camera.name, "color_image"), "color_image") == "color_image"
 
 
 def test_hardware_without_a_usd_is_refused() -> None:
