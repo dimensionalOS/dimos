@@ -186,7 +186,7 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
     blueprint = autoconnect(
         sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
         _Room.blueprint(),
-        _Dog.blueprint(mount="dog").namespace("dog"),
+        _Dog.blueprint(attached_to="dog").namespace("dog"),
     ).solidify()
     # Its own zenoh domain, so no other sim running on this machine answers its RPCs.
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}

@@ -75,7 +75,9 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
 def compose_world(hardware: Sequence[HardwareSpec]) -> UsdModel:
     """Graft every hardware's USD onto the frame it is mounted on, into the one unmounted USD."""
     # Asked all at once: each part serves its own files, from this machine or another.
-    described = safe_thread_map(list(hardware), lambda part: (fetched_usd(part), part.mounted_on()))
+    described = safe_thread_map(
+        list(hardware), lambda part: (fetched_usd(part), part.attached_to())
+    )
     return compose_usds(described)
 
 
@@ -94,7 +96,7 @@ def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
     from dimos.robot.assets.usd_utils.layers import graft_usd
     from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
 
-    roots = [usd for usd, mounted_on in described if mounted_on is None]
+    roots = [usd for usd, attached_to in described if attached_to is None]
     if len(roots) != 1:
         raise ValueError(
             f"a simulated world needs exactly one unmounted HardwareModule (the scene "
@@ -102,7 +104,7 @@ def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
         )
     # Before any stage is opened on them: a stage opens every layer they reference, such as a scene's hulls.
     pull_usd_assets(usd for usd, _ in described)
-    mounted = [(usd, mounted_on) for usd, mounted_on in described if mounted_on is not None]
+    mounted = [(usd, attached_to) for usd, attached_to in described if attached_to is not None]
     placed: set[str] = set()
 
     def grafted(usd: str) -> str:
