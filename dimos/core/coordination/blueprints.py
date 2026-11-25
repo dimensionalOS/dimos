@@ -50,8 +50,8 @@ else:
 logger = setup_logger()
 
 
-# Shared by every namespace: the simulated world that each robot and sensor reads and acts on, and tf_static (frame ids are namespaced instead).
-ALWAYS_SHARED = frozenset({"world_observations", "world_actions", "tf_static"})
+# Shared by every namespace: the simulated world that each robot and sensor reads and acts on.
+ALWAYS_SHARED = frozenset({"world_observations", "world_actions"})
 
 
 class DisabledModuleProxy:
@@ -395,7 +395,7 @@ class Blueprint(BlueprintProtocol):
 
         Stream names listed in *shared* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary. ``tf`` is shared too unless ``share_tf=False``, so every
+        namespace boundary. ``tf`` and ``tf_static`` are shared too unless ``share_tf=False``, so every
         robot's transforms land in one tf tree (their frame ids are namespaced instead).
         ``world_observations`` and ``world_actions`` are always shared, so every namespaced
         robot and sensor reaches the one simulated world:
@@ -417,7 +417,7 @@ class Blueprint(BlueprintProtocol):
         listed = frozenset(shared)
         if "tf" in listed and not share_tf:
             raise ValueError("shared lists 'tf' but share_tf=False")
-        shared_set = listed | ALWAYS_SHARED | ({"tf"} if share_tf else set())
+        shared_set = listed | ALWAYS_SHARED | ({"tf", "tf_static"} if share_tf else set())
 
         effective_names = set()
         for atom in self.blueprints:
