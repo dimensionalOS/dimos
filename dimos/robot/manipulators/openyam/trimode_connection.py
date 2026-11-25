@@ -81,7 +81,7 @@ def arm_bounds(model: RobotModel) -> Bounds:
 
 class TrimodeLifecycle(Spec, Protocol):
     def open_reference(self, port: str, until: float) -> str | None: ...
-    def close_reference(self, session: str) -> None: ...
+    def close_reference(self, session: str, idle_hold: bool = False) -> None: ...
     def stop_references(self, stopped: bool) -> None: ...
 
 
@@ -250,9 +250,12 @@ class TrimodeConnection(OpenYamConnection):
             return self._token
 
     @rpc
-    def close_reference(self, session: str) -> None:
+    def close_reference(self, session: str, idle_hold: bool = False) -> None:
         with self._hardware_lock:
             if session != self._token or self._token is None:
+                return
+            if not idle_hold:
+                self._end_locked()
                 return
             now = time.monotonic()
             self._expire_locked(now)
@@ -403,7 +406,9 @@ class TrimodeConnection(OpenYamConnection):
                 raise ValueError("cannot safely hold invalid arm position")
             # The measured-state tolerance is shared with the tracker; hold commands stay in bounds.
             arm.hold_arm(
-                tuple(min(max(value, lo), hi) for value, (lo, hi) in zip(q, self._bounds, strict=True))
+                tuple(
+                    min(max(value, lo), hi) for value, (lo, hi) in zip(q, self._bounds, strict=True)
+                )
             )
             if hold_jaw:
                 arm.hold_jaw(reading.position[6])

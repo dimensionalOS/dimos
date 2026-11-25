@@ -97,11 +97,11 @@ class QuestReference(BaseControlTask):
     def blocks_plan(self) -> bool:
         return self._held and time.monotonic() < self._buttons_deadline
 
-    def _end(self) -> None:
+    def _end(self, *, idle_hold: bool = False) -> None:
         session, self._session = self._session, None
         self._pose = self._anchor = None
         if session is not None:
-            self._lifecycle.close_reference(session)
+            self._lifecycle.close_reference(session, idle_hold=idle_hold)
 
     def set_estop(self, estopped: bool) -> None:
         self._estopped = estopped
@@ -151,7 +151,7 @@ class QuestReference(BaseControlTask):
             self._end()
             self._need_release = True
         elif not self._held:
-            self._end()
+            self._end(idle_hold=not expired)
             self._need_release = False
         elif expired:
             self._end()
@@ -295,7 +295,9 @@ class PlannedReference(JointTrajectoryTask):
         session, self._session = self._session, None
         self._plan = None
         if session is not None:
-            self._lifecycle.close_reference(session)
+            self._lifecycle.close_reference(
+                session, idle_hold=self._state is TrajectoryState.COMPLETED
+            )
 
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         self.cancel()

@@ -336,7 +336,7 @@ def test_stock_jaw_write_failure_revokes_inflight_policy(
 ) -> None:
     connection, native, motors, jaw = recording_sdk
     entered, release = threading.Event(), threading.Event()
-    submit = Mock(wraps=connection._submit)
+    submit = Mock(wraps=connection._submit_policy)
 
     def blocked_actor(_: np.ndarray) -> np.ndarray:
         entered.set()
@@ -508,11 +508,13 @@ def test_real_cpu_quest_and_viser_share_single_arm_sink(
         observations[1][297:303], np.asarray(outputs[0], dtype=np.float32)
     )
     end = (0.04, *HOME[1:])
+    # Start above the settling speed before the first terminal poll.
+    rig.plant.dq = (1.0,) * 6
+    wait(lambda: (sample := rig.control._read_sample()) is not None and sample.dq == rig.plant.dq)
     assert rig.execute_viser(plan(end))
     wait(lambda: any(obs[317] == 2 and np.isclose(obs[311], end[0]) for obs in observations))
     np.testing.assert_allclose(observations[-1][304:311], tcp_pose(end), atol=1e-7)
     rig.plant.q = end
-    rig.plant.dq = (1.0,) * 6
     wait(lambda: len([o for o in observations if o[317] == 2 and np.all(o[291:297] == 1.0)]) >= 2)
     assert (
         rig.control.task_invoke("joint_trajectory", "get_status", {"t_now": None}).state
@@ -736,7 +738,7 @@ def test_clean_close_keeps_last_submitted_goal_until_preempted(idle_connection, 
     token = worker.open_reference(port, clock.now + 0.09)
     # Closing a session that never submitted must not start policy hold.
     assert token is not None
-    worker.close_reference(token)
+    worker.close_reference(token, idle_hold=True)
     tracker.offer.assert_not_called()
     assert not arm.holds and not arm.arm_writes
 
@@ -747,7 +749,7 @@ def test_clean_close_keeps_last_submitted_goal_until_preempted(idle_connection, 
     goal = JointGoal(*args, terminal=True) if goal_type is JointGoal else goal_type(*args)
     sample = worker._prepare(goal)
     assert sample is not None and worker._submit_policy(goal, sample, HOME)
-    worker.close_reference(token)
+    worker.close_reference(token, idle_hold=True)
     idle = tracker.offer.call_args.args[0]
     assert type(idle) is goal_type and idle.target == target and idle.session == token
     assert not isinstance(idle, JointGoal) or not idle.terminal
@@ -775,7 +777,16 @@ def test_clean_close_keeps_last_submitted_goal_until_preempted(idle_connection, 
 
 @pytest.mark.parametrize(
     "event",
-    ["estop", "shutdown", "actor", "submit", "write_timeout", "stale_feedback", "active_timeout"],
+    [
+        "estop",
+        "shutdown",
+        "actor",
+        "submit",
+        "write_timeout",
+        "stale_feedback",
+        "active_timeout",
+        "cancel",
+    ],
 )
 def test_policy_hold_falls_back_and_never_restarts(idle_connection, monkeypatch, event):
     worker, arm, clock, tracker = idle_connection
@@ -784,14 +795,22 @@ def test_policy_hold_falls_back_and_never_restarts(idle_connection, monkeypatch,
     goal = JointGoal(token, clock.now, clock.now + 0.09, HOME)
     sample = worker._prepare(goal)
     assert sample is not None and worker._submit_policy(goal, sample, HOME)
+    if event == "cancel":
+        worker.close_reference(token)
+        tracker.offer.assert_not_called()
+        assert arm.holds == 1
+        assert not worker._submit_policy(goal, sample, HOME)
+        return
     if event == "active_timeout":
         clock.now += 0.09
-        worker.close_reference(token)  # Expiry wins even before the next reader tick.
+        worker.close_reference(
+            token, idle_hold=True
+        )  # Expiry wins even before the next reader tick.
         tracker.offer.assert_not_called()
         assert arm.holds == 1
         return
 
-    worker.close_reference(token)
+    worker.close_reference(token, idle_hold=True)
     idle = tracker.offer.call_args.args[0]
     if event == "estop":
         worker.stop_references(True)

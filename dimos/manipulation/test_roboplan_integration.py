@@ -210,7 +210,9 @@ def scalar_world(tmp_path, roboplan_types):
 
 
 @pytest.mark.parametrize("selected", [False, True], ids=["full", "selected"])
-def test_real_rrt_tolerates_only_bounded_measured_start_overshoot(tmp_path, roboplan_types, selected):
+def test_real_rrt_tolerates_only_bounded_measured_start_overshoot(
+    tmp_path, roboplan_types, selected
+):
     model_path = tmp_path / "stop.urdf"
     model_path.write_text("""
         <robot name="stop">

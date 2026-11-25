@@ -122,9 +122,9 @@ resuming it afterward; after a Quest input gap, release grip with both raw input
 streams live before re-engaging. Trigger still operates the jaw.
 
 **Operator only.** Launching this blueprint opens CAN, enables the arm, and may
-move the jaw during the stock calibration. Use only a commissioned right OpenYAM follower with a supported arm, a
-clear workspace and a tested physical stop. Stop any other writer on that CAN
-bus first. Install the usual dimOS manipulation dependencies, including the
+move the jaw during the stock calibration. Use only a commissioned right OpenYAM
+follower with a supported arm, a clear workspace and a tested physical stop.
+Stop any other writer on that CAN bus first. Install the usual dimOS manipulation dependencies, including the
 `cpu` extra and stock `can-motor-control==0.0.12`. Put your authorized copy of
 `policy_trimode_dual_enc_10ms_13500.onnx` outside the checkout. No download or
 older checkpoint is used. Verify it before launch:
@@ -153,12 +153,12 @@ Normal jaw traffic never renews arm authority or resends arm MIT rows. The stock
 command deadman and write-failure halt still revoke arm authority and request a
 measured arm and jaw hold, even before the first policy write. If the hold
 cannot be sampled or sent, the connection attempts to disable the device.
-A clean reference close with a live, previously submitted goal revokes external
-authority and keeps tracking the final goal from fresh feedback until takeover.
-Expiry, faults and E-stop revoke policy and fall back to a measured hardware
+A completed plan or a fresh grip release revokes external authority and keeps
+tracking the last submitted goal from fresh feedback until takeover. Cancellation,
+expiry, faults and E-stop revoke policy and fall back to a measured hardware
 hold when possible. Shutdown revokes policy before device teardown. A native
-send already in progress cannot be undone. This host-side protection is **not** an independent firmware
-watchdog and cannot protect against host death. SDK q/dq polls can contain cached
+send already in progress cannot be undone. This host-side protection is **not**
+an independent firmware watchdog and cannot protect against host death. SDK q/dq polls can contain cached
 values: plan completion checks a subsequent SDK poll against the final target
 and velocity tolerance, not a motor execution receipt or a verified per-axis
 acquisition timestamp.

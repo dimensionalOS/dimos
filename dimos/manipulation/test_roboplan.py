@@ -574,15 +574,15 @@ def test_omitted_joint_inherits_in_limit_scene_seed(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     config = robot_config.model_copy(
-        update={"model": robot_config.model.with_joint_position_limits("joint3", lower=0.1, upper=0.2)}
+        update={
+            "model": robot_config.model.with_joint_position_limits("joint3", lower=0.1, upper=0.2)
+        }
     )
     world = _make_world(fake_roboplan, config)
 
     assert world.get_prepared_model().joint_space.names == ("joint1", "joint2")
     with world.scratch_context() as ctx:
-        world.set_joint_state(
-            ctx, JointState(name=config.joint_names, position=[1.2, -0.25])
-        )
+        world.set_joint_state(ctx, JointState(name=config.joint_names, position=[1.2, -0.25]))
         np.testing.assert_allclose(world._full_scene_q(ctx), [1.2, -0.25, 0.1])
 
 

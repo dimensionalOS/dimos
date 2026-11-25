@@ -79,8 +79,7 @@ def tcp_pose(q: Vector) -> Vector:
 
 def bounded(q: Vector, bounds: Bounds, *, tolerance: float = 0.0) -> bool:
     return len(q) == len(bounds) == 6 and all(
-        lo - tolerance <= value <= hi + tolerance
-        for value, (lo, hi) in zip(q, bounds, strict=True)
+        lo - tolerance <= value <= hi + tolerance for value, (lo, hi) in zip(q, bounds, strict=True)
     )
 
 
