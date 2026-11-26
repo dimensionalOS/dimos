@@ -3,10 +3,7 @@
  *
  * Reads one JSON request per line on stdin and writes one JSON reply per line on stdout:
  *   {op:"init", timestep, bodies:[scene_data.v1 body], robots:[{id, pos, yaw, halfExtents, center, mass}]}
- *   {op:"spawn", bodies:[scene_data.v1 body], meshes}   {op:"remove", entity}
- *   {op:"velocity", entity, linear:[x,y,z], angular:[x,y,z]}   (in the entity's own frame, held)
- *   {op:"pose", entity, pos:[x,y,z], quat:[x,y,z,w]}
- *   {op:"attach", entity, to}   {op:"detach", entity}   (carry an entity with another, as placed now)
+ *   {op:"velocity", entity, linear:[x,y,z], angular:[x,y,z]}   (a robot's, in its own frame, held)
  *   {op:"step", steps}  -> {time, entities:{name:{pos, quat, velocity, acceleration}}}  (only the awake and
  *   those that fell asleep since the last reply: Rapier's sleeping bodies have not moved; init's reply has every one)
  * A velocity or acceleration is linear then angular, world axes, at the body's origin; an acceleration is
@@ -64,8 +61,6 @@ const robots = new Map<
     string,
     { body: any; collider: any; controller: any; yaw: number; linear: V3; angular: V3 }
 >()
-const velocities = new Map<string, { linear: V3; angular: V3 }>() // held velocities of non-robot bodies
-const carried = new Map<string, { to: string; offset: any; rotation: any }>() // entity -> its carrier and pose in it
 const motions = new Map<string, { velocity: number[]; acceleration: number[] }>() // entity -> its motion after the last timestep
 const awake = new Set<string>() // the entities the last reply held awake
 const STILL = [0, 0, 0, 0, 0, 0]
@@ -195,44 +190,6 @@ const rotate = (q: any, v: any) => {
     return { x: p.x, y: p.y, z: p.z }
 }
 
-function holdCarried(): void {
-    for (const [name, { to, offset, rotation }] of carried) {
-        const body = named.get(name)
-        const carrier = named.get(to)
-        if (!body || !carrier) {
-            continue
-        }
-        const at = carrier.translation()
-        const q = carrier.rotation()
-        const shift = rotate(q, offset)
-        body.setTranslation({ x: at.x + shift.x, y: at.y + shift.y, z: at.z + shift.z }, true)
-        body.setRotation(multiply(q, rotation), true)
-        body.setLinvel({ x: 0, y: 0, z: 0 }, true)
-        body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-    }
-}
-
-function holdVelocities(): void {
-    for (const [name, velocity] of velocities) {
-        const body = named.get(name)
-        if (!body) {
-            continue
-        }
-        const r = body.rotation()
-        const rotate = (v: V3) => {
-            const p = multiply(multiply(r, { w: 0, x: v[0], y: v[1], z: v[2] }), {
-                w: r.w,
-                x: -r.x,
-                y: -r.y,
-                z: -r.z,
-            })
-            return { x: p.x, y: p.y, z: p.z }
-        }
-        body.setLinvel(rotate(velocity.linear), true)
-        body.setAngvel(rotate(velocity.angular), true)
-    }
-}
-
 // Rapier's velocity, which is its center of mass's, moved to the body's origin: v + w x (origin - com).
 function velocityAtOrigin(body: any): number[] {
     const v = body.linvel()
@@ -295,8 +252,6 @@ function handle(request: any): unknown {
             world.timestep = request.timestep
             named.clear()
             robots.clear()
-            velocities.clear()
-            carried.clear()
             motions.clear()
             awake.clear()
             time = 0
@@ -308,73 +263,18 @@ function handle(request: any): unknown {
             }
             return state(false)
         }
-        case "spawn": {
-            for (const body of request.bodies) {
-                addBody(body, request.meshes ?? {})
-            }
-            return {}
-        }
-        case "remove": {
-            const body = named.get(request.entity)
-            if (body) {
-                world.removeRigidBody(body)
-                named.delete(request.entity)
-                velocities.delete(request.entity)
-                motions.delete(request.entity)
-                awake.delete(request.entity)
-            }
-            return {}
-        }
         case "velocity": {
             const robot = robots.get(request.entity)
-            if (robot) {
-                robot.linear = request.linear
-                robot.angular = request.angular
-            } else if (named.has(request.entity)) {
-                velocities.set(request.entity, { linear: request.linear, angular: request.angular })
-            } else {
-                return { error: `no entity ${request.entity}` }
+            if (!robot) {
+                return { error: `no robot ${request.entity}` }
             }
+            robot.linear = request.linear
+            robot.angular = request.angular
             return {}
         }
-        case "pose": {
-            const body = named.get(request.entity)
-            if (!body) {
-                return { error: `no entity ${request.entity}` }
-            }
-            body.setTranslation({ x: request.pos[0], y: request.pos[1], z: request.pos[2] }, true)
-            body.setRotation(quat(request.quat), true)
-            const robot = robots.get(request.entity)
-            if (robot) {
-                const q = request.quat
-                robot.yaw = Math.atan2(2 * (q[3] * q[2] + q[0] * q[1]), 1 - 2 * (q[1] * q[1] + q[2] * q[2]))
-            }
-            return {}
-        }
-        case "attach": {
-            const body = named.get(request.entity)
-            const carrier = named.get(request.to)
-            if (!body || !carrier || body.isFixed()) {
-                return { error: `cannot carry ${request.entity} with ${request.to}` }
-            }
-            const inverse = conjugate(carrier.rotation())
-            const a = body.translation()
-            const b = carrier.translation()
-            carried.set(request.entity, {
-                to: request.to,
-                offset: rotate(inverse, { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }),
-                rotation: multiply(inverse, body.rotation()),
-            })
-            return {}
-        }
-        case "detach":
-            carried.delete(request.entity)
-            return {}
         case "step": {
             for (let i = 0; i < (request.steps ?? 1); i++) {
                 moveRobots(world.timestep)
-                holdVelocities()
-                holdCarried()
                 world.step()
                 measureMotions(world.timestep)
                 time += world.timestep

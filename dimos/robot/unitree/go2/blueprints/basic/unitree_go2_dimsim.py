@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A Go2 as DimSim's kinematic base in DimSim's apartment, whose fridge, cabinets and lamps act as DimSim's do.
+"""A Go2 as DimSim's kinematic base in DimSim's apartment.
 
 Only DimSim runs this scene: its meshes are MuJoCo-visible (for the sensors) but not MuJoCo-solid.
 """
@@ -20,7 +20,8 @@ Only DimSim runs this scene: its meshes are MuJoCo-visible (for the sensors) but
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.sim2 import GO2_ODOM_TF, Go2KinematicBase, Go2Sim
+from dimos.robot.unitree.go2.dimsim import Go2KinematicBase
+from dimos.robot.unitree.go2.sim2 import GO2_ODOM_TF, Go2Sim
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.dimsim.apartment import DimSimApartment
 from dimos.sim2.dimsim.sim import DimSimSim

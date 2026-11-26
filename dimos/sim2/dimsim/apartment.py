@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimSim's apartment as a scene: its fridge, cabinets, lamps, TV and the rest keep their actions."""
+"""DimSim's apartment as a scene: its structure, furniture and lights."""
 
-from pydantic import Field
+from typing import Any
+
+from pydantic import model_validator
 
 from dimos.core.hardware_module import Mounts
 from dimos.robot.assets.model import UsdModel
@@ -27,15 +29,26 @@ SPOTS = {"go2": ((3.0, 2.0, 0.12), (0.0, 0.0, 0.0))}
 _SCENE = "apartment"
 
 
-def apartment_usd() -> UsdModel:
-    return UsdModel.from_layer(dimsim_scene_usd(_SCENE)).with_frames(
-        {name: (_SCENE, xyz, rpy) for name, (xyz, rpy) in SPOTS.items()}
-    )
-
-
 class DimSimApartmentConfig(SimSceneConfig):
-    # Converted when the scene is made, not imported: its objects' meshes are read out of the scene's GLBs.
-    usd: UsdModel = Field(default_factory=apartment_usd)
+    # The DomeLight radiance standing in for DimSim's environment map (a RoomEnvironment), by eye against DimSim's view.
+    environment: float = 1.15
+    # What a viewer reading UsdLux as Blender does (Controller) multiplies a normalized DistantLight's intensity by.
+    sun_per_intensity: float = 4.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _converted(cls, data: Any) -> Any:
+        """The scene converted with this config's lighting, unless a usd is given; its meshes are read out of its GLBs."""
+        if not isinstance(data, dict) or "usd" in data:
+            return data
+        lighting = {
+            name: data.get(name, cls.model_fields[name].default)
+            for name in ("environment", "sun_per_intensity")
+        }
+        usd = UsdModel.from_layer(dimsim_scene_usd(_SCENE, **lighting)).with_frames(
+            {name: (_SCENE, xyz, rpy) for name, (xyz, rpy) in SPOTS.items()}
+        )
+        return {**data, "usd": usd}
 
 
 class DimSimApartment(SimScene):

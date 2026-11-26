@@ -24,6 +24,8 @@ from dimos.sim2.dimsim import dimsim_scene
 pytest.importorskip("pxr")
 trimesh = pytest.importorskip("trimesh")
 
+_LIGHTING = {"environment": 1.0, "sun_per_intensity": 4.0}
+
 
 @pytest.fixture
 def pxr() -> Any:
@@ -45,20 +47,6 @@ def _glb(path: Path, visual: Any = None) -> Path:
         box.visual = visual
     path.write_bytes(trimesh.Scene(box).export(file_type="glb"))
     return path
-
-
-def test_the_mesh_cache_is_made_for_this_user_alone(pxr: Any, meshes: Path, tmp_path: Path) -> None:
-    dimsim_scene._mesh_parts(pxr, _glb(tmp_path / "box.glb"))
-    assert meshes.stat().st_mode & 0o777 == 0o700
-
-
-def test_a_mesh_cache_others_can_write_to_is_refused(
-    pxr: Any, meshes: Path, tmp_path: Path
-) -> None:
-    meshes.mkdir()
-    meshes.chmod(0o777)
-    with pytest.raises(PermissionError, match="writable by you alone"):
-        dimsim_scene._mesh_parts(pxr, _glb(tmp_path / "box.glb"))
 
 
 def test_the_mesh_cache_is_not_in_the_shared_temporary_directory() -> None:
@@ -139,10 +127,10 @@ def test_the_scenes_git_lfs_pointers_are_fetched_in_one_pull_before_any_is_read(
 
     monkeypatch.setattr(dimsim_scene, "pull_lfs_files", pull)
 
-    layer = dimsim_scene.dimsim_scene_usd("room")
+    layer = dimsim_scene.dimsim_scene_usd("room", **_LIGHTING)
 
     assert pulled == [[scene / "structure.glb", scene / "objects" / "door.glb"]]
-    assert layer.count(str(meshes)) == 2
+    assert layer.count(f"references = @{meshes}") == 2
 
 
 def test_the_scenes_lights_and_dimsims_own_become_usd_lights(
@@ -157,7 +145,7 @@ def test_the_scenes_lights_and_dimsims_own_become_usd_lights(
     )
     monkeypatch.setattr(dimsim_scene, "DIMSIM_SCENES", tmp_path / "scenes")
     stage = pxr.Usd.Stage.Open(pxr.Sdf.Layer.CreateAnonymous(".usda"))
-    stage.GetRootLayer().ImportFromString(dimsim_scene.dimsim_scene_usd("room"))
+    stage.GetRootLayer().ImportFromString(dimsim_scene.dimsim_scene_usd("room", **_LIGHTING))
     lights = {
         prim.GetTypeName(): prim for prim in stage.Traverse() if "Light" in prim.GetTypeName()
     }
@@ -169,7 +157,5 @@ def test_the_scenes_lights_and_dimsims_own_become_usd_lights(
     lamp = lights["SphereLight"]
     assert lamp.GetAttribute("inputs:intensity").Get() == pytest.approx(2)
     assert lamp.GetAttribute("xformOp:translate").Get() == pxr.Gf.Vec3d(1, 2.5, -1)
-    settings = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "RenderSettings")
-    assert settings.GetAttribute("dimos:look:exposure").Get() == pytest.approx(
-        dimsim_scene.LOOK["exposure"]
-    )
+    dome = lights["DomeLight"]
+    assert dome.GetAttribute("inputs:intensity").Get() > _LIGHTING["environment"]

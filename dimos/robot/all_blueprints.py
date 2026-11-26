@@ -300,7 +300,7 @@ all_modules = {
     "go2-connection": "dimos.robot.unitree.go2.connection.GO2Connection",
     "go2-coordinator": "dimos.robot.unitree.go2.coordinator.Go2Coordinator",
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
-    "go2-kinematic-base": "dimos.robot.unitree.go2.sim2.Go2KinematicBase",
+    "go2-kinematic-base": "dimos.robot.unitree.go2.dimsim.Go2KinematicBase",
     "go2-l1-lidar": "dimos.robot.unitree.go2.dds.module.GO2L1Lidar",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
     "go2-mid360-recorder": "dimos.robot.unitree.go2.go2_mid360_recorder.Go2Mid360Recorder",

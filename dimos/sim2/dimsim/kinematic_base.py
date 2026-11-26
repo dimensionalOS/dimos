@@ -15,25 +15,21 @@
 """A robot the world moves as a box on cmd_vel: DimSim's kinematic base, wearing the robot's own USD."""
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
-from functools import cached_property
+from collections.abc import AsyncIterator
 import time
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
-import numpy as np
 
 from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig
+from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.dimsim.backend import BASE_JOINTS, MOUNTED_AT
-from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.dimsim.backend import BASE_JOINTS
+from dimos.sim2.sim import SimulatedWorldSpec
+from dimos.sim2.sim_robot import SimRobot
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
 
@@ -46,7 +42,7 @@ class SimKinematicBaseConfig(HardwareModuleConfig):
     odom_frame: str = "odom"
 
 
-class SimKinematicBase(HardwareModule):
+class SimKinematicBase(SimRobot):
     """Mount it on a frame of the scene, which is where it starts; its robot id is its namespace.
 
     Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
@@ -63,18 +59,11 @@ class SimKinematicBase(HardwareModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._expires: float | None = None
-        self._start: np.ndarray | None = None
 
     @property
     def attach_frame(self) -> str:
         """Its odometry frame: the mount it started on holds odom, and odom holds its body."""
         return self.config.odom_frame
-
-    @cached_property
-    def _static_edges(self) -> list[Transform]:
-        """The USD's static edges below its body, and the mount: odometry holds the body, so the prims above it go out on no edge."""
-        body = f"{self.tf_frames[self.config.usd.root_link]}/"
-        return [t for t in super()._static_edges if not body.startswith(f"{t.child_frame_id}/")]
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
@@ -83,7 +72,7 @@ class SimKinematicBase(HardwareModule):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations, self.world.snapshot)
-        reporting = asyncio.create_task(until_it_stops("the base's odometry", self._report()))
+        reporting = asyncio.create_task(self._report())
         yield
         reporting.cancel()
 
@@ -112,18 +101,4 @@ class SimKinematicBase(HardwareModule):
         base = self._world.entity(self.namespace)
         if base is None or base.pose is None:
             return None
-        if self._start is None:
-            self._start = np.linalg.inv(_matrix(base.cbor[MOUNTED_AT]))
-        # Odometry is from where the base started, the frame it is mounted on (which it stands above).
-        relative = Transform.from_matrix(self._start @ _matrix(base.pose))
-        translation, rotation = relative.translation, relative.rotation
-        return PoseStamped(
-            ts=stamp,
-            frame_id=self.config.odom_frame,
-            position=[translation.x, translation.y, translation.z],
-            orientation=[rotation.x, rotation.y, rotation.z, rotation.w],
-        )
-
-
-def _matrix(pose: Sequence[float] | np.ndarray) -> np.ndarray:
-    return Transform(translation=Vector3(*pose[:3]), rotation=Quaternion(*pose[3:7])).to_matrix()
+        return self.odometry(base.pose, stamp, self.config.odom_frame)

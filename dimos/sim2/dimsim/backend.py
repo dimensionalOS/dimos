@@ -14,7 +14,6 @@
 
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
 import json
 import math
 from pathlib import Path
@@ -26,16 +25,13 @@ from typing import TYPE_CHECKING, Any
 from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 from numpy.typing import NDArray
-from scipy.spatial.transform import Rotation
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
-from dimos.sim2.dimsim.dimsim_scene import INTERACTIVE, PICKABLE, STATE, TITLE
+from dimos.sim2.actions import Action, JointCommand
 from dimos.sim2.dimsim.scene import PURPOSES, stage_bodies
 from dimos.sim2.mujoco.names import resolve
-from dimos.sim2.spec import ODOM_FRAME, Simulated, SimulatedRobot
-from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import GEOMETRY, REFUSED, WorldWriter
+from dimos.sim2.spec import ODOM_FRAME, ROBOT, SimulatedRobot
+from dimos.sim2.world_observations import REFUSED, WorldWriter
 from dimos.utils.deno import ensure_deno
 
 if TYPE_CHECKING:
@@ -44,15 +40,6 @@ if TYPE_CHECKING:
 # The Deno world dimsim steps; it ships with the repo (misc/DimSim/cli), not with the dimos package.
 _WORLD = DIMOS_PROJECT_ROOT / "misc" / "DimSim" / "cli"
 BASE_JOINTS = ("base_vx", "base_vy", "base_wz")
-# CborKeyValueCommand(object, ACTION, <action id or label>) runs one of the ACTIONS its STATE has now.
-ACTION = "action"
-ACTIONS = "actions"
-# CborKeyValueCommand(object, HELD_BY, <robot id>) picks a pickable object up; None puts it down where it is.
-HELD_BY = "held_by"
-# A robot's pose of the frame it is mounted on, where its odometry starts from.
-MOUNTED_AT = "mounted_at"
-# The velocity and acceleration of a body that is not moving.
-_STILL = (0.0,) * 6
 
 
 def _world_dir() -> Path:
@@ -64,49 +51,13 @@ def _world_dir() -> Path:
     )
 
 
-@dataclass
-class _Object:
-    """A scene object DimSim lets you act on: its states and actions, and whether it can be picked up."""
-
-    path: str
-    title: str
-    states: dict[str, str]
-    actions: dict[str, dict[str, str]]
-    state: str
-    pickable: bool
-    # Where it is now, from where its USD puts it (it moves only by being carried).
-    moved: NDArray[np.float64] = field(default_factory=lambda: np.eye(4))
-    held_by: str | None = None
-    # Its pose in its carrier's frame, while it is held.
-    grip: NDArray[np.float64] | None = None
-
-    def available(self) -> dict[str, dict[str, str]]:
-        return {id: action for id, action in self.actions.items() if action["from"] == self.state}
-
-    def find(self, wanted: str) -> dict[str, str] | None:
-        available = self.available()
-        if wanted in available:
-            return available[wanted]
-        return next((a for a in available.values() if a["label"] == wanted), None)
-
-    def cbor(self) -> dict[str, Any]:
-        said: dict[str, Any] = {"title": self.title}
-        if self.actions:
-            said[STATE] = self.states[self.state]
-            said[ACTIONS] = [action["label"] for action in self.available().values()]
-        if self.pickable:
-            said[HELD_BY] = self.held_by
-        return said
-
-
 class DimSimBackend:
     def __init__(
         self,
         usd: "UsdModel",
-        simulated: Iterable[Simulated] = (),
+        simulated: Iterable[SimulatedRobot] = (),
         *,
         timestep: float,
-        reach: float,
         speed: float = 1.0,
         max_burst_steps: int = 5,
     ) -> None:
@@ -117,17 +68,10 @@ class DimSimBackend:
         self._timestep = timestep
         self._speed = speed
         self._max_burst_steps = max_burst_steps
-        self._reach = reach
-        self._scene_layer = usd_layer(usd)
-        self._stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
-        self._robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
+        self._stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd.asset_root))
+        self._robots = list(simulated)
         robot_ids = [robot.robot_id for robot in self._robots]
         bodies, meshes = stage_bodies(pxr, self._stage, exclude=robot_ids)
-        self._objects = self._scene_objects()
-        self._object_bodies = {
-            name: [b["name"] for b in bodies if _under(b["name"], thing.path)]
-            for name, thing in self._objects.items()
-        }
         self._time = 0.0
         self._pending: list[Action] = []
         self._lock = Lock()
@@ -135,14 +79,10 @@ class DimSimBackend:
         self.world = WorldWriter()
         self._known: set[str] = set()
         self._moved: dict[str, Any] = {}
-        self._poses: dict[str, NDArray[np.float64]] = {}
         self._base = {robot_id: [0.0, 0.0, 0.0] for robot_id in robot_ids}
-        self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
         # Each entity's pose and velocity as last sent.
         self._sent: dict[str, NDArray[np.float64]] = {}
-        self._mounts: dict[str, list[float]] = {}
-        self._reshaped = 0
         self._refusals: list[tuple[str, str]] = []
         world = _world_dir()
         self._world = subprocess.Popen(
@@ -178,13 +118,6 @@ class DimSimBackend:
     def timestep(self) -> float:
         """Wall seconds between steps at this speed."""
         return self._timestep / self._speed
-
-    def describe(self) -> dict[str, Any]:
-        return {
-            "backend": "dimsim",
-            "scene": str(self._scene_layer),
-            "objects": sorted(self._objects),
-        }
 
     def snapshot(self) -> dict[str, Any]:
         with self._frame_lock:
@@ -242,29 +175,6 @@ class DimSimBackend:
             raise ValueError(reply["error"])
         return reply
 
-    def _scene_objects(self) -> dict[str, _Object]:
-        found = {}
-        for prim in self._stage.Traverse():
-            machine = dict(prim.GetCustomDataByKey(INTERACTIVE) or {})
-            pickable = bool(prim.GetCustomDataByKey(PICKABLE))
-            if not machine and not pickable:
-                continue
-            variants = prim.GetVariantSets()
-            found[prim.GetName()] = _Object(
-                path=prim.GetPath().pathString,
-                title=str(prim.GetCustomDataByKey(TITLE) or prim.GetName()),
-                states={str(k): str(v) for k, v in machine.get("states", {}).items()},
-                actions={
-                    str(id): {key: str(value) for key, value in action.items()}
-                    for id, action in machine.get("actions", {}).items()
-                },
-                state=variants.GetVariantSet(STATE).GetVariantSelection()
-                if variants.HasVariantSet(STATE)
-                else "",
-                pickable=pickable,
-            )
-        return found
-
     def _apply_pending(self) -> None:
         with self._lock:
             pending, self._pending = self._pending, []
@@ -294,100 +204,14 @@ class DimSimBackend:
                     }
                 )
                 self._base_sent.discard(entity)
-            case CborKeyValueCommand(entity, key, wanted) if key == ACTION:
-                self._act(self._object(entity), str(wanted))
-            case CborKeyValueCommand(entity, key, carrier) if key == HELD_BY:
-                self._hold(self._object(entity), None if carrier is None else str(carrier))
             case _:
                 raise ValueError(
                     f"the dimsim world cannot do {action!r}: a robot has only its base joints"
-                    f" {BASE_JOINTS}, by velocity, and an object only {ACTION!r} and {HELD_BY!r}"
+                    f" {BASE_JOINTS}, by velocity"
                 )
-
-    def _object(self, entity: str) -> _Object:
-        thing = self._objects.get(entity)
-        if thing is None:
-            raise KeyError(f"{entity!r} is no object to act on; those are {sorted(self._objects)}")
-        return thing
-
-    def _act(self, thing: _Object, wanted: str) -> None:
-        """Run an object's action: its new state's variant replaces its geometry, as DimSim swaps its GLB."""
-        action = thing.find(wanted)
-        if action is None:
-            raise ValueError(
-                f"{thing.title} ({thing.states.get(thing.state, 'no state')}) has no action"
-                f" {wanted!r} now; it has {[a['label'] for a in thing.available().values()]}"
-            )
-        self._remove(thing)
-        prim = self._stage.GetPrimAtPath(thing.path)
-        prim.GetVariantSets().GetVariantSet(STATE).SetVariantSelection(action["to"])
-        thing.state = action["to"]
-        if thing.held_by is None:
-            self._spawn(thing)
-        # The sensors draw the world from its USD, so it is the USD with the new variant before they hear of it.
-        self.usd = self._stage.GetRootLayer().ExportToString()
-        self._reshaped += 1
-        with self._frame_lock:
-            self.world.set("world", GEOMETRY, self._reshaped)
-        self._say(thing)
-
-    def _hold(self, thing: _Object, carrier: str | None) -> None:
-        """Pick it up (its geometry goes, as in DimSim's hand), or put it down where it is now."""
-        if not thing.pickable:
-            raise ValueError(f"{thing.title} cannot be picked up")
-        if carrier is not None:
-            if carrier not in self._base:
-                raise KeyError(
-                    f"no robot {carrier!r} to hold {thing.title}; the robots are {sorted(self._base)}"
-                )
-            if thing.held_by is not None:
-                raise ValueError(f"{thing.title} is already held by {thing.held_by}")
-            grip = np.linalg.inv(self._poses[carrier]) @ self._placed(thing)
-            if np.linalg.norm(grip[:3, 3]) > self._reach:
-                raise ValueError(f"{thing.title} is out of {carrier}'s reach ({self._reach} m)")
-            self._remove(thing)
-            thing.grip = grip
-        elif thing.held_by is not None:
-            thing.moved = self._carried(thing) @ np.linalg.inv(self._usd_pose(thing.path))
-            thing.grip = None
-            self._spawn(thing)
-        thing.held_by = carrier
-        self._say(thing)
-
-    def _remove(self, thing: _Object) -> None:
-        for name in self._object_bodies.pop(self._name(thing), []):
-            self._call({"op": "remove", "entity": name})
-
-    def _spawn(self, thing: _Object) -> None:
-        bodies, meshes = stage_bodies(self._pxr, self._stage, under=thing.path)
-        for body in bodies:
-            placed = thing.moved @ _matrix(body["pos"], body["quat"])
-            pose = _pose(placed)
-            body["pos"], body["quat"] = pose[:3], pose[3:]
-        self._call({"op": "spawn", "bodies": bodies, "meshes": meshes})
-        self._object_bodies[self._name(thing)] = [body["name"] for body in bodies]
-
-    def _say(self, thing: _Object) -> None:
-        with self._frame_lock:
-            for key, value in thing.cbor().items():
-                self.world.set(self._name(thing), key, value)
-
-    def _name(self, thing: _Object) -> str:
-        return thing.path.rsplit("/", 1)[-1]
-
-    def _placed(self, thing: _Object) -> NDArray[np.float64]:
-        return thing.moved @ self._usd_pose(thing.path)
-
-    def _carried(self, thing: _Object) -> NDArray[np.float64]:
-        assert thing.held_by is not None and thing.grip is not None
-        return self._poses[thing.held_by] @ thing.grip
 
     def _publish(self, state: dict[str, Any]) -> None:
         self._time = float(state.get("time", self._time))
-        for name in state["entities"].keys() & self._base.keys():
-            self._poses[name] = _matrix(
-                state["entities"][name]["pos"], state["entities"][name]["quat"]
-            )
         with self._lock:
             self._moved.update(state["entities"])
 
@@ -395,17 +219,11 @@ class DimSimBackend:
         """Name every entity once; a listener that missed it asks the world for its ``snapshot()``."""
         world = self.world
         world.add("world", backend="dimsim")
-        odom_frames = {robot.robot_id: robot.odom_frame for robot in self._robots}
-        for robot_id in self._base:
-            announced: dict[str, Any] = {MOUNTED_AT: self._mounts[robot_id]}
-            if odom_frames.get(robot_id) is not None:
-                announced[ODOM_FRAME] = odom_frames[robot_id]
-            world.add(robot_id, model=str(self._layers[robot_id]), **announced)
+        for robot in self._robots:
+            announced = {} if robot.odom_frame is None else {ODOM_FRAME: robot.odom_frame}
+            world.add(robot.robot_id, **{ROBOT: True}, **announced)
             for name in BASE_JOINTS:
-                world.add(f"{robot_id}/{name}")
-        for name, thing in self._objects.items():
-            world.add(name, **thing.cbor())
-            self._send(name, _pose(self._placed(thing)), _STILL, _STILL)
+                world.add(f"{robot.robot_id}/{name}")
         self._known = set(world.ids)
 
     def frame(self) -> WorldObservations:
@@ -423,11 +241,6 @@ class DimSimBackend:
             self._send(
                 name, [*entity["pos"], *entity["quat"]], entity["velocity"], entity["acceleration"]
             )
-        for name, thing in self._objects.items():
-            if thing.held_by is not None and thing.held_by in moved:
-                carrier = moved[thing.held_by]
-                pose = _pose(self._carried(thing))
-                self._send(name, pose, *_carried_motion(carrier, pose[:3]))
         for robot_id, held in self._base.items():
             if robot_id not in self._base_sent:
                 for name, value in zip(BASE_JOINTS, held, strict=True):
@@ -452,19 +265,8 @@ class DimSimBackend:
             self.world.body_state(name, pose, velocity, acceleration)
             self._sent[name] = state
 
-    def _usd_pose(self, path: str) -> NDArray[np.float64]:
-        """The prim's pose in the world as its USD places it, scale left out."""
-        pxr = self._pxr
-        placed = pxr.Gf.Transform(
-            pxr.UsdGeom.Xformable(self._stage.GetPrimAtPath(path)).ComputeLocalToWorldTransform(
-                pxr.Usd.TimeCode.Default()
-            )
-        )
-        quat = placed.GetRotation().GetQuat()
-        return _matrix([*placed.GetTranslation()], [*quat.GetImaginary(), quat.GetReal()])
-
     def _robot(self, robot: SimulatedRobot) -> dict[str, Any]:
-        """The robot's box, standing on the frame it is mounted on, turned as that frame is."""
+        """The robot's box, placed and turned (about z) as its USD places its root body."""
         pxr, stage = self._pxr, self._stage
         owned = f"/{robot.robot_id}/"
         prims = [p for p in stage.Traverse() if owned in f"{p.GetPath().pathString}/"]
@@ -476,8 +278,6 @@ class DimSimBackend:
             )
         # Its frames are under its namespace on tf; its prims are named as its own layer names them.
         root = bodies[resolve(bodies, robot.root_body.rpartition("/")[2])]
-        # Its namespace is the frame it is mounted on, which may be many segments (office_555/left).
-        mount = stage.GetPrimAtPath(f"/{robot.robot_id}")
         at = pxr.Usd.TimeCode.Default()
         placed = pxr.UsdGeom.Xformable(root).ComputeLocalToWorldTransform(at)
         inverse = placed.GetInverse()
@@ -492,13 +292,10 @@ class DimSimBackend:
         if not corners:
             raise ValueError(f"{robot.robot_id}: it has no geometry to be the size of")
         low, high = np.min(corners, axis=0), np.max(corners, axis=0)
-        x, y, _ = placed.ExtractTranslation()
-        self._mounts[robot.robot_id] = _pose(self._usd_pose(mount.GetPath().pathString))
-        floor = self._mounts[robot.robot_id][2]
         forward = placed.TransformDir(pxr.Gf.Vec3d(1, 0, 0))
         return {
             "id": robot.robot_id,
-            "pos": [x, y, floor - float(low[2])],
+            "pos": list(placed.ExtractTranslation()),
             "yaw": math.atan2(forward[1], forward[0]),
             "halfExtents": ((high - low) / 2).tolist(),
             "center": ((high + low) / 2).tolist(),
@@ -517,29 +314,3 @@ def _robot_mass(pxr: Any, prims: Iterable[Any]) -> float:
             "a dimsim robot pushes what it walks into as hard as its mass, and this one has none in its USD"
         )
     return total
-
-
-def _carried_motion(
-    carrier: dict[str, Any], at: Sequence[float]
-) -> tuple[list[float], list[float]]:
-    """The velocity and acceleration at ``at`` of a point fixed to ``carrier`` (an entity of a step's reply)."""
-    velocity, acceleration = np.asarray(carrier["velocity"]), np.asarray(carrier["acceleration"])
-    spin, spin_rate = velocity[3:], acceleration[3:]
-    arm = np.asarray(at) - np.asarray(carrier["pos"])
-    linear = velocity[:3] + np.cross(spin, arm)
-    linear_rate = acceleration[:3] + np.cross(spin_rate, arm) + np.cross(spin, np.cross(spin, arm))
-    return [*linear.tolist(), *spin.tolist()], [*linear_rate.tolist(), *spin_rate.tolist()]
-
-
-def _matrix(pos: Sequence[float], quat: Sequence[float]) -> NDArray[np.float64]:
-    matrix = np.eye(4)
-    matrix[:3, :3], matrix[:3, 3] = Rotation.from_quat(quat).as_matrix(), pos
-    return matrix
-
-
-def _pose(matrix: NDArray[np.float64]) -> list[float]:
-    return [*matrix[:3, 3].tolist(), *Rotation.from_matrix(matrix[:3, :3]).as_quat().tolist()]
-
-
-def _under(name: str, path: str) -> bool:
-    return name == path or name.startswith(f"{path}/")

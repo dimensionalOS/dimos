@@ -24,8 +24,8 @@ from dimos.core.hardware_module import HardwareModule
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.actions import CborKeyValueCommand, JointCommand
-from dimos.sim2.dimsim.backend import BASE_JOINTS, HELD_BY, DimSimBackend
+from dimos.sim2.actions import JointCommand
+from dimos.sim2.dimsim.backend import BASE_JOINTS, DimSimBackend
 from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 from dimos.sim2.dimsim.sim import DimSimSim
 from dimos.sim2.scene import SimScene
@@ -36,9 +36,10 @@ from dimos.sim2.world_observations import REFUSED, WorldMirror
 pytest.importorskip("pxr")
 
 TIMESTEP = 0.02
-REACH = 1.5
 # The room's frame the bot mounts on, and so the bot's namespace and robot id.
 BOT = "room/bot"
+# The bot's spot: its base's height above the floor, as a real robot's mount carries it.
+SPOT = (0.0, 0.0, 0.2)
 
 _ROOM = """#usda 1.0
 (
@@ -74,18 +75,6 @@ def Xform "room"
         float3 xformOp:scale = (0.2, 0.2, 0.2)
         double3 xformOp:translate = (1, 0, 0.2)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
-    }
-
-    def Cube "cup" (
-        customData = {
-            bool pickable = 1
-            string title = "Cup"
-        }
-    )
-    {
-        double size = 0.1
-        double3 xformOp:translate = (-1, 0, 0.05)
-        uniform token[] xformOpOrder = ["xformOp:translate"]
     }
 }
 """
@@ -155,9 +144,7 @@ def _cbor(world: WorldMirror, name: str) -> dict[str, Any]:
 
 @pytest.fixture
 def backend() -> Iterator[_Stepped]:
-    room = SimScene(
-        usd=UsdModel.from_layer(_ROOM).with_frames({"bot": ("room", (0, 0, 0), (0, 0, 0))})
-    )
+    room = SimScene(usd=UsdModel.from_layer(_ROOM).with_frames({"bot": ("room", SPOT, (0, 0, 0))}))
     bot = _bot()
     try:
         world, robot = (
@@ -167,7 +154,7 @@ def backend() -> Iterator[_Stepped]:
     finally:
         room.stop()
         bot.stop()
-    engine = DimSimBackend(world, [robot], timestep=TIMESTEP, reach=REACH)
+    engine = DimSimBackend(world, [robot], timestep=TIMESTEP)
     yield _Stepped(engine)
     engine.close()
 
@@ -177,24 +164,23 @@ def test_the_world_says_what_is_in_it_and_stands_the_robot_on_its_mount(backend:
     assert _cbor(world, "world")["backend"] == "dimsim"
     assert backend.pose(BOT)[:3] == pytest.approx([0.0, 0.0, 0.2], abs=0.02)
     assert backend.pose("crate")[:3] == pytest.approx([1.0, 0.0, 0.2], abs=0.02)
-    assert _cbor(world, "cup") == {"path": "cup", "title": "Cup", HELD_BY: None}
 
 
 def test_odometry_puts_the_base_where_the_world_does(backend: _Stepped) -> None:
-    """Its odometry frame is its mount's, so the height it stands above that mount stays in it."""
-    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
-    world = backend.step(50)
+    """Its odometry starts on its mount, which holds odom by an identity edge."""
     bot = _bot()
     try:
-        bot._world = world
+        bot._world = backend.world
+        assert bot._odom(backend.world.time) is not None
+        backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
+        world = backend.step(50)
         odom = bot._odom(world.time)
     finally:
         bot.stop()
     assert odom is not None
-    assert [odom.position.x, odom.position.y, odom.position.z] == pytest.approx(
-        backend.pose(BOT)[:3], abs=1e-6
-    )
-    assert odom.position.z == pytest.approx(0.2, abs=0.02)
+    position = np.add([odom.position.x, odom.position.y, odom.position.z], SPOT)
+    assert position.tolist() == pytest.approx(backend.pose(BOT)[:3], abs=1e-6)
+    assert backend.pose(BOT)[0] > 0.5
 
 
 def test_the_base_moves_on_a_base_joint_velocity_and_pushes_a_crate(backend: _Stepped) -> None:
@@ -245,37 +231,6 @@ def test_what_a_kinematic_base_cannot_do_is_refused(backend: _Stepped) -> None:
     assert any(key == REFUSED for _, key, _ in backend.received)
 
 
-def test_a_picked_up_object_rides_with_its_robot_and_stays_where_it_is_put_down(
-    backend: _Stepped,
-) -> None:
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, BOT))
-    backend.step()
-    assert _cbor(backend.world, "cup")[HELD_BY] == BOT
-    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(0.0, -1.0, 0.0)))
-    backend.step(50)
-    cup = backend.pose("cup")
-    assert cup[1] == pytest.approx(backend.pose(BOT)[1], abs=1e-6)
-    assert cup[1] < -0.5
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, None))
-    backend.step(50)
-    assert _cbor(backend.world, "cup")[HELD_BY] is None
-    assert backend.pose("cup")[:2] == pytest.approx(cup[:2])
-
-
-def test_an_object_out_of_reach_or_not_pickable_is_refused(backend: _Stepped) -> None:
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, BOT))
-    backend.step()
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, None))
-    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(3.0, 0.0, 0.0)))
-    backend.step(50)
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, BOT))
-    backend.apply(CborKeyValueCommand("crate", HELD_BY, BOT))
-    backend.step()
-    refused = [value["reason"] for _, key, value in backend.world.received if key == REFUSED]
-    assert len(refused) == 2
-    assert any(f"out of {BOT}'s reach" in reason for reason in refused)
-
-
 def test_the_robot_is_named_by_its_namespace() -> None:
     bot = _bot()
     try:
@@ -305,25 +260,3 @@ def test_the_world_announces_the_frame_the_base_reports_its_odometry_in(
         bot.stop()
     assert odom is not None
     assert _cbor(world, BOT)[ODOM_FRAME] == odom.frame_id
-
-
-def test_a_usd_request_is_answered_with_the_world_as_it_is_now() -> None:
-    import asyncio
-    from types import SimpleNamespace
-
-    from dimos.msgs.std_msgs.String import String
-
-    sim = DimSimSim()
-    published: list[Any] = []
-    try:
-        backend = SimpleNamespace(usd=_ROOM, close=lambda: None)
-        sim._backend = backend  # type: ignore[assignment]
-        sim.file_info.publish = published.append  # type: ignore[method-assign,assignment]
-        asyncio.run(sim.handle_render_file_request(String("*.usd")))
-        # An action that reshapes the world hands the backend a new USD.
-        backend.usd = _ROOM.replace('"wall"', '"door"')
-        asyncio.run(sim.handle_render_file_request(String("*.usd")))
-    finally:
-        sim.stop()
-    assert [reply.uri for reply in published] == ["*.usd", "*.usd"]
-    assert b'"wall"' in published[0].data and b'"door"' in published[1].data

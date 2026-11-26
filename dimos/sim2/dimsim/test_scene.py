@@ -21,7 +21,7 @@ from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.logistics_props import LOGISTICS_PROPS
 from dimos.sim2.assets.toy import toy_robot
-from dimos.sim2.dimsim.scene import dimsim_bodies
+from dimos.sim2.dimsim.scene import stage_bodies
 from dimos.sim2.sim import compose_usds
 
 # Every body here is read out of a USD layer, and the test runners that have no usd-core
@@ -30,8 +30,16 @@ from dimos.sim2.sim import compose_usds
 pytest.importorskip("pxr")
 
 
+def _bodies(usd: UsdModel, exclude: tuple[str, ...] = ()) -> list[dict]:
+    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd.asset_root))
+    return stage_bodies(pxr, stage, exclude)[0]
+
+
 def _by_name(usd: UsdModel, exclude: tuple[str, ...] = ()) -> dict:
-    bodies, _meshes = dimsim_bodies(usd, exclude=exclude)
+    bodies = _bodies(usd, exclude)
     return {body["name"]: body for body in bodies}
 
 
@@ -80,7 +88,7 @@ def test_a_robot_in_a_composed_scene_is_left_out_of_it():
             (usd_under_namespace(toy_robot().usd, dog), dog),
         ]
     )
-    whole, _meshes = dimsim_bodies(composed)
+    whole = _bodies(composed)
     assert len(whole) == 14, "the dog's two links were never mounted in"
     bodies = _by_name(composed, exclude=(dog,))
     assert len(bodies) == 12

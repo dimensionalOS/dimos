@@ -15,40 +15,26 @@
 
 import base64
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
 from dimos.sim2.mujoco.names import short_names
 
-if TYPE_CHECKING:
-    from dimos.robot.assets.model import UsdModel
-
 _DEFAULT_MASS = 1.0
 PURPOSES = ["default", "proxy", "render", "guide"]
 
 
-def dimsim_bodies(
-    usd: "UsdModel", exclude: Iterable[str] = ()
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
-    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
-
-    pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
-    return stage_bodies(pxr, stage, exclude)
-
-
 def stage_bodies(
-    pxr: Any, stage: Any, exclude: Iterable[str] = (), under: str | None = None
+    pxr: Any, stage: Any, exclude: Iterable[str] = ()
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
-    """Every body of the stage (or of the prim at ``under``) and the meshes they use, but those of ``exclude``."""
+    """Every body of the stage and the meshes they use, but those of ``exclude``."""
     cache = pxr.UsdGeom.BBoxCache(pxr.Usd.TimeCode.Default(), PURPOSES)
     owners = tuple(exclude)
     bodies: dict[str, dict[str, Any]] = {}
     frames: dict[str, Any] = {}
     meshes: dict[str, dict[str, str]] = {}
-    prims = stage.Traverse() if under is None else pxr.Usd.PrimRange(stage.GetPrimAtPath(under))
-    for prim in prims:
+    for prim in stage.Traverse():
         if not prim.IsA(pxr.UsdGeom.Gprim) or _owned(prim.GetPath().pathString, owners):
             continue
         rigid = _rigid_body(pxr, prim)

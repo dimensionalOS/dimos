@@ -12,17 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A DimSim scene (misc/DimSim/scenes/<name>) as USD: its structure, and each object with a variant per state.
-
-An object with actions carries its state machine in customData ``interactive``: ``states`` (state
-id -> name) and ``actions`` (action id -> label, from, to); its variant set ``state`` is its state now.
-One that can be picked up has customData ``pickable``; every object has its DimSim ``title``.
-"""
+"""A DimSim scene (misc/DimSim/scenes/<name>) as USD: its structure, and each object as it is in its current state."""
 
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 import re
 import struct
@@ -31,30 +25,16 @@ from typing import Any
 import numpy as np
 
 from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
+from dimos.robot.assets.usd_utils.assets import write_asset_info
 from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 DIMSIM_SCENES = DIMOS_PROJECT_ROOT / "misc" / "DimSim" / "scenes"
-INTERACTIVE = "interactive"
-PICKABLE = "pickable"
-TITLE = "title"
-STATE = "state"
-# Loaded as scene content, so it is this user's alone: see _private().
 _MESHES = CACHE_DIR / "dimsim-meshes"
 # DimSim's scenes are three.js, y up: this rotation (120 degrees about x+y+z) takes its x, y, z to our y, z, x.
 _Y_UP_TO_Z_UP = (0.5, 0.5, 0.5, 0.5)
-# How a USD viewer should show a DimSim scene to look as DimSim does (see _light): RenderSettings dimos:look:*.
-# Brighter than DimSim's own 1.1, for the light its environment map reflects and its headlamp adds, neither of
-# which a USD light can give; less saturated, for the same reflections washing DimSim's colours a little.
-# Both tuned by eye (and by mean luminance and saturation) against DimSim's own view of the apartment.
-LOOK = {"exposure": 1.3, "saturation": 0.8}
-# DomeLight radiance standing in for DimSim's environment map (a RoomEnvironment), which lights every surface; tuned
-# as LOOK is.
-ENVIRONMENT = 1.15
-# What a viewer reading UsdLux as Blender does (Controller) multiplies a normalized DistantLight's intensity by.
-_SUN_PER_INTENSITY = 4
 # A SphereLight of this radius shows a disc of area 1, so its radiance is a three.js PointLight's intensity.
 _POINT_RADIUS = 1 / np.sqrt(np.pi)
 # The lights DimSim's engine adds to every scene (src/engine.js), as a scene's index.js would write them.
@@ -70,8 +50,8 @@ _LIGHT = re.compile(
 )
 
 
-def dimsim_scene_usd(name: str) -> str:
-    """The DimSim scene ``name`` as a z-up USD layer whose root prim is ``name``."""
+def dimsim_scene_usd(name: str, *, environment: float, sun_per_intensity: float) -> str:
+    """The DimSim scene ``name`` as a z-up USD layer whose root prim is ``name``; see _light for the rest."""
     from dimos.robot.assets.usd_utils.pxr import load_pxr
 
     pxr = load_pxr()
@@ -91,34 +71,35 @@ def dimsim_scene_usd(name: str) -> str:
     pull_lfs_files(
         [
             structure,
-            *(scene / "objects" / state["file"] for entry in entries for state in entry["states"]),
+            *(scene / "objects" / _current_file(entry) for entry in entries),
         ]
     )
     if structure.is_file():
         _add_geometry(pxr, stage, f"{y_up}/structure", structure)
-    _light(pxr, stage, f"/{name}", y_up, (scene / "index.js").read_text())
+    _light(pxr, stage, y_up, (scene / "index.js").read_text(), environment, sun_per_intensity)
     taken: set[str] = set()
     for entry in entries:
-        _add_object(pxr, stage, f"{y_up}/objects/{_prim_name(entry['title'], taken)}", entry, name)
+        _add_object(pxr, stage, f"{y_up}/objects/{_prim_name(entry['title'], taken)}", entry, scene)
     return str(stage.GetRootLayer().ExportToString())
 
 
-def _light(pxr: Any, stage: Any, root: str, y_up: str, index_js: str) -> None:
-    """DimSim's lighting, its engine's and the scene's own (index.js), as UsdLux lights and a look.
+def _light(
+    pxr: Any, stage: Any, y_up: str, index_js: str, environment: float, sun_per_intensity: float
+) -> None:
+    """DimSim's lighting, its engine's and the scene's own (index.js), as UsdLux lights.
 
     The lights are DimSim's three.js ones in UsdLux units: a PointLight as a SphereLight of the same radiance, a
     DirectionalLight as a normalized DistantLight, the ambient lights as one DomeLight (a hemisphere light as an
     ambient one and a light from straight above, see _three_lights). Two things DimSim lights with have no USD
-    light: its environment map, stood in for by ENVIRONMENT on the dome, and the headlamp on its camera, left out.
+    light: its environment map, stood in for by ``environment`` radiance on the dome, and the headlamp on its camera,
+    left out. A viewer reading UsdLux as Blender does multiplies a normalized DistantLight's intensity by
+    ``sun_per_intensity``, so a DirectionalLight's is divided by it.
     Nothing casts a shadow unless the scene turns shadows on, as in DimSim.
     """
     from pxr import UsdLux
 
-    settings = stage.DefinePrim(f"{root}/look", "RenderSettings")
-    for key, value in LOOK.items():
-        settings.CreateAttribute(f"dimos:look:{key}", pxr.Sdf.ValueTypeNames.Float).Set(value)
     shadows = "enableShadows()" in index_js
-    ambient = np.full(3, ENVIRONMENT * np.pi)
+    ambient = np.full(3, environment * np.pi)
     for number, (kind, colour, intensity, at, toward, shadow) in enumerate(
         _three_lights(_ENGINE_LIGHTS + index_js)
     ):
@@ -136,7 +117,7 @@ def _light(pxr: Any, stage: Any, root: str, y_up: str, index_js: str) -> None:
         else:
             light = UsdLux.DistantLight.Define(stage, path)
             light.CreateNormalizeAttr(True)
-            light.CreateIntensityAttr(float(intensity / _SUN_PER_INTENSITY))
+            light.CreateIntensityAttr(float(intensity / sun_per_intensity))
             # a UsdLux light shines down its -Z
             turn = pxr.Gf.Rotation(
                 pxr.Gf.Vec3d(0, 0, -1), pxr.Gf.Vec3d(*np.subtract(toward, at, dtype=float).tolist())
@@ -205,49 +186,35 @@ def _position(source: str, what: str) -> tuple[float, float, float] | None:
 
 def _linear(colour: str) -> Any:
     """A three.js colour literal (0xRRGGBB or '#RRGGBB', sRGB) as linear RGB, as three.js lights with it."""
-    srgb = np.array([int(colour.strip("'\"#")[-6:][i : i + 2], 16) for i in (0, 2, 4)]) / 255
+    return _srgb_to_linear(
+        np.array([int(colour.strip("'\"#")[-6:][i : i + 2], 16) for i in (0, 2, 4)]) / 255
+    )
+
+
+def _srgb_to_linear(srgb: Any) -> Any:
     return np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
 
 
-def _add_object(pxr: Any, stage: Any, path: str, entry: dict[str, Any], scene: str) -> None:
+def _current_file(entry: dict[str, Any]) -> str:
+    return str(
+        next(state["file"] for state in entry["states"] if state["id"] == entry["currentStateId"])
+    )
+
+
+def _add_object(pxr: Any, stage: Any, path: str, entry: dict[str, Any], scene: Path) -> None:
     placed = entry["transform"]
     xform = pxr.UsdGeom.Xform.Define(stage, path)
     xform.AddTranslateOp().Set(pxr.Gf.Vec3d(*_xyz(placed["position"])))
     # three.js turns by its Euler "XYZ" order, which is USD's rotateZYX.
     xform.AddRotateZYXOp().Set(pxr.Gf.Vec3f(*np.degrees(_xyz(placed["rotation"])).tolist()))
     xform.AddScaleOp().Set(pxr.Gf.Vec3f(*_xyz(placed["scale"])))
-    prim = xform.GetPrim()
-    variants = prim.GetVariantSets().AddVariantSet(STATE)
-    for state in entry["states"]:
-        variants.AddVariant(state["id"])
-        variants.SetVariantSelection(state["id"])
-        glb = DIMSIM_SCENES / scene / "objects" / state["file"]
-        with variants.GetVariantEditContext():
-            _add_geometry(pxr, stage, f"{path}/geometry", glb)
-    variants.SetVariantSelection(entry["currentStateId"])
-    prim.SetCustomDataByKey(TITLE, entry["title"])
-    if entry.get("pickable"):
-        prim.SetCustomDataByKey(PICKABLE, True)
-    if entry.get("actions"):
-        prim.SetCustomDataByKey(
-            INTERACTIVE,
-            {
-                "states": {state["id"]: state["name"] for state in entry["states"]},
-                "actions": {
-                    action["id"]: {
-                        "label": action["label"],
-                        "from": action["from"],
-                        "to": action["to"],
-                    }
-                    for action in entry["actions"]
-                },
-            },
-        )
+    _add_geometry(pxr, stage, f"{path}/geometry", scene / "objects" / _current_file(entry))
 
 
 def _reference(pxr: Any, stage: Any, path: str, layer: Path) -> Any:
     prim = stage.DefinePrim(path, "Xform")
     prim.GetReferences().AddReference(str(layer))
+    write_asset_info(pxr, prim, str(layer), None)
     return prim
 
 
@@ -271,7 +238,8 @@ def _mesh_parts(pxr: Any, glb: Path) -> list[tuple[Path, dict[str, Any] | None]]
     """The GLB's meshes as cached USD layers, one per material, each mesh in the GLB's own frame; with each its material."""
     data = glb.read_bytes()
     key = hashlib.sha256(data).hexdigest()[:16]
-    manifest = _private(_MESHES) / f"{key}.json"
+    _MESHES.mkdir(parents=True, exist_ok=True)
+    manifest = _MESHES / f"{key}.json"
     if manifest.exists():
         return [(_MESHES / name, look) for name, look in json.loads(manifest.read_text())]
     import trimesh
@@ -321,13 +289,9 @@ def _mesh_parts(pxr: Any, glb: Path) -> list[tuple[Path, dict[str, Any] | None]]
                 ).Set(pxr.Vt.Vec2fArray.FromNumpy(uv.astype(np.float32)))
         # Binary is fine here: the layer names no other file (its material, and so its texture, is the scene's).
         name = f"{key}_{index}.usdc"
-        partial = _MESHES / f"{name}.{os.getpid()}.usdc"
-        stage.GetRootLayer().Export(str(partial))
-        partial.replace(_MESHES / name)
+        stage.GetRootLayer().Export(str(_MESHES / name))
         parts.append((name, None if source is None else _look(source)))
-    staged = manifest.with_suffix(f".{os.getpid()}.json")
-    staged.write_text(json.dumps(parts))
-    staged.replace(manifest)
+    manifest.write_text(json.dumps(parts))
     return [(_MESHES / name, look) for name, look in parts]
 
 
@@ -395,6 +359,7 @@ def _material(pxr: Any, stage: Any, path: str, look: dict[str, Any]) -> Any:
         texture = Shader.Define(stage, f"{path}/texture")
         texture.CreateIdAttr("UsdUVTexture")
         texture.CreateInput("file", Types.Asset).Set(str(_MESHES / look["texture"]))
+        write_asset_info(pxr, texture.GetPrim(), str(_MESHES / look["texture"]), None)
         texture.CreateInput("st", Types.Float2).ConnectToSource(reader.ConnectableAPI(), "result")
         color.ConnectToSource(texture.ConnectableAPI(), "rgb")
     material.CreateSurfaceOutput().ConnectToSource(surface.ConnectableAPI(), "surface")
@@ -405,12 +370,7 @@ def _image_file(image: Any, factor: Any) -> Path:
     """The texture times its linear colour factor, as a PNG in the mesh cache."""
     if not np.allclose(factor, 1):
         rgba = np.asarray(image.convert("RGBA"), dtype=np.float64) / 255
-        linear = np.where(
-            rgba[..., :3] <= 0.04045,
-            rgba[..., :3] / 12.92,
-            ((rgba[..., :3] + 0.055) / 1.055) ** 2.4,
-        )
-        linear = linear * np.asarray(factor)
+        linear = _srgb_to_linear(rgba[..., :3]) * np.asarray(factor)
         rgba[..., :3] = np.where(
             linear <= 0.0031308, linear * 12.92, 1.055 * linear ** (1 / 2.4) - 0.055
         )
@@ -422,22 +382,8 @@ def _image_file(image: Any, factor: Any) -> Path:
     data = pixels.getvalue()
     out = _MESHES / f"{hashlib.sha256(data).hexdigest()[:16]}.png"
     if not out.exists():
-        partial = out.with_suffix(f".{os.getpid()}.png")
-        partial.write_bytes(data)
-        partial.replace(out)
+        out.write_bytes(data)
     return out
-
-
-def _private(directory: Path) -> Path:
-    """The directory, made if missing; refused if another user owns it or anyone else can write to it."""
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    held = directory.stat()
-    if held.st_uid != os.getuid() or held.st_mode & 0o022:
-        raise PermissionError(
-            f"{directory} holds meshes loaded into the scene, and someone else could put their own"
-            f" there: it must be yours and writable by you alone (chmod go-w), or removed"
-        )
-    return directory
 
 
 def _shell(pxr: Any, prim: Any) -> None:
