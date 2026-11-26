@@ -89,7 +89,8 @@ class Collector:
     ) -> None:
         self.directory, self.manifest, self.limits, self.mode = directory, manifest, limits, mode
         self.storage_root = storage_root or directory
-        self.reservation = MemoryReservation(self.storage_root, requested=16 * 1024 * 1024)
+        # Leave room for native collectors when a blueprint uses one Python worker per module.
+        self.reservation = MemoryReservation(self.storage_root, requested=8 * 1024 * 1024)
         if self.reservation.bytes < 4 * 1024 * 1024:
             self.reservation.close()
             raise ValueError("diagnostics host/process memory budget exhausted")
