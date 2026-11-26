@@ -102,7 +102,6 @@ def mj_resetData(model: MjModel, data: MjData) -> None: ...
 def mj_objectVelocity(
     m: MjModel, d: MjData, objtype: int, objid: int, res: NDArray[np.float64], flg_local: int
 ) -> None: ...
-def mj_contactForce(m: MjModel, d: MjData, id: int, result: NDArray[np.float64]) -> None: ...
 def mju_quat2Mat(res: NDArray[np.float64], quat: NDArray[np.float64]) -> None: ...
 def mju_mat2Quat(res: NDArray[np.float64], mat: NDArray[np.float64]) -> None: ...
 def mj_comPos(model: MjModel, data: MjData) -> None: ...
@@ -179,15 +178,6 @@ class mjtTextureRole:
 class mjtLightType:
     mjLIGHT_DIRECTIONAL: int
     mjLIGHT_SPOT: int
-
-class mjtLimited:
-    mjLIMITED_FALSE: int
-    mjLIMITED_TRUE: int
-
-class mjtSensor:
-    mjSENS_GYRO: int
-    mjSENS_ACCELEROMETER: int
-    mjSENS_FRAMEQUAT: int
 
 class mjtJoint:
     mjJNT_FREE: int

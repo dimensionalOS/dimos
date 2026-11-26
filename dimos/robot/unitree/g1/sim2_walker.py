@@ -40,7 +40,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.sim2 import usd_joint
-from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.sim import SimulatedWorldSpec
 from dimos.sim2.world_observations import WorldMirror
 from dimos.utils.data import LfsPath
 
@@ -128,9 +128,8 @@ class G1SimWalker(Module):
     async def main(self) -> AsyncIterator[None]:
         self._policy = await asyncio.to_thread(GrootPolicy, Path(self.config.model_path))
         self._world = WorldMirror()
-        self.cmd_vel.subscribe(self._on_cmd_vel)
         self._world.subscribe(self.world_observations, self.world.snapshot)
-        walking = asyncio.create_task(until_it_stops("g1 walker", self._walk()))
+        walking = asyncio.create_task(self._walk())
         yield
         walking.cancel()
 
@@ -139,7 +138,7 @@ class G1SimWalker(Module):
         async for _ in self._world.ticks(1 / GROOT_PERIOD):
             self.act()
 
-    def _on_cmd_vel(self, twist: Twist) -> None:
+    async def handle_cmd_vel(self, twist: Twist) -> None:
         self._command = np.array(
             [twist.linear.x, twist.linear.y, twist.angular.z], dtype=np.float32
         )

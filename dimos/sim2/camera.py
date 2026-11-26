@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import Coroutine
 from typing import Any
 
 from pydantic import model_validator
@@ -21,12 +21,10 @@ from pydantic import model_validator
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.sim2.mujoco.renders import RenderQuality
-from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
-from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor, SimSensorConfig
+from dimos.sim2.mujoco.sensor_mount import SensorMount
+from dimos.sim2.sensor import SimSensorConfig
 from dimos.sim2.sensor_usd import camera_usd
-from dimos.sim2.sim import until_it_stops
-from dimos.sim2.world_observations import geometry
+from dimos.sim2.view_sensor import ViewSensor
 
 
 class SimCameraConfig(SimSensorConfig):
@@ -34,35 +32,8 @@ class SimCameraConfig(SimSensorConfig):
     height: int = 480
     fovy: float = 60.0
     rate_hz: float = 10.0
-    # Lights cast shadows (MuJoCo's mjRND_SHADOW).
-    shadows: bool = True
-    # Shadow map texels per side; None: the scene's (MuJoCo's default 4096).
-    shadow_size: int | None = None
-    # Multisampling for anti-aliasing; None: the scene's (MuJoCo's default 4).
-    samples: int | None = None
-    # Reflective materials mirror the scene (mjRND_REFLECTION).
-    reflections: bool = True
-    # The dome's sky is drawn behind everything (mjRND_SKYBOX).
-    skybox: bool = True
-    # Materials show their textures (mjVIS_TEXTURE).
-    textures: bool = True
-    # The tone curve ("agx", "neutral", "linear", "none"); None: the one the stage's RenderSettings name.
-    tone_map: str | None = None
-    # MuJoCo's headlight; None: on only when the stage brings no lights.
-    headlight: bool | None = None
-
-    def quality(self) -> RenderQuality:
-        """The render knobs above, as the view takes them."""
-        return RenderQuality(
-            shadows=self.shadows,
-            shadow_size=self.shadow_size,
-            samples=self.samples,
-            reflections=self.reflections,
-            skybox=self.skybox,
-            textures=self.textures,
-            tone_map=self.tone_map,
-            headlight=self.headlight,
-        )
+    # Shadows, multisampling, reflections, sky, textures, tone curve and headlight.
+    render: RenderQuality = RenderQuality()
 
     @model_validator(mode="before")
     @classmethod
@@ -76,34 +47,20 @@ class SimCameraConfig(SimSensorConfig):
         return {**data, "usd": usd}
 
 
-class SimCamera(SimSensor):
+class SimCamera(ViewSensor):
     config: SimCameraConfig
     color_image: Out[Image]
 
-    async def main(self) -> AsyncIterator[None]:
-        self._world = self.mirror_world()
-        self._capturing = asyncio.create_task(
-            until_it_stops(f"{self.frame_id} camera", self._capture())
-        )
-        yield
-        self._capturing.cancel()
+    def loops(self) -> list[Coroutine[Any, Any, None]]:
+        return [self._capture()]
 
     async def _capture(self) -> None:
-        site, view, built = self.frame_id, None, 0
+        site, view = self.frame_id, None
         try:
             async for _ in self._world.ticks(self.config.rate_hz):
-                if view is not None and geometry(self._world) != built:
-                    view.close()
-                    view = None
                 if view is None:
-                    built = geometry(self._world)
-                    layer = await asyncio.to_thread(self.world_layer)
-                    view = open_view(
-                        layer,
-                        robot_ids(self._world),
-                        SensorMount("camera", site, site, self.config.fovy),
-                        self.config.quality(),
-                    )
+                    mount = SensorMount("camera", site, site, self.config.fovy)
+                    view = await asyncio.to_thread(self.open_view, mount, self.config.render)
                     # Opening took this tick, so the next tick is the first read on time.
                     continue
                 view.update(self._world)

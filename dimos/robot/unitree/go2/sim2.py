@@ -16,7 +16,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from functools import cached_property
 import math
 from pathlib import Path
 import time
@@ -26,10 +25,9 @@ from dimos_lcm.world_msgs import WorldAction, WorldObservations
 import numpy as np
 
 from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
+from dimos.core.hardware_module import HardwareModuleConfig, Mounts
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
@@ -46,10 +44,9 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.dimsim.kinematic_base import SimKinematicBase, SimKinematicBaseConfig
-from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
-from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.sim import SimulatedWorldSpec
+from dimos.sim2.sim_robot import SimRobot
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.go2_legged.policy import Go2Policy, Proprioception, load_policy
@@ -93,7 +90,7 @@ GO2_ODOM_TF: dict[str, dict[str, str]] = {
 def with_policy_drives(usd: UsdModel, policy: Go2Policy) -> UsdModel:
     """The USD with the policy's gains and default pose on its joint drives, which the world holds it at."""
     pxr = load_pxr()
-    layer = layer_from(pxr, usd.usd, "a robot", usd.source_path.parent if usd.source_path else None)
+    layer = layer_from(pxr, usd.usd, "a robot", usd.asset_root)
     stage = pxr.Usd.Stage.Open(layer)
     drives = {
         name: (float(kp), float(kd), float(q))
@@ -122,7 +119,7 @@ class Go2SimConfig(HardwareModuleConfig):
     odom_frame: str = GO2_ODOM_FRAME
 
 
-class Go2Sim(HardwareModule):
+class Go2Sim(SimRobot):
     """A Go2 in a simulated world; mount it on a frame of the scene, which is where it starts.
 
     Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
@@ -150,18 +147,11 @@ class Go2Sim(HardwareModule):
         self._desired_expires = 0.0
         self._command = np.zeros(3)
         self._heading: float | None = None
-        self._odometry: MountOdometry | None = None
 
     @property
     def attach_frame(self) -> str:
         """Its odometry frame: the mount it started on holds odom, and odom holds its body."""
         return self.config.odom_frame
-
-    @cached_property
-    def _static_edges(self) -> list[Transform]:
-        """The USD's static edges below its body, and the mount: odometry holds the body, so the prims above it go out on no edge."""
-        body = f"{self.tf_frames[self.config.usd.root_link]}/"
-        return [t for t in super()._static_edges if not body.startswith(f"{t.child_frame_id}/")]
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
@@ -175,7 +165,7 @@ class Go2Sim(HardwareModule):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations, self.world.snapshot)
-        acting = asyncio.create_task(until_it_stops("go2 policy", self._run()))
+        acting = asyncio.create_task(self._run())
         yield
         acting.cancel()
 
@@ -232,37 +222,8 @@ class Go2Sim(HardwareModule):
         )
         self._publish_pose(base.pose, stamp, {name: float(row[0]) for name, row in joints.items()})
 
-    def _odom(self, pose: np.ndarray, stamp: float) -> PoseStamped:
-        if self._odometry is None:
-            usd = self.config.usd
-            self._odometry = MountOdometry.of(usd, usd.root_link)
-        relative = self._odometry(pose)
-        return PoseStamped(
-            ts=stamp,
-            frame_id=self.config.odom_frame,
-            position=[relative.translation.x, relative.translation.y, relative.translation.z],
-            orientation=[
-                relative.rotation.x,
-                relative.rotation.y,
-                relative.rotation.z,
-                relative.rotation.w,
-            ],
-        )
-
     def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
-        self.odom.publish(self._odom(pose, stamp))
+        self.odom.publish(self.odometry(pose, stamp, self.config.odom_frame))
         transforms = self.moving_transforms(positions, ts=stamp)
         if transforms:
             self.tfbuffer.publish(*transforms)
-
-
-class Go2KinematicBaseConfig(SimKinematicBaseConfig):
-    usd: UsdModel = GO2_USD
-    odom_frame: str = GO2_ODOM_FRAME
-
-
-class Go2KinematicBase(SimKinematicBase):
-    """A Go2 as DimSim's kinematic base: moved as a box on cmd_vel, with a Go2's USD, mounts and odometry frame."""
-
-    config: Go2KinematicBaseConfig
-    mounts = Go2Sim.mounts

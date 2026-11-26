@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 import hashlib
 import itertools
 from pathlib import Path
@@ -224,74 +224,6 @@ def write_asset_info(pxr: Pxr, prim: Prim, filename: str, base_dir: Path | None)
     prim.SetAssetInfoByKey("version", digest)
 
 
-_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
-LFS_POINTER = "an unfetched Git LFS pointer, not the file itself"
-
-
-def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
-    unopenable: dict[str, str] = {}
-    base = Path(root) if root else None
-    for asset in referenced_asset_paths(usd, root):
-        path = Path(asset)
-        if not path.is_absolute():
-            if base is None:
-                unopenable[asset] = "relative, and this layer was opened with no asset root"
-                continue
-            path = base / path
-        try:
-            head = path.open("rb").read(len(_LFS_POINTER_PREFIX))
-        except OSError as error:
-            unopenable[asset] = f"{type(error).__name__}: {error.strerror or error}"
-            continue
-        if head == _LFS_POINTER_PREFIX:
-            unopenable[asset] = LFS_POINTER
-    return unopenable
-
-
-def require_fetched_assets(
-    unopenable: Mapping[str, str], root: Path | str | None, *, what: str
-) -> None:
-    stubs = {asset: why for asset, why in unopenable.items() if why == LFS_POINTER}
-    if not stubs:
-        return
-    raise FileNotFoundError(
-        f"{describe_unopenable_assets(stubs, root, what=what)}\nNothing has to be downloaded "
-        f"twice: a checkout under GIT_LFS_SKIP_SMUDGE=1 writes pointers, and `git lfs checkout` "
-        f"turns the objects already in .git/lfs/objects back into files."
-    )
-
-
-def describe_unopenable_assets(
-    unopenable: Mapping[str, str], root: Path | str | None, *, what: str
-) -> str:
-    shown = "\n".join(f"  {asset}\n    {why}" for asset, why in sorted(unopenable.items())[:5])
-    more = f"\n  ... and {len(unopenable) - 5} more" if len(unopenable) > 5 else ""
-    where = _common_parent(unopenable, root)
-    fetch = (
-        f'\nFetch them with: git lfs checkout "{where}"'
-        if any(why == LFS_POINTER for why in unopenable.values()) and where
-        else ""
-    )
-    return (
-        f"{what} names {len(unopenable)} asset(s) USD cannot open, so that geometry will be "
-        f"missing and every reference to it costs a USD warning on every open of this "
-        f"layer:\n{shown}{more}{fetch}"
-    )
-
-
-def _common_parent(assets: Mapping[str, str], root: Path | str | None) -> str:
-    base = Path(root) if root else None
-    parents = {
-        str(
-            (base / asset).parent
-            if base is not None and not Path(asset).is_absolute()
-            else Path(asset).parent
-        )
-        for asset in assets
-    }
-    return parents.pop() if len(parents) == 1 else ""
-
-
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
     pxr = load_pxr()
     return layer_asset_paths(pxr, layer_from(pxr, usd, "a layer", root))
@@ -300,51 +232,3 @@ def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]
 def layer_asset_paths(pxr: Pxr, layer: Layer) -> set[str]:
     """The files an open layer needs, as it names them."""
     return {asset for asset, _ in _required_assets(pxr, layer)}
-
-
-def unhashed_assets(usd: str, root: Path | str | None = None) -> dict[str, str]:
-    pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
-    missing: dict[str, str] = {}
-    for prim in stage.Traverse():
-        info = prim.GetAssetInfo() or {}
-        for asset in _referenced_assets(pxr, prim):
-            if not is_asset_hash(info.get("version")):
-                missing[asset] = str(prim.GetPath())
-    return missing
-
-
-def _referenced_assets(pxr: Pxr, prim: Prim) -> list[str]:
-    assets: list[str] = []
-
-    def record(asset: str, _where: str, required: bool) -> None:
-        if required:
-            assets.append(asset)
-
-    for spec in prim.GetPrimStack():
-        _rename_spec_assets(pxr, spec, record)
-    return assets
-
-
-def require_asset_hashes(usd: str, *, what: str, root: Path | str | None = None) -> None:
-    missing = unhashed_assets(usd, root)
-    if not missing:
-        return
-    lines = []
-    for asset, prim_path in sorted(missing.items()):
-        digest = hash_of_file(asset)
-        lines.append(
-            f"  {asset}  (at {prim_path})\n"
-            + (
-                f"    assetInfo version: {digest}"
-                if digest
-                else "    unreadable from here, so hash it where the file lives"
-            )
-        )
-    listed = "\n".join(lines)
-    raise ValueError(
-        f"{what} references {len(missing)} asset(s) with no usable hash. Every asset needs "
-        f"one: a path alone cannot say whether the file fetched is the file meant. Set "
-        f'assetInfo["version"] on each prim below to "{_HASH_ALGORITHM}:<64 hex digits>" '
-        f"(urdf_to_usd does this for you):\n{listed}"
-    )

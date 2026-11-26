@@ -234,8 +234,8 @@ def test_a_view_renders_linear_light_only_for_a_stage_that_asks_for_a_tone_map()
 
 
 def test_a_lidar_view_opens_on_a_dome_sky_given_as_pixels():
+    from dimos.sim2.mujoco.sensor_mount import SensorMount
     from dimos.sim2.mujoco.view import MujocoView
-    from dimos.sim2.mujoco.world import SensorMount
 
     sky = '\ndef DomeLight "sky"\n{\n    color3f inputs:color = (1, 0.5, 0.25)\n}\n'
     scene = layer_file(SCENE.read_text() + sky, called="look")

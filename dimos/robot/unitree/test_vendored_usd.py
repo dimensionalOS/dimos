@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.assets import hash_of_file
+from dimos.robot.assets.usd_utils.assets import hash_of_file, referenced_asset_paths
 
 pytest.importorskip("pxr")
 mujoco = pytest.importorskip("mujoco")
@@ -63,11 +63,11 @@ def test_the_layer_names_every_frame_a_sensor_mounts_at(robot: str) -> None:
 
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_every_file_the_layer_names_is_beside_it_and_hashes(robot: str) -> None:
-    source = _usd(robot).source_path
+    usd = _usd(robot)
+    source = usd.source_path
     assert source is not None
-    layer = UsdModel.from_file(source)
 
-    named = layer.referenced_files()
+    named = referenced_asset_paths(usd.usd, source.parent)
     assert named, f"{robot} names no files at all, which a mesh-built robot should not"
     missing = sorted(name for name in named if not (source.parent / name).is_file())
     assert not missing, f"{robot}: {missing}"

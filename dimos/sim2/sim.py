@@ -15,14 +15,15 @@
 
 """A simulated world is a physics backend, picked by the ``sim`` choice.
 
-There is no simulation module: a backend (MuJoCo, DimSim) is a module that meets ``PhysicsBackend``.
+There is no simulation module: a backend (MuJoCo, DimSim) is a ``SimWorld`` module.
 It asks every running HardwareModule (from ``on_system_modules``) for its USD and what it is
 mounted on, overlays them into one world, steps it, and publishes it as ``world_observations``.
 Robots and sensors are HardwareModules that read those observations and send ``world_actions`` back.
 """
 
 import asyncio
-from collections.abc import Coroutine, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from threading import Event
 from typing import Any, Protocol, TypeVar
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -33,10 +34,14 @@ from dimos.core.coordination.blueprints import (
     ChoiceAtom,
     MetaBlueprint,
 )
+from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareSpec, Mount
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.actions import Action, read_actions
+from dimos.sim2.spec import SimulatedRobot, validate
+from dimos.sim2.world_observations import WorldWriter
 from dimos.spec.utils import Spec, get_protocol_method_signatures
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -57,13 +62,79 @@ class SimulatedRobotSpec(HardwareSpec, Protocol):
     def simulated_robot(self) -> SimulatedRobot: ...
 
 
-class PhysicsBackend(SimulatedWorldSpec, Protocol):
-    """What a simulator module implements; the ``sim`` choice picks one."""
+class Backend(Protocol):
+    """A physics engine running the world a SimWorld publishes."""
+
+    world: WorldWriter
+
+    def frame(self) -> WorldObservations: ...
+    def snapshot(self) -> dict[str, Any]: ...
+    def apply(self, actions: Sequence[Action]) -> None: ...
+    def close(self) -> None: ...
+
+
+class SimWorld(Module):
+    """A physics backend's module: builds its backend from the running hardware, steps it, publishes it and applies the actions sent to it."""
 
     world_actions: In[WorldAction]
     world_observations: Out[WorldObservations]
 
-    def describe(self) -> dict[str, Any]: ...
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._backend: Backend | None = None
+        self._built = Event()
+
+    async def main(self) -> AsyncIterator[None]:
+        self.world_actions.subscribe(self._on_actions)
+        running = asyncio.create_task(self._run())
+        yield
+        running.cancel()
+
+    @rpc
+    def on_system_modules(self, modules: list[Any]) -> None:
+        simulated = [robot.simulated_robot() for robot in meeting(SimulatedRobotSpec, modules)]
+        validate(simulated)
+        self._backend = self._build(simulated, meeting(HardwareSpec, modules))
+        # The first frame exists before anyone can ask for a snapshot, so a snapshot always has one.
+        self._first_frame = self._backend.frame()
+        self._built.set()
+
+    @rpc
+    def snapshot(self) -> dict[str, Any]:
+        self._built.wait()
+        assert self._backend is not None
+        return self._backend.snapshot()
+
+    def _build(self, simulated: list[SimulatedRobot], hardware: list[Any]) -> Backend:
+        raise NotImplementedError
+
+    async def _run(self) -> None:
+        """Step and publish the world, once it is built."""
+        raise NotImplementedError
+
+    def _on_actions(self, message: WorldAction) -> None:
+        backend = self._backend
+        if backend is None:
+            return
+        try:
+            actions = read_actions(message, backend.world)
+        except (KeyError, ValueError) as error:
+            logger.warning(f"sim2: an action this world cannot read: {error}")
+            return
+        backend.apply(actions)
+        self._applied(actions)
+
+    def _applied(self, actions: list[Action]) -> None:
+        """Called with the actions just applied."""
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+        # Releases a caller blocked on a world that is never going to be built.
+        self._built.set()
+        if self._backend is not None:
+            self._backend.close()
+            self._backend = None
 
 
 def sim(backends: Mapping[str, Blueprint | MetaBlueprint], default: str) -> ChoiceAtom:
@@ -79,13 +150,33 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
 
 BlueprintT = TypeVar("BlueprintT", bound=BlueprintProtocol)
 
+# Every namespaced robot and sensor reaches the one simulated world on these.
+SIM_STREAMS = frozenset({"world_observations", "world_actions", "tf_static"})
+
 
 def on_mount(blueprint: BlueprintT, mount: Mount, shared: Iterable[str] = ()) -> BlueprintT:
-    """``blueprint`` (a robot attached to ``mount`` and the hardware on it) under the namespace of the mount's frame, as attach() puts one module."""
+    """``blueprint`` (a robot attached to ``mount`` and the hardware on it) under the namespace of the mount's frame, as attach() puts one module, with whichever SIM_STREAMS it has shared."""
+    shared = SIM_STREAMS.intersection(_stream_names(blueprint)).union(shared)
     # namespace() puts its prefix in front, so the last segment goes on first.
     for segment in reversed(mount.frame.split("/")):
         blueprint = blueprint.namespace(segment, shared=shared)
     return blueprint
+
+
+def _stream_names(blueprint: Blueprint | MetaBlueprint | ChoiceAtom) -> set[str]:
+    """Every stream name a blueprint's modules have, in any of its choices."""
+    if isinstance(blueprint, ChoiceAtom):
+        return set().union(*map(_stream_names, blueprint.choices.values()))
+    if isinstance(blueprint, MetaBlueprint):
+        return set().union(*map(_stream_names, blueprint.blueprints))
+    return {
+        name
+        for atom in blueprint.blueprints
+        for stream in atom.streams
+        if isinstance(
+            name := blueprint.remapping_map.get((atom.name, stream.name), stream.name), str
+        )
+    }
 
 
 class RunningHardware(HardwareSpec, Protocol):
@@ -116,8 +207,8 @@ def fetched_usd(namespace: str) -> str:
 def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
     """Overlay each (namespaced USD, mount frame) onto the one USD that is mounted on nothing."""
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
-    from dimos.robot.assets.usd_utils.layers import overlay_usds
     from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
+    from dimos.sim2.overlay import overlay_usds
 
     roots = [usd for usd, attached_to in described if attached_to is None]
     if len(roots) != 1:
@@ -142,14 +233,3 @@ def _path_to(frame: str) -> set[str]:
     """The frame and every frame above it: the namespace prims a USD mounted on it holds."""
     segments = frame.split("/")
     return {"/".join(segments[:depth]) for depth in range(1, len(segments) + 1)}
-
-
-async def until_it_stops(what: str, loop: Coroutine[Any, Any, None]) -> None:
-    """Run a sensor's loop, and log what it raised if it ever stops (a bare task would keep it silent)."""
-    try:
-        await loop
-    except asyncio.CancelledError:
-        raise
-    except BaseException as error:
-        logger.exception(f"sim2: {what} stopped: {error!r}")
-        raise

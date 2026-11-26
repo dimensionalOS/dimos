@@ -22,7 +22,8 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.sim2.mujoco.renders import RenderQuality
-from dimos.sim2.mujoco.world import SensorMount
+from dimos.sim2.mujoco.sensor_mount import SensorMount
+from dimos.sim2.spec import ROBOT
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 
@@ -56,7 +57,6 @@ class WorldView(Protocol):
         self,
         groups: Sequence[int],
         mounted_at: str | None = None,
-        blind_to: Sequence[str] = (),
         blind_to_robots: Sequence[str] = (),
     ) -> Raycaster:
         pass
@@ -99,7 +99,7 @@ def imu_reading(
 
 def robot_ids(world: WorldMirror) -> list[str]:
     with world.lock:
-        return sorted(entity.path for entity in world.entities.values() if "model" in entity.cbor)
+        return sorted(entity.path for entity in world.entities.values() if ROBOT in entity.cbor)
 
 
 def open_view(

@@ -22,7 +22,7 @@ every command against this table.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
 
@@ -108,10 +108,7 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
             key = Key(f"{full_name}/{interface}")
             if key.source != source:
                 raise ValueError(f"joint {name!r} belongs to another source than {source!r}")
-            limit = model_limit(joint, interface)
-            if config.clamp_position and interface == Interface.POSITION and limit.lo is not None:
-                limit = replace(limit, clamp=True)
-            table[key] = limit
+            table[key] = model_limit(joint, interface)
     if not table:
         raise ValueError(f"{source!r} is told nothing: set joint_commands")
     return table

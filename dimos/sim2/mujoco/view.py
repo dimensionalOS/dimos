@@ -24,7 +24,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.mujoco.lights import dome_sky
+from dimos.sim2.mujoco.lights import apply_lights, dome_sky
 from dimos.sim2.mujoco.look import (
     ambient_headroom,
     blank_textures,
@@ -40,8 +40,9 @@ from dimos.sim2.mujoco.look import (
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
 from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
+from dimos.sim2.mujoco.sensor_mount import SensorMount, mount_sensor
 from dimos.sim2.mujoco.sensor_world import GRAVITY
-from dimos.sim2.mujoco.world import USD_SUFFIXES, SensorMount, compile_world, mount_sensor
+from dimos.sim2.mujoco.world import USD_SUFFIXES, compile_world
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 
 
@@ -66,8 +67,12 @@ class MujocoView:
         spec = compile_world(scene, ids=self._robots)
         # Only a camera draws the world, and decoding a scene's textures can take gigabytes a view.
         self._draws = mount is None or mount.kind == "camera"
+        if stage is not None:
+            apply_lights(spec, Path(scene))
         if not self._draws:
             blank_textures(spec)
+        elif stage is not None:
+            _textured_materials_win(spec)
         if mount is not None:
             mount_sensor(spec, mount)
         self._tone_map = (
@@ -195,14 +200,13 @@ class MujocoView:
         self,
         groups: Sequence[int],
         mounted_at: str | None = None,
-        blind_to: Sequence[str] = (),
         blind_to_robots: Sequence[str] = (),
     ) -> RayScene:
-        """A cast against the geoms in `groups` as this view poses them; build a new one when the world's geometry changes."""
+        """A cast against the geoms in `groups` as this view poses them."""
         blind: set[int] = set()
         # The hardware a sensor is mounted in is as invisible to it as the robot link it rides.
-        for frame in [*blind_to, *([] if mounted_at is None else [mounted_at])]:
-            blind |= {self._mount(frame), *self._carried_by(frame)}
+        if mounted_at is not None:
+            blind |= {self._mount(mounted_at), *self._carried_by(mounted_at)}
         for robot in blind_to_robots:
             if self._root(robot) >= 0:
                 blind |= set(self._under(self._root(robot)))
@@ -386,3 +390,15 @@ class MujocoView:
                 mujoco.mju_quat2Mat(rotation, quat_wxyz)
                 data.qvel[dof : dof + 3] = velocity[:3]
                 data.qvel[dof + 3 : dof + 6] = rotation.reshape(3, 3).T @ velocity[3:]
+
+
+def _textured_materials_win(spec: mujoco.MjSpec) -> int:
+    """MuJoCo lets the displayColor rgba its USD reader sets tint a textured material, as a USD renderer does not; the number changed."""
+    textured = {m.name for m in spec.materials if any(m.textures)}
+    unset = spec.default.geom.rgba
+    changed = 0
+    for geom in spec.geoms:
+        if geom.material in textured and not np.array_equal(geom.rgba, unset):
+            geom.rgba = unset
+            changed += 1
+    return changed

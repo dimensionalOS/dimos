@@ -37,9 +37,9 @@ from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, 
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
-from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
+from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.sim import compose_usds, sim
-from dimos.sim2.spec import ODOM_FRAME, SimulatedRobot
+from dimos.sim2.spec import ODOM_FRAME, ROBOT, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import Entity, WorldMirror, WorldWriter
 
@@ -103,23 +103,6 @@ def test_a_robot_the_world_does_not_hold_is_refused(robot_model: UsdModel) -> No
         compile_world(usd_layer(_scene()), [SimulatedRobot("dog", robot_model)])
 
 
-def test_a_sensor_mounts_itself_in_a_world_of_its_own(
-    world: UsdModel, robot_model: UsdModel
-) -> None:
-    spec = compile_world(usd_layer(world), [SimulatedRobot("dog", robot_model)])
-    mount_sensor(spec, SensorMount("camera", "dog/head", "dog/eye", fovy=42.0))
-    mount_sensor(spec, SensorMount("camera", "overhead", "world/overhead"))
-    mount_sensor(spec, SensorMount("imu", "dog/base", "dog/imu"))
-    model = spec.compile()
-
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    assert model.cam_fovy[model.camera("dog/eye").id] == 42.0
-    assert data.cam("world/overhead").xpos.tolist() == pytest.approx([0, 0, 3])
-    assert data.site("dog/imu").xpos.tolist() == pytest.approx(data.body("dog/base").xpos)
-    assert model.nsensor == 0
-
-
 def test_a_robot_mounted_in_a_scene_is_still_free_to_move(
     world: UsdModel, robot_model: UsdModel
 ) -> None:
@@ -132,12 +115,6 @@ def test_a_robot_mounted_in_a_scene_is_still_free_to_move(
         mujoco.mj_step(model, data)
 
     assert data.body("dog/base").xpos[2] < started - 0.5, "the dog is welded to the room"
-
-
-def test_mounting_at_a_frame_the_world_does_not_have_is_rejected() -> None:
-    spec = compile_world(usd_layer(_scene()))
-    with pytest.raises(ValueError, match="no site or body 'nowhere'"):
-        mount_sensor(spec, SensorMount("imu", "nowhere", "nowhere"))
 
 
 def test_a_robot_mounted_under_a_frame_still_reports_its_own_pose(robot_model: UsdModel) -> None:
@@ -162,7 +139,6 @@ def test_the_world_the_backend_runs_is_the_usd_it_was_given(
 ) -> None:
     backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model)])
     assert backend.usd == world.usd
-    assert backend.describe() == {"backend": "mujoco", "scene": str(usd_layer(world))}
 
 
 def test_two_robots_with_one_id_are_refused_by_name(world: UsdModel, robot_model: UsdModel) -> None:
@@ -231,6 +207,9 @@ def test_the_world_usd_is_served_while_physics_is_still_compiling(
 
         def frame(self) -> None:
             return None
+
+        def close(self) -> None:
+            pass
 
     monkeypatch.setattr(mujoco_sim, "compose_world", lambda _hardware: world)
     monkeypatch.setattr(mujoco_sim, "MujocoBackend", _StillCompiling)
@@ -347,7 +326,7 @@ def test_frames_report_robots_and_objects_and_actions_drive_them(
     backend._apply_pending()
     seen = _Collect()
     seen.offer(backend.frame())
-    assert _seen(seen.world, "dog").cbor["model"] == str(usd_layer(robot_model))
+    assert _seen(seen.world, "dog").cbor[ROBOT] is True
     assert seen.world.joints("dog")[0] == ["neck"]
     assert _pose(seen.world, "crate")[:3] == pytest.approx([0, 2, 0.5])
     assert seen.world.time == pytest.approx(time.time(), abs=5.0)

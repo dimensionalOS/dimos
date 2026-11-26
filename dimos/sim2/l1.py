@@ -14,27 +14,25 @@
 
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import Coroutine
 import math
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.stream import Out
+from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_pose
-from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
-from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor, SimSensorConfig
+from dimos.sim2.mujoco.sensor_mount import SensorMount
+from dimos.sim2.mujoco.sensor_world import WorldView, rotation_matrix
+from dimos.sim2.sensor import SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.sim import until_it_stops
 from dimos.sim2.spec import ODOM_FRAME
-from dimos.sim2.world_observations import geometry
+from dimos.sim2.view_sensor import ViewSensor
 from dimos.simulation.sensors.lidar import Raycaster
-
-_KEY_BITS = 21
-_KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
 class SimL1Config(SimSensorConfig):
@@ -49,40 +47,26 @@ class SimL1Config(SimSensorConfig):
     seed: int = 0
 
 
-class SimL1(SimSensor):
+class SimL1(ViewSensor):
     config: SimL1Config
     lidar: Out[PointCloud2]
 
-    async def main(self) -> AsyncIterator[None]:
-        self._world = self.mirror_world()
-        self._mapping = asyncio.create_task(until_it_stops(f"{self.frame_id} l1", self._map()))
-        yield
-        self._mapping.cancel()
-
-    def _open(self) -> WorldView:
-        return open_view(
-            self.world_layer(),
-            robot_ids(self._world),
-            SensorMount("lidar", self.frame_id, self.frame_id),
-        )
+    def loops(self) -> list[Coroutine[Any, Any, None]]:
+        return [self._map()]
 
     async def _map(self) -> None:
         config, site = self.config, self.frame_id
         view: WorldView | None = None
         raycaster: Raycaster | None = None
         rider: str | None = None
-        built = 0
         odom_frame, from_world = "", np.eye(4)
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
         cells = np.zeros(0, dtype=np.int64)
         async for _ in self._world.ticks(1 / config.period):
-            if view is not None and geometry(self._world) != built:
-                view.close()
-                view = None
             if view is None:
-                built = geometry(self._world)
-                view = await asyncio.to_thread(self._open)
+                mount = SensorMount("lidar", site, site)
+                view = await asyncio.to_thread(self.open_view, mount)
                 rider = view.owner(site)
                 # The real L1's voxel map has no returns off the robot it rides (none within 0.3 m of a Go2's base, two recordings).
                 raycaster = view.raycaster(
@@ -90,8 +74,7 @@ class SimL1(SimSensor):
                     mounted_at=site,
                     blind_to_robots=() if rider is None else (rider,),
                 )
-                if not odom_frame:
-                    odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
+                odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
                 # Opening took this tick, so the next tick is the first read on time.
                 continue
             assert raycaster is not None
@@ -107,9 +90,7 @@ class SimL1(SimSensor):
             if not self.on_time("lidar", stamp, config.period, config.stamp_tolerance):
                 continue
             self.lidar.publish(
-                PointCloud2.from_numpy(
-                    (self._indices(cells) + 0.5) * config.cell, odom_frame, stamp
-                )
+                PointCloud2.from_numpy((unpack_keys(cells) + 0.5) * config.cell, odom_frame, stamp)
             )
             self.publish_moving_tf(stamp)
 
@@ -129,19 +110,13 @@ class SimL1(SimSensor):
         return origin if entity is None or entity.pose is None else entity.pose[:3]
 
     def _keys(self, points: NDArray[np.float64]) -> NDArray[np.int64]:
-        index = np.floor(points / self.config.cell).astype(np.int64) + _KEY_OFFSET
-        return np.unique((index[:, 0] << 2 * _KEY_BITS) | (index[:, 1] << _KEY_BITS) | index[:, 2])
-
-    def _indices(self, keys: NDArray[np.int64]) -> NDArray[np.int64]:
-        mask = (1 << _KEY_BITS) - 1
-        return (
-            np.stack([keys >> 2 * _KEY_BITS, (keys >> _KEY_BITS) & mask, keys & mask], axis=1)
-            - _KEY_OFFSET
+        return np.unique(
+            pack_indices(np.floor(points / self.config.cell).astype(np.int64) + KEY_OFFSET)
         )
 
     def _crop(self, keys: NDArray[np.int64], center: NDArray[np.float64]) -> NDArray[np.int64]:
         config = self.config
-        index = self._indices(keys)
+        index = unpack_keys(keys)
         low = np.floor(center[:2] / config.cell).astype(np.int64) - config.half_width_cells
         inside = np.all(
             (index[:, :2] >= low) & (index[:, :2] < low + 2 * config.half_width_cells), axis=1

@@ -154,18 +154,6 @@ def test_each_joint_command_takes_its_own_bound_from_the_model(model: RobotModel
     assert "arm/j1/effort" not in table
 
 
-def test_clamp_position_clamps_positions_and_nothing_else(model: RobotModel) -> None:
-    table = limits(
-        config(
-            model=model,
-            joint_commands=commands(model, Interface.POSITION, Interface.VELOCITY),
-            clamp_position=True,
-        )
-    )
-    assert table["arm/j1/position"] == Limits(-1.0, 1.0, clamp=True)
-    assert table["arm/j1/velocity"] == Limits(-2.0, 2.0)
-
-
 def test_pd_tells_each_joint_five_things_with_gains_any_size_from_zero(
     model: RobotModel,
 ) -> None:

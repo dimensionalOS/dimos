@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Any
-
 import pytest
 
 from dimos.sim2.mujoco.names import resolve, resolved, shorten
@@ -27,40 +25,40 @@ USD_NAMES = [
 ]
 
 
-def test_a_short_name_finds_the_prim_path_it_refers_to() -> None:
+def test_a_short_name_finds_the_prim_path_it_refers_to():
     assert resolve(USD_NAMES, "pelvis") == "/g1/Joints/pelvis"
     assert resolve(USD_NAMES, "box_1") == "/office_555/Geometry/box_1"
 
 
-def test_a_name_that_is_already_whole_is_taken_as_written() -> None:
+def test_a_name_that_is_already_whole_is_taken_as_written():
     assert resolve(["/a/pelvis", "pelvis"], "pelvis") == "pelvis"
     assert resolve(USD_NAMES, "/g1/Joints/pelvis") == "/g1/Joints/pelvis"
 
 
-def test_mjcf_names_are_untouched() -> None:
+def test_mjcf_names_are_untouched():
     assert resolve(["world", "base", "neck"], "base") == "base"
 
 
-def test_two_of_the_same_short_name_is_an_error_not_a_guess() -> None:
+def test_two_of_the_same_short_name_is_an_error_not_a_guess():
     with pytest.raises(KeyError, match="ambiguous"):
         resolve(["/left/wheel", "/right/wheel"], "wheel")
 
 
-def test_a_miss_says_what_there_was() -> None:
+def test_a_miss_says_what_there_was():
     with pytest.raises(KeyError, match="pelvis"):
         resolve(["/a/base"], "pelvis")
     with pytest.raises(KeyError, match=r"\.\.\. \(5 more\)"):
         resolve([f"/scene/thing_{i}" for i in range(11)], "nothing")
 
 
-def test_a_frame_under_a_many_segment_owner_finds_its_owner_s_shortened_body() -> None:
+def test_a_frame_under_a_many_segment_owner_finds_its_owner_s_shortened_body():
     # Three robots mounted on one scene: shortened, each body keeps only its owner (scene/spot) in front.
     bodies = [f"office_555/{spot}/pelvis" for spot in ("main", "left", "right")]
     wanted = "office_555/left/g1_29dof_rev_1_0/Geometry/pelvis"
     assert resolve(bodies, wanted) == "office_555/left/pelvis"
 
 
-def test_resolved_hands_back_none_where_resolve_would_raise() -> None:
+def test_resolved_hands_back_none_where_resolve_would_raise():
     assert resolved(USD_NAMES, "pelvis") == "/g1/Joints/pelvis"
     assert resolved(USD_NAMES, "nothing") is None
     assert resolved(["/a/x", "/b/x"], "x") is None
@@ -77,19 +75,12 @@ class _Reference:
 
 
 class _Spec:
-    """The parts of an MjSpec that shorten() renames or follows."""
-
-    def __init__(self, **kinds: list[Any]) -> None:
-        self.bodies: list[Any] = kinds.get("bodies", [])
-        self.joints: list[Any] = kinds.get("joints", [])
-        self.sites: list[Any] = kinds.get("sites", [])
-        self.cameras: list[Any] = kinds.get("cameras", [])
-        self.actuators: list[Any] = kinds.get("actuators", [])
-        self.sensors: list[Any] = kinds.get("sensors", [])
-        self.pairs: list[Any] = kinds.get("pairs", [])
+    def __init__(self, **kinds: list) -> None:
+        for kind in ("bodies", "joints", "sites", "cameras", "actuators", "sensors", "pairs"):
+            setattr(self, kind, kinds.get(kind, []))
 
 
-def test_shortening_renames_a_models_parts_to_the_names_a_description_uses() -> None:
+def test_shortening_renames_a_models_parts_to_the_names_a_description_uses():
     spec = _Spec(
         bodies=[_Element("world"), _Element("/toy/Geometry/base")],
         joints=[_Element("/toy/Geometry/base/head/neck")],
@@ -102,7 +93,7 @@ def test_shortening_renames_a_models_parts_to_the_names_a_description_uses() -> 
     assert renames == {"/toy/Geometry/base": "base", "/toy/Geometry/base/head/neck": "neck"}
 
 
-def test_a_reference_follows_the_part_it_names() -> None:
+def test_a_reference_follows_the_part_it_names():
     spec = _Spec(
         joints=[_Element("/toy/Geometry/base/head/neck")],
         actuators=[_Reference(name="/toy/Physics/neck", target="/toy/Geometry/base/head/neck")],
@@ -117,7 +108,7 @@ def test_a_reference_follows_the_part_it_names() -> None:
     assert spec.sensors[0].objname == "base"
 
 
-def test_a_hinge_and_the_motor_on_it_may_share_a_name() -> None:
+def test_a_hinge_and_the_motor_on_it_may_share_a_name():
     spec = _Spec(
         joints=[_Element("/toy/Geometry/base/head/neck")],
         actuators=[_Reference(name="/toy/Physics/neck", target="/toy/Geometry/base/head/neck")],
@@ -129,20 +120,20 @@ def test_a_hinge_and_the_motor_on_it_may_share_a_name() -> None:
     assert spec.actuators[0].name == "neck"
 
 
-def test_two_parts_of_one_kind_ending_the_same_way_keep_their_paths() -> None:
+def test_two_parts_of_one_kind_ending_the_same_way_keep_their_paths():
     spec = _Spec(bodies=[_Element("/robot/left/wheel"), _Element("/robot/right/wheel")])
 
     assert shorten(spec) == {}
     assert [body.name for body in spec.bodies] == ["/robot/left/wheel", "/robot/right/wheel"]
 
 
-def test_a_short_name_something_else_already_holds_is_left_alone() -> None:
+def test_a_short_name_something_else_already_holds_is_left_alone():
     spec = _Spec(bodies=[_Element("base"), _Element("/toy/Geometry/base")])
 
     assert shorten(spec) == {}
 
 
-def test_three_of_one_robot_in_a_composed_world_keep_their_ids() -> None:
+def test_three_of_one_robot_in_a_composed_world_keep_their_ids():
     spec = _Spec(
         bodies=[
             _Element("/office_555/left/g1/Geometry/pelvis"),
@@ -160,13 +151,13 @@ def test_three_of_one_robot_in_a_composed_world_keep_their_ids() -> None:
     ]
 
 
-def test_the_world_around_the_robots_keeps_the_names_it_came_with() -> None:
+def test_the_world_around_the_robots_keeps_the_names_it_came_with():
     spec = _Spec(bodies=[_Element("/office_555/Geometry/desk_1")])
 
     assert shorten(spec, ids=("left",)) == {}
 
 
-def test_an_id_matches_a_whole_path_segment_and_not_part_of_one() -> None:
+def test_an_id_matches_a_whole_path_segment_and_not_part_of_one():
     spec = _Spec(bodies=[_Element("/scene/left_arm/Geometry/base")])
 
     shorten(spec, ids=("left",))
@@ -174,7 +165,7 @@ def test_an_id_matches_a_whole_path_segment_and_not_part_of_one() -> None:
     assert [body.name for body in spec.bodies] == ["/scene/left_arm/Geometry/base"]
 
 
-def test_a_frame_is_told_from_its_namesakes_by_every_namespace_it_sits_under() -> None:
+def test_a_frame_is_told_from_its_namesakes_by_every_namespace_it_sits_under():
     names = ["/room/dog/imu/sim_imu/imu_link", "/room/dog/livox/mid360/imu_link"]
     assert resolve(names, "dog/imu/imu_link") == "/room/dog/imu/sim_imu/imu_link"
     assert resolve(["dog/imu_link"], "dog/imu/imu_link") == "dog/imu_link"

@@ -21,7 +21,7 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.mujoco.lights import render_settings, sky_bytes
+from dimos.sim2.mujoco.lights import linear_to_srgb, render_settings, sky_bytes
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -175,10 +175,7 @@ def pbr_neutral(color: NDArray[np.float32]) -> NDArray[np.float32]:
 
 def srgb_bytes(linear: NDArray[np.float32]) -> NDArray[np.uint8]:
     """Linear light in [0, 1] encoded with the sRGB transfer curve, as 8-bit."""
-    # The sRGB transfer curve as IEC 61966-2-1 defines it.
-    light = np.clip(linear, 0.0, 1.0)
-    encoded = np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
-    return np.rint(encoded * 255).astype(np.uint8)
+    return np.rint(linear_to_srgb(np.clip(linear, 0.0, 1.0)) * 255).astype(np.uint8)
 
 
 _AGX = Path(__file__).parent / "assets" / "agx_base_srgb.npz"
@@ -244,8 +241,7 @@ def agx(color: NDArray[np.float32]) -> NDArray[np.float32]:
 def _rec1886_to_srgb() -> NDArray[np.float32]:
     """Rec.1886's 2.4 power decoded and the sRGB transfer curve (IEC 61966-2-1) encoded, at every 16-bit code value."""
     light = np.linspace(0.0, 1.0, np.iinfo(np.uint16).max + 1, dtype=np.float64) ** 2.4
-    encoded = np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
-    return encoded.astype(np.float32)
+    return linear_to_srgb(light).astype(np.float32)
 
 
 def display(render: NDArray[np.uint8], headroom: float, curve: str) -> NDArray[np.uint8]:

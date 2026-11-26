@@ -163,6 +163,50 @@ def test_a_g1_publishes_its_odometry_on_odom_and_only_the_joints_that_move_on_tf
     assert [reading.frame_id for reading in odometry] == [sim.attach_frame]
 
 
+def test_a_position_command_drives_its_joints_with_groot_s_gains_once_the_world_shows_the_g1() -> (
+    None
+):
+    import asyncio
+
+    from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
+    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.robot.unitree.g1.config import G1_JOINT_NAMES
+    from dimos.robot.unitree.g1.sim2 import G1Sim, usd_joint
+    from dimos.sim2.actions import JointCommand, read_actions
+    from dimos.sim2.world_observations import WorldWriter
+
+    knee = G1_JOINT_NAMES.index("g1/left_knee")
+    command = JointState(name=[G1_JOINT_NAMES[knee]], position=[0.3])
+    sim = G1Sim(attached_to=MOUNT, instance_name=f"{MOUNT}/G1Sim")
+    sent: list[Any] = []
+    try:
+        sim.world_actions.publish = sent.append  # type: ignore[method-assign,assignment]
+        asyncio.run(sim.handle_position_command(command))
+        assert sent == []
+        writer = WorldWriter()
+        writer.start_ns = 0
+        writer.add(MOUNT, model="g1.usda")
+        writer.add(f"{MOUNT}/{usd_joint(G1_JOINT_NAMES[knee])}")
+        sim._world.apply(writer.end_frame(1.0))
+        asyncio.run(sim.handle_position_command(command))
+    finally:
+        sim.stop()
+
+    assert [read_actions(action, writer) for action in sent] == [
+        [
+            JointCommand(
+                MOUNT,
+                ("left_knee_joint",),
+                position=(0.3,),
+                velocity=(0.0,),
+                effort=(0.0,),
+                kp=(G1_GROOT_KP[knee],),
+                kd=(G1_GROOT_KD[knee],),
+            )
+        ]
+    ]
+
+
 def test_a_mounted_g1_s_mount_holds_its_odom_and_nothing_static_holds_its_body() -> None:
     from dimos.robot.unitree.g1.sim2 import G1Sim
 

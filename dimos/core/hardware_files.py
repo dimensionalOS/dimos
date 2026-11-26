@@ -92,21 +92,6 @@ def declared_hashes(usd: str) -> dict[str, str | None]:
     return named
 
 
-def inline_meshes(pxr: Pxr, usd: str) -> list[str]:
-    """The Mesh prims whose points are written in ``usd`` itself rather than in a file it references."""
-    layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
-    layer.ImportFromString(usd)
-    found: list[str] = []
-
-    def visit(path: object) -> None:
-        spec = layer.GetPrimAtPath(path)
-        if spec is not None and spec.typeName == "Mesh" and "points" in spec.attributes:
-            found.append(str(path))
-
-    layer.Traverse(layer.pseudoRoot.path, visit)
-    return found
-
-
 class HardwareFiles:
     def __init__(self, usd: str, mtime: float | None = None) -> None:
         """``usd`` names its files by absolute path; what is provided names them relative to it.
@@ -118,12 +103,6 @@ class HardwareFiles:
         pull_usd_assets([usd])
         # Reserved, so a sublayer that is also called hardware.usda never takes the root's name.
         provided, published = publish_usd_assets(usd, reserved={HARDWARE_USD})
-        inline = inline_meshes(load_pxr(), provided)
-        if inline:
-            logger.warning(
-                f"{HARDWARE_USD} holds mesh geometry itself ({', '.join(inline)}); keep it to "
-                f"links, joints and sensors and reference meshes from their own files"
-            )
         self._usd = _layer(provided, mtime)
         # None: named by a provided layer but not providable, which is said in a header with no sha256.
         self._files: dict[str, _File | _Layer | None] = {}
@@ -142,10 +121,6 @@ class HardwareFiles:
     def usd(self) -> str:
         """``hardware.usda`` as provided."""
         return self._usd.content.decode()
-
-    @property
-    def uris(self) -> list[str]:
-        return [HARDWARE_USD, *sorted(self._files)]
 
     def announcement(self) -> FileInfo:
         """The header of ``hardware.usda``, published when the module starts."""
