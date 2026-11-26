@@ -22,6 +22,7 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
+import threading
 import time
 from typing import Any, Literal
 
@@ -46,6 +47,7 @@ class FakeTransport:
         self.epoch = 0  # presign generation; URLs from older epochs are expired
         self.expire_at = 0  # bump epoch before the Nth put, once
         self.previews: dict[str, dict[str, Any]] = {}
+        self.put_lock = threading.Lock()
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.endswith("/uploads") and method == "POST":
@@ -114,15 +116,16 @@ class FakeTransport:
     def put(self, url: str, body: bytes) -> None:
         path, _, epoch = url.partition("?e=")
         uid, n = path.split("/")
-        if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
-            self.expire_at = 0
-            self.epoch += 1
-        if int(epoch) != self.epoch:
-            raise OSError("403 Forbidden: Request has expired")
-        if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
-            self.fail_at = 0
-            raise OSError("link dropped")
-        self.parts[uid][int(n)] = body
+        with self.put_lock:
+            if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
+                self.expire_at = 0
+                self.epoch += 1
+            if int(epoch) != self.epoch:
+                raise OSError("403 Forbidden: Request has expired")
+            if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
+                self.fail_at = 0
+                raise OSError("link dropped")
+            self.parts[uid][int(n)] = body
 
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
@@ -276,14 +279,66 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     assert before and set(sent).isdisjoint(before)
 
 
-def test_upload_refreshes_expired_part_urls(env: tuple[CloudData, FakeTransport, Path]) -> None:
-    """An upload slower than the presign TTL: URLs from create die mid-run; the
-    client must re-create (same sha256 -> fresh URLs) and finish, not abort."""
+def test_parallel_upload_sends_each_part_once(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     cloud, t, db = env
-    t.expire_at = 2  # URLs signed at create expire before part 2 lands
+    cloud.backend.parallel_parts = 4
+    sent: list[int] = []
+    completed: list[int] = []
+    real_put, real_request = t.put, t.request
+
+    def spying_put(url: str, body: bytes) -> None:
+        sent.append(int(url.split("/")[1].partition("?")[0]))
+        real_put(url, body)
+
+    def spying_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if path.endswith("/complete"):
+            assert body
+            completed.extend(p["part_number"] for p in body["parts"])
+        return real_request(method, path, body)
+
+    monkeypatch.setattr(t, "put", spying_put)
+    monkeypatch.setattr(t, "request", spying_request)
+    r = cloud.upload(db)
+    assert len(sent) > 1 and sorted(sent) == completed == list(range(1, len(sent) + 1))
+    out = cloud.pull(r["upload_id"], dest=db.parent / "back.db")
+    assert out.read_bytes() == db.read_bytes()
+
+
+def test_upload_refreshes_expired_part_urls(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An upload slower than the presign TTL: URLs from create die mid-run; the
+    client must re-create (same sha256 -> fresh URLs) and finish, not abort.
+    Four parts in flight hit the expiry together and share one re-create."""
+    cloud, t, db = env
+    cloud.backend.retries, cloud.backend.parallel_parts = 0, 4
+    t.expire_at = 1  # URLs signed at create expire before any part lands
+    in_flight = threading.Barrier(4)
+    creates: list[str] = []
+    real_put, real_request = t.put, t.request
+
+    def put_together(url: str, body: bytes) -> None:
+        if url.endswith("?e=0"):
+            in_flight.wait(timeout=5)
+        real_put(url, body)
+
+    def counting_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if method == "POST" and path.endswith("/uploads"):
+            creates.append(path)
+        return real_request(method, path, body)
+
+    monkeypatch.setattr(t, "put", put_together)
+    monkeypatch.setattr(t, "request", counting_request)
     r = cloud.upload(db)
     assert r["state"] == "complete" and not r["skipped"]
     assert t.epoch == 1  # completed on re-signed URLs, not the originals
+    assert len(creates) == 2  # the create, then one re-sign for all four parts
 
 
 @pytest.mark.parametrize(

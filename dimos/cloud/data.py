@@ -21,6 +21,7 @@ callers. Transfer settings live on CloudConfig."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextlib
 from datetime import datetime
 import functools
@@ -33,6 +34,7 @@ import sqlite3
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -45,6 +47,13 @@ from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
+
+
+class _AlreadyCompleteError(Exception):
+    """A re-sign found the upload already complete."""
+
+    def __init__(self, upload: dict[str, Any]) -> None:
+        self.upload = upload
 
 
 class DataApi:
@@ -94,12 +103,20 @@ class MultipartBackend:
     """Blob artifacts via /v1/data: presigned multipart to S3, server-side part
     listing as the only resume state, sha256-verified pulls."""
 
-    def __init__(self, api: DataApi, codec_id: str, staging_dir: Path | None, retries: int) -> None:
-        self.api, self.codec_id, self.staging_dir, self.retries = (
+    def __init__(
+        self,
+        api: DataApi,
+        codec_id: str,
+        staging_dir: Path | None,
+        retries: int,
+        parallel_parts: int = 1,
+    ) -> None:
+        self.api, self.codec_id, self.staging_dir, self.retries, self.parallel_parts = (
             api,
             codec_id,
             staging_dir,
             retries,
+            parallel_parts,
         )
 
     def _retry(self, fn: Any, what: str) -> Any:
@@ -178,37 +195,47 @@ class MultipartBackend:
                     else None,
                 }
             uid = create["upload_id"]
-            have = {p["part_number"] for p in self.status(uid)["parts"]}
+            uploaded = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
-            done = min(len(have) * ps, size)
+            done = min(len(uploaded) * ps, size)
             tick("upload", done, size)
             urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
-            with artifact.open("rb") as f:
-                for n in sorted(urls):
-                    if n in have:
-                        continue
+            resign = threading.Lock()
+
+            def send(n: int) -> int:
+                with artifact.open("rb") as f:
                     f.seek((n - 1) * ps)
                     chunk = f.read(ps)
-                    try:
-                        self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
-                        )
-                    except RuntimeError as e:
-                        if "403" not in str(e):
-                            raise
-                        # Part URLs are presigned at create and share one expiry
-                        # clock; an upload slower than the TTL outlives them and
-                        # S3 answers 403. create is idempotent by sha256 and
-                        # re-signs every URL.
-                        fresh = self.api.create(**spec)
-                        if fresh["state"] == "complete":
-                            return {**fresh, "skipped": True}
-                        urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
-                        self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
-                        )
-                    done += len(chunk)
+                url = urls[n]
+                try:
+                    self._retry(functools.partial(self.api.put_part, url, chunk), f"part {n}")
+                except RuntimeError as e:
+                    if "403" not in str(e):
+                        raise
+                    # Part URLs are presigned at create and share one expiry
+                    # clock; an upload slower than the TTL outlives them and
+                    # S3 answers 403. create is idempotent by sha256 and
+                    # re-signs every URL, so only the first part to get here
+                    # re-signs and the rest pick up its URLs.
+                    with resign:
+                        if urls[n] == url:
+                            fresh = self.api.create(**spec)
+                            if fresh["state"] == "complete":
+                                raise _AlreadyCompleteError(fresh) from None
+                            urls.update({p["part_number"]: p["url"] for p in fresh["part_urls"]})
+                    self._retry(functools.partial(self.api.put_part, urls[n], chunk), f"part {n}")
+                return len(chunk)
+
+            pool = ThreadPoolExecutor(self.parallel_parts)
+            try:
+                missing = [n for n in sorted(urls) if n not in uploaded]
+                for sent in as_completed([pool.submit(send, n) for n in missing]):
+                    done += sent.result()
                     tick("upload", done, size)
+            except _AlreadyCompleteError as e:
+                return {**e.upload, "skipped": True}
+            finally:
+                pool.shutdown(cancel_futures=True)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
             return {
@@ -313,6 +340,7 @@ class CloudData:
                 self.config.upload_codec,
                 self.config.staging_dir,
                 self.config.upload_retries,
+                self.config.upload_parallel_parts,
             )
         self.backend = backend
 
