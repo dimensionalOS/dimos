@@ -31,6 +31,8 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.control_msgs import JointCommand
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -41,9 +43,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.std_msgs.Header import Header
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 
@@ -540,9 +542,22 @@ class CartesianMotionController(Module):
                     )
 
                 # Publish joint command
+                names = list(joint_state.name)
+                if (
+                    not names
+                    or not all(names)
+                    or len(set(names)) != len(names)
+                    or len(names) != len(target_joints)
+                ):
+                    logger.warning("Joint feedback must name every commanded joint uniquely")
+                    continue
                 joint_cmd = JointCommand(
-                    timestamp=current_time,
-                    positions=list(target_joints),
+                    header=Header(current_time),
+                    joint_names_length=len(names),
+                    joint_names=names,
+                    interface_name="position",
+                    values_length=len(target_joints),
+                    values=list(target_joints),
                 )
 
                 # Always try to publish - the Out stream will handle transport availability

@@ -51,6 +51,13 @@ def test_lcm_encode_decode(img: Image) -> None:
     assert decoded_img == img
 
 
+@pytest.mark.parametrize("stamp", [0.0, 0.125])
+def test_lcm_round_trip_preserves_zero_and_subsecond_timestamps(stamp):
+    image = Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8), ImageFormat.RGB, "camera", stamp)
+    assert Image.lcm_decode(image.lcm_encode()).ts == stamp
+    assert Image.lcm_jpeg_decode(image.lcm_jpeg_encode()).ts == stamp
+
+
 def test_rgb_bgr_conversion(img: Image) -> None:
     rgb = img.to_rgb()
     assert not rgb == img
