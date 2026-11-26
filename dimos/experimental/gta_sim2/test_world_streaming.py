@@ -181,7 +181,7 @@ def test_route_prefetch_looks_around_corner() -> None:
         np.array([[0.0, 0, 0], [2, 0, 0], [2, 10, 0]]),
         8,
     )
-    np.testing.assert_allclose(predicted, [2, 3, 0])
+    np.testing.assert_allclose(predicted, [2, 3 + 4 / 1.5, 0])
 
 
 def test_placed_bounds_include_rotation_and_nonuniform_scale() -> None:
@@ -411,7 +411,7 @@ def test_route_projection_does_not_prefetch_behind_robot() -> None:
     result = predict_position(
         np.array([40.0, 0, 0]), np.array([2.0, 0, 0]), 1, np.array([[0.0, 0, 0], [100.0, 0, 0]]), 8
     )
-    np.testing.assert_allclose(result, [43, 0, 0])
+    np.testing.assert_allclose(result, [43 + 4 / 1.5, 0, 0])
 
 
 def test_compiler_exit_preserves_current_physics(tmp_path: Path) -> None:

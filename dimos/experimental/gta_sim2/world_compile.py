@@ -144,11 +144,13 @@ def compile_world_window(
         # Quantized support patches make cache keys stable while awake bodies move.
         position = np.floor(np.asarray(pinned_state["position"]) / 4 + 0.5) * 4
         regions.append((position, max(6.0, float(pinned_state["radius"]) + 4)))
-    records_by_id = {
-        row["identity"]: row
-        for point, extent in regions
-        for row in catalog.instances(point, extent)
-    }
+    records_by_id: dict[str, dict[str, Any]] = {}
+    for point, extent in regions:
+        records_by_id.update((row["identity"], row) for row in catalog.instances(point, extent))
+        if len(records_by_id) > 10000:
+            raise MemoryError(
+                "Combined support regions exceed the 10,000-instance admission budget"
+            )
     saved = {
         identity: state
         for point, extent in regions

@@ -319,6 +319,7 @@ class WorldStreamingMujocoBackend(MujocoBackend):
         retired = [self._window]
         self.model, self.data, self._window = ready.model, ready.data, ready
         self._actors = incoming
+        self._settled = {key: value for key, value in self._settled.items() if key in incoming}
         self._active_object_regions = ready.metadata.get("object_regions", ())
         self._swaps += 1
         duration = time.monotonic() - started

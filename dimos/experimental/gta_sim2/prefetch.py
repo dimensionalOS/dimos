@@ -19,6 +19,8 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
+BRAKING_DECELERATION = 0.75
+
 
 def predict_position(
     position: NDArray[np.float64],
@@ -28,7 +30,11 @@ def predict_position(
     maximum_lead: float,
 ) -> NDArray[np.float64]:
     speed = float(np.linalg.norm(velocity[:2]))
-    distance = min(maximum_lead, max(speed * (latency_s + 0.5), 2.0 if route is not None else 0.0))
+    stopping_distance = speed * speed / (2 * BRAKING_DECELERATION)
+    distance = min(
+        maximum_lead,
+        max(speed * (latency_s + 0.5) + stopping_distance, 2.0 if route is not None else 0.0),
+    )
     if route is None or len(route) == 0:
         return position + velocity * (distance / speed if speed > 1e-6 else 0.0)
     if len(route) == 1:
@@ -51,7 +57,9 @@ def predict_position(
     return np.asarray(previous, dtype=np.float64).copy()
 
 
-def speed_for_distance(distance: float, latency_s: float, deceleration: float = 0.75) -> float:
+def speed_for_distance(
+    distance: float, latency_s: float, deceleration: float = BRAKING_DECELERATION
+) -> float:
     """Solve v*T + v²/(2*a) <= distance with a conservative deceleration budget."""
     if distance <= 0:
         return 0.0

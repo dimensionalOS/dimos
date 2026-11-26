@@ -114,9 +114,11 @@ class WorldCatalog:
             """SELECT i.*,o.definition AS object FROM spatial s JOIN instances i ON i.id=s.id
             LEFT JOIN objects o ON o.identity=i.identity
             WHERE s.minx<=? AND s.maxx>=? AND s.miny<=? AND s.maxy>=? AND s.minz<=? AND s.maxz>=?
-            ORDER BY i.id""",
+            ORDER BY i.id LIMIT 10001""",
             tuple(float(v) for v in (hi[0], lo[0], hi[1], lo[1], hi[2], lo[2])),
         ).fetchall()
+        if len(rows) > 10000:
+            raise MemoryError("Spatial query exceeds the 10,000-instance admission budget")
         self.stats["query_ms"] = (time.monotonic() - started) * 1000
         return [dict(row) for row in rows]
 
@@ -219,7 +221,11 @@ class WorldCatalog:
             self.stats["disk_hits"] += 1
             metadata_path.touch()
         else:
-            metadata = self._decode(source, geometry_path)
+            try:
+                metadata = self._decode(source, geometry_path)
+            except (OSError, RuntimeError, ValueError, MemoryError):
+                geometry_path.unlink(missing_ok=True)
+                raise
             pending = metadata_path.with_suffix(".tmp")
             pending.write_text(json.dumps(metadata))
             pending.replace(metadata_path)
