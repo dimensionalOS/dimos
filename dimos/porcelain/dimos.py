@@ -145,12 +145,14 @@ class Dimos:
             self._coordinator.unload_module(module_class)
 
     @classmethod
-    def connect(cls, *, timeout: float = 5.0) -> Dimos:
+    def connect(cls, *, timeout: float = 5.0, run_id: str | None = None) -> Dimos:
         """Connect to the running DimOS coordinator on the current transport bus.
 
         One coordinator serves the configured bus. This works for both
         `dimos run` processes and coordinators launched directly from Python;
         a run-registry entry is not required.
+
+        Pass ``run_id`` to discover that hosted run across its participating hosts.
 
         Returns a `Dimos` instance in read/call mode: `skills`, attribute
         access, `__repr__` and `__dir__` work, but only methods marked with
@@ -158,7 +160,7 @@ class Dimos:
         `stop()` closes the connection without terminating the remote process.
         """
         _load_opencv_first()
-        source = RemoteModuleSource(timeout=timeout)
+        source = RemoteModuleSource(timeout=timeout, run_id=run_id)
         instance = cls()
         instance._source = source
         return instance

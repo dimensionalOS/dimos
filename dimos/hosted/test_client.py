@@ -14,12 +14,14 @@
 
 from types import SimpleNamespace
 
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.module import Module
-from dimos.hosted.client import HostClient, describe_all, discover_host_ids
+from dimos.hosted.client import HostClient, describe_all, discover_host_ids, run_coordinator_names
 from dimos.hosted.fragment import HostFragment, PythonFragmentPayload
 from dimos.hosted.protocol import DeploymentStatus, HostDescriptor
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 
 class ClientTestModule(Module):
@@ -112,3 +114,25 @@ def test_describe_all_keeps_the_round_when_one_host_does_not_answer(
 
     rpc.call_sync.side_effect = describe
     assert [h.host_id for h in describe_all(rpc, timeout=0.5)] == ["host-1"]
+
+
+def test_hosted_discovery_never_selects_another_run(mocker):
+    rpc = mocker.MagicMock(spec=ZenohRPC)
+    rpc.session.liveliness.return_value.get.return_value = [SimpleNamespace(ok=True)]
+    hosts = mocker.patch(
+        "dimos.hosted.client.describe_all",
+        return_value=(
+            HostDescriptor(
+                host_id="robot", name="robot", tags={}, revision="r", active_run_ids=("lap",)
+            ),
+            HostDescriptor(
+                host_id="other", name="other", tags={}, revision="r", active_run_ids=("demo",)
+            ),
+        ),
+    )
+    assert run_coordinator_names(rpc, "lap", timeout=3) == ("runs/lap/hosts/robot/coordinator",)
+    hosts.return_value = ()
+    with pytest.raises(TimeoutError, match="Hosts are unavailable"):
+        run_coordinator_names(rpc, "lap", timeout=3)
+    rpc.session.liveliness.return_value.get.return_value = []
+    assert run_coordinator_names(rpc, "ordinary-run", timeout=3) == ()

@@ -46,6 +46,7 @@ class CoordinatorRPC:
     def __init__(self, rpc: RPCSpec, name: str = NAME) -> None:
         self._rpc = rpc
         self._name = name
+        self._hosted_names: tuple[str, ...] = ()
         self._published = False
 
     @classmethod
@@ -93,6 +94,7 @@ class CoordinatorRPC:
         *,
         timeout: float,
         name: str | None = None,
+        run_id: str | None = None,
         before_retry: Callable[[], None] | None = None,
     ) -> CoordinatorRPC:
         """Attach to a running Coordinator, raising `TimeoutError` if none answers.
@@ -100,6 +102,8 @@ class CoordinatorRPC:
         ``before_retry`` runs after every unanswered ping; raising from it gives
         up early, e.g. once the process meant to serve the Coordinator has exited.
         """
+        if name is not None and run_id is not None:
+            raise ValueError("Select a coordinator name or a run ID, not both")
         selected_name = name or cls.NAME
         rpc = rpc_backend()()
         rpc.start()
@@ -107,6 +111,12 @@ class CoordinatorRPC:
         deadline = time.monotonic() + timeout
         last_timeout: TimeoutError | None = None
         try:
+            if run_id is not None:
+                # hosted.client imports fragment -> blueprints -> module_coordinator,
+                # which imports this module; defer it to avoid that import cycle.
+                from dimos.hosted.client import run_coordinator_names
+
+                client._hosted_names = run_coordinator_names(rpc, run_id, timeout=timeout)
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -130,6 +140,18 @@ class CoordinatorRPC:
 
     def call(self, method: str, *args: Any, rpc_timeout: float | None = None, **kwargs: Any) -> Any:
         """Invoke `Coordinator/<method>` and return its result."""
+        if self._hosted_names:
+            if method not in {"ping", "list_modules", "list_streams"}:
+                raise NotImplementedError(
+                    f"Hosted run discovery does not support coordinator operation {method!r}"
+                )
+            results = [
+                CoordinatorRPC(self._rpc, name).call(
+                    method, *args, rpc_timeout=rpc_timeout, **kwargs
+                )
+                for name in self._hosted_names
+            ]
+            return "pong" if method == "ping" else [item for result in results for item in result]
         result, _unsub = self._rpc.call_sync(
             f"{self._name}/{method}",
             ([*args], kwargs),

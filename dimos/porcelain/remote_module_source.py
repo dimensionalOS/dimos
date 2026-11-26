@@ -44,7 +44,7 @@ class RemoteModuleSource(ModuleSource):
 
     is_remote = True
 
-    def __init__(self, *, timeout: float = 5.0) -> None:
+    def __init__(self, *, timeout: float = 5.0, run_id: str | None = None) -> None:
         self._timeout = timeout
         self._cache: dict[str, RPCClient | RemoteModuleProxy] = {}
         self._descriptors: dict[str, ModuleDescriptor] | None = None
@@ -53,7 +53,7 @@ class RemoteModuleSource(ModuleSource):
         self._closed = False
 
         try:
-            self._coord = CoordinatorRPC.connect(timeout=timeout)
+            self._coord = CoordinatorRPC.connect(timeout=timeout, run_id=run_id)
         except TimeoutError:
             raise RuntimeError(
                 "No running DimOS coordinator found on the configured transport bus. "

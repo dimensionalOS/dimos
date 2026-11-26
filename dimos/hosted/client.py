@@ -24,10 +24,12 @@ from dimos.hosted.fragment import HostFragment
 from dimos.hosted.protocol import (
     HOST_CONTROL_RPC_NAME,
     HOST_LIVELINESS_KEY,
+    RUN_LIVELINESS_KEY,
     DeploymentStatus,
     HostDescriptor,
+    run_coordinator_rpc_name,
 )
-from dimos.protocol.rpc.spec import Args
+from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -79,6 +81,32 @@ def describe_all(
         with suppress(Exception):
             descriptors.append(client.describe())
     return tuple(descriptors)
+
+
+def run_coordinator_names(rpc: RPCSpec, run_id: str, *, timeout: float) -> tuple[str, ...]:
+    """Find the exact coordinators of a hosted run, without selecting another run.
+
+    Ordinary runs have no hosted liveliness token and retain legacy discovery.
+    A hosted run with unavailable Hosts fails instead of falling back to a demo's
+    shared Coordinator service.
+    """
+    if not isinstance(rpc, ZenohRPC):
+        return ()
+    discovery_timeout = min(timeout / 3, 1.0)
+    replies = rpc.session.liveliness().get(
+        RUN_LIVELINESS_KEY.format(run_id=run_id), timeout=discovery_timeout
+    )
+    if not any(reply.ok is not None for reply in replies):
+        return ()
+    hosts = describe_all(rpc, discovery_timeout, rpc_timeout=discovery_timeout)
+    names = tuple(
+        run_coordinator_rpc_name(run_id, host.host_id)
+        for host in hosts
+        if run_id in host.active_run_ids
+    )
+    if not names:
+        raise TimeoutError(f"Hosted run {run_id} is live but its Hosts are unavailable")
+    return names
 
 
 class HostClient:

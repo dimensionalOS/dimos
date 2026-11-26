@@ -258,7 +258,7 @@ def terminal_run(home: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[subpro
     sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
     process = subprocess.Popen(sleeper, env=environment, start_new_session=True)
     threading.Thread(target=process.wait, daemon=True).start()
-    monkeypatch.setattr(Dimos, "connect", staticmethod(lambda: global_config.transport))
+    monkeypatch.setattr(Dimos, "connect", staticmethod(lambda **kwargs: global_config.transport))
     monkeypatch.setattr(global_config, "transport", global_config.transport)
     yield process
     process.kill()
@@ -295,3 +295,17 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
     registered(terminal_run.pid, original_argv=["dimos", "--transport=lcm", "run", "demo"])
     assert live.connect_dimos() == "lcm"
+
+
+def test_connect_selects_hosted_run_and_resets_endpoint(terminal_run, monkeypatch):
+    for name in ("robot_ip", "robot_ips", "zenoh_connect", "zenoh_mode", "zenoh_domain"):
+        monkeypatch.setattr(global_config, name, getattr(global_config, name))
+    seen = []
+    monkeypatch.setattr(Dimos, "connect", staticmethod(lambda **kwargs: seen.append(kwargs)))
+    registered(terminal_run.pid, config_overrides={"zenoh_connect": "tcp/robot:7447"})
+    live.connect_dimos()
+    assert global_config.zenoh_connect == "tcp/robot:7447"
+    assert seen[-1]["run_id"] == live.live_run_id()
+    registered(terminal_run.pid)
+    live.connect_dimos()
+    assert global_config.zenoh_connect == GlobalConfig().zenoh_connect
