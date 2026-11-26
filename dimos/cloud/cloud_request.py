@@ -16,13 +16,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import json
 from pathlib import Path
 import shutil
 from typing import Any, Protocol, cast
 import urllib.error
 import urllib.request
+
+# 1 mb blocks for splitting chunks
+PUT_BLOCK = 1 << 20
 
 
 class CloudRequest(Protocol):
@@ -60,10 +63,19 @@ class HttpCloudRequest:
             raise RuntimeError(f"{method} {path}: {e}") from e
 
     def put(self, url: str, body: bytes | memoryview) -> None:
+        view = memoryview(body)
+        # split the body in to a tuple of blocks so each gets its own timeout
+        blocks = (view[i : i + PUT_BLOCK] for i in range(0, len(view), PUT_BLOCK))
         with urllib.request.urlopen(
             # urllib's default form content-type makes some S3-compatible servers parse the body
             urllib.request.Request(
-                url, data=body, method="PUT", headers={"Content-Type": "application/octet-stream"}
+                url,
+                data=cast("Iterable[bytes]", blocks),
+                method="PUT",
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(len(view)),
+                },
             ),
             timeout=self.timeout,
         ):

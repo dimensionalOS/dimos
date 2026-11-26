@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import contextlib
 import errno
 import hashlib
 import json
@@ -25,11 +26,13 @@ import tempfile
 import threading
 import time
 from typing import Any, Literal
+import urllib.request
 
 import pytest
 import typer
 
 from dimos.cloud import cli, data as cd
+from dimos.cloud.cloud_request import PUT_BLOCK, HttpCloudRequest
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -620,9 +623,6 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     from email.message import Message
     import io
     import urllib.error
-    import urllib.request
-
-    from dimos.cloud.cloud_request import HttpCloudRequest
 
     t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=1)
 
@@ -638,6 +638,27 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", raise_http(401))
     with pytest.raises(RuntimeError, match="dimos login"):
         t.request("POST", "/v1/data/uploads", {})
+
+
+def test_put_sends_the_body_in_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The timeout bounds each socket send. A part sent whole is cut off after that
+    long even while data is moving, so the body must reach the socket in blocks."""
+    requests: list[urllib.request.Request] = []
+
+    def opener(req: urllib.request.Request, timeout: float) -> Any:
+        requests.append(req)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(urllib.request, "urlopen", opener)
+    body = os.urandom(2 * PUT_BLOCK + 123)
+    HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=1).put(
+        "https://s3.test/part", memoryview(body)
+    )
+    (req,) = requests
+    blocks = [bytes(block) for block in req.data]  # type: ignore[union-attr]
+    assert [len(block) for block in blocks] == [PUT_BLOCK, PUT_BLOCK, 123]
+    assert b"".join(blocks) == body
+    assert req.get_header("Content-length") == str(len(body))
 
 
 @pytest.mark.parametrize(
