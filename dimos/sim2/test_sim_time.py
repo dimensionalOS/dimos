@@ -52,7 +52,9 @@ RATES = {
     "livox_imu": 50.0,
     "l1_lidar": 1 / L1_PERIOD,
 }
-MOUNTS = {"eye": "head", "imu": "base", "livox": "head", "l1": "base"}
+_BASE = "toy/Geometry/base"
+# Each sensor's mount on the toy dog, and the frame it hangs off.
+MOUNTS = {"eye": f"{_BASE}/head", "imu": _BASE, "livox": f"{_BASE}/head", "l1": _BASE}
 
 
 class _RoomConfig(SimSceneConfig):
@@ -63,7 +65,7 @@ class _RoomConfig(SimSceneConfig):
 
 class _Room(SimScene):
     config: _RoomConfig
-    mounts = Mounts("dog")
+    mounts = Mounts("logistics/dog")
 
 
 class _DogConfig(HardwareModuleConfig):
@@ -76,7 +78,7 @@ class _Dog(HardwareModule):
     """A toy robot nothing drives, so the world is not held for it."""
 
     config: _DogConfig
-    mounts = Mounts(*MOUNTS)
+    mounts = Mounts(*(f"{body}/{frame}" for frame, body in MOUNTS.items()))
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
@@ -118,21 +120,25 @@ SENSOR_STREAMS = {"color_image", "imu", "lidar", "livox_imu", "l1_lidar"}
 
 
 def _run(seconds: float, speed: float) -> dict[str, Any]:
+    dog = autoconnect(
+        _Dog.blueprint(attached_to=_Room.mounts.dog.frame),
+        # A mount namespaces its sensor's streams; these take them back out to _Readings.
+        SimCamera.attach(
+            _Dog.mounts.eye, width=64, height=48, rate_hz=RATES["color_image"]
+        ).remappings([(SimCamera, "color_image", "color_image")]),
+        SimImu.attach(_Dog.mounts.imu, rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
+        LivoxSim.attach(
+            _Dog.mounts.livox, rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
+        ).remappings([(LivoxSim, "imu", "livox_imu"), (LivoxSim, "lidar", "lidar")]),
+        SimL1.attach(_Dog.mounts.l1, period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
+    )
+    # The dog and its sensors under the room's mount, as attach() namespaces one module.
+    for segment in reversed(_Room.mounts.dog.frame.split("/")):
+        dog = dog.namespace(segment, shared=SENSOR_STREAMS)
     blueprint = autoconnect(
         sim({"mujoco": MujocoSim.blueprint(speed=speed)}, default="mujoco"),
         _Room.blueprint(),
-        autoconnect(
-            _Dog.blueprint(attached_to="dog"),
-            # A mount namespaces its sensor's streams; these take them back out to _Readings.
-            SimCamera.attach("eye", width=64, height=48, rate_hz=RATES["color_image"]).remappings(
-                [(SimCamera, "color_image", "color_image")]
-            ),
-            SimImu.attach("imu", rate_hz=RATES["imu"]).remappings([(SimImu, "imu", "imu")]),
-            LivoxSim.attach(
-                "livox", rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
-            ).remappings([(LivoxSim, "imu", "livox_imu"), (LivoxSim, "lidar", "lidar")]),
-            SimL1.attach("l1", period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
-        ).namespace("dog", shared=SENSOR_STREAMS),
+        dog,
         _Readings.blueprint(),
     ).solidify()
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
@@ -144,7 +150,8 @@ def _run(seconds: float, speed: float) -> dict[str, Any]:
         time.sleep(seconds)
         while time.monotonic() < deadline and not _steady(readings.readings()["stamps"]):
             time.sleep(1.0)
-        return readings.readings()
+        result: dict[str, Any] = readings.readings()
+        return result
     finally:
         coordinator.stop()
 

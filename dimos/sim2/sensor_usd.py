@@ -30,15 +30,15 @@ def frame_usd(frame_id: str, *, name: str) -> UsdModel:
 
 def camera_usd(frame_id: str, *, name: str, fovy: float, aspect: float) -> UsdModel:
     """A USD that is one frame with a camera looking down its +x, ``aspect`` (width / height) wide."""
-    from dimos.robot.assets.usd_utils.frames import link_prim_paths
     from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr, prim_identifier, usd_matrix
 
     pxr = load_pxr()
-    layer = layer_from(pxr, frame_usd(frame_id, name=name).usd, name, None)
+    frame = frame_usd(frame_id, name=name)
+    layer = layer_from(pxr, frame.usd, name, None)
     stage = pxr.Usd.Stage.Open(layer)
-    mount = link_prim_paths(stage)[frame_id]
     camera = pxr.UsdGeom.Camera.Define(
-        stage, pxr.Sdf.Path(mount).AppendChild(prim_identifier(pxr, f"{frame_id}_optics"))
+        stage,
+        pxr.Sdf.Path(f"/{frame.root_link}").AppendChild(prim_identifier(pxr, f"{frame_id}_optics")),
     )
     camera.CreateVerticalApertureAttr(_APERTURE_MM)
     camera.CreateHorizontalApertureAttr(_APERTURE_MM * aspect)
