@@ -22,10 +22,10 @@ pytest.importorskip("pxr")
 
 def test_the_layer_drives_every_joint_the_controller_commands() -> None:
     from dimos.control.components import make_humanoid_joints
-    from dimos.robot.unitree.g1.sim2 import G1_USD, _usd_joint
+    from dimos.robot.unitree.g1.sim2 import G1_USD, usd_joint
     from dimos.sim2.mujoco.drives import usd_drives
 
-    assert set(usd_drives(G1_USD.usd)) == {_usd_joint(name) for name in make_humanoid_joints("g1")}
+    assert set(usd_drives(G1_USD.usd)) == {usd_joint(name) for name in make_humanoid_joints("g1")}
 
 
 @pytest.mark.self_hosted  # usd_layer fetches the G1's Git LFS meshes

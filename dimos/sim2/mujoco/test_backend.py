@@ -41,7 +41,7 @@ from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import compose_usds, sim
 from dimos.sim2.spec import ODOM_FRAME, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import Entity, WorldMirror, WorldWriter
+from dimos.sim2.world_observations import ACT, Entity, WorldMirror, WorldWriter
 
 # linux-aarch64 has no usd-core wheel, and every scene here is a USD layer.
 pytest.importorskip("pxr")
@@ -337,6 +337,31 @@ def test_a_held_robot_stands_still_on_a_running_clock_until_it_is_commanded(
     standing, still, fallen = asyncio.run(hold_then_drive())
     assert still == pytest.approx(standing)
     assert fallen < 0.3
+
+
+def test_a_lockstep_world_holds_at_each_control_tick_until_its_robot_acts(
+    world: UsdModel, robot_model: UsdModel
+) -> None:
+    period = 0.02
+    backend = MujocoBackend(world, [SimulatedRobot("dog", robot_model, control_period=period)])
+    published = _Collect()
+    command = JointCommand("dog", ("neck",), effort=(0.0,))
+    acted_at: list[float] = []
+
+    async def act_on_two_ticks() -> None:
+        async with _looping(backend, published) as sim_module:
+            for _ in range(2):
+                await asyncio.sleep(0.1)
+                assert published.world.got("dog", ACT)
+                acted_at.append(backend.data.time)
+                sim_module._on_actions(world_action(published.world, command))
+            await asyncio.sleep(0.1)
+
+    asyncio.run(act_on_two_ticks())
+    # Each wait lasted 0.1 s of wall time, and the world spent none of it.
+    assert acted_at == pytest.approx([0.0, period])
+    assert backend.data.time == pytest.approx(2 * period)
+    assert backend.waiting == {"dog"}
 
 
 def test_frames_report_robots_and_objects_and_actions_drive_them(
