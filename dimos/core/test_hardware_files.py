@@ -26,6 +26,7 @@ pytest.importorskip("pxr")
 
 _HULL = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
 _FOREARM = b"v 0 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n"
+_SKIN = b"png"
 
 
 def _robot(root: Path) -> Path:
@@ -35,7 +36,7 @@ def _robot(root: Path) -> Path:
     (root / "textures").mkdir()
     (root / "meshes" / "hull.obj").write_bytes(_HULL)
     (root / "meshes" / "forearm.obj").write_bytes(_FOREARM)
-    (root / "textures" / "skin.png").write_bytes(b"png")
+    (root / "textures" / "skin.png").write_bytes(_SKIN)
     (root / "parts" / "arm.usda").write_text(
         f"""#usda 1.0
 (
@@ -51,7 +52,15 @@ def Xform "arm"
         }}
     )
     {{
-        asset skin = @../textures/skin.png@
+        def Shader "skin" (
+            assetInfo = {{
+                asset identifier = @../textures/skin.png@
+                string version = "{asset_hash(_SKIN)}"
+            }}
+        )
+        {{
+            asset inputs:file = @../textures/skin.png@
+        }}
     }}
 }}
 """
@@ -85,13 +94,6 @@ def Xform "robot"
     return robot
 
 
-@pytest.fixture(autouse=True)
-def _provided_layers_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import dimos.core.hardware_files as hardware_files
-
-    monkeypatch.setattr(hardware_files, "PROVIDED_LAYERS", tmp_path / "provided")
-
-
 def _files(tmp_path: Path) -> HardwareFiles:
     from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 
@@ -106,16 +108,6 @@ def _provided(files: HardwareFiles) -> dict[str, bytes]:
         assert reply is not None and reply.content is not None, uri
         provided[uri] = reply.content
     return provided
-
-
-def test_rewritten_layers_are_provided_from_disk_not_held_in_memory(tmp_path: Path) -> None:
-    files = _files(tmp_path)
-    kept = {path.name: path.read_bytes() for path in (tmp_path / "provided").rglob("*.usda")}
-
-    assert "hardware.usda" in kept
-    for uri, content in _provided(files).items():
-        if uri.endswith(".usda"):
-            assert content in kept.values(), uri
 
 
 def test_only_meshes_written_inside_the_layer_count_as_inline() -> None:
@@ -192,11 +184,9 @@ def test_no_provided_file_or_uri_holds_a_host_path_nested_layers_included(tmp_pa
     )
 
 
-def test_a_file_is_hashed_again_only_once_it_changes(
+def test_only_the_rewritten_layers_are_hashed_never_a_file_with_a_declared_sha256(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mesh = tmp_path / "mesh.obj"
-    mesh.write_bytes(_HULL)
     hashed: list[bytes] = []
 
     def counted(data: bytes) -> str:
@@ -204,11 +194,27 @@ def test_a_file_is_hashed_again_only_once_it_changes(
         return asset_hash(data)
 
     monkeypatch.setattr(hardware_files, "asset_hash", counted)
+    files = _files(tmp_path)
+    provided = _provided(files)
 
-    first = hardware_files.file_hash(mesh)
-    assert hardware_files.file_hash(mesh) == first
-    assert hashed == [_HULL]
+    assert sorted(hashed) == sorted(
+        content for uri, content in provided.items() if uri.endswith(".usda")
+    )
+    for uri in ("meshes/hull.obj", "meshes/forearm.obj", "textures/skin.png"):
+        (reached,) = [name for name in provided if name.endswith(uri.rpartition("/")[2])]
+        assert files.reply(FileInfo(reached)).sha256 == asset_hash(provided[reached])
 
-    mesh.write_bytes(_FOREARM + b"# longer")
-    assert hardware_files.file_hash(mesh)[0] == asset_hash(_FOREARM + b"# longer")
-    assert len(hashed) == 2
+
+def test_a_file_with_no_declared_sha256_is_refused_when_the_hardware_starts(tmp_path: Path) -> None:
+    (tmp_path / "hull.obj").write_bytes(_HULL)
+    usd = f"""#usda 1.0
+def Xform "robot"
+{{
+    def Mesh "hull"
+    {{
+        asset mesh = @{tmp_path / "hull.obj"}@
+    }}
+}}
+"""
+    with pytest.raises(ValueError, match=r"no sha256 declared[\s\S]*hull\.obj"):
+        HardwareFiles(usd)
