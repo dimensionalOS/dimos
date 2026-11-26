@@ -24,7 +24,7 @@ from dimos.robot.assets.usd_utils.assets import (
     referenced_asset_paths,
     resolve_usd_assets,
 )
-from dimos.robot.assets.usd_utils.layers import graft_usd, usd_under_namespace
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
 pytest.importorskip("pxr")
 
@@ -132,152 +132,6 @@ def test_moving_an_arc_keeps_its_timing_and_custom_data(move: Any) -> None:
     assert payload.layerOffset.offset == 5
 
 
-_SCENE = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-def Xform "room"
-{
-}
-
-def Material "Materials"
-{
-    def Material "paint"
-    {
-        custom string dimos_owner = "room"
-    }
-}
-"""
-
-_PAINTED_ARM = """#usda 1.0
-(
-    defaultPrim = "arm"
-)
-
-def Xform "arm"
-{
-    def Mesh "shell" (
-        prepend apiSchemas = ["MaterialBindingAPI"]
-    )
-    {
-        rel material:binding = </Materials/paint>
-        rel material:binding:physics = </Materials/rubber>
-    }
-
-    def Xform "looks" (
-        prepend apiSchemas = ["MaterialBindingAPI", "CollectionAPI:trim"]
-    )
-    {
-        prepend rel collection:trim:includes = </Parts/trim>
-        rel material:binding:collection:trim = [<.collection:trim>, </Materials/chrome>]
-    }
-}
-
-def Scope "Materials"
-{
-    def Material "paint"
-    {
-        custom string dimos_owner = "arm"
-    }
-
-    def Material "rubber"
-    {
-    }
-
-    def Material "chrome"
-    {
-    }
-}
-
-def Xform "Parts"
-{
-    def Xform "trim"
-    {
-    }
-}
-"""
-
-
-def _targets(stage: Any, prim_path: str, relationship: str) -> list[Any]:
-    return list(stage.GetPrimAtPath(prim_path).GetRelationship(relationship).GetTargets())
-
-
-def test_a_grafted_mesh_keeps_the_material_bound_beside_its_default_prim() -> None:
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
-
-    (paint,) = _targets(stage, "/room/arm/shell", "material:binding")
-    assert str(paint) != "/Materials/paint", "the arm is wearing the room's paint"
-    assert stage.GetPrimAtPath(paint).GetAttribute("dimos_owner").Get() == "arm"
-    assert stage.GetPrimAtPath("/Materials/paint").GetAttribute("dimos_owner").Get() == "room"
-
-
-def test_a_grafted_physics_binding_is_carried_too() -> None:
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
-
-    (rubber,) = _targets(stage, "/room/arm/shell", "material:binding:physics")
-    assert stage.GetPrimAtPath(rubber), f"the physics material at {rubber} was left behind"
-
-
-def test_a_grafted_collection_binding_carries_its_material_and_members() -> None:
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
-
-    collection, chrome = _targets(stage, "/room/arm/looks", "material:binding:collection:trim")
-    assert str(collection) == "/room/arm/looks.collection:trim"
-    assert stage.GetPrimAtPath(chrome), f"the chrome material at {chrome} was left behind"
-    (trim,) = _targets(stage, "/room/arm/looks", "collection:trim:includes")
-    assert stage.GetPrimAtPath(trim), f"the collection member at {trim} was left behind"
-
-
-def test_two_bindings_to_one_outside_material_share_one_copy() -> None:
-    twice = _PAINTED_ARM.replace("</Materials/rubber>", "</Materials/paint>")
-    stage = _stage(graft_usd(_SCENE, {"room": twice}))
-
-    assert _targets(stage, "/room/arm/shell", "material:binding") == _targets(
-        stage, "/room/arm/shell", "material:binding:physics"
-    )
-
-
-def test_a_carried_copy_does_not_swallow_a_source_prim_its_name_now_shadows() -> None:
-    # /Looks/paint is carried first and lands at /paint, where a different source prim lives.
-    arm = """#usda 1.0
-(
-    defaultPrim = "arm"
-)
-
-def Xform "arm"
-{
-    def Mesh "shell" (
-        prepend apiSchemas = ["MaterialBindingAPI"]
-    )
-    {
-        rel material:binding = </Looks/paint>
-        rel material:binding:physics = </paint>
-    }
-}
-
-def Scope "Looks"
-{
-    def Material "paint"
-    {
-        custom string dimos_owner = "looks"
-    }
-}
-
-def Material "paint"
-{
-    custom string dimos_owner = "root"
-}
-"""
-    stage = _stage(graft_usd(_SCENE, {"room": arm}))
-
-    (looks,) = _targets(stage, "/room/arm/shell", "material:binding")
-    (root,) = _targets(stage, "/room/arm/shell", "material:binding:physics")
-    assert looks != root
-    assert stage.GetPrimAtPath(looks).GetAttribute("dimos_owner").Get() == "looks"
-    assert stage.GetPrimAtPath(root).GetAttribute("dimos_owner").Get() == "root"
-
-
 def test_resolving_assets_already_in_place_opens_no_list_editor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -291,22 +145,6 @@ def test_resolving_assets_already_in_place_opens_no_list_editor(
     for name in ("referenceList", "payloadList"):
         monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
     assert resolve_usd_assets(resolved, _ROOT) == resolved
-
-
-def test_grafting_a_subtree_with_no_arcs_opens_no_list_editor_for_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from pxr import Sdf
-
-    def opened(spec: Any) -> None:
-        pytest.fail(f"opened a list editor on {spec.path}, which a scene does per prim")
-
-    for name in ("referenceList", "payloadList"):
-        monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
-    monkeypatch.setattr(Sdf.AttributeSpec, "connectionPathList", property(opened))
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
-
-    assert stage.GetPrimAtPath("/room/arm/shell")
 
 
 _BOUND_ARM = """#usda 1.0

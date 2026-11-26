@@ -79,14 +79,13 @@ def usd_with_frames(
                 f"parent ({parent!r}), so its name has no '/'"
             )
         check_frame_path(name, "the added frame")
-        by_link = link_prim_paths(stage)
-        parent_path = by_link.get(parent)
-        if parent_path is None:
+        frames_here = {frame_path(prim) for prim in frame_prims(stage)}
+        if parent not in frames_here:
             raise ValueError(
                 f"cannot add the frame {name!r}: the layer has no frame {parent!r} to hang it "
-                f"off (it has {sorted(by_link)[:8]}...)"
+                f"off (it has {sorted(frames_here)[:8]}...)"
             )
-        path = pxr.Sdf.Path(parent_path).AppendChild(name)
+        path = pxr.Sdf.Path(f"/{parent}").AppendChild(name)
         if stage.GetPrimAtPath(path):
             raise ValueError(f"cannot add the frame {name!r}: {path} is taken")
         prim = pxr.UsdGeom.Xform.Define(stage, path)
@@ -95,7 +94,7 @@ def usd_with_frames(
         transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
         transform[:3, 3] = xyz
         prim.AddTransformOp().Set(usd_matrix(pxr, transform))
-        _weld_frame(pxr, stage, parent_path, str(path), name, xyz, rpy)
+        _weld_frame(pxr, stage, f"/{parent}", str(path), name, xyz, rpy)
     return str(layer.ExportToString())
 
 
@@ -167,12 +166,9 @@ def usd_frame_pose(usd: str, frame: str, root: Path | str | None = None) -> NDAr
     """Where ``frame`` sits in the frame this USD is mounted on (its default prim's parent), as a 4x4."""
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
-    prim = stage.GetPrimAtPath(link_prim_paths(stage)[frame])
+    if frame not in {frame_path(prim) for prim in frame_prims(stage)}:
+        raise KeyError(frame)
+    prim = stage.GetPrimAtPath(f"/{frame}")
     pose = pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
     # Gf matrices are row-vector, so transposed.
     return np.array(pose, dtype=np.float64).T
-
-
-def link_prim_paths(stage: Stage) -> dict[str, str]:
-    """Each frame's name (its path without the leading "/") -> its prim path."""
-    return {frame_path(prim): str(prim.GetPath()) for prim in frame_prims(stage)}
