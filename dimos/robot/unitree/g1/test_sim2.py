@@ -251,7 +251,7 @@ def test_the_pelvis_imu_is_where_the_usd_puts_its_site_on_the_pelvis() -> None:
 
 
 def test_a_g1_at_rest_reads_gravity_up_and_no_spin() -> None:
-    from dimos.sim2.mujoco.sensor_world import imu_reading
+    from dimos.robot.unitree.g1.sim2 import imu_reading
 
     gyro, accelerometer, orientation = imu_reading(
         np.array([1.0, 2.0, 0.8, 0.0, 0.0, 0.0, 1.0]), np.zeros(6), np.zeros(6), _imu_in_body()
@@ -263,7 +263,7 @@ def test_a_g1_at_rest_reads_gravity_up_and_no_spin() -> None:
 
 
 def test_a_spinning_g1_s_gyro_reads_the_spin_in_the_imu_s_axes() -> None:
-    from dimos.sim2.mujoco.sensor_world import imu_reading
+    from dimos.robot.unitree.g1.sim2 import imu_reading
 
     spin = np.array([0.0, 0.0, 0.0, 0.3, 0.0, 0.0])
     # The IMU is yawed a quarter turn on the body, so the world's x spin is about its -y.
@@ -275,7 +275,7 @@ def test_a_spinning_g1_s_gyro_reads_the_spin_in_the_imu_s_axes() -> None:
 
 
 def test_a_spinning_g1_s_accelerometer_feels_the_pull_toward_the_axis() -> None:
-    from dimos.sim2.mujoco.sensor_world import imu_reading
+    from dimos.robot.unitree.g1.sim2 import imu_reading
 
     rate = 2.0
     spin = np.array([0.0, 0.0, 0.0, 0.0, 0.0, rate])
@@ -290,7 +290,7 @@ def test_a_spinning_g1_s_accelerometer_feels_the_pull_toward_the_axis() -> None:
 def test_a_tilted_g1_s_imu_is_turned_as_its_root_is_and_feels_gravity_tilted() -> None:
     from scipy.spatial.transform import Rotation
 
-    from dimos.sim2.mujoco.sensor_world import imu_reading
+    from dimos.robot.unitree.g1.sim2 import imu_reading
 
     tilt = Rotation.from_euler("xyz", (0.3, -0.2, 1.1))
     gyro, accelerometer, orientation = imu_reading(
