@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import replace
 import math
 import threading
+import time
 from typing import Any, TypeVar
 
 import numpy as np
@@ -619,3 +620,27 @@ def test_hardware_without_a_usd_is_refused() -> None:
 
     with pytest.raises(ValueError, match="usd"):
         Bare(instance_name="bare")
+
+
+def test_hardware_stamps_with_wall_time_by_default() -> None:
+    arm = Arm()
+    try:
+        before = time.time()
+        stamp = arm.time()
+        after = time.time()
+    finally:
+        arm.stop()
+
+    assert before <= stamp <= after
+
+
+def test_hardware_sleeps_in_wall_time_by_default() -> None:
+    arm = Arm()
+    try:
+        started = time.monotonic()
+        asyncio.run(arm.sleep(0.05))
+        slept = time.monotonic() - started
+    finally:
+        arm.stop()
+
+    assert slept >= 0.05
