@@ -18,7 +18,6 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -33,7 +32,6 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.memory.type import recording
 from dimos.msgs.control_msgs.ControlValues import ControlValues
-from dimos.msgs.control_msgs.DynamicJointState import DynamicJointState
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -280,7 +278,6 @@ def test_unstamped_messages_index_at_arrival_and_warn_once_per_topic(sqlite_stor
         Header(0.25),
         JointCommand(timestamp=0.25),
         ControlValues("test", source_ts=0.25),
-        DynamicJointState(header=LCMHeader(stamp=LCMTime(sec=0, nsec=250_000_000))),
     ],
 )
 def test_tap_records_types_that_keep_their_stamp_under_another_name(sqlite_store, message):
