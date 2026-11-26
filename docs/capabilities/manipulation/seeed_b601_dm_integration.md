@@ -63,9 +63,9 @@ the planner.
   stops. The motors return to their stored mode on power-up.
 - **Gripper open limit**: fully open (1.0) drives the jaw to 0.99 of its
   calibrated stroke (`open_limit` on its `DamiaoGripper`), and activation leaves
-  it there rather than on the open stop. Held on the stop at its holding
-  current the gripper motor stalls and heats: 65 C in the winding after about
-  30 minutes, measured on a B601.
+  it there rather than on the open stop. Held on the stop the gripper motor
+  stalls and heats: its winding reached 65 C on a B601. The closed end is
+  unchanged.
 - **Control** sends MIT position targets with Seeed's SDK gains and gravity
   compensation from the vendor URDF.
 - **Feedback** is published as measured, even past a URDF limit; the

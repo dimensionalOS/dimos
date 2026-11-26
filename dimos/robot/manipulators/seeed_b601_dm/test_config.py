@@ -250,11 +250,12 @@ def test_mock_coordinator_executes_trajectory_and_gripper_command(tmp_path, mock
 
 
 def test_the_b601_gripper_stops_short_of_its_open_stop_and_other_damiao_arms_do_not():
+    from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
+    from dimos.robot.manipulators.makermods_metal.config import METAL
     from dimos.robot.manipulators.openarm.config import OPENARM
     from dimos.robot.manipulators.openyam.config import OPENYAM
-    from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM, GRIPPER_OPEN_LIMIT
+    from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
 
-    assert GRIPPER_OPEN_LIMIT == 0.99
-    assert [g.open_limit for g in B601_DM.grippers] == [0.99]
-    for robot in (OPENARM, OPENYAM):
-        assert all(g.open_limit == 1.0 for g in robot.grippers)
+    assert all(0.0 < g.open_limit < 1.0 for g in B601_DM.grippers)
+    for robot in (OPENARM, OPENYAM, DUAL_OPENYAM, METAL):
+        assert robot.grippers and all(g.open_limit == 1.0 for g in robot.grippers)

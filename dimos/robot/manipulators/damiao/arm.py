@@ -167,8 +167,9 @@ class DamiaoArm:
     """One Damiao robot on its buses: enable, command, read and disable it.
 
     Each jaw is read and commanded as its URDF finger joint, in that joint's
-    unit (m or rad). The SDK's opening, 0 closed to 1 open, maps linearly
-    onto the joint's URDF range, with the gripper's ``open_at`` end as open.
+    unit (m or rad). The joint's URDF range maps linearly onto the SDK's
+    opening, from 0 (closed) to the gripper's ``open_limit`` at the joint's
+    ``open_at`` end; an opening beyond the limit reads as that end.
 
     Args:
         robot: The motors, gains, gripper settings and models to use.
@@ -204,8 +205,6 @@ class DamiaoArm:
         self._physical: PhysicalModel | None = None
         # Each gripper joint's (closed, open) positions.
         self._travel: dict[str, tuple[float, float]] = {}
-        # Each gripper's fraction of its calibrated stroke that fully open maps to.
-        self._open_limits = {gripper.name: gripper.open_limit for gripper in robot.grippers}
         self._targets: dict[str, float] = {}
         self._active = False
         # How each arm joint is held, from the bottom layer up: the bus
@@ -644,7 +643,8 @@ class DamiaoArm:
             opening = (target - closed) / (opened - closed)
             if not 0 <= opening <= 1:
                 raise ValueError(f"{gripper.joint} target {target} is outside its URDF range")
-            openings[gripper.name] = opening
+            # The joint's open end is the jaw's open limit, not its stop.
+            openings[gripper.name] = opening * gripper.open_limit
         assert self._physical is not None
         gravity = self._physical.gravity(measured)
         torque_limits, _ = self._torque_tables()
@@ -678,8 +678,7 @@ class DamiaoArm:
             if name in self._passive:
                 group.mit_control(0.0, 0.0, float(group.motor.position), 0.0, 0.0)
             else:
-                # The joint's open end is the jaw's open limit, not its stop.
-                group.set_opening(openings[name] * self._open_limits[name])
+                group.set_opening(openings[name])
         native.tick(1_000)
 
     def _sample(self) -> ArmReading:

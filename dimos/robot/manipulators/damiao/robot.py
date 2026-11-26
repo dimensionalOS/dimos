@@ -77,10 +77,12 @@ class DamiaoGripper:
         current: The current limit used while gripping, in amperes.
         calibration_travel: How far to drive past the stroke when calibrating,
             in radians; ``None`` leaves calibration to the native default.
-        open_limit: The fraction of the calibrated stroke that "fully open"
-            (the URDF joint's open end) drives the jaw to. Below 1.0 the jaw
-            stops short of its open stop: a jaw held against the stop stalls
-            the motor at the holding current and heats it. 0.0 stays closed.
+        open_limit: The fraction of the calibrated stroke that fully open (the
+            URDF joint's open end) drives the jaw to, in (0, 1]. At 1.0 fully
+            open is the calibrated open stop, where a current-limited hold
+            stalls the motor; below 1.0 the jaw stops short of it and is
+            brought in to it after calibration. Closed (0.0) stays on the
+            closed stop: closing is how the jaw grips.
     """
 
     name: str
@@ -93,7 +95,7 @@ class DamiaoGripper:
     open_limit: float = 1.0
 
     def __post_init__(self) -> None:
-        if not 0.0 < self.open_limit <= 1.0:
+        if not (0.0 < self.open_limit <= 1.0):
             raise ValueError(
                 f"gripper {self.name!r}: open_limit must be in (0, 1], got {self.open_limit}"
             )

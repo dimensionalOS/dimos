@@ -223,16 +223,29 @@ def test_a_jaw_at_its_open_limit_or_on_the_stop_reads_fully_open(boundary):
 
 
 def test_enabling_brings_a_limited_jaw_in_from_the_open_stop(boundary):
-    arm = _arm(boundary, robot=_limited(0.9))
+    _arm(boundary, robot=_limited(0.9))
     native = boundary[0]
     assert native.groups["left_gripper"].commands[0] == pytest.approx(0.9)
     # a jaw without a limit gets no extra command at enable
     assert not native.groups["right_gripper"].commands
-    del arm
+
+
+def test_a_passive_jaw_with_a_limit_is_left_alone_at_enable_and_still_read_scaled(boundary):
+    # teaching: the jaw follows the hand, so nothing opens it; its reading is still mapped through the limit
+    robot = replace(
+        _limited(0.9), teach_kd=[2.0, 2.0, 0.5], passive_grippers=frozenset({"left_gripper"})
+    )
+    arm = _arm(boundary, teach=True, robot=robot)
+    native = boundary[0]
+    assert not native.groups["left_gripper"].commands
+    native.groups["left_gripper"].opening = 0.45
+    assert arm.read().position[-2] == pytest.approx(0.02)
+    native.groups["left_gripper"].opening = 1.0
+    assert arm.read().position[-2] == pytest.approx(0.04)
 
 
 def test_an_open_limit_outside_its_range_is_refused():
     gripper = TEST_ROBOT.buses[0].gripper
-    for bad in (0.0, -0.1, 1.01):
+    for bad in (0.0, -0.1, 1.01, float("nan")):
         with pytest.raises(ValueError, match="open_limit"):
             replace(gripper, open_limit=bad)
