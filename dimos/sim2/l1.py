@@ -20,14 +20,13 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor
+from dimos.sim2.sensor import SimSensor, SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.sim import until_it_stops
 from dimos.sim2.spec import ODOM_FRAME
@@ -37,7 +36,7 @@ _KEY_BITS = 21
 _KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
-class SimL1Config(HardwareModuleConfig):
+class SimL1Config(SimSensorConfig):
     usd: UsdModel = frame_usd("l1_link", name="sim_l1")
     period: float = 0.13
     points_per_second: float = 21_600.0
@@ -86,7 +85,7 @@ class SimL1(SimSensor):
                     blind_to_robots=() if rider is None else (rider,),
                 )
                 odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
-                # Opening took this tick's sim time, so the next tick is the first read on time.
+                # Opening took this tick, so the next tick is the first read on time.
                 continue
             assert raycaster is not None
             view.update(self._world)
@@ -98,6 +97,8 @@ class SimL1(SimSensor):
             hits = _moved(from_world, origin + directions[hit] * distance[hit, None])
             cells = np.union1d(cells, self._keys(hits))
             cells = self._crop(cells, _moved(from_world, self._center(rider, origin)))
+            if not self.on_time("lidar", stamp, config.period, config.stamp_tolerance):
+                continue
             self.lidar.publish(
                 PointCloud2.from_numpy(
                     (self._indices(cells) + 0.5) * config.cell, odom_frame, stamp
