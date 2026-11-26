@@ -48,7 +48,7 @@ def _glb(path: Path, visual: Any = None) -> Path:
 
 
 def test_the_mesh_cache_is_made_for_this_user_alone(pxr: Any, meshes: Path, tmp_path: Path) -> None:
-    dimsim_scene._mesh_file(pxr, _glb(tmp_path / "box.glb"))
+    dimsim_scene._mesh_parts(pxr, _glb(tmp_path / "box.glb"))
     assert meshes.stat().st_mode & 0o777 == 0o700
 
 
@@ -58,7 +58,7 @@ def test_a_mesh_cache_others_can_write_to_is_refused(
     meshes.mkdir()
     meshes.chmod(0o777)
     with pytest.raises(PermissionError, match="writable by you alone"):
-        dimsim_scene._mesh_file(pxr, _glb(tmp_path / "box.glb"))
+        dimsim_scene._mesh_parts(pxr, _glb(tmp_path / "box.glb"))
 
 
 def test_the_mesh_cache_is_not_in_the_shared_temporary_directory() -> None:
@@ -70,15 +70,15 @@ def test_the_mesh_cache_is_not_in_the_shared_temporary_directory() -> None:
     assert not dimsim_scene._MESHES.is_relative_to(tempfile.gettempdir())
 
 
-def _compiled(pxr: Any, mesh_layer: Path, tmp_path: Path) -> Any:
-    """The mesh layer referenced from a scene elsewhere, as the sensors' MuJoCo compiles it."""
+def _compiled(pxr: Any, glb: Path, tmp_path: Path) -> Any:
+    """The GLB added to a scene elsewhere, as the sensors' MuJoCo compiles it."""
     import mujoco
 
     from dimos.sim2.mujoco.world import compile_world
 
     stage = pxr.Usd.Stage.CreateNew(str(tmp_path / "scene" / "scene.usda"))
     stage.SetDefaultPrim(pxr.UsdGeom.Xform.Define(stage, "/scene").GetPrim())
-    dimsim_scene._reference(pxr, stage, "/scene/box", mesh_layer)
+    dimsim_scene._add_geometry(pxr, stage, "/scene/box", glb)
     stage.Save()
     model = compile_world(tmp_path / "scene" / "scene.usda").compile()
     assert isinstance(model, mujoco.MjModel)
@@ -88,7 +88,7 @@ def _compiled(pxr: Any, mesh_layer: Path, tmp_path: Path) -> Any:
 def test_a_glb_keeps_its_base_color(pxr: Any, meshes: Path, tmp_path: Path) -> None:
     red = trimesh.visual.material.PBRMaterial(baseColorFactor=[255, 0, 0, 255])
     glb = _glb(tmp_path / "red.glb", trimesh.visual.TextureVisuals(material=red))
-    model = _compiled(pxr, dimsim_scene._mesh_file(pxr, glb), tmp_path)
+    model = _compiled(pxr, glb, tmp_path)
     (geom,) = np.flatnonzero(model.geom_matid >= 0)
     assert model.mat_rgba[model.geom_matid[geom]] == pytest.approx([1.0, 0.0, 0.0, 1.0])
 
@@ -103,7 +103,7 @@ def test_a_glb_keeps_its_texture(pxr: Any, meshes: Path, tmp_path: Path) -> None
         material=trimesh.visual.material.PBRMaterial(baseColorTexture=blue),
     )
     glb = _glb(tmp_path / "blue.glb", textured)
-    model = _compiled(pxr, dimsim_scene._mesh_file(pxr, glb), tmp_path)
+    model = _compiled(pxr, glb, tmp_path)
     assert model.ntex == 1
     pixels = model.tex_data[: model.tex_width[0] * model.tex_height[0] * 3].reshape(-1, 3)
     assert (pixels == [0, 0, 255]).all()
@@ -143,3 +143,33 @@ def test_the_scenes_git_lfs_pointers_are_fetched_in_one_pull_before_any_is_read(
 
     assert pulled == [[scene / "structure.glb", scene / "objects" / "door.glb"]]
     assert layer.count(str(meshes)) == 2
+
+
+def test_the_scenes_lights_and_dimsims_own_become_usd_lights(
+    pxr: Any, meshes: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene = tmp_path / "scenes" / "room"
+    scene.mkdir(parents=True)
+    (scene / "index.js").write_text(
+        "const lamp = new THREE.PointLight(new THREE.Color('#ffffff'), 2, 8);\n"
+        "lamp.position.set(1, 2.5, -1);\n"
+        "for (const z of [1, 2]) { const bulb = new THREE.PointLight(0xffffff, 3); bulb.position.set(0, 2, z); }\n"
+    )
+    monkeypatch.setattr(dimsim_scene, "DIMSIM_SCENES", tmp_path / "scenes")
+    stage = pxr.Usd.Stage.Open(pxr.Sdf.Layer.CreateAnonymous(".usda"))
+    stage.GetRootLayer().ImportFromString(dimsim_scene.dimsim_scene_usd("room"))
+    lights = {
+        prim.GetTypeName(): prim for prim in stage.Traverse() if "Light" in prim.GetTypeName()
+    }
+    kinds = sorted(prim.GetTypeName() for prim in stage.Traverse() if "Light" in prim.GetTypeName())
+
+    # the lamp; DimSim's directional light and its hemisphere's light from above; one dome for the rest
+    # (the bulbs, placed in a loop, are left out)
+    assert kinds == ["DistantLight", "DistantLight", "DomeLight", "SphereLight"]
+    lamp = lights["SphereLight"]
+    assert lamp.GetAttribute("inputs:intensity").Get() == pytest.approx(2)
+    assert lamp.GetAttribute("xformOp:translate").Get() == pxr.Gf.Vec3d(1, 2.5, -1)
+    settings = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "RenderSettings")
+    assert settings.GetAttribute("dimos:look:exposure").Get() == pytest.approx(
+        dimsim_scene.LOOK["exposure"]
+    )
