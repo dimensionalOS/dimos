@@ -86,30 +86,14 @@ class Replay(Configurable):
     def list_streams(self) -> list[str]:
         return self.store.list_streams()
 
-    def stream(
-        self,
-        name: str,
-        autocast: Callable[[Any], T] | None = None,
-        *,
-        source: Stream[Any] | None = None,
-    ) -> ReplayStream[T]:
-        """Replay a named stream, optionally from a filtered observation query."""
-        return ReplayStream(replay=self, name=name, autocast=autocast, source=source)
-
-    def set_relative_window(
-        self, origin: float, *, seek: float | None, duration: float | None
-    ) -> None:
-        """Set bounds before playback when only part of the recording participates in timing."""
-        self._first_ts = origin
-        self._loop_period = None
-        self.config.from_timestamp = None
-        self.config.seek = seek
-        self.config.duration = duration
+    def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
+        return ReplayStream(replay=self, name=name, autocast=autocast)
 
     def first_ts(self) -> float | None:
-        """Common origin for relative seek and duration.
+        """Earliest source timestamp across non-empty streams in the underlying store.
 
-        Defaults to the earliest source timestamp in the underlying store.
+        Found once and reused. A replay reads a finished recording, and every
+        stream measures seek and duration from the same start.
         """
         if self._first_ts is None:
             candidates: list[float] = []
@@ -174,19 +158,14 @@ class ReplayStream(Generic[T]):
         replay: Replay,
         name: str,
         autocast: Callable[[Any], T] | None = None,
-        source: Stream[Any] | None = None,
     ) -> None:
         self._replay = replay
         self._name = name
         self._autocast = autocast
-        self._source = source
 
     @property
     def name(self) -> str:
         return self._name
-
-    def _source_stream(self) -> Stream[Any]:
-        return self._replay.store.stream(self._name) if self._source is None else self._source
 
     def _decode(self, obs: Any) -> T:
         data = obs.data
@@ -197,7 +176,7 @@ class ReplayStream(Generic[T]):
     def _base_stream(self) -> Stream[Any]:
         """Memory Stream bounded by the replay window, ordered by ts."""
         cfg = self._replay.config
-        s = self._source_stream()
+        s: Stream[Any] = self._replay.store.stream(self._name)
 
         start: float | None = None
         if cfg.from_timestamp is not None:
@@ -267,7 +246,7 @@ class ReplayStream(Generic[T]):
             return None
 
     def find_closest(self, timestamp: float, tolerance: float = 1.0) -> T | None:
-        s = self._source_stream()
+        s: Stream[Any] = self._replay.store.stream(self._name)
         try:
             obs: Any = s.at(timestamp, tolerance).first()
         except LookupError:
@@ -317,8 +296,10 @@ class ReplayStream(Generic[T]):
                     try:
                         for obs in rows:
                             emitted = True
-                            # Decoded at emission, keeping subscribe cheap.
-                            yield (obs.ts + offset, obs)
+                            yield (
+                                obs.ts + offset,
+                                obs,
+                            )  # decoded at emission, keeping subscribe cheap
                     finally:
                         close = getattr(rows, "close", None)
                         if close is not None:

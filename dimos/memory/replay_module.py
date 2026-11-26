@@ -133,35 +133,21 @@ class ReplayModule(Module):
         replay: Replay = store.replay(
             speed=self.config.speed,
             loop=self.config.loop,
+            seek=self.config.seek,
+            duration=self.config.duration,
         )
-        streams: dict[str, ReplayStream[DimosMsg]] = {}
-        starts = []
-        outputs = self.outputs
-        has_window = self.config.seek is not None or self.config.duration is not None
-        # Relative offsets use the whole recording, even when only one topic is published.
-        types = (
-            stream_payload_types(store) if has_window else {n: p.type for n, p in outputs.items()}
-        )
-        for name in types:
-            stream: ReplayStream[DimosMsg] = replay.stream(name)
-            first_ts = stream.first_ts()
-            if first_ts is not None:
-                starts.append(first_ts)
-                if name in outputs:
-                    streams[name] = stream
-
-        if starts and has_window:
-            replay.set_relative_window(
-                min(starts), seek=self.config.seek, duration=self.config.duration
-            )
-            # Pin the wall clock to the first frame inside the requested window.
-            starts = [ts for stream in streams.values() if (ts := stream.first_ts()) is not None]
+        # Open every stream before pinning the anchor, so setup time does not
+        # put the playback behind the wall clock from the start.
+        streams: dict[str, ReplayStream[DimosMsg]] = {
+            name: replay.stream(name) for name in self.outputs
+        }
+        starts = [ts for stream in streams.values() if (ts := stream.first_ts()) is not None]
 
         progress = ReplayProgress(str(path))
         progress.start(replay, streams.values())
         replay.pin_anchor(min(starts) if starts else None)
         for name, stream in streams.items():
-            port = outputs[name]
+            port = self.outputs[name]
             logger.info("Replaying %s -> %s", name, port)
             # Not a late subscriber, just behind by the setup of the streams
             # subscribed before it, which on a loaded machine exceeds the
