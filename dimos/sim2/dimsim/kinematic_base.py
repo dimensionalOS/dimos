@@ -17,6 +17,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 from functools import cached_property
+import time
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -34,18 +35,18 @@ from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.dimsim.backend import BASE_JOINTS, MOUNTED_AT
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import OnWorldTime, WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 
 
 class SimKinematicBaseConfig(HardwareModuleConfig):
-    # Sim seconds a cmd_vel holds before the base stops, as a real base's command watchdog does.
+    # Seconds a cmd_vel holds before the base stops, as a real base's command watchdog does.
     cmd_vel_timeout: float = 0.5
     odom_rate_hz: float = 50.0
     # The frame its odometry is in, which its mount holds; an OdomTf beside it publishes odom -> body.
     odom_frame: str = "odom"
 
 
-class SimKinematicBase(OnWorldTime, HardwareModule):
+class SimKinematicBase(HardwareModule):
     """Mount it on a frame of the scene, which is where it starts; its robot id is its namespace.
 
     Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
@@ -88,7 +89,7 @@ class SimKinematicBase(OnWorldTime, HardwareModule):
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         self._drive((twist.linear.x, twist.linear.y, twist.angular.z))
-        self._expires = self._world.stamp() + self.config.cmd_vel_timeout
+        self._expires = time.time() + self.config.cmd_vel_timeout
 
     def _drive(self, velocity: tuple[float, float, float]) -> None:
         command = JointCommand(self.namespace, BASE_JOINTS, velocity=velocity)

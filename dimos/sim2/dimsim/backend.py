@@ -121,11 +121,6 @@ class DimSimBackend:
         self._scene_layer = usd_layer(usd)
         self._stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
         self._robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
-        lockstep = [robot.robot_id for robot in self._robots if robot.control_period is not None]
-        if lockstep:
-            raise ValueError(
-                f"{lockstep}: a dimsim robot is a kinematic base, with no control tick for the world to hold for"
-            )
         robot_ids = [robot.robot_id for robot in self._robots]
         bodies, meshes = stage_bodies(pxr, self._stage, exclude=robot_ids)
         self._objects = self._scene_objects()
@@ -204,6 +199,8 @@ class DimSimBackend:
         if steps > self._max_burst_steps:
             self._started += (steps - self._max_burst_steps) * self._timestep / self._speed
             steps = self._max_burst_steps
+            # A world that fell behind stamps its frames on wall time again.
+            self.world.rebase(self._time + steps * self._timestep)
         if steps < 1:
             return self._time, self.frame()
         return self._advance(steps)
@@ -211,6 +208,7 @@ class DimSimBackend:
     def restart_clock(self) -> None:
         """Count real time from now, so the wait before the first step costs no world time."""
         self._started = time.monotonic() - self._time / self._speed
+        self.world.rebase(self._time)
 
     def advance(self, steps: int = 1) -> tuple[float, WorldObservations]:
         self._apply_pending()
