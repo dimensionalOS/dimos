@@ -114,14 +114,7 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "codec": "lcm",
         },
     ]
-    assert config["preserve_zero_stamps"] is False
-    assert set(config) == {"encoding_threads", "store", "streams", "preserve_zero_stamps"}
-
-
-def test_simulation_passes_zero_stamp_policy_to_native_module() -> None:
-    config = RustRecorderConfig()
-    config.g.simulation = "mujoco"
-    assert config.to_config_dict()["preserve_zero_stamps"] is True
+    assert set(config) == {"encoding_threads", "store", "streams"}
 
 
 def test_json_options_cross_the_native_boundary_only_when_configured() -> None:

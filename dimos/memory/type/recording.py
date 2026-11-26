@@ -21,6 +21,9 @@ from typing import Any
 
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.types.timestamped import to_timestamp
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class OnExisting(str, enum.Enum):
@@ -48,14 +51,34 @@ def message_timestamp(msg: Any, reception_ts: float | None = None) -> float:
     return time.time() if reception_ts is None else reception_ts
 
 
-def recording_rows(
-    msg: Any, ts: float | None = None, *, reception_ts: float, preserve_zero_stamps: bool
-) -> Iterator[tuple[Any, float]]:
-    """Index each transform at its source time. Other packets retain a single row."""
-    # Unset headers and a simulation's first tick have the same wire representation.
-    zero_stamp = 0.0 if preserve_zero_stamps else reception_ts
-    if isinstance(msg, TFMessage) and msg.transforms:
-        for transform in msg.transforms:
-            yield TFMessage(transform), transform.ts or zero_stamp
-    elif ts is not None:
-        yield msg, ts or zero_stamp
+class SourceStamps:
+    """Index recorded rows on their source stamps, one row per TF transform.
+
+    A zero stamp means the publisher never set it: that row is indexed at
+    arrival, and the topic is reported once.
+    """
+
+    def __init__(self) -> None:
+        self._unstamped_topics: set[str] = set()
+
+    def rows(
+        self, topic: str, msg: Any, ts: float | None = None, *, reception_ts: float
+    ) -> Iterator[tuple[Any, float]]:
+        """Yield ``(payload, ts)``: one per TF transform, otherwise *msg* at *ts*."""
+        if isinstance(msg, TFMessage) and msg.transforms:
+            for transform in msg.transforms:
+                yield TFMessage(transform), self._stamp(topic, transform.ts, reception_ts)
+        elif ts is not None:
+            yield msg, self._stamp(topic, ts, reception_ts)
+
+    def _stamp(self, topic: str, ts: float, reception_ts: float) -> float:
+        if ts:
+            return ts
+        if topic not in self._unstamped_topics:
+            self._unstamped_topics.add(topic)
+            logger.warning(
+                "[%s] publisher does not stamp its messages (source stamp 0); "
+                "indexing them at arrival time",
+                topic,
+            )
+        return reception_ts

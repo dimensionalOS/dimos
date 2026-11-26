@@ -22,13 +22,14 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.global_config import global_config
 from dimos.core.stream import In, Transport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.memory import tap
 from dimos.memory.module import Recorder
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
+from dimos.memory.type import recording
 from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -215,9 +216,8 @@ def test_recording_delegates_to_rust_session(
     session.stop.assert_called_once_with()
 
 
-@pytest.mark.parametrize("ts", [42.25, 0.0])
-def test_records_tf_and_odom_at_source_time(sqlite_store, ts, monkeypatch):
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
+def test_records_tf_and_odom_at_source_time(sqlite_store):
+    ts = 42.25
     older = Transform(ts=ts, frame_id="base", child_frame_id="sensor")
     batches = [
         TFMessage(Transform(ts=ts + 1.0, child_frame_id="base"), older),
@@ -268,6 +268,21 @@ def test_unset_stamps_share_the_wall_clock_replay_window(sqlite_store, mocker):
     ]
 
 
+def test_zero_stamps_index_at_arrival_and_warn_once_per_topic(sqlite_store, mocker):
+    mocker.patch.object(tap.time, "time", return_value=99.0)
+    warning = mocker.patch.object(recording.logger, "warning")
+    with closing(TransportRecorder(sqlite_store)) as recorder:
+        odom, pose = _Transport(), _Transport()
+        recorder.tap("odom", PoseStamped, odom)
+        recorder.tap("pose", PoseStamped, pose)
+        for _ in range(3):
+            odom.publish(PoseStamped(ts=0.0))
+        pose.publish(PoseStamped(ts=0.0))
+
+    assert [row.ts for row in sqlite_store.stream("odom", PoseStamped)] == [99.0] * 3
+    assert sorted(call.args[1] for call in warning.call_args_list) == ["odom", "pose"]
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -292,10 +307,7 @@ class _SourceRecorder(Recorder):
     frames: In[TFMessage]
 
 
-@pytest.mark.parametrize("simulation", ["", "mujoco"])
-def test_module_recorder_preserves_source_and_arrival_clocks(
-    tmp_path, mocker, wait_until, simulation
-):
+def test_module_recorder_preserves_source_and_arrival_clocks(tmp_path, mocker, wait_until):
     path = tmp_path / "memory.db"
     mocker.patch.object(ZenohRPC, "start")
     mocker.patch.object(ZenohRPC, "serve_module_rpc")
@@ -304,7 +316,6 @@ def test_module_recorder_preserves_source_and_arrival_clocks(
         record_tf=True,
         poseless_streams=["frames", "odom"],
         rpc_transport=ZenohRPC,
-        g=GlobalConfig(simulation=simulation),
     )
     module.odom.transport = _Transport()
     module.frames.transport = _Transport()
@@ -324,19 +335,13 @@ def test_module_recorder_preserves_source_and_arrival_clocks(
         )
     with SqliteStore(path=str(path), must_exist=True) as store:
         odom = store.stream("odom").first()
-        assert odom.ts == (0.0 if simulation else odom.tags["reception_ts"])
+        assert odom.ts == odom.tags["reception_ts"]
         assert odom.data.ts == 0.0
         frames = store.stream("frames").order_by("id").to_list()
-        assert [row.ts for row in frames] == [
-            0.0 if simulation else frames[0].tags["reception_ts"],
-            42.25,
-        ]
+        assert [row.ts for row in frames] == [frames[0].tags["reception_ts"], 42.25]
         assert [row.data.transforms[0].ts for row in frames] == [0.0, 42.25]
         assert frames[0].tags["reception_ts"] == frames[1].tags["reception_ts"]
         dedicated = store.stream("tf", TFMessage).order_by("id").to_list()
         assert [row.data.transforms[0].ts for row in dedicated] == [0.0, 42.25]
         assert dedicated[1].ts == 42.25
-        if simulation:
-            assert dedicated[0].ts == 0.0
-        else:
-            assert dedicated[0].ts > 42.25
+        assert dedicated[0].ts > 42.25

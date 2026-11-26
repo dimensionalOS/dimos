@@ -34,7 +34,7 @@ from dimos.core.stream import In
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
-from dimos.memory.type.recording import OnExisting, message_timestamp, recording_rows
+from dimos.memory.type.recording import OnExisting, SourceStamps, message_timestamp
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
@@ -344,13 +344,12 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
+        source_stamps = SourceStamps()
+
         async def on_msg(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
-            for payload, ts in recording_rows(
-                msg,
-                self._resolve_ts(name, msg),
-                reception_ts=recv_ts,
-                preserve_zero_stamps=self.config.g.preserve_zero_stamps,
+            for payload, ts in source_stamps.rows(
+                name, msg, self._resolve_ts(name, msg), reception_ts=recv_ts
             ):
                 pose = await self._resolve_pose(name, payload, ts)
                 if not pose and name not in self.config.poseless_streams:
@@ -417,14 +416,11 @@ class Recorder(MemoryModule):
             logger.warning("Recorder: tf port has no transport — not recording tf")
             return
         tf_stream = self.store.stream("tf", TFMessage)
+        source_stamps = SourceStamps()
 
         def on_tf(msg: TFMessage) -> None:
             try:
-                for payload, ts in recording_rows(
-                    msg,
-                    reception_ts=time.time(),
-                    preserve_zero_stamps=self.config.g.preserve_zero_stamps,
-                ):
+                for payload, ts in source_stamps.rows("tf", msg, reception_ts=time.time()):
                     tf_stream.append(payload, ts=ts, pose=None)
             except sqlite3.ProgrammingError:
                 # A late LCM callback raced teardown and hit the closed store.

@@ -37,7 +37,7 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.type.recording import message_timestamp, recording_rows
+from dimos.memory.type.recording import SourceStamps, message_timestamp
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ class TransportRecorder:
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
         self.store = store
         self._topics = topics
-        self._preserve_zero_stamps = global_config.preserve_zero_stamps
+        self._source_stamps = SourceStamps()
         self._queue: queue.Queue[tuple[str, type, Any, float, float] | None] = queue.Queue(
             queue_size
         )
@@ -105,11 +105,8 @@ class TransportRecorder:
                     codec = codec_for(stream_type, sample=msg)
                     stream = self.store.stream(name, stream_type, codec=codec)
                     self._streams[name] = stream
-                for payload, source_ts in recording_rows(
-                    msg,
-                    ts,
-                    reception_ts=received,
-                    preserve_zero_stamps=self._preserve_zero_stamps,
+                for payload, source_ts in self._source_stamps.rows(
+                    name, msg, ts, reception_ts=received
                 ):
                     stream.append(payload, ts=source_ts)
             except Exception:
