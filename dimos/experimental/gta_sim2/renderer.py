@@ -225,8 +225,16 @@ class SixNGRenderer:
         (self.directory / "assets.json").write_text(json.dumps(assets))
 
     def _make_request(self, sample: WorldState, name: str) -> dict[str, Any]:
-        self.geometry.set_poses(sample)
         poses = poses_by_id(sample)
+        try:
+            self.geometry.set_poses(sample)
+        except ValueError as error:
+            raise ValueError(
+                f"Observer scene mismatch: sample revision={sample.model_revision}, "
+                f"observer revision={self.geometry.revision}, "
+                f"missing={set(self.geometry.body_ids) - set(poses)}, "
+                f"extra={set(poses) - set(self.geometry.body_ids)}"
+            ) from error
         actors = []
         for body in self._actor_ids:
             p = poses[body]

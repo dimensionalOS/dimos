@@ -15,7 +15,7 @@
 """Run an isolated browser-controlled G1 and a separate latest-state observer.
 
 The browser never supplies joint targets or teleports. Its bounded Twist goes
-through the existing G1 policy. Reset rebuilds the deployment and policy history.
+through the selected robot policy. Reset rebuilds the deployment and policy history.
 Observer images have no sensor publication role; Sim2 sensors keep their clocks.
 """
 
@@ -38,19 +38,18 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.experimental.gta_sim2.blueprint import gta_g1_blueprint
+from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare import ground_height
+from dimos.experimental.gta_sim2.prepare_m20 import BASE as M20_BASE
 from dimos.experimental.gta_sim2.renderer import ObserverOutput, SixNGRenderer
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
-from dimos.robot.unitree.g1.sim2_scene import PELVIS, TORSO, G1Desk
+from dimos.robot.unitree.g1.sim2_scene import PELVIS, TORSO
 from dimos.sim2.description import compose_scene
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
 from dimos.sim2.sensors.camera.config import CameraConfig
-from dimos.sim2.sensors.camera.module import SimCameraModule
-from dimos.sim2.sensors.imu.module import SimImuModule
-from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.utils.testing.waiting import wait_until
 
 CONTROL_TIMEOUT = 0.35
@@ -77,6 +76,7 @@ def bounded_velocity(
     yaw: float,
     lo: NDArray[np.float64],
     hi: NDArray[np.float64],
+    speed: tuple[float, float, float] = (0.2, 0.15, 0.4),
 ) -> tuple[float, float, float]:
     """Expire browser input and remove motion directed out of the contact patch."""
     values = [command.get(k, 0.0) for k in ("issued", "forward", "right", "turn")]
@@ -89,9 +89,9 @@ def bounded_velocity(
     if not 0 <= now - stamp <= CONTROL_TIMEOUT:
         return 0.0, 0.0, 0.0
     vx, vy, wz = (
-        float(np.clip(forward, -1, 1)) * 0.2,
-        -float(np.clip(right, -1, 1)) * 0.15,
-        -float(np.clip(turn, -1, 1)) * 0.4,
+        float(np.clip(forward, -1, 1)) * speed[0],
+        -float(np.clip(right, -1, 1)) * speed[1],
+        -float(np.clip(turn, -1, 1)) * speed[2],
     )
     rotation = np.array([[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]])
     world = rotation @ [vx, vy]
@@ -115,7 +115,16 @@ def main() -> None:
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--camera-port", type=int, required=True)
     parser.add_argument("--gpu")
+    parser.add_argument("--robot", choices=("g1", "m20"), default="g1")
+    parser.add_argument("--policy", type=Path)
+    parser.add_argument("--policy-profile", choices=("sdk57", "dreamwaq342"), default="sdk57")
     args = parser.parse_args()
+    if args.robot == "m20" and args.policy is None:
+        parser.error("--robot m20 requires the explicit --policy checkpoint")
+    is_m20 = args.robot == "m20"
+    focus_body = M20_BASE if is_m20 else PELVIS
+    camera_frame = (M20_BASE if is_m20 else TORSO) + "/camera_mount/camera/camera"
+    speed = (1.5, 0.3, 0.7) if is_m20 else (0.2, 0.15, 0.4)
     args.runtime.mkdir(parents=True, exist_ok=True)
     manifest = read_json(args.scene.with_name("manifest.json"))
     origin = np.asarray(manifest["origin_rage_m"], dtype=np.float64)
@@ -191,23 +200,27 @@ def main() -> None:
                         },
                     )
                     blueprint = (
-                        gta_g1_blueprint(args.scene)
+                        (
+                            m20_blueprint(args.scene, args.policy, args.policy_profile)
+                            if is_m20
+                            else gta_g1_blueprint(args.scene)
+                        )
                         .global_config(zenoh_domain="gta-interactive-" + uuid.uuid4().hex)
                         .solidify()
                     )
                     deployment = ModuleCoordinator.build(blueprint)
                     sim = deployment.get_instance(SimModule)
-                    policy = deployment.get_instance(G1PolicyModule)
+                    policy = deployment.get_instance(M20PolicyModule if is_m20 else G1PolicyModule)
                     wait_until(partial(physics_ready, sim), timeout=40)
                     if not observer_loaded:
                         scene = compose_scene(
                             [
-                                deployment.get_instance(kind)
-                                for kind in (G1Desk, SimCameraModule, SimImuModule, SimLidarModule)
+                                deployment.get_instance(atom.name)
+                                for atom in blueprint.active_blueprints
                             ]
                         )
                         camera = CameraConfig(
-                            TORSO + "/camera_mount/camera/camera",
+                            camera_frame,
                             width=960,
                             height=540,
                             fx=570,
@@ -218,31 +231,41 @@ def main() -> None:
                         observer.load(scene, (camera,))
                         observer_loaded = True
                     generation += 1
-                    policy.arm_joint("g1/left_elbow_joint", 1.1)
-                    state = {"state": "running", "message": "Ready", "generation": generation}
+                    if not is_m20:
+                        policy.arm_joint("g1/left_elbow_joint", 1.1)
+                    state = {
+                        "state": "running",
+                        "message": "Ready",
+                        "generation": generation,
+                        "robot": args.robot,
+                        "speed_limits": speed,
+                    }
                     # Never replay input received during a long reset/load.
                     accept_after = time.monotonic()
                 sample = sim.inspect()
-                pose = poses_by_id(sample)[PELVIS]
+                pose = poses_by_id(sample)[focus_body]
                 p, q = pose.position, pose.orientation
                 xyz = np.array([p.x, p.y, p.z])
                 yaw = float(Rotation.from_quat([q.x, q.y, q.z, q.w]).as_euler("xyz")[2])
                 command = read_json(args.runtime / "control.json")
                 if command.get("issued", 0) < accept_after:
                     command = {}
-                vx, vy, wz = bounded_velocity(command, time.monotonic(), xyz[:2], yaw, lo, hi)
+                vx, vy, wz = bounded_velocity(
+                    command, time.monotonic(), xyz[:2], yaw, lo, hi, speed
+                )
                 try:
                     clearance = p.z - ground_height(surfaces, (p.x, p.y), p.z - 0.3)
                 except ValueError:
                     clearance = 0.0
-                fallen = clearance < 0.5 or p.z < -0.2
+                upright = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()[2, 2]
+                fallen = clearance < (0.23 if is_m20 else 0.5) or p.z < -0.2 or upright < 0.3
                 if fallen or not visible:
                     vx = vy = wz = 0.0
                 policy.move(
                     Twist(linear=Vector3(vx, vy, 0), angular=Vector3(0, 0, wz)),
                     duration=CONTROL_TIMEOUT,
                 )
-                observer.publish_observer(sample, PELVIS)
+                observer.publish_observer(sample, focus_body)
                 if tick >= next_status:
                     state.update(
                         state="fallen" if fallen else "running",
