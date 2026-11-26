@@ -31,6 +31,9 @@ pub(crate) const SESSION_KEY: &str = "session";
 /// Poll interval while waiting for the dialed endpoints to link.
 const CONNECT_POLL: Duration = Duration::from_millis(50);
 
+/// Shared-memory pool for large messages. A message larger than the pool goes over TCP.
+const SHM_POOL_BYTES: usize = 56 * 1024 * 1024;
+
 /// How this session joins the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -86,6 +89,10 @@ impl SessionSettings {
             ("scouting/multicast/enabled", json_text(&self.multicast)),
             ("scouting/multicast/interface", json_text(&self.interface)),
             ("scouting/gossip/enabled", json_text(&self.gossip)),
+            (
+                "transport/shared_memory/transport_optimization/pool_size",
+                json_text(&SHM_POOL_BYTES),
+            ),
         ];
         // Empty means the stock multicast group. A moved group is a private
         // discovery bus, which is how parallel sessions on one host stay apart.

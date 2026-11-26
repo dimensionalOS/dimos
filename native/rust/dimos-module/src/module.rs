@@ -66,7 +66,8 @@ pub(crate) fn init_tracing() {
 // Only absorbs jitter between the transport and the handler. A full buffer
 // blocks the transport so congestion reaches the publisher's QoS.
 const INPUT_BUFFER_LEN: usize = 8;
-const PUBLISH_CHANNEL_CAPACITY: usize = 32;
+// One, so a slow transport blocks the publisher instead of queueing stale messages.
+const PUBLISH_CHANNEL_CAPACITY: usize = 1;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's channel.

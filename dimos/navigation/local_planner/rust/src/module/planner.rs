@@ -17,14 +17,17 @@
 //! along `planner_path`, pulled back along it to where the body fits. A refusal or a stale
 //! map publishes a one-pose hold stub.
 
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::planner::{plan_explored, step_reach, Emb, Terrain, COMMIT_MARGIN};
 use crate::{clearance, stamps};
+use dimos_module::log::check_and_record;
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
 
@@ -33,6 +36,9 @@ use crate::module::ground::{self, Plane};
 use crate::module::msg;
 use crate::module::obstacles::{self, FieldPoints, ObstacleModel};
 use crate::module::tf_pose::PoseWatch;
+
+/// Hits this close together are one collision.
+const COLLISION_GAP: Duration = Duration::from_secs(1);
 
 /// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
 #[native_config]
@@ -117,6 +123,10 @@ pub struct LocalPlanner {
     #[output(encode = PointCloud2::encode)]
     ground_support: Output<PointCloud2>,
 
+    /// A note on each collision start, for the recorder to keep a full-rate clip around.
+    #[output(encode = std_msgs::String::encode)]
+    clip_that: Output<std_msgs::String>,
+
     #[config]
     config: Config,
 
@@ -125,6 +135,48 @@ pub struct LocalPlanner {
 
     shared: Arc<Mutex<Shared>>,
     worker: Option<tokio::task::JoinHandle<()>>,
+    map_age: MapAge,
+}
+
+/// Debug: how often the local_map age summary logs.
+const MAP_AGE_PERIOD: Duration = Duration::from_secs(5);
+
+/// Debug: a local_map arriving later than this behind its stamp warns.
+const MAP_AGE_WARN_S: f64 = 1.0;
+
+/// Debug: how late local_map arrives here, logged every MAP_AGE_PERIOD.
+#[derive(Default)]
+struct MapAge {
+    n: u32,
+    sum_s: f64,
+    max_s: f64,
+}
+
+impl MapAge {
+    fn record(&mut self, stamp: &std_msgs::Time) {
+        let age_s = msg::now_secs() - (f64::from(stamp.sec) + f64::from(stamp.nsec) * 1e-9);
+        if age_s > MAP_AGE_WARN_S {
+            warn_throttled!(
+                Duration::from_secs(1),
+                age_ms = age_s * 1e3,
+                "debug: local_map arrived late at local_planner"
+            );
+        }
+        self.n += 1;
+        self.sum_s += age_s;
+        self.max_s = self.max_s.max(age_s);
+        static LAST_NS: AtomicU64 = AtomicU64::new(0);
+        if !check_and_record(&LAST_NS, MAP_AGE_PERIOD.as_nanos() as u64) {
+            return;
+        }
+        info!(
+            n = self.n,
+            mean_ms = self.sum_s / f64::from(self.n) * 1e3,
+            max_ms = self.max_s * 1e3,
+            "debug: local_map age at local_planner"
+        );
+        *self = Self::default();
+    }
 }
 
 impl LocalPlanner {
@@ -139,6 +191,7 @@ impl LocalPlanner {
             model,
             path: self.path.clone(),
             ground_support: self.ground_support.clone(),
+            clip_that: self.clip_that.clone(),
             tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
@@ -153,6 +206,7 @@ impl LocalPlanner {
     // Handlers only record; the replan is the slow part and lives on the worker.
 
     async fn on_local_map(&mut self, msg: PointCloud2) {
+        self.map_age.record(&msg.header.stamp);
         let mut s = self.shared.lock().expect("shared mutex");
         s.cloud = Some(Arc::new(msg));
         s.cloud_seq = s.cloud_seq.wrapping_add(1);
@@ -372,6 +426,7 @@ struct Worker {
     model: Box<dyn ObstacleModel>,
     path: Output<Path>,
     ground_support: Output<PointCloud2>,
+    clip_that: Output<std_msgs::String>,
     tf: Tf,
 }
 
@@ -399,6 +454,7 @@ impl Worker {
         // The published plan; the search keeps it unless a fresh one earns the switch.
         let mut incumbent: Option<Vec<[f64; 3]>> = None;
         let mut published = false;
+        let mut last_hit: Option<Instant> = None;
 
         loop {
             ticker.tick().await;
@@ -490,6 +546,9 @@ impl Worker {
                         let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
                         let body = body_z.unwrap_or(0.0);
                         let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
+                        let hard =
+                            obstacles::field_points(self.model.as_ref(), &pts, &ground.plane).hard;
+                        let hits = obstacles::body_hits(&hard, &self.config.embodiment, pose);
                         let path = plan_once(
                             &self.config,
                             &self.emb,
@@ -501,9 +560,21 @@ impl Worker {
                             &ground.plane,
                             incumbent.as_deref(),
                         );
-                        Some((path, ground.support))
+                        Some((path, ground.support, hits))
                     });
-                    if let Some((produced, support)) = produced {
+                    if let Some((produced, support, hits)) = produced {
+                        let fresh = last_hit.is_none_or(|t| now.duration_since(t) > COLLISION_GAP);
+                        if hits > 0 {
+                            last_hit = Some(now);
+                        }
+                        if hits > 0 && fresh {
+                            let note = format!(
+                                "local_planner collision: {hits} hard voxels in the body at ({:.2}, {:.2})",
+                                pose.0, pose.1
+                            );
+                            warn!("{note}");
+                            msg::publish(&self.clip_that, &std_msgs::String { data: note }).await;
+                        }
                         let floor =
                             msg::build_cloud(&support, &self.config.world_frame, msg::now_secs());
                         msg::publish(&self.ground_support, &floor).await;

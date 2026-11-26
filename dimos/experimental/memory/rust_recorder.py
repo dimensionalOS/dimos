@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
@@ -29,6 +30,8 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -38,6 +41,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
+# Payload types kept at full rate unless overridden: transforms and odometry.
+_DEFAULT_TYPE_PERIODS = {payload.__name__: 0.0 for payload in (TFMessage, Odometry, PoseStamped)}
+_Period: TypeAlias = Annotated[float, Field(ge=0)]
 
 
 class RustStreamSpec(BaseModel):
@@ -116,12 +122,93 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 ]
 
 
+class RustContinuousMode(BaseModel):
+    """Write every observation straight to the artifact."""
+
+    kind: Literal["continuous"] = "continuous"
+
+
+class RustEventConfig(BaseModel):
+    """Record long runs thinned, with full-rate clips around each trigger.
+
+    Every message on the ``clip_that`` stream keeps all streams at full rate from
+    ``pre_s`` before it to ``post_s`` after it. Outside clips, each stream keeps at
+    most one message per its period. A stream's period comes from the first matching
+    glob in ``stream_periods``, then in ``type_periods``, then the type defaults (full
+    rate for transforms and odometry), then ``default_period``. Messages wait in window
+    segments until no trigger can still claim them, so the artifact runs about
+    ``pre_s + segment_s`` behind live.
+    """
+
+    kind: Literal["events"] = "events"
+    pre_s: float = Field(default=10.0, ge=0, description="Full-rate seconds before a trigger.")
+    post_s: float = Field(default=20.0, ge=0, description="Full-rate seconds after a trigger.")
+    segment_s: float = Field(default=10.0, gt=0, description="Seconds per window segment.")
+    sync_s: float = Field(
+        default=1.0,
+        gt=0,
+        description="Seconds between syncs of the open segment, the most a power loss loses.",
+    )
+    max_clip_s: float = Field(
+        default=600.0,
+        gt=0,
+        description="Longest a clip may grow when overlapping triggers extend it.",
+    )
+    max_window_mib: float = Field(
+        default=2048.0,
+        gt=0,
+        description="Most window data waiting to be stored before the oldest segment is stored thinned.",
+    )
+    trigger: Literal["clip_that"] = "clip_that"
+    default_period: _Period = Field(
+        exclude=True,
+        description="Seconds between kept messages outside clips, for every stream.",
+    )
+    type_periods: dict[str, _Period] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="Seconds between kept messages outside clips, by payload type name glob.",
+    )
+    stream_periods: dict[str, _Period] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="Seconds between kept messages outside clips, by stream name glob.",
+    )
+    periods: dict[str, float] = Field(
+        default_factory=dict,
+        description="Resolved period of every stream, populated internally before native launch.",
+    )
+    window_dir: str = Field(
+        default="",
+        description="Window directory of this run, populated internally before native launch.",
+    )
+
+    def resolve(
+        self, streams: list[RustStreamSpec], artifact: Path, window_root: Path
+    ) -> RustEventConfig:
+        """Fill ``periods`` for every stream and put ``window_dir`` under ``window_root``."""
+        if self.trigger not in {stream.name for stream in streams}:
+            raise ValueError(f"Event recording needs the trigger stream {self.trigger!r}")
+        periods = {stream.name: self._period(stream) for stream in streams}
+        return self.model_copy(
+            update={"periods": periods, "window_dir": str(window_root / artifact.parent.name)}
+        )
+
+    def _period(self, stream: RustStreamSpec) -> float:
+        type_name = stream.payload_type.rsplit(".", 1)[-1]
+        for globs, name in ((self.stream_periods, stream.name), (self.type_periods, type_name)):
+            for pattern, period in globs.items():
+                if fnmatch.fnmatchcase(name, pattern):
+                    return period
+        return _DEFAULT_TYPE_PERIODS.get(type_name, self.default_period)
+
+
 class RustRecorderConfig(NativeModuleConfig):
     """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
-    receives only ``store``, ``encoding_threads``, and the internally resolved
-    ``streams`` list over stdin.
+    receives only ``store``, ``encoding_threads``, the internally resolved
+    ``streams`` list and the continuous ``mode`` over stdin.
     """
 
     executable: str = "result/bin/dimos-memory-recorder"
@@ -183,6 +270,7 @@ class RustRecorderConfig(NativeModuleConfig):
         config = super().to_config_dict()
         # Older recorder binaries reject unknown stream fields, even null ones.
         config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
+        config["mode"] = RustContinuousMode().model_dump()
         return config
 
 

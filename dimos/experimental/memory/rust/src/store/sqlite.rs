@@ -33,6 +33,24 @@ impl SqliteRecordingStore {
         }
         Ok(Self { connection })
     }
+
+    /// Reopens a crashed recording, keeping only the first `stored` rows of each stream.
+    pub fn recover(path: &str, streams: &[StreamConfig], stored: &[u64]) -> Result<Self> {
+        let store = Self::open(path, streams)?;
+        for (stream, &count) in streams.iter().zip(stored) {
+            let name = &stream.name;
+            let count = i64::try_from(count).context("stored count exceeds the SQLite range")?;
+            for table in [format!("{name}_blob"), name.clone()] {
+                store.connection.execute(
+                    &format!(
+                        r#"DELETE FROM "{table}" WHERE id IN (SELECT id FROM "{name}" ORDER BY id LIMIT -1 OFFSET ?1)"#
+                    ),
+                    params![count],
+                )?;
+            }
+        }
+        Ok(store)
+    }
 }
 
 impl RecordingStore for SqliteRecordingStore {
@@ -42,6 +60,12 @@ impl RecordingStore for SqliteRecordingStore {
             insert_observation(&transaction, observation)?;
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    fn sync(&mut self) -> Result<()> {
+        self.connection
+            .execute_batch("PRAGMA wal_checkpoint(FULL)")?;
         Ok(())
     }
 

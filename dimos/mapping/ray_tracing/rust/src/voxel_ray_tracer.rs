@@ -877,8 +877,8 @@ pub fn chunk_points(map: &VoxelMap, voxel_size: f32, chunks: &[ChunkKey]) -> Vec
 }
 
 /// Points for an emitted cloud, flat (x, y, z) triples: healthy surface voxels
-/// within `bounds` that clear the map's support gate, plus this frame's
-/// not-yet-healthy `live` voxels within `bounds`. No bounds means the whole map.
+/// within `bounds` that clear the map's support gate, plus this frame's `live`
+/// voxels within `bounds`, gate or not. No bounds means the whole map.
 pub fn emit_points(
     map: &VoxelMap,
     voxel_size: f32,
@@ -928,7 +928,7 @@ fn emit_points_impl(
         1,
         live.len(),
         |hv, chunk_inside, part| {
-            if gated && !voxel_supported(hv.support, map.support_min) {
+            if gated && !voxel_supported(hv.support, map.support_min) && !live.contains(&hv.key) {
                 return;
             }
             let (x, y, z) = voxel_center(hv.key, voxel_size);
@@ -960,7 +960,7 @@ fn emit_points_impl(
 
 /// Points for a fine emitted cloud, flat (x, y, z) triples: observed fine
 /// cells inside healthy voxels clearing the map's support gate, within `bounds`,
-/// plus this frame's `live_fine` cells whose voxel is not yet healthy. No bounds
+/// plus this frame's `live_fine` cells those did not cover, gate or not. No bounds
 /// means the whole map.
 pub fn emit_points_fine(
     map: &VoxelMap,
@@ -1005,7 +1005,12 @@ pub fn emit_points_fine(
 
     for &fine_key in live_fine.iter() {
         let (coarse, _) = split_fine_key(fine_key, divisor);
-        if map.voxels.is_healthy(&coarse) {
+        let covered = map.voxels.is_healthy(&coarse)
+            && map
+                .voxels
+                .support(&coarse)
+                .is_some_and(|support| voxel_supported(support, map.support_min));
+        if covered {
             continue;
         }
         let (x, y, z) = voxel_center(fine_key, fine_size);

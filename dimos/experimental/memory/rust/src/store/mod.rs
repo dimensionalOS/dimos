@@ -56,6 +56,7 @@ pub struct Observation {
     pub stream: Arc<StreamConfig>,
     pub source_ts: f64,
     pub reception_ts: f64,
+    pub monotonic_ts: f64,
     pub data: Vec<u8>,
 }
 
@@ -63,6 +64,14 @@ pub struct Observation {
 pub trait RecordingStore: Send {
     /// Persist one arrival-ordered batch atomically where the format supports it.
     fn write_batch(&mut self, observations: &[Observation]) -> Result<()>;
+
+    /// Make everything written so far survive a power loss.
+    fn sync(&mut self) -> Result<()>;
+
+    /// Runs after each write batch with the monotonic time, and whether nothing is still being encoded.
+    fn tick(&mut self, _now: f64, _idle: bool) -> Result<()> {
+        Ok(())
+    }
 
     /// Finalize indexes, summaries, and buffered data before shutdown returns.
     fn finish(&mut self) -> Result<()>;
@@ -80,6 +89,32 @@ pub fn open(
         RecordingStoreConfig::Mcap { path, attachments } => Ok(Box::new(
             mcap::McapRecordingStore::open(path, streams, compression_threads, attachments)?,
         )),
+    }
+}
+
+/// Reopens a crashed recording, keeping only the first `stored` observations of each stream.
+pub fn recover(
+    config: &RecordingStoreConfig,
+    streams: &[StreamConfig],
+    compression_threads: usize,
+    stored: &[u64],
+) -> Result<Box<dyn RecordingStore>> {
+    anyhow::ensure!(
+        stored.len() == streams.len(),
+        "{} stored counts for {} streams",
+        stored.len(),
+        streams.len()
+    );
+    match config {
+        RecordingStoreConfig::Sqlite { path } => Ok(Box::new(
+            sqlite::SqliteRecordingStore::recover(path, streams, stored)?,
+        )),
+        RecordingStoreConfig::Mcap { path, .. } => Ok(Box::new(mcap::McapRecordingStore::recover(
+            path,
+            streams,
+            compression_threads,
+            stored,
+        )?)),
     }
 }
 

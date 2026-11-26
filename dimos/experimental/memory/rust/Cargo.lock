@@ -576,12 +576,14 @@ name = "dimos-memory-recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crc32fast",
  "crossbeam-channel",
  "crossbeam-utils",
  "dimos-module",
  "lcm-msgs",
  "lz4_flex 0.14.0",
  "mcap",
+ "memmap2",
  "rayon",
  "rusqlite",
  "serde",
@@ -596,7 +598,7 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537a86f3a96884c77fb1#5eb9e7ae757a82f3481d537a86f3a96884c77fb1"
+source = "git+https://github.com/dimensionalOS/dimos?rev=9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef#9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef"
 dependencies = [
  "async-channel",
  "dimos-lcm",
@@ -617,7 +619,7 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537a86f3a96884c77fb1#5eb9e7ae757a82f3481d537a86f3a96884c77fb1"
+source = "git+https://github.com/dimensionalOS/dimos?rev=9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef#9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1541,6 +1543,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "memmap2"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "miniz_oxide"

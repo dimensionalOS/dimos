@@ -28,7 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
-from dimos.experimental.memory.rust_recorder import RustStreamSpec
+from dimos.experimental.memory.rust_recorder import RustContinuousMode, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -189,6 +189,7 @@ def _plan(tmp_path: Path) -> RustRecordingPlan:
         ],
         payload_types={"odom": PoseStamped},
         path=tmp_path / "memory.db",
+        mode=RustContinuousMode(),
     )
 
 
@@ -272,7 +273,7 @@ def test_stop_kills_process_that_does_not_flush(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess(ignore_term=True)
-    monkeypatch.setattr(rust_cli_recorder, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.01)
+    monkeypatch.setattr(rust_cli_recorder, "_STOP_TIMEOUT", 0.01)
     session = _start_fake_session(tmp_path, monkeypatch, process)
 
     session.stop()
@@ -311,6 +312,18 @@ def test_conflicting_lcm_urls_are_rejected():
     finally:
         first.stop()
         second.stop()
+
+
+def test_event_trigger_joins_the_recorded_streams_lcm_url(monkeypatch):
+    monkeypatch.setattr(global_config, "record_events", True)
+    url = "udpm://239.255.76.69:7667?ttl=0"
+    transport = LCMTransport("/odom", PoseStamped, url=url)
+    try:
+        plan = rust_cli_recorder.make_plan({("odom", PoseStamped): transport})
+        assert plan.lcm_url == url
+        assert [stream.name for stream in plan.streams] == ["odom", "clip_that"]
+    finally:
+        transport.stop()
 
 
 def test_external_lcm_connection_is_rejected():

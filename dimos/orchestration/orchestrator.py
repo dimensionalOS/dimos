@@ -122,6 +122,8 @@ class Orchestrator(Module):
     # The state after each step, and again whenever orchestrator_state_request is True.
     orchestrator_state: Out[String]
     orchestrator_state_request: In[Bool]
+    # Requests from an operator. The file names what each one does.
+    orchestrator_request: In[String]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)

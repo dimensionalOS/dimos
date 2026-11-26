@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::PI;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,7 @@ use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LO
 use crate::planner::snap_pose_to_cell;
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
+use dimos_module::log::check_and_record;
 use dimos_module::nalgebra::Vector3;
 use dimos_module::time::now;
 use dimos_module::{
@@ -36,7 +37,7 @@ use lcm_msgs::actionlib_msgs::GoalStatus;
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use lcm_msgs::std_msgs::{self, Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
@@ -183,6 +184,95 @@ impl SeedProgress {
     }
 }
 
+/// Debug: how often the live map age summary logs.
+const MAP_AGE_PERIOD: Duration = Duration::from_secs(5);
+
+/// Debug: a live map arriving later than this behind its stamp warns.
+const MAP_AGE_WARN_S: f64 = 1.0;
+
+/// Debug: arrival ages behind the stamp, summed over one summary period.
+#[derive(Default)]
+struct AgeSum {
+    n: u32,
+    sum_s: f64,
+    max_s: f64,
+}
+
+impl AgeSum {
+    fn add(&mut self, age_s: f64) {
+        self.n += 1;
+        self.sum_s += age_s;
+        self.max_s = self.max_s.max(age_s);
+    }
+
+    fn mean_ms(&self) -> f64 {
+        if self.n == 0 {
+            0.0
+        } else {
+            self.sum_s / f64::from(self.n) * 1e3
+        }
+    }
+}
+
+/// Debug: how late live maps arrive here and how many pair up, logged every MAP_AGE_PERIOD.
+#[derive(Default)]
+struct MapAge {
+    local: AgeSum,
+    bounds: AgeSum,
+    pairs: u32,
+}
+
+impl MapAge {
+    fn local(&mut self, stamp: &Time) {
+        let age_s = stamp_age_s(stamp);
+        if age_s > MAP_AGE_WARN_S {
+            warn_throttled!(
+                Duration::from_secs(1),
+                age_ms = age_s * 1e3,
+                "debug: local_map arrived late at mls_planner"
+            );
+        }
+        self.local.add(age_s);
+        self.log_if_due();
+    }
+
+    fn bounds(&mut self, stamp: &Time) {
+        self.bounds.add(stamp_age_s(stamp));
+        self.log_if_due();
+    }
+
+    fn paired(&mut self) {
+        self.pairs += 1;
+    }
+
+    fn log_if_due(&mut self) {
+        static LAST_NS: AtomicU64 = AtomicU64::new(0);
+        if !check_and_record(&LAST_NS, MAP_AGE_PERIOD.as_nanos() as u64) {
+            return;
+        }
+        info!(
+            local_n = self.local.n,
+            local_mean_ms = self.local.mean_ms(),
+            local_max_ms = self.local.max_s * 1e3,
+            bounds_n = self.bounds.n,
+            bounds_mean_ms = self.bounds.mean_ms(),
+            bounds_max_ms = self.bounds.max_s * 1e3,
+            pairs = self.pairs,
+            "debug: live map age at mls_planner"
+        );
+        *self = Self::default();
+    }
+}
+
+/// Debug: seconds from a message's stamp to now on this clock.
+fn stamp_age_s(stamp: &Time) -> f64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    now - (f64::from(stamp.sec) + f64::from(stamp.nsec) * 1e-9)
+}
+
 /// Seed clouds and bounds waiting for their counterpart, keyed by the region
 /// number in their header seq, since every region of a seed shares one stamp.
 #[derive(Default)]
@@ -273,6 +363,10 @@ pub struct MlsPlanner {
     #[output(encode = GoalStatus::encode)]
     nav_status: Output<GoalStatus>,
 
+    /// A note when a goal aborts, for the recorder to keep a full-rate clip around.
+    #[output(encode = std_msgs::String::encode)]
+    clip_that: Output<std_msgs::String>,
+
     #[config]
     config: Config,
 
@@ -280,6 +374,7 @@ pub struct MlsPlanner {
     pending_local: Option<PointCloud2>,
     pending_bounds: Option<PoseStamped>,
     pending_seeds: SeedPairs,
+    map_age: MapAge,
 
     // Written by the handle loop, read by the worker, so the loop never blocks
     // on map processing. Seed regions queue in arrival order.
@@ -342,6 +437,7 @@ impl MlsPlanner {
     fn status(&self) -> StatusReporter {
         StatusReporter {
             out: self.nav_status.clone(),
+            clip_that: self.clip_that.clone(),
             latest: Arc::clone(&self.latest_status),
         }
     }
@@ -353,11 +449,13 @@ impl MlsPlanner {
     }
 
     async fn on_local_map(&mut self, msg: PointCloud2) {
+        self.map_age.local(&msg.header.stamp);
         self.pending_local = Some(msg);
         self.try_pair();
     }
 
     async fn on_region_bounds(&mut self, msg: PoseStamped) {
+        self.map_age.bounds(&msg.header.stamp);
         self.pending_bounds = Some(msg);
         self.try_pair();
     }
@@ -381,6 +479,7 @@ impl MlsPlanner {
         }
         let bounds = self.pending_bounds.take().expect("checked above");
         let cloud = self.pending_local.take().expect("checked above");
+        self.map_age.paired();
         if let Some(points) = cloud_points(&cloud, "local_map") {
             let received = Instant::now();
             self.hand_off(MapUpdate::Region {

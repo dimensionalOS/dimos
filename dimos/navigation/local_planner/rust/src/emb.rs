@@ -27,6 +27,7 @@ pub fn base_params(emb: &Emb, band: [f64; 2]) -> Params {
         lookahead: c.lookahead,
         max_speed: band[1],
         max_yaw_rate: emb.max_yaw_rate,
+        min_yaw_rate: emb.min_yaw_rate,
         k_pos: c.k_pos,
         k_yaw: c.k_yaw,
         fan_yaw_per_m: c.fan_yaw_per_m,

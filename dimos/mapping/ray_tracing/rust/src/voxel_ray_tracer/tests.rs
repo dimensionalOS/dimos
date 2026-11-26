@@ -1300,6 +1300,26 @@ fn live_fine_cells_emit_before_confirmation() {
 }
 
 #[test]
+fn a_live_fine_cell_of_an_unsupported_healthy_voxel_still_emits() {
+    let cfg = Config {
+        min_health: -1,
+        ..fine_config(2)
+    };
+    let mut map = VoxelMap::with_support_min(3);
+    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
+    let hits = update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), Some(1), "healthy, with no neighbors");
+
+    let no_live = AHashSet::new();
+    assert!(emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
+    assert_eq!(
+        tuples(emit_points_fine(&map, 1.0, 2, None, &hits.fine)),
+        vec![(5.25, 0.25, 0.25)],
+        "this frame's returns pass the support gate"
+    );
+}
+
+#[test]
 fn fine_emission_applies_support_min() {
     let mut map = VoxelMap::default();
     for x in 0..3 {

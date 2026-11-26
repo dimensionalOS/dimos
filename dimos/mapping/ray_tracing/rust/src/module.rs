@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
@@ -34,6 +35,114 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+// DEBUG ONLY, never merge: publish and queue timing for the M20 memory jumps.
+
+/// Publishes slower than this are warned one by one.
+const SLOW_PUBLISH_MS: f64 = 100.0;
+
+/// How often the publish summary is logged.
+const PUBLISH_SUMMARY_EVERY: Duration = Duration::from_secs(5);
+
+#[derive(Default, Clone, Copy)]
+struct Stat {
+    n: u32,
+    sum: f64,
+    max: f64,
+}
+
+impl Stat {
+    fn add(&mut self, v: f64) {
+        self.n += 1;
+        self.sum += v;
+        self.max = self.max.max(v);
+    }
+
+    fn mean(&self) -> f64 {
+        if self.n == 0 {
+            0.0
+        } else {
+            self.sum / self.n as f64
+        }
+    }
+}
+
+/// Per-window publish and queue timing, logged and reset every `PUBLISH_SUMMARY_EVERY`.
+#[derive(Default)]
+struct PublishDebug {
+    window_start: Option<Instant>,
+    job_depth_max: usize,
+    job_wait_ms: Stat,
+    process_ms: Stat,
+    arrival_age_ms: Stat,
+    publish_ms: BTreeMap<&'static str, (Stat, usize)>,
+}
+
+impl PublishDebug {
+    fn record_publish(&mut self, output: &'static str, ms: f64, bytes: usize) {
+        let (stat, max_bytes) = self.publish_ms.entry(output).or_default();
+        stat.add(ms);
+        *max_bytes = (*max_bytes).max(bytes);
+    }
+
+    fn record_frame(
+        &mut self,
+        job_depth: usize,
+        wait_ms: f64,
+        process_ms: f64,
+        arrival_age_ms: f64,
+    ) {
+        self.job_depth_max = self.job_depth_max.max(job_depth);
+        self.job_wait_ms.add(wait_ms);
+        self.process_ms.add(process_ms);
+        self.arrival_age_ms.add(arrival_age_ms);
+    }
+
+    fn summarize_if_due(&mut self) {
+        let start = *self.window_start.get_or_insert_with(Instant::now);
+        if start.elapsed() < PUBLISH_SUMMARY_EVERY {
+            return;
+        }
+        let outputs = self
+            .publish_ms
+            .iter()
+            .map(|(name, (s, bytes))| {
+                format!(
+                    "{name} n={} mean={:.1} max={:.1} max_mb={:.1}",
+                    s.n,
+                    s.mean(),
+                    s.max,
+                    *bytes as f64 / 1e6
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        info!(
+            frames = self.job_wait_ms.n,
+            job_depth_max = self.job_depth_max,
+            job_wait_ms_mean = format!("{:.1}", self.job_wait_ms.mean()),
+            job_wait_ms_max = format!("{:.1}", self.job_wait_ms.max),
+            process_ms_mean = format!("{:.1}", self.process_ms.mean()),
+            process_ms_max = format!("{:.1}", self.process_ms.max),
+            arrival_age_ms_mean = format!("{:.1}", self.arrival_age_ms.mean()),
+            arrival_age_ms_max = format!("{:.1}", self.arrival_age_ms.max),
+            publish_ms = %outputs,
+            "DEBUG publish summary"
+        );
+        *self = Self {
+            window_start: Some(Instant::now()),
+            ..Self::default()
+        };
+    }
+}
+
+fn wall_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
+// END DEBUG ONLY
+
 /// Messages queued to the worker in arrival order.
 enum Job {
     /// A live cloud and when it was queued.
@@ -44,8 +153,9 @@ enum Job {
     SeedPrepared(Option<SeedPartition>),
 }
 
-/// Messages the handlers can queue ahead of the worker before they wait.
-const JOB_QUEUE_CAPACITY: usize = 256;
+/// Messages the handlers can queue ahead of the worker before they wait. One, so a
+/// worker that falls behind blocks the handler and the transport drops stale frames.
+const JOB_QUEUE_CAPACITY: usize = 1;
 
 /// How long a load may go without a tile, with live clouds keeping the
 /// worker busy, before it is reported as starved.
@@ -125,6 +235,7 @@ impl RayTracingVoxelMap {
             map_regions: self.map_regions.clone(),
             seed_map: self.seed_map.clone(),
             seed_bounds: self.seed_bounds.clone(),
+            debug: Mutex::default(),
         };
         self.jobs = Some(tx);
         self.worker = Some(tokio::spawn(worker.run()));
@@ -317,9 +428,28 @@ struct Worker {
     map_regions: Output<PointCloud2>,
     seed_map: Output<PointCloud2>,
     seed_bounds: Output<PoseStamped>,
+    debug: Mutex<PublishDebug>,
 }
 
 impl Worker {
+    /// DEBUG ONLY: record one publish's duration, warning when it is slow.
+    fn record_publish(&self, output: &'static str, started: Instant, bytes: usize) {
+        let ms = started.elapsed().as_secs_f64() * 1e3;
+        if ms > SLOW_PUBLISH_MS {
+            warn_throttled!(
+                Duration::from_secs(1),
+                output,
+                publish_ms = format!("{ms:.1}"),
+                mb = format!("{:.1}", bytes as f64 / 1e6),
+                "DEBUG slow publish"
+            );
+        }
+        self.debug
+            .lock()
+            .expect("debug mutex")
+            .record_publish(output, ms, bytes);
+    }
+
     async fn run(mut self) {
         let mut state = State {
             mapper: Mapper::new(self.config.clone()),
@@ -429,6 +559,11 @@ impl Worker {
         if let SeedState::Loading(load) = &mut state.seed {
             load.max_live_wait_ms = load.max_live_wait_ms.max(wait_ms);
         }
+        let job_depth = self
+            .job_sender
+            .upgrade()
+            .map_or(0, |s| s.max_capacity() - s.capacity());
+        let arrival_age_ms = (wall_secs() - stamp) * 1e3 - wait_ms;
 
         let out_frame_id = self.config.world_frame.as_str();
         let stamp = msg.header.stamp;
@@ -437,20 +572,28 @@ impl Worker {
         // Bounds pair with local_map by stamp, so publish them on its cadence.
         if let Some(c) = region {
             let bounds_msg = bounds_to_pose(&c, out_frame_id, stamp.clone());
+            let started = Instant::now();
             publish_bounds(&self.region_bounds, &bounds_msg).await;
+            self.record_publish("region_bounds", started, 0);
         }
 
         if let Some(points) = global_points {
             let global = points_to_cloud(&points, true, out_frame_id, stamp.clone());
+            let started = Instant::now();
             publish_cloud(&self.global_map, &global).await;
+            self.record_publish("global_map", started, global.data.len());
         }
         if let Some(points) = local_points {
             let local = points_to_cloud(&points, true, out_frame_id, stamp.clone());
+            let started = Instant::now();
             publish_cloud(&self.local_map, &local).await;
+            self.record_publish("local_map", started, local.data.len());
         }
         if let Some(points) = fine_points {
             let fine = points_to_cloud(&points, false, out_frame_id, stamp.clone());
+            let started = Instant::now();
             publish_cloud(&self.local_map_fine, &fine).await;
+            self.record_publish("local_map_fine", started, fine.data.len());
         }
 
         if state.mapper.viz_due() {
@@ -462,6 +605,9 @@ impl Worker {
             wait_ms,
             "lidar frame processed"
         );
+        let mut debug = self.debug.lock().expect("debug mutex");
+        debug.record_frame(job_depth, wait_ms, process_ms, arrival_age_ms);
+        debug.summarize_if_due();
     }
 
     /// Publish the map region cells due this viz tick, the cell in each
@@ -1133,15 +1279,12 @@ mod tests {
     async fn queued_jobs_go_ahead_of_seed_tiles() {
         let (tx, mut rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
         tx.send(lidar_job(1)).await.unwrap();
-        tx.send(lidar_job(2)).await.unwrap();
-
         assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(1));
-        assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(2));
         assert!(matches!(next_turn(&mut rx, true).await, Turn::SeedTile));
         assert!(matches!(next_turn(&mut rx, true).await, Turn::SeedTile));
 
-        tx.send(lidar_job(3)).await.unwrap();
-        assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(3));
+        tx.send(lidar_job(2)).await.unwrap();
+        assert_eq!(lidar_seq(next_turn(&mut rx, true).await), Some(2));
         assert!(matches!(next_turn(&mut rx, true).await, Turn::SeedTile));
 
         drop(tx);
@@ -1432,5 +1575,20 @@ mod tests {
             pts.contains(&voxel_center(25, 0, 0)),
             "live voxel bypasses support_min"
         );
+    }
+
+    #[test]
+    fn a_live_voxel_that_is_already_healthy_bypasses_support_min() {
+        let mut map = map_with_healthy(&[(20, 0, 0)]);
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((20, 0, 0));
+        map.set_support_min(3);
+        let local = points_to_cloud(
+            &emit_points(&map, 1.0, None, &live),
+            false,
+            "world",
+            Time::default(),
+        );
+        assert!(cloud_points(&local).contains(&voxel_center(20, 0, 0)));
     }
 }

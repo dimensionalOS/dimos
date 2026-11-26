@@ -22,6 +22,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
@@ -76,6 +77,8 @@ class LocalPlannerNative(NativeModule, spec.MapLocalPlanner):
     path: Out[Path]
     # The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.
     ground_support: Out[PointCloud2]
+    # A note on each collision start, for the recorder to keep a full-rate clip around.
+    clip_that: Out[String]
 
 
 if TYPE_CHECKING:

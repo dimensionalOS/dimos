@@ -582,6 +582,17 @@ robots:
           - module: premapmodule
             field: map_file
             label: Premap (.db/.mcap)
+        m20-patrol:
+          title: 'M20: patrol'
+          description: 'M20 navigation run by an orchestration workflow: patrols the named locations, docks to charge when the battery is low, and takes dock/undock requests.'
+          recommended_config:
+          - module: m20connection
+            field: basic_server_host
+            label: M20 control host
+            placeholder: 10.21.31.103
+          - module: localmaprelocalization
+            field: map_file
+            label: Premap (.db/.mcap)
         m20-sim-nav:
           title: 'M20 in simulation (navigation)'
           description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'

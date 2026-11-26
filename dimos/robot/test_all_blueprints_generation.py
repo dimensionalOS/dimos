@@ -42,6 +42,7 @@ BLUEPRINT_METHODS = {
     "remappings",
     "requirements",
     "configurators",
+    "disabled_modules",
 }
 _EXCLUDED_MODULE_NAMES = {
     "AgentModule",

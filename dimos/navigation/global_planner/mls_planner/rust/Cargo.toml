@@ -36,9 +36,10 @@ nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
 nav_status = "actionlib_msgs.GoalStatus"
+clip_that = "std_msgs.String"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9f95c1c9a6f5dd246d6aa453c88a1dd0816770ef" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }

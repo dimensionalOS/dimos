@@ -1,0 +1,465 @@
+root = "Robot"
+resources = ["base"]
+
+[constants]
+goals = ["hardware", "kitchenette", "lobby", "common_area", "side_entrance", "hallway_1", "hallway_2", "bathroom", "garage", "flag", "robot_area", "hugo"]
+approach_location = "dock_approach"
+predock_location = "predock"
+low_battery = 0.50
+full_battery = 0.85
+critical_battery = 0.15
+recover_battery = 0.25
+retry_s = 2.0
+not_charging_s = 60.0
+nav_timeout_s = 600.0
+goal_attempts = 3
+reverse_loops = 3
+dock_attempts = 3
+CHARGING = 1
+DISCHARGING = 2
+NOT_CHARGING = 3
+PREEMPTED = 2
+SUCCEEDED = 3
+ABORTED = 4
+
+[vars]
+"goal.index" = 0
+"goal.tries" = 0
+skips = 0
+streak = 0
+"dock.tries" = 0
+"dock.wait" = 0
+"dock.hold" = 0
+
+[[stream_value]]
+name = "battery"
+stream = "M20Connection.battery"
+field = "percentage"
+
+[[stream_value]]
+name = "power"
+stream = "M20Connection.battery"
+field = "power_supply_status"
+
+[[stream_value]]
+name = "request"
+stream = "Orchestrator.orchestrator_request"
+field = "data"
+
+[[stream_value]]
+name = "nav_state"
+stream = "MLSPlannerNative.nav_status"
+field = "status"
+
+[[stream_value]]
+name = "nav_stamp"
+stream = "MLSPlannerNative.nav_status"
+field = "goal_id.stamp"
+
+[[activity]]
+name = "navigate"
+start = "MLSPlannerNative.go_to"
+cancel = "MLSPlannerNative.stop_navigation"
+uses = ["base"]
+
+[[activity]]
+name = "locate"
+start = "PremapModule.location"
+
+[[activity]]
+name = "dock"
+start = "M20Connection.dock"
+
+[[activity]]
+name = "undock"
+start = "M20Connection.undock"
+
+[[activity]]
+name = "sit"
+start = "M20Connection.liedown"
+
+[[activity]]
+name = "stand"
+start = "M20Connection.standup"
+
+[[node]]
+name = "Robot"
+children = ["Mission", "Depleted"]
+initial = "Mission"
+
+[[node]]
+name = "Mission"
+children = ["Start", "Patrol", "Charging"]
+initial = "Start"
+
+[[node.transition]]
+if = "battery < critical_battery && power == DISCHARGING"
+goto = "Depleted"
+
+# Waits for the first battery message, so a restart resumes from where the robot is.
+[[node]]
+name = "Start"
+
+[[node.transition]]
+if = "power == CHARGING || power == NOT_CHARGING"
+goto = "Charging"
+
+[[node.transition]]
+if = "power == DISCHARGING"
+goto = "Patrol"
+
+# Walks the goals in a loop until the battery is low, then resumes at the same goal.
+# Every reverse_loops loops, it turns around and walks them in the other direction.
+# After a dock gives up, the robot walks a full loop before it tries the dock again.
+[[node]]
+name = "Patrol"
+children = ["Lookup", "Going", "Retry"]
+initial = "Lookup"
+
+[[node.transition]]
+if = "battery < low_battery && dock.wait == 0"
+goto = "Charging"
+
+# An operator sends "dock" on orchestrator_request to charge now, and "undock" to let it go.
+[[node.transition]]
+on = "Orchestrator.orchestrator_request"
+if = "request == 'dock'"
+goto = "Charging"
+set = { "dock.wait" = "0", "dock.hold" = "1" }
+
+[[node.transition]]
+if = "streak >= size(goals)"
+goto = "Charging"
+set = { streak = "0" }
+
+[[node]]
+name = "Lookup"
+activity = "locate"
+args = { name = "goals[goal.index / size(goals) / reverse_loops % 2 == 0 ? goal.index % size(goals) : (2 * size(goals) - 2 - goal.index % size(goals)) % size(goals)]" }
+result = "goal.pose"
+
+[[node.transition]]
+on = "succeeded"
+goto = "Going"
+
+[[node.transition]]
+on = "failed"
+goto = "Retry"
+
+[[node]]
+name = "Going"
+activity = "navigate"
+args = { pose = "goal.pose" }
+result = "nav.goal"
+
+[[node.transition]]
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
+goto = "Lookup"
+set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", streak = "0", "dock.wait" = "dock.wait > 0 ? dock.wait - 1 : 0" }
+
+[[node.transition]]
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
+goto = "Retry"
+
+[[node.transition]]
+on = "failed"
+goto = "Retry"
+
+# No leg takes this long, so the planner is stuck and the same goal would likely stick again.
+[[node.transition]]
+after = "nav_timeout_s"
+goto = "Lookup"
+set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", skips = "skips + 1", streak = "streak + 1", "dock.wait" = "dock.wait > 0 ? dock.wait - 1 : 0" }
+
+# Out of tries, the goal is skipped.
+[[node]]
+name = "Retry"
+
+[[node.transition]]
+after = "retry_s"
+if = "goal.tries + 1 < goal_attempts"
+goto = "Lookup"
+set = { "goal.tries" = "goal.tries + 1" }
+
+[[node.transition]]
+after = "retry_s"
+goto = "Lookup"
+set = { "goal.index" = "goal.index + 1", "goal.tries" = "0", skips = "skips + 1", streak = "streak + 1", "dock.wait" = "dock.wait > 0 ? dock.wait - 1 : 0" }
+
+# Everything about the charger, from heading for it until the robot has undocked again.
+[[node]]
+name = "Charging"
+children = ["Arrive", "ApproachLookup", "Approach", "ApproachRetry", "PredockLookup", "Predock", "Docking", "TopUp", "Redocking", "RedockRetry", "Undocking", "UndockRetry"]
+initial = "Arrive"
+outcomes = ["done", "failed"]
+
+[[node.transition]]
+on = "done"
+goto = "Patrol"
+
+[[node.transition]]
+on = "failed"
+goto = "Patrol"
+
+[[node]]
+name = "Arrive"
+
+[[node.transition]]
+if = "power == CHARGING || power == NOT_CHARGING"
+goto = "TopUp"
+
+[[node.transition]]
+goto = "ApproachLookup"
+
+[[node]]
+name = "ApproachLookup"
+activity = "locate"
+args = { name = "approach_location" }
+result = "approach.pose"
+
+[[node.transition]]
+on = "succeeded"
+goto = "Approach"
+
+[[node.transition]]
+on = "failed"
+goto = "ApproachRetry"
+
+# Both docking points carry the charger's heading, so the robot faces the reflectors at predock.
+[[node]]
+name = "Approach"
+activity = "navigate"
+args = { pose = "approach.pose", face_heading = true }
+result = "nav.goal"
+
+[[node.transition]]
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
+goto = "PredockLookup"
+
+[[node.transition]]
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
+goto = "ApproachRetry"
+
+[[node.transition]]
+after = "nav_timeout_s"
+goto = "ApproachRetry"
+
+[[node.transition]]
+on = "failed"
+goto = "ApproachRetry"
+
+[[node]]
+name = "ApproachRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "ApproachLookup"
+
+[[node]]
+name = "PredockLookup"
+activity = "locate"
+args = { name = "predock_location" }
+result = "predock.pose"
+
+[[node.transition]]
+on = "succeeded"
+goto = "Predock"
+
+[[node.transition]]
+on = "failed"
+goto = "ApproachRetry"
+
+[[node]]
+name = "Predock"
+activity = "navigate"
+args = { pose = "predock.pose", face_heading = true }
+result = "nav.goal"
+
+[[node.transition]]
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
+goto = "Docking"
+
+[[node.transition]]
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
+goto = "ApproachRetry"
+
+[[node.transition]]
+after = "nav_timeout_s"
+goto = "ApproachRetry"
+
+[[node.transition]]
+on = "failed"
+goto = "ApproachRetry"
+
+# The robot creeps forward while standing, so a failed dock goes back out to the approach point.
+[[node]]
+name = "Docking"
+activity = "dock"
+
+[[node.transition]]
+on = "succeeded"
+goto = "TopUp"
+set = { "dock.tries" = "0" }
+
+[[node.transition]]
+on = "failed"
+if = "dock.tries + 1 < dock_attempts"
+goto = "ApproachLookup"
+set = { "dock.tries" = "dock.tries + 1" }
+
+[[node.transition]]
+on = "failed"
+goto = "failed"
+set = { "dock.tries" = "0", "dock.wait" = "size(goals)", "dock.hold" = "0" }
+
+[[node]]
+name = "TopUp"
+children = ["Filling", "Stalled"]
+initial = "Filling"
+outcomes = ["failed"]
+
+[[node.transition]]
+if = "battery >= full_battery && dock.hold == 0"
+goto = "Undocking"
+
+[[node.transition]]
+on = "Orchestrator.orchestrator_request"
+if = "request == 'undock'"
+goto = "TopUp"
+set = { "dock.hold" = "0" }
+
+[[node.transition]]
+on = "failed"
+goto = "Redocking"
+
+[[node]]
+name = "Filling"
+
+[[node.transition]]
+if = "power != CHARGING"
+goto = "Stalled"
+
+# A bad contact, or a robot knocked off the charger, docks again after a minute.
+[[node]]
+name = "Stalled"
+
+[[node.transition]]
+if = "power == CHARGING"
+goto = "Filling"
+
+[[node.transition]]
+after = "not_charging_s"
+goto = "failed"
+
+[[node]]
+name = "Redocking"
+activity = "undock"
+
+[[node.transition]]
+on = "succeeded"
+goto = "ApproachLookup"
+
+[[node.transition]]
+on = "failed"
+goto = "RedockRetry"
+
+[[node]]
+name = "RedockRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "Redocking"
+
+[[node]]
+name = "Undocking"
+activity = "undock"
+
+[[node.transition]]
+on = "succeeded"
+goto = "done"
+
+[[node.transition]]
+on = "failed"
+goto = "UndockRetry"
+
+[[node]]
+name = "UndockRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "Undocking"
+
+# Off the charger below 10%, the robot sits down until a charged battery brings it back to 20%.
+# Put on the charger instead, it goes back to the mission, which charges it.
+[[node]]
+name = "Depleted"
+children = ["SitDown", "SitRetry", "Resting", "StandUp", "StandRetry"]
+initial = "SitDown"
+outcomes = ["done"]
+
+[[node.transition]]
+if = "power != DISCHARGING"
+goto = "Mission"
+set = { "dock.tries" = "0", "dock.wait" = "0", "dock.hold" = "0" }
+
+[[node.transition]]
+on = "done"
+goto = "Mission"
+set = { "dock.tries" = "0", "dock.wait" = "0", "dock.hold" = "0" }
+
+[[node]]
+name = "SitDown"
+activity = "sit"
+result = "sat"
+
+[[node.transition]]
+on = "succeeded"
+if = "sat"
+goto = "Resting"
+
+[[node.transition]]
+on = "succeeded"
+goto = "SitRetry"
+
+[[node.transition]]
+on = "failed"
+goto = "SitRetry"
+
+[[node]]
+name = "SitRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "SitDown"
+
+[[node]]
+name = "Resting"
+
+[[node.transition]]
+if = "battery >= recover_battery"
+goto = "StandUp"
+
+[[node]]
+name = "StandUp"
+activity = "stand"
+result = "stood"
+
+[[node.transition]]
+on = "succeeded"
+if = "stood"
+goto = "done"
+
+[[node.transition]]
+on = "succeeded"
+goto = "StandRetry"
+
+[[node.transition]]
+on = "failed"
+goto = "StandRetry"
+
+[[node]]
+name = "StandRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "StandUp"

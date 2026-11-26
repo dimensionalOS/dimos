@@ -88,6 +88,20 @@ pub fn load(name: &str, emb: &Emb, step_cost: f64) -> Option<Box<dyn ObstacleMod
     }
 }
 
+/// Hard voxels inside the standing body box at `pose`.
+pub fn body_hits(hard: &[[f32; 3]], emb: &Emb, pose: (f64, f64, f64)) -> usize {
+    let [length, width, off_x, off_y] = emb.stand_box();
+    let (s, c) = pose.2.sin_cos();
+    hard.iter()
+        .filter(|p| {
+            let (dx, dy) = (p[0] as f64 - pose.0, p[1] as f64 - pose.1);
+            let along = c * dx + s * dy - off_x;
+            let across = -s * dx + c * dy - off_y;
+            along.abs() <= length / 2.0 && across.abs() <= width / 2.0
+        })
+        .count()
+}
+
 /// The voxel holding `p`, as layer indices.
 pub fn voxel_key(p: &[f32; 3]) -> [i64; 3] {
     let v = VOXEL as f32;
@@ -169,6 +183,23 @@ mod tests {
 
     fn model() -> Box<dyn ObstacleModel> {
         load("body_band", &fixture(), 5.0).expect("known model")
+    }
+
+    #[test]
+    fn only_voxels_inside_the_turned_standing_box_hit_the_body() {
+        let emb = fixture();
+        let [length, width, off_x, _] = emb.stand_box();
+        let ahead = (off_x + length / 2.0) as f32;
+        let side = (width / 2.0) as f32;
+        let hard = [
+            [0.0, ahead - 0.01, 0.3],
+            [0.0, ahead + 0.01, 0.3],
+            [side + 0.01, 0.0, 0.3],
+        ];
+        assert_eq!(
+            body_hits(&hard, &emb, (0.0, 0.0, std::f64::consts::FRAC_PI_2)),
+            1
+        );
     }
 
     /// One voxel column at x, centers at `layers` voxel layers above a floor at `ground_z`.

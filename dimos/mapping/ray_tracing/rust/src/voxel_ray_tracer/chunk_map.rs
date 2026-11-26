@@ -296,7 +296,6 @@ impl ChunkMap {
     }
 
     /// Healthy-neighbor count of the voxel at `key`.
-    #[cfg(test)]
     pub fn support(&self, key: &VoxelKey) -> Option<u8> {
         let chunk = self.chunks.get(&chunk_of(*key))?;
         chunk.index(slot_of(*key)).map(|i| chunk.support[i])

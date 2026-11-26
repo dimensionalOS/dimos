@@ -35,6 +35,8 @@ const GRID_PAD: f64 = 0.72; // 3 * PERIOD
 const YAW_BINS: usize = 16;
 /// Cells around the goal a route may step onto an exact pose from.
 const GOAL_WINDOW: usize = 2;
+/// Cells around the start a route may step onto from the exact pose.
+const START_WINDOW: usize = 2;
 /// Tolerance for a route that already ends on the exact goal pose.
 const EXACT_EPS: f64 = 1e-6;
 const OFFSET_STEP: f64 = 0.05;
@@ -116,6 +118,7 @@ pub struct Emb {
     pub walk_gain: f64,
     pub walk_slip: f64,
     pub walk_slip_ramp: f64,
+    pub min_yaw_rate: f64,
     /// Vertical geometry off the surface the feet stand on (`obstacles.rs`).
     pub steppable: f64,
     pub height: f64,
@@ -151,6 +154,7 @@ impl Emb {
             walk_gain: 0.964,
             walk_slip: 0.132,
             walk_slip_ramp: 0.08,
+            min_yaw_rate: 0.0,
             steppable: 0.2,
             height: 0.6,
             base_height: 0.29,
@@ -197,7 +201,7 @@ impl Emb {
 
     /// The standing body: the largest box nested in every envelope row.
     /// `embodiment/base.py::stand_box`.
-    fn stand_box(&self) -> [f64; 4] {
+    pub fn stand_box(&self) -> [f64; 4] {
         if self.envelope.is_empty() {
             return self.union_box();
         }
@@ -1390,12 +1394,30 @@ fn se2_search_in(
     // entered from any state within GOAL_WINDOW of the goal cell by a clear segment.
     let exact = goal_yaw.map(|yaw| [goal.0, goal.1, yaw]);
     let goal_k = n_states;
-    let mut dist = vec![f64::INFINITY; n_states + 1];
+    // Where the body clears the true pose the route starts on it: a column past the
+    // lattice holding the true position in its own heading and in every bin's, turns in
+    // place between them, each left by a clear segment to a state within START_WINDOW
+    // of the start cell in its heading's bin.
+    let start_k = n_states + 1;
+    let column = |b: usize| start_k + 1 + b;
+    let n_all = start_k + 1 + YAW_BINS;
+    let here_of = |k: usize| -> [f64; 3] {
+        if k == start_k {
+            [start.0, start.1, start.2]
+        } else {
+            [start.0, start.1, thetas[k - start_k - 1]]
+        }
+    };
+    let mut dist = vec![f64::INFINITY; n_all];
     // `from + 1`, 0 = no predecessor, so the vector is served zeroed.
-    let mut prev = vec![0u32; n_states + 1];
-    let mut closed = vec![false; n_states];
+    let mut prev = vec![0u32; n_all];
+    let mut closed = vec![false; n_all];
     let mut heap: BinaryHeap<Node> = BinaryHeap::new();
-    let s0 = (sb * nx + si) * ny + sj;
+    let s0 = if witness {
+        start_k
+    } else {
+        (sb * nx + si) * ny + sj
+    };
     dist[s0] = 0.0;
     // Infinite `h` proves unreachability: drop, do not push.
     let mut goal_state: Option<usize> = None;
@@ -1411,6 +1433,66 @@ fn se2_search_in(
         if from == goal_k {
             goal_state = Some(prev[goal_k] as usize - 1);
             break;
+        }
+        if from >= start_k {
+            if closed[from] {
+                continue;
+            }
+            closed[from] = true;
+            let d = dist[from];
+            let here = here_of(from);
+            let mult = cl.w.mult_at(start.0, start.1);
+            if from == start_k {
+                let uv = pose_clear(cl.w, &offs, start.0, start.1, start.2);
+                for b in 0..YAW_BINS {
+                    let k = column(b);
+                    let turned = here_of(k);
+                    let c = motion_cost(emb, &here, &turned) * cl.price(uv) * mult;
+                    if d + c < dist[k] && seg_free(cl.w, fps, emb, &here, &turned, margin) {
+                        dist[k] = d + c;
+                        prev[k] = from as u32 + 1;
+                        let f = d + c + heur(si, sj);
+                        debug_assert!(f >= 0.0 && f.is_sign_positive());
+                        heap.push(Node {
+                            f: f.to_bits(),
+                            k: k as u32,
+                        });
+                    }
+                }
+            }
+            let b = if from == start_k {
+                sb
+            } else {
+                from - start_k - 1
+            };
+            let w = START_WINDOW as i64;
+            for di in -w..=w {
+                for dj in -w..=w {
+                    let (ni, nj) = (si as i64 + di, sj as i64 + dj);
+                    if ni < 0 || nj < 0 || ni >= nx as i64 || nj >= ny as i64 {
+                        continue;
+                    }
+                    let (ni, nj) = (ni as usize, nj as usize);
+                    let hn = heur(ni, nj);
+                    if hn == f64::INFINITY {
+                        continue;
+                    }
+                    let k = (b * nx + ni) * ny + nj;
+                    let there = [cl.gx[ni], cl.gy[nj], thetas[b]];
+                    let uv = cl.clear_at(k, b, ni, nj);
+                    let c = motion_cost(emb, &here, &there) * cl.price(uv) * cl.w.mult(ni, nj);
+                    if d + c < dist[k] && seg_free(cl.w, fps, emb, &here, &there, margin) {
+                        dist[k] = d + c;
+                        prev[k] = from as u32 + 1;
+                        debug_assert!(d + c + hn >= 0.0 && (d + c + hn).is_sign_positive());
+                        heap.push(Node {
+                            f: (d + c + hn).to_bits(),
+                            k: k as u32,
+                        });
+                    }
+                }
+            }
+            continue;
         }
         let b = from / (nx * ny);
         let i = (from / ny) % nx;
@@ -1543,20 +1625,23 @@ fn se2_search_in(
             }
         }
     }
-    let k = goal_state?;
-    let (mut b, mut i, mut j) = (k / (nx * ny), (k / ny) % nx, k % ny);
-    let mut states = vec![(b, i, j)];
-    while prev[(b * nx + i) * ny + j] != 0 && (b, i, j) != (sb, si, sj) {
-        let p = prev[(b * nx + i) * ny + j] as usize - 1;
-        b = p / (nx * ny);
-        i = (p / ny) % nx;
-        j = p % ny;
-        states.push((b, i, j));
+    let mut k = goal_state?;
+    let mut chain = vec![k];
+    while prev[k] != 0 && k != s0 {
+        k = prev[k] as usize - 1;
+        chain.push(k);
     }
-    states.reverse();
-    let mut raw: Vec<[f64; 3]> = states
+    chain.reverse();
+    let mut raw: Vec<[f64; 3]> = chain
         .iter()
-        .map(|&(b, i, j)| [cl.gx[i], cl.gy[j], thetas[b]])
+        .map(|&k| {
+            if k >= start_k {
+                here_of(k)
+            } else {
+                let (b, i, j) = (k / (nx * ny), (k / ny) % nx, k % ny);
+                [cl.gx[i], cl.gy[j], thetas[b]]
+            }
+        })
         .collect();
     raw.extend(exact);
 
@@ -2319,6 +2404,25 @@ mod tests {
                 assert_eq!(p[k].to_bits(), q[k].to_bits());
             }
         }
+    }
+
+    #[test]
+    fn a_route_starts_at_the_true_pose_off_the_lattice() {
+        let pose = (0.05, -0.04, 0.2);
+        let states = plan(
+            &[],
+            pose,
+            (-3.0, 0.0),
+            &Emb::fixture(),
+            0.1,
+            None,
+            COMMIT_MARGIN,
+        )
+        .expect("a route");
+        assert_eq!(states[0], [pose.0, pose.1, pose.2]);
+        // The turn toward the goal behind starts where the robot stands.
+        let first = states[1];
+        assert!((first[0] - pose.0).hypot(first[1] - pose.1) < 0.01 && first[2] != pose.2);
     }
 
     #[test]
