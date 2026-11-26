@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from dimos.autoresearch.judge import BodyPose, LiftJudge, Snapshot
-from dimos.autoresearch.session import Budget, Session
-from dimos.autoresearch.trial import HELDOUT_SEED_BASE, NoEpisodes, run_trial
+from dimos.autoresearch.mujoco.judge import BodyPose, LiftJudge, Snapshot
+from dimos.autoresearch.mujoco.trial import HELDOUT_SEED_BASE, ArmEvaluator, NoEpisodes
+from dimos.autoresearch.session import Trial
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
 from dimos.manipulation.code_policy._test_helpers import FAKE_BACKEND
@@ -72,62 +72,49 @@ class FakeMonitor:
 
 
 @pytest.fixture
-def session(tmp_path: Path) -> Session:
-    budget = Budget(
-        iterations=1, candidates_per_round=1, dev_trials=2, heldout_trials=1, threshold=0.8
+def trial(tmp_path: Path) -> Trial:
+    program = tmp_path / "program.py"
+    program.write_text(PROGRAM)
+    return Trial(
+        artifact=program, task="lift the cube", directory=tmp_path / "dev-03", split="dev", index=3
     )
-    return Session.create(tmp_path / "lift", task="lift the cube", budget=budget, model="test")
 
 
-def test_success_saves_the_episode_and_records_the_trial(session: Session) -> None:
-    candidate = session.submit(PROGRAM, "straight down, close, straight up")
+def test_success_saves_the_episode_and_reports_the_trace(trial: Trial) -> None:
     world = FakeWorld([snapshot(0.02), snapshot(0.12)])
     monitor = FakeMonitor()
     monitor.saved = 1
 
-    record = run_trial(
-        session, candidate, "dev", 3, world, LiftJudge("cube"), monitor, FAKE_BACKEND, 60.0
-    )
+    result = ArmEvaluator(world, LiftJudge("cube"), monitor, FAKE_BACKEND, 60.0)(trial)
 
-    assert (record.success, record.stage, record.status) == (True, "done", "completed")
-    assert record.note == "cube rose 0.100 m"
-    assert record.episode == 1
-    assert (record.start_ts, record.backend) == (0.0, FAKE_BACKEND)
+    assert result.score == 1
+    assert result.note == "cube rose 0.100 m"
+    assert result.evidence["episode"] == 1
+    assert result.evidence["trace"] == str(trial.directory / "trace.jsonl")
+    assert (trial.directory / "trace.jsonl").is_file()
     assert monitor.events == ["start", "save"]
     assert world.seeds == [3]
-    assert record.trace == session.candidate_dir(candidate) / "trials/dev-03/trace.jsonl"
-    assert record.trace.is_file()
-    assert Session(session.dir).results(candidate) == [record]
-
-    unrecorded = FakeWorld([snapshot(0.02), snapshot(0.12)])
-    record = run_trial(
-        session,
-        candidate,
-        "dev",
-        4,
-        unrecorded,
-        LiftJudge("cube"),
-        NoEpisodes(),
-        FAKE_BACKEND,
-        60.0,
-    )
-    assert record.success and record.episode is None
 
 
-def test_failure_discards_the_episode_and_keeps_the_program_error(session: Session) -> None:
-    candidate = session.submit(
-        "def run(robot, task):\n    raise ValueError('no cube')\n", "gives up"
-    )
+def test_without_a_recorder_no_episode_is_saved(trial: Trial) -> None:
+    world = FakeWorld([snapshot(0.02), snapshot(0.12)])
+    result = ArmEvaluator(world, LiftJudge("cube"), NoEpisodes(), FAKE_BACKEND, 60.0)(trial)
+    assert result.score == 1 and result.evidence["episode"] is None
+
+
+def test_failure_discards_the_episode_and_keeps_the_program_error(trial: Trial) -> None:
+    trial.artifact.write_text("def run(robot, task):\n    raise ValueError('no cube')\n")
     world = FakeWorld([snapshot(0.02), snapshot(0.02)])
     monitor = FakeMonitor()
-
-    record = run_trial(
-        session, candidate, "heldout", 0, world, LiftJudge("cube"), monitor, FAKE_BACKEND, 60.0
+    result = ArmEvaluator(world, LiftJudge("cube"), monitor, FAKE_BACKEND, 60.0)(
+        trial.model_copy(update={"split": "heldout", "index": 0})
     )
-
-    assert (record.success, record.stage, record.status) == (False, "reach", "raised")
-    assert record.note == "cube was not touched; program raised: ValueError: no cube"
-    assert record.episode is None
+    assert (result.score, result.evidence["stage"], result.evidence["status"]) == (
+        0,
+        "reach",
+        "raised",
+    )
+    assert result.note == "cube was not touched; program raised: ValueError: no cube"
+    assert result.evidence["episode"] is None
     assert monitor.events == ["start", "discard"]
     assert world.seeds == [HELDOUT_SEED_BASE]
-    assert record.trace.read_text() == ""

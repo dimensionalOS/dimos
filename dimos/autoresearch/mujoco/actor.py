@@ -25,7 +25,7 @@ import shutil
 import sys
 import threading
 
-from dimos.autoresearch.prompt import EXCLUDED_KEYWORDS, actor_prompt
+from dimos.autoresearch.mujoco.prompt import EXCLUDED_KEYWORDS, RoundBudget, actor_prompt
 from dimos.autoresearch.session import Session
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.evals.agents.lib.pi_config import RunPaths
@@ -107,7 +107,10 @@ def run_actor(
     watcher.start()
     try:
         trajectory = agent.run(
-            actor_prompt(info.task, info.budget), env, run_dir, timeout_s=timeout_s
+            actor_prompt(info.task, RoundBudget.model_validate(info.settings["rounds"])),
+            env,
+            run_dir,
+            timeout_s=timeout_s,
         )
     finally:
         ended.set()

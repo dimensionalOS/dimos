@@ -18,8 +18,8 @@ import inspect
 from pathlib import Path
 
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.autoresearch.module import AutoresearchModule, AutoresearchModuleConfig
-from dimos.autoresearch.truth_scene import TruthSceneModule
+from dimos.autoresearch.mujoco.module import AutoresearchModule, AutoresearchModuleConfig
+from dimos.autoresearch.mujoco.truth_scene import TruthSceneModule
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionModule, CollectionModuleConfig

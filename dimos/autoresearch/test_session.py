@@ -13,86 +13,104 @@
 # limitations under the License.
 
 from pathlib import Path
-import stat
 
 import pytest
 
-from dimos.autoresearch.session import Budget, Session, Split, TrialRecord
-
-PROGRAM = "import math\n\ndef run(robot, task):\n    robot.arm.home()\n"
+from dimos.autoresearch.session import Budget, Evaluation, Session, SessionInfo, Trial
 
 
 @pytest.fixture
 def session(tmp_path: Path) -> Session:
-    budget = Budget(
-        iterations=3, candidates_per_round=2, dev_trials=2, heldout_trials=4, threshold=0.8
-    )
-    # The collection recorder makes the directory before the session exists.
-    (tmp_path / "lift" / "recording").mkdir(parents=True)
-    return Session.create(tmp_path / "lift", task="lift the cube", budget=budget, model="test")
-
-
-def record(split: Split, index: int, success: bool) -> TrialRecord:
-    return TrialRecord(
-        split=split,
-        index=index,
-        success=success,
-        stage="done" if success else "reach",
-        note="",
-        status="completed",
-        duration_s=1.0,
-        trace=Path("/nowhere/trace.jsonl"),
-        start_ts=0.0,
-        episode=None,
-        backend="fake",
+    return Session.create(
+        tmp_path / "research",
+        SessionInfo(
+            task="Find a smaller encoding",
+            experiment="test",
+            metric="bytes",
+            direction="minimize",
+            budget=Budget(max_candidates=2, dev_trials=2, heldout_trials=3),
+        ),
     )
 
 
-def test_candidates_are_immutable_scored_and_frozen_once(session: Session) -> None:
-    first = session.submit(PROGRAM, "go straight down")
-    second = session.submit(PROGRAM.replace("home()", "home()\n    robot.gripper.open()"), "open")
-    assert (first, second) == (1, 2)
-    assert session.program_path(first).read_text() == PROGRAM
-    assert stat.S_IMODE(session.program_path(first).stat().st_mode) == 0o444
-    assert session.hypothesis(second) == "open"
+def test_snapshot_budget_and_numeric_leaderboard(session: Session) -> None:
+    first = session.submit("candidate.bin", b"\x00\xff", "baseline")
+    second = session.submit("candidate.bin", b"\xff", "omit padding")
 
-    session.record_trial(first, record("dev", 0, True))
-    session.record_trial(first, record("dev", 1, False))
-    session.record_trial(second, record("dev", 0, True))
-    with pytest.raises(RuntimeError, match="already ran"):
-        session.trial_dir(first, "dev", 0)
-    assert session.trial_dir(first, "dev", 5) == session.trial_dir(first, "dev", 5)
-    with pytest.raises(FileExistsError):
-        Session.create(session.dir, task="again", budget=session.info().budget, model="test")
+    def size(trial: Trial) -> Evaluation:
+        return Evaluation(score=trial.artifact.stat().st_size + trial.index)
 
+    session.evaluate(first, "dev", size)
+    assert session.leaderboard()[-1].dev_score is None
+    session.evaluate(second, "dev", size)
+
+    (session.artifact(first).parent / "__pycache__").mkdir()
     other = Session(session.dir)
-    board = [(score.candidate, score.dev_passed, score.dev_trials) for score in other.leaderboard()]
-    assert board == [(2, 1, 1), (1, 1, 2)]
-    assert other.results(first) == [record("dev", 0, True), record("dev", 1, False)]
+    assert other.artifact(first).read_bytes() == b"\x00\xff"
+    assert [(s.candidate, s.dev_score) for s in other.leaderboard()] == [
+        (second, 1.5),
+        (first, 2.5),
+    ]
+    with pytest.raises(RuntimeError, match="budget"):
+        other.submit("another", b"", "too late")
+    with pytest.raises(RuntimeError, match="call freeze"):
+        other.evaluate(second, "heldout", size)
 
-    other.freeze(second)
-    assert session.frozen() == 2
+
+def test_resume_interrupted_heldout_without_reusing_evidence_or_rescoring(session: Session) -> None:
+    candidate = session.submit("answer.txt", b"plain text", "baseline")
+    alternate = session.submit("answer.txt", b"different", "alternate")
+    session.freeze(candidate)
+
+    def fails_on_second(trial: Trial) -> Evaluation:
+        (trial.directory / "partial").touch()
+        if trial.index == 1:
+            raise RuntimeError("evaluator unavailable")
+        return Evaluation(score=-3)
+
+    with pytest.raises(RuntimeError, match="unavailable"):
+        session.evaluate(candidate, "heldout", fails_on_second)
+    assert [r.score for r in session.results(candidate)] == [-3]
     assert session.info().status == "frozen"
+    other = Session(session.dir)
     with pytest.raises(RuntimeError, match="frozen"):
-        session.submit(PROGRAM, "too late")
+        other.freeze(alternate)
     with pytest.raises(RuntimeError, match="frozen"):
-        session.freeze(first)
+        other.submit("third", b"", "late")
+    with pytest.raises(RuntimeError, match="frozen"):
+        other.evaluate(candidate, "dev", fails_on_second)
+
+    indexes = []
+
+    def resumed(trial: Trial) -> Evaluation:
+        assert not (trial.directory / "partial").exists()
+        indexes.append(trial.index)
+        return Evaluation(score=0, note="measured")
+
+    other.freeze(candidate)
+    other.evaluate(candidate, "heldout", resumed)
+    other.evaluate(candidate, "heldout", resumed)
+    assert indexes == [1, 2]
+    assert (session.info().status, session.info().heldout_score) == ("scored", -1)
 
 
-def test_submit_refuses_programs_outside_the_contract(session: Session) -> None:
-    with pytest.raises(ValueError, match="only math"):
-        session.submit("import os\n\ndef run(robot, task):\n    pass\n", "uses os")
-    with pytest.raises(ValueError, match="only math"):
-        session.submit("from numpy import array\n\ndef run(robot, task):\n    pass\n", "numpy")
-    with pytest.raises(ValueError, match=r"run\(robot, task\)"):
-        session.submit("import math\n\ndef main():\n    pass\n", "no run")
-    with pytest.raises(ValueError, match="parse"):
-        session.submit("def run(robot, task)\n    pass\n", "syntax error")
-    assert session.candidates() == []
+def test_running_evaluation_excludes_other_writers_but_allows_status(session: Session) -> None:
+    candidate = session.submit("data", b"", "baseline")
+    other = Session(session.dir)
+
+    def measure(trial: Trial) -> Evaluation:
+        assert other.info().status == "running"
+        with pytest.raises(RuntimeError, match="in progress"):
+            other.freeze(candidate)
+        with pytest.raises(RuntimeError, match="in progress"):
+            other.evaluate(candidate, "dev", measure)
+        return Evaluation(score=trial.index)
+
+    session.evaluate(candidate, "dev", measure)
+    assert session.info().status == "idle"
 
 
-def test_library_notes_are_markdown_files(session: Session) -> None:
-    path = session.note("Grasp from above", "Approach 10 cm over the cube, then descend.")
-    assert path == session.dir / "library" / "grasp-from-above.md"
-    assert path.read_text() == "# Grasp from above\n\nApproach 10 cm over the cube, then descend.\n"
-    assert Session(session.dir).library() == [path]
+def test_library_note_survives_reopen(session: Session) -> None:
+    note = session.note("Remove padding", "Keep trailing bytes only for partial blocks.")
+    assert [note] == Session(session.dir).library()
+    assert note.read_text().startswith("# Remove padding\n")

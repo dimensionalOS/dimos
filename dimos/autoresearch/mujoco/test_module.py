@@ -29,10 +29,12 @@ import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.autoresearch.module import AutoresearchModule
-from dimos.autoresearch.session import Budget, Session
-from dimos.autoresearch.status import AutoresearchStatus
-from dimos.autoresearch.world import PlacementBounds
+from dimos.autoresearch.mujoco.module import AutoresearchModule
+from dimos.autoresearch.mujoco.prompt import RoundBudget
+from dimos.autoresearch.mujoco.status import AutoresearchStatus
+from dimos.autoresearch.mujoco.trial import ArmTrialRecord
+from dimos.autoresearch.mujoco.world import PlacementBounds
+from dimos.autoresearch.session import Session
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
@@ -217,7 +219,7 @@ def autoresearch(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[
         judge_body="cube",
         place_body="bowl",
         placement_bounds=BOUNDS,
-        budget=Budget(
+        budget=RoundBudget(
             iterations=1, candidates_per_round=2, dev_trials=2, heldout_trials=1, threshold=0.8
         ),
         program_timeout_s=60.0,
@@ -296,10 +298,10 @@ def test_run_returns_at_once_then_records_every_dev_trial_and_releases_the_tool(
         autoresearch.module.run(candidate)
         == "a run is in progress; wait for its results or call stop_run first"
     )
-    assert autoresearch.session.info().status == "running"
+    wait_until(lambda: autoresearch.session.info().status == "running", timeout=5.0)
     wait_until(autoresearch.done, timeout=60.0)
 
-    records = autoresearch.session.results(candidate)
+    records = [ArmTrialRecord.from_record(r) for r in autoresearch.session.results(candidate)]
     assert [(r.split, r.index, r.success, r.stage) for r in records] == [
         ("dev", 0, False, "reach"),
         ("dev", 1, True, "done"),
@@ -359,8 +361,8 @@ def test_freeze_runs_the_heldout_trials_and_scores_the_session(autoresearch: Aut
     wait_until(lambda: autoresearch.session.info().status == "scored", timeout=60.0)
 
     info = autoresearch.session.info()
-    assert (info.status, info.heldout_rate, autoresearch.session.frozen()) == ("scored", 1.0, 1)
-    [record] = autoresearch.session.results(candidate)
+    assert (info.status, info.heldout_score, info.frozen_candidate) == ("scored", 1.0, 1)
+    [record] = [ArmTrialRecord.from_record(r) for r in autoresearch.session.results(candidate)]
     assert (record.split, record.index, record.success) == ("heldout", 0, True)
     wait_until(autoresearch.done, timeout=5.0)
     assert (autoresearch.statuses[-1].state, autoresearch.statuses[-1].heldout_rate) == (
@@ -391,7 +393,7 @@ def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
         seen.update(mcp_url=mcp_url, model=model, provider=provider, run_dir=run_dir)
         return TrajectoryBuilder("go", name="t", model=model).build("answer")
 
-    mocker.patch("dimos.autoresearch.module.run_actor", fake)
+    mocker.patch("dimos.autoresearch.mujoco.module.run_actor", fake)
     status = AutoresearchStatus.model_validate_json(autoresearch.module.start_actor())
     assert (status.actor, status.actor_model, status.actor_provider) == (
         "running",
@@ -412,7 +414,7 @@ def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
     assert autoresearch.session.info().status == "idle"
 
     mocker.patch(
-        "dimos.autoresearch.module.run_actor",
+        "dimos.autoresearch.mujoco.module.run_actor",
         side_effect=RuntimeError("OPENAI_API_KEY is not set"),
     )
     autoresearch.module.start_actor("gpt-5.6-luna", "openai")
@@ -434,7 +436,7 @@ def test_stop_actor_ends_a_running_actor(
         stop.wait(10.0)
         return TrajectoryBuilder("go", name="t", model="m").build("error", error="killed")
 
-    mocker.patch("dimos.autoresearch.module.run_actor", fake)
+    mocker.patch("dimos.autoresearch.mujoco.module.run_actor", fake)
     autoresearch.module.start_actor()
     with pytest.raises(RuntimeError, match="running"):
         autoresearch.module.start_actor()
@@ -452,3 +454,10 @@ def test_a_blueprint_without_the_scene_settings_fails_at_build(tmp_path: Path) -
         BlueprintConfigParser(blueprint).parse([], environ={})
     for field_name in ("judge_body", "place_body", "placement_bounds"):
         assert f"{field_name}: Field required" in str(error.value)
+
+
+@pytest.mark.parametrize("program", ["import os\ndef run(robot, task): pass", "def main(): pass"])
+def test_arm_submit_requires_an_arm_program(autoresearch: Autoresearch, program: str) -> None:
+    with pytest.raises(ValueError):
+        autoresearch.module.submit(program, "outside the arm API")
+    assert autoresearch.session.candidates() == []

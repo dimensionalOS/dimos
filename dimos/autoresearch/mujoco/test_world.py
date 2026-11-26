@@ -18,8 +18,8 @@ import time
 
 import pytest
 
-from dimos.autoresearch.judge import BodyPose
-from dimos.autoresearch.world import MujocoWorld, PlacementBounds
+from dimos.autoresearch.mujoco.judge import BodyPose
+from dimos.autoresearch.mujoco.world import MujocoWorld, PlacementBounds
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,

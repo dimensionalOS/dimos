@@ -1,0 +1,16 @@
+---
+name: autoresearch
+description: Run a measured search for a better solution to a task. Use when asked to autoresearch, optimize, or compare candidate implementations, prompts, parameters, or other artifacts against a repeatable evaluator.
+---
+
+Agree on what counts as improvement from the user's request. Identify a baseline, a metric, whether a higher or lower score is better, and a budget. Prefer an existing benchmark, test, dataset, or domain judge. When judgment is subjective, make the rubric and the source of judgments explicit. If there is no meaningful way to evaluate the task yet, work that out with the user first.
+
+For workspace tasks use the `bash`, `read`, and `write` tools. The `dimos autoresearch` CLI runs locally. An evaluator is a project command. It reads one JSON object from stdin with `task`, `artifact` (absolute path to the immutable candidate file), `split` (`dev` or `heldout`), `index` (zero-based within the split), and `directory` (absolute path for this attempt's outputs). It writes one JSON object to stdout, e.g. `{"score": 0.82, "note": "41/50 correct", "evidence": {"errors": 9}}`. Scores must be finite. Send diagnostics to stderr. Use the same development cases for every candidate and a disjoint held-out set. Keep the evaluator and datasets fixed throughout the search.
+
+1. Choose a fresh session directory. From the project working directory run `dimos autoresearch init SESSION --task "..." --metric "..." --candidates 5 --dev-trials 3 --heldout-trials 3 --evaluator evaluate.py`. Add `--minimize` for metrics such as latency. For evaluator commands with arguments, quote the whole command, e.g. `--evaluator "python3 evaluate.py --dataset dev.json"`. Each invocation of the evaluator measures one case or one repeat.
+2. Submit the baseline with `dimos autoresearch submit SESSION FILE --hypothesis "..."`. Use the returned number in `dimos autoresearch run SESSION NUMBER`. Read the trial scores and evidence. The candidate can be any file, including a patch or archive for a multi-file solution.
+3. Propose a specific change based on that evidence. Submit it as a new candidate, measure it on development, and compare with `dimos autoresearch status SESSION`. Use `dimos autoresearch results SESSION NUMBER` to inspect individual trials. Stop exploring when the objective is met or the budget is spent.
+4. Choose the final candidate from development evidence. Run `dimos autoresearch freeze SESSION NUMBER` to commit the choice and evaluate it on held-out cases. If an evaluator fails, inspect the attempt's stderr and retry the same command after restoring the evaluator. Completed measurements are retained.
+5. Give the user the winning artifact path, baseline and winner development scores, held-out mean, trial counts, and any important failure cases. If the user wants a reusable agent skill, write Markdown explaining how to use that artifact and run `dimos autoresearch export SESSION --instructions USAGE.md`. Read the returned folder's `SKILL.md` to use it immediately.
+
+When the connected stack already hosts the Metal arm experiment, its module supplies the evaluator. Use `dimos mcp call task` for its program API, then `scene`, `submit`, `run`, `results`, `leaderboard`, and `freeze`. The module owns physical execution and recording. Inspect its final held-out score before reporting the winner.

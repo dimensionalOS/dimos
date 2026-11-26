@@ -38,7 +38,7 @@ import { jobFacts } from "#dimos/agents/harness/jobs/registry.ts";
 import { backgroundTool } from "#dimos/agents/harness/tools/background.ts";
 import { jobTool } from "#dimos/agents/harness/tools/job.ts";
 import { jobsExtension } from "#dimos/agents/harness/jobs/extension.ts";
-import { loadSkills, skillsExtension } from "#dimos/agents/harness/skills/catalog.ts";
+import { skillsExtension } from "#dimos/agents/harness/skills/catalog.ts";
 import { mayChangeSystem, toolsExtension } from "#dimos/agents/harness/tools/extension.ts";
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { promptExtension } from "#dimos/agents/harness/prompt.ts";
@@ -180,7 +180,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
     registry.install(toolsExtension(table, limiter, detacher));
   };
   registry.install(promptExtension(install));
-  registry.install(skillsExtension(await loadSkills(options.skillRoots, report)));
+  registry.install(skillsExtension(options.skillRoots, report));
   registry.install(contextExtension({ inputs, mayChangeSystem: (name) => mayChangeSystem(table)(name) }));
   catalog.schemas.subscribe(installTools);
   registry.install(budget.extension());

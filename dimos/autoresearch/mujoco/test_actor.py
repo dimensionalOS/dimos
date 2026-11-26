@@ -21,15 +21,24 @@ import threading
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.autoresearch.actor import run_actor
-from dimos.autoresearch.session import Budget, Session
+from dimos.autoresearch.mujoco.actor import run_actor
+from dimos.autoresearch.session import Budget, Session, SessionInfo
 
 
 def test_run_actor_names_the_missing_key_before_launching_anything(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    session = Session.create(tmp_path / "s", task="lift the cube", budget=Budget(), model="m")
-    adapter = mocker.patch("dimos.autoresearch.actor.Actor")
+    session = Session.create(
+        tmp_path / "s",
+        SessionInfo(
+            task="lift the cube",
+            budget=Budget(),
+            model="m",
+            experiment="mujoco",
+            metric="pass rate",
+        ),
+    )
+    adapter = mocker.patch("dimos.autoresearch.mujoco.actor.Actor")
     mocker.patch.dict(os.environ, {}, clear=True)
 
     for provider, key in (("anthropic", "ANTHROPIC_API_KEY"), ("google", "GEMINI_API_KEY")):

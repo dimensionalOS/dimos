@@ -12,133 +12,96 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One autoresearch session on disk: the task and budget, the immutable
-candidate programs, their trial results, the library notes and the frozen
-choice. Everything is plain JSON and text under one directory, so any number
-of ``Session`` objects can look at the same session."""
+"""A durable search over immutable candidate artifacts and repeatable trials."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import json
-import os
 from pathlib import Path
 import re
+from statistics import fmean
+import tempfile
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from filelock import FileLock, Timeout
+from pydantic import AliasChoices, BaseModel, Field, FiniteFloat, JsonValue
 
-from dimos.constants import STATE_DIR
-from dimos.manipulation.code_policy.runner import ProgramStatus, validate_program
-
-SESSIONS_DIR = STATE_DIR / "autoresearch"
+from dimos.autoresearch.storage import artifact_path, read_manifest, read_trials, write_text
 
 Split = Literal["dev", "heldout"]
-#: idle or running while candidates may still be submitted, frozen once the final
-#: one is named, scored when its held-out trials are in.
+Direction = Literal["maximize", "minimize"]
 SessionStatus = Literal["idle", "running", "frozen", "scored"]
 
 
 class Budget(BaseModel):
-    """How much searching a session may do and the dev pass rate that ends
-    it early."""
-
-    iterations: int = Field(default=5, gt=0)
-    candidates_per_round: int = Field(default=3, gt=0)
+    max_candidates: int = Field(default=15, gt=0)
     dev_trials: int = Field(default=5, gt=0)
     heldout_trials: int = Field(default=10, gt=0)
-    threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
 class SessionInfo(BaseModel):
-    """The contents of ``session.json``. ``heldout_rate`` is the frozen
-    candidate's held-out pass rate, set when the session is scored. The
-    blueprint, success rule, dimos commit and scene source are empty for a
-    session that did not record them. ``model`` is the coding agent's model,
-    empty until a coding agent is started in this session."""
-
     task: str
     budget: Budget
+    experiment: str
+    metric: str
+    direction: Direction = "maximize"
+    settings: dict[str, JsonValue] = Field(default_factory=dict)
     model: str = ""
     status: SessionStatus = "idle"
-    heldout_rate: float | None = None
-    blueprint: str = ""
-    success_rule: str = ""
-    dimos_commit: str = ""
-    scene_source: str = ""
+    frozen_candidate: int | None = None
+    heldout_score: FiniteFloat | None = Field(
+        default=None, validation_alias=AliasChoices("heldout_score", "heldout_rate")
+    )
 
 
-class TrialRecord(BaseModel):
-    """One trial of one candidate, as stored in ``results.json``: the judge's
-    ``stage`` and ``note``, the program's ``status`` (completed, raised or
-    timeout), the absolute ``trace`` path, ``start_ts`` (the recorder's time at
-    ``start``, 0.0 without one; exports are joined to trials by it), ``episode``
-    (the saved episode's index, if any) and ``backend`` (the factory used)."""
+class Trial(BaseModel):
+    """Everything an evaluator receives. Paths are absolute; outputs belong in directory."""
 
+    task: str
+    artifact: Path
+    directory: Path
     split: Split
     index: int
-    success: bool
-    stage: str
-    note: str
-    status: ProgramStatus
-    duration_s: float
-    trace: Path
-    start_ts: float
-    episode: int | None
-    backend: str
+
+
+class Evaluation(BaseModel):
+    """One measurement in the session's metric and any evidence explaining it."""
+
+    score: FiniteFloat
+    note: str = ""
+    evidence: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class TrialRecord(Evaluation):
+    directory: Path | None = None
+    split: Split
+    index: int
 
 
 class CandidateScore(BaseModel):
-    """One candidate's tallies on each split."""
-
     candidate: int
-    dev_passed: int
     dev_trials: int
-    heldout_passed: int
-    heldout_trials: int
-
-    @property
-    def dev_rate(self) -> float:
-        return self.dev_passed / self.dev_trials if self.dev_trials else 0.0
+    dev_score: float | None
 
 
 class Session:
-    """A session directory. Every method reads or writes the files under it,
-    so a second ``Session`` on the same directory sees the same state."""
-
     def __init__(self, directory: Path) -> None:
-        if not (directory / "session.json").is_file():
+        self.dir = directory.resolve()
+        if not (self.dir / "session.json").is_file():
             raise FileNotFoundError(f"{directory} holds no session.json")
-        self.dir = directory
 
     @classmethod
-    def create(
-        cls,
-        directory: Path,
-        task: str,
-        budget: Budget,
-        model: str = "",
-        *,
-        blueprint: str = "",
-        success_rule: str = "",
-        dimos_commit: str = "",
-        scene_source: str = "",
-    ) -> Session:
-        """Start a session in ``directory``; refused if one is already there."""
-        if (directory / "session.json").exists():
-            raise FileExistsError(f"{directory} already holds a session")
+    def create(cls, directory: Path, info: SessionInfo) -> Session:
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "candidates").mkdir()
-        (directory / "library").mkdir()
-        info = SessionInfo(
-            task=task,
-            budget=budget,
-            model=model,
-            blueprint=blueprint,
-            success_rule=success_rule,
-            dimos_commit=dimos_commit,
-            scene_source=scene_source,
-        )
-        (directory / "session.json").write_text(info.model_dump_json(indent=2))
+        with FileLock(directory / ".session.lock"):
+            manifest = directory / "session.json"
+            if manifest.exists():
+                raise FileExistsError(f"{directory} already holds a session")
+            (directory / "candidates").mkdir(exist_ok=True)
+            (directory / "library").mkdir(exist_ok=True)
+            write_text(manifest, info.model_dump_json(indent=2))
         return cls(directory)
 
     @property
@@ -146,11 +109,21 @@ class Session:
         return self.dir.name
 
     def info(self) -> SessionInfo:
-        return SessionInfo.model_validate_json((self.dir / "session.json").read_text())
+        return SessionInfo.model_validate(read_manifest(self.dir))
+
+    def _save(self, info: SessionInfo) -> None:
+        write_text(self.dir / "session.json", info.model_dump_json(indent=2))
+
+    def set_model(self, model: str) -> None:
+        with FileLock(self.dir / ".session.lock"):
+            info = self.info()
+            info.model = model
+            self._save(info)
 
     def candidates(self) -> list[int]:
-        """Candidate numbers submitted so far, in order."""
-        return sorted(int(path.name) for path in (self.dir / "candidates").iterdir())
+        return sorted(
+            int(p.name) for p in (self.dir / "candidates").iterdir() if p.name.isdecimal()
+        )
 
     def candidate_dir(self, candidate: int) -> Path:
         path = self.dir / "candidates" / f"{candidate:02d}"
@@ -158,101 +131,168 @@ class Session:
             raise KeyError(f"session {self.name} has no candidate {candidate}")
         return path
 
-    def program_path(self, candidate: int) -> Path:
-        return self.candidate_dir(candidate) / "program.py"
+    def artifact(self, candidate: int) -> Path:
+        return artifact_path(self.candidate_dir(candidate))
 
     def hypothesis(self, candidate: int) -> str:
         return (self.candidate_dir(candidate) / "hypothesis.md").read_text()
 
-    def submit(self, program_text: str, hypothesis: str) -> int:
-        """Store a new candidate and return its number. The program must meet
-        the contract in ``validate_program``; a frozen session refuses."""
-        self._require_open("submit")
-        validate_program(program_text)
-        number = len(self.candidates()) + 1
-        path = self.dir / "candidates" / f"{number:02d}"
-        path.mkdir()
-        for name, text in (("program.py", program_text), ("hypothesis.md", hypothesis)):
-            (path / name).write_text(text)
-            (path / name).chmod(0o444)
-        (path / "results.json").write_text("[]")
+    def submit(self, filename: str, content: bytes, hypothesis: str) -> int:
+        """Store an opaque file and the reason for trying it."""
+        if not filename or filename in (".", "..") or Path(filename).name != filename:
+            raise ValueError("candidate filename must be a single file name")
+        with FileLock(self.dir / ".session.lock"):
+            info = self.info()
+            if info.frozen_candidate is not None:
+                raise RuntimeError(f"cannot submit: session {self.name} is {info.status}")
+            number = len(self.candidates()) + 1
+            if number > info.budget.max_candidates:
+                raise RuntimeError(
+                    f"the budget of {info.budget.max_candidates} candidates is spent"
+                )
+            candidates = self.dir / "candidates"
+            with tempfile.TemporaryDirectory(dir=candidates, prefix=".submit-") as temp:
+                path = Path(temp) / "candidate"
+                (path / "artifact").mkdir(parents=True)
+                artifact = path / "artifact" / filename
+                (path / "artifact-name").write_text(filename)
+                artifact.write_bytes(content)
+                artifact.chmod(0o444)
+                (path / "hypothesis.md").write_text(hypothesis)
+                (path / "results.json").write_text("[]")
+                path.rename(candidates / f"{number:02d}")
         return number
 
-    def record_trial(self, candidate: int, record: TrialRecord) -> None:
-        path = self.candidate_dir(candidate) / "results.json"
-        records = [*self.results(candidate), record]
-        # Written beside and renamed over, so a concurrent results() never reads a half file.
-        partial = path.with_name("results.json.part")
-        partial.write_text(json.dumps([item.model_dump(mode="json") for item in records], indent=2))
-        os.replace(partial, path)
-
     def results(self, candidate: int) -> list[TrialRecord]:
-        path = self.candidate_dir(candidate) / "results.json"
-        return [TrialRecord.model_validate(item) for item in json.loads(path.read_text())]
-
-    def trial_dir(self, candidate: int, split: Split, index: int) -> Path:
-        """Make the directory for one trial's trace and keyframes. A trial on
-        the candidate's record is refused; one that never got a record may run again."""
-        if any(r.split == split and r.index == index for r in self.results(candidate)):
-            raise RuntimeError(f"candidate {candidate} already ran trial {split}-{index}")
-        path = self.candidate_dir(candidate) / "trials" / f"{split}-{index:02d}"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        records = read_trials(self.candidate_dir(candidate))
+        return [TrialRecord.model_validate(record) for record in records]
 
     def leaderboard(self) -> list[CandidateScore]:
-        """Every candidate's tallies, best dev pass rate first."""
-        scores = []
+        board = []
         for candidate in self.candidates():
-            records = self.results(candidate)
-            dev = [record for record in records if record.split == "dev"]
-            heldout = [record for record in records if record.split == "heldout"]
-            scores.append(
+            scores = [r.score for r in self.results(candidate) if r.split == "dev"]
+            board.append(
                 CandidateScore(
                     candidate=candidate,
-                    dev_passed=sum(record.success for record in dev),
-                    dev_trials=len(dev),
-                    heldout_passed=sum(record.success for record in heldout),
-                    heldout_trials=len(heldout),
+                    dev_trials=len(scores),
+                    dev_score=fmean(scores) if scores else None,
                 )
             )
-        return sorted(scores, key=lambda score: (-score.dev_rate, score.candidate))
+        sign = -1 if self.info().direction == "maximize" else 1
+        return sorted(
+            board,
+            key=lambda row: (row.dev_score is None, sign * (row.dev_score or 0.0), row.candidate),
+        )
+
+    def pending(self, candidate: int, split: Split) -> list[int]:
+        info = self.info()
+        if split == "dev" and info.frozen_candidate is not None:
+            raise RuntimeError(
+                f"the session is frozen on candidate {info.frozen_candidate}; dev runs are over"
+            )
+        if split == "heldout" and info.frozen_candidate != candidate:
+            raise RuntimeError("held-out trials run on the frozen candidate: call freeze")
+        done = {r.index for r in self.results(candidate) if r.split == split}
+        count = info.budget.dev_trials if split == "dev" else info.budget.heldout_trials
+        return [i for i in range(count) if i not in done]
+
+    @contextmanager
+    def _exclusive_run(self) -> Iterator[None]:
+        lock = FileLock(self.dir / ".run.lock")
+        try:
+            lock.acquire(timeout=0)
+        except Timeout as exc:
+            raise RuntimeError("a trial run is already in progress") from exc
+        try:
+            yield
+        finally:
+            lock.release()
 
     def freeze(self, candidate: int) -> None:
-        """Name the final candidate. After this nothing can be submitted."""
-        self._require_open("freeze")
-        self.candidate_dir(candidate)
-        (self.dir / "frozen").write_text(f"{candidate}\n")
-        self.set_status("frozen")
+        """Commit to one candidate. Repeating the same choice permits resuming evaluation."""
+        with self._exclusive_run(), FileLock(self.dir / ".session.lock"):
+            self.candidate_dir(candidate)
+            info = self.info()
+            if info.frozen_candidate == candidate:
+                return
+            if info.frozen_candidate is not None:
+                raise RuntimeError(f"session is frozen on candidate {info.frozen_candidate}")
+            info.frozen_candidate = candidate
+            info.status = "frozen"
+            self._save(info)
 
-    def set_model(self, model: str) -> None:
-        """Record ``model`` as the model of the coding agent started in this session."""
-        info = self.info().model_copy(update={"model": model})
-        (self.dir / "session.json").write_text(info.model_dump_json(indent=2))
+    def evaluate(
+        self,
+        candidate: int,
+        split: Split,
+        evaluator: Callable[[Trial], Evaluation],
+        *,
+        on_trial: Callable[[int], None] | None = None,
+    ) -> None:
+        """Measure pending trials, checkpoint each result, and score a completed held-out split.
 
-    def set_status(self, status: SessionStatus, *, heldout_rate: float | None = None) -> None:
-        """Write ``status`` to session.json; ``heldout_rate`` goes with ``scored``."""
-        info = self.info().model_copy(update={"status": status, "heldout_rate": heldout_rate})
-        (self.dir / "session.json").write_text(info.model_dump_json(indent=2))
+        Evaluator exceptions leave the current index pending. A fresh attempt gets its own
+        output directory so evidence from an interrupted trial cannot contaminate the retry.
+        """
+        with self._exclusive_run():
+            pending = self.pending(candidate, split)
+            info = self.info()
+            base = self.candidate_dir(candidate)
+            if split == "dev":
+                self._set_phase("running")
+            try:
+                records = self.results(candidate)
+                for index in pending:
+                    if on_trial is not None:
+                        on_trial(index)
+                    directory = base / "trials" / f"{split}-{index:02d}"
+                    directory.parent.mkdir(exist_ok=True)
+                    if directory.exists():
+                        directory = Path(
+                            tempfile.mkdtemp(dir=directory.parent, prefix=f"{directory.name}-")
+                        )
+                    else:
+                        directory.mkdir()
+                    trial = Trial(
+                        task=info.task,
+                        artifact=self.artifact(candidate),
+                        directory=directory,
+                        split=split,
+                        index=index,
+                    )
+                    measurement = evaluator(trial)
+                    records.append(
+                        TrialRecord(
+                            directory=directory,
+                            split=split,
+                            index=index,
+                            **measurement.model_dump(),
+                        )
+                    )
+                    write_text(
+                        base / "results.json",
+                        json.dumps([r.model_dump(mode="json") for r in records], indent=2),
+                    )
+                if split == "heldout":
+                    self._set_phase("scored", fmean(r.score for r in records if r.split == split))
+            finally:
+                if split == "dev":
+                    self._set_phase("idle")
 
-    def frozen(self) -> int | None:
-        """The frozen candidate's number, or None while the session is open."""
-        path = self.dir / "frozen"
-        return int(path.read_text()) if path.is_file() else None
+    def _set_phase(self, phase: SessionStatus, score: float | None = None) -> None:
+        with FileLock(self.dir / ".session.lock"):
+            info = self.info()
+            info.status = phase
+            info.heldout_score = score
+            self._save(info)
 
     def note(self, title: str, text: str) -> Path:
-        """Write a library entry (``library/<slug>.md``) and return its path."""
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
         if not slug:
             raise ValueError(f"title {title!r} has no letters or digits to name a file by")
         path = self.dir / "library" / f"{slug}.md"
-        path.write_text(f"# {title}\n\n{text.strip()}\n")
+        write_text(path, f"# {title}\n\n{text.strip()}\n")
         return path
 
     def library(self) -> list[Path]:
-        """The library entries, in name order."""
         return sorted((self.dir / "library").glob("*.md"))
-
-    def _require_open(self, action: str) -> None:
-        status = self.info().status
-        if status not in ("idle", "running"):
-            raise RuntimeError(f"cannot {action}: session {self.name} is {status}")

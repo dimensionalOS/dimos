@@ -27,7 +27,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from dimos.autoresearch.judge import BodyPose, Snapshot
+from dimos.autoresearch.mujoco.judge import BodyPose, Snapshot
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,

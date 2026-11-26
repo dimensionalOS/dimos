@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.autoresearch.truth_scene import TruthObject, TruthSceneModule
+from dimos.autoresearch.mujoco.truth_scene import TruthObject, TruthSceneModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

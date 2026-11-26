@@ -20,9 +20,9 @@ from datetime import datetime
 import math
 
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.autoresearch.module import AutoresearchModule
-from dimos.autoresearch.truth_scene import TruthObject, TruthSceneModule
-from dimos.autoresearch.world import PlacementBounds
+from dimos.autoresearch.mujoco.module import AutoresearchModule
+from dimos.autoresearch.mujoco.truth_scene import TruthObject, TruthSceneModule
+from dimos.autoresearch.mujoco.world import PlacementBounds
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule

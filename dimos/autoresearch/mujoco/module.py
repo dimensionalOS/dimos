@@ -33,13 +33,15 @@ from reactivex.disposable import Disposable
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.mcp.spec import McpServerSpec
-from dimos.autoresearch.actor import provider_key, run_actor
-from dimos.autoresearch.judge import Judge, LiftJudge, PlaceAtJudge
-from dimos.autoresearch.session import Budget, Session, SessionStatus, Split
-from dimos.autoresearch.skill import USER_SKILLS_DIR, export_skill
-from dimos.autoresearch.status import ActorState, AutoresearchStatus
-from dimos.autoresearch.trial import run_trial
-from dimos.autoresearch.world import MujocoWorld, PlacementBounds, TrajectoryControlSpec
+from dimos.autoresearch.mujoco.actor import provider_key, run_actor
+from dimos.autoresearch.mujoco.judge import Judge, LiftJudge, PlaceAtJudge
+from dimos.autoresearch.mujoco.prompt import RoundBudget
+from dimos.autoresearch.mujoco.skill import export_skill
+from dimos.autoresearch.mujoco.status import ActorState, AutoresearchStatus
+from dimos.autoresearch.mujoco.trial import ArmEvaluator, ArmTrialRecord
+from dimos.autoresearch.mujoco.world import MujocoWorld, PlacementBounds, TrajectoryControlSpec
+from dimos.autoresearch.session import Session, SessionInfo, Split
+from dimos.autoresearch.skill import USER_SKILLS_DIR
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -47,7 +49,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
 from dimos.manipulation.code_policy.api import API_REFERENCE, RunStoppedError
-from dimos.manipulation.code_policy.runner import DEFAULT_TIMEOUT_S, LIVE_BACKEND
+from dimos.manipulation.code_policy.runner import DEFAULT_TIMEOUT_S, LIVE_BACKEND, validate_program
 from dimos.manipulation.code_policy.scene_spec import SCAN_WINDOW_S, ObjectSceneSpec
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.sdk import Arm
@@ -135,7 +137,7 @@ class AutoresearchModuleConfig(ModuleConfig):
 
     session_dir: Path
     task: str
-    budget: Budget = Field(default_factory=Budget)
+    budget: RoundBudget = Field(default_factory=RoundBudget)
     model: str = "claude-sonnet-4-5"
     actor_provider: str = "anthropic"
     actor_max_steps: int = Field(default=600, gt=0)
@@ -205,12 +207,19 @@ class AutoresearchModule(Module):
         super().start()
         self._session = Session.create(
             self.config.session_dir,
-            self.config.task,
-            self.config.budget,
-            blueprint=self.config.blueprint,
-            success_rule=self._success_rule(),
-            dimos_commit=_dimos_commit(),
-            scene_source=self.config.scene_source,
+            SessionInfo(
+                task=self.config.task,
+                budget=self.config.budget.trial_budget(),
+                experiment="mujoco",
+                metric="pass rate",
+                settings=dict(
+                    rounds=self.config.budget.model_dump(),
+                    blueprint=self.config.blueprint,
+                    success_rule=self._success_rule(),
+                    dimos_commit=_dimos_commit(),
+                    scene_source=self.config.scene_source,
+                ),
+            ),
         )
         self._env = bus_env(self.config.g)
         arm = _wait_for_arm(self._arm, PLANNER_TIMEOUT_S)
@@ -307,12 +316,12 @@ class AutoresearchModule(Module):
                 "success": self._success_rule(),
                 "api": API_REFERENCE,
                 "budget": {
-                    **info.budget.model_dump(),
+                    **self.config.budget.model_dump(),
                     "candidates_submitted": submitted,
-                    "candidates_left": _candidate_budget(info.budget) - submitted,
+                    "candidates_left": info.budget.max_candidates - submitted,
                 },
                 "status": info.status,
-                "frozen": self._session.frozen(),
+                "frozen": info.frozen_candidate,
                 "library": [path.read_text() for path in self._session.library()],
             },
             indent=1,
@@ -347,10 +356,8 @@ class AutoresearchModule(Module):
             program: The program's source text.
             hypothesis: What this candidate is expected to do better, and its likely failure.
         """
-        budget = self._session.info().budget
-        if len(self._session.candidates()) >= _candidate_budget(budget):
-            raise RuntimeError(f"the budget of {_candidate_budget(budget)} candidates is spent")
-        return self._session.submit(program, hypothesis)
+        validate_program(program)
+        return self._session.submit("program.py", program.encode(), hypothesis)
 
     @skill(uses=[CAP_MOVEMENT], lifecycle="background")
     def run(self, candidate: int, split: Split = "dev") -> str:
@@ -362,20 +369,7 @@ class AutoresearchModule(Module):
             candidate: The number submit returned.
             split: "dev" to iterate on, or "heldout" to resume a frozen candidate's held-out trials.
         """
-        with self._run_lock:
-            self.start_tool(_TOOL)
-            if self._thread is not None:
-                return "a run is in progress; wait for its results or call stop_run first"
-            try:
-                indexes = self._pending(candidate, split)
-                if not indexes:
-                    self.stop_tool(_TOOL)
-                    return f"candidate {candidate} has already run every {split} trial"
-                self._launch(candidate, split, indexes)
-            except Exception:
-                self.stop_tool(_TOOL)
-                raise
-        return f"started candidate {candidate} on {len(indexes)} {split} trials; poll results({candidate})"
+        return self._start_trials(candidate, split)
 
     @skill
     def stop_run(self) -> str:
@@ -393,7 +387,7 @@ class AutoresearchModule(Module):
         Args:
             candidate: The number submit returned.
         """
-        records = self._session.results(candidate)
+        records = [ArmTrialRecord.from_record(r) for r in self._session.results(candidate)]
         status = self.status()
         return json.dumps(
             {
@@ -422,9 +416,9 @@ class AutoresearchModule(Module):
             [
                 {
                     "candidate": score.candidate,
-                    "dev_passed": score.dev_passed,
+                    "dev_passed": round((score.dev_score or 0) * score.dev_trials),
                     "dev_trials": score.dev_trials,
-                    "dev_rate": round(score.dev_rate, 3),
+                    "dev_rate": round(score.dev_score or 0, 3),
                 }
                 for score in self._session.leaderboard()
             ],
@@ -440,18 +434,27 @@ class AutoresearchModule(Module):
         Args:
             candidate: The number submit returned.
         """
+        return self._start_trials(candidate, "heldout", freeze=True)
+
+    def _start_trials(self, candidate: int, split: Split, *, freeze: bool = False) -> str:
         with self._run_lock:
             self.start_tool(_TOOL)
             if self._thread is not None:
                 return "a run is in progress; wait for its results or call stop_run first"
             try:
-                self._session.freeze(candidate)
-                indexes = self._pending(candidate, "heldout")
-                self._launch(candidate, "heldout", indexes)
+                if freeze:
+                    self._session.freeze(candidate)
+                indexes = self._session.pending(candidate, split)
+                if not indexes and (split == "dev" or self._session.info().status == "scored"):
+                    self.stop_tool(_TOOL)
+                    return f"candidate {candidate} has already run every {split} trial"
+                self._launch(candidate, split, indexes)
             except Exception:
                 self.stop_tool(_TOOL)
                 raise
-        return f"frozen candidate {candidate}; running {len(indexes)} held-out trials; poll results({candidate})"
+        if freeze:
+            return f"frozen candidate {candidate}; running {len(indexes)} held-out trials; poll results({candidate})"
+        return f"started candidate {candidate} on {len(indexes)} {split} trials; poll results({candidate})"
 
     @skill
     def note(self, title: str, text: str) -> str:
@@ -464,67 +467,41 @@ class AutoresearchModule(Module):
         """
         return str(self._session.note(title, text))
 
-    def _pending(self, candidate: int, split: Split) -> list[int]:
-        """The trial indexes of ``split`` that ``candidate`` has no record for."""
-        self._session.candidate_dir(candidate)
-        budget = self._session.info().budget
-        frozen = self._session.frozen()
-        if split == "dev" and frozen is not None:
-            raise RuntimeError(f"the session is frozen on candidate {frozen}; dev runs are over")
-        if split == "heldout" and frozen != candidate:
-            raise RuntimeError("held-out trials run once, on the frozen candidate: call freeze")
-        count = budget.dev_trials if split == "dev" else budget.heldout_trials
-        done = {
-            record.index for record in self._session.results(candidate) if record.split == split
-        }
-        return [index for index in range(count) if index not in done]
-
     def _launch(self, candidate: int, split: Split, indexes: list[int]) -> None:
-        if split == "dev":
-            self._session.set_status("running")
         self._publish(
-            state=self._session.info().status,
+            state="running" if split == "dev" else "frozen",
             busy=True,
             candidate=candidate,
             split=split,
-            trial=indexes[0],
+            trial=indexes[0] if indexes else None,
             error=None,
             **_tally(self._session, candidate),
         )
         self._stop.clear()
         self._thread = threading.Thread(
-            target=self._trials, args=(candidate, split, indexes), name="autoresearch-trials"
+            target=self._trials, args=(candidate, split), name="autoresearch-trials"
         )
         self._thread.start()
 
-    def _trials(self, candidate: int, split: Split, indexes: list[int]) -> None:
+    def _trials(self, candidate: int, split: Split) -> None:
         error: str | None = None
+
+        def progress(index: int) -> None:
+            if self._stop.is_set():
+                raise RunStoppedError("trial loop stopped")
+            self._publish(trial=index, **_tally(self._session, candidate))
+
         try:
-            for index in indexes:
-                if self._stop.is_set():
-                    break
-                self._publish(
-                    state=self._session.info().status,
-                    busy=True,
-                    candidate=candidate,
-                    split=split,
-                    trial=index,
-                    error=None,
-                    **_tally(self._session, candidate),
-                )
-                run_trial(
-                    self._session,
-                    candidate,
-                    split,
-                    index,
-                    self._world,
-                    self._judge(),
-                    self._episodes,
-                    self.config.backend_factory,
-                    self.config.program_timeout_s,
-                    self._env,
-                    self._stop,
-                )
+            evaluator = ArmEvaluator(
+                self._world,
+                self._judge(),
+                self._episodes,
+                self.config.backend_factory,
+                self.config.program_timeout_s,
+                self._env,
+                self._stop,
+            )
+            self._session.evaluate(candidate, split, evaluator, on_trial=progress)
         except RunStoppedError:
             logger.info("autoresearch: run stopped", candidate=candidate, split=split)
         except Exception as exc:
@@ -535,17 +512,19 @@ class AutoresearchModule(Module):
                 error = f"{type(exc).__name__}: {exc}"
         finally:
             with self._run_lock:
-                self._thread = None
-                self.stop_tool(_TOOL)
-            state = self._finish(candidate, split)
-            self._publish(
-                state=state,
-                busy=False,
-                trial=None,
-                error=error,
-                heldout_rate=self._session.info().heldout_rate,
-                **_tally(self._session, candidate),
-            )
+                try:
+                    info = self._session.info()
+                    self._publish(
+                        state=info.status,
+                        busy=False,
+                        trial=None,
+                        error=error,
+                        heldout_rate=info.heldout_score,
+                        **_tally(self._session, candidate),
+                    )
+                finally:
+                    self.stop_tool(_TOOL)
+                    self._thread = None
 
     def _actor(self, model: str, provider: str) -> None:
         actor: ActorState = "done"
@@ -582,31 +561,17 @@ class AutoresearchModule(Module):
         self._actor_stop.set()
         thread.join(ACTOR_STOP_TIMEOUT_S)
 
-    def _finish(self, candidate: int, split: Split) -> SessionStatus:
-        """Settle session.json when a loop ends: scored once every held-out trial is in."""
-        info = self._session.info()
-        if split == "heldout":
-            records = [r for r in self._session.results(candidate) if r.split == "heldout"]
-            if len(records) < info.budget.heldout_trials:
-                return info.status
-            rate = sum(record.success for record in records) / len(records)
-            self._session.set_status("scored", heldout_rate=rate)
-            return "scored"
-        if info.status == "running":
-            self._session.set_status("idle")
-            return "idle"
-        return info.status
-
     def _halt(self) -> bool:
         """Stop a running loop and its program, then release the tool. False when none ran."""
         with self._run_lock:
             thread = self._thread
-        if thread is None:
-            return False
-        self._stop.set()
-        self._arm.cancel()
+            if thread is None:
+                return False
+            self._stop.set()
+            self._arm.cancel()
         thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
-        self.stop_tool(_TOOL)
+        if thread.is_alive():
+            raise TimeoutError("trial is stopping; movement remains reserved until it exits")
         return True
 
     def _success_rule(self) -> str:
@@ -636,9 +601,7 @@ class AutoresearchModule(Module):
             raise RuntimeError("no camera frame received yet")
         path = self.config.session_dir / "scene" / f"{number:03d}.png"
         path.parent.mkdir(exist_ok=True)
-        import cv2
-
-        if not cv2.imwrite(str(path), frame.to_opencv()):
+        if not frame.save(str(path)):
             raise RuntimeError(f"could not write {path}")
         return path
 
@@ -668,13 +631,9 @@ def _dimos_commit() -> str:
     ).stdout.strip()
 
 
-def _candidate_budget(budget: Budget) -> int:
-    return budget.iterations * budget.candidates_per_round
-
-
 def _tally(session: Session, candidate: int) -> dict[str, int]:
     dev = [record for record in session.results(candidate) if record.split == "dev"]
-    return {"dev_passed": sum(record.success for record in dev), "dev_trials": len(dev)}
+    return {"dev_passed": sum(int(record.score) for record in dev), "dev_trials": len(dev)}
 
 
 autoresearch_module = AutoresearchModule.blueprint

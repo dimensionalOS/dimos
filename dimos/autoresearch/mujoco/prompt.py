@@ -17,6 +17,8 @@ API, and the words that mark a way around the tools."""
 
 from __future__ import annotations
 
+from pydantic import BaseModel, Field
+
 from dimos.autoresearch.session import Budget
 from dimos.manipulation.code_policy.api import API_REFERENCE
 
@@ -29,7 +31,24 @@ when it runs, and the program never sees the judge or any score.
 """
 
 
-def actor_prompt(task: str, budget: Budget) -> str:
+class RoundBudget(BaseModel):
+    """Search policy of the optional Pi actor and the original Metal blueprint flags."""
+
+    iterations: int = Field(default=5, gt=0)
+    candidates_per_round: int = Field(default=3, gt=0)
+    dev_trials: int = Field(default=5, gt=0)
+    heldout_trials: int = Field(default=10, gt=0)
+    threshold: float = Field(default=0.8, ge=0, le=1)
+
+    def trial_budget(self) -> Budget:
+        return Budget(
+            max_candidates=self.iterations * self.candidates_per_round,
+            dev_trials=self.dev_trials,
+            heldout_trials=self.heldout_trials,
+        )
+
+
+def actor_prompt(task: str, budget: RoundBudget) -> str:
     """The coding agent's instructions for ``task``: the autoresearch module's tools, the loop rules and the program API."""
     return f"""\
 You are the coding agent of an autoresearch session: write a program that makes a robot arm in
