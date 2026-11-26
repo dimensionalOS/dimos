@@ -133,3 +133,48 @@ is free and our Mid-360 driver competes with the vendor's for the sensor.
 The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
 `R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
 `--mid360.host_ip` override them).
+
+## R1 Pro policy simulation (no ROS or hardware)
+
+Use the DimOS `sim`, `cpu`, and `planning` extras. Point `R1PRO_SIM_BUNDLE` at
+an unpacked `r1pro-web-demo` bundle with `assets/BUNDLE.json`, `assets/meshes/`,
+the pinned `assets/r1pro-holonomic-run45.xml` plant, and the default
+`models/r1pro_run46_upperdr_8000u.onnx`. The plant and model files stay outside
+DimOS. To fall back to run45@8k, set
+`R1PRO_POLICY_ONNX="$R1PRO_SIM_BUNDLE/models/r1pro_run45_upperdr_8000u.onnx"`
+before launching.
+
+```sh
+CUDA_VISIBLE_DEVICES="" R1PRO_SIM_BUNDLE=/home/cc/work/r1pro-web-demo \
+  dimos run r1pro-mujoco-policy --g.zenoh-domain r1pro-layer2 \
+  --g.zenoh-scout-addr 239.77.38.96:17696
+```
+
+Viser renders the loaded plant on loopback port 8080. Open `/teleop` on the
+WebXR HTTPS port 8443 from the headset on a trusted network (the stock
+WebXR server binds all interfaces and uses a local certificate). With both
+controllers tracked, release a grip, then hold both grips to anchor both
+wrists. Release either to stop the policy; the per-hand triggers use the
+normal gripper tasks. The visible and collision fingers are welded in the
+run45 model; the gripper streams model ideal jaw opening in metres, not
+manipulation/contact. No camera/LiDAR or physical drivers are launched.
+
+For a programmatic goal, stream a fresh `PoseArray` on `wrist_targets`,
+ordered `[left_wrist, right_wrist]`, with Unix acquisition stamp and `odom`
+frame (metres, unit xyzw quaternion). `wrist_poses` carries the measured
+poses in that frame. Stop publishing to let intent expire, or send an
+empty stamped array to withdraw immediately. Programmatic targets take
+precedence over grip-relative WebXR while active.
+
+The 50 Hz task uses synchronized upper joint, root odometry and wrist
+samples. `state_history` is float32 `[1,10,60]`, oldest first; each row is
+`[q(18), dq(18), root-local omega(3), previous raw action(21)]`, with ten
+copies of the initial row on engage and zero initial raw action.
+`urr_goal` is float32 `[1,60]`: slots 1 and 2 are the left and right wrist,
+`[root-local XYZ, first two rotation columns, valid]`; other slots are
+zero. `command[0:3]` is body twist and `command[3:21]` is upper position.
+There is no command shaping; out-of-contract commands are rejected by
+the existing named-interface checks, not clipped. Native MuJoCo force
+limits remain active. The physical plant has a free root and uses ten 2 ms
+steps per simulation cycle. The Coordinator and simulation have independent
+50 Hz clocks joined by transport, not a lockstep real-time guarantee.

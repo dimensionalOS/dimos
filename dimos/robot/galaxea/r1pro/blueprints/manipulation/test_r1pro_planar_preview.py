@@ -150,3 +150,4 @@ def test_real_control_declares_body_velocity_joints_without_position_commands() 
     assert all(
         declaration.joint_commands[joint] == (Interface.VELOCITY,) for joint in R1PRO_BASE_JOINTS
     )
+    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(declaration.joint_commands)
