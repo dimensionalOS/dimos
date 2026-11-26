@@ -16,18 +16,21 @@
 
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos_lcm.world_msgs import WorldObservations
 
 from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mount
 from dimos.core.stream import In
 from dimos.robot.assets.usd_utils.lfs import pull_model_assets
-from dimos.sim2.sim import SimulatedWorldSpec
+from dimos.sim2.sim import SimulatedWorldSpec, on_mount
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import Blueprint
 
 logger = setup_logger()
 
@@ -48,6 +51,11 @@ class SimSensor(HardwareModule):
         # The streams whose last reading was too far off wall time, warned about once until one is not.
         self._late: set[str] = set()
 
+    @classmethod
+    def attach(cls, mount: Mount, **kwargs: Any) -> "Blueprint":
+        """This sensor on ``mount``, as HardwareModule.attach puts it, still reaching the one simulated world."""
+        return on_mount(cls.blueprint(**kwargs, attached_to=mount.frame), mount)
+
     @rpc
     def start(self) -> None:
         # Before anything opens its stage, which opens every mesh layer it references.
@@ -58,6 +66,12 @@ class SimSensor(HardwareModule):
     def frame_id(self) -> str:
         """The sensor's frame: its USD's root link, under its namespace."""
         return self.tf_frames[self.config.usd.root_link]
+
+    def publish_moving_tf(self, ts: float) -> None:
+        """Publish its USD's moving edges (at zero: a sensor drives no joint) stamped ``ts``, so a sensor USD with a joint keeps it on tf."""
+        transforms = self.moving_transforms(ts=ts)
+        if transforms:
+            self.tfbuffer.publish(*transforms)
 
     def on_time(self, stream: str, stamp: float, period: float, tolerance: float | None) -> bool:
         """Whether a ``stream`` reading stamped ``stamp`` is within ``tolerance`` (None: ``period``) of wall time: one that is not, the real sensor would have missed."""

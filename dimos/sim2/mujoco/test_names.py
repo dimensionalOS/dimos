@@ -51,6 +51,13 @@ def test_a_miss_says_what_there_was():
         resolve([f"/scene/thing_{i}" for i in range(11)], "nothing")
 
 
+def test_a_frame_under_a_many_segment_owner_finds_its_owner_s_shortened_body():
+    # Three robots mounted on one scene: shortened, each body keeps only its owner (scene/spot) in front.
+    bodies = [f"office_555/{spot}/pelvis" for spot in ("main", "left", "right")]
+    wanted = "office_555/left/g1_29dof_rev_1_0/Geometry/pelvis"
+    assert resolve(bodies, wanted) == "office_555/left/pelvis"
+
+
 def test_resolved_hands_back_none_where_resolve_would_raise():
     assert resolved(USD_NAMES, "pelvis") == "/g1/Joints/pelvis"
     assert resolved(USD_NAMES, "nothing") is None
