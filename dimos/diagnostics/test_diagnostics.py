@@ -15,12 +15,13 @@
 """Behavioral regression coverage for identity, timing and bounded capture."""
 
 from asyncio import CancelledError
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from dimos.core.stream import Out
 from dimos.diagnostics.analysis import analyze, load_bundle, perfetto
-from dimos.diagnostics.collector import CaptureLimits, Collector
+from dimos.diagnostics.collector import CaptureLimits, Collector, EventQueue
 from dimos.diagnostics.envelope import pack, unpack
 from dimos.diagnostics.model import ClockMapping, TraceContext, context_scope, current_context
 from dimos.diagnostics.runtime import Runtime, publication, span
@@ -155,3 +156,27 @@ def test_injected_queue_delay_is_not_encode_work():
     assert result["stages"]["video.encode"]["p95_ms"] == 5
     exported = perfetto(events)
     assert [e["ph"] for e in exported["traceEvents"]] == ["b", "e", "b", "e"]
+
+
+def test_trace_emission_returns_while_observer_queue_is_locked(runtime):
+    collector = runtime.collector
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with collector.queue.mutex:
+            before = collector.dropped
+            emitted = pool.submit(collector.emit, {"event": "robot.callback"})
+            emitted.result(timeout=1)
+            assert collector.dropped == before + 1
+
+
+def test_observer_queue_rejects_capacity_before_copying_metadata_and_recovers():
+    queue = EventQueue(1)
+    event = {"event": "frame", "labels": ["original"]}
+    assert queue.offer(event)
+    event["labels"].append("changed")
+    # Full queues reject even invalid metadata without doing producer-side copying.
+    assert not queue.offer({"payload": bytearray(10)})
+    assert queue.get_nowait() == {"event": "frame", "labels": ["original"]}
+    with pytest.raises(ValueError):
+        queue.offer({"payload": bytearray(10)})
+    assert queue.offer({"event": "recovered"})
+    assert queue.get_nowait() == {"event": "recovered"}

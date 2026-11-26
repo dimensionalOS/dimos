@@ -22,7 +22,7 @@ import fcntl
 import json
 import math
 from pathlib import Path
-from queue import Empty, Full, Queue
+from queue import Empty, Queue
 import threading
 import time
 from typing import Any, cast
@@ -62,6 +62,26 @@ def bounded_metadata(event: dict[str, Any]) -> dict[str, Any]:
     return cast("dict[str, Any]", copy(event))
 
 
+class EventQueue(Queue[dict[str, Any]]):
+    """Bounded observer ingress that never waits for the queue mutex on a producer."""
+
+    def offer(self, event: dict[str, Any]) -> bool:
+        # Queue.put_nowait only avoids waiting for capacity; it still waits for
+        # this mutex. A robot callback must not wait behind the observer or another
+        # producer. The Queue subclass hooks keep its consumer/notification contract.
+        if not self.mutex.acquire(blocking=False):
+            return False
+        try:
+            if self._qsize() >= self.maxsize:
+                return False
+            self._put(bounded_metadata(event))
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+            return True
+        finally:
+            self.mutex.release()
+
+
 @dataclass(frozen=True)
 class CaptureLimits:
     ring_bytes: int = 64 * 1024 * 1024
@@ -96,7 +116,7 @@ class Collector:
             raise ValueError("diagnostics host/process memory budget exhausted")
         # Half the reservation covers bounded ingress, caches, histograms and bookkeeping.
         self.ring_limit = min(limits.ring_bytes, self.reservation.bytes // 2)
-        self.queue: Queue[dict[str, Any]] = Queue(min(limits.queue_events, 128))
+        self.queue = EventQueue(min(limits.queue_events, 128))
         self.dropped = 0
         self.evicted = 0
         self.errors = 0
@@ -121,8 +141,9 @@ class Collector:
         if self.stop_event.is_set():
             return
         try:
-            self.queue.put_nowait(bounded_metadata(event))
-        except (Full, ValueError):
+            if not self.queue.offer(event):
+                self.dropped += 1
+        except ValueError:
             self.dropped += 1
 
     def trigger(self, reason: str) -> None:
