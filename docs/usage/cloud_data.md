@@ -70,7 +70,7 @@ These fields belong to [`CloudConfig`](/dimos/cloud/config.py). Prefix the upper
 | `url` | `https://api.dimensional.org` | API host |
 | `api_key` | `None` | Overrides the stored `dimos login` credential (`DIMOS_CLOUD_API_KEY` for CI) |
 | `upload_codec` | `lz4` | `lz4`, `gzip`, `bz2`, `xz`, or `""` for no compression |
-| `upload_chunk_mb` | `8` | Multipart part size in MB (`--chunk`) |
+| `upload_chunk_mb` | `None` | Multipart part size in MB (`--chunk`); server default 64 |
 | `upload_parallel_parts` | `32` | Multipart parts sent at once; `1` sends them one after another |
 | `upload_retries` | `2` | Per-part retries for transfers |
 | `upload_quiet_s` | `30.0` | Discovery skips files modified this recently |
