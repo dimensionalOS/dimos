@@ -41,4 +41,6 @@ misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
 # out of LFS on purpose (see pyproject): a scene travels as a string, so it has to be readable.
 dimos/robot/*/*/assets/meshes/** filter=lfs diff=lfs merge=lfs -text binary
 dimos/simulation/scenes/*/meshes/** filter=lfs diff=lfs merge=lfs -text binary
+# A scene layer is generated text megabytes long (office_555 is 150k lines), kept out of diffs like its meshes.
+dimos/simulation/scenes/*/scene.usda filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text

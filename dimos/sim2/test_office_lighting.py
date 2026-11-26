@@ -116,8 +116,10 @@ def test_the_offices_skylights_show_its_dome_as_the_sky(renders):
 def test_every_office_visual_is_a_mesh_with_a_material_that_blender_imports():
     from pxr import Usd, UsdGeom, UsdShade
 
+    from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
     from dimos.simulation.scenes.office_555.room import SCENE
 
+    pull_lfs_files([SCENE])
     stage = Usd.Stage.Open(str(SCENE))
     visuals = [
         prim
@@ -143,8 +145,11 @@ def test_every_office_visual_is_a_mesh_with_a_material_that_blender_imports():
 def test_every_file_the_office_names_hashes_to_the_sha256_it_declares():
     from dimos.core.hardware_files import declared_hashes
     from dimos.robot.assets.usd_utils.assets import asset_hash
+    from dimos.robot.assets.usd_utils.lfs import pull_lfs_files, pull_usd_assets
     from dimos.simulation.scenes.office_555.room import SCENE
 
+    pull_lfs_files([SCENE])
+    pull_usd_assets([SCENE.read_text()], root=SCENE.parent)
     declared = declared_hashes(SCENE.read_text())
     assert declared
     stale = [
