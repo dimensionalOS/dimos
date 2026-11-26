@@ -138,3 +138,18 @@ def test_every_office_visual_is_a_mesh_with_a_material_that_blender_imports():
         and UsdGeom.Imageable(prim).ComputePurpose() == UsdGeom.Tokens.default_
     ]
     assert drawn_colliders == ["ground"]
+
+
+def test_every_file_the_office_names_hashes_to_the_sha256_it_declares():
+    from dimos.core.hardware_files import declared_hashes
+    from dimos.robot.assets.usd_utils.assets import asset_hash
+    from dimos.simulation.scenes.office_555.room import SCENE
+
+    declared = declared_hashes(SCENE.read_text())
+    assert declared
+    stale = [
+        name
+        for name, sha256 in declared.items()
+        if sha256 is not None and asset_hash((SCENE.parent / name).read_bytes()) != sha256
+    ]
+    assert not stale, f"rehash these in scene.usda, or a renderer refuses them: {stale}"
