@@ -795,21 +795,6 @@ def test_joint_velocity_limits_replace_only_requested_limits(tmp_path: Path) -> 
         ).with_joint_velocity_limits({"slide": 0.3}).load()
 
 
-_URDF_WITH_FILES = """<?xml version="1.0"?>
-<robot name="box_robot">
-  <link name="base"/>
-  <link name="arm">
-    <visual>
-      <geometry><mesh filename="meshes/arm.stl"/></geometry>
-      <material name="skin"><texture filename="textures/skin.png"/></material>
-    </visual>
-  </link>
-  <joint name="shoulder" type="fixed">
-    <parent link="base"/><child link="arm"/>
-  </joint>
-</robot>
-"""
-
 _SCENE_USDA = """#usda 1.0
 (
     defaultPrim = "room"
@@ -821,44 +806,6 @@ def Xform "room" (
 {
 }
 """
-
-
-def _urdf(tmp_path: Path) -> robot_model.RobotModel:
-    (tmp_path / "meshes").mkdir()
-    (tmp_path / "meshes" / "arm.stl").write_text("mesh")
-    (tmp_path / "textures").mkdir()
-    (tmp_path / "textures" / "skin.png").write_text("texture")
-    source = tmp_path / "robot.urdf"
-    source.write_text(_URDF_WITH_FILES)
-    return robot_model.RobotModel.from_file(source)
-
-
-def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
-    model = _urdf(tmp_path).to_usd()
-
-    assert [joint.name for joint in model.joints] == ["shoulder"]
-    assert model.root_link == "box_robot/base"
-    assert model.source_path == tmp_path / "robot.urdf"
-    assert model.referenced_files() == {
-        str(tmp_path / "meshes/arm.stl"),
-        str(tmp_path / "textures/skin.png"),
-    }
-
-
-def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
-    tmp_path: Path, mocker: MockerFixture
-) -> None:
-    import dimos.robot.assets.usd_utils.from_urdf as conversion
-
-    convert = mocker.patch.object(conversion, "urdf_to_usd", return_value="#usda 1.0\n")
-
-    model = _urdf(tmp_path).to_usd()
-    assert model.joints
-    assert model.referenced_files()
-    convert.assert_not_called()
-
-    assert model.usd == "#usda 1.0\n"
-    convert.assert_called_once()
 
 
 def test_a_usd_model_from_a_file_is_read_lazily(tmp_path: Path) -> None:
@@ -923,27 +870,6 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
     assert joint.type == "revolute"
     assert joint.parent_link == "arm/base"
     assert joint.child_link == "arm/base/forearm"
-    assert model.get_joint("shoulder") is joint
-
-
-def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
-    tmp_path: Path, mocker: MockerFixture
-) -> None:
-    import dimos.robot.assets.usd_utils.to_urdf_mask as usd_to_urdf_module
-
-    convert = mocker.patch.object(usd_to_urdf_module, "usd_to_urdf")
-    model = _urdf(tmp_path).to_usd()
-
-    assert [joint.name for joint in model.joints] == ["shoulder"]
-    convert.assert_not_called()
-
-
-def test_a_usd_model_from_a_file_is_its_own_loaded_form(tmp_path: Path) -> None:
-    scene = tmp_path / "room.usda"
-    scene.write_text(_SCENE_USDA)
-    model = robot_model.UsdModel.from_file(scene)
-
-    assert model.load() is model
 
 
 def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
@@ -996,20 +922,18 @@ def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> Non
     """with_frames welds the frame into the layer, so joints and frame_names have to say so."""
     source = tmp_path / "arm.urdf"
     source.write_text('<robot name="arm"><link name="base_link"/></robot>')
-    model = (
-        robot_model.RobotModel.from_file(source)
-        .to_usd()
-        .with_frames({"tool": ("arm/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
+    model = UsdModel.from_robot_model(robot_model.RobotModel.from_file(source)).with_frames(
+        {"tool": ("arm/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))}
     )
 
-    joint = model.get_joint("tool_joint")
+    joint = next((joint for joint in model.joints if joint.name == "tool_joint"), None)
     assert joint is not None, "the added frame is welded in the layer but absent from joints"
     assert (joint.type, joint.parent_link, joint.child_link) == (
         "fixed",
         "arm/base_link",
         "arm/base_link/tool",
     )
-    assert joint.origin_xyz == (0.1, 0.0, 0.2)
+    assert joint.origin_xyz == pytest.approx((0.1, 0.0, 0.2))
     assert model.frame_names() == {"arm", "arm/base_link", "arm/base_link/tool"}
 
 
@@ -1028,24 +952,3 @@ def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path
     pytest.importorskip("pxr")
 
     assert 'def Xform "spot"' in model.usd
-
-
-_LAYER = '#usda 1.0\n(\n    defaultPrim = "box"\n)\n\ndef Xform "box"\n{\n}\n'
-
-
-def test_a_usd_file_is_json_as_its_path_and_a_layer_as_its_content(tmp_path: Path) -> None:
-    usd_file = tmp_path / "box.usda"
-    usd_file.write_text(_LAYER)
-    assert UsdModel.from_file(usd_file).to_json() == {"path": str(usd_file)}
-    assert UsdModel.from_layer(_LAYER).to_json() == {"content": _LAYER}
-    assert UsdModel.from_json({"path": str(usd_file)}).usd == _LAYER
-    assert UsdModel.from_json({"content": _LAYER}).usd == _LAYER
-
-
-def test_usd_json_has_exactly_one_of_path_or_content() -> None:
-    with pytest.raises(ValueError, match="exactly one of path or content"):
-        UsdModel.from_json({})
-    with pytest.raises(ValueError, match="exactly one of path or content"):
-        UsdModel.from_json({"path": "box.usda", "content": _LAYER})
-    with pytest.raises(ValueError, match="not \\['frames'\\]"):
-        UsdModel.from_json({"content": _LAYER, "frames": {}})

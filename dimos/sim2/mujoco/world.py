@@ -14,28 +14,13 @@
 
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import mujoco
-import numpy as np
-from scipy.spatial.transform import Rotation
 
-from dimos.sim2.mujoco.lights import apply_lights
 from dimos.sim2.mujoco.names import resolved, shorten
-from dimos.sim2.spec import Simulated, SimulatedRobot, validate
-
-_SITE_SIZE = (0.001, 0.001, 0.001)
-
-
-@dataclass(frozen=True)
-class SensorMount:
-    kind: Literal["camera", "lidar", "imu"]
-    frame_id: str
-    name: str
-    fovy: float = 60.0
-
+from dimos.sim2.spec import SimulatedRobot, validate
 
 USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
 
@@ -104,31 +89,17 @@ def _apply_sliding_friction(spec: mujoco.MjSpec, layer: Path) -> int:
     return applied
 
 
-def _textured_materials_win(spec: mujoco.MjSpec) -> int:
-    """MuJoCo lets the displayColor rgba its USD reader sets tint a textured material, as a USD renderer does not; the number changed."""
-    textured = {m.name for m in spec.materials if any(m.textures)}
-    unset = spec.default.geom.rgba
-    changed = 0
-    for geom in spec.geoms:
-        if geom.material in textured and not np.array_equal(geom.rgba, unset):
-            geom.rgba = unset
-            changed += 1
-    return changed
-
-
 def compile_world(
-    scene: Path, simulated: Iterable[Simulated] = (), ids: Iterable[str] | None = None
+    scene: Path, simulated: Iterable[SimulatedRobot] = (), ids: Iterable[str] | None = None
 ) -> mujoco.MjSpec:
+    """The world's MjSpec: what physics needs, so no lights or looks (a view adds those)."""
     _register_usd_reader(Path(scene))
-    robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
+    robots = list(simulated)
     validate(robots)
     owners = [robot.robot_id for robot in robots] if ids is None else list(ids)
 
     world = mujoco.MjSpec.from_file(str(scene))
     _apply_sliding_friction(world, Path(scene))
-    if Path(scene).suffix.lower() in USD_SUFFIXES:
-        apply_lights(world, Path(scene))
-        _textured_materials_win(world)
     shorten(world, ids=owners)
     for robot in robots:
         standing = resolved(
@@ -139,11 +110,10 @@ def compile_world(
                 f"{robot.robot_id}: no body {robot.root_body!r} in the world; a robot is in the "
                 f"world by being mounted, so mount it onto a frame of the scene"
             )
-        _configure(world, robot, root=world.body(standing))
-    fixed = {robot.robot_id for robot in robots if not robot.floating}
+    for key in list(world.keys) if robots else ():
+        world.delete(key)
     for robot_id in owners:
-        if robot_id not in fixed:
-            _free_if_unjointed(world, robot_id)
+        _free_if_unjointed(world, robot_id)
     return world
 
 
@@ -166,43 +136,3 @@ def _chain(body: Any, holder: Any) -> list[Any]:
     while parts[-1] is not holder and parts[-1].parent is not None:
         parts.append(parts[-1].parent)
     return parts
-
-
-def _configure(spec: mujoco.MjSpec, robot: SimulatedRobot, *, root: Any) -> None:
-    if not robot.floating:
-        root.mocap = True
-    for key in list(spec.keys):
-        spec.delete(key)
-
-
-def mount_sensor(spec: mujoco.MjSpec, sensor: SensorMount) -> None:
-    frame = sensor.frame_id
-    # A lidar or imu named as a site the world already has reads that site, so there is nothing to place.
-    if (
-        sensor.kind != "camera"
-        and resolved([s.name for s in spec.sites], sensor.name) == sensor.name
-    ):
-        return
-    site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
-    if frame != "world":
-        site_name = resolved([s.name for s in spec.sites], frame)
-        body_name = resolved([b.name for b in spec.bodies], frame)
-        site = spec.site(site_name) if site_name else None
-        body = spec.body(body_name) if body_name else None
-        if site is not None:
-            compiled = spec.copy().compile()
-            index = compiled.site(site_name).id
-            body, pos, quat = site.parent, compiled.site_pos[index], compiled.site_quat[index]
-        elif body is None:
-            raise ValueError(
-                f"no site or body {frame!r} to mount a {sensor.kind} on; this world has "
-                f"{sorted(b.name for b in spec.bodies)[:8]}..."
-            )
-    name = sensor.name
-    if sensor.kind == "camera":
-        optical = Rotation.from_quat(quat, scalar_first=True) * Rotation.from_euler("x", np.pi)
-        body.add_camera(
-            name=name, fovy=sensor.fovy, pos=pos, quat=optical.as_quat(scalar_first=True)
-        )
-    elif resolved([s.name for s in spec.sites], name) != name:
-        body.add_site(name=name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), pos=pos, quat=quat)

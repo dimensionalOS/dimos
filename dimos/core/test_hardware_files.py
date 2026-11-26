@@ -18,7 +18,7 @@ import posixpath
 import pytest
 
 from dimos.core import hardware_files
-from dimos.core.hardware_files import HardwareFiles
+from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.usd_utils.assets import asset_hash, referenced_asset_paths
 
@@ -101,42 +101,22 @@ def _files(tmp_path: Path) -> HardwareFiles:
     return HardwareFiles(resolve_usd_assets(robot.read_text(), str(robot.parent)))
 
 
+def _uris(files: HardwareFiles) -> list[str]:
+    return [HARDWARE_USD, *sorted(files._files)]
+
+
 def _provided(files: HardwareFiles) -> dict[str, bytes]:
     provided = {}
-    for uri in files.uris:
+    for uri in _uris(files):
         reply = files.reply(FileInfo(uri))
         assert reply is not None and reply.content is not None, uri
         provided[uri] = reply.content
     return provided
 
 
-def test_only_meshes_written_inside_the_layer_count_as_inline() -> None:
-    from dimos.core.hardware_files import inline_meshes
-    from dimos.robot.assets.usd_utils.pxr import load_pxr
-
-    usd = """#usda 1.0
-def Xform "robot"
-{
-    def Mesh "inline"
-    {
-        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
-    }
-    def Mesh "referenced" (
-        prepend references = @meshes/hull.usda@
-    )
-    {
-    }
-    def Xform "link"
-    {
-    }
-}
-"""
-    assert inline_meshes(load_pxr(), usd) == ["/robot/inline"]
-
-
 def test_a_request_holding_the_current_sha256_gets_only_the_header(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    for uri in files.uris:
+    for uri in _uris(files):
         full = files.reply(FileInfo(uri))
         assert full is not None and full.content is not None
         assert full.sha256 == asset_hash(full.content)

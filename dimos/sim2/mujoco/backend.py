@@ -26,7 +26,7 @@ from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.mujoco.drives import usd_with_mjc_servos
 from dimos.sim2.mujoco.names import resolve, resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
-from dimos.sim2.spec import ODOM_FRAME, Simulated, SimulatedRobot
+from dimos.sim2.spec import ODOM_FRAME, ROBOT, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import REFUSED, WorldWriter
 from dimos.utils.logging_config import setup_logger
@@ -47,12 +47,11 @@ def _xyzw(wxyz: np.ndarray) -> list[float]:
     return [float(x), float(y), float(z), float(w)]
 
 
-# Seconds of world time between repeats of the entity table.
 class MujocoBackend:
     def __init__(
         self,
         usd: "UsdModel",
-        simulated: Iterable[Simulated] = (),
+        simulated: Iterable[SimulatedRobot] = (),
         speed: float = 1.0,
         max_burst_seconds: float = 0.01,
     ) -> None:
@@ -62,7 +61,7 @@ class MujocoBackend:
         self.usd = usd.usd
         # MuJoCo ignores UsdPhysics drives, so a robot authored with them is respelled as mjc servos.
         self._scene_layer = usd_layer(usd, transform=usd_with_mjc_servos)
-        self._robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
+        self._robots = {robot.robot_id: robot for robot in simulated}
         spec = compile_world(self._scene_layer, simulated)
         self.model = spec.compile()
         self.data = mujoco.MjData(self.model)
@@ -78,16 +77,12 @@ class MujocoBackend:
         self._servo_lookup: dict[tuple[str, tuple[str, ...]], tuple[np.ndarray, np.ndarray]] = {}
         self._started = time.monotonic()
         self._rebase = True
-        self._layers = {id: usd_layer(r.model) for id, r in self._robots.items()}
         self._reset()
 
     @property
     def timestep(self) -> float:
         """Wall seconds between steps at this speed."""
         return float(self.model.opt.timestep) / self._speed
-
-    def describe(self) -> dict[str, Any]:
-        return {"backend": "mujoco", "scene": str(self._scene_layer)}
 
     def step(
         self, actions: Sequence[Action] = (), hold: bool = False
@@ -123,6 +118,12 @@ class MujocoBackend:
         with self._lock:
             self._pending.extend(actions)
 
+    def snapshot(self) -> dict[str, Any]:
+        return self.world.snapshot()
+
+    def close(self) -> None:
+        """Nothing to release: the world lives in this process."""
+
     def restart_clock(self) -> None:
         """Start counting real time from now, so a wait before the first step costs no sim time."""
         self._rebase = True
@@ -137,7 +138,7 @@ class MujocoBackend:
 
         initial = {}
         for robot in self._robots.values():
-            drives = usd_drives(robot.model.usd, robot.model._asset_root())
+            drives = usd_drives(robot.model.usd, robot.model.asset_root)
             for joint, (_kp, _kd, target) in drives.items():
                 initial[f"{robot.robot_id}/{joint}"] = target
         return initial
@@ -305,7 +306,7 @@ class MujocoBackend:
         world.add("world", backend="mujoco")
         for name in self._roots:
             robot = self._robots.get(name)
-            announced = {} if robot is None else {"model": str(self._layers[name])}
+            announced = {} if robot is None else {ROBOT: True}
             if robot is not None and robot.odom_frame is not None:
                 announced[ODOM_FRAME] = robot.odom_frame
             world.add(name, **announced)

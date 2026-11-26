@@ -47,7 +47,7 @@ class JointTransforms:
         origins = np.array([joint.origin() for joint in joints]).reshape(-1, 4, 4)
         self._origin_rotation = origins[:, :3, :3]
         self._origin_translation = origins[:, :3, 3]
-        self._origin_quaternion = _quaternions(self._origin_rotation)
+        self._origin = Rotation.from_matrix(self._origin_rotation) if joints else None
         axes = np.array([joint.axis for joint in joints], dtype=np.float64).reshape(-1, 3)
         self._axis = axes / np.linalg.norm(axes, axis=1, keepdims=True)
         self._turns = np.array([j.type in ("revolute", "continuous") for j in joints], dtype=bool)
@@ -55,39 +55,13 @@ class JointTransforms:
 
     def at(self, positions: Mapping[str, float]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Each joint's translation and x, y, z, w quaternion (w >= 0) at ``positions``; joints not named sit at zero."""
+        if self._origin is None:
+            return np.zeros((0, 3)), np.zeros((0, 4))
         at = np.array([joint_position(joint, positions) for joint in self.joints], dtype=np.float64)
-        half = np.where(self._turns, at, 0.0) / 2.0
-        motion = np.concatenate([self._axis * np.sin(half)[:, None], np.cos(half)[:, None]], axis=1)
-        rotations = _canonical(_multiply(self._origin_quaternion, motion))
+        turned = Rotation.from_rotvec(self._axis * np.where(self._turns, at, 0.0)[:, None])
+        rotations = (self._origin * turned).as_quat(canonical=True)
         slid = self._axis * np.where(self._slides, at, 0.0)[:, None]
         translations = self._origin_translation + np.einsum(
             "nij,nj->ni", self._origin_rotation, slid
         )
         return translations, rotations
-
-
-def _multiply(a: NDArray[np.float64], b: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Row-wise Hamilton product of x, y, z, w quaternions."""
-    ax, ay, az, aw = a.T
-    bx, by, bz, bw = b.T
-    return np.stack(
-        [
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-            aw * bw - ax * bx - ay * by - az * bz,
-        ],
-        axis=1,
-    )
-
-
-def _canonical(quaternions: NDArray[np.float64]) -> NDArray[np.float64]:
-    """The same rotations with w >= 0."""
-    return np.where(quaternions[:, 3:4] < 0.0, -quaternions, quaternions)
-
-
-def _quaternions(rotations: NDArray[np.float64]) -> NDArray[np.float64]:
-    """x, y, z, w quaternions of rotation matrices, once at setup."""
-    if not len(rotations):
-        return np.zeros((0, 4))
-    return _canonical(np.asarray(Rotation.from_matrix(rotations).as_quat()).reshape(-1, 4))

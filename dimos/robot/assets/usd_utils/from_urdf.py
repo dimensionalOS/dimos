@@ -63,15 +63,10 @@ class _Geometry:
     collision: bool
 
 
-def urdf_to_usd(
-    model: LoadedRobotModel,
-    *,
-    name: str | None = None,
-    include_collision: bool = True,
-) -> str:
+def urdf_to_usd(model: LoadedRobotModel) -> str:
     pxr = load_pxr()
-    name = _robot_name(model, name)
-    links = _urdf_links_of(model.xml, include_collision=include_collision)
+    name = _robot_name(model)
+    links = _urdf_links_of(model.xml)
     children = _children_by_parent(model.joints)
 
     stage = pxr.Usd.Stage.CreateInMemory(f"{name}.usda")
@@ -106,25 +101,9 @@ def urdf_to_usd(
     return str(stage.GetRootLayer().ExportToString())
 
 
-def urdf_link_paths(model: LoadedRobotModel, name: str | None = None) -> dict[str, str]:
-    """Each URDF link's frame in the USD urdf_to_usd writes: ``<robot>/<root link>/.../<link>``."""
-    top = _robot_name(model, name)
-    children = _children_by_parent(model.joints)
-    paths: dict[str, str] = {}
-    stack = [(model.root_link, top)]
-    while stack:
-        link, parent_path = stack.pop()
-        if link in paths:
-            continue
-        paths[link] = f"{parent_path}/{_link_segment(link)}"
-        # Reversed onto the stack so links are visited in the order _write_link_tree writes them.
-        stack.extend((joint.child_link, paths[link]) for joint in reversed(children.get(link, ())))
-    return paths
-
-
-def _robot_name(model: LoadedRobotModel, name: str | None) -> str:
+def _robot_name(model: LoadedRobotModel) -> str:
     """The USD's top prim, which is the first segment of every frame: the URDF robot's name."""
-    name = name or ET.fromstring(model.xml).get("name") or "robot"
+    name = ET.fromstring(model.xml).get("name") or "robot"
     if "/" in name:
         raise ValueError(f"the robot name {name!r} cannot be a USD prim name: it has a '/'")
     check_frame_path(name, "the robot name")
@@ -433,7 +412,7 @@ def _children_by_parent(
     return children
 
 
-def _urdf_links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geometry]]:
+def _urdf_links_of(xml: str) -> dict[str, list[_Geometry]]:
     root = ET.fromstring(xml)
     colors = _named_colors(root)
     links: dict[str, list[_Geometry]] = {}
@@ -443,11 +422,7 @@ def _urdf_links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geom
             continue
         geometries = [
             _geometry_of(element, colors, collision=False) for element in link.iter("visual")
-        ]
-        if include_collision:
-            geometries += [
-                _geometry_of(element, colors, collision=True) for element in link.iter("collision")
-            ]
+        ] + [_geometry_of(element, colors, collision=True) for element in link.iter("collision")]
         links[name] = [geometry for geometry in geometries if geometry is not None]
     return links
 

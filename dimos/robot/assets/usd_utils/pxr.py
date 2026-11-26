@@ -95,14 +95,6 @@ def frame_path(prim: Prim) -> str:
     return str(prim.GetPath())[1:]
 
 
-def warm_usd() -> None:
-    pxr = load_pxr()
-    layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
-    layer.ImportFromString('#usda 1.0\n(\n    defaultPrim = "warm"\n)\n\ndef Xform "warm"\n{\n}\n')
-    stage = pxr.Usd.Stage.Open(layer)
-    list(stage.Traverse())
-
-
 def layer_from(pxr: Pxr, usd: str, what: str, root: Path | str | None) -> Layer:
     if root is None:
         layer = pxr.Sdf.Layer.CreateAnonymous(".usda")

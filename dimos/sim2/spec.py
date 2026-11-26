@@ -20,6 +20,8 @@ from dimos.robot.assets.model import UsdModel
 
 # The key a world announces a robot's ``odom_frame`` under, on the robot's entity.
 ODOM_FRAME = "odom_frame"
+# The key a world marks each robot's entity with.
+ROBOT = "robot"
 
 
 @dataclass(frozen=True)
@@ -28,7 +30,6 @@ class SimulatedRobot:
 
     robot_id: str
     model: UsdModel
-    floating: bool = True
     # The world holds still until this robot is commanded: a robot held up by a policy falls before it is driven.
     held_until_commanded: bool = False
     # The tf frame the robot reports its odometry in, which sensors riding it map in.
@@ -39,10 +40,7 @@ class SimulatedRobot:
         return self.model.root_link
 
 
-Simulated = SimulatedRobot
-
-
-def validate(simulated: Iterable[Simulated]) -> None:
+def validate(simulated: Iterable[SimulatedRobot]) -> None:
     robot_ids = [d.robot_id for d in simulated]
     if len(set(robot_ids)) != len(robot_ids):
         raise ValueError(f"duplicate simulated robot ids: {sorted(robot_ids)}")

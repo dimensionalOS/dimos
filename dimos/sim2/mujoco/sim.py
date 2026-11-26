@@ -13,23 +13,21 @@
 # limitations under the License.
 
 
-"""The MuJoCo backend: one PhysicsBackend, stepped in real time (times ``speed``)."""
+"""The MuJoCo backend: one SimWorld, stepped in real time (times ``speed``)."""
 
 import asyncio
 from collections.abc import AsyncIterator
 from threading import Event, Lock, Thread
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldAction, WorldObservations
+from dimos_lcm.world_msgs import WorldObservations
 
 from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareSpec
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.sim2.actions import JointCommand, read_actions
+from dimos.core.module import ModuleConfig
+from dimos.sim2.actions import Action, JointCommand
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.sim import SimulatedRobotSpec, compose_world, meeting, until_it_stops
-from dimos.sim2.spec import validate
+from dimos.sim2.sim import SimWorld, compose_world
+from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import merged
 from dimos.utils.logging_config import setup_logger
 
@@ -42,63 +40,45 @@ class MujocoSimConfig(ModuleConfig):
     max_burst_seconds: float = 0.01
 
 
-class MujocoSim(Module):
+class MujocoSim(SimWorld):
     config: MujocoSimConfig
-    world_actions: In[WorldAction]
-    world_observations: Out[WorldObservations]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._backend: MujocoBackend | None = None
         self._publisher: _LatestPublisher | None = None
         self._composed = Event()
         self._world_usd = ""
-        self._built = Event()
         self._commanded: set[str] = set()
         self._held: set[str] = set()
         self._all_commanded = Event()
 
     async def main(self) -> AsyncIterator[None]:
-        self.world_actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
-        running = asyncio.create_task(until_it_stops("the world", self._run()))
-        yield
-        running.cancel()
+        async for _ in super().main():
+            yield
 
-    @rpc
-    def on_system_modules(self, modules: list[Any]) -> None:
-        simulated = [robot.simulated_robot() for robot in meeting(SimulatedRobotSpec, modules)]
-        validate(simulated)
+    def _build(self, simulated: list[SimulatedRobot], hardware: list[Any]) -> MujocoBackend:
         self._held = {robot.robot_id for robot in simulated if robot.held_until_commanded}
-        world = compose_world(meeting(HardwareSpec, modules))
+        world = compose_world(hardware)
         # Sensors build their views from the composed world alone, so they start on it while physics compiles.
         self._world_usd = world.usd
         self._composed.set()
-        self._backend = MujocoBackend(
+        return MujocoBackend(
             world,
             simulated,
             speed=self.config.speed,
             max_burst_seconds=self.config.max_burst_seconds,
         )
-        # The first frame exists before anyone can ask for a snapshot, so a snapshot always has one.
-        self._first_frame = self._backend.frame()
-        self._built.set()
 
     @rpc
     def get_world_usd(self) -> str:
         self._composed.wait()
         return self._world_usd
 
-    @rpc
-    def snapshot(self) -> dict[str, Any]:
-        self._built.wait()
-        assert self._backend is not None
-        return self._backend.world.snapshot()
-
     async def _run(self) -> None:
         await asyncio.to_thread(self._built.wait)
         backend, publisher = self._backend, self._publisher
-        assert backend is not None and publisher is not None
+        assert isinstance(backend, MujocoBackend) and publisher is not None
         publisher.offer(self._first_frame)
         backend.restart_clock()
         # Held still until every held robot is commanded, with the clock running so the readings its policy waits on stay fresh.
@@ -111,35 +91,20 @@ class MujocoSim(Module):
             publisher.offer(frame)
             await asyncio.sleep(backend.timestep)
 
-    def _on_actions(self, message: WorldAction) -> None:
-        backend = self._backend
-        if backend is None:
-            return
-        try:
-            actions = read_actions(message, backend.world)
-        except (KeyError, ValueError) as error:
-            logger.warning(f"sim2: an action this world cannot read: {error}")
-            return
-        backend.apply(actions)
+    def _applied(self, actions: list[Action]) -> None:
         if not self._all_commanded.is_set():
             self._commanded |= {a.entity for a in actions if isinstance(a, JointCommand)}
             if self._held <= self._commanded:
                 self._all_commanded.set()
 
     @rpc
-    def describe(self) -> dict[str, Any]:
-        return self._backend.describe() if self._backend is not None else {}
-
-    @rpc
     def stop(self) -> None:
         super().stop()
         # Releases a get_world_usd() caller blocked on a world that is never going to be built.
         self._composed.set()
-        self._built.set()
         if self._publisher is not None:
             self._publisher.close()
             self._publisher = None
-        self._backend = None
 
 
 class _LatestPublisher:

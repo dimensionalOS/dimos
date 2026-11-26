@@ -90,7 +90,8 @@ def _cbor_command(entity: int, key: str, value: Any) -> CborKeyValueCommandMessa
 def read_actions(message: WorldAction, world: WorldWriter) -> list[Action]:
     actions: list[Action] = []
     for command in message.joint_commands:
-        entity, name = world.paths[command.entity_id].split("/", 1)
+        # A joint's path is its robot's (a namespace, any number of segments) and its own name.
+        entity, name = world.paths[command.entity_id].rsplit("/", 1)
         values = {f: getattr(command, f) for f in _FIELDS}
         given = {f: None if math.isnan(v) else (v,) for f, v in values.items()}
         previous = actions[-1] if actions else None

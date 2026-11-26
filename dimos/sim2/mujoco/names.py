@@ -22,9 +22,9 @@ def resolve(names: Iterable[str], wanted: str) -> str:
     available = list(names)
     if wanted in available:
         return wanted
-    # A namespaced frame (owner/.../leaf) is the one name with its leaf under all its namespaces, else under its owner (shortened).
+    # A namespaced frame (owner/.../leaf) is the one name with its leaf under all its namespaces, else under the longest front of them that holds just one (its owner, shortened).
     *namespaces, leaf = wanted.split("/")
-    for under in (namespaces, namespaces[:1]) if namespaces else ():
+    for under in (namespaces[:count] for count in range(len(namespaces), 0, -1)):
         owned = [
             name
             for name in available

@@ -111,14 +111,14 @@ def test_one_unmounted_with_mounted_hardware_passes() -> None:
 
 
 def test_two_unmounted_in_one_namespace_is_refused() -> None:
-    with pytest.raises(ValueError, match=r"the top level: arm, wristcamera"):
+    with pytest.raises(ValueError, match=r"the top level holds arm, wristcamera"):
         _verify(autoconnect(Arm.blueprint(), WristCamera.blueprint()))
 
 
 def test_each_namespace_gets_its_own_unmounted_hardware() -> None:
     robot = autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist))
     _verify(autoconnect(robot.namespace("left"), robot.namespace("right")))
-    with pytest.raises(ValueError, match=r"left: left/arm, left/wristcamera"):
+    with pytest.raises(ValueError, match=r"left holds left/arm, left/wristcamera"):
         _verify(autoconnect(Arm.blueprint(), WristCamera.blueprint()).namespace("left"))
 
 
@@ -214,7 +214,7 @@ def _build(blueprint: MetaBlueprint) -> ModuleCoordinator:
 
 
 def test_build_refuses_two_unmounted() -> None:
-    with pytest.raises(ValueError, match="more than one unmounted HardwareModule"):
+    with pytest.raises(ValueError, match="hardware_file streams would answer each other"):
         _build(autoconnect(Arm.blueprint(), WristCamera.blueprint()))
 
 
@@ -263,9 +263,6 @@ def test_a_usd_with_no_source_path_is_provided_and_published() -> None:
             "arm/base",
             "arm/base/forearm",
             "arm/base/forearm/wrist",
-        }
-        assert ("arm/base", "arm/base/forearm") in {
-            tuple(edge) for edge in arm.get_hardware_transform_ids()
         }
     finally:
         coordinator.stop()
@@ -504,13 +501,13 @@ def test_the_hardware_transform_ids_are_exactly_what_it_publishes_on_tf_and_tf_s
         static_edges |= {(t.frame_id, t.child_frame_id) for ts in on_tf for t in ts}
         moving = camera.moving_transforms()
         published = static_edges | {(t.frame_id, t.child_frame_id) for t in moving}
-        assert set(camera.get_hardware_transform_ids()) == published == _CAMERA_STATIC_EDGES
+        assert camera.tf_edge_ids == published == _CAMERA_STATIC_EDGES
 
         arm_edges = {
             (t.frame_id, t.child_frame_id)
             for t in [*arm.static_transforms(), *arm.moving_transforms()]
         }
-        assert set(arm.get_hardware_transform_ids()) == arm_edges
+        assert arm.tf_edge_ids == arm_edges
     finally:
         arm.stop()
         camera.stop()
