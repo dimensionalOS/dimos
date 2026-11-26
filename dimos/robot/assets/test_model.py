@@ -1028,3 +1028,24 @@ def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path
     pytest.importorskip("pxr")
 
     assert 'def Xform "spot"' in model.usd
+
+
+_LAYER = '#usda 1.0\n(\n    defaultPrim = "box"\n)\n\ndef Xform "box"\n{\n}\n'
+
+
+def test_a_usd_file_is_json_as_its_path_and_a_layer_as_its_content(tmp_path: Path) -> None:
+    usd_file = tmp_path / "box.usda"
+    usd_file.write_text(_LAYER)
+    assert UsdModel.from_file(usd_file).to_json() == {"path": str(usd_file)}
+    assert UsdModel.from_layer(_LAYER).to_json() == {"content": _LAYER}
+    assert UsdModel.from_json({"path": str(usd_file)}).usd == _LAYER
+    assert UsdModel.from_json({"content": _LAYER}).usd == _LAYER
+
+
+def test_usd_json_has_exactly_one_of_path_or_content() -> None:
+    with pytest.raises(ValueError, match="exactly one of path or content"):
+        UsdModel.from_json({})
+    with pytest.raises(ValueError, match="exactly one of path or content"):
+        UsdModel.from_json({"path": "box.usda", "content": _LAYER})
+    with pytest.raises(ValueError, match="not \\['frames'\\]"):
+        UsdModel.from_json({"content": _LAYER, "frames": {}})

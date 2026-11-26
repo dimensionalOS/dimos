@@ -23,7 +23,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Annotated, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -182,6 +182,33 @@ class UsdModel:
     @property
     def source_path(self) -> Path | None:
         return None if self._source_path is None else Path(self._source_path).expanduser()
+
+    def to_json(self) -> dict[str, str]:
+        """``{"path": ...}`` for a USD file as it is on disk, else ``{"content": ...}`` with its asset paths made absolute."""
+        source = self.source_path
+        if (
+            source is not None
+            and self._text is None
+            and self._urdf is None
+            and not self._added_frames
+        ):
+            return {"path": str(source.absolute())}
+        if source is None:
+            return {"content": self.usd}
+        from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+
+        return {"content": resolve_usd_assets(self.usd, str(source.parent.absolute()))}
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, Any]) -> UsdModel:
+        """A UsdModel from exactly one of ``path`` (a USD file) or ``content`` (a USD layer's text)."""
+        unknown = set(value) - {"path", "content"}
+        if unknown:
+            raise ValueError(f"a UsdModel is {{path}} or {{content}}, not {sorted(unknown)}")
+        path, content = value.get("path"), value.get("content")
+        if (path is None) == (content is None):
+            raise ValueError("a UsdModel has exactly one of path or content")
+        return cls.from_file(path) if path is not None else cls.from_layer(value["content"])
 
     @cached_property
     def usd(self) -> str:
