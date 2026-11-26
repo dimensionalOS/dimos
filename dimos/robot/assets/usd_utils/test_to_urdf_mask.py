@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd_utils.from_urdf import urdf_link_paths, urdf_to_usd
+from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
 from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 
 pytest.importorskip("pxr")
@@ -71,6 +71,17 @@ def probe(tmp_path: Path) -> Any:
     return RobotModel.from_file(source).load()
 
 
+def _link_paths(loaded: Any) -> dict[str, str]:
+    """Each URDF link's frame in the USD urdf_to_usd writes: ``<robot>/<root link>/.../<link>``."""
+    paths = {loaded.root_link: f"{ET.fromstring(loaded.xml).get('name')}/{loaded.root_link}"}
+    pending = list(loaded.joints)
+    while pending:
+        joint = next(joint for joint in pending if joint.parent_link in paths)
+        pending.remove(joint)
+        paths[joint.child_link] = f"{paths[joint.parent_link]}/{joint.child_link}"
+    return paths
+
+
 def _round_trip(loaded: Any, tmp_path: Path) -> Any:
     recovered = tmp_path / "recovered.urdf"
     recovered.write_text(usd_to_urdf(urdf_to_usd(loaded)))
@@ -84,7 +95,7 @@ def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path)
     for original in probe.joints:
         got = back.get_joint(original.name)
         assert got is not None, original.name
-        paths = urdf_link_paths(probe)
+        paths = _link_paths(probe)
         assert (got.type, got.parent_link, got.child_link) == (
             original.type,
             paths[original.parent_link],
@@ -139,7 +150,7 @@ def test_a_joint_turns_about_the_axis_its_token_names() -> None:
 def test_the_kinematic_tree_comes_back_the_same(probe: Any, tmp_path: Path) -> None:
     back = _round_trip(probe, tmp_path)
 
-    paths = urdf_link_paths(probe)
+    paths = _link_paths(probe)
     assert back.root_link == paths[probe.root_link] == "probe/base"
     assert {j.child_link for j in back.joints} == {paths[j.child_link] for j in probe.joints}
 
@@ -226,10 +237,6 @@ def test_a_continuous_joint_round_trips_as_continuous(tmp_path: Path) -> None:
     assert joint is not None
     assert joint.type == "continuous"
     assert joint.lower is None and joint.upper is None
-
-
-def test_the_robot_name_can_be_overridden(probe: Any) -> None:
-    assert ET.fromstring(usd_to_urdf(urdf_to_usd(probe), name="other")).get("name") == "other"
 
 
 def test_a_layer_with_no_joints_is_still_a_robot(tmp_path: Path) -> None:

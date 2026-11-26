@@ -42,7 +42,7 @@ _JOINT_TYPES = {
 }
 
 
-def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = None) -> str:
+def usd_to_urdf(usd: str, *, root: Path | str | None = None) -> str:
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a layer", root)
     stage = pxr.Usd.Stage.Open(layer)
@@ -57,7 +57,7 @@ def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = 
     links |= _static_bodies_of(pxr, stage, links, joints)
 
     default_prim = stage.GetDefaultPrim()
-    robot_name = name or (default_prim.GetName() if default_prim else "robot")
+    robot_name = default_prim.GetName() if default_prim else "robot"
     robot = ET.Element("robot", name=robot_name)
 
     for link_name, prim in links.items():

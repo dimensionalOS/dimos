@@ -74,7 +74,6 @@ class _View:
         self,
         groups: Sequence[int],
         mounted_at: str | None = None,
-        blind_to: Sequence[str] = (),
         blind_to_robots: Sequence[str] = (),
     ) -> _Raycaster:
         self.mounted_at.append(mounted_at)
@@ -97,11 +96,11 @@ def _run(
     published: list[Any] = []
     sensor._world = world
 
-    def open_view() -> _View:
+    def open_view(*_mount: Any) -> _View:
         world.time += opening
         return view
 
-    monkeypatch.setattr(sensor, "_open", open_view)
+    monkeypatch.setattr(sensor, "open_view", open_view)
     monkeypatch.setattr(getattr(sensor, stream), "publish", published.append)
     asyncio.run(getattr(sensor, loop)())
     return {"view": view, "published": published, "ticked": world.ticked}
@@ -205,11 +204,11 @@ def test_a_livox_opens_one_view_for_its_lidar_and_imu_and_reads_both_at_their_ra
     published: dict[str, list[float]] = {"lidar": [], "imu": []}
     livox._world = world
 
-    def open_view() -> _View:
+    def open_view(*_mount: Any) -> _View:
         opened.append(_View(world))
         return opened[-1]
 
-    monkeypatch.setattr(livox, "_open", open_view)
+    monkeypatch.setattr(livox, "open_view", open_view)
     for stream, stamps in published.items():
         monkeypatch.setattr(getattr(livox, stream), "publish", lambda m, s=stamps: s.append(m.ts))
 
@@ -238,13 +237,13 @@ def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPat
     readings: list[Any] = []
     try:
         _toy_world(livox, LIDAR_MOUNT, monkeypatch)
-        open_view = livox._open
+        open_view = livox.open_view
 
-        def counted_open() -> Any:
-            opened.append(open_view())
+        def counted_open(*mount: Any) -> Any:
+            opened.append(open_view(*mount))
             return opened[-1]
 
-        monkeypatch.setattr(livox, "_open", counted_open)
+        monkeypatch.setattr(livox, "open_view", counted_open)
         monkeypatch.setattr(livox.lidar, "publish", clouds.append)
         monkeypatch.setattr(livox.imu, "publish", readings.append)
 
@@ -294,7 +293,7 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     from dimos.robot.assets.usd_utils.layers import usd_under_namespace
     from dimos.sim2.assets.toy import toy_robot
     from dimos.sim2.sim import compose_usds, fetched_usd
-    from dimos.sim2.spec import ODOM_FRAME
+    from dimos.sim2.spec import ODOM_FRAME, ROBOT
     from dimos.sim2.usd_layer import layer_file
     from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
@@ -320,7 +319,7 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     writer, mirror = WorldWriter(), WorldMirror()
     writer.start_ns = 0
     writer.add("world")
-    writer.add(DOG, model="dog.usda", **{ODOM_FRAME: f"{DOG}/odom"})
+    writer.add(DOG, **{ROBOT: True, ODOM_FRAME: f"{DOG}/odom"})
     still = [0.0] * 6
     writer.body_state(
         DOG, [*SPOT_XY, 0.3, 0, 0, np.sin(SPOT_YAW / 2), np.cos(SPOT_YAW / 2)], still, still

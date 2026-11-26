@@ -23,7 +23,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -121,19 +121,10 @@ class LoadedRobotModel:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
 
-    def referenced_files(self) -> set[str]:
-        """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
-        return {
-            element.attrib["filename"]
-            for element in ET.fromstring(self.xml).iter()
-            if "filename" in element.attrib
-        }
-
 
 @dataclass(frozen=True)
 class UsdModel:
     _source_path: Path | str | os.PathLike[str] | None = None
-    _urdf: LoadedRobotModel | None = None
     _text: str | None = None
     _added_frames: tuple[tuple[str, str, Vector, Vector], ...] = ()
 
@@ -176,45 +167,22 @@ class UsdModel:
 
     @classmethod
     def from_robot_model(cls, model: RobotModel) -> UsdModel:
+        from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
+
         loaded = model.load()
-        return cls(loaded.source_path, loaded)
+        return cls.from_layer(urdf_to_usd(loaded), loaded.source_path)
 
     @property
     def source_path(self) -> Path | None:
         return None if self._source_path is None else Path(self._source_path).expanduser()
 
-    def to_json(self) -> dict[str, str]:
-        """``{"path": ...}`` for a USD file as it is on disk, else ``{"content": ...}`` with its asset paths made absolute."""
-        source = self.source_path
-        if (
-            source is not None
-            and self._text is None
-            and self._urdf is None
-            and not self._added_frames
-        ):
-            return {"path": str(source.absolute())}
-        if source is None:
-            return {"content": self.usd}
-        from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
-
-        return {"content": resolve_usd_assets(self.usd, str(source.parent.absolute()))}
-
-    @classmethod
-    def from_json(cls, value: Mapping[str, Any]) -> UsdModel:
-        """A UsdModel from exactly one of ``path`` (a USD file) or ``content`` (a USD layer's text)."""
-        unknown = set(value) - {"path", "content"}
-        if unknown:
-            raise ValueError(f"a UsdModel is {{path}} or {{content}}, not {sorted(unknown)}")
-        path, content = value.get("path"), value.get("content")
-        if (path is None) == (content is None):
-            raise ValueError("a UsdModel has exactly one of path or content")
-        return cls.from_file(path) if path is not None else cls.from_layer(value["content"])
-
     @cached_property
     def usd(self) -> str:
         return self._with_added_frames(self._layer())
 
-    def _asset_root(self) -> Path | None:
+    @property
+    def asset_root(self) -> Path | None:
+        """Where the layer's relative asset paths resolve from."""
         source = self.source_path
         return source.parent if source is not None else None
 
@@ -226,19 +194,15 @@ class UsdModel:
         return usd_with_frames(
             layer,
             {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames},
-            root=self._asset_root(),
+            root=self.asset_root,
         )
 
     def _layer(self) -> str:
         if self._text is not None:
             return self._text
-        if self._urdf is not None:
-            from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
-
-            return urdf_to_usd(self._urdf)
         path = self.source_path
         if path is None:
-            raise ValueError("a UsdModel has neither a layer, a URDF nor a file to read one from")
+            raise ValueError("a UsdModel has neither a layer nor a file to read one from")
         if not path.is_file():
             raise FileNotFoundError(f"no USD file at {path}")
         try:
@@ -250,61 +214,43 @@ class UsdModel:
             ) from error
 
     @cached_property
-    def _poseable(self) -> LoadedRobotModel:
+    def joints(self) -> tuple[JointDescription, ...]:
         from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 
         source = self.source_path
-        return RobotModel.from_urdf_string(
-            usd_to_urdf(self.usd, root=self._asset_root()),
-            asset_dir=None if source is None else source.parent,
-        ).load()
-
-    @property
-    def joints(self) -> tuple[JointDescription, ...]:
-        if self._urdf is None:
-            return self._poseable.joints
-        # The URDF knows nothing of frames added to the USD, and reading them back out of the
-        # layer would mean putting the whole description through USD and back for an answer we
-        # already hold: usd_with_frames welds each one exactly here.
-        paths = self._urdf_link_paths
-        urdf_joints = tuple(
-            replace(joint, parent_link=paths[joint.parent_link], child_link=paths[joint.child_link])
-            for joint in self._urdf.joints
-            if joint.parent_link in paths and joint.child_link in paths
+        return (
+            RobotModel.from_urdf_string(
+                usd_to_urdf(self.usd, root=self.asset_root),
+                asset_dir=None if source is None else source.parent,
+            )
+            .load()
+            .joints
         )
-        return urdf_joints + self._added_frame_joints()
 
     @property
     def root_link(self) -> str:
         """The root link's frame: its prim path without the leading "/", e.g. ``go2/base``."""
-        if self._urdf is not None:
-            return self._urdf_link_paths[self._urdf.root_link]
         from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
-        return usd_root_link(self.usd, self._asset_root())
+        return usd_root_link(self.usd, self.asset_root)
 
     @property
     def top_frame(self) -> str:
         """The frame of the USD's top (default) prim, which every other frame is under."""
-        if self._urdf is not None:
-            return self.root_link.partition("/")[0]
         from dimos.robot.assets.usd_utils.frames import usd_top_frame
 
-        return usd_top_frame(self.usd, self._asset_root())
+        return usd_top_frame(self.usd, self.asset_root)
 
     @property
     def prim_edges(self) -> tuple[JointDescription, ...]:
         """The frame edges no joint makes, as fixed joints: a frame on its path-parent where its own prim transform puts it."""
-        if self._urdf is not None:
-            # urdf_to_usd writes the root link at the top prim's origin, and every other link is a joint's child.
-            return (_fixed_edge(self.top_frame, self.root_link, np.eye(4)),)
         from dimos.robot.assets.usd_utils.frames import usd_frame_edges
 
         # A floating joint's child keeps its rest pose here; what moves it (odometry) is another parent.
         jointed = {joint.child_link for joint in self.joints if joint.type != "floating"}
         return tuple(
             _fixed_edge(parent, child, transform)
-            for parent, child, transform in usd_frame_edges(self.usd, self._asset_root())
+            for parent, child, transform in usd_frame_edges(self.usd, self.asset_root)
             if child not in jointed
         )
 
@@ -363,59 +309,10 @@ class UsdModel:
             )
         ]
 
-    @cached_property
-    def _urdf_link_paths(self) -> dict[str, str]:
-        from dimos.robot.assets.usd_utils.from_urdf import urdf_link_paths
-
-        assert self._urdf is not None
-        return urdf_link_paths(self._urdf)
-
-    def get_joint(self, name: str) -> JointDescription | None:
-        return next((joint for joint in self.joints if joint.name == name), None)
-
-    def urdf(self) -> LoadedRobotModel | None:
-        return self._urdf
-
     def frame_names(self) -> set[str]:
-        if self._urdf is None:
-            from dimos.robot.assets.usd_utils.frames import usd_frame_names
+        from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
-            return usd_frame_names(self.usd, self._asset_root())
-        added = {joint.child_link for joint in self._added_frame_joints()}
-        return {self.top_frame, *self._urdf_link_paths.values(), *added}
-
-    def _added_frame_joints(self) -> tuple[JointDescription, ...]:
-        """The frames with_frames added (to a URDF-backed model), as the fixed joints the layer welds them on."""
-        known = {self.root_link.partition("/")[0], *self._urdf_link_paths.values()}
-        joints = []
-        for name, parent, xyz, rpy in self._added_frames:
-            if parent not in known:
-                raise ValueError(
-                    f"cannot add the frame {name!r}: the model has no frame {parent!r} to hang it "
-                    f"off (it has {sorted(known)[:8]}...)"
-                )
-            known.add(f"{parent}/{name}")
-            joints.append(
-                JointDescription(
-                    name=_FixedFrame(name, parent, xyz, rpy).joint_name,
-                    type="fixed",
-                    parent_link=parent,
-                    child_link=f"{parent}/{name}",
-                    origin_xyz=xyz,
-                    origin_rpy=rpy,
-                )
-            )
-        return tuple(joints)
-
-    def referenced_files(self) -> set[str]:
-        if self._urdf is None:
-            from dimos.robot.assets.usd_utils.assets import referenced_asset_paths
-
-            return referenced_asset_paths(self.usd, self._asset_root())
-        return self._urdf.referenced_files()
-
-    def load(self) -> UsdModel:
-        return self
+        return usd_frame_names(self.usd, self.asset_root)
 
 
 _USD_SUFFIXES = frozenset({".usd", ".usda"})
@@ -761,9 +658,6 @@ class RobotModel:
         if not old:
             raise ValueError("The text to replace in mesh paths must not be empty")
         return replace(self, _mesh_path_replacements=(*self._mesh_path_replacements, (old, new)))
-
-    def to_usd(self) -> UsdModel:
-        return UsdModel.from_robot_model(self)
 
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter.
