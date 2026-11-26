@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GR00T walking a simulated G1 in lockstep with its world: one policy step at each control tick the world holds for.
+"""GR00T walking a simulated G1: one policy step every GROOT_PERIOD of wall time, on the world as it is then.
 
-Give its G1Sim ``control_period=GROOT_PERIOD``: the world then stops at every tick, says ACT on the
-robot, and steps on only once this walker's position_command has reached it, so no wall clock paces it.
+Nothing waits for it, as on the real robot: a step that comes late is late, and the world has moved on meanwhile.
 """
 
 import asyncio
 from collections.abc import AsyncIterator
 import math
 from pathlib import Path
+import time
 from typing import Any, ClassVar
 
 from dimos_lcm.world_msgs import WorldObservations
@@ -40,11 +40,11 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.sim2 import usd_joint
-from dimos.sim2.sim import SimulatedWorldSpec
-from dimos.sim2.world_observations import ACT, OnWorldTime, WorldMirror
+from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
+from dimos.sim2.world_observations import WorldMirror
 from dimos.utils.data import LfsPath
 
-# GR00T was trained at 50 Hz: the G1Sim's control_period.
+# GR00T was trained at 50 Hz.
 GROOT_PERIOD = 1 / 50
 
 
@@ -103,15 +103,15 @@ class GrootPolicy:
 
 class G1SimWalkerConfig(ModuleConfig):
     model_path: Path = LfsPath("groot")
-    # Sim seconds a cmd_vel is followed for, as on the real G1.
+    # Seconds a cmd_vel is followed for, as on the real G1.
     cmd_vel_timeout: float = G1GrootWBCTaskConfig.timeout
 
 
-class G1SimWalker(OnWorldTime, Module):
+class G1SimWalker(Module):
     """Walks the simulated G1 of its namespace under GR00T: reads its world, takes cmd_vel, sends position_command."""
 
     config: G1SimWalkerConfig
-    # Its policy step is what the world waits on, so no sensor in its process should hold the GIL.
+    # Its 50 Hz policy step shares no GIL with a sensor, which would make it late.
     dedicated_worker: ClassVar[bool] = True
     world: SimulatedWorldSpec
     world_observations: In[WorldObservations]
@@ -123,39 +123,37 @@ class G1SimWalker(OnWorldTime, Module):
         self._policy: GrootPolicy | None = None
         self._command = np.zeros(3, dtype=np.float32)
         self._command_until = -math.inf
-        self._acted_at = -math.inf
         self._arms: NDArray[np.float32] | None = None
 
     async def main(self) -> AsyncIterator[None]:
         self._policy = await asyncio.to_thread(GrootPolicy, Path(self.config.model_path))
         self._world = WorldMirror()
-        loop = asyncio.get_running_loop()
-
-        def on_frame(world: WorldMirror) -> None:
-            if world.got(self.namespace, ACT):
-                loop.call_soon_threadsafe(self.act)
-
-        self._world.on_frame(on_frame)
         self.cmd_vel.subscribe(self._on_cmd_vel)
         self._world.subscribe(self.world_observations, self.world.snapshot)
+        walking = asyncio.create_task(until_it_stops("g1 walker", self._walk()))
         yield
+        walking.cancel()
+
+    async def _walk(self) -> None:
+        # A late tick is just late: the ones it missed are skipped, not caught up on.
+        async for _ in self._world.ticks(1 / GROOT_PERIOD):
+            self.act()
 
     def _on_cmd_vel(self, twist: Twist) -> None:
         self._command = np.array(
             [twist.linear.x, twist.linear.y, twist.angular.z], dtype=np.float32
         )
-        self._command_until = self.time() + self.config.cmd_vel_timeout
+        self._command_until = time.time() + self.config.cmd_vel_timeout
 
     def act(self) -> None:
-        """One policy step on the world as it stands at its control tick, sent as a position_command."""
+        """One policy step on the world as it is now, sent as a position_command."""
         policy, world = self._policy, self._world
         assert policy is not None
         with world.lock:
-            now = world.stamp()
             body = world.entity(self.namespace)
             names, rows = world.joints(self.namespace)
-        # The world repeats ACT while it waits; a tick is acted on once.
-        if now <= self._acted_at or body is None or body.pose is None or body.velocity is None:
+        now = time.time()
+        if body is None or body.pose is None or body.velocity is None:
             return
         by_name = dict(zip(names, rows, strict=True))
         joints = np.array([by_name[usd_joint(name)] for name in g1_joints], dtype=np.float32)
@@ -168,7 +166,6 @@ class G1SimWalker(OnWorldTime, Module):
         # The arms are no part of GR00T's action: held where they first were.
         if self._arms is None:
             self._arms = joints[legs.size :, 0]
-        self._acted_at = now
         self.position_command.publish(
             JointState(ts=now, name=g1_joints, position=[*legs.tolist(), *self._arms.tolist()])
         )

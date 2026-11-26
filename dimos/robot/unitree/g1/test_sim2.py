@@ -14,6 +14,7 @@
 
 import math
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -73,7 +74,7 @@ def test_odom_is_from_the_mount_so_the_pelvis_stands_above_it() -> None:
         backend = MujocoBackend(world, [SimulatedRobot(MOUNT, G1_USD)])
         sim._world = WorldMirror()
         sim._world.apply(backend.frame())
-        odom = sim._odom(sim._world.stamp())
+        odom = sim._odom(time.time())
         assert odom is not None
         odom_pelvis = Transform.from_pose(sim.tf_frames["body"], odom).to_matrix()
         mount = Transform.from_matrix(np.eye(4)).to_matrix()

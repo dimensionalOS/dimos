@@ -31,8 +31,6 @@ class SimulatedRobot:
     floating: bool = True
     # The world holds still until this robot is commanded: a robot held up by a policy falls before it is driven.
     held_until_commanded: bool = False
-    # Sim seconds between its controller's ticks: at each the world holds, ACT on its entity, until the robot is commanded.
-    control_period: float | None = None
     # The tf frame the robot reports its odometry in, which sensors riding it map in.
     odom_frame: str | None = None
 
