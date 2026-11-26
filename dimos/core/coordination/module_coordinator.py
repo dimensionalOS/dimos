@@ -33,7 +33,11 @@ from dimos.core.coordination.blueprint_config.fields import (
     validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import MetaBlueprint, transport_config_name
+from dimos.core.coordination.blueprints import (
+    MetaBlueprint,
+    config_defaults,
+    transport_config_name,
+)
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -58,7 +62,7 @@ from dimos.spec.utils import (
 )
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.safe_thread_map import safe_thread_map
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
@@ -404,12 +408,17 @@ class ModuleCoordinator(Resource):
                 self._transport_observers.remove(callback)
 
     def _send_on_system_modules(self) -> None:
+        """Refresh module discovery, then notify consumers of the completed discovery.
+
+        Both phases run on startup and whenever the deployed module list changes.
+        """
         modules = list(self._deployed_modules.values())
-        for module in modules:
-            # Only an @rpc counts: a plain method would be fetched over the worker
-            # pipe as a bound method, which cannot cross it.
-            if "on_system_modules" in getattr(module, "rpcs", ()):
-                cast("Any", module).on_system_modules(modules)
+        for hook in ("on_system_modules", "on_system_modules_ready"):
+            for module in modules:
+                # Only an @rpc counts: a plain method would be fetched over the worker
+                # pipe as a bound method, which cannot cross it.
+                if hook in getattr(module, "rpcs", ()):
+                    getattr(module, hook)(modules)
 
     def _connect_streams(
         self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
@@ -1104,6 +1113,31 @@ def _deploy_all_modules(
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
+    # Checks see every config field, defaults included, not just the ones someone set.
+    atoms = [
+        dataclasses.replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
+        for atom in [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
+    ]
+    # Every base's own check (so mixins each keep theirs), and each distinct function once.
+    checkers = list(
+        dict.fromkeys(
+            vars(base)["blueprint_checks"]
+            for atom in atoms
+            for base in atom.module.__mro__
+            if "blueprint_checks" in vars(base)
+        )
+    )
+    errors = []
+    for checker in checkers:
+        try:
+            checker(atoms)
+        except Exception as error:
+            errors.append(error)
+    # One failed check raises its own error; several raise them together.
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("blueprint checks failed", errors)
     module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:

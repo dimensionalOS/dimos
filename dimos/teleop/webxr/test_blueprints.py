@@ -89,7 +89,7 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
     by_name = {task.name: task for task in tasks}
     assert _binding(by_name["teleop_xarm"]) == {
         "hand": "left",
-        "target_frame": "xarm_arm/link6",
+        "target_frame": "link6",
     }
     assert (
         by_name["teleop_xarm"].params["robot_model"].joint_names

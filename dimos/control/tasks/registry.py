@@ -22,7 +22,7 @@ resolved only for the requested task type.
 Usage:
     from dimos.control.tasks.registry import control_task_registry
 
-    task = control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+    task = control_task_registry.create(cfg.type, cfg, connections=self._connections)
     print(control_task_registry.available())
 """
 
@@ -45,7 +45,6 @@ if TYPE_CHECKING:
 
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.coordinator import TaskConfig
-    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.control.task import ControlTask
 
 TaskFactory = Callable[..., "ControlTask"]
@@ -144,7 +143,6 @@ class ControlTaskRegistry:
         name: str,
         cfg: TaskConfig,
         *,
-        hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody] | None = None,
         connections: Mapping[str, ConnectionSource] | None = None,
     ) -> ControlTask:
         """Instantiate a task by registered name.
@@ -153,9 +151,6 @@ class ControlTaskRegistry:
             name: Registered task-type name (e.g. ``"trajectory"``).
             cfg: ``TaskConfig`` carrying the generic task envelope
                 (name/joint_names/priority) plus task-owned ``params``.
-            hardware: Coordinator's hardware map. Tasks that need an
-                adapter resolve it from their typed params; pass ``None``
-                only if no task in this registry needs hardware.
             connections: Coordinator's robot map for connection modules.
                 Passed only to a factory that takes a ``connections``
                 argument, so tasks can read deployment declarations such as
@@ -163,7 +158,7 @@ class ControlTaskRegistry:
         """
         key = name.lower()
         factory = self._resolve_factory(key)
-        kwargs: dict[str, Any] = {"cfg": cfg, "hardware": hardware or {}}
+        kwargs: dict[str, Any] = {"cfg": cfg}
         if "connections" in inspect.signature(factory).parameters:
             kwargs["connections"] = connections or {}
         task = factory(**kwargs)

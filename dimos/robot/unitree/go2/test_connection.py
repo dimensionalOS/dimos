@@ -21,6 +21,7 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 from collections.abc import Callable, Iterator
 from contextlib import closing
 import json
+import math
 from pathlib import Path
 import sqlite3
 import threading
@@ -30,7 +31,7 @@ from unittest.mock import MagicMock
 from mcap.writer import Writer
 import pytest
 from pytest_mock import MockerFixture
-from reactivex import Subject
+from reactivex import Subject, empty, timer
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
@@ -41,10 +42,16 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.dimsim_connection import DimSimConnection
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
+from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
@@ -64,6 +71,7 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
         "192.168.123.161",
         aes_128_key="cafe" * 8,
         velocity_api=False,
+        timed_move_resend_period_s=cfg.timed_move_resend_period_s,
     )
 
 
@@ -391,6 +399,72 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     assert conn.odom.publish.call_count == 1
 
 
+def test_body_command_and_pose_derived_feedback(connection):
+    conn = connection(publish_tf=False)
+    conn.joint_state = MagicMock()
+    conn.odometry = MagicMock()
+    values = {
+        f"{name}/velocity": v
+        for name, v in zip(go2_conn.GO2_BASE_JOINTS, (0.4, 0.1, 0.2), strict=True)
+    }
+    conn.write(values)  # No pose prerequisite.
+    q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    conn._publish_tf(PoseStamped(ts=10.0, position=[2.0, 3.0, 0.0], orientation=q))
+    conn.joint_state.publish.assert_not_called()  # No invented first rate.
+    conn.odometry.publish.assert_not_called()
+    conn._publish_tf(PoseStamped(ts=10.1, position=[1.99, 3.04, 0.0], orientation=q))
+    state = conn.joint_state.publish.call_args.args[0]
+    odom = conn.odometry.publish.call_args.args[0]
+    assert state.name == list(go2_conn.GO2_BASE_JOINTS)
+    assert list(state.position) == []
+    assert state.frame_id == odom.child_frame_id == "base_link"
+    assert state.ts == odom.ts == 10.1
+    assert state.velocity == pytest.approx([0.4, 0.1, 0.0])
+    assert [odom.twist.linear.x, odom.twist.linear.y] == pytest.approx([0.4, 0.1])
+    assert odom.pose.position.y == 3.04
+    conn.write(values)  # Measured nonzero yaw cannot change body commands.
+    twist = conn.connection.move.call_args.args[0]
+    assert [twist.linear.x, twist.linear.y, twist.angular.z] == pytest.approx([0.4, 0.1, 0.2])
+    conn._publish_tf(PoseStamped(ts=10.1, orientation=q))  # duplicate time: no rate
+    conn._publish_tf(PoseStamped(ts=12.0, orientation=q))  # missing interval
+    assert conn.joint_state.publish.call_count == 1
+    half_yaw = math.pi / 4 + 0.01
+    turning = Quaternion(0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+    conn._publish_tf(PoseStamped(ts=12.1, orientation=turning))
+    assert conn.joint_state.publish.call_args.args[0].velocity[2] == pytest.approx(0.2)
+    assert conn.odometry.publish.call_args.args[0].twist.angular.z == pytest.approx(0.2)
+    conn.halt()
+    conn.connection.stop_movement.assert_called_once()
+
+
+def test_canonical_lifecycle_deadman_and_post_stop_no_replay(monkeypatch):
+    from dimos.control._control_test_helpers import LocalTransport
+
+    backend = MagicMock()
+    backend.odom_stream.return_value = Subject()
+    backend.lowstate_stream.return_value = Subject()
+    backend.move.return_value = True
+    monkeypatch.setattr(go2_conn, "make_connection", lambda *args, **kwargs: backend)
+    conn = GO2Connection(ip="replay", camera=False, lidar=False, deadman_timeout_s=0.03)
+    commands = LocalTransport()
+    conn.set_transport("velocity_command", commands)
+    conn.set_transport("cmd_vel", LocalTransport())
+    try:
+        conn.start()
+        backend.odom_stream.return_value.on_next(PoseStamped())
+        command = JointState(name=list(go2_conn.GO2_BASE_JOINTS), velocity=[0.2, 0.0, 0.0])
+        commands.publish(command)
+        assert backend.move.call_count == 1
+        wait_until(lambda: conn.status().deadman_fired, timeout=2.0)
+        assert backend.stop_movement.call_count == 1
+        conn.stop()
+        commands.publish(command)
+        assert backend.move.call_count == 1
+        assert not conn.status().connected
+    finally:
+        conn.stop()
+
+
 def test_stop_disposes_stream_readers_before_closing_connection(connection, mocker) -> None:
     conn = connection(publish_tf=False)
     subscription = conn.register_disposable(Disposable())
@@ -404,6 +478,97 @@ def test_stop_disposes_stream_readers_before_closing_connection(connection, mock
     conn.stop()
 
     assert disposed_at_close == [True]
+
+
+@pytest.fixture
+def lidar_connection(mocker, request):
+    scheduler = TestScheduler()
+    mocker.patch.object(
+        go2_conn, "timer", side_effect=lambda delay: timer(delay, scheduler=scheduler)
+    )
+    backend = mocker.Mock(spec=getattr(request, "param", go2_conn.UnitreeWebRTCConnection))
+    backend.odom_stream.return_value = empty()
+    backend.lowstate_stream.return_value = empty()
+    mocker.patch.object(go2_conn, "make_connection", return_value=backend)
+    # Skip the physical robot's stand-up delay.
+    mocker.patch.object(go2_conn.time, "sleep")
+    with Subject() as lidar:
+        backend.lidar_stream.return_value = lidar
+        module = GO2Connection(ip="192.0.2.1", camera=False)
+        mocker.patch.object(module.cmd_vel, "subscribe", return_value=lambda: None)
+        mocker.patch.object(module.velocity_command, "subscribe", return_value=lambda: None)
+        mocker.patch.object(module.lidar, "publish", autospec=True)
+        yield module, lidar, scheduler
+        module.stop()
+
+
+def test_no_lidar_warns_once_and_late_data_still_publishes(lidar_connection, mocker):
+    module, lidar, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+
+    scheduler.advance_to(9)
+    warning.assert_not_called()
+    scheduler.advance_to(10)
+
+    warning.assert_called_once_with(
+        "No lidar message received. Mapping and navigation need lidar data. Check the lidar stream.",
+        timeout_s=10.0,
+    )
+    message = PointCloud2()
+    lidar.on_next(message)
+    module.lidar.publish.assert_called_once_with(message)
+    scheduler.advance_to(60)
+    assert warning.call_count == 1
+
+
+def test_first_lidar_message_suppresses_startup_warning(lidar_connection, mocker):
+    module, lidar, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(9)
+    message = PointCloud2()
+    lidar.on_next(message)
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
+    module.lidar.publish.assert_called_once_with(message)
+
+
+def test_stop_cancels_pending_lidar_warning(lidar_connection, mocker):
+    module, _, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(9)
+    module.stop()
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
+
+
+def test_disabled_lidar_does_not_warn(lidar_connection, mocker):
+    module, _, scheduler = lidar_connection
+    mocker.patch.object(module.config, "lidar", False)
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
+    module.connection.lidar_stream.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "lidar_connection",
+    [DimSimConnection, MujocoConnection, go2_conn.ReplayConnection],
+    indirect=True,
+)
+def test_offline_connection_does_not_warn_about_robot_lidar(lidar_connection, mocker):
+    module, _, scheduler = lidar_connection
+    warning = mocker.patch.object(go2_conn.logger, "warning")
+    module.start()
+    scheduler.advance_to(60)
+
+    warning.assert_not_called()
 
 
 class _StopLoopError(Exception):
@@ -452,7 +617,7 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
 
 
 def test_odom_to_tf_prefixed() -> None:
-    """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
+    """A namespaced instance name gives frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
     odom = PoseStamped(ts=1.0, frame_id="world")
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
@@ -607,6 +772,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     log = mocker.patch("dimos.memory.replay_progress.logger")
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
+    mocker.patch.object(module.velocity_command, "subscribe", return_value=mocker.Mock())
     module.set_transport("odom", mocker.Mock())
     received = []
     try:

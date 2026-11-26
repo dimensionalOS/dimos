@@ -148,6 +148,7 @@ M20_RIG = Rig(
     sensors=(FRONT, REAR),
     shape=SHAPE,
     command_timeout=CMD_VEL_TIMEOUT_S,
+    # the sim's odometry is ground truth, so it publishes straight in the nav frame (no relocalizer)
     world_frame=WORLD_FRAME,
     odom_child_frame="base_link",
     cloud_frame="base",
