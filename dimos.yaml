@@ -120,11 +120,12 @@ provides:
       post:
         description: >-
           202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes;
-          follow it at jobs/{job}
+          follow it at jobs/{job}. A scan that cannot start reading the checkout fails the job and keeps the previous catalog.
     /catalog/scan/blueprints/{name}:
       post:
         description: >-
           Scan just this blueprint and its modules, and update their entries in the cache (or join the running full scan).
+          A failure to read the checkout keeps the previous entries.
         parameters:
           - name: name
             in: path
