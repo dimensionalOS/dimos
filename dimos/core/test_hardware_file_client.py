@@ -32,8 +32,8 @@ pytest.importorskip("pxr")
 
 
 @contextmanager
-def _serving(robot: Path, namespace: str) -> Iterator[tuple[HardwareFiles, Callable[[], None]]]:
-    """``robot`` served as a HardwareModule in ``namespace`` would serve it, over the same two topics; and what announces it."""
+def _providing(robot: Path, namespace: str) -> Iterator[tuple[HardwareFiles, Callable[[], None]]]:
+    """``robot`` provided as a HardwareModule in ``namespace`` would provide it, over the same two topics; and what announces it."""
     root = str(robot.parent)
     files = HardwareFiles(
         usd_under_namespace(resolve_usd_assets(robot.read_text(), root), namespace, root)
@@ -66,7 +66,7 @@ def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_fi
     namespace = f"files_{uuid.uuid4().hex[:8]}"
     cache = tmp_path / "cache"
     fetched: list[str] = []
-    with _serving(_robot(tmp_path / "robot"), namespace) as (files, announce):
+    with _providing(_robot(tmp_path / "robot"), namespace) as (files, announce):
         # Asked before the files are announced: the request is sent again when they are.
         result: list[Path] = []
         fetching = threading.Thread(
@@ -81,7 +81,7 @@ def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_fi
         from pxr import Usd
 
         stage = Usd.Stage.Open(str(usd))
-        # Served under the namespace, so the prim path is the tf frame.
+        # Provided under the namespace, so the prim path is the tf frame.
         forearm = stage.GetPrimAtPath(f"/{namespace}/robot/arm/forearm")
         assert forearm, "the part layer resolved from the cache"
         skin = forearm.GetAttribute("skin").Get().resolvedPath
@@ -128,7 +128,7 @@ def Xform "robot"
 """
     )
     namespace = f"files_{uuid.uuid4().hex[:8]}"
-    with _serving(robot, namespace) as (files, announce):
+    with _providing(robot, namespace) as (files, announce):
         announce()
         usd = fetch_hardware_files(namespace, tmp_path / "cache")
         assert Usd.Stage.Open(str(usd)).GetPrimAtPath(f"/{namespace}/robot/base")
