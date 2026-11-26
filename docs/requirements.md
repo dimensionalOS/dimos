@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, av | No |
-| `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
+| `sim` | MuJoCo simulation | mujoco, mjcf-to-urdf, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |

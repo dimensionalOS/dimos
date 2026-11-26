@@ -25,6 +25,7 @@ from typing import Any
 from unittest.mock import call
 
 from filelock import FileLock, Timeout
+from git import Actor, Repo
 from pydantic import TypeAdapter
 import pytest
 from pytest_mock import MockerFixture
@@ -157,6 +158,46 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
         call.initialize(tmp_path),
         call.pull(archive, tmp_path),
     ]
+
+
+def test_installed_package_finds_archive_added_after_clone(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    origin = tmp_path / "origin"
+    checkout = tmp_path / "repo"
+    author = Actor("DimOS Test", "test@example.invalid")
+    with Repo.init(origin, initial_branch="main") as repo:
+        archive = origin / "data/.lfs/sample.tar.gz"
+        archive.parent.mkdir(parents=True)
+        (origin / "data/.gitkeep").touch()
+        repo.index.add(["data/.gitkeep"])
+        repo.index.commit("Initial data", author=author, committer=author)
+        Repo.clone_from(origin.as_uri(), checkout, depth=1).close()
+        sample = tmp_path / "sample"
+        sample.write_bytes(b"new robot asset")
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(sample, arcname="sample")
+        repo.index.add(["data/.lfs/sample.tar.gz"])
+        repo.index.commit("Add archive", author=author, committer=author)
+
+    mocker.patch.object(data, "get_project_root", return_value=checkout)
+    mocker.patch.object(data, "get_data_dir", return_value=checkout / "data")
+    mocker.patch.object(data, "_get_lfs_dir", return_value=checkout / "data/.lfs")
+
+    assert data.get_data("sample").read_bytes() == b"new robot asset"
+
+
+def test_source_checkout_missing_archive_does_not_fetch(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path)
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+    mocker.patch.object(data, "_get_lfs_dir", return_value=tmp_path / "data/.lfs")
+    run = mocker.patch.object(data.subprocess, "run")
+
+    with pytest.raises(FileNotFoundError, match="absent"):
+        data._pull_lfs_archive("absent")
+    run.assert_not_called()
 
 
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
