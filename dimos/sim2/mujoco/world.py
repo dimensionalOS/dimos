@@ -136,8 +136,8 @@ def compile_world(
         )
         if standing is None:
             raise ValueError(
-                f"{robot.robot_id}: no body {robot.root_body!r} in the world; a robot is grafted "
-                f"into the world by mounting it, so mount it onto a frame of the scene"
+                f"{robot.robot_id}: no body {robot.root_body!r} in the world; a robot is in the "
+                f"world by being mounted, so mount it onto a frame of the scene"
             )
         _configure(world, robot, root=world.body(standing))
     fixed = {robot.robot_id for robot in robots if not robot.floating}

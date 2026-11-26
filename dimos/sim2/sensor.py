@@ -40,7 +40,13 @@ class SimSensor(OnWorldTime, HardwareModule):
     @property
     def frame_id(self) -> str:
         """The sensor's frame: its USD's root link, under its namespace."""
-        return self.usd_frame(self.config.usd.root_link)
+        return self.tf_frames[self.config.usd.root_link]
+
+    def publish_moving_tf(self, ts: float) -> None:
+        """Publish its USD's moving edges (at zero: a sensor drives no joint) stamped ``ts``, so a sensor USD with a joint keeps it on tf."""
+        transforms = self.moving_transforms(ts=ts)
+        if transforms:
+            self.tfbuffer.publish(*transforms)
 
     def mirror_world(self) -> WorldMirror:
         world = WorldMirror()

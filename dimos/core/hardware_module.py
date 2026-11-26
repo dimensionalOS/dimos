@@ -21,13 +21,13 @@ mounted onto one of the robot's mount frames::
 
 A frame is named by its prim path, with the namespace in front: the Go2's ``/go2/head`` is
 ``go2/head``, and a lidar whose USD holds ``/lidar/imu``, attached at ``go2/head``, is
-``go2/head/lidar/imu``. ``get_usd()`` serves the prims nested under the namespace, so every served
+``go2/head/lidar/imu``. ``get_usd()`` provides the prims nested under the namespace, so every provided
 prim path is already its tf frame and the layers of an assembly overlay each other as they are. The USD fills the module's
 ``tf_frames_local`` (role = frame path) and ``tf_edges``, so TfModule's checks see every edge.
 
 Each HardwareModule publishes the tf of its own USD; a mounted one also publishes the edge from
 the mount frame it sits on to its top prim. The edges that never move (its USD's static ones and
-the mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It serves its
+the mount) go out once on ``tf_static`` at start, then on ``tf`` at ``static_tf_rate_hz``. It provides its
 USD and every file it reaches on ``hardware_file_request``/``hardware_file_response``, named
 relative to itself, so whatever needs the whole assembly (a simulator, on this machine or another)
 fetches them with ``fetch_hardware_files`` and composes them (each already sits at its tf frames).
@@ -35,8 +35,9 @@ fetches them with ``fetch_hardware_files`` and composes them (each already sits 
 
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, get_type_hints
 
 import numpy as np
 from pydantic import model_validator
@@ -45,7 +46,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles
 from dimos.core.stream import In, Out
-from dimos.core.tf_module import TfModule, TfModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig, _frame_ids
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -54,13 +55,19 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.frame_paths import check_frame_path
 from dimos.robot.assets.model import TfEdge, UsdModel
 from dimos.spec.utils import Spec
-from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 
 logger = setup_logger()
+
+
+@dataclass(frozen=True)
+class Mount:
+    """A frame of a HardwareModule's USD that other hardware mounts onto; ``Robot.mounts.<name>`` gives one."""
+
+    frame: str
 
 
 class Mounts:
@@ -78,12 +85,12 @@ class Mounts:
                 )
             self._frames[name] = frame
 
-    def __getattr__(self, name: str) -> str:
+    def __getattr__(self, name: str) -> Mount:
         if name.startswith("_"):
             raise AttributeError(name)
         if name not in self._frames:
             raise AttributeError(f"no mount {name!r}; the mounts are {sorted(self._frames)}")
-        return self._frames[name]
+        return Mount(self._frames[name])
 
     def __iter__(self) -> Iterator[str]:
         return iter(sorted(self._frames.values()))
@@ -103,22 +110,20 @@ class HardwareModuleConfig(TfModuleConfig):
 
     @model_validator(mode="after")
     def _check_roles(self) -> "HardwareModuleConfig":
-        # Filled before TfModuleConfig's role check runs, so tf_edges may name the USD's frames.
-        self.tf_frames_local, self.tf_frames_global, self.tf_edges = usd_tf(self)
+        check_declared_tf_against_usd(vars(self))
         check_attached_namespace(self.attached_to, (self.instance_name or "").rpartition("/")[0])
         # The parent's validator is a plain function at runtime; mypy sees pydantic's decorator proxy.
         cast("Callable[[TfModuleConfig], TfModuleConfig]", TfModuleConfig._check_roles)(self)
         return self
 
 
-def usd_tf(
-    config: Any, mounts: "Mounts | None" = None
-) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
-    """A HardwareModule's tf: its USD's frames (role = frame path) and edges, its mount edge, then what its config adds.
+def check_declared_tf_against_usd(
+    values: Mapping[str, Any], mounts: "Mounts | None" = None
+) -> None:
+    """Refuse a HardwareModule's declared tf unless it names its USD: each local frame a USD prim path, each edge a USD edge, no global frames.
 
-    ``config`` is a HardwareModuleConfig or a blueprint atom's kwargs (read the same way).
+    ``values`` are a HardwareModuleConfig's fields or a blueprint atom's kwargs.
     """
-    values: Mapping[str, Any] = config if isinstance(config, Mapping) else vars(config)
     usd: UsdModel | None = values.get("usd")
     if usd is None:
         raise ValueError(
@@ -130,53 +135,38 @@ def usd_tf(
             "frame_id_prefix (which would name them apart from the USD) is refused; namespace "
             "the blueprint instead"
         )
-    frames = usd.frame_names()
-    for mount in mounts or ():
-        if mount not in frames:
-            raise ValueError(
-                f"the mount {mount!r} is not a frame of the USD (its frames: {sorted(frames)})"
-            )
-    edges = list(usd.tf_edges)
-    local = {frame: frame for frame in sorted(usd.tf_frames)}
-    shared: dict[str, str] = {}
-    attached_to: str | None = values.get("attached_to")
-    if attached_to is not None:
-        check_frame_path(attached_to, "attached_to")
-        # The mount is the namespace frame itself (local ""), which the served USD has as a prim.
-        local[""] = ""
-        edges.append(("", usd.top_frame))
-    for role, frame in values["tf_frames_local"].items():
-        if frame not in local:
-            raise ValueError(
-                f"tf_frames_local[{role!r}] is {frame!r}, which is not a frame of this hardware's "
-                f"USD (its frames: {sorted(frames)})"
-            )
-        if local.setdefault(role, frame) != frame:
-            raise ValueError(
-                f"tf_frames_local[{role!r}] is {frame!r}, but the USD's frame {role!r} is that role"
-            )
     if values.get("skip_tf_checks"):
         raise ValueError(
             "a HardwareModule cannot skip_tf_checks: it publishes its USD's edges and its mount, "
             "and the check is what keeps it to those"
         )
-    for role, frame in values["tf_frames_global"].items():
-        if shared.get(role) != frame:
+    frames = usd.tf_frames
+    for mount in mounts or ():
+        if mount not in frames:
             raise ValueError(
-                f"tf_frames_global[{role!r}] is {frame!r}, but a HardwareModule publishes only its "
-                f"USD's frames and its mount; an estimate (odom, map, ...) belongs in a separate "
-                f"module that is not a HardwareModule"
+                f"the mount {mount!r} is not a frame of the USD (its frames: {sorted(frames)})"
             )
-    roles = {**local, **shared}
-    usd_frames = {(roles[parent], roles[child]) for parent, child in edges}
+    local: dict[str, str] = values["tf_frames_local"]
+    for role, frame in local.items():
+        if frame not in frames:
+            raise ValueError(
+                f"tf_frames_local[{role!r}] is {frame!r}, which is not a prim path of this "
+                f"hardware's USD (its frames: {sorted(frames)})"
+            )
+    if values["tf_frames_global"]:
+        raise ValueError(
+            f"tf_frames_global is {values['tf_frames_global']!r}, but a HardwareModule publishes "
+            f"only its USD's frames and its mount; an estimate (odom, map, ...) belongs in a "
+            f"separate module that is not a HardwareModule"
+        )
+    usd_edges = set(usd.tf_edges)
     for parent, child in values["tf_edges"]:
-        if (roles.get(parent), roles.get(child)) not in usd_frames:
+        if (local.get(parent), local.get(child)) not in usd_edges:
             raise ValueError(
-                f"tf_edges holds ({parent!r}, {child!r}), which is not an edge of this hardware's USD "
-                f"or its mount; a HardwareModule never publishes an estimate (odom -> base, ...), "
-                f"so that belongs in a separate module that is not a HardwareModule"
+                f"tf_edges holds ({parent!r}, {child!r}), which is not an edge of this hardware's "
+                f"USD; a HardwareModule never publishes an estimate (odom -> base, ...), so that "
+                f"belongs in a separate module that is not a HardwareModule"
             )
-    return local, shared, list(dict.fromkeys([*edges, *values["tf_edges"]]))
 
 
 def check_attached_namespace(attached_to: str | None, namespace: str) -> None:
@@ -197,59 +187,59 @@ class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     # possible to have a namespace without being mounted, this differentiates that
     def attached_to(self) -> str | None: ...
-    def get_namespace(self) -> str: ...
+    # The (parent, child) frame ids it publishes, so a recorder can tell which edges are hardware.
+    def get_hardware_transform_ids(self) -> list[tuple[str, str]]: ...
 
 
 class HardwareModule(TfModule):
     """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted.
 
     It publishes only its USD's edges and its mount, never an estimate; ``get_hardware_transform_ids()``
-    names them, which is how a recorder tells hardware edges from imaginary ones.
+    names them, which is how a recorder tells which edges are hardware.
     """
 
     config: HardwareModuleConfig
     # Frames of this hardware's USD that other hardware can mount onto.
     mounts: ClassVar[Mounts] = Mounts()
-    # A FileInfo naming a file this hardware serves, with the sha256 the asker already has.
+    # A FileInfo naming a file this hardware provides, with the sha256 the asker already has.
     hardware_file_request: In[FileInfo]
     # The reply (header only when the asker's sha256 is current), and the hardware.usda header announced at start.
     hardware_file_response: Out[FileInfo]
     # The edges that never move, once at start (not latched: only what listens then gets them).
     tf_static: Out[TFMessage]
-    tf_edges_are_hardware: ClassVar[bool] = True
-
-    @classproperty
-    def blueprint(self) -> "Callable[..., Blueprint]":
-        """A blueprint of this hardware with its tf filled in from its USD (and its mount, when attached), so the build check reads it as-is."""
-        from dimos.core.coordination.blueprints import Blueprint, config_defaults
-
-        # A classproperty, as on Module, so ``self`` is the class.
-        cls = cast("type[HardwareModule]", self)
-
-        def create(**kwargs: Any) -> Blueprint:
-            values = {**config_defaults(cls), **kwargs}
-            local, shared, edges = usd_tf(values, cls.mounts)
-            return Blueprint.create(
-                cls,
-                **{
-                    **kwargs,
-                    "tf_frames_local": local,
-                    "tf_frames_global": shared,
-                    "tf_edges": edges,
-                },
-            )
-
-        return create
 
     @classmethod
-    def attach(cls, mount_frame: str, **kwargs: Any) -> "Blueprint":
-        """This hardware on the mount frame ``mount_frame``, under the namespace of the same path (``a/b/c/<module>``)."""
-        check_frame_path(mount_frame, "the mount frame")
-        blueprint = cls.blueprint(**kwargs, attached_to=mount_frame)
+    def attach(cls, mount: Mount, **kwargs: Any) -> "Blueprint":
+        """This hardware on ``mount`` (``Robot.mounts.<name>``), under the namespace of its frame's path (``a/b/c/<module>``)."""
+        if not isinstance(mount, Mount):
+            raise TypeError(
+                f"attach takes a mount (Robot.mounts.<name>), not {type(mount).__name__} {mount!r}"
+            )
+        blueprint = cls.blueprint(**kwargs, attached_to=mount.frame)
         # namespace() puts its prefix in front, so the last segment goes on first.
-        for segment in reversed(mount_frame.split("/")):
+        for segment in reversed(mount.frame.split("/")):
             blueprint = blueprint.namespace(segment)
         return blueprint
+
+    @cached_property
+    def tf_frames(self) -> dict[str, str]:
+        """Every role -> frame id: each USD frame under its own prim path, then the declared roles."""
+        usd_frames = {frame: frame for frame in self.config.usd.tf_frames}
+        return {
+            **_frame_ids(usd_frames, {}, self.namespace),
+            **_frame_ids(self.config.tf_frames_local, self.config.tf_frames_global, self.namespace),
+        }
+
+    @cached_property
+    def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
+        """What tf and tf_static may carry, as frame ids: the declared edges, the USD's, and the mount."""
+        frames = self.tf_frames
+        usd_edges = {(frames[parent], frames[child]) for parent, child in self.config.usd.tf_edges}
+        declared = {(frames[parent], frames[child]) for parent, child in self.config.tf_edges}
+        mount = (
+            {(self.namespace, self.attach_frame)} if self.config.attached_to is not None else set()
+        )
+        return frozenset(declared | usd_edges | mount)
 
     @rpc
     def get_hardware_transform_ids(self) -> list[tuple[str, str]]:
@@ -262,7 +252,16 @@ class HardwareModule(TfModule):
         hardware = [atom for atom in atoms if issubclass(atom.module, HardwareModule)]
         unmounted: dict[str, list[str]] = defaultdict(list)
         for atom in hardware:
-            check_attached_namespace(atom.kwargs.get("attached_to"), atom.name.rpartition("/")[0])
+            namespace = atom.name.rpartition("/")[0]
+            # Its namespace is a prefix of its USD's prim paths, so each segment must be a prim name.
+            if namespace:
+                check_frame_path(namespace, f"{atom.name}'s namespace")
+            # Validated as the module will be, which reads a USD the blueprint config took apart back into one.
+            config = get_type_hints(atom.module)["config"].model_validate(atom.kwargs)
+            check_declared_tf_against_usd(
+                vars(config), cast("type[HardwareModule]", atom.module).mounts
+            )
+            check_attached_namespace(atom.kwargs.get("attached_to"), namespace)
             if atom.kwargs.get("attached_to") is None:
                 unmounted[atom.name.rpartition("/")[0]].append(atom.name)
         errors = [
@@ -285,7 +284,7 @@ class HardwareModule(TfModule):
     @rpc
     def start(self) -> None:
         super().start()
-        self.serve_hardware_files()
+        self.provide_hardware_files()
         self.publish_static_tf()
 
     def publish_static_tf(self) -> None:
@@ -302,7 +301,7 @@ class HardwareModule(TfModule):
             self.tfbuffer.publish(*self.static_transforms(ts=self.time()))
             await self.sleep(1 / self.config.static_tf_rate_hz)
 
-    def serve_hardware_files(self) -> None:
+    def provide_hardware_files(self) -> None:
         """Answer hardware_file_request and announce hardware.usda; start() does this once its streams are wired."""
         self.register_disposable(
             Disposable(self.hardware_file_request.subscribe(self._on_hardware_file_request))
@@ -310,13 +309,13 @@ class HardwareModule(TfModule):
         try:
             files = self._hardware_files
         except ImportError as error:
-            logger.warning(f"{self.config.instance_name} serves no hardware files: {error}")
+            logger.warning(f"{self.config.instance_name} provides no hardware files: {error}")
             return
         self.hardware_file_response.publish(files.announcement())
 
     @rpc
     def get_usd(self) -> str:
-        """This hardware's USD exactly as served as hardware.usda: prims under the namespace, so each frame's prim path is its tf frame; files relative to it."""
+        """This hardware's USD exactly as provided as hardware.usda: prims under the namespace, so each frame's prim path is its tf frame; files relative to it."""
         return self._hardware_files.usd
 
     @rpc
@@ -324,23 +323,18 @@ class HardwareModule(TfModule):
         """The tf frame this hardware is mounted on, or None if nothing holds it."""
         return self.namespace if self.config.attached_to is not None else None
 
-    def _local_usd(self) -> str:
-        """This hardware's USD for its own process: prims under ``/<namespace>``, files as paths on this machine (``get_usd`` is the served one)."""
+    @cached_property
+    def _hardware_files(self) -> HardwareFiles:
         from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
         from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
+        # Its prims under /<namespace> and files as paths on this machine; HardwareFiles makes them relative to provide them.
         source = self.config.usd.source_path
         root = str(source.parent) if source is not None else ""
-        return usd_under_namespace(
+        usd = usd_under_namespace(
             resolve_usd_assets(self.config.usd.usd, root), self.namespace, root or None
         )
-
-    @cached_property
-    def _hardware_files(self) -> HardwareFiles:
-        source = self.config.usd.source_path
-        return HardwareFiles(
-            self._local_usd(), source.stat().st_mtime if source and source.is_file() else None
-        )
+        return HardwareFiles(usd, source.stat().st_mtime if source and source.is_file() else None)
 
     def _on_hardware_file_request(self, request: FileInfo) -> None:
         # Answered on the request stream's own thread, so a burst (one per mesh) is never coalesced.
@@ -376,9 +370,14 @@ class HardwareModule(TfModule):
         self, positions: Mapping[str, float] | None = None, ts: float | None = None
     ) -> list[Transform]:
         """The USD's edges that move, at ``positions`` (the USD's own names; one not named sits at zero)."""
-        return self._namespaced(self.config.usd.moving_transforms(positions), ts)
+        return self._usd_edges_as_namespaced_transforms(
+            self.config.usd.moving_transforms(positions), ts
+        )
 
-    def _namespaced(self, edges: "list[TfEdge]", ts: float | None) -> list[Transform]:
+    def _usd_edges_as_namespaced_transforms(
+        self, edges: "list[TfEdge]", ts: float | None
+    ) -> list[Transform]:
+        """The USD's ``edges`` as Transforms stamped ``ts``, between this hardware's tf frame ids (its namespace in front)."""
         return [
             Transform(
                 translation=Vector3(*edge.translation),
@@ -393,12 +392,14 @@ class HardwareModule(TfModule):
     @cached_property
     def _static_edges(self) -> list[Transform]:
         """The USD's static edges and the mount, worked out once and only restamped; a subclass may narrow them."""
-        transforms = self._namespaced(self.config.usd.static_transforms(), None)
+        transforms = self._usd_edges_as_namespaced_transforms(
+            self.config.usd.static_transforms(), None
+        )
         if self.config.attached_to is not None:
             transforms.append(
                 Transform.from_matrix(
                     np.eye(4),
-                    frame_id=self.tf_frames[""],
+                    frame_id=self.namespace,
                     child_frame_id=self.attach_frame,
                 )
             )

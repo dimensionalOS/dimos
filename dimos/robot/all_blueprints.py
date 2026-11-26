@@ -354,6 +354,7 @@ all_modules = {
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
     "observe-skill": "dimos.agents.skills.observe_skill.ObserveSkill",
+    "odom-tf": "dimos.sim2.odom_tf.OdomTf",
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "office555": "dimos.robot.unitree.g1.blueprints.basic.three_g1_office_555.Office555",
     "open-arm-connection": "dimos.robot.manipulators.openarm.connection.OpenArmConnection",

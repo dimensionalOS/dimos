@@ -17,7 +17,6 @@
 Each "/"-separated segment is a USD prim name, so a frame id is a prim path without its leading "/".
 """
 
-from collections.abc import Collection
 import re
 
 # A USD prim name (Tf identifier): an ASCII letter or underscore, then letters, digits or underscores.
@@ -53,9 +52,3 @@ def check_frame_path(path: str, what: str) -> None:
     error = frame_path_error(path)
     if error is not None:
         raise ValueError(f"{what} {path!r} cannot be a tf frame / USD prim path: {error}")
-
-
-def is_hardware_edge(parent: str, child: str, hardware_ids: "Collection[tuple[str, str]]") -> bool:
-    """Whether ``parent -> child`` is a hardware edge, not an imaginary one (an estimate, a localization)."""
-    # hardware_ids: what every HardwareModule's get_hardware_transform_ids() returns; nothing else is hardware.
-    return (parent, child) in hardware_ids

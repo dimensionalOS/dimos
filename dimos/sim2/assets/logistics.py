@@ -33,4 +33,4 @@ class Logistics(SimScene):
     """A logistics room with one spot, `go2`."""
 
     config: LogisticsConfig
-    mounts = Mounts("go2")
+    mounts = Mounts("logistics/go2")

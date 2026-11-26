@@ -17,7 +17,7 @@
 from collections import defaultdict, deque
 from functools import cached_property
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
 
@@ -25,7 +25,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.frame_paths import is_hardware_edge
 from dimos.protocol.tf.tf import TF, refuse_undeclared_edges
 from dimos.utils.logging_config import setup_logger
 
@@ -108,8 +107,6 @@ class TfModule(Module):
     """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-    # Whether every edge it declares is hardware (a HardwareModule's: its USD's and its mount).
-    tf_edges_are_hardware: ClassVar[bool] = False
     if TYPE_CHECKING:
         tf: TfIO
     else:
@@ -144,49 +141,31 @@ class TfModule(Module):
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse declared edges that close a loop, or a frame with two parents of one kind; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
+        """Refuse declared edges that close a loop, so there is one path between any two frames; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out.
 
-        A frame may have one hardware parent (an edge a HardwareModule declares) and one imaginary
-        parent (an estimate, a localization): lookups search the tree both ways. Two imaginary parents
-        are refused, since each says where the frame is and nothing says which wins.
+        A frame may have several parents: lookups search the tree both ways, so only a loop makes a lookup ambiguous.
         """
         owners: dict[tuple[str, str], list[str]] = defaultdict(list)
-        hardware_ids: set[tuple[str, str]] = set()
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            module = cast("type[TfModule]", atom.module)
             frames = _frame_ids(
                 atom.kwargs["tf_frames_local"],
                 atom.kwargs["tf_frames_global"],
                 atom.name.rpartition("/")[0],
             )
             for parent_role, child_role in atom.kwargs["tf_edges"]:
-                edge = frames[parent_role], frames[child_role]
-                owners[edge].append(atom.name)
-                if module.tf_edges_are_hardware:
-                    hardware_ids.add(edge)
+                owners[frames[parent_role], frames[child_role]].append(atom.name)
 
         if not owners:
             return
 
         errors = []
-        parents: dict[tuple[str, bool], list[str]] = defaultdict(list)
         for (parent, child), names in sorted(owners.items()):
-            parents[child, is_hardware_edge(parent, child, hardware_ids)].append(
-                f"{parent} (from {', '.join(names)})"
-            )
             if len(names) > 1:
                 logger.warning(
                     f"tf edge '{parent}' -> '{child}' is declared by several modules "
                     f"({', '.join(names)}); only one module should own an edge"
-                )
-        for (child, hardware), listed in sorted(parents.items()):
-            if len(listed) > 1:
-                kind = "hardware" if hardware else "imaginary"
-                errors.append(
-                    f"    - '{child}' has several parents: {', '.join(listed)} (all {kind}; a "
-                    f"frame has at most one hardware and one imaginary parent)"
                 )
 
         # Union-find over the declared edges, undirected: an edge between two frames already joined closes a loop.
@@ -246,14 +225,8 @@ class TfModule(Module):
 
 
 def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
-    # A local frame "" is the namespace frame itself (a HardwareModule's mount).
-    if "" in local.values() and not prefix:
-        roles = sorted(role for role, frame in local.items() if not frame)
-        raise ValueError(
-            f"tf_frames_local {roles} name the frame '' (the namespace frame), but the module has no namespace"
-        )
     if prefix:
-        local = {role: f"{prefix}/{frame}" if frame else prefix for role, frame in local.items()}
+        local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
     return {**shared, **local}
 
 

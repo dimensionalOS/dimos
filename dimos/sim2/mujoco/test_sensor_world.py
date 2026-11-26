@@ -13,17 +13,19 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Any, Literal, cast
 
 import mujoco
 import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.toy import toy_robot
-from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
+from dimos.sim2.mujoco.view import MujocoView
 from dimos.sim2.mujoco.world import SensorMount
+from dimos.sim2.sim import compose_usds
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
@@ -34,26 +36,33 @@ from dimos.sim2.world_observations import WorldMirror, WorldWriter
 pytest.importorskip("pxr")
 
 SCENE = Path(__file__).parent / "assets" / "scene.usda"
+# The scene's frame the dog mounts on, and so the dog's namespace.
+_DOG = "scene/dog"
 
 
 @pytest.fixture
 def composed() -> Path:
     robot = toy_robot().with_frames(
         {
-            "imu": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            "eye": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "imu": ("toy/Geometry/base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "eye": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         }
     )
     scene = UsdModel.from_file(SCENE).with_frames(
         {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
     )
-    layer = graft_usd(scene.usd, {"dog": prefix_usd_frames(robot.usd, "dog")})
-    return layer_file(layer, called="sensor-world")
+    world = compose_usds([(scene.usd, None), (usd_under_namespace(robot.usd, _DOG), _DOG)])
+    return layer_file(world.usd, called="sensor-world")
 
 
-def _view(composed: Path, kind: str = "lidar", frame: str = "dog/lidar"):
+def _view(
+    composed: Path, kind: Literal["camera", "lidar", "imu"] = "lidar", frame: str = "dog/lidar"
+) -> WorldView:
     return open_view(composed, ["dog"], SensorMount(kind, frame, frame))
+
+
+_STILL = [0.0] * 6
 
 
 class _World:
@@ -64,20 +73,21 @@ class _World:
         self.writer.add("dog", model="dog.usda")
         self.writer.add("dog/neck")
         self.writer.add("crate")
-        self.writer.position("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1])
+        self.writer.body_state("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1], _STILL, _STILL)
 
-    def at(self, sim_time: float, x: float, neck: float) -> WorldMirror:
-        self.writer.position("dog", [x, 0.0, 1.0, 0, 0, 0, 1])
+    def at(self, sim_time: float, x: float, neck: float, speed: float = 0.0) -> WorldMirror:
+        """The dog at ``x``, moving along x at ``speed``, its neck at ``neck``."""
+        self.writer.body_state("dog", [x, 0.0, 1.0, 0, 0, 0, 1], [speed, 0, 0, 0, 0, 0], _STILL)
         self.writer.joint("dog/neck", neck, 0.0, 0.0)
         self.mirror.apply(self.writer.end_frame(sim_time))
         return self.mirror
 
 
-def test_the_robots_in_the_world_are_the_ones_the_world_announced():
+def test_the_robots_in_the_world_are_the_ones_the_world_announced() -> None:
     assert robot_ids(_World().at(0.0, 0.0, 0.0)) == ["dog"]
 
 
-def test_the_view_is_posed_by_the_world_alone(composed):
+def test_the_view_is_posed_by_the_world_alone(composed: Path) -> None:
     view = _view(composed)
     view.update(_World().at(1.0, 2.0, np.pi / 2))
     assert view.time == 1.0
@@ -93,14 +103,14 @@ def test_the_view_is_posed_by_the_world_alone(composed):
 
 
 @pytest.mark.self_hosted
-def test_the_view_renders_from_a_camera_frame(composed, renders):
+def test_the_view_renders_from_a_camera_frame(composed: Path, renders: None) -> None:
     view = _view(composed, "camera", "dog/eye")
     view.update(_World().at(1.0, 2.0, np.pi / 2))
     assert view.render("dog/eye", 32, 24).shape == (24, 32, 3)
     view.close()
 
 
-def test_a_sensor_does_not_see_the_body_it_is_mounted_on(composed):
+def test_a_sensor_does_not_see_the_body_it_is_mounted_on(composed: Path) -> None:
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
     origin, _ = view.pose("dog/lidar")
@@ -134,14 +144,22 @@ def Xform "housing"
 """
 
 
-def test_a_sensor_does_not_see_the_housing_it_is_mounted_in():
-    robot = toy_robot().with_frames({"lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-    housed = graft_usd(robot.usd, {"lidar": _HOUSING})
+def test_a_sensor_does_not_see_the_housing_it_is_mounted_in() -> None:
+    robot = toy_robot().with_frames(
+        {"lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
+    )
     scene = UsdModel.from_file(SCENE).with_frames(
         {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
     )
-    layer = graft_usd(scene.usd, {"dog": prefix_usd_frames(housed, "dog")})
-    view = _view(layer_file(layer, called="housed-sensor-world"))
+    lidar = f"{_DOG}/toy/Geometry/base/head/lidar"
+    world = compose_usds(
+        [
+            (scene.usd, None),
+            (usd_under_namespace(robot.usd, _DOG), _DOG),
+            (usd_under_namespace(_HOUSING, lidar), lidar),
+        ]
+    )
+    view = _view(layer_file(world.usd, called="housed-sensor-world"))
     view.update(_World().at(0.0, 0.0, 0.0))
     origin, _ = view.pose("dog/lidar")
     out_and_down = np.array([[1.0, 0.0, -1.0]]) / np.sqrt(2.0)
@@ -155,7 +173,7 @@ def test_a_sensor_does_not_see_the_housing_it_is_mounted_in():
     view.close()
 
 
-def test_blind_to_lets_the_rays_through_further_frames(composed):
+def test_blind_to_lets_the_rays_through_further_frames(composed: Path) -> None:
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
     base, _ = view.pose("dog/base")
@@ -169,7 +187,7 @@ def test_blind_to_lets_the_rays_through_further_frames(composed):
     assert through[0] < 0
 
 
-def test_blind_to_a_robot_lets_the_rays_through_all_of_its_links(composed):
+def test_blind_to_a_robot_lets_the_rays_through_all_of_its_links(composed: Path) -> None:
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, np.pi / 2))
     head, _ = view.pose("dog/eye")
@@ -185,7 +203,7 @@ def test_blind_to_a_robot_lets_the_rays_through_all_of_its_links(composed):
     view.close()
 
 
-def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed):
+def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed: Path) -> None:
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
     base, _ = view.pose("dog/base")
@@ -199,12 +217,12 @@ def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed)
     assert again[0] == pytest.approx(0.9, abs=1e-3), "the next caster is still blind to the base"
 
 
-def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed):
+def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed: Path) -> None:
     view = open_view(composed, ["cat", "dog"], SensorMount("imu", "dog/imu", "dog/imu"))
     world = _World()
     world.writer.add("cat", model="cat.usda")
     world.writer.add("cat/neck")
-    world.writer.position("cat", [9.0, 0.0, 1.0, 0, 0, 0, 1])
+    world.writer.body_state("cat", [9.0, 0.0, 1.0, 0, 0, 0, 1], _STILL, _STILL)
     world.writer.joint("cat/neck", np.pi / 2, 0.0, 0.0)
     view.update(world.at(1.0, 2.0, 0.0))
     assert view.pose("dog/base")[0] == pytest.approx([2.0, 0.0, 1.0])
@@ -212,24 +230,28 @@ def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed):
     assert 2 * np.arctan2(z, w) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(composed):
+def test_an_imu_reads_gravity_at_rest_and_acceleration_from_velocity_changes(
+    composed: Path,
+) -> None:
     view, world = _view(composed, "imu", "dog/imu"), _World()
     view.update(world.at(1.0, 0.0, 0.0))
     gyro, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([0.0, 0.0, 9.81])
     assert gyro == pytest.approx([0.0, 0.0, 0.0])
-    view.update(world.at(1.5, 0.5, 0.0))
+    view.update(world.at(1.5, 0.5, 0.0, speed=1.0))
     _, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([2.0, 0.0, 9.81])
 
 
-def test_a_view_reads_its_scene_from_one_parse(composed, monkeypatch):
+def test_a_view_reads_its_scene_from_one_parse(
+    composed: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dimos.robot.assets.usd_utils.pxr import load_pxr
 
     pxr = load_pxr()
     open_stage, already_parsed = pxr.Usd.Stage.Open, []
 
-    def spied(path, *args):
+    def spied(path: Any, *args: Any) -> Any:
         already_parsed.append(bool(pxr.Sdf.Layer.Find(str(path))))
         return open_stage(path, *args)
 
@@ -241,8 +263,8 @@ def test_a_view_reads_its_scene_from_one_parse(composed, monkeypatch):
 
 
 def test_a_sensor_named_for_a_site_the_world_has_is_mounted_without_compiling(
-    composed, monkeypatch
-):
+    composed: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dimos.sim2.mujoco.world import compile_world, mount_sensor
 
     spec = compile_world(composed, ids=["dog"])
@@ -267,11 +289,13 @@ _TEXTURED = """<mujoco>
 """
 
 
-def test_only_a_camera_view_loads_the_textures_and_a_lidar_still_sees_the_textured_box(tmp_path):
+def test_only_a_camera_view_loads_the_textures_and_a_lidar_still_sees_the_textured_box(
+    tmp_path: Path,
+) -> None:
     scene = tmp_path / "textured.xml"
     scene.write_text(_TEXTURED)
-    lidar = open_view(scene, mount=SensorMount("lidar", "world", "lidar"))
-    camera = open_view(scene, mount=SensorMount("camera", "world", "eye"))
+    lidar = cast("MujocoView", open_view(scene, mount=SensorMount("lidar", "world", "lidar")))
+    camera = cast("MujocoView", open_view(scene, mount=SensorMount("camera", "world", "eye")))
 
     distance, _ = lidar.raycaster((0,)).cast(np.zeros(3), np.array([[1.0, 0.0, 0.0]]), 10.0)
 
