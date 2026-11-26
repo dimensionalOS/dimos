@@ -27,11 +27,12 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.hardware_module import Mount, Mounts
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.assets.client import materialize_scene
-from dimos.robot.usd_manager import UsdManager
+from dimos.sim2.description import compose_scene, scene_revision
+from dimos.sim2.hardware import SimHardwareModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import (
@@ -47,30 +48,56 @@ from dimos.utils.testing.waiting import wait_until
 pytestmark = pytest.mark.self_hosted
 
 
+def mount(name):
+    return f"world/world/{name}_mount/cartesian_pusher/base_link/carriage/tool/camera"
+
+
+class CameraScene(SimHardwareModule):
+    mounts = Mounts(mount("left"), mount("right").replace("/camera", "/lidar"))
+
+
+# Mounts are named by their last segment. Use distinct existing mounts.
+def camera_mount(name):
+    return mount(name) if name == "left" else mount(name).replace("/camera", "/lidar")
+
+
+def device_name(name):
+    return camera_mount(name) + "/" + name
+
+
+def camera_frame(name):
+    return camera_mount(name) + "/camera/view"
+
+
+def composed(deployment):
+    return compose_scene(
+        [
+            deployment.get_instance(d.instance_name)
+            for d in deployment.list_modules()
+            if "get_usd" in d.rpc_names
+        ]
+    )
+
+
 @pytest.fixture
 def camera_blueprint(world, request):
     def camera(name, hz, device=SimCameraModule):
         color, depth = device is not SimDepthCameraModule, device is not SimColorCameraModule
         ports = [p for p, has in (("color_image", color), ("depth_image", depth)) if has]
-        return device.blueprint(
+        return device.attach(
+            Mount(camera_mount(name)),
             instance_name=name,
-            sensor=CameraConfig(f"{name}/view", hz=hz, color=color, depth=depth),
+            sensor=CameraConfig("view", hz=hz, color=color, depth=depth),
         ).remappings([(device, port, f"{name}/{port}") for port in (*ports, "camera_info")])
 
-    # The right camera's device class; a test selects another with indirect parametrization.
     left = camera("left", 10)
     right = camera("right", 5, getattr(request, "param", SimCameraModule))
-    scene = UsdManager.blueprint(
-        instance_name="scene",
-        model=world,
-        mounts={"left/camera": left, "right/camera": right},
-    )
     return autoconnect(
-        scene,
+        CameraScene.blueprint(instance_name="scene", usd=world),
         left,
         right,
         CameraRenderModule.blueprint(
-            scene_manager=scene, renderer=MujocoRenderer, cameras=("left", "right")
+            renderer=MujocoRenderer, cameras=(device_name("left"), device_name("right"))
         ),
     ).global_config(
         viewer="none",
@@ -84,8 +111,9 @@ def camera_blueprint(world, request):
 def cameras(camera_blueprint, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
-    parsed = BlueprintConfigParser(camera_blueprint).parse()
-    deployed = ModuleCoordinator.build(camera_blueprint, parsed_config=parsed)
+    blueprint = camera_blueprint.solidify()
+    parsed = BlueprintConfigParser(blueprint).parse()
+    deployed = ModuleCoordinator.build(blueprint, parsed_config=parsed)
     try:
         yield deployed
     finally:
@@ -97,10 +125,7 @@ def test_two_mounted_cameras_share_one_scene_and_keep_topics_rates_and_timestamp
 ):
     render = cameras.get_instance(CameraRenderModule)
     wait_until(lambda: render.statistics().get("scene_loads") == 1, timeout=20)
-    manager = cameras.get_instance("scene")
-    scene = materialize_scene(
-        manager.get_scene([])[1], manager.get_asset, cache=tmp_path / "reader"
-    )
+    scene = composed(cameras)
     messages = defaultdict(Queue)
     with ExitStack() as cleanup:
         backend = MujocoBackend()
@@ -125,7 +150,7 @@ def test_two_mounted_cameras_share_one_scene_and_keep_topics_rates_and_timestamp
                     header=SampleHeader(
                         clock_id="camera-test", time_ns=step * 100_000_000, frame_id="world"
                     ),
-                    model_revision=scene.revision,
+                    model_revision=scene_revision(scene),
                     bodies_length=len(bodies),
                     bodies=bodies,
                 )
@@ -134,7 +159,7 @@ def test_two_mounted_cameras_share_one_scene_and_keep_topics_rates_and_timestamp
             for name in names:
                 for port in ("color_image", "depth_image", "camera_info"):
                     msg = messages[name, port].get(timeout=10)
-                    assert msg.frame_id == f"{name}/view"
+                    assert msg.frame_id == camera_frame(name)
                     assert msg.ts == pytest.approx(step / 10)
                     samples[name, port].append(msg)
     assert render.statistics()["scene_loads"] == 1
@@ -142,8 +167,8 @@ def test_two_mounted_cameras_share_one_scene_and_keep_topics_rates_and_timestamp
     assert render.statistics()["error"] == ""
     assert [m.ts for m in samples["left", "color_image"]] == [0, 0.1, 0.2, 0.3, 0.4]
     assert [m.ts for m in samples["right", "color_image"]] == [0, 0.2, 0.4]
-    assert cameras.get_instance("left").statistics()["acquisitions"] == 5
-    assert cameras.get_instance("right").statistics()["acquisitions"] == 3
+    assert cameras.get_instance(device_name("left")).statistics()["acquisitions"] == 5
+    assert cameras.get_instance(device_name("right")).statistics()["acquisitions"] == 3
     assert samples["left", "color_image"][0].shape == (240, 320, 3)
     assert samples["right", "depth_image"][0].shape == (240, 320)
     np.testing.assert_allclose(
@@ -155,10 +180,7 @@ def test_two_mounted_cameras_share_one_scene_and_keep_topics_rates_and_timestamp
 def test_compressed_camera_sends_jpeg_color_beside_a_raw_camera(cameras, tmp_path):
     render = cameras.get_instance(CameraRenderModule)
     wait_until(lambda: render.statistics().get("scene_loads") == 1, timeout=20)
-    manager = cameras.get_instance("scene")
-    scene = materialize_scene(
-        manager.get_scene([])[1], manager.get_asset, cache=tmp_path / "reader"
-    )
+    scene = composed(cameras)
     messages = defaultdict(Queue)
     with ExitStack() as cleanup:
         backend = MujocoBackend()
@@ -178,7 +200,7 @@ def test_compressed_camera_sends_jpeg_color_beside_a_raw_camera(cameras, tmp_pat
         observations.publish(
             WorldState(
                 header=SampleHeader(clock_id="camera-test", time_ns=300_000_000, frame_id="world"),
-                model_revision=scene.revision,
+                model_revision=scene_revision(scene),
                 bodies_length=len(bodies),
                 bodies=bodies,
             )
@@ -188,15 +210,15 @@ def test_compressed_camera_sends_jpeg_color_beside_a_raw_camera(cameras, tmp_pat
         depth = messages["right/depth_image"].get(timeout=10)
     assert isinstance(raw, Image) and raw.shape == (240, 320, 3)
     assert isinstance(jpeg, CompressedImage) and jpeg.format == "jpeg"
-    assert jpeg.frame_id == "right/view" and jpeg.ts == pytest.approx(0.3)
+    assert jpeg.frame_id == camera_frame("right") and jpeg.ts == pytest.approx(0.3)
     # Far smaller than the raw pixels, and still a picture of the scene.
     assert len(jpeg.data) < 240 * 320 * 3 / 4
     decoded = jpeg.decode()
     assert decoded.shape == (240, 320, 3) and decoded.data.std() > 5
     # JPEG cannot carry metric depth: it stays raw.
     assert depth.shape == (240, 320) and depth.data.dtype == np.float32
-    assert cameras.get_instance("right").jpeg_quality() == 75
-    assert cameras.get_instance("left").jpeg_quality() is None
+    assert cameras.get_instance(device_name("right")).jpeg_quality() == 75
+    assert cameras.get_instance(device_name("left")).jpeg_quality() is None
 
 
 @pytest.mark.parametrize(
@@ -205,11 +227,10 @@ def test_compressed_camera_sends_jpeg_color_beside_a_raw_camera(cameras, tmp_pat
 def test_a_camera_with_one_image_has_only_that_stream(cameras, camera_blueprint, tmp_path):
     render = cameras.get_instance(CameraRenderModule)
     wait_until(lambda: render.statistics().get("scene_loads") == 1, timeout=20)
-    manager = cameras.get_instance("scene")
-    scene = materialize_scene(
-        manager.get_scene([])[1], manager.get_asset, cache=tmp_path / "reader"
+    scene = composed(cameras)
+    right = next(
+        a for a in camera_blueprint.solidify().active_blueprints if a.name == device_name("right")
     )
-    right = next(a for a in camera_blueprint.active_blueprints if a.name == "right")
     color_only = right.module is SimColorCameraModule
     own = ("right/color_image", CompressedImage) if color_only else ("right/depth_image", Image)
     messages = defaultdict(Queue)
@@ -228,7 +249,7 @@ def test_a_camera_with_one_image_has_only_that_stream(cameras, camera_blueprint,
         observations.publish(
             WorldState(
                 header=SampleHeader(clock_id="camera-test", time_ns=300_000_000, frame_id="world"),
-                model_revision=scene.revision,
+                model_revision=scene_revision(scene),
                 bodies_length=len(bodies),
                 bodies=bodies,
             )
@@ -236,15 +257,18 @@ def test_a_camera_with_one_image_has_only_that_stream(cameras, camera_blueprint,
         image = messages[own[0]].get(timeout=10)
         assert messages["left/color_image"].get(timeout=10).shape == (240, 320, 3)
         assert messages["left/depth_image"].get(timeout=10).shape == (240, 320)
-    assert image.frame_id == "right/view" and image.ts == pytest.approx(0.3)
+    assert image.frame_id == camera_frame("right") and image.ts == pytest.approx(0.3)
     if color_only:
         decoded = image.decode()
         assert decoded.shape == (240, 320, 3) and decoded.data.std() > 5
     else:
         assert image.shape == (240, 320) and image.data.dtype == np.float32
-    ports = {port.name for port in cameras.get_instance("right").get_stream_descriptors()}
-    assert ports == {own[0].split("/")[1], "camera_info"}
-    assert cameras.get_instance("right").statistics()["acquisitions"] == 1
+    ports = {
+        port.name for port in cameras.get_instance(device_name("right")).get_stream_descriptors()
+    }
+    assert {"color_image", "depth_image"} & ports == {own[0].split("/")[1]}
+    assert "camera_info" in ports
+    assert cameras.get_instance(device_name("right")).statistics()["acquisitions"] == 1
 
 
 def test_a_depth_device_cannot_have_a_color_only_sensor(world, tmp_path, monkeypatch):
@@ -258,9 +282,8 @@ def test_a_depth_device_cannot_have_a_color_only_sensor(world, tmp_path, monkeyp
     ).global_config(
         viewer="none", n_workers=1, zenoh_domain="sim2-depth-mismatch-" + uuid.uuid4().hex
     )
-    with pytest.raises(ExceptionGroup) as error:
+    with pytest.raises(ValueError, match="publishes depth_image exactly when"):
         ModuleCoordinator.build(blueprint)
-    assert error.group_contains(ValueError, match="publishes depth_image exactly when")
 
 
 def test_renderer_cannot_take_a_camera_assigned_to_another_owner(world, tmp_path, monkeypatch):
@@ -274,6 +297,5 @@ def test_renderer_cannot_take_a_camera_assigned_to_another_owner(world, tmp_path
     ).global_config(
         viewer="none", n_workers=1, zenoh_domain="sim2-wrong-renderer-" + uuid.uuid4().hex
     )
-    with pytest.raises(ExceptionGroup) as error:
+    with pytest.raises(ValueError, match="no camera renderer named"):
         ModuleCoordinator.build(blueprint)
-    assert error.group_contains(ValueError, match="camera belongs to renderer")

@@ -18,7 +18,7 @@ stays open.
 import argparse
 from collections import defaultdict
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from itertools import count
 import json
 from math import comb
@@ -179,7 +179,7 @@ def main() -> None:
     args = parser.parse_args()
     repo = os.environ["GITHUB_REPOSITORY"]
     token = os.environ.get("GITHUB_TOKEN")
-    since = datetime.now(UTC) - timedelta(days=args.days)
+    since = datetime.now(timezone.utc) - timedelta(days=args.days)
 
     counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     # Labels asked for -> runner -> the same counts over the jobs that asked for

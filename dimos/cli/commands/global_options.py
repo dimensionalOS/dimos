@@ -57,6 +57,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
         # Convert field name from snake_case to kebab-case for CLI
         cli_option_name = field_name.replace("_", "-")
+        help_text = field_info.description or f"Override {field_name} in GlobalConfig"
 
         # Special handling for boolean fields
         if actual_type is bool:
@@ -67,7 +68,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
                 default=typer.Option(
                     None,  # None means use the model's default if not provided
                     f"--{cli_option_name}/--no-{cli_option_name}",
-                    help=f"Override {field_name} in GlobalConfig",
+                    help=help_text,
                 ),
                 annotation=bool | None,
             )
@@ -79,7 +80,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
                 default=typer.Option(
                     None,  # None means use the model's default if not provided
                     f"--{cli_option_name}",
-                    help=f"Override {field_name} in GlobalConfig",
+                    help=help_text,
                 ),
                 annotation=actual_type | None,
             )

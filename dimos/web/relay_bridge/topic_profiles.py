@@ -56,7 +56,7 @@ VIDEO_PROFILES = frozenset(
 # docs/web/benchmarks/topic-video.md records the measurement that set them.
 VIDEO_BITRATES = ((640 * 360, 1_000_000), (1280 * 720, 2_500_000), (1920 * 1080, 4_500_000))
 
-SETTING_NAMES = ("maxHz", "maxResolution", "quality", "keepEvery", "fields")
+SETTING_NAMES = ("maxHz", "maxResolution", "quality", "keepEvery", "fields", "maxBitrate")
 CLOUD_FIELDS = ["intensity", "color"]
 MAX_RATE = 1000
 
@@ -78,6 +78,13 @@ def _options(profile: MediaProfile | None) -> dict[str, Any]:
         }
     if profile is not None and profile.kind == "jpeg":
         options["quality"] = {"kind": "int", "min": 1, "max": 100, "default": profile.quality}
+    elif profile is not None and profile.kind == "h264":
+        options["maxBitrate"] = {
+            "kind": "int",
+            "min": 100_000,
+            "max": 4_500_000,
+            "default": 4_500_000,
+        }
     elif profile is not None and profile.kind == "cloud":
         options["keepEvery"] = {"kind": "int", "min": 1, "max": 64, "default": profile.keep_every}
         options["fields"] = {"kind": "enum", "values": CLOUD_FIELDS, "default": CLOUD_FIELDS}
@@ -110,7 +117,7 @@ def _clamp(name: str, option: Mapping[str, Any], value: Any) -> Any:
         if (
             (name == "maxHz" and number <= 0)
             or ("min" in option and number < option["min"])
-            or ("max" in option and number > option["max"])
+            or ("max" in option and number > option["max"] and name != "maxBitrate")
         ):
             raise ValueError("option_out_of_range")
         if not isinstance(default, (int, float)):
@@ -160,6 +167,10 @@ def normalize_settings(profile_name: str, requested: Mapping[str, Any] | None) -
         if value is None:
             continue
         settings[name] = _clamp(name, option, value)
+    if "maxBitrate" in settings:
+        settings["maxBitrate"] = min(
+            settings["maxBitrate"], video_bitrate(*settings["maxResolution"])
+        )
     return settings
 
 

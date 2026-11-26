@@ -17,6 +17,7 @@
 from collections.abc import Callable
 from concurrent.futures import Future
 import math
+from pathlib import Path
 from queue import Empty, Full, Queue
 import threading
 import time
@@ -31,8 +32,9 @@ from dimos_lcm.std_msgs import Header, Time
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.cbor import validate_cbor_entries
-from dimos.sim2.description import SceneConfig
+from dimos.sim2.description import SceneConfig, compose_scene, scene_revision
 from dimos.sim2.physics.interface import PhysicsBackend
 from dimos.sim2.publication import PublicationRate
 from dimos.utils.logging_config import setup_logger
@@ -106,6 +108,22 @@ class SimModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        if self.config.scene is not None:
+            self._scene = (
+                UsdModel.from_file(self.config.scene)
+                if isinstance(self.config.scene, Path)
+                else self.config.scene
+            )
+            self._start_physics()
+
+    @rpc
+    def on_system_modules(self, modules: list[Any]) -> None:
+        if self._threads:
+            return
+        self._scene = compose_scene(modules)
+        self._start_physics()
+
+    def _start_physics(self) -> None:
         self._threads = [threading.Thread(target=self._run, name="sim2-physics", daemon=True)]
         try:
             self._threads[0].start()
@@ -155,7 +173,7 @@ class SimModule(Module):
             raise ValueError("physics dt must be in (0, 20 ms]")
         if not math.isfinite(c.observation_hz) or not 0 < c.observation_hz <= 1e9 / c.dt_ns:
             raise ValueError("truth rate must be positive and no faster than physics")
-        self._scene = c.load_scene(self.rpc)
+        self._model_revision = scene_revision(self._scene)
         self._backend.load(self._scene, c.dt_ns, c.gravity_world)
         if not set(c.joint_ids) <= set(self._backend.joint_ids):
             raise ValueError("unknown exported joint")
@@ -185,7 +203,7 @@ class SimModule(Module):
         joints.header = Header(stamp=Time(sec=sec, nsec=nsec))
         return WorldState(
             header=header,
-            model_revision=self._scene.revision,
+            model_revision=self._model_revision,
             bodies_length=len(bodies),
             bodies=bodies,
             joint_truth=joints,

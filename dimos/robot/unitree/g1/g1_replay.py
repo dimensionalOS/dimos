@@ -26,6 +26,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -95,6 +96,8 @@ class G1Replay(Module):
             if name in available:
                 streams[name] = replay.stream(name)
 
+        progress = ReplayProgress(str(path))
+        progress.start(replay, streams.values())
         starts = [t for s in streams.values() if (t := s.first_ts()) is not None]
         replay.pin_anchor(min(starts) if starts else None)
 
@@ -117,7 +120,8 @@ class G1Replay(Module):
                 stream.count(),
                 self.config.speed,
             )
-            self.register_disposable(stream.observable().subscribe(port.publish))
+            self.register_disposable(progress.track(stream.observable()).subscribe(port.publish))
+        progress.seal()
 
     @rpc
     def stop(self) -> None:

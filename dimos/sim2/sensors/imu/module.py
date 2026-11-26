@@ -14,23 +14,23 @@
 
 """Mounted IMU measurement from physical motion, independent of the physics engine."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import model_validator
 from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.robot.assets.model import RobotModel
+from dimos.sim2.hardware import SimHardwareConfig, SimHardwareModule
 from dimos.sim2.module import SimModule
 from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.sampling import Acquisition, same_acquisition
@@ -48,19 +48,26 @@ class ImuConfig:
     seed: int = 0
 
 
-class ImuModuleConfig(ModuleConfig):
+class ImuModuleConfig(SimHardwareConfig):
     sensor: ImuConfig
-    simulation: str = "SimModule"
+
+    @model_validator(mode="before")
+    @classmethod
+    def describe_imu(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("usd") is None:
+            sensor = data["sensor"]
+            if isinstance(sensor, dict):
+                sensor = ImuConfig(**sensor)
+            model = RobotModel.from_root_link(sensor.frame_id, name="imu").to_usd()
+            return {**data, "usd": model, "sensor": replace(sensor, frame_id=model.root_link)}
+        return data
 
 
-class SimImuModule(Module):
+class SimImuModule(SimHardwareModule):
+    _simulation: SimModule
     config: ImuModuleConfig
     observations: In[WorldState]
     imu: Out[Imu]
-
-    @rpc
-    def get_usd(self) -> list[str]:
-        return ["", RobotModel.from_root_link(self.config.sensor.frame_id, name="imu").to_usd().usd]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -79,17 +86,13 @@ class SimImuModule(Module):
     @rpc
     def build(self) -> None:
         super().build()
-        simulation = RPCClient.remote(SimModule, self.config.simulation, rpc=self.rpc)
-        try:
-            gravity = np.asarray(simulation.simulation_config()["sim_gravity_world"], dtype=float)
-        finally:
-            simulation.stop_rpc_client()
+        gravity = np.asarray(self._simulation.simulation_config()["sim_gravity_world"], dtype=float)
         if gravity.shape != (3,) or not np.isfinite(gravity).all():
             raise ValueError("simulation gravity must be a finite 3-vector")
         self._gravity_world = gravity
 
     def measure(self, truth: WorldState) -> Imu | None:
-        c = self.config.sensor
+        c = replace(self.config.sensor, frame_id=self.tf_frames[self.config.sensor.frame_id])
         if self._gravity_world is None:
             raise ValueError("IMU must be built before acquisition")
         body = next((b for b in truth.bodies if b.body_id == c.frame_id), None)
@@ -125,6 +128,7 @@ class SimImuModule(Module):
         return self._last
 
     async def handle_observations(self, truth: WorldState) -> None:
+        await super().handle_observations(truth)
         self._publication_rate.begin()
         sample = self.measure(truth)
         if sample is not None:

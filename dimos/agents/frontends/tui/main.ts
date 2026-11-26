@@ -7,7 +7,6 @@ import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
-import type { Gallery } from "#dimos/agents/frontends/tui/views/gallery.ts";
 import type { ImageAddress } from "#dimos/agents/shared/protocol/conversation/images.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
@@ -37,7 +36,7 @@ import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { LoginPanel } from "#dimos/agents/frontends/tui/dialogs.ts";
 import { MessageSelection } from "#dimos/agents/frontends/tui/conversation/selection.ts";
 import { PromptEditor } from "#dimos/agents/frontends/tui/conversation/input.ts";
-import { MenuView } from "#dimos/agents/frontends/tui/menu/view.ts";
+import { MenuView, newMenuMemory } from "#dimos/agents/frontends/tui/menu/view.ts";
 import { SIDEBAR_COLUMNS, Sidebar } from "#dimos/agents/frontends/tui/sidebar/sidebar.ts";
 import { StatusLine, accent, amber, levelColor, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { RemoteFrames } from "#dimos/agents/sdk/streams/remote.ts";
@@ -210,12 +209,16 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui,
     cwd,
     () => (showing === null ? null : { rows: rows(), omitted: showing.conversation.transcript.value.omitted }),
-    (gallery, index) => openPanel(gallery, index),
+    (gallery, index) => {
+      gallery.select(index);
+      if (gallery.interactive)
+        fullScreen(gallery.details.views[index - 1]?.label ?? "Overview", gallery, true, () => gallery.select(0));
+    },
   );
   const chatScroll = new ScrollView(transcript, { follow: "end", primary: true });
   const editor = new PromptEditor(
     tui,
-    commands.map((command) => command.name),
+    [...commands.map((command) => command.name), ...ui.gateway.skills.value.map((skill) => `skill:${skill.name}`)],
     cwd(),
     () => ui.gateway.streams.value,
   );
@@ -276,7 +279,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
           (candidate) => candidate.call === call,
         );
         fullScreen(
-          clean(row?.label ?? call),
+          clean(row?.label ?? "Background output"),
           movedOutput(showing.id, call),
           true,
           () => {
@@ -289,7 +292,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         if (showing === null) return;
         const { conversation } = showing;
         try {
-          void ui.actions.observe(`stop call ${call}`, owner(conversation).stopBackground({ call })).catch(note);
+          void ui.actions.observe("stop background call", owner(conversation).stopBackground({ call })).catch(note);
         } catch (error) {
           note(error);
         }
@@ -488,18 +491,12 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     };
     tui.setLayoutRoot(
       new VStack([
-        new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc returns to chat")]),
+        new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc back")]),
         { component: new ScrollView(focused, { primary: true, follow }), basis: 0, grow: 1 },
       ]),
     );
     tui.setFocus(focused);
     tui.requestRender();
-  };
-
-  const openPanel = (gallery: Gallery, index: number) => {
-    gallery.select(index);
-    if (gallery.interactive)
-      fullScreen(gallery.details.views[index - 1]?.label ?? "view", gallery, true, () => gallery.select(0));
   };
 
   /** The unsent text of each conversation that is not shown; it returns to the editor when its conversation shows. */
@@ -719,6 +716,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   };
 
   let menuView = null as MenuView | null;
+  const menuMemory = newMenuMemory();
   const app: TerminalApp = {
     ui,
     tui,
@@ -737,8 +735,8 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     openMenu: () => {
       closeSwitcher();
       const view = new MenuView({
-        inventory,
         ui,
+        memory: menuMemory,
         current: showing?.id ?? null,
         attach: (conversation) => {
           closeFullScreen?.();
@@ -759,7 +757,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       const gallery = transcript.latestGallery;
       if (gallery === null) throw new Error("No rendering yet.");
       if (index > gallery.details.views.length) throw new Error(`Choose /panel 0–${gallery.details.views.length}.`);
-      openPanel(gallery, index);
+      gallery.openPanel(index);
     },
     exit: (code) => resolveExit(code),
   };
@@ -806,7 +804,8 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         .catch(note);
       return;
     }
-    if (value.startsWith("/")) {
+    const isSkill = value.startsWith("/skill:");
+    if (value.startsWith("/") && !isSkill) {
       editor.addToHistory(value);
       editor.setValue("");
       runCommand(value);
@@ -852,6 +851,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       } else resolveExit(0);
       return { consume: true };
     }
+    if (closeFullScreen !== null) return undefined;
     if (overlay !== null) return undefined;
     if (matchesKey(data, "ctrl+t")) {
       if (isKeyRelease(data) || isKeyRepeat(data)) return { consume: true };

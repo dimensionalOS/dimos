@@ -21,13 +21,14 @@ exercise the public planning RPCs.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import closing
 import time
+from typing import cast
 
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.rpc_client import RPCClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -37,6 +38,7 @@ from dimos.manipulation.manipulation_spec import (
     PlanningGroupInfo,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.porcelain.remote_module_source import RemoteModuleSource
 
 pytestmark = [pytest.mark.self_hosted_large]
 
@@ -49,7 +51,7 @@ ALL_GROUP_IDS = {LEFT_GROUP_ID, RIGHT_GROUP_ID, BOTH_GROUP_ID}
 
 
 def _wait_for_groups(
-    client: RPCClient,
+    client: ManipulationModule,
     expected_ids: set[str],
     *,
     timeout: float = 120.0,
@@ -72,7 +74,7 @@ def _wait_for_groups(
 
 
 def _wait_for_trajectory_completion(
-    coordinator_client: RPCClient,
+    coordinator_client: ControlCoordinator,
     *,
     timeout: float = 10.0,
 ) -> None:
@@ -87,7 +89,7 @@ def _wait_for_trajectory_completion(
 
 
 def _wait_for_manipulation_ready(
-    client: RPCClient,
+    client: ManipulationModule,
     *,
     timeout: float = 10.0,
 ) -> None:
@@ -103,7 +105,7 @@ def _wait_for_manipulation_ready(
 
 
 def _wait_for_current_joints(
-    client: RPCClient,
+    client: ManipulationModule,
     group_ids: tuple[str, ...],
     *,
     timeout: float = 10.0,
@@ -126,7 +128,7 @@ def _wait_for_current_joints(
     raise TimeoutError(f"Timed out waiting for current joints from {missing}")
 
 
-def _prepare_for_planning(client: RPCClient, group_ids: tuple[str, ...]) -> None:
+def _prepare_for_planning(client: ManipulationModule, group_ids: tuple[str, ...]) -> None:
     _wait_for_current_joints(client, group_ids)
     # Robot info and joint-state topics can become available just before the
     # manipulation module finishes finalizing world monitors. Require a stable
@@ -145,23 +147,31 @@ def _offset_target(snapshot: ManipulationSnapshot, group_id: str, delta: float) 
 
 
 def _start_openarm_mock_planner(
-    start_blueprint: Callable[..., DimosCliCall], lcm_spy: LcmSpy
+    start_blueprint: Callable[..., DimosCliCall],
+    lcm_spy: LcmSpy,
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     lcm_spy.save_topic(JOINT_STATE_TOPIC)
     start_blueprint(BLUEPRINT)
+    # Joint states can arrive while the planner is still initializing. Coordinator
+    # RPC is published only after every module has finished starting.
+    wait_for_system_ready()
     lcm_spy.wait_for_saved_topic(JOINT_STATE_TOPIC, timeout=120.0)
 
 
 def test_single_arm_plans_and_executes_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     """Plan with one arm and execute through its trajectory task."""
-    _start_openarm_mock_planner(start_blueprint, lcm_spy)
+    _start_openarm_mock_planner(start_blueprint, lcm_spy, wait_for_system_ready)
 
-    client = RPCClient(None, ManipulationModule)
-    coordinator_client = RPCClient(None, ControlCoordinator)
-    try:
+    with closing(RemoteModuleSource()) as source:
+        client = cast("ManipulationModule", source.get_module(ManipulationModule.__name__))
+        coordinator_client = cast(
+            "ControlCoordinator", source.get_module(ControlCoordinator.__name__)
+        )
         groups = _wait_for_groups(client, ALL_GROUP_IDS)
         left_id = groups[LEFT_GROUP_ID].id
 
@@ -178,21 +188,21 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         assert result.status is ExecutionStatus.COMPLETED
 
         _wait_for_trajectory_completion(coordinator_client)
-    finally:
-        coordinator_client.stop_rpc_client()
-        client.stop_rpc_client()
 
 
 def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     """Plan one generated plan over both arms and dispatch through one trajectory task."""
-    _start_openarm_mock_planner(start_blueprint, lcm_spy)
+    _start_openarm_mock_planner(start_blueprint, lcm_spy, wait_for_system_ready)
 
-    client = RPCClient(None, ManipulationModule)
-    coordinator_client = RPCClient(None, ControlCoordinator)
-    try:
+    with closing(RemoteModuleSource()) as source:
+        client = cast("ManipulationModule", source.get_module(ManipulationModule.__name__))
+        coordinator_client = cast(
+            "ControlCoordinator", source.get_module(ControlCoordinator.__name__)
+        )
         groups = _wait_for_groups(client, ALL_GROUP_IDS)
         left_id = groups[LEFT_GROUP_ID].id
         right_id = groups[RIGHT_GROUP_ID].id
@@ -214,6 +224,3 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         assert result.status is ExecutionStatus.COMPLETED
 
         _wait_for_trajectory_completion(coordinator_client)
-    finally:
-        coordinator_client.stop_rpc_client()
-        client.stop_rpc_client()

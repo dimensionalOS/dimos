@@ -15,6 +15,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 import re
+import signal
 import sys
 from typing import Any
 
@@ -28,15 +29,25 @@ from dimos.cli.commands.lifecycle import _with_relay_bridge
 import dimos.cli.commands.mcp as mcp
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.daemon as core_daemon
+from dimos.core.daemon import install_signal_handlers
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.robot.get_all_blueprints import get_by_name_or_exit
+from dimos.robot.manipulators.a1z.connection import A1ZConnection
+from dimos.robot.manipulators.a750.connection import A750Connection
+from dimos.robot.manipulators.piper.connection import PiperConnection
+from dimos.robot.manipulators.xarm.connection import XArmConnection
+from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection
 import dimos.utils.cache as cache_utils
 import dimos.utils.logging_config as logging_config
 
@@ -133,6 +144,17 @@ def test_mcp_malformed_argument_rejected_before_adapter(monkeypatch: pytest.Monk
     result = CliRunner().invoke(main, ["mcp", "call", "inspect", "--arg", "invalid"])
     assert result.exit_code == 2, result.output + repr(result.exception)
     assert "expected KEY=VALUE" in result.output
+
+
+def test_global_help_explains_dtop() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    output_plain = " ".join(output_plain.replace("│", "").split())
+    assert "--dtop" in output_plain
+    assert "Publish live resource stats for dtop" in output_plain
+    assert "Override dtop in GlobalConfig" not in output_plain
 
 
 def test_global_config_flag_applies_before_subcommand():
@@ -296,7 +318,13 @@ def stubbed_run(
 
         @classmethod
         def build(
-            cls, blueprint: Any, parsed_config: Any = None, *, remote_module_refs: Any = None
+            cls,
+            blueprint: Any,
+            parsed_config: Any = None,
+            *,
+            reserve_rpc_name: str | None = None,
+            module_rpc_namespace: str | None = None,
+            remote_module_refs: Any = None,
         ) -> "FakeCoordinator":
             recorded["blueprint"] = blueprint
             recorded["parsed_config"] = parsed_config
@@ -361,6 +389,224 @@ def stubbed_run(
         global_config.update(**original_global_config)
 
 
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_foreground_logs_signal_and_requests_shutdown_once(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    signum: signal.Signals,
+) -> None:
+    handlers = {}
+    monkeypatch.setattr(core_daemon, "install_signal_handlers", install_signal_handlers)
+    mocker.patch("signal.signal", side_effect=lambda sig, handler: handlers.update({sig: handler}))
+    shutdown = mocker.patch.object(module_coordinator.ModuleCoordinator, "shutdown", create=True)
+    mocker.patch.object(
+        module_coordinator.ModuleCoordinator,
+        "loop",
+        side_effect=lambda: handlers[signum](signum, None),
+    )
+    log = mocker.patch.object(core_daemon.logger, "info")
+
+    result = CliRunner().invoke(main, ["run", "alpha"])
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    log.assert_called_once_with(
+        "Received signal, shutting down", signal=signum, run_id="test-alpha"
+    )
+    shutdown.assert_called_once_with()
+
+
+@pytest.fixture
+def stubbed_choices(stubbed_run, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
+    mapping = autoconnect(
+        ChoiceAtom(
+            name="PointClearing",
+            default="raycasting",
+            choices={
+                "raycasting": RunModuleA.blueprint(),
+                "column_carving": RunModuleB.blueprint(),
+            },
+        ),
+        ChoiceAtom(
+            name="Viewer",
+            default="off",
+            choices={"on": RunModuleA.blueprint(instance_name="viewer"), "off": autoconnect()},
+        ),
+    )
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
+    return stubbed_run
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ([], RunModuleA),
+        (["--choice", "PointClearing=column_carving"], RunModuleB),
+        (["--choice=PointClearing=column_carving"], RunModuleB),
+    ],
+)
+def test_run_resolves_choices_before_build(stubbed_choices, options, expected) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options])
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert isinstance(stubbed_choices["blueprint"], Blueprint)
+    assert [atom.module for atom in stubbed_choices["blueprint"].blueprints] == [expected]
+
+
+def test_run_supports_multiple_choices(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "mapping", "--choice", "PointClearing=column_carving", "--choice", "Viewer=on"],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.name for atom in stubbed_choices["blueprint"].blueprints] == [
+        "runmoduleb",
+        "viewer",
+    ]
+
+
+def test_run_parses_configuration_for_the_selected_branch(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--runmoduleb.lookahead",
+            "2.5",
+            "--choice",
+            "PointClearing=column_carving",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert stubbed_choices["parsed_config"].module_kwargs("runmoduleb")["lookahead"] == 2.5
+
+
+def test_run_rejects_configuration_for_unselected_modules(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--choice",
+            "PointClearing=column_carving",
+            "--runmodulea.entity-prefix",
+            "unused",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "runmodulea.entity-prefix" in result.output
+    assert stubbed_choices == {}
+
+
+def test_run_help_uses_the_selected_branch(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main, ["run", "mapping", "--choice", "PointClearing=column_carving", "--help"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--runmoduleb.lookahead" in result.output
+    assert "--runmodulea.entity-prefix" not in result.output
+    assert stubbed_choices == {}
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (["--choice", "PointClearing"], "expected NAME=OPTION"),
+        (["--choice", "=raycasting"], "expected NAME=OPTION"),
+        (["--choice", "PointClearing="], "expected NAME=OPTION"),
+        (["--choice", "PointClearing=typo"], "Invalid option 'typo'"),
+        (["--choice", "Typo=raycasting"], "Unknown or inactive choices: Typo"),
+        (
+            ["--choice", "PointClearing=raycasting", "--choice", "PointClearing=column_carving"],
+            "Choice 'PointClearing' was specified more than once",
+        ),
+    ],
+)
+def test_run_rejects_invalid_choices_before_starting(stubbed_choices, options, message) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options])
+
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert stubbed_choices == {}
+
+
+def test_run_requires_a_selection_when_no_default_exists(
+    stubbed_run, mocker: MockerFixture
+) -> None:
+    mapping = autoconnect(ChoiceAtom(name="Required", choices={"alpha": RunModuleA.blueprint()}))
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+
+    result = CliRunner().invoke(main, ["run", "mapping"])
+
+    assert result.exit_code == 2, result.output
+    assert "Choice 'Required' is required" in result.output
+    assert "--choice Required=<option>" in result.output
+    assert stubbed_run == {}
+
+
+def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monkeypatch) -> None:
+    inner = autoconnect(
+        ChoiceAtom(
+            name="PointClearing",
+            choices={
+                "raycasting": RunModuleA.blueprint(),
+                "column_carving": RunModuleB.blueprint(),
+            },
+        )
+    )
+    exported = autoconnect(inner.global_config(n_workers=2)).global_config(n_workers=4)
+    monkeypatch.setattr(sys.modules[__name__], "registered_choices", exported, raising=False)
+    monkeypatch.setitem(
+        get_all_blueprints.all_blueprints, "mapping", f"{__name__}:registered_choices"
+    )
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", get_by_name_or_exit)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--choice",
+            "PointClearing=column_carving",
+            "--runmoduleb.lookahead=2.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.module for atom in stubbed_run["blueprint"].blueprints] == [RunModuleB]
+    assert stubbed_run["parsed_config"].module_kwargs("runmoduleb")["lookahead"] == 2.5
+    assert stubbed_run["blueprint"].global_config_overrides == {"n_workers": 4}
+
+
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+def test_dimsim_default_transport_fails_before_run_registration(
+    stubbed_run, mocker, run_options
+) -> None:
+    mocker.patch.object(
+        get_all_blueprints, "get_by_name_or_exit", return_value=GO2Connection.blueprint()
+    )
+    fork = mocker.patch.object(
+        lifecycle, "fork_daemon", side_effect=AssertionError("started daemon")
+    )
+
+    result = CliRunner().invoke(
+        main, ["--simulation", "dimsim", "run", "unitree-go2", *run_options]
+    )
+
+    assert result.exit_code == 2, result.output
+    fork.assert_not_called()
+    assert "DimSim publishes over LCM only" in result.output
+    assert "--transport lcm" in result.output
+    assert "entry" not in stubbed_run
+    assert "parsed_config" not in stubbed_run
+
+
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])
 @pytest.mark.parametrize(
     "import_error",
@@ -394,6 +640,39 @@ def test_run_reports_missing_dependency_before_starting(
     fork_daemon.assert_not_called()
 
 
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+@pytest.mark.parametrize(
+    ("module", "dependency", "hint"),
+    [
+        (A1ZConnection, "a1z.robots.get_robot", "bin/hardware/a1z/setup"),
+        (A750Connection, "a750_control", "uv pip install a750-control"),
+        (PiperConnection, "piper_sdk", "uv sync --extra control"),
+        (XArmConnection, "xarm.wrapper", "uv sync --extra control"),
+    ],
+)
+@pytest.mark.parametrize(
+    "import_error", [ModuleNotFoundError("SDK missing"), ImportError("undefined symbol: example")]
+)
+def test_run_reports_unavailable_arm_sdk_before_starting(
+    stubbed_run, mocker, run_options, module, dependency, hint, import_error
+) -> None:
+    # Exercise the arm's check without resolving hardware URDFs during config validation.
+    mocker.patch.object(RunModuleA, "check_dependencies", side_effect=module.check_dependencies)
+    import_sdk = mocker.patch(f"{module.__module__}.import_module", side_effect=import_error)
+    fork_daemon = mocker.patch.object(lifecycle, "fork_daemon")
+
+    result = CliRunner().invoke(main, ["run", "alpha", *run_options])
+
+    assert result.exit_code == 1, result.output
+    assert "SDK unavailable" in result.output
+    assert str(import_error) in result.output
+    assert result.output.count(hint) == 1
+    assert "Traceback" not in result.output
+    assert stubbed_run == {}
+    import_sdk.assert_called_once_with(dependency)
+    fork_daemon.assert_not_called()
+
+
 def test_run_leaves_hosted_dependency_checks_to_the_host(
     stubbed_run: dict[str, Any],
     mocker: MockerFixture,
@@ -414,6 +693,63 @@ def test_run_leaves_hosted_dependency_checks_to_the_host(
     check_dependencies.assert_not_called()
     run_hosted.assert_called_once()
     assert "blueprint" not in stubbed_run
+
+
+def test_hosted_run_announces_host_discovery_before_waiting(
+    stubbed_run: dict[str, Any], mocker: MockerFixture
+) -> None:
+    mocker.patch.object(
+        get_all_blueprints,
+        "get_by_name_or_exit",
+        return_value=RunModuleA.blueprint().hosted(host="robot-host"),
+    )
+    mocker.patch("dimos.hosted.machine.local_host", return_value=None)
+    mocker.patch("dimos.hosted.client.root_rpc")
+    mocker.patch("signal.signal")
+    echo = mocker.spy(lifecycle.typer, "echo")
+
+    def wait_for_hosts(*args: Any, **kwargs: Any) -> None:
+        echo.assert_any_call("Waiting for Hosts...")
+        raise TimeoutError("no live Host named or identified by 'robot-host'")
+
+    mocker.patch("dimos.hosted.deploy.wait_for_hosts", side_effect=wait_for_hosts)
+
+    result = CliRunner().invoke(main, ["--zenoh-connect", "tcp/127.0.0.1:7447", "run", "alpha"])
+
+    assert result.exit_code == 1, result.output
+    assert "Waiting for Hosts..." in result.output
+    assert "Error: no live Host named or identified by 'robot-host'" in result.output
+
+
+@pytest.mark.parametrize(
+    ("module", "options", "message"),
+    [
+        (GO2Connection, [], "No robot IP specified"),
+        (GO2Connection, ["--robot-ip", ""], "No robot IP specified"),
+        (GO2Connection, ["--go2connection.ip", " "], "No robot IP specified"),
+        (Go2FleetConnection, [], "No robot IPs specified"),
+        (Go2FleetConnection, ["--go2fleetconnection.ips", "[]"], "No robot IPs specified"),
+        (G1HighLevelWebRtc, [], "No robot IP specified"),
+    ],
+)
+def test_run_rejects_missing_robot_addresses_before_build(
+    stubbed_run, monkeypatch, tmp_path, module, options, message
+) -> None:
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", lambda _: module.blueprint())
+    monkeypatch.setenv("ROBOT_IP", "null")
+    monkeypatch.setenv("ROBOT_IPS", "null")
+    monkeypatch.setenv("REPLAY", "false")
+    monkeypatch.setenv("SIMULATION", "")
+
+    result = CliRunner().invoke(
+        main, ["run", "robot", "--config", str(tmp_path / "absent.json"), *options]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Invalid blueprint configuration" in result.output
+    assert message in result.output
+    assert "blueprint" not in stubbed_run
+    assert "entry" not in stubbed_run
 
 
 @pytest.mark.parametrize(
@@ -612,6 +948,14 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
 
 
+def test_run_help_without_blueprint(isolated_cache_locks: None) -> None:
+    result = CliRunner().invoke(main, ["run", "--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--daemon" in output_plain
+
+
 def test_run_help_lists_dynamic_flags_without_starting(
     stubbed_run: dict[str, Any], mocker: MockerFixture
 ) -> None:
@@ -629,6 +973,7 @@ def test_run_help_lists_dynamic_flags_without_starting(
     assert "--map-file" in output_plain
     assert "--runmodulea.daemon" in output_plain
     assert output_plain.count("--daemon") == 1
+    assert "Publish live resource stats for dtop" in output_plain
     assert "parsed_config" not in stubbed_run
     assert "entry" not in stubbed_run
 

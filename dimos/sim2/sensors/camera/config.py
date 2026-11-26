@@ -23,7 +23,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd_utils.frames import link_prim_paths
 from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
 
@@ -75,11 +74,10 @@ class CameraRenderer(Protocol):
 def camera_usd(camera: CameraConfig) -> str:
     """Camera description in the same optical frame as Image and CameraInfo."""
     pxr = load_pxr()
-    layer = layer_from(
-        pxr, RobotModel.from_root_link(camera.frame_id, name="camera").to_usd().usd, "camera", None
-    )
+    model = RobotModel.from_root_link(camera.frame_id, name="camera").to_usd()
+    layer = layer_from(pxr, model.usd, "camera", None)
     stage = pxr.Usd.Stage.Open(layer)
-    path = link_prim_paths(stage)[camera.frame_id]
+    path = "/" + model.root_link
     optics = pxr.UsdGeom.Camera.Define(stage, path + "/optics")
     optics.GetPrim().SetDisplayName(camera.frame_id + "/optics")
     # USD cameras look down -Z with +Y up; DimOS optical coordinates are +Z, -Y.

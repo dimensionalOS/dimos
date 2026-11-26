@@ -20,13 +20,16 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.robot.assets.model import UsdModel
+from dimos.sim2.description import scene_revision
 from dimos.sim2.geometry.mujoco import build_scene
 from dimos.sim2.geometry.query import MujocoGeometry
 
 
 class MujocoRaycaster:
     def load(self, scene: UsdModel, excluded_bodies: tuple[str, ...] = ()) -> None:
-        self.geometry = MujocoGeometry(build_scene(scene, kinematic=True).compile(), scene.revision)
+        self.geometry = MujocoGeometry(
+            build_scene(scene, kinematic=True).compile(), scene_revision(scene)
+        )
         self.geometry.select_surfaces(excluded_bodies)
         self._groups = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)
 
