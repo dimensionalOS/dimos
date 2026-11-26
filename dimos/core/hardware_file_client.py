@@ -15,7 +15,7 @@
 """Fetches a HardwareModule's files over its hardware_file_request/response into a local cache that pxr and mujoco open.
 
 Every file is kept once at ``<cache>/<sha256 hex>/<name>``. A module's ``hardware.usda`` is kept the
-same way, and the directory holding it is laid out as the module serves it: each file it reaches
+same way, and the directory holding it is laid out as the module provides it: each file it reaches
 is linked in at its relative path, so the names in the layers resolve as they do on the module.
 """
 
@@ -53,7 +53,9 @@ def fetch_hardware_files(namespace: str, cache: Path = HARDWARE_FILES_CACHE) -> 
         try:
             usd = asking.ask(HARDWARE_USD, None)
             if usd.sha256 is None:
-                raise RuntimeError(f"the HardwareModule in {namespace!r} cannot serve its USD here")
+                raise RuntimeError(
+                    f"the HardwareModule in {namespace!r} cannot provide its USD here"
+                )
             stored = _store(cache, usd)
             _fetch_named(asking, cache, stored.parent, HARDWARE_USD, stored)
             return stored
@@ -91,7 +93,7 @@ class _Asking:
         if waiting is None:
             return
         request, future = waiting
-        # A header answers only a request holding its sha256 (or names a file the module cannot serve).
+        # A header answers only a request holding its sha256 (or names a file the module cannot provide).
         if reply.uri == request.uri and (
             reply.content is not None or reply.sha256 in (request.sha256, None)
         ):
@@ -170,7 +172,7 @@ def _fetch_named(asking: _Asking, cache: Path, tree: Path, uri: str, stored: Pat
             continue
         reply = asking.ask(reached, _held(tree, reached))
         if reply.sha256 is None:
-            logger.warning(f"{uri!r} names {reached!r}, which its module cannot serve")
+            logger.warning(f"{uri!r} names {reached!r}, which its module cannot provide")
             continue
         kept[reached] = _store(cache, reply)
     for reached, kept_at in kept.items():
@@ -179,9 +181,9 @@ def _fetch_named(asking: _Asking, cache: Path, tree: Path, uri: str, stored: Pat
 
 
 def _named_files(usd: str) -> dict[str, str | None]:
-    """Each file a served layer names, with the sha256 its prim's assetInfo gives it, if any."""
+    """Each file a provided layer names, with the sha256 its prim's assetInfo gives it, if any."""
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a served layer", None)
+    layer = layer_from(pxr, usd, "a provided layer", None)
     named: dict[str, str | None] = {}
 
     def record(asset: str, where: str, required: bool) -> None:

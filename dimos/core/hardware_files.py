@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a HardwareModule serves: its USD as ``hardware.usda`` and every file it reaches, named relative to it."""
+"""What a HardwareModule provides: its USD as ``hardware.usda`` and every file it reaches, named relative to it."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -35,8 +35,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 HARDWARE_USD = "hardware.usda"
-# Where a module keeps the layers it rewrote, so it serves them from disk like any other file.
-SERVED_LAYERS = CACHE_DIR / "hardware_files" / "served"
+# Where a module keeps the layers it rewrote, so it provides them from disk like any other file.
+PROVIDED_LAYERS = CACHE_DIR / "hardware_files" / "provided"
 
 # A file's sha256 by (path, size, mtime in ns), so a file is hashed again only once it changes.
 _hashes: dict[tuple[str, int, int], str] = {}
@@ -45,7 +45,7 @@ _hashes_lock = threading.Lock()
 
 @dataclass(frozen=True)
 class _Layer:
-    """A layer served rewritten (so the names in it are relative to where it is served), kept on disk."""
+    """A layer provided rewritten (so the names in it are relative to where it is provided), kept on disk."""
 
     path: Path
     sha256: str
@@ -53,10 +53,10 @@ class _Layer:
 
 
 def _written_layer(text: str, name: str, mtime: float | None) -> _Layer:
-    """``text`` stored once under its sha256, so serving it holds no copy of it in memory."""
+    """``text`` stored once under its sha256, so providing it holds no copy of it in memory."""
     content = text.encode()
     sha256 = asset_hash(content)
-    path = SERVED_LAYERS / sha256.partition(":")[2] / name
+    path = PROVIDED_LAYERS / sha256.partition(":")[2] / name
     if not path.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
         staged = path.with_name(f".{name}.{threading.get_ident()}")
@@ -106,24 +106,24 @@ def inline_meshes(pxr: Pxr, usd: str) -> list[str]:
 
 class HardwareFiles:
     def __init__(self, usd: str, mtime: float | None = None) -> None:
-        """``usd`` names its files by absolute path; what is served names them relative to it."""
+        """``usd`` names its files by absolute path; what is provided names them relative to it."""
         # Before any layer is opened or hashed: a clone without LFS smudging has pointers, not meshes.
         pull_usd_assets([usd])
-        served, published = publish_usd_assets(usd)
-        inline = inline_meshes(load_pxr(), served)
+        provided, published = publish_usd_assets(usd)
+        inline = inline_meshes(load_pxr(), provided)
         if inline:
             logger.warning(
                 f"{HARDWARE_USD} holds mesh geometry itself ({', '.join(inline)}); keep it to "
                 f"links, joints and sensors and reference meshes from their own files"
             )
-        self._usd = _written_layer(served, HARDWARE_USD, mtime)
-        # None: named by a served layer but not servable, which is said in a header with no sha256.
+        self._usd = _written_layer(provided, HARDWARE_USD, mtime)
+        # None: named by a provided layer but not providable, which is said in a header with no sha256.
         self._files: dict[str, Path | _Layer | None] = {}
-        self._serve_reached("", published, frozenset())
+        self._provide_reached("", published, frozenset())
 
     @property
     def usd(self) -> str:
-        """``hardware.usda`` as served, read from where it is kept."""
+        """``hardware.usda`` as provided, read from where it is kept."""
         return self._usd.path.read_text()
 
     @property
@@ -135,13 +135,13 @@ class HardwareFiles:
         return FileInfo(HARDWARE_USD, self._usd.sha256, self._usd.mtime)
 
     def reply(self, request: FileInfo) -> FileInfo | None:
-        """The whole file, or only its header when the request already has its sha256; None for a uri this does not serve."""
+        """The whole file, or only its header when the request already has its sha256; None for a uri this does not provide."""
         uri = request.uri
         if not is_relative_uri(uri):
             logger.debug(f"hardware_file_request for {uri!r}, which is not relative to the module")
             return None
         if uri != HARDWARE_USD and uri not in self._files:
-            logger.debug(f"hardware_file_request for {uri!r}, which this hardware does not serve")
+            logger.debug(f"hardware_file_request for {uri!r}, which this hardware does not provide")
             return None
         found = self._usd if uri == HARDWARE_USD else self._files[uri]
         if found is None:
@@ -161,42 +161,44 @@ class HardwareFiles:
         # Hashed as read, so the content and its sha256 never disagree.
         return FileInfo(uri, asset_hash(content), mtime, content)
 
-    def _serve_reached(
+    def _provide_reached(
         self, directory: str, published: Mapping[str, str], walking: frozenset[Path]
     ) -> None:
-        """Serve each published file under ``directory``, and what each layer among them names, rewritten the same way."""
+        """Provide each published file under ``directory``, and what each layer among them names, rewritten the same way."""
         pxr = load_pxr()
         for name, real in published.items():
             uri = posixpath.join(directory, name)
             path = Path(real)
             if uri in self._files:
-                logger.warning(f"{path} would be served as {uri!r}, already another file's name")
+                logger.warning(f"{path} would be provided as {uri!r}, already another file's name")
                 continue
-            self._files[uri] = self._served(pxr, uri, path, walking)
+            self._files[uri] = self._provided(pxr, uri, path, walking)
 
-    def _served(
+    def _provided(
         self, pxr: Pxr, uri: str, path: Path, walking: frozenset[Path]
     ) -> Path | _Layer | None:
         if pxr.Sdf.FileFormat.FindByExtension(path.suffix[1:]) is None or not path.is_file():
             return path
         if path.resolve() in walking:
-            logger.warning(f"{path} reaches itself through what it names, so {uri!r} is not served")
+            logger.warning(
+                f"{path} reaches itself through what it names, so {uri!r} is not provided"
+            )
             return None
         try:
             layer = pxr.Sdf.Layer.FindOrOpen(str(path))
         except pxr.Tf.ErrorException as error:
-            logger.warning(f"{path} does not open as a layer, so {uri!r} is not served: {error}")
+            logger.warning(f"{path} does not open as a layer, so {uri!r} is not provided: {error}")
             return None
         if not layer_asset_paths(pxr, layer):
             return path
         if path.suffix == ".usdc":
             logger.warning(
                 f"{path} is a binary layer naming other files, so its names cannot be made "
-                f"relative and {uri!r} is not served (export it as .usda)"
+                f"relative and {uri!r} is not provided (export it as .usda)"
             )
             return None
         text = resolve_usd_assets(str(layer.ExportToString()), str(path.parent))
         pull_usd_assets([text])
-        served, reached = publish_usd_assets(text)
-        self._serve_reached(posixpath.dirname(uri), reached, walking | {path.resolve()})
-        return _written_layer(served, path.name, path.stat().st_mtime)
+        provided, reached = publish_usd_assets(text)
+        self._provide_reached(posixpath.dirname(uri), reached, walking | {path.resolve()})
+        return _written_layer(provided, path.name, path.stat().st_mtime)

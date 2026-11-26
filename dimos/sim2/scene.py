@@ -42,7 +42,7 @@ class SimScene(SimSensor):
         parent_of = {t.child_frame_id: t.frame_id for t in transforms}
         needed: set[str] = set()
         for mount in self.mounts:
-            frame = self.usd_frame(mount)
+            frame = self.tf_frames[mount]
             while frame in parent_of and frame not in needed:
                 needed.add(frame)
                 frame = parent_of[frame]

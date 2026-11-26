@@ -23,9 +23,9 @@ from dimos.robot.assets.usd_utils.frames import usd_frame_names
 pytest.importorskip("pxr")
 
 _SENSORS = [
-    ("camera", {"left/camera_link"}),
-    ("imu", {"left/imu_link"}),
-    ("livox", {"left/lidar_link", "left/imu_link"}),
+    ("camera", {"left/sim_camera/camera_link"}),
+    ("imu", {"left/sim_imu/imu_link"}),
+    ("livox", {"left/mid360/lidar_link", "left/mid360/lidar_link/imu_link"}),
 ]
 
 
@@ -52,8 +52,8 @@ def test_a_sensor_serves_its_usd_under_its_namespace(kind: str, frames: set[str]
 def test_a_namespaced_lidar_puts_its_namespace_on_its_imu_frame_too() -> None:
     lidar = _sensor("livox")
     try:
-        assert lidar.frame_id == "left/lidar_link"
-        assert lidar.imu_frame_id == "left/imu_link"
+        assert lidar.frame_id == "left/mid360/lidar_link"
+        assert lidar.imu_frame_id == "left/mid360/lidar_link/imu_link"
     finally:
         lidar.stop()
 

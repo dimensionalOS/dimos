@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-17T18:17:38.003202Z"
+exclude-newer = "2026-11-18T22:52:57.108658Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2610,7 +2610,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm?rev=b367dd412fe9cda763b5b9d712fe455d86505861" },
+    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm?rev=fa4b03a96d190677f60be2b314690ded16bf68a7" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2966,7 +2966,7 @@ wheels = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.5"
-source = { git = "https://github.com/dimensionalOS/dimos-lcm?rev=b367dd412fe9cda763b5b9d712fe455d86505861#b367dd412fe9cda763b5b9d712fe455d86505861" }
+source = { git = "https://github.com/dimensionalOS/dimos-lcm?rev=fa4b03a96d190677f60be2b314690ded16bf68a7#fa4b03a96d190677f60be2b314690ded16bf68a7" }
 dependencies = [
     { name = "foxglove-websocket" },
     { name = "lcm" },

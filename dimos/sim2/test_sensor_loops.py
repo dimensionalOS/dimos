@@ -233,12 +233,12 @@ def test_a_livox_opens_one_view_for_its_lidar_and_imu_and_reads_both_at_their_ra
 def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.livox import LivoxSim
 
-    livox = LivoxSim(instance_name="dog/lidar/livox", attached_to="dog/lidar")
+    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to=LIDAR_MOUNT)
     opened: list[Any] = []
     clouds: list[Any] = []
     readings: list[Any] = []
     try:
-        _toy_world(livox, "dog/lidar")
+        _toy_world(livox, LIDAR_MOUNT, monkeypatch)
         open_view = livox._open
 
         def counted_open() -> Any:
@@ -265,20 +265,39 @@ def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPat
 
 
 SPOT_XY, SPOT_YAW = (2.0, 1.0), np.pi / 2
+# The scene's frame the dog mounts on, and so the dog's namespace.
+DOG = "scene/dog"
+# The dog's frames a sensor mounts on, each under the dog's namespace.
+LIDAR_MOUNT = f"{DOG}/toy/Geometry/base/head/lidar"
+L1_MOUNT = f"{DOG}/toy/Geometry/base/l1"
+L1_UP_MOUNT = f"{DOG}/toy/Geometry/base/l1_up"
 
 
-def _toy_world(sensor: Any, mount: str) -> Any:
+def _providing_hardware_files(sensor: Any) -> str:
+    """Wire ``sensor``'s hardware_file streams to the topics a blueprint gives them and answer on them; its namespace."""
+    from dimos.core.hardware_files import hardware_file_topics
+    from dimos.core.transport_factory import make_transport
+    from dimos.msgs.files.FileInfo import FileInfo
+
+    namespace: str = sensor.namespace
+    request_topic, response_topic = hardware_file_topics(namespace)
+    sensor.hardware_file_request.transport = make_transport(request_topic, FileInfo)
+    sensor.hardware_file_response.transport = make_transport(response_topic, FileInfo)
+    sensor.provide_hardware_files()
+    return namespace
+
+
+def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
     """A real MuJoCo view of the toy dog standing in a scene, with ``sensor`` grafted on at ``mount``."""
     from pathlib import Path
 
     from dimos.robot.assets.model import UsdModel
-    from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+    from dimos.robot.assets.usd_utils.layers import usd_under_namespace
     from dimos.sim2.assets.toy import toy_robot
     from dimos.sim2.sim import compose_usds, fetched_usd
     from dimos.sim2.spec import ODOM_FRAME
     from dimos.sim2.usd_layer import layer_file
     from dimos.sim2.world_observations import WorldMirror, WorldWriter
-    from dimos.utils.testing.hardware_files import serving_hardware_files
 
     scene = Path(__file__).parent / "mujoco" / "assets" / "scene.usda"
     room = UsdModel.from_file(scene).with_frames(
@@ -286,80 +305,83 @@ def _toy_world(sensor: Any, mount: str) -> Any:
     )
     dog = toy_robot().with_frames(
         {
-            "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            "l1": ("base", (0.0, 0.0, 0.0), (np.pi, 0.0, 0.0)),
-            "l1_up": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "l1": ("toy/Geometry/base", (0.0, 0.0, 0.0), (np.pi, 0.0, 0.0)),
+            "l1_up": ("toy/Geometry/base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         }
     )
     world_usd = compose_usds(
         [
             (room.usd, None),
-            (prefix_usd_frames(dog.usd, "dog"), "dog"),
+            (usd_under_namespace(dog.usd, DOG), DOG),
             # The sensor's own files come over its hardware_file streams, as in a running blueprint.
-            (fetched_usd(serving_hardware_files(sensor)), mount),
+            (fetched_usd(_providing_hardware_files(sensor)), mount),
         ]
     ).usd
     writer, mirror = WorldWriter(), WorldMirror()
     writer.start_ns = 0
     writer.add("world")
-    writer.add("dog", model="dog.usda", **{ODOM_FRAME: "dog/odom"})
-    writer.position("dog", [*SPOT_XY, 0.3, 0, 0, np.sin(SPOT_YAW / 2), np.cos(SPOT_YAW / 2)])
+    writer.add(DOG, model="dog.usda", **{ODOM_FRAME: f"{DOG}/odom"})
+    still = [0.0] * 6
+    writer.body_state(
+        DOG, [*SPOT_XY, 0.3, 0, 0, np.sin(SPOT_YAW / 2), np.cos(SPOT_YAW / 2)], still, still
+    )
     mirror.apply(writer.end_frame(1.0))
 
     async def ticks(rate_hz: float) -> AsyncIterator[float]:
         for _ in range(TICKS):
             yield mirror.time
 
-    mirror.ticks = ticks
+    monkeypatch.setattr(mirror, "ticks", ticks)
     sensor._world = mirror
     sensor.world_layer = lambda: layer_file(world_usd, "toy-world")
     return mirror
 
 
 @pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
-def test_a_livox_in_its_housing_sees_past_the_housing() -> None:
+def test_a_livox_in_its_housing_sees_past_the_housing(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.livox import LivoxSim
 
-    livox = LivoxSim(instance_name="dog/lidar/livox", attached_to="dog/lidar")
+    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to=LIDAR_MOUNT)
     published: list[Any] = []
     try:
-        _toy_world(livox, "dog/lidar")
-        livox.lidar.publish = published.append
+        _toy_world(livox, LIDAR_MOUNT, monkeypatch)
+        monkeypatch.setattr(livox.lidar, "publish", published.append)
         asyncio.run(livox._scan())
     finally:
         livox.stop()
     assert published and all(len(cloud.as_numpy()[0]) > 0 for cloud in published)
 
 
-def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides() -> None:
+def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name="dog/l1/l1", attached_to="dog/l1")
+    l1 = SimL1(instance_name=f"{L1_MOUNT}/l1", attached_to=L1_MOUNT)
     published: list[Any] = []
     try:
-        _toy_world(l1, "dog/l1")
-        l1.lidar.publish = published.append
+        _toy_world(l1, L1_MOUNT, monkeypatch)
+        monkeypatch.setattr(l1.lidar, "publish", published.append)
         asyncio.run(l1._map())
     finally:
         l1.stop()
     cloud = published[-1]
     points, _ = cloud.as_numpy()
     floor = points[points[:, 2] < l1.config.cell]
-    assert cloud.frame_id == "dog/odom"
+    assert cloud.frame_id == f"{DOG}/odom"
     assert len(floor) > 0 and np.abs(floor[:, 2]).max() <= l1.config.cell
     assert np.abs(floor[:, :2].mean(axis=0)).max() < 0.5, (
         "the floor is mapped around the odom origin"
     )
 
 
-def test_an_l1_maps_none_of_the_robot_it_rides() -> None:
+def test_an_l1_maps_none_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name="dog/l1_up/l1", attached_to="dog/l1_up")
+    l1 = SimL1(instance_name=f"{L1_UP_MOUNT}/l1", attached_to=L1_UP_MOUNT)
     published: list[Any] = []
     try:
-        _toy_world(l1, "dog/l1_up")
-        l1.lidar.publish = published.append
+        _toy_world(l1, L1_UP_MOUNT, monkeypatch)
+        monkeypatch.setattr(l1.lidar, "publish", published.append)
         asyncio.run(l1._map())
     finally:
         l1.stop()
