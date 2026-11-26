@@ -638,12 +638,23 @@ class AgentConversationId(Body):
     conversation: int
 
 
+class AgentParent(Body):
+    conversation: int
+    at: int
+
+
+class AgentRunning(Body):
+    kind: Literal["answering", "tool", "compaction", "summary"]
+    since: int
+    name: NotRequired[str]
+
+
 class AgentConversationRow(Body):
     id: int
-    parent: dict[str, int] | None
+    parent: AgentParent | None
     title: str
     cwd: str | None
-    running: dict[str, Any] | None
+    running: AgentRunning | None
     queued: int
     unread: int
     costUsd: float
@@ -655,8 +666,13 @@ class AgentTranscript(Body):
     omitted: int
 
 
+class AgentRun(Body):
+    taskId: int
+    inputs: list[int]
+
+
 class AgentTurn(Body):
-    run: dict[str, Any]
+    run: AgentRun
     messageTimestamp: int | None
     text: str
 
@@ -680,8 +696,22 @@ class AgentJobOutcome(Body):
     text: NotRequired[str]
 
 
+class AgentJobTrigger(Body):
+    kind: Literal["scheduled", "manual", "requested"]
+    due: NotRequired[int]
+    toolCall: NotRequired[str]
+    request: NotRequired[str]
+
+
+class AgentJobAction(Body):
+    kind: Literal["notify", "skill"]
+    text: NotRequired[str]
+    skill: NotRequired[str]
+    arguments: NotRequired[dict[str, Any]]
+
+
 class AgentJobRun(Body):
-    run: dict[str, Any]
+    run: AgentJobTrigger
     firedAt: int
     outcome: AgentJobOutcome
 
@@ -691,7 +721,7 @@ class AgentJob(Body):
     conversation: int
     cron: str
     timeZone: str
-    action: dict[str, Any]
+    action: AgentJobAction
     nextDue: int | None
     upcoming: list[int]
     createdAt: int

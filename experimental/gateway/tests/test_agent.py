@@ -31,10 +31,10 @@ import uvicorn
 import zenoh
 
 from dimos.agents.mcp.mcp_server import app as mcp_app
+from experimental.gateway.agent_client import AgentClient
 from experimental.gateway.app import create_app
 from experimental.gateway.errors import ApiError
 from experimental.gateway.events import Bus
-from experimental.gateway.routes import agent
 
 ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "dimos/agents"
@@ -132,7 +132,8 @@ async def live_agent(state, monkeypatch, skill_server, agent_bundle, agent_event
             cwd=PACKAGE,
             env=env,
         )
-        watcher = asyncio.create_task(agent.watch(ROOT, bus))
+        monkeypatch.setattr(state, "agent", AgentClient(bus))
+        await state.agent.start(ROOT)
         try:
             with socket.socket(socket.AF_UNIX) as listener:
                 path = str(Path(home) / "http.sock")
@@ -151,8 +152,7 @@ async def live_agent(state, monkeypatch, skill_server, agent_bundle, agent_event
                     server.should_exit = True
                     await serving
         finally:
-            watcher.cancel()
-            await asyncio.gather(watcher, return_exceptions=True)
+            await state.agent.close()
             if daemon.returncode is None:
                 daemon.terminate()
                 try:
@@ -315,10 +315,11 @@ def test_checkout_without_agent_client(client):
 
 async def test_offline_agent_and_gateway_shutdown(agent_bundle, monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    client = AgentClient(Bus())
     with pytest.raises(ApiError, match="offline") as error:
-        await agent.call_sdk(ROOT, "jobs")
+        await client.call(ROOT, "jobs")
     assert error.value.status == 503
-    async with agent.sdk_process(ROOT, "watch") as watcher:
-        assert watcher.stdin is not None
-        watcher.stdin.close()
-        assert await asyncio.wait_for(watcher.wait(), 5) == 0
+    proc = client.proc
+    assert proc is not None
+    await client.close()
+    assert proc.returncode == 0

@@ -98,7 +98,7 @@ Subscribe to `<namespace>/dimos/events/agent/*` to receive all agent events, or 
 
 Each list event includes its topic suffix in `type` (e.g. `agent/jobs`) and a `change` of `added`, `updated`, or
 `removed`. For example, deleting the job named `demo` publishes
-`{"type":"agent/jobs","change":"removed","name":"demo"}`. When the gateway starts watching, it publishes each
+`{"type":"agent/jobs","change":"removed","name":"demo"}`. Each time the gateway connects to the agent, it publishes each
 current list in `rows` with `change: "snapshot"`.
 
 On open or reconnect, subscribe first and buffer events while fetching the initial lists from `GET /agent/conversations`

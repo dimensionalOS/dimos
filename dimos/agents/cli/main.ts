@@ -15,7 +15,7 @@ import { ensureGateway } from "#dimos/agents/cli/process.ts";
 const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
 dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json
 dimos agent sdk OPERATION [CONVERSATION_ID]                       read a JSON request from stdin and print the reply
-dimos agent sdk watch                                             stream conversation and job events as JSON lines
+dimos agent sdk serve                                             answer JSON-line requests and stream agent events as JSON lines
 dimos agent conversations                                         list conversations, newest first
 dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon
 dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams

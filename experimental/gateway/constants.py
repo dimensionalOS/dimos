@@ -78,8 +78,3 @@ ACCOUNT_CACHE_S = 20.0
 # cloud account: reading the login touches the OS keyring, which can stall; past this the request
 # answers with an error instead of never answering at all
 ACCOUNT_TIMEOUT_S = 15.0
-
-# Allow a manual skill run its agent-side execution timeout plus transport overhead.
-AGENT_CALL_TIMEOUT_S = 150.0
-AGENT_RECONNECT_S = 5.0
-AGENT_EVENT_BYTES = 16 * 1024 * 1024

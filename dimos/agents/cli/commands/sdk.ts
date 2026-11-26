@@ -11,6 +11,11 @@ import { Value } from "typebox/value";
 import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
 import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
 import { json } from "node:stream/consumers";
+import { createConnection } from "node:net";
+import { existsSync, watch as watchDirectory } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { basename, dirname } from "node:path";
+import { createInterface } from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import { connect, type Client } from "#dimos/agents/sdk/main.ts";
 import { owner, RefusalError, refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
@@ -18,9 +23,8 @@ import { until } from "#dimos/agents/sdk/until.ts";
 import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
 import { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
-import { done, type Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import { done, type Outcome, type Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
 import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
-import { reachable } from "#dimos/agents/shared/socket.ts";
 import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
 
 function write(value: unknown): void {
@@ -66,7 +70,7 @@ function turn(live: LiveState) {
 type WatchedChat = { id: ConversationId; lastEntry?: EntryId; following: boolean };
 
 /** Stream list changes and attach one passive viewer to each running chat. */
-async function watch(client: Client): Promise<never> {
+async function relayEvents(client: Client): Promise<never> {
   const gateway = await client.host.get(GatewayContract, {});
   const chats = new Map<ConversationId, WatchedChat>();
   const publishConversations = publishRowChanges("agent/conversations", "id");
@@ -74,6 +78,9 @@ async function watch(client: Client): Promise<never> {
     gateway.jobs.subscribe(publishRowChanges("agent/jobs", "name"));
     gateway.conversations.subscribe((rows) => {
       publishConversations(rows);
+      for (const chat of chats.values()) {
+        if (!chat.following && !rows.some((row) => row.id === chat.id)) chats.delete(chat.id);
+      }
       for (const { id, running } of rows) {
         if (!running) continue;
         const chat = chats.get(id) ?? { id, following: false };
@@ -174,9 +181,7 @@ function chatPublisher(chat: WatchedChat) {
 
 const gatewayActions = ["createConversation", "createJob", "updateJob", "deleteJob", "runJob"] as const;
 
-async function invoke(ctx: Ctx, operation: string, id: string | undefined): Promise<Outcome<unknown>> {
-  const args = await json(process.stdin);
-
+async function invoke(ctx: Ctx, operation: string, id: string | undefined, args: unknown): Promise<Outcome<unknown>> {
   function call<G extends ActionGroup, K extends keyof G & string>(
     catalog: G,
     ref: { [N in K]: (input: Static<G[N]["args"]>, ctx: Ctx) => Promise<Outcome<unknown>> },
@@ -211,33 +216,133 @@ async function invoke(ctx: Ctx, operation: string, id: string | undefined): Prom
   throw new Error("Unknown DimOS gateway operation");
 }
 
-/** The Desktop gateway's stdin/stdout interface. A call prints one reply, watch streams JSON lines. */
-export const runSdk: Command = async ({ args: [operation, id], paths }) => {
-  if (operation === undefined || (operation === "watch" && id !== undefined))
-    throw new Error("Usage: dimos agent sdk OPERATION [CONVERSATION_ID]");
-  // Closing the Desktop gateway's pipe also stops a watcher waiting for the agent to come online.
-  if (operation === "watch") process.stdin.once("end", () => process.exit(0)).resume();
+const httpStatuses: Partial<Record<Refusal["code"], number>> = {
+  invalid: 400,
+  viewing: 403,
+  not_found: 404,
+  running: 409,
+  stale: 409,
+};
+
+type Failure = { status: number; refusal?: Refusal["code"]; error: string };
+
+function refused(refusal: Refusal): Failure {
+  return { status: httpStatuses[refusal.code] ?? 503, refusal: refusal.code, error: refusalText(refusal) };
+}
+
+function failureOf(error: unknown): Failure {
+  if (isChordError(error) && error.reason === "conversation") return { status: 404, error: "Unknown conversation" };
+  return refused(refusalOfFailure(error, epochMs(Date.now())));
+}
+
+async function call(client: Client, operation: string, id: string | undefined, args: unknown) {
   try {
-    if (operation !== "watch" && !(await reachable(paths.socket, 1000))) {
+    const result = await Promise.race([client.host.root((ctx) => invoke(ctx, operation, id, args)), client.ended]);
+    return result.ok ? { value: result.value } : refused(result.refusal);
+  } catch (error) {
+    return failureOf(error);
+  }
+}
+
+/** Whether the agent accepts a bare connect on its socket. */
+function listening(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createConnection(path);
+    probe.once("connect", () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once("error", () => resolve(false));
+  });
+}
+
+/** Resolves once the agent's socket file exists; with `replaced`, once a restarted agent creates it again. */
+async function socketCreated(path: string, replaced: boolean): Promise<void> {
+  if (!replaced && existsSync(path)) return;
+  await mkdir(dirname(path), { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    const watcher = watchDirectory(dirname(path), (_, name) => {
+      if ((name === null || name === basename(path)) && existsSync(path)) finish();
+    });
+    const finish = () => {
+      watcher.close();
+      resolve();
+    };
+    watcher.once("error", reject);
+    if (!replaced && existsSync(path)) finish();
+  });
+}
+
+class NotListening extends Error {}
+
+type Request = { id: number; operation: string; conversation?: number; args?: unknown };
+
+/** The Desktop gateway's one client: JSON-line requests on stdin; replies and agent events as JSON lines on stdout. */
+async function serve(socket: string): Promise<never> {
+  const offline: Failure = { status: 503, error: "DimOS Agent is offline" };
+  let connection: Promise<Client> | undefined;
+  let down = offline;
+  const lines = createInterface({ input: process.stdin });
+  // Closing the Desktop gateway's pipe stops the client, including while it waits for the agent.
+  lines.once("close", () => process.exit(0));
+  lines.on("line", (line) => {
+    const { id, operation, conversation, args = {} } = JSON.parse(line) as Request;
+    const reply = connection?.then(
+      (client) => call(client, operation, conversation?.toString(), args),
+      () => down,
+    );
+    void Promise.resolve(reply ?? down).then((body) => write({ reply: id, ...body }));
+  });
+  for (let replaced = false; ; ) {
+    await socketCreated(socket, replaced);
+    connection = listening(socket).then((up) => {
+      if (!up) throw new NotListening();
+      return connect(unixSocket({ path: socket, label: "dimos-gateway" }));
+    });
+    try {
+      await relayEvents(await connection);
+    } catch (error) {
+      // A file nobody listens on is left by a crashed agent; its restart replaces it.
+      if (error instanceof NotListening) {
+        replaced = true;
+        down = offline;
+        continue;
+      }
+      const refusal = refusalOfFailure(error, epochMs(Date.now()));
+      // Another build refuses every attempt, so wait for the agent to restart before dialing it again.
+      replaced = refusal.code === "other_build";
+      down = replaced ? refused(refusal) : offline;
+      if (refusal.code !== "stopping") console.error(error);
+    } finally {
+      const ended = connection;
+      connection = undefined;
+      await ended.then(
+        (client) => client.close(),
+        () => {},
+      );
+    }
+  }
+}
+
+/** The command-line interface: `serve` runs the Desktop gateway's client; any other operation prints one reply. */
+export const runSdk: Command = async ({ args: [operation, id], paths }) => {
+  if (operation === undefined || (operation === "serve" && id !== undefined))
+    throw new Error("Usage: dimos agent sdk OPERATION [CONVERSATION_ID]");
+  if (operation === "serve") return serve(paths.socket);
+  try {
+    if (!(await listening(paths.socket))) {
       write({ status: 503, error: "DimOS Agent is offline" });
       return 0;
     }
+    const args = await json(process.stdin);
     const client = await connect(unixSocket({ path: paths.socket, label: "dimos-gateway" }));
     try {
-      const request = operation === "watch" ? watch(client) : client.host.root((ctx) => invoke(ctx, operation, id));
-      const result = await Promise.race([request, client.ended]);
-      if (result.ok) write({ value: result.value });
-      else write({ refusal: result.refusal.code, error: refusalText(result.refusal) });
+      write(await call(client, operation, id, args));
     } finally {
       await client.close();
     }
   } catch (error) {
-    if (operation === "watch") throw error;
-    if (isChordError(error) && error.reason === "conversation") write({ status: 404, error: "Unknown conversation" });
-    else {
-      const refusal = refusalOfFailure(error, epochMs(Date.now()));
-      write({ refusal: refusal.code, error: refusalText(refusal) });
-    }
+    write(failureOf(error));
   }
   return 0;
 };

@@ -164,7 +164,7 @@ async function startGateway(
   }
 }
 
-test("sdk CLI replies with JSON and watches entries committed before it attaches", { timeout: 30_000 }, async (t) => {
+test("sdk CLI replies with JSON and serves entries committed before it attaches", { timeout: 30_000 }, async (t) => {
   const { root, paths, remove } = await scratch();
   const scripted = scriptedModel();
   const faux = scripted.models.getProvider("faux");
@@ -198,6 +198,7 @@ test("sdk CLI replies with JSON and watches entries committed before it attaches
     return json(child.stdout);
   };
   assert.deepEqual(await call({}, "createConversation"), {
+    status: 400,
     refusal: "invalid",
     error: "createConversation: invalid arguments",
   });
@@ -214,18 +215,27 @@ test("sdk CLI replies with JSON and watches entries committed before it attaches
   const snapshot = (await call({}, "conversation", id)) as { value: { transcript: { items: unknown[] } } };
   assert(snapshot.value.transcript.items.length > 1);
 
-  const watcher = sdk("watch");
-  const closed = once(watcher, "close");
+  const served = sdk("serve");
+  const closed = once(served, "close");
+  served.stdin.write(JSON.stringify({ id: 7, operation: "conversation", conversation: Number(id) }) + "\n");
+  let replied = false;
+  let watched = false;
   try {
-    for await (const line of createInterface({ input: watcher.stdout })) {
+    for await (const line of createInterface({ input: served.stdout })) {
       const event = JSON.parse(line);
-      if (event.type !== "agent/chat" || !event.entries) continue;
-      assert.deepEqual(event.entries, snapshot.value.transcript.items);
-      return;
+      if (event.reply === 7) {
+        assert.deepEqual(event.value.transcript, snapshot.value.transcript);
+        replied = true;
+      }
+      if (event.type === "agent/chat" && event.entries) {
+        assert.deepEqual(event.entries, snapshot.value.transcript.items);
+        watched = true;
+      }
+      if (replied && watched) return;
     }
-    assert.fail("watch exited before emitting the conversation entries");
+    assert.fail("serve exited before replying and emitting the conversation entries");
   } finally {
-    watcher.stdin.end();
+    served.stdin.end();
     await closed;
   }
 });
