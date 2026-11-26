@@ -19,6 +19,7 @@ import inspect
 import json
 import sys
 import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -209,6 +210,14 @@ class ModuleBase(Configurable, CompositeResource):
     def frame_id(self) -> str:
         base = self.config.frame_id or self.__class__.__name__
         return f"{self.frame_id_prefix}/{base}" if self.frame_id_prefix else base
+
+    def time(self) -> float:
+        """This module's clock, which it stamps with: wall time, or a simulated world's time in a sim module."""
+        return time.time()
+
+    async def sleep(self, seconds: float) -> None:
+        """Wait ``seconds`` of this module's time: wall time, or a simulated world's time in a sim module."""
+        await asyncio.sleep(seconds)
 
     @rpc
     def build(self) -> None:
