@@ -83,7 +83,9 @@ def test_odom_keeps_the_go2_standing_above_its_mount(go2_sim: Go2Sim) -> None:
     assert usd.source_path is not None
     standing = usd_frame_pose(usd.usd, usd.root_link, usd.source_path.parent)[2, 3]
 
-    odom = go2_sim._odom(np.array([2.0, -1.0, standing, 0.0, 0.0, 0.0, 1.0]), 1.0)
+    odom = go2_sim.odometry(
+        np.array([2.0, -1.0, standing, 0.0, 0.0, 0.0, 1.0]), 1.0, go2_sim.config.odom_frame
+    )
 
     assert standing > 0
     assert np.allclose([odom.position.x, odom.position.y, odom.position.z], [0.0, 0.0, standing])
@@ -92,7 +94,9 @@ def test_odom_keeps_the_go2_standing_above_its_mount(go2_sim: Go2Sim) -> None:
 def test_odom_is_in_the_frame_a_real_go2_reports_it_in(go2_sim: Go2Sim) -> None:
     from dimos.robot.unitree.go2.connection import ConnectionConfig
 
-    odom = go2_sim._odom(np.array([0.0, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]), 1.0)
+    odom = go2_sim.odometry(
+        np.array([0.0, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]), 1.0, go2_sim.config.odom_frame
+    )
 
     assert odom.frame_id == ConnectionConfig.model_fields["odom_frame_id"].default
 

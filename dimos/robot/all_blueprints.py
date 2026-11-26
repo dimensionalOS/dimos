@@ -408,6 +408,7 @@ all_modules = {
     "sim-imu": "dimos.sim2.imu.SimImu",
     "sim-l1": "dimos.sim2.l1.SimL1",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",
+    "sim-robot": "dimos.sim2.sim_robot.SimRobot",
     "sim-scene": "dimos.sim2.scene.SimScene",
     "sim-sensor": "dimos.sim2.sensor.SimSensor",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",

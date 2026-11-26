@@ -38,8 +38,7 @@ class MountOdometry:
 
     @classmethod
     def of(cls, usd: UsdModel, frame: str) -> MountOdometry:
-        root = usd.source_path.parent if usd.source_path is not None else None
-        return cls(usd_frame_pose(usd.usd, frame, root))
+        return cls(usd_frame_pose(usd.usd, frame, usd.asset_root))
 
     def __call__(self, pose: Sequence[float] | NDArray[np.float64]) -> Transform:
         """The body's odometry, given its world pose as x, y, z, qx, qy, qz, qw."""
