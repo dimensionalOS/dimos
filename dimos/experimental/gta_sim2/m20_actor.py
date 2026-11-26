@@ -16,8 +16,8 @@
 
 Source: DeepRoboticsLab/sdk_deploy at 2367375f922f2a739f7b578849ae2affd4d8660d.
 DreamWaQ source: Lain-Ego0/ArenaX at 438c7c5cb704ebdf01fdc60a2a50ec9a8bb4239d.
-Neither checkpoint passed the 10 cm stair fixture in this experiment. Other checkpoints must be
-matched to their own observation/action contract rather than selected by shape.
+Checkpoint capability depends on both its own observation/action contract and
+faithful physical geometry. See M20.md for measured validation, including stairs.
 """
 
 from pathlib import Path

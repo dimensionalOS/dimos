@@ -23,7 +23,8 @@ from pathlib import Path
 import shutil
 
 import mujoco
-from pxr import Sdf, Usd
+import numpy as np
+from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 from dimos.experimental.gta_sim2.m20_actor import JOINTS, KD, KP, Profile, home_pose
 from dimos.robot.assets.model import UsdModel
@@ -31,6 +32,45 @@ from dimos.sim2.description import joint_paths
 from dimos.sim2.physics.drives import usd_with_drives
 
 BASE = "world/m20/base_link"
+
+
+def restore_m20_contacts(stage: Usd.Stage, native: mujoco.MjModel) -> None:
+    """Preserve the SDK's visual masks and shared contact material in USD.
+
+    MuJoCo 4.0's exporter omits collisionEnabled on visual meshes and the
+    physics material binding. Reimport otherwise adds mesh colliders and uses
+    default friction. Validate the SDK's uniform material before authoring it.
+    """
+    colliders = (native.geom_contype != 0) | (native.geom_conaffinity != 0)
+    np.testing.assert_array_equal(native.geom_group[colliders], 1)
+    np.testing.assert_array_equal(native.geom_contype[colliders], 1)
+    np.testing.assert_array_equal(native.geom_conaffinity[colliders], 1)
+    materials = np.unique(native.geom_friction[colliders], axis=0)
+    if materials.shape != (1, 3):
+        raise ValueError("M20 preparation requires one shared SDK contact material")
+    sliding, torsional, rolling = (float(v) for v in materials[0])
+    material = UsdShade.Material.Define(
+        stage, stage.GetDefaultPrim().GetPath().AppendPath("Materials/ContactMaterial")
+    )
+    physics = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+    physics.CreateDynamicFrictionAttr(sliding)
+    physics.CreateStaticFrictionAttr(sliding)
+    material.GetPrim().AddAppliedSchema("NewtonMaterialAPI")
+    material.GetPrim().CreateAttribute("newton:torsionalFriction", Sdf.ValueTypeNames.Float).Set(
+        torsional
+    )
+    material.GetPrim().CreateAttribute("newton:rollingFriction", Sdf.ValueTypeNames.Float).Set(
+        rolling
+    )
+    for prim in stage.Traverse():
+        if "MjcImageableAPI" in prim.GetAppliedSchemas():
+            UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(False)
+        if prim.GetAttribute("mjc:group").Get() == 1:
+            binding = UsdShade.MaterialBindingAPI.Apply(prim)
+            # The 4.0 decoder resolves all-purpose bindings, even for friction.
+            binding.Bind(material)
+            binding.Bind(material, materialPurpose="physics")
+            UsdGeom.Imageable(prim).CreateVisibilityAttr(UsdGeom.Tokens.invisible)
 
 
 def prepare(
@@ -68,6 +108,7 @@ def prepare(
     spec.compile()
     spec.to_file(str(output / "robot.xml"))
     robot = Usd.Stage.Open(str(output / "robot.xml"))
+    restore_m20_contacts(robot, native)
     robot.Export(str(output / "robot.usda"))
     stage = Usd.Stage.Open(str(patch / "world.usda"))
     # Work on an anonymous copy; never modify the active G1's scene.
@@ -126,7 +167,6 @@ def prepare(
         "source": str(model),
         "policy_contract": profile,
         "heading_degrees": heading_degrees,
-        "stairs_validated": False,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return scene

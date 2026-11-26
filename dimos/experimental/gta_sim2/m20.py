@@ -239,7 +239,6 @@ class M20PolicyModule(Module):
                 "active": self._actor is not None,
                 "contract": self.config.profile,
                 "mode": "stand" if self._standing else "policy",
-                "stairs_validated": False,
             }
 
     @rpc
