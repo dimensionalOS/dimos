@@ -43,7 +43,7 @@ def prepare(scene: Path, catalog: Path, output: Path) -> dict[str, Any]:
     patch.CreateAttribute("gta:world_streaming", Sdf.ValueTypeNames.Bool, custom=True).Set(True)
     stage.GetRootLayer().Export(str(output / "world.usda"))
     shutil.copyfile(scene.with_name("surfaces.npz"), output / "surfaces.npz")
-    source["optical_proxy_bounds_rage_m"] = source["bounds_rage_m"]
+    source.setdefault("optical_proxy_bounds_rage_m", source["bounds_rage_m"])
     source["bounds_rage_m"] = (
         np.asarray(world["coverage_bounds"]) + world["origin_rage_m"]
     ).tolist()
@@ -51,9 +51,9 @@ def prepare(scene: Path, catalog: Path, output: Path) -> dict[str, Any]:
     source["world_catalog"] = str(catalog.resolve())
     source["world_counts"] = world["counts"]
     source["limitations"] = world["limits"] + [
-        "Sim2 camera optical proxy currently covers the initial patch; SixNG observer imagery streams the map independently.",
+        "The default MuJoCo optical proxy covers the initial patch; the interactive M20 uses SixNG for streamed Sim2 RGB-D.",
         "Uniform friction 0.8 remains an assumption.",
-        "Dynamic objects require explicit physical definitions in the catalog's objects table.",
+        "Dynamic objects require admitted physical definitions in the catalog's objects table.",
     ]
     source.pop("excluded_overlapping_sources", None)
     (output / "manifest.json").write_text(json.dumps(source, indent=2) + "\n")

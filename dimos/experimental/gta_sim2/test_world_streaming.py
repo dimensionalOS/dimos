@@ -343,6 +343,7 @@ def test_authored_parent_and_compiled_object_revisit(
                     "provenance": "synthetic regression fixture",
                     "mass": 10,
                     "inertia": [4, 4, 1],
+                    "inertia_quaternion_wxyz": [0.9238795325112867, 0.3826834323650898, 0, 0],
                     "pivot": [-0.5, 0, 0],
                     "axis": [0, 0, 1],
                     "range": [-1.2, 1.2],
@@ -389,6 +390,9 @@ def test_authored_parent_and_compiled_object_revisit(
         model, data, _, metadata = compile_world_window(spec, catalog, np.zeros(3), 12, state_path)
         actor = metadata["actors"][identity]
         joint = model.joint(actor["body"] + "/joint")
+        np.testing.assert_allclose(
+            model.body(actor["body"]).iquat, [0.9238795325112867, 0.3826834323650898, 0, 0]
+        )
         np.testing.assert_allclose(joint.range, [-1.2, 1.2])
         data.qpos[joint.qposadr[0]] = 0.7
         mujoco.mj_forward(model, data)

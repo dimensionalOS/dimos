@@ -212,6 +212,16 @@ def compile_world_window(
         )
         body.explicitinertial = True
         body.mass, body.inertia = mass, inertia
+        inertia_quaternion = np.asarray(
+            definition.get("inertia_quaternion_wxyz", [1, 0, 0, 0]), dtype=np.float64
+        )
+        if (
+            inertia_quaternion.shape != (4,)
+            or not np.isfinite(inertia_quaternion).all()
+            or not np.isclose(np.linalg.norm(inertia_quaternion), 1, atol=1e-5)
+        ):
+            raise ValueError("Invalid principal inertia orientation")
+        body.iquat = inertia_quaternion
         body.ipos = (center_of_mass - pivot) * scale[0]
         if definition["kind"] == "free":
             body.add_freejoint(name=name + "/joint")
