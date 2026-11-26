@@ -121,6 +121,11 @@ class DimSimBackend:
         self._scene_layer = usd_layer(usd)
         self._stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
         self._robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
+        lockstep = [robot.robot_id for robot in self._robots if robot.control_period is not None]
+        if lockstep:
+            raise ValueError(
+                f"{lockstep}: a dimsim robot is a kinematic base, with no control tick for the world to hold for"
+            )
         robot_ids = [robot.robot_id for robot in self._robots]
         bodies, meshes = stage_bodies(pxr, self._stage, exclude=robot_ids)
         self._objects = self._scene_objects()

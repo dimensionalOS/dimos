@@ -17,6 +17,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+import contextlib
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -57,6 +58,8 @@ class MujocoSim(Module):
         self._commanded: set[str] = set()
         self._held: set[str] = set()
         self._all_commanded = Event()
+        # Set from the actions' thread when one comes in, on the loop the world steps on.
+        self._acted: tuple[asyncio.AbstractEventLoop, asyncio.Event] | None = None
 
     async def main(self) -> AsyncIterator[None]:
         self.world_actions.subscribe(self._on_actions)
@@ -99,6 +102,8 @@ class MujocoSim(Module):
         await asyncio.to_thread(self._built.wait)
         backend, publisher = self._backend, self._publisher
         assert backend is not None and publisher is not None
+        acted = asyncio.Event()
+        self._acted = (asyncio.get_running_loop(), acted)
         publisher.offer(self._first_frame)
         backend.restart_clock()
         # Held still until every held robot is commanded, with the clock running so the readings its policy waits on stay fresh.
@@ -109,7 +114,13 @@ class MujocoSim(Module):
                 logger.info("sim2: every robot is being driven; starting the world")
             _when, frame = backend.step(hold=held)
             publisher.offer(frame)
-            await asyncio.sleep(backend.timestep)
+            if backend.waiting:
+                # Woken by the command it holds for, not a timer that can oversleep; a timeout says ACT again.
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(acted.wait(), backend.timestep)
+                acted.clear()
+            else:
+                await asyncio.sleep(backend.timestep)
 
     def _on_actions(self, message: WorldAction) -> None:
         backend = self._backend
@@ -121,6 +132,10 @@ class MujocoSim(Module):
             logger.warning(f"sim2: an action this world cannot read: {error}")
             return
         backend.apply(actions)
+        if self._acted is not None:
+            loop, acted = self._acted
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(acted.set)
         if not self._all_commanded.is_set():
             self._commanded |= {a.entity for a in actions if isinstance(a, JointCommand)}
             if self._held <= self._commanded:

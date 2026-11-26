@@ -291,6 +291,7 @@ all_modules = {
     "g1-recorder": "dimos.robot.unitree.g1.g1_recorder.G1Recorder",
     "g1-replay": "dimos.robot.unitree.g1.g1_replay.G1Replay",
     "g1-sim": "dimos.robot.unitree.g1.sim2.G1Sim",
+    "g1-sim-walker": "dimos.robot.unitree.g1.sim2_walker.G1SimWalker",
     "g1-tf-publisher": "dimos.robot.unitree.g1.g1_tf_publisher.G1TfPublisher",
     "g1-whole-body-connection": "dimos.robot.unitree.g1.effectors.low_level.groot_wholebody.G1WholeBodyConnection",
     "go2-audio-bridge-module": "dimos.teleop.hosted.go2_audio_bridge.Go2AudioBridgeModule",

@@ -77,7 +77,7 @@ G1_ODOM_TF: dict[str, dict[str, str]] = {
 }
 
 
-def _usd_joint(name: str) -> str:
+def usd_joint(name: str) -> str:
     """The G1 USD's name for a control joint: g1/left_knee -> left_knee_joint."""
     return f"{name.split('/', 1)[1]}_joint"
 
@@ -101,6 +101,8 @@ class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
     tf_frames_local: dict[str, str] = {"body": G1_BODY}
     # The frame its odometry is in, under its namespace, which its mount holds; its OdomTf publishes odom -> body.
     odom_frame: str = G1_ODOM_FRAME
+    # Sim seconds between its controller's ticks, which the world holds for; None runs the world free of it.
+    control_period: float | None = None
 
 
 # ConnectionModule.frame(name) and TfModule.frame (by role) share a name; G1Sim uses neither, only tf_frames.
@@ -157,6 +159,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
             self.config.usd,
             held_until_commanded=True,
             odom_frame=self.attach_frame,
+            control_period=self.config.control_period,
         )
 
     @rpc
@@ -191,7 +194,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         duration = self.config.soft_start_seconds
         scale = min(1.0, (now - self._soft_start) / duration) if duration > 0 else 1.0
         joints = self.joint_names
-        names = tuple(_usd_joint(name) for name in joints)
+        names = tuple(usd_joint(name) for name in joints)
         self.world_actions.publish(
             world_action(
                 self._world,
@@ -210,9 +213,12 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
     def halt(self) -> None:
         """Damping only, as the real G1's halt: no stiffness, so nothing is driven toward a stale target."""
         self._soft_start = None
+        # In lockstep the world holds for its next command, so no stale target ever drives it.
+        if self.config.control_period is not None:
+            return
         if not hasattr(self, "_world") or not self._world.ids:
             return
-        names = tuple(_usd_joint(name) for name in self.joint_names)
+        names = tuple(usd_joint(name) for name in self.joint_names)
         self.world_actions.publish(
             world_action(
                 self._world,
@@ -266,7 +272,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
                 else (None, None, None)
             )
         by_name = dict(zip(names, rows, strict=True))
-        wanted = [_usd_joint(name) for name in self.joint_names]
+        wanted = [usd_joint(name) for name in self.joint_names]
         if not all(joint in by_name for joint in wanted):
             return
         ordered = np.array([by_name[joint] for joint in wanted])
