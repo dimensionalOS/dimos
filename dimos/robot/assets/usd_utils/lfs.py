@@ -40,6 +40,7 @@ def pull_model_assets(model: "UsdModel") -> None:
     """Fetch the Git LFS pointers a model's own layer file names, before anything opens a stage of it."""
     source = model.source_path
     if source is not None and source.suffix == ".usda":
+        pull_lfs_files([source])
         pull_usd_assets([source.read_text()], root=source.parent)
 
 

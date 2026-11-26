@@ -456,6 +456,10 @@ robots:
           required: true
           docs: https://docs.dimensional.org/platforms/humanoid/g1/#1-get-ssh-access
       blueprints:
+        three-g1-office-555:
+          title: Three G1s in office 555
+          description: 'Three GR00T-driven G1s walking the office_555 room in sim2, each with its own Mid-360: no robot needed.'
+          recommended_config: []
         unitree-g1:
           title: G1
           description: 'The default G1 stack: onboard sensors, the locomotion SDK and navigation, or GR00T whole-body control under --simulation mujoco.'

@@ -241,6 +241,10 @@ class UsdModel:
             raise ValueError("a UsdModel has neither a layer, a URDF nor a file to read one from")
         if not path.is_file():
             raise FileNotFoundError(f"no USD file at {path}")
+        from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
+
+        # A layer kept in Git LFS is a pointer in a checkout that skips smudging.
+        pull_lfs_files([path])
         try:
             return path.read_text()
         except UnicodeDecodeError as error:
@@ -536,12 +540,14 @@ class RobotModel:
         *,
         package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
         xacro_args: Mapping[str, str] | None = None,
+        asset_dir: Path | str | os.PathLike[str] | None = None,
     ) -> RobotModel:
-        """Create a lazy model from a URDF or Xacro source."""
+        """Create a lazy model from a URDF or Xacro source; relative mesh paths also resolve against `asset_dir`."""
         return cls(
             _source_path=source_path,
             _package_paths=tuple((package_paths or {}).items()),
             _xacro_args=tuple((xacro_args or {}).items()),
+            _asset_dir=asset_dir,
         )
 
     @classmethod

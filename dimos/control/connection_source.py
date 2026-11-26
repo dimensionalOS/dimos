@@ -137,6 +137,8 @@ class ConnectionSource:
         reading_timeout_s: How old its newest reading may be, in seconds.
         zero_stiffness_joints: Joints the connection commands with zero
             stiffness, so tasks such as hand guiding may follow them by hand.
+        frame_owner: Whose frames its readings are in, when that is not its
+            name: a namespaced coordinator's robot owns the frames under the namespace.
 
     Raises:
         ValueError: If the coordinator cannot drive it: no reading port, a
@@ -152,6 +154,7 @@ class ConnectionSource:
         reading_timeout_s: float,
         *,
         zero_stiffness_joints: Collection[str] = (),
+        frame_owner: str | None = None,
     ) -> None:
         robot = config.source
         if commands and not readings:
@@ -220,7 +223,7 @@ class ConnectionSource:
                 self._readers[port] = _read_joint_state
                 groups = [tuple(joint.state_keys.values()) for joint in self._joints]
             elif port == IMU:
-                self._readers[port] = _reader(imu_to_values, imu, robot)
+                self._readers[port] = _reader(imu_to_values, imu, frame_owner or robot)
                 groups = [(sensor.key,) for sensor in self._sensors]
             else:
                 raise ValueError(
@@ -525,7 +528,7 @@ def _within(value: float, limit: Limits) -> bool:
 
 
 def _reader(
-    convert: Callable[[Any, Any], Values], part: Any, robot: str
+    convert: Callable[[Any, Any], Values], part: Any, owner: str
 ) -> Callable[[Any], Values]:
     """``convert(msg, part)`` for a message in one of this robot's frames.
 
@@ -537,7 +540,7 @@ def _reader(
 
     def read(msg: Any) -> Values:
         frame = getattr(msg, "frame_id", "")
-        if SEPARATOR in frame and not frame.startswith(f"{robot}{SEPARATOR}"):
+        if SEPARATOR in frame and not frame.startswith(f"{owner}{SEPARATOR}"):
             raise ValueError(f"frame {frame!r} is another robot's")
         return convert(msg, part)
 
