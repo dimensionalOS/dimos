@@ -23,11 +23,10 @@ import pytest
 from pytest_mock import MockerFixture
 from reactivex import interval
 from reactivex.disposable import Disposable
-from reactivex.subject import Subject
 from reactivex.testing import TestScheduler
 
 from dimos.core.stream import Out, Transport
-from dimos.memory import replay as replay_mod, replay_module as rm
+from dimos.memory import replay as replay_mod
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
@@ -213,35 +212,40 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     assert got["odom"] == 1  # arrived within the 5 s deadline, not 39 s later
 
 
-def test_constant_timestamp_tf_republishes_every_edge(sqlite_store, mocker):
+def test_static_tf_is_sent_once_at_start_on_tf_static(sqlite_store, mocker):
     chain = TFMessage(
         Transform(frame_id="base", child_frame_id="camera", ts=42.25),
         Transform(frame_id="camera", child_frame_id="optical", ts=42.25),
     )
-    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
-        transport = mocker.Mock(spec=Transport)
-        unsubscribe = recorder.tap("tf", TFMessage, transport)
-        assert unsubscribe is not None
-        subscriptions.callback(unsubscribe)
-        on_message = transport.subscribe.call_args.args[0]
-        on_message(chain)
-        on_message(chain)
+    tf = sqlite_store.stream("tf", TFMessage)
+    for _ in range(2):
+        tf.append(chain, ts=42.25)
+    mount = Transform(frame_id="base", child_frame_id="lidar", ts=5.0)
+    sqlite_store.stream("tf_static", TFMessage).append(TFMessage(mount), ts=5.0)
+    odom = sqlite_store.stream("odom", PoseStamped)
+    for ts in (100.0, 101.0):
+        odom.append(PoseStamped(ts=ts), ts=ts)
 
-    mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
+    scheduler = TestScheduler()
+    mocker.patch.object(replay_mod.time, "time", side_effect=lambda: scheduler.clock)
+    mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
     mocker.patch.object(ZenohRPC, "start")
     mocker.patch.object(ZenohRPC, "serve_module_rpc")
-    emitted = []
     path = sqlite_store.config.path
-    with Subject() as ticks:
-        mocker.patch.object(rm, "interval", return_value=ticks)
-        with replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True) as module:
-            module.register_disposable(Disposable(module.outputs["tf"].subscribe(emitted.append)))
-            ticks.on_next(0)
-            ticks.on_next(1)
+    sent: dict[str, list[TFMessage]] = {"tf": [], "tf_static": []}
+    with ExitStack() as cleanup:
+        module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC)
+        cleanup.callback(module.stop)
+        for name, messages in sent.items():
+            cleanup.callback(module.outputs[name].subscribe(messages.append))
+        module.start()
+        scheduler.advance_by(5.0)
 
+    assert sent["tf"] == []
     assert [
-        [(t.frame_id, t.child_frame_id, t.ts) for t in message.transforms] for message in emitted
-    ] == [[("base", "camera", 42.25), ("camera", "optical", 42.25)]] * 2
+        sorted((t.child_frame_id, t.ts) for t in message.transforms)
+        for message in sent["tf_static"]
+    ] == [[("camera", 42.25), ("lidar", 5.0), ("optical", 42.25)]]
 
 
 @pytest.fixture
@@ -280,8 +284,6 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(
     mocker.patch.object(ReplayStream, "_decode", side_effect=slow_decode, autospec=True)
     mocker.patch.object(replay_mod.time, "time", side_effect=lambda: scheduler.clock)
     mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
-    interval = rm.interval
-    mocker.patch.object(rm, "interval", side_effect=lambda period: interval(period, scheduler))
     mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
     mocker.patch.object(ZenohRPC, "start")
     mocker.patch.object(ZenohRPC, "serve_module_rpc")
@@ -309,10 +311,12 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(
         scheduler.advance_to(started + 1.01)
         assert [m.ts for m in odom] == [1000.0, 1001.0]
         assert [t.ts for t in tf if t.frame_id == "world"] == [1000.0, 1001.0]
+        assert [t.ts for t in tf if t.frame_id == "base"] == [10.0]
         scheduler.advance_to(started + 2.06)
         assert [m.ts for m in odom] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "world"] == [1000.0, 1001.0] * 2
-        assert [t.ts for t in tf if t.frame_id == "base"] == [10.0] * 3
+        # Frozen edges are sent again when the loop restarts playback.
+        assert [t.ts for t in tf if t.frame_id == "base"] == [10.0] * 2
 
 
 @pytest.mark.parametrize(

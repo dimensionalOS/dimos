@@ -143,6 +143,9 @@ class ReplayModule(Module):
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
         # would spend that lead time emitting nothing.
         static: dict[str, DimosMsg] = {}
+        # Static TF (a ``*_static`` stream, or edges frozen in a TF stream) is sent
+        # once per pass, on the matching ``*_static`` port when there is one.
+        static_tf: dict[str, dict[tuple[str, str], Transform]] = {}
         timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
         timed_starts = []
         outputs = self.outputs
@@ -154,13 +157,25 @@ class ReplayModule(Module):
         for name, payload_type in types.items():
             stream: ReplayStream[DimosMsg] = replay.stream(name)
             if issubclass(payload_type, TFMessage):
+                rows = store.stream(name, TFMessage)
+                static_stream = name.endswith("_static")
+                static_port = name if static_stream else f"{name}_static"
+                if static_port not in outputs or not issubclass(
+                    outputs[static_port].type, TFMessage
+                ):
+                    static_port = name
                 # Frozen frames describe the coordinate system even when their
                 # original source stamp is outside the selected time window.
-                rows = store.stream(name, TFMessage)
-                frozen, edges = _frozen_tf(rows)
+                frozen, edges = (
+                    (_latest_transforms(rows), set()) if static_stream else _frozen_tf(rows)
+                )
+                if frozen.transforms and static_port in outputs:
+                    port_edges = static_tf.setdefault(static_port, {})
+                    for transform in frozen.transforms:
+                        port_edges[(transform.frame_id, transform.child_frame_id)] = transform
+                if static_stream:
+                    continue
                 if frozen.transforms:
-                    if name in outputs:
-                        static[name] = frozen
                     dynamic = rows.filter(partial(_has_dynamic_tf, edges))
                     try:
                         start = dynamic.order_by("ts").first().ts
@@ -189,12 +204,18 @@ class ReplayModule(Module):
             timed_starts = [
                 ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
             ]
-        for name, message in static.items():
-            if isinstance(message, TFMessage):
-                outputs[name].publish(message)
+
+        def publish_static_tf() -> None:
+            for port_name, transforms in static_tf.items():
+                outputs[port_name].publish(TFMessage(*transforms.values()))
+
+        publish_static_tf()
         progress = ReplayProgress(str(path))
         progress.start(replay, timed_streams.values())
         replay.pin_anchor(min(timed_starts) if timed_starts else None)
+        # The earliest stream marks each new pass of a looping replay.
+        starts = {n: ts for n, s in timed_streams.items() if (ts := s.first_ts()) is not None}
+        pass_clock = min(starts, key=starts.__getitem__) if starts else None
         for name, port in outputs.items():
             logger.info("Replaying %s -> %s", name, port)
             if name in static:
@@ -202,11 +223,11 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, static[name]))
                 )
             if name in timed_streams:
-                self.register_disposable(
-                    progress.track(timed_streams[name].observable(skip_late=False)).subscribe(
-                        port.publish
-                    )
+                timed = timed_streams[name].observable(
+                    skip_late=False,
+                    on_loop=publish_static_tf if name == pass_clock and static_tf else None,
                 )
+                self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 
     @rpc
@@ -228,6 +249,15 @@ def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
     return TFMessage(
         *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
     )
+
+
+def _latest_transforms(rows: Stream[TFMessage]) -> TFMessage:
+    """The last recorded transform of every edge."""
+    latest: dict[tuple[str, str], Transform] = {}
+    for row in rows.order_by("ts"):
+        for transform in row.data.transforms:
+            latest[(transform.frame_id, transform.child_frame_id)] = transform
+    return TFMessage(*latest.values())
 
 
 def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
