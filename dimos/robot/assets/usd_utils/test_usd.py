@@ -23,15 +23,9 @@ import pytest
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
-    describe_unopenable_assets,
-    require_asset_hashes,
-    require_fetched_assets,
-    unhashed_assets,
-    unopenable_assets,
 )
 from dimos.robot.assets.usd_utils.frames import usd_frame_names, usd_with_frames
 from dimos.robot.assets.usd_utils.from_urdf import PASSTHROUGH_KEY, urdf_to_usd
-from dimos.robot.assets.usd_utils.layers import graft_usd
 
 pytest.importorskip("pxr")
 
@@ -203,12 +197,6 @@ def test_collision_geometry_is_carried_but_not_rendered(toy: Any) -> None:
     assert "PhysicsCollisionAPI" in collision.GetAppliedSchemas()
 
 
-def test_collision_geometry_can_be_left_out(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy, include_collision=False))
-
-    assert not stage.GetPrimAtPath("/toy/base_link/collision_1")
-
-
 def test_a_box_is_a_unit_cube_scaled_to_its_extents(toy: Any) -> None:
     stage = _stage(urdf_to_usd(toy))
     cube = stage.GetPrimAtPath("/toy/base_link/visual_0")
@@ -286,64 +274,6 @@ def test_the_layer_authors_no_custom_attributes(toy: Any) -> None:
     assert "dimos:" not in usd
 
 
-def test_a_subtree_is_grafted_under_the_frame_it_names(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert stage.GetPrimAtPath("/toy/base_link/mount/arm_sub/base_link")
-
-
-def test_a_grafted_subtree_keeps_its_joints_pointing_at_its_own_links(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")}))
-    joint = stage.GetPrimAtPath("/toy/base_link/mount/arm_sub/joints/base_to_mount")
-
-    assert joint
-    targets = joint.GetRelationship("physics:body0").GetTargets()
-    assert str(targets[0]) == "/toy/base_link/mount/arm_sub/base_link"
-
-
-def test_a_graft_joins_the_subtree_to_its_mount_with_a_floating_joint(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")}))
-    mounted = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
-
-    assert len(mounted) == 1
-    joint = mounted[0]
-    assert joint.GetDisplayName() == "base_link_mount"
-    assert str(joint.GetRelationship("physics:body0").GetTargets()[0]) == "/toy/base_link/mount"
-    assert str(joint.GetRelationship("physics:body1").GetTargets()[0]) == (
-        "/toy/base_link/mount/arm_sub/base_link"
-    )
-
-
-def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
-    from pxr import Gf
-
-    stage = _stage(
-        graft_usd(urdf_to_usd(toy), {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")})
-    )
-    joint = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint")
-
-    for attribute in ("physics:localPos0", "physics:localPos1"):
-        assert joint.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
-    for attribute in ("physics:localRot0", "physics:localRot1"):
-        assert joint.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
-
-
-def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    grown = usd_with_frames(root, {"spot": ("toy/base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
-    stage = _stage(graft_usd(grown, {"toy/base_link/spot": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert _prim_by_link(stage, "spot"), "the frame is a link, so graft_usd can match it"
-    assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
-
-
 def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
     from pxr import UsdPhysics
 
@@ -377,7 +307,7 @@ def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
     xyz, rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
     scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy/base_link", xyz, rpy)})
 
-    joint = UsdModel.from_layer(scene).get_joint("spot_joint")
+    joint = next((j for j in UsdModel.from_layer(scene).joints if j.name == "spot_joint"), None)
     assert joint is not None, "the added frame is a joint of the description"
     placed = joint.parent_from_child(0.0)
     expected = np.eye(4)
@@ -492,57 +422,9 @@ def test_a_frame_is_named_by_its_prim_path_through_any_scope_on_the_way() -> Non
     assert edges["go2/Geometry", "go2/Geometry/base_link"][2, 3] == pytest.approx(0.3)
 
 
-def test_a_grafted_subtree_s_frames_are_its_own_under_the_mount(toy: Any) -> None:
-    """Every frame of the composed stage is a frame of the root, or the mount + a frame of the subtree."""
-    root = urdf_to_usd(toy)
-    sensor = urdf_to_usd(toy, name="arm_sub")
-
-    composed = usd_frame_names(graft_usd(root, {"toy/base_link/mount": sensor}))
-
-    assert composed == usd_frame_names(root) | {
-        f"toy/base_link/mount/{frame}" for frame in usd_frame_names(sensor)
-    }
-
-
 def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no frame 'nowhere'"):
         usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-
-
-def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
-    with pytest.raises(ValueError, match="no prim for that frame"):
-        graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
-
-
-def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert stage.GetPrimAtPath("/toy/arm_sub/base_link")
-
-
-def test_grafting_two_copies_of_one_description_at_one_frame_is_an_error(toy: Any) -> None:
-    root = graft_usd(urdf_to_usd(toy), {"toy": urdf_to_usd(toy, name="arm_sub")})
-
-    with pytest.raises(ValueError, match="is taken"):
-        graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")})
-
-
-def test_a_link_and_the_root_that_share_a_name_are_two_frames(toy: Any) -> None:
-    root = urdf_to_usd(toy, name="base_link")
-
-    on_link = _stage(graft_usd(root, {"base_link/base_link": urdf_to_usd(toy, name="arm_sub")}))
-    on_root = _stage(graft_usd(root, {"base_link": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert on_link.GetPrimAtPath("/base_link/base_link/arm_sub/base_link")
-    assert on_root.GetPrimAtPath("/base_link/arm_sub/base_link")
-
-
-def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    assert graft_usd(root, {}) == root
 
 
 _EXTRAS_URDF = """<?xml version="1.0"?>
@@ -754,91 +636,6 @@ def test_the_asset_identifier_is_the_path_it_references(hashy: Any) -> None:
     assert prim.GetAssetInfo()["identifier"].path.endswith("meshes/arm.stl")
 
 
-def test_a_hashed_layer_passes_the_requirement(hashy: Any) -> None:
-    require_asset_hashes(urdf_to_usd(hashy), what="this layer")
-
-
-def test_a_layer_with_no_assets_at_all_passes(toy: Any) -> None:
-    require_asset_hashes(urdf_to_usd(toy), what="this layer")
-
-
-def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: Any) -> None:
-    usd = urdf_to_usd(hashy).replace("string version", "string notversion")
-
-    with pytest.raises(ValueError) as caught:
-        require_asset_hashes(usd, what="the subtree from SomeSensor")
-
-    message = str(caught.value)
-    assert "the subtree from SomeSensor" in message
-    assert "meshes/arm.stl" in message
-    assert asset_hash(b"solid arm\nendsolid arm\n") in message
-
-
-def test_a_release_number_in_the_version_field_is_not_taken_for_a_hash(hashy: Any) -> None:
-    """USD's version is free-form, so only a sha256 digest can satisfy the hash requirement."""
-    layer = urdf_to_usd(hashy)
-    posing = layer.replace(
-        next(line for line in layer.splitlines() if "sha256:" in line).strip(),
-        'string version = "1.0"',
-    )
-
-    assert unhashed_assets(posing), "a release number passed as the digest consumers need"
-    with pytest.raises(ValueError, match="no usable hash"):
-        require_asset_hashes(posing, what="the layer")
-
-
-def test_an_unreadable_asset_is_refused_but_says_where_to_hash_it(toy: Any, tmp_path: Path) -> None:
-    urdf = tmp_path / "gone.urdf"
-    urdf.write_text(
-        '<?xml version="1.0"?><robot name="gone"><link name="base_link">'
-        '<visual><geometry><mesh filename="/nowhere/at/all.stl"/></geometry></visual>'
-        "</link></robot>"
-    )
-    usd = urdf_to_usd(RobotModel.from_file(urdf).load())
-
-    with pytest.raises(ValueError, match="hash it where the file lives"):
-        require_asset_hashes(usd, what="this layer")
-
-
-def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
-    usd = urdf_to_usd(hashy).replace("string version", "string notversion")
-
-    missing = unhashed_assets(usd)
-
-    assert list(missing.values()) == ["/hashy/base_link/visual_0"]
-
-
-def test_a_texture_is_an_asset_the_hash_check_sees(tmp_path: Any) -> None:
-    from pxr import Sdf, Usd, UsdGeom, UsdShade
-
-    image = tmp_path / "wood.png"
-    image.write_bytes(b"not really a png, but it is a file")
-    stage = Usd.Stage.CreateInMemory()
-    root = UsdGeom.Xform.Define(stage, "/scene")
-    stage.SetDefaultPrim(root.GetPrim())
-    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
-    texture.CreateIdAttr("UsdUVTexture")
-    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
-
-    assert str(image) in unhashed_assets(stage.GetRootLayer().ExportToString())
-
-
-def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
-    from pxr import Sdf, Usd, UsdGeom, UsdShade
-
-    image = tmp_path / "wood.png"
-    image.write_bytes(b"not really a png, but it is a file")
-    stage = Usd.Stage.CreateInMemory()
-    root = UsdGeom.Xform.Define(stage, "/scene")
-    stage.SetDefaultPrim(root.GetPrim())
-    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
-    texture.CreateIdAttr("UsdUVTexture")
-    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
-    texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
-
-    assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
-
-
 def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
     from pxr import UsdPhysics
 
@@ -860,7 +657,7 @@ def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: P
 </robot>
 """
     )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="weighed"))
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load()))
 
     base = _prim_by_link(stage, "base")
     assert base.HasAPI(UsdPhysics.MassAPI)
@@ -890,343 +687,9 @@ def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: P
 </robot>
 """
     )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="tilted"))
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load()))
     mass = UsdPhysics.MassAPI(_prim_by_link(stage, "base"))
     moments = tuple(mass.GetDiagonalInertiaAttr().Get())
     assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
     axes = mass.GetPrincipalAxesAttr().Get()
     assert axes is not None
-
-
-_REFERENCING_LAYER = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-def Xform "room"
-{
-    def Mesh "there" (
-        prepend references = @meshes/there.usdc@
-    )
-    {
-    }
-
-    def Mesh "pointer" (
-        prepend references = @meshes/pointer.usdc@
-    )
-    {
-    }
-
-    def Mesh "gone" (
-        prepend references = @meshes/gone.usdc@
-    )
-    {
-    }
-}
-"""
-
-
-def _referencing_layer(tmp_path: Path) -> Path:
-    meshes = tmp_path / "meshes"
-    meshes.mkdir()
-    (meshes / "there.usdc").write_bytes(b"not really a crate, but readable")
-    (meshes / "pointer.usdc").write_bytes(
-        b"version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
-    )
-    return tmp_path
-
-
-def test_unopenable_assets_separates_a_pointer_stub_from_a_missing_file(tmp_path: Path) -> None:
-    root = _referencing_layer(tmp_path)
-
-    unopenable = unopenable_assets(_REFERENCING_LAYER, root)
-
-    assert set(unopenable) == {"meshes/pointer.usdc", "meshes/gone.usdc"}
-    assert "Git LFS pointer" in unopenable["meshes/pointer.usdc"]
-    assert "No such file" in unopenable["meshes/gone.usdc"]
-
-
-def test_unopenable_assets_counts_every_relative_asset_when_no_root_was_given(
-    tmp_path: Path,
-) -> None:
-    _referencing_layer(tmp_path)
-
-    unopenable = unopenable_assets(_REFERENCING_LAYER, None)
-
-    assert set(unopenable) == {
-        "meshes/there.usdc",
-        "meshes/pointer.usdc",
-        "meshes/gone.usdc",
-    }
-    assert all("no asset root" in why for why in unopenable.values())
-
-
-def test_unopenable_assets_passes_a_layer_whose_every_reference_is_on_disk(
-    tmp_path: Path,
-) -> None:
-    root = _referencing_layer(tmp_path)
-    (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
-    (root / "meshes" / "gone.usdc").write_bytes(b"here now")
-
-    assert unopenable_assets(_REFERENCING_LAYER, root) == {}
-
-
-def test_describe_unopenable_assets_says_which_files_and_how_to_fetch_them(
-    tmp_path: Path,
-) -> None:
-    root = _referencing_layer(tmp_path)
-
-    message = describe_unopenable_assets(
-        unopenable_assets(_REFERENCING_LAYER, root), root, what="the office scene"
-    )
-
-    assert "the office scene names 2 asset(s)" in message
-    assert "meshes/pointer.usdc" in message
-    assert f'git lfs checkout "{root / "meshes"}"' in message
-
-
-def test_an_unfetched_pointer_is_refused_and_a_merely_missing_file_is_not(
-    tmp_path: Path,
-) -> None:
-    root = _referencing_layer(tmp_path)
-    unopenable = unopenable_assets(_REFERENCING_LAYER, root)
-
-    with pytest.raises(FileNotFoundError) as error:
-        require_fetched_assets(unopenable, root, what="the office scene")
-
-    message = str(error.value)
-    assert "names 1 asset(s)" in message, "only the pointer stub, not the missing file"
-    assert "meshes/pointer.usdc" in message
-    assert "meshes/gone.usdc" not in message
-    assert "GIT_LFS_SKIP_SMUDGE" in message
-
-    (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
-    require_fetched_assets(unopenable_assets(_REFERENCING_LAYER, root), root, what="the scene")
-
-
-_SCENE_WITH_ITS_OWN_SHADER = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-over "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (1, 0, 0)
-    }
-}
-
-def Xform "room"
-{
-}
-"""
-
-_SUBTREE_WITH_AN_OUTSIDE_SHADER = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-over "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (0, 1, 0)
-    }
-}
-
-def Xform "arm_sub"
-{
-    def Material "paint" (
-        prepend references = </Shared>
-    )
-    {
-    }
-}
-"""
-
-
-def test_a_grafted_subtree_keeps_its_own_shaders_when_the_scene_has_prims_by_the_same_name() -> (
-    None
-):
-    from pxr import Gf
-
-    stage = _stage(graft_usd(_SCENE_WITH_ITS_OWN_SHADER, {"room": _SUBTREE_WITH_AN_OUTSIDE_SHADER}))
-
-    surface = stage.GetPrimAtPath("/room/arm_sub/paint/Surface")
-    assert surface, "the grafted material composed no shader at all"
-    assert surface.GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(0.0, 1.0, 0.0), (
-        "the grafted subtree is wearing the scene's shader instead of its own: a converted "
-        "asset keeps its shader networks beside its default prim, and grafting left the "
-        "reference pointing at whatever owns that path in the scene"
-    )
-
-
-_SCENE_WIRED_BY_CONNECTION = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-def Scope "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (1, 0, 0)
-        token outputs:surface
-    }
-}
-
-def Xform "room"
-{
-}
-"""
-
-_SUBTREE_WIRED_BY_CONNECTION = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-def Scope "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (0, 1, 0)
-        token outputs:surface
-    }
-}
-
-def Xform "arm_sub"
-{
-    def Material "paint"
-    {
-        token outputs:surface.connect = </Shared/Surface.outputs:surface>
-    }
-}
-"""
-
-
-def test_a_grafted_material_wired_by_connection_keeps_its_own_shader() -> None:
-    """Not every asset wires its network through a reference; some connect straight to it."""
-    from pxr import Gf
-
-    stage = _stage(graft_usd(_SCENE_WIRED_BY_CONNECTION, {"room": _SUBTREE_WIRED_BY_CONNECTION}))
-
-    paint = stage.GetPrimAtPath("/room/arm_sub/paint").GetAttribute("outputs:surface")
-    connections = paint.GetConnections()
-    assert connections, "the grafted material lost its surface connection"
-    shader = stage.GetPrimAtPath(connections[0].GetPrimPath())
-    assert shader.GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(0.0, 1.0, 0.0), (
-        "the grafted subtree is wearing the scene's shader: its connection named a prim "
-        "beside the subtree, and grafting left the absolute path alone"
-    )
-
-
-_SUBTREE_WIRED_TO_WHAT_IT_DOES_NOT_STATE = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-def Xform "arm_sub"
-{
-    def Material "paint"
-    {
-        token outputs:surface.connect = </Flattened_Prototype_1.outputs:surface>
-    }
-}
-"""
-
-
-def test_a_graft_leaves_alone_a_connection_to_a_prim_the_layer_does_not_state() -> None:
-    """An instancing prototype is composed, not authored, so Sdf.CopySpec cannot carry it."""
-    grafted = graft_usd(
-        _SCENE_WIRED_BY_CONNECTION, {"room": _SUBTREE_WIRED_TO_WHAT_IT_DOES_NOT_STATE}
-    )
-
-    stage = _stage(grafted)
-    paint = stage.GetPrimAtPath("/room/arm_sub/paint").GetAttribute("outputs:surface")
-    assert [str(path) for path in paint.GetConnections()] == [
-        "/Flattened_Prototype_1.outputs:surface"
-    ]
-
-
-_SCENE_WITH_TWO_SHADERS = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-over "Shared"
-{
-    def Shader "Surface"
-    {
-        color3f inputs:diffuseColor = (1, 0, 0)
-    }
-}
-
-over "Deeper"
-{
-    def Shader "Underneath"
-    {
-        color3f inputs:diffuseColor = (1, 0, 0)
-    }
-}
-
-def Xform "room"
-{
-}
-"""
-
-_SUBTREE_REACHING_TWO_HOPS = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-over "Deeper"
-{
-    def Shader "Underneath"
-    {
-        color3f inputs:diffuseColor = (0, 0, 1)
-    }
-}
-
-over "Shared" (
-    prepend references = </Deeper>
-)
-{
-    def Shader "Surface"
-    {
-        color3f inputs:diffuseColor = (0, 1, 0)
-    }
-}
-
-def Xform "arm_sub"
-{
-    def Material "paint" (
-        prepend references = </Shared>
-    )
-    {
-    }
-}
-"""
-
-
-def test_carrying_a_referenced_prim_also_carries_what_that_prim_reaches() -> None:
-    from pxr import Gf
-
-    stage = _stage(graft_usd(_SCENE_WITH_TWO_SHADERS, {"room": _SUBTREE_REACHING_TWO_HOPS}))
-
-    paint = stage.GetPrimAtPath("/room/arm_sub/paint")
-    assert paint, "the grafted material is missing"
-    composed = paint.GetPrototype() if paint.IsInstance() else paint
-    shaders = {child.GetName(): child for child in composed.GetChildren()}
-    assert sorted(shaders) == ["Surface", "Underneath"], (
-        f"the second hop did not compose: got {sorted(shaders)}"
-    )
-    for name, expected in (("Surface", (0.0, 1.0, 0.0)), ("Underneath", (0.0, 0.0, 1.0))):
-        assert shaders[name].GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(*expected), (
-            f"{name} resolved to the scene's shader, so a prim carried over for the subtree "
-            f"kept an arc pointing at whatever owned that path in the scene"
-        )
