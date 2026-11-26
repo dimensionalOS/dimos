@@ -25,7 +25,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import TF, refuse_undeclared_edges
+from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -76,7 +76,11 @@ class TfModule(Module):
         publish = self.tf.publish
 
         def checked_publish(msg: TFMessage) -> None:
-            refuse_undeclared_edges(self.tf_edge_ids, self.tf_owner_name, msg.transforms)
+            for t in msg.transforms:
+                if (t.frame_id, t.child_frame_id) not in self.tf_edge_ids:
+                    raise ValueError(
+                        f"{self.tf_owner_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
+                    )
             publish(msg)
 
         self.tf.publish = checked_publish  # type: ignore[method-assign]
