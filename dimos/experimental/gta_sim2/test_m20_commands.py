@@ -91,3 +91,21 @@ def test_stop_duplicate_and_motor_contract(
     imu.ts = 0.14
     with pytest.raises(ValueError, match="matching, monotonic"):
         module.compute(joints, imu)
+    module.move(Twist(linear=Vector3(1.5, 0, 0)), duration=10)
+    for index in range(40):
+        joints.ts = imu.ts = 0.14 + index * 0.02
+        module.compute(joints, imu)
+    np.testing.assert_allclose(module.status()["policy_velocity"], [1.5, 0, 0])
+    ramp = np.array([row[0, 6] for row in session.inputs[-40:]])
+    assert np.max(np.diff(ramp)) <= 0.040001
+    module.move(Twist(), duration=10)
+    joints.ts = imu.ts = 0.94
+    braking = module.compute(joints, imu)
+    np.testing.assert_allclose(module.status()["policy_velocity"], [1.46, 0, 0])
+    braking_kp = next(c.values for c in braking.joint_commands if c.interface_name == "kp")
+    np.testing.assert_array_equal(braking_kp[12:], 0)
+    for index in range(38):
+        joints.ts = imu.ts = 0.96 + index * 0.02
+        module.compute(joints, imu)
+    assert module.status()["mode"] == "stand"
+    np.testing.assert_allclose(module.status()["policy_velocity"], 0, atol=1e-8)

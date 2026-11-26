@@ -64,6 +64,7 @@ class M20PolicyConfig(SceneConfig):
     profile: Profile = "sdk57"
     period_ns: int = 20_000_000
     command_ttl_ns: int = 100_000_000
+    command_acceleration: tuple[float, float, float] = (2.0, 1.0, 2.0)
 
 
 class M20PolicyModule(Module):
@@ -79,6 +80,7 @@ class M20PolicyModule(Module):
         self._lock = threading.RLock()
         self._actor: M20Actor | None = None
         self._velocity = np.zeros(3)
+        self._applied_velocity = np.zeros(3)
         self._until = 0.0
         self._identity = -1
         self._joints: dict[int, JointState] = {}
@@ -97,6 +99,11 @@ class M20PolicyModule(Module):
             or self.config.command_ttl_ns < self.config.period_ns
         ):
             raise ValueError("M20 policy requires 50 Hz and a TTL covering one period")
+        if (
+            not np.isfinite(self.config.command_acceleration).all()
+            or min(self.config.command_acceleration) <= 0
+        ):
+            raise ValueError("Command acceleration limits must be finite and positive")
         scene = self.config.scene
         if not isinstance(scene, UsdModel):
             raise TypeError("M20 requires its composed USD scene")
@@ -170,7 +177,11 @@ class M20PolicyModule(Module):
                 .apply([0, 0, -1])
             )
             velocity = self._velocity if time.monotonic() < self._until else np.zeros(3)
-            standing = bool(np.max(np.abs(velocity)) < 1e-6)
+            # A hard wheel-position latch at road speed pitches the body down.
+            # Decelerate through the actor first, on measured simulation ticks.
+            delta = np.asarray(self.config.command_acceleration) * self.config.period_ns / 1e9
+            self._applied_velocity += np.clip(velocity - self._applied_velocity, -delta, delta)
+            standing = bool(np.max(np.abs(self._applied_velocity)) < 1e-6)
             if standing:
                 if not self._standing:
                     self._actor.reset()
@@ -184,7 +195,7 @@ class M20PolicyModule(Module):
                     np.asarray(joints.velocity)[order],
                     np.array([gyro.x, gyro.y, gyro.z]),
                     gravity,
-                    velocity,
+                    self._applied_velocity,
                 )
                 self._inferences += 1
             self._standing = standing
@@ -239,6 +250,7 @@ class M20PolicyModule(Module):
                 "active": self._actor is not None,
                 "contract": self.config.profile,
                 "mode": "stand" if self._standing else "policy",
+                "policy_velocity": self._applied_velocity.tolist(),
             }
 
     @rpc
@@ -247,6 +259,7 @@ class M20PolicyModule(Module):
         with self._lock:
             self._actor = None
             self._velocity.fill(0)
+            self._applied_velocity.fill(0)
 
 
 def m20_blueprint(scene_path: Path, policy_path: Path, profile: Profile = "sdk57") -> MetaBlueprint:
