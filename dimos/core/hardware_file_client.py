@@ -42,6 +42,8 @@ HARDWARE_FILES_CACHE = CACHE_DIR / "hardware_files"
 
 def fetch_hardware_files(namespace: str, cache: Path = HARDWARE_FILES_CACHE) -> Path:
     """The local ``hardware.usda`` of the HardwareModule in ``namespace``, with every file it reaches beside it."""
+    # Absolute, since each link in the tree points at its kept file by this path.
+    cache = cache.resolve()
     request_topic, response_topic = hardware_file_topics(namespace)
     requests = make_transport(request_topic, FileInfo)
     responses = make_transport(response_topic, FileInfo)
@@ -57,7 +59,7 @@ def fetch_hardware_files(namespace: str, cache: Path = HARDWARE_FILES_CACHE) -> 
                     f"the HardwareModule in {namespace!r} cannot provide its USD here"
                 )
             stored = _store(cache, usd)
-            _fetch_named(asking, cache, stored.parent, HARDWARE_USD, stored)
+            _fetch_named(asking, cache, stored.parent, HARDWARE_USD, stored, {HARDWARE_USD})
             return stored
         finally:
             unsubscribe()
@@ -146,8 +148,10 @@ def _held(tree: Path, uri: str) -> str | None:
     return held if is_asset_hash(held) else None
 
 
-def _fetch_named(asking: _Asking, cache: Path, tree: Path, uri: str, stored: Path) -> None:
-    """Fetch what the layer at ``uri`` names that is not kept yet, link it into the tree, and do the same for each layer among it."""
+def _fetch_named(
+    asking: _Asking, cache: Path, tree: Path, uri: str, stored: Path, visited: set[str]
+) -> None:
+    """Fetch what the layer at ``uri`` names that is not kept yet, link it into the tree, and do the same for each layer among it not yet ``visited``."""
     pxr = load_pxr()
     if pxr.Sdf.FileFormat.FindByExtension(Path(uri).suffix[1:]) is None:
         return
@@ -161,6 +165,9 @@ def _fetch_named(asking: _Asking, cache: Path, tree: Path, uri: str, stored: Pat
         if not is_relative_uri(reached):
             logger.warning(f"{uri!r} names {name!r}, which is not relative to the module")
             continue
+        if reached in visited:
+            continue
+        visited.add(reached)
         named[reached] = sha256
     kept = {
         reached: cache / _hex(sha256) / posixpath.basename(reached)
@@ -177,7 +184,7 @@ def _fetch_named(asking: _Asking, cache: Path, tree: Path, uri: str, stored: Pat
         kept[reached] = _store(cache, reply)
     for reached, kept_at in kept.items():
         _link(tree, reached, kept_at)
-        _fetch_named(asking, cache, tree, reached, kept_at)
+        _fetch_named(asking, cache, tree, reached, kept_at, visited)
 
 
 def _named_files(usd: str) -> dict[str, str | None]:
