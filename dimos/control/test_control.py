@@ -27,16 +27,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareType,
-    make_joints,
-)
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.hardware_interface import (
-    ConnectedHardware,
-    ConnectedWholeBody,
-)
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -44,10 +35,6 @@ from dimos.control.task import (
     JointCommandOutput,
     JointStateSnapshot,
     ResourceClaim,
-)
-from dimos.control.tasks.gripper_task.gripper_task import (
-    GripperControlTask,
-    GripperControlTaskConfig,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
@@ -59,40 +46,12 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
-
-
-@pytest.fixture
-def mock_adapter():
-    """Create a mock manipulator adapter."""
-    adapter = MagicMock(spec=ManipulatorAdapter)
-    adapter.get_dof.return_value = 6
-    adapter.read_joint_positions.return_value = [0.0] * 6
-    adapter.read_joint_velocities.return_value = [0.0] * 6
-    adapter.read_joint_efforts.return_value = [0.0] * 6
-    adapter.write_joint_positions.return_value = True
-    adapter.write_joint_velocities.return_value = True
-    adapter.set_control_mode.return_value = True
-    return adapter
-
-
-@pytest.fixture
-def connected_hardware(mock_adapter):
-    """Create a ConnectedHardware instance with mock adapter."""
-    component = HardwareComponent(
-        hardware_id="test_arm",
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints("arm", 6),
-    )
-    return ConnectedHardware(adapter=mock_adapter, component=component)
 
 
 @pytest.fixture
@@ -201,113 +160,6 @@ class TestJointStateSnapshot:
         assert snapshot.get_position("nonexistent") is None
 
 
-class TestConnectedHardware:
-    def test_configured_limits_override_adapter_limits(self, mock_adapter):
-        configured = JointLimits(
-            position_lower=[0.0],
-            position_upper=[1.0],
-            velocity_max=[2.0],
-        )
-        component = HardwareComponent(
-            hardware_id="gripper",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=["gripper/finger"],
-            limits=configured,
-        )
-        hardware = ConnectedHardware(mock_adapter, component)
-
-        assert hardware.get_limits() is configured
-        mock_adapter.get_limits.assert_not_called()
-
-    def test_adapter_limits_are_used_when_not_configured(self, connected_hardware, mock_adapter):
-        reported = JointLimits(
-            position_lower=[-1.0] * 6,
-            position_upper=[1.0] * 6,
-            velocity_max=[2.0] * 6,
-        )
-        mock_adapter.get_limits.return_value = reported
-
-        assert connected_hardware.get_limits() is reported
-        mock_adapter.get_limits.assert_called_once_with()
-
-    def test_gripper_rides_the_one_array_without_conversion(self, mock_adapter):
-        mock_adapter.read_joint_positions.return_value = [0.0] * 6 + [0.035]
-        mock_adapter.read_joint_velocities.return_value = [0.0] * 7
-        mock_adapter.read_joint_efforts.return_value = [0.0] * 7
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=[*make_joints("arm", 6), "arm/gripper"],
-        )
-        hardware = ConnectedHardware(mock_adapter, component)
-
-        # Read: the adapter's value, verbatim — not remapped to a fraction.
-        assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.035)
-
-        # Write: one call carrying arm and gripper, gripper value untouched.
-        assert hardware.write_command({"arm/gripper": 0.07}, ControlMode.POSITION)
-        mock_adapter.write_joint_positions.assert_called_once_with([0.0] * 6 + [0.07])
-
-        # Velocity commands use the same complete joint order and zero omitted joints.
-        assert hardware.write_command({"arm/joint1": 0.5}, ControlMode.VELOCITY)
-        mock_adapter.write_joint_velocities.assert_called_once_with([0.5] + [0.0] * 6)
-
-    def test_joint_names_prefixed(self, connected_hardware):
-        names = connected_hardware.joint_names
-        assert names == [
-            "arm/joint1",
-            "arm/joint2",
-            "arm/joint3",
-            "arm/joint4",
-            "arm/joint5",
-            "arm/joint6",
-        ]
-
-    def test_read_state(self, connected_hardware):
-        state = connected_hardware.read_state()
-        assert "arm/joint1" in state
-        assert len(state) == 6
-        joint_state = state["arm/joint1"]
-        assert joint_state.position == 0.0
-        assert joint_state.velocity == 0.0
-        assert joint_state.effort == 0.0
-
-    def test_write_command(self, connected_hardware, mock_adapter):
-        commands = {
-            "arm/joint1": 0.5,
-            "arm/joint2": 1.0,
-        }
-        connected_hardware.write_command(commands, ControlMode.POSITION)
-        mock_adapter.write_joint_positions.assert_called()
-
-
-class TestConnectedWholeBody:
-    def test_partial_commands_retain_last_targets_for_omitted_joints(self) -> None:
-        adapter = MagicMock()
-        adapter.has_motor_states.return_value = True
-        adapter.read_motor_states.return_value = [
-            MotorState(q=0.1),
-            MotorState(q=0.2),
-            MotorState(q=0.3),
-        ]
-        adapter.write_motor_commands.return_value = True
-        hardware = ConnectedWholeBody(
-            adapter,
-            HardwareComponent(
-                hardware_id="robot",
-                hardware_type=HardwareType.WHOLE_BODY,
-                joints=["robot/leg", "robot/waist", "robot/arm"],
-            ),
-        )
-
-        assert hardware.write_command({"robot/arm": 0.8}, ControlMode.SERVO_POSITION)
-        assert hardware.write_command({"robot/leg": -0.4}, ControlMode.SERVO_POSITION)
-
-        commands = adapter.write_motor_commands.call_args.args[0]
-        assert [command.q for command in commands] == [-0.4, 0.2, 0.8]
-        assert [command.kp for command in commands] == [40.0, 40.0, 40.0]
-
-
 @pytest.fixture
 def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
     """Factory for real coordinators, all stopped on teardown."""
@@ -413,69 +265,6 @@ class TestControlCoordinatorLifecycle:
         assert coordinator.reset_runtime_state(reactivate=True) == {"resettable": True}
         assert task.reset_reactivate_args == [True]
 
-    def test_start_stop_calls_adapter_activate_and_deactivate(self):
-        from dimos.hardware.manipulators.mock.adapter import MockAdapter
-        from dimos.hardware.manipulators.registry import adapter_registry
-
-        class LifecycleAdapter(MockAdapter):
-            events: list[str] = []
-
-            def connect(self) -> bool:
-                self.events.append("connect")
-                return super().connect()
-
-            def activate(self) -> bool:
-                self.events.append("activate")
-                return self.write_enable(True)
-
-            def deactivate(self) -> bool:
-                self.events.append("deactivate")
-                return self.write_stop()
-
-            def disconnect(self) -> None:
-                self.events.append("disconnect")
-                super().disconnect()
-
-        adapter_registry.register("lifecycle_test", LifecycleAdapter)
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            adapter_type="lifecycle_test",
-        )
-        coordinator = ControlCoordinator(publish_joint_state=False, hardware=[component])
-
-        try:
-            coordinator.start()
-        finally:
-            coordinator.stop()
-
-        assert LifecycleAdapter.events == ["connect", "activate", "deactivate", "disconnect"]
-
-    def test_start_stop_with_adapter_without_lifecycle_methods(self):
-        """Adapters without activate/deactivate (e.g. twist bases) start and stop cleanly."""
-        from dimos.control.components import make_twist_base_joints
-
-        component = HardwareComponent(
-            hardware_id="base",
-            hardware_type=HardwareType.BASE,
-            joints=make_twist_base_joints("base"),
-            adapter_type="mock_twist_base",
-        )
-        coordinator = ControlCoordinator(publish_joint_state=False, hardware=[component])
-
-        try:
-            coordinator.start()
-            adapter = coordinator._hardware["base"].adapter
-            assert not hasattr(adapter, "activate")
-            assert not hasattr(adapter, "deactivate")
-            # auto_enable falls back to write_enable(True) for adapters without activate()
-            assert adapter.read_enabled()
-        finally:
-            coordinator.stop()
-
-        assert not adapter.is_connected()
-
 
 class TestControlCoordinatorTrajectoryExecution:
     def test_trajectory_config_requires_canonical_name(self, make_coordinator):
@@ -520,96 +309,6 @@ class TestControlCoordinatorTrajectoryExecution:
 
         assert execute_result.status is TrajectoryExecutionStatus.NO_TRAJECTORY_TASK
         assert cancel_result.status is TrajectoryCancellationStatus.NO_TRAJECTORY_TASK
-
-    def test_execute_uses_tick_snapshot_without_polling_hardware(
-        self,
-        make_coordinator,
-        connected_hardware,
-        mock_adapter,
-        trajectory_task,
-        simple_trajectory,
-        mocker,
-    ):
-        mocker.patch.object(TickLoop, "start")
-        coordinator = make_coordinator()
-        mock_adapter.read_joint_positions.return_value = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]
-        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
-        coordinator.add_task(trajectory_task, task_type="trajectory")
-
-        coordinator.start()
-        assert coordinator.get_joint_positions() == {}
-        assert (
-            coordinator.execute_trajectory(simple_trajectory).status
-            is TrajectoryExecutionStatus.START_STATE_UNAVAILABLE
-        )
-        coordinator._tick_loop._tick()
-        mock_adapter.read_joint_positions.reset_mock()
-        mock_adapter.read_joint_positions.return_value = [0.0] * 6
-
-        assert coordinator.get_joint_positions()["arm/joint1"] == 0.1
-        result = coordinator.execute_trajectory(simple_trajectory)
-        mock_adapter.read_joint_positions.assert_not_called()
-
-        assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
-        assert "arm/joint1" in result.message
-        assert not trajectory_task.is_active()
-
-    def test_estop_stops_a_running_trajectory_on_adapter_hardware(
-        self,
-        make_coordinator,
-        connected_hardware,
-        mock_adapter,
-        trajectory_task,
-        simple_trajectory,
-        mocker,
-    ):
-        mocker.patch.object(TickLoop, "start")
-        coordinator = make_coordinator()
-        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
-        coordinator.add_task(trajectory_task, task_type="trajectory")
-        coordinator.start()
-        tick = coordinator._tick_loop._tick
-        tick()
-        accepted = coordinator.execute_trajectory(simple_trajectory)
-        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
-        tick()
-        assert mock_adapter.write_joint_positions.called
-        mock_adapter.write_joint_positions.reset_mock()
-
-        assert coordinator.set_estop(True)
-        tick()
-        mock_adapter.write_joint_positions.assert_not_called()
-        refused = coordinator.execute_trajectory(simple_trajectory)
-        assert refused.status is TrajectoryExecutionStatus.ESTOPPED
-
-        # Clearing does not resume the cancelled trajectory.
-        assert coordinator.set_estop(False)
-        tick()
-        mock_adapter.write_joint_positions.assert_not_called()
-        assert not trajectory_task.is_active()
-
-    def test_a_task_added_during_an_estop_is_stopped_too(
-        self,
-        make_coordinator,
-        connected_hardware,
-        trajectory_task,
-        simple_trajectory,
-        mocker,
-    ):
-        mocker.patch.object(TickLoop, "start")
-        coordinator = make_coordinator()
-        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
-        assert coordinator.set_estop(True)
-
-        coordinator.add_task(trajectory_task, task_type="trajectory")
-
-        refused = coordinator.execute_trajectory(simple_trajectory)
-        assert refused.status is TrajectoryExecutionStatus.ESTOPPED
-        assert coordinator.set_estop(False)
-        coordinator.start()
-        coordinator._tick_loop._tick()
-        accepted = coordinator.execute_trajectory(simple_trajectory)
-        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
 
     def test_cancel_waits_for_submission_and_leaves_no_active_trajectory(
         self, make_coordinator, trajectory_task, simple_trajectory, mocker
@@ -1227,252 +926,23 @@ class TestArbitration:
 
 
 class TestTickLoop:
-    def test_unready_whole_body_is_excluded_from_read_and_write(self, mocker):
-        adapter = MagicMock(spec=WholeBodyAdapter)
-        adapter.has_motor_states.return_value = False
-        component = HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=["g1/joint1"],
-        )
-        hardware = ConnectedWholeBody(adapter, component)
-        log_error = mocker.patch("dimos.control.tick_loop.logger.error")
+    def test_tick_loop_runs_active_tasks_until_stopped(self, wait_until):
+        task = MagicMock()
+        task.name = "test_task"
+        task.is_active.return_value = True
+        task.claim.return_value = ResourceClaim(joints=frozenset({"arm/joint1"}), priority=10)
+        task.compute.return_value = None
         tick_loop = TickLoop(
             tick_rate=100.0,
-            hardware={"g1": hardware},
             hardware_lock=threading.Lock(),
-            tasks={},
+            tasks={"test_task": task},
             task_lock=threading.Lock(),
-            joint_to_hardware={"g1/joint1": "g1"},
-        )
-
-        state, per_hardware = tick_loop._read_all_hardware()
-        imu = tick_loop._read_all_imu()
-        tick_loop._write_all_hardware({"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)})
-
-        assert state.joint_positions == {}
-        assert per_hardware == {}
-        assert imu == {}
-        adapter.read_motor_states.assert_not_called()
-        adapter.read_imu.assert_not_called()
-        adapter.write_motor_commands.assert_not_called()
-        log_error.assert_not_called()
-
-    def test_ready_whole_body_reads_and_writes(self):
-        adapter = MagicMock(spec=WholeBodyAdapter)
-        adapter.has_motor_states.return_value = True
-        adapter.read_motor_states.return_value = [MotorState(q=0.5, dq=0.1, tau=0.2)]
-        adapter.write_motor_commands.return_value = True
-        component = HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=["g1/joint1"],
-        )
-        hardware = ConnectedWholeBody(adapter, component)
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware={"g1": hardware},
-            hardware_lock=threading.Lock(),
-            tasks={},
-            task_lock=threading.Lock(),
-            joint_to_hardware={"g1/joint1": "g1"},
-        )
-
-        state, _per_hardware = tick_loop._read_all_hardware()
-        tick_loop._write_all_hardware({"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)})
-
-        assert state.joint_positions == {"g1/joint1": 0.5}
-        adapter.write_motor_commands.assert_called_once()
-
-    def test_partial_trajectory_and_gripper_command_share_hardware_write(self, mocker):
-        joint_names = ["arm/joint1", "arm/joint2", "arm/gripper"]
-        adapter = mocker.Mock(spec=ManipulatorAdapter)
-        adapter.read_joint_positions.return_value = [0.0, 0.0, 0.0]
-        adapter.read_joint_velocities.return_value = [0.0, 0.0, 0.0]
-        adapter.read_joint_efforts.return_value = [0.0, 0.0, 0.0]
-        adapter.set_control_mode.return_value = True
-        adapter.write_joint_positions.return_value = True
-        hardware = ConnectedHardware(
-            adapter,
-            HardwareComponent(
-                hardware_id="arm",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=joint_names,
-            ),
-        )
-        trajectory_task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=joint_names))
-        gripper_task = GripperControlTask(
-            "gripper",
-            GripperControlTaskConfig(joint_names=["arm/gripper"]),
-            limits=[(0.0, 1.0)],
-        )
-        trajectory = JointTrajectory(
-            joint_names=["arm/joint1", "arm/joint2"],
-            points=[
-                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[0.5, 0.5], velocities=[0.0, 0.0], time_from_start=1.0),
-            ],
-        )
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware={"arm": hardware},
-            hardware_lock=threading.Lock(),
-            tasks={trajectory_task.name: trajectory_task, "gripper": gripper_task},
-            task_lock=threading.Lock(),
-            joint_to_hardware=dict.fromkeys(joint_names, "arm"),
-        )
-
-        assert (
-            trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
-            is TrajectoryExecutionStatus.ACCEPTED
-        )
-        assert gripper_task.set_position([0.75])
-        tick_loop._tick()
-
-        adapter.write_joint_positions.assert_called_once_with([0.0, 0.0, 0.75])
-
-    def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-        )
-        hw = ConnectedHardware(mock_adapter, component)
-        hardware = {"arm": hw}
-        tasks: dict = {}
-        joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
-
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware=hardware,
-            hardware_lock=threading.Lock(),
-            tasks=tasks,
-            task_lock=threading.Lock(),
-            joint_to_hardware=joint_to_hardware,
+            joint_to_hardware={},
         )
 
         tick_loop.start()
-        wait_until(lambda: tick_loop.tick_count > 0, timeout=5.0, interval=0.01)
-
-        tick_loop.stop()
-        final_count = tick_loop.tick_count
-        time.sleep(0.02)
-        assert tick_loop.tick_count == final_count
-
-    def test_tick_loop_calls_compute(self, mock_adapter, wait_until):
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-        )
-        hw = ConnectedHardware(mock_adapter, component)
-        hardware = {"arm": hw}
-
-        mock_task = MagicMock()
-        mock_task.name = "test_task"
-        mock_task.is_active.return_value = True
-        mock_task.claim.return_value = ResourceClaim(
-            joints=frozenset({"arm/joint1"}),
-            priority=10,
-        )
-        mock_task.compute.return_value = JointCommandOutput(
-            joint_names=["arm/joint1"],
-            positions=[0.5],
-            mode=ControlMode.POSITION,
-        )
-
-        tasks = {"test_task": mock_task}
-        joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
-
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware=hardware,
-            hardware_lock=threading.Lock(),
-            tasks=tasks,
-            task_lock=threading.Lock(),
-            joint_to_hardware=joint_to_hardware,
-        )
-
-        tick_loop.start()
-        wait_until(lambda: mock_task.compute.call_count > 0, timeout=5.0, interval=0.01)
+        wait_until(lambda: task.compute.call_count > 0, timeout=5.0, interval=0.01)
         tick_loop.stop()
 
-        assert mock_task.compute.call_count > 0
-
-    def test_write_all_hardware_rejected_command_logs_error(self, mocker):
-        hardware = {"arm": MagicMock()}
-        hardware["arm"].write_command.return_value = False
-        log_error = mocker.patch("dimos.control.tick_loop.logger.error")
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware=hardware,
-            hardware_lock=threading.Lock(),
-            tasks={},
-            task_lock=threading.Lock(),
-            joint_to_hardware={"arm/joint1": "arm"},
-        )
-
-        tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)})
-
-        log_error.assert_called_once_with(
-            "Hardware arm rejected SERVO_POSITION command from control task"
-        )
-
-
-class TestIntegration:
-    def test_full_trajectory_execution(self, mock_adapter, wait_until):
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-        )
-        hw = ConnectedHardware(mock_adapter, component)
-        hardware = {"arm": hw}
-
-        config = JointTrajectoryTaskConfig(
-            joint_names=[f"arm/joint{i + 1}" for i in range(6)],
-            priority=10,
-        )
-        traj_task = JointTrajectoryTask(config=config)
-        tasks = {JOINT_TRAJECTORY_TASK_NAME: traj_task}
-
-        joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
-
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware=hardware,
-            hardware_lock=threading.Lock(),
-            tasks=tasks,
-            task_lock=threading.Lock(),
-            joint_to_hardware=joint_to_hardware,
-        )
-
-        trajectory = JointTrajectory(
-            joint_names=[f"arm/joint{i + 1}" for i in range(6)],
-            points=[
-                TrajectoryPoint(
-                    positions=[0.0] * 6,
-                    velocities=[0.0] * 6,
-                    time_from_start=0.0,
-                ),
-                TrajectoryPoint(
-                    positions=[0.5] * 6,
-                    velocities=[0.0] * 6,
-                    time_from_start=0.5,
-                ),
-            ],
-        )
-
-        tick_loop.start()
-        try:
-            traj_task.execute(trajectory, trajectory_start_positions(trajectory))
-            wait_until(
-                lambda: traj_task.get_state() == TrajectoryState.COMPLETED,
-                timeout=5.0,
-                interval=0.01,
-            )
-        finally:
-            tick_loop.stop()
-
-        assert traj_task.get_state() == TrajectoryState.COMPLETED
-        assert mock_adapter.write_joint_positions.call_count > 0
+        assert not tick_loop.is_running
+        assert tick_loop._tick_thread is not None and not tick_loop._tick_thread.is_alive()

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import threading
 from typing import TYPE_CHECKING
 
@@ -36,7 +35,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
-    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
 
 
 @attrs.frozen(slots=False)
@@ -126,7 +124,6 @@ class CartesianIKTaskParams(PoseTargetIKTaskParams):
 
 def create_task(
     cfg: TaskConfig,
-    hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
 ) -> CartesianIKTask:
     """Create an absolute Cartesian Pink task from a registry configuration."""
     params = CartesianIKTaskParams.model_validate(cfg.params)

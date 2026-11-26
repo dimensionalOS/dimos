@@ -31,6 +31,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.sim2.description import scene_revision
 from dimos.sim2.geometry.mujoco import build_scene
 from dimos.sim2.geometry.query import MujocoGeometry
 from dimos.sim2.sensors.camera.config import CameraConfig
@@ -107,7 +108,7 @@ class _NativeMujocoRenderer:
                 # decreasing pixel coordinates on both axes.
                 principal_pixel=[camera.width / 2 - camera.cx, camera.height / 2 - camera.cy],
             )
-        self.geometry = MujocoGeometry(spec.compile(), scene.revision)
+        self.geometry = MujocoGeometry(spec.compile(), scene_revision(scene))
         self.geometry.select_surfaces()
         if not {c.frame_id for c in cameras} <= set(self.geometry.body_ids):
             raise ValueError("camera frames must exist in the composed USD scene")

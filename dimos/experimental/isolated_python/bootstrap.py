@@ -36,8 +36,7 @@ def load_class(reference: str) -> type[Any]:
     try:
         if not entry_point.module or not entry_point.attr:
             raise ValueError(f"Invalid import reference {reference!r}; use module:Class")
-    # TODO(PY313): Remove AttributeError
-    except (AttributeError, AssertionError) as error:
+    except AttributeError as error:
         raise ValueError(f"Invalid import reference {reference!r}; use module:Class") from error
 
     value = entry_point.load()
@@ -94,6 +93,9 @@ def main(
         validate_runtime(declaration_class, runtime_class)
         kwargs = decode(sys.stdin.buffer.read())
         kwargs["instance_name"] = instance_name
+        # The child serves the private address passed by its parent. The config
+        # it inherits contains the public address of the worker-side module.
+        kwargs["rpc_name"] = instance_name
         module = runtime_class(_isolated_python_runtime=True, **kwargs)
         os.write(handshake_fd, b"READY\n")
     except Exception as error:

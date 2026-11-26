@@ -18,7 +18,7 @@ from typing import NoReturn
 
 import typer
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.external_blueprints import (
     ExternalBlueprintError,
@@ -58,7 +58,7 @@ def _raise_unknown(name: str, candidates: list[str]) -> NoReturn:
     raise ValueError(msg)
 
 
-def get_blueprint_by_name(name: str) -> Blueprint:
+def get_blueprint_by_name(name: str) -> Blueprint | MetaBlueprint:
     if name not in all_blueprints:
         _raise_unknown(name, list(all_blueprints.keys()))
     module_path, attr = all_blueprints[name].split(":")
@@ -66,7 +66,7 @@ def get_blueprint_by_name(name: str) -> Blueprint:
     return getattr(module, attr)  # type: ignore[no-any-return]
 
 
-def load_blueprint(name: str) -> Blueprint:
+def load_blueprint(name: str) -> Blueprint | MetaBlueprint:
     """The named blueprint. Raises OptionalDependencyError when its extras are absent."""
     try:
         return get_blueprint_by_name(name)
@@ -89,7 +89,7 @@ def get_module_by_name(name: str) -> Blueprint:
     return getattr(python_module, class_name).blueprint()  # type: ignore[no-any-return]
 
 
-def get_by_name(name: str) -> Blueprint:
+def get_by_name(name: str) -> Blueprint | MetaBlueprint:
     if name in all_blueprints:
         return get_blueprint_by_name(name)
     elif name in all_modules:
@@ -115,7 +115,7 @@ def _exit_with_error(message: str) -> NoReturn:
     raise typer.Exit(1)
 
 
-def get_by_name_or_exit(name: str) -> Blueprint:
+def get_by_name_or_exit(name: str) -> Blueprint | MetaBlueprint:
     if name in all_blueprints:
         return get_blueprint_by_name(name)
     elif name in all_modules:

@@ -127,19 +127,20 @@ uv run dimos --viewer none --replay run unitree-go2
 uv run dimos rerun-bridge --rerun-open web
 ```
 
-Expected result: the first run opens the web viewer at http://localhost:9878. The headless run opens no viewer and logs the `.rrd` path, which `rerun` plays back. The standalone bridge shows the streams of the run started with `--viewer none`.
+Expected result: the first run opens the web viewer at http://localhost:9878. To open it by hand, use the full URL from the `Rerun web viewer ready at` log line, because the bare address shows a viewer with no data. The headless run opens no viewer and logs the `.rrd` path, which `rerun` plays back. The standalone bridge shows the streams of the run started with `--viewer none`.
 
 ## 5.9 Blueprint graph and docs site
 
-Needs Graphviz.
+Needs Graphviz. The docs images are stored in Git LFS, and a checkout cloned with `GIT_LFS_SKIP_SMUDGE=1` has only pointer files for them. The `git lfs pull` line fetches them (about 75 MB).
 
 ```bash
 uv run dimos graph unitree-go2-agentic --rpc --output /tmp/go2-agentic.svg
 uv sync --group docs --inexact
+git lfs pull --include="docs/**,assets/readme/**" --exclude=""
 uv run dimos docs
 ```
 
-Expected result: `graph` writes an SVG with the modules grouped by package, their stream channels and the RPC contracts between them. `dimos docs` serves the docs site at http://127.0.0.1:8000 with navigation and search.
+Expected result: `graph` writes an SVG with the modules grouped by package, their stream channels and the RPC contracts between them. `dimos docs` serves the docs site at http://127.0.0.1:8000 with navigation, search and images that load.
 
 ## 5.10 Host daemon
 
@@ -153,7 +154,7 @@ uv run dimos host describe lab
 uv run dimos host ls
 ```
 
-Expected result: `doctor` passes every check but two. Reachability warns because the Host listens only on loopback, and the systemd unit check fails because only `dimos host install` sets it up. `ls` shows `lab` with the `release-test` tag next to the detected ones such as `arch` and `ram_gb`. `describe lab` prints its Host ID, name, tags, revision and runs. After Ctrl+C on `start`, `ls` prints "No dimos Hosts answered".
+Expected result: `doctor` prints `OK` for every check but four. Reachability warns because the Host listens only on loopback, the systemd unit check fails because only `dimos host install` sets it up, and the two checks that depend on that unit are skipped. `ls` shows `lab` with the `release-test` tag next to the detected ones such as `arch` and `ram_gb`. `describe lab` prints its Host ID, name, tags, revision and runs. After Ctrl+C on `start`, `ls` prints "No dimos Hosts answered".
 
 ## 5.11 Native module examples
 
@@ -215,4 +216,4 @@ uv run dimos logout
 
 * Open https://console.dimensional.org and find the upload with its map, path and camera previews.
 
-Expected result: login prints a code and a URL, and after approval names the account, which `whoami` repeats. The upload prints `memory.db: complete (<id>)` and `console preview: sent`. `data ls` opens a browser that lists it (q quits). `pull` prints `pulled to /tmp/pulled.db`, and `logout` signs out.
+Expected result: login prints a code and a URL, and after approval names the account, which `whoami` repeats. The upload prints `memory.db: complete (<id>)` and `console preview: sent`. `data ls` opens an interactive list in the terminal that shows it (q quits). `pull` prints `pulled to /tmp/pulled.db`, and `logout` signs out.

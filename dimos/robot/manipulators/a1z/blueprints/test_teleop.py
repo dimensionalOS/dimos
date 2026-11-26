@@ -21,7 +21,7 @@ from dimos.teleop.webxr.blueprints import teleop_webxr_a1z
 
 
 def test_webxr_left_controller_moves_the_gripper_end_through_the_connection() -> None:
-    modules = {atom.module: atom.kwargs for atom in teleop_webxr_a1z.blueprints}
+    modules = {atom.module: atom.kwargs for atom in teleop_webxr_a1z.solidify().blueprints}
     tasks = cast("list[TaskConfig]", modules[A1ZWebXRCoordinator]["tasks"])
     teleop = next(task for task in tasks if task.type == "teleop_ik")
     gripper = next(task for task in tasks if task.type == "gripper")
@@ -30,7 +30,7 @@ def test_webxr_left_controller_moves_the_gripper_end_through_the_connection() ->
     assert teleop.joint_names == [f"arm/arm_joint{i}" for i in range(1, 7)]
     assert teleop.params["bindings"] == [{"hand": "left", "target_frame": "gripper_eef_link"}]
     assert gripper.stream_bind == {"gripper_command": "left_gripper_command"}
-    assert teleop_webxr_a1z.remapping_map == {
+    assert teleop_webxr_a1z.solidify().remapping_map == {
         ("armteleopmodule", "left_controller_output"): "left_cartesian_command",
         ("armteleopmodule", "left_gripper_command"): "left_gripper_command",
         ("a1zconnection", "position_command"): "arm_position_command",

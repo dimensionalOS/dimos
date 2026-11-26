@@ -91,6 +91,23 @@ def test_the_scan_survives_a_restart_and_says_when_the_checkout_changed(
     assert after.snapshot()["stale"] and catalog.modules(after.cache())[0]["name"] == "cam"
 
 
+def test_the_fingerprint_notices_a_second_edit_of_a_modified_file(tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        identity = ("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false")
+        subprocess.run(["git", "-C", str(tmp_path), *identity, *args], check=True)
+
+    git("init", "-q")
+    source = tmp_path / "blueprint.py"
+    source.write_text("x = 1\n")
+    git("add", "blueprint.py")
+    git("commit", "-q", "--no-verify", "-m", "first")
+    # git status then starts with ` M blueprint.py`, whose leading space is part of the line
+    source.write_text("x = 2\n")
+    edited = discovery.fingerprint(tmp_path)
+    source.write_text("x = 3\n")
+    assert discovery.fingerprint(tmp_path) != edited
+
+
 def test_a_child_dying_right_after_a_record_still_scans_the_rest(
     client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -317,6 +334,58 @@ def test_only_the_latest_finished_job_of_each_kind_is_kept() -> None:
     assert jobs.get(first.id) is None
     assert jobs.get(second.id) is second and jobs.get(other.id) is other
     assert jobs.get(running.id) is running
+
+
+def test_a_rescan_forgets_what_was_introspected(
+    client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned.listed = [{"name": "good", "kind": "builtin"}]
+    probes: list[list[str]] = []
+
+    async def probe(dimos_dir: Path, args: list[str], *rest: Any, **options: Any) -> Any:
+        probes.append(args)
+        return {"name": "good", "global": {}, "modules": {}}
+
+    monkeypatch.setattr(introspect, "run_child", probe)
+    config = "/catalog/blueprints/good/config"
+    assert client.get(config).status_code == 200
+    client.get(config)
+    assert len(probes) == 1
+
+    def probes_after(scan: str) -> int:
+        job = client.post(scan).json()["job"]
+        until(lambda: client.get(f"/jobs/{job}").json()["done"])
+        client.get(config)
+        return len(probes)
+
+    assert probes_after("/catalog/scan/blueprints/good") == 2
+    assert probes_after("/catalog/scan") == 3
+
+
+def test_a_changed_checkout_forgets_what_was_introspected(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subprocess.run(["git", "init", "-q", str(state.dimos_dir)], check=True)
+    source = state.dimos_dir / "blueprint.py"
+    source.write_text("x = 1\n")
+    state.listed = [{"name": "good", "kind": "builtin"}]
+    # every read looks at the checkout again
+    monkeypatch.setattr(constants, "FINGERPRINT_CACHE_S", 0.0)
+    probes: list[list[str]] = []
+
+    async def probe(dimos_dir: Path, args: list[str], *rest: Any, **options: Any) -> Any:
+        probes.append(args)
+        return {"name": "good", "global": {}, "modules": {}}
+
+    monkeypatch.setattr(introspect, "run_child", probe)
+    config = "/catalog/blueprints/good/config"
+    assert client.get(config).status_code == 200
+    client.get(config)
+    assert len(probes) == 1
+    source.write_text("x = 2\n")
+    client.get(config)
+    client.get(config)
+    assert len(probes) == 2
 
 
 def test_an_extras_install_forgets_the_cached_package_probe(

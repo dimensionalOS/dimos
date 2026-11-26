@@ -4,19 +4,25 @@ SimModule owns time, stepping and command validity. PhysicsBackend implements
 engine operations. There is no separate Runtime/Simulation execution layer.
 
 ```text
-camera / lidar / IMU -- get_usd() --> UsdManager mounts
-UsdManager -- get_scene() + get_asset() --> physics / rendering / raycasting
+HardwareModule.get_usd() + hardware_file_request/response
+  -> SimModule.on_system_modules() -> compose_scene() -> PhysicsBackend
+  -> CameraRenderModule / SimLidarModule -> compose_scene() -> geometry copies
 
-ActionCommand --> SimModule --> observations: WorldState --> sensor modules
-                                                        --> UsdManager TF
+ActionCommand -> SimModule -> observations: WorldState -> independent sensors
+                                                     -> SimHardwareModule -> TF
 ```
+
+The shared foundation is Jeff's HardwareModule, UsdModel, mounts and file transport.
+Sim2 keeps its existing WorldState and ActionCommand messages; it does not adopt
+Jeff's separate world_msgs or simulator implementation.
 
 ## Directory and ownership
 
 ```text
 sim2/
   module.py                  execution, complete samples, commands and RPCs
-  description.py             selects scene_manager or a local USD scene
+  description.py             fetches and composes hardware USD at startup
+  hardware.py                HardwareModule adapter: WorldState -> owned TF edges
   cbor.py                    CBOR observation/command envelope validation
   physics/interface.py       PhysicsBackend protocol
   physics/mujoco.py          native dynamics and physical queries
@@ -67,23 +73,23 @@ SampleHeader is used only by the Sim2 WorldState and ActionCommand contracts.
 
 ## Calls and ports
 
-Every mounted camera, lidar and IMU implements `get_usd() -> [asset_root, usd]`.
-A scene `UsdManager` mounts those device descriptions at named frames in its
-prepared USD asset. The G1 example's asset contains the robot, desk and loose box;
-the blueprint supplies the camera, Mid360 and IMU at the robot's attachment frames.
-There is no Python `Instance`/`Drive` ledger or `robot_models` shared-config delivery.
+Every scene, mounted camera, lidar and IMU is a HardwareModule. Its inherited
+`get_usd() -> str` returns namespaced USD; the inherited file streams serve the USD
+and its referenced files. `Device.attach(Scene.mounts.camera_mount, ...)` declares
+ownership and namespace. Frame IDs and joint IDs are full USD prim paths without
+the leading slash. The encoder samples joints already owned by the robot; it adds
+no physical subtree.
 
-Physics, camera and lidar use `scene_manager=...`, call `get_scene()`, then fetch
-referenced files through `get_asset(name)`. The common client checks declared content
-hashes and stores relative, content-addressed filenames so readers get the same
-scene revision in different cache directories. `scene=UsdModel(...)` selects a local
-USD instead. An encoder observes existing joints and adds no physical subtree.
+After all modules start, DimOS calls `on_system_modules(modules)`. Physics and
+geometric sensors discover HardwareSpec providers, fetch their files with Jeff's
+`fetch_hardware_files`, and compose the same root and mounted layers with
+`overlay_usds`. Exactly one unmounted scene is required. Composition happens once
+at startup. There is no UsdManager RPC, second asset server, or core lifecycle edit.
+A direct `scene=UsdModel(...)` is also accepted for physics/backend tests.
 
 MuJoCo 4.0's native USD importer reads the composed USD directly. Install the
 `sim` extra on Python 3.11-3.13, on macOS ARM64 or Linux x86_64.
-DimOS defaults to Python 3.14, but MuJoCo 4.0's USD importer does not support it;
-use Python 3.12 for this stack. CI runs the native Sim2 tests in a separate 3.12
-environment on both self-hosted platforms. There is no
+Use Python 3.12 for this stack. There is no
 runtime USD-to-URDF-to-MJCF path. Convert and validate assets during authoring;
 the running stack loads the prepared files. The camera and lidar create private
 geometry copies with independent bodies driven by `WorldState` poses; neither
@@ -93,13 +99,15 @@ sensor steps physics. This prototype tests rigid bodies and scalar joints.
 an ordinary RPC during build. The policy receives the ID and the IMU receives
 gravity before start. Gravity is fixed for the run and is absent from WorldState.
 
-UsdManager uses Jeff's `JointTf` helper when its input is joint state. When connected
-to simulation observations, it publishes the complete TF tree from body poses at
-their acquisition time instead; the joint-state publisher stays off for that run.
+`SimHardwareModule` is a HardwareModule adapter, not another physics owner.
+Each hardware module publishes only its own USD edges at the observation timestamp.
+Body poses supply motion; USD joint transforms supply intermediate frames that have
+no native physics body. Static simulation edges also use acquisition time, avoiding
+wall-clock timestamps in a simulation TF tree.
 
-`start()` opens the physics owner thread and one publisher thread. The owner calls
-`_apply_commands()`, `_sample_truth()` and `_step()`; `_inspect()` constructs a
-complete snapshot between physics steps. Only the owner accesses native dynamics.
+`SimModule.on_system_modules()` opens the physics owner and publisher threads after
+hardware discovery. With a directly supplied scene, `start()` opens them. Only the
+owner accesses native dynamics. RPC requests are queued between physics steps.
 
 ```text
 # PhysicsBackend; all reads return detached records owned by the caller.
@@ -169,7 +177,7 @@ is an in-run state edit: it does not rewind time, clear maps or start an episode
 Sensor and TF stamps use seconds/nanoseconds in this simulation clock. The G1
 demonstration joins IMU and encoder readings by timestamp; its run identity arrives
 once during build through the ordinary `simulation_config()` RPC. The same RPC
-provides gravity to the IMU. Each consumer selects its simulation by RPC name.
+provides gravity to the IMU. The policy and IMU receive their SimModule through normal typed module references.
 
 Physics defaults to fixed 2 ms steps and complete observations at 500 Hz. Sensors
 retain their own acquisition rates in simulation time. A rate not integral in
@@ -217,7 +225,7 @@ pytest dimos/sim2 -m 'not native_e2e' --import-mode=importlib -o addopts='' -q
 pytest dimos/sim2/test_module.py dimos/sim2/examples --import-mode=importlib -o addopts='' -q
 ```
 
-The final integration slice provides G1 GR00T beside a desk, with camera,
+The final integration slice provides [G1 GR00T beside a desk](/docs/development/sim2/g1.md), with camera,
 lidar, IMU and encoders. MuJoCo is the validated backend. Native renderer/raycaster
 adapters are selectable; another physics backend and cross-renderer fidelity have
 not been validated. The core imports no robot-specific policy or coordinator code.
@@ -232,33 +240,15 @@ a separate dimOS-only type; its two manipulation publishers now emit named
 `control_msgs.JointCommand` position records. Trajectories must provide joint
 names and Cartesian feedback must name each joint in the IK result's order.
 
-Pim's nine PRs build directly on Jeff's asset-serving layers:
-
-```text
-main
-  -> Jeff: #5102 USD conversion and file serving
-  -> Jeff: #5105 namespaces and mounts
-  -> Jeff: #5109 empty bridge (Mid360 moved to the lidar layer)
-  -> Jeff: #5111 UsdManager rename
-  -> Pim: #5033 messages -> #5034 models -> #5035 physics
-  -> Pim: #5036 IMU -> #5037 encoders -> #5038 camera -> #5039 lidar
-  -> Pim: #5040 examples -> #5041 G1 GR00T
-```
-
-No shared-configuration hook or coordinator change is required. Modules use the
-existing build/start lifecycle and explicit RPC dependencies. Jeff's Sim2 branches
-#4908-#4915 and #5126 are not dependencies.
-
-#5039 carries Jeff's unchanged `mid360_usd()` provider and `Mid360.get_usd()` RPC,
-which he moved from #5109 to his lidar PR. It shares that device description with
-the real driver without importing Jeff's Sim2 implementation.
-
-The integration keeps Pim's `SimModule`, `PhysicsBackend`, `WorldState`,
-`ActionCommand` and independent sensor modules. Jeff's asset serving and composition
-RPCs supply the same composed USD to physics and geometric sensors. The old
-`robot_models()` bypass, `Instance` and `Drive` descriptions are removed.
-The companion [dimos-lcm #31](https://github.com/dimensionalOS/dimos-lcm/pull/31)
-owns the schemas and generated codecs.
+Review the shared foundation first: [#5551](https://github.com/dimensionalOS/dimos/pull/5551)
+(TF checks, included in #5519), [#5519](https://github.com/dimensionalOS/dimos/pull/5519)
+(USD tooling), [#5553](https://github.com/dimensionalOS/dimos/pull/5553) (module clock),
+then [#5520](https://github.com/dimensionalOS/dimos/pull/5520) (hardware, mounts and files).
+The small USD overlay prerequisite extracts Jeff's composition helper from #5521;
+none of his Sim2 implementation is imported. The existing nine PRs then follow below.
+The independent schema prerequisite is
+[dimos-lcm #31](https://github.com/dimensionalOS/dimos-lcm/pull/31); its pinned Git
+commit installs automatically through uv until the message package is released.
 
 | PR | Review scope |
 | --- | --- |
@@ -276,11 +266,11 @@ owns the schemas and generated codecs.
 
 `SimCameraModule(sensor=CameraConfig(...))` owns a camera's `get_usd()` description
 and declares its ordinary `color_image`, `depth_image` and `camera_info` outputs.
-Add one `CameraRenderModule(scene_manager=scene, renderer=MujocoRenderer,
-cameras=("camera",))` for cameras viewing that scene. `cameras` contains the device
-RPC names (`instance_name` when explicitly set, otherwise the class name). During
-build the owner reads each device's `camera_config(renderer_name)` and existing
-`get_stream_descriptors()` RPC. No global discovery or core configuration exchange.
+Add one `CameraRenderModule(renderer=MujocoRenderer, cameras=(...))` for cameras
+viewing that scene. The tuple names mounted device instances. During module discovery
+the owner uses the supplied proxies to read `camera_config(renderer_name)` and
+`get_stream_descriptors()`. It uses the runtime's actual RPC addresses, including
+per-run isolation. No global unscoped RPC names are constructed.
 Images are published directly to those output topics, without an intermediate
 image stream or image RPC. Existing namespaces and stream remappings still apply.
 
@@ -304,21 +294,14 @@ closed with their review history preserved.
 ## Shared-code boundary
 
 The stack adds no mapping or localization implementation. `dimos/mapping`,
-Point-LIO, `UsdManagerPointClearing` and `RoboPlanBodyFilter` match Jeff's USD-manager prerequisite base.
+Point-LIO and robot filtering match the shared prerequisite base.
 The G1 demo may compose the existing mapper as a world-frame preview consumer;
 it does not include the earlier estimated-map or robot-filtering integration.
 
-The shared files that still change have these specific roles:
-
-| File or group | Reason within Option G |
-| --- | --- |
-| `robot/assets/model.py` | Resolve fixed mounts and namespace one model shared by physics, sensors and TF; normalize frame values after CLI config parsing. |
-| `robot/usd_manager.py` | Compose mounted device USD through RPC and publish the ordinary TF tree from WorldState. |
-| `msgs/sensor_msgs/Image.py`, `PointCloud2.py` | Preserve valid subsecond acquisition stamps in existing decoders; schemas are unchanged. An all-zero cloud stamp still means unspecified. |
-| G1 URDF and its existing mount publisher | Define the native Mid360 orientation once in the model instead of adding its roll separately in hardware TF. |
-| Existing GR00T task | Accept an explicit IMU reading without requiring a hardware adapter in the demonstration host. |
-| Blueprint registry and gateway annotations | Expose the normal `dimos run` / Desktop launch entries. |
-| MuJoCo stubs and dependency metadata | Type the backend calls and install the Option G message and CBOR dependencies. |
+The shared edits retained from the prior stack are the standard timestamp decoder
+fixes, the existing JointCommand migration, package dependencies, MuJoCo stubs,
+test environment setup and blueprint registration. There are no Sim2-specific edits
+to HardwareModule, the control coordinator, real G1 TF, or mapping implementation.
 
 The first PR's remaining sensor edits are decoder behavior, not a new header or
 transport. The standard Image decoder preserves zero; PointCloud2 retains its

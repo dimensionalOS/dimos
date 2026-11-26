@@ -1,11 +1,11 @@
 #usda 1.0
 (
-    defaultPrim = "sim2_basic"
+    defaultPrim = "world"
     metersPerUnit = 1
     upAxis = "Z"
 )
 
-def Xform "sim2_basic"
+def Xform "world"
 {
     uniform token[] xformOpOrder = []
 
@@ -219,7 +219,7 @@ def Xform "sim2_basic"
             displayName = "base_joint"
         )
         {
-            rel physics:body1 = </sim2_basic/assets/base>
+            rel physics:body1 = </world/assets/base>
             point3f physics:localPos0 = (0, 0, 0)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -230,8 +230,8 @@ def Xform "sim2_basic"
             displayName = "wall_joint"
         )
         {
-            rel physics:body0 = </sim2_basic/assets/base>
-            rel physics:body1 = </sim2_basic/assets/base/wall>
+            rel physics:body0 = </world/assets/base>
+            rel physics:body1 = </world/assets/base/wall>
             point3f physics:localPos0 = (0, 0, 0)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -252,8 +252,8 @@ def Xform "sim2_basic"
             float drive:linear:physics:stiffness = 200
             float drive:linear:physics:targetPosition = 0
             uniform token physics:axis = "Z"
-            rel physics:body0 = </sim2_basic/assets/base>
-            rel physics:body1 = </sim2_basic/assets/base/tool>
+            rel physics:body0 = </world/assets/base>
+            rel physics:body1 = </world/assets/base/tool>
             point3f physics:localPos0 = (-0.4, 0, 0.08)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (0.70710677, 0, 0.70710677, 0)
@@ -266,8 +266,8 @@ def Xform "sim2_basic"
             displayName = "camera_mount_joint"
         )
         {
-            rel physics:body0 = </sim2_basic/assets/base/tool>
-            rel physics:body1 = </sim2_basic/assets/base/tool/camera_mount>
+            rel physics:body0 = </world/assets/base/tool>
+            rel physics:body1 = </world/assets/base/tool/camera_mount>
             point3f physics:localPos0 = (-0.25, 0, 0.6)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (0.27059805, -0.6532815, 0.6532815, -0.27059805)
@@ -278,8 +278,8 @@ def Xform "sim2_basic"
             displayName = "lidar_mount_joint"
         )
         {
-            rel physics:body0 = </sim2_basic/assets/base/tool>
-            rel physics:body1 = </sim2_basic/assets/base/tool/lidar_mount>
+            rel physics:body0 = </world/assets/base/tool>
+            rel physics:body1 = </world/assets/base/tool/lidar_mount>
             point3f physics:localPos0 = (0, 0, 0.12)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -290,8 +290,8 @@ def Xform "sim2_basic"
             displayName = "imu_mount_joint"
         )
         {
-            rel physics:body0 = </sim2_basic/assets/base/tool>
-            rel physics:body1 = </sim2_basic/assets/base/tool/imu_mount>
+            rel physics:body0 = </world/assets/base/tool>
+            rel physics:body1 = </world/assets/base/tool/imu_mount>
             point3f physics:localPos0 = (0, 0, 0)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
@@ -308,7 +308,7 @@ def Xform "sim2_basic"
         uniform double mjc:forceRange:max = 80
         uniform double mjc:forceRange:min = -80
         uniform double[] mjc:gainPrm = [200, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        rel mjc:target = </sim2_basic/joints/tool_joint>
+        rel mjc:target = </world/joints/tool_joint>
     }
 
     def Plane "floor" (

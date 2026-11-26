@@ -804,6 +804,8 @@ describe("topic settings updates", () => {
     await sub.ready();
     const phases: string[] = [];
     sub.onStatus((status) => phases.push(status.phase));
+    const settings = vi.fn();
+    const unsubscribeSettings = sub.onSettings(settings);
     const update = sub.update({ quality: 40, maxResolution: [320, 240] });
     expect(h.updates()).toEqual([{
       t: "topic_update",
@@ -815,15 +817,19 @@ describe("topic settings updates", () => {
     h.frame(1, "@t:v1");
     expect(seen).toHaveBeenCalledTimes(1);
     expect(sub.settings()).toEqual(LOW);
+    expect(settings).not.toHaveBeenCalled();
     h.applied(1, { maxHz: 30, maxResolution: [320, 240], quality: 40 });
     await expect(update).resolves.toEqual({ maxHz: 30, maxResolution: [320, 240], quality: 40 });
     expect(sub.settings()).toEqual({ maxHz: 30, maxResolution: [320, 240], quality: 40 });
     expect(phases).toEqual(["ready"]);
+    expect(settings).toHaveBeenCalledExactlyOnceWith(sub.settings());
+    unsubscribeSettings();
     // null resets one key to the profile value; the relay says which.
     const reset = sub.update({ maxResolution: null });
     expect(h.updates().at(-1)).toMatchObject({ revision: 2, options: { maxResolution: null } });
     h.applied(2, { maxHz: 30, maxResolution: [640, 360], quality: 40 });
     await expect(reset).resolves.toEqual({ maxHz: 30, maxResolution: [640, 360], quality: 40 });
+    expect(settings).toHaveBeenCalledOnce();
     // The group now answers to its new settings: a twin joins it, not the wire.
     const twin = h.camera({ quality: 40 });
     expect(h.subs()).toHaveLength(1);

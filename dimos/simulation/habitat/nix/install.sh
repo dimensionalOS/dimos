@@ -20,7 +20,7 @@ fi
 # dimos peers, or SHM payloads arrive as unreadable handles. --no-deps skips
 # lcm-dimos-fork, the LCM runtime; only dimos_lcm's pure-python encoders are needed.
 ./env/bin/pip install --no-input --no-deps "dimos-lcm==0.1.3"
-./env/bin/pip install --no-input "eclipse-zenoh==1.10.1" numpy
+./env/bin/pip install --no-input "eclipse-zenoh==1.10.2" numpy
 
 # Annotated HM3D house, no credentials. --no-replace resumes a partial download
 # by the downloader's own per-package markers; a dir check would not.

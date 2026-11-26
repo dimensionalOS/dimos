@@ -87,16 +87,16 @@ Checkpoint: yolo11n.pt (5482KB)
 
 ```python skip
 from dimos.utils.data import get_data
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 data_dir = get_data("unitree_office_walk")
-replay = TimedSensorReplay(data_dir / "lidar")
-print(f"Replay {replay} loaded from: {data_dir.name}")
+replay = LegacyPickleStore(data_dir / "lidar")
+print(f"Replay {type(replay).__name__} loaded from: {data_dir.name}")
 print(replay.find_closest_seek(1))
 ```
 
 ```results
-Replay <dimos.utils.testing.replay.TimedSensorReplay object at 0x7fdc24c708f0> loaded from: unitree_office_walk
+Replay LegacyPickleStore loaded from: unitree_office_walk
 {'type': 'msg', 'topic': 'rt/utlidar/voxel_map_compressed', 'data': {'stamp': 1751591000.0, 'frame_id': 'odom', 'resolution': 0.05, 'src_size': 77824, 'origin': [-3.625, -3.275, -0.575], 'width': [128, 128, 38], 'data': {'points': array([[ 2.725, -1.025, -0.575],
        [ 2.525, -0.275, -0.575],
        [ 2.575, -0.275, -0.575],

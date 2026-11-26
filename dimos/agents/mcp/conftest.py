@@ -43,6 +43,7 @@ def agent_setup(request, mcp_port: int, lcm_url: str):
         messages: list[BaseMessage],
         system_prompt: str | None = None,
         fixture: str | None = None,
+        mcp_server_last: bool = False,
     ) -> list[BaseMessage]:
         history: list[BaseMessage] = []
         finished_event = Event()
@@ -76,6 +77,8 @@ def agent_setup(request, mcp_port: int, lcm_url: str):
             Agent.blueprint(**client_kwargs),
             AgentTestRunner.blueprint(messages=messages),
         )
+        if mcp_server_last:
+            blueprint = autoconnect(blueprint, McpServer.blueprint(port=mcp_port))
 
         global_config.update(viewer="none", transport="lcm")  # fixture uses pLCMTransport sidecars
 

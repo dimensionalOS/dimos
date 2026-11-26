@@ -15,7 +15,7 @@
 """MuJoCo compilation and dynamics. The only dynamics engine in this prototype.
 
 Loads the composed USD through MuJoCo's native importer. Native indices are bound
-once. Fixed bodies remain addressable by UsdManager's frame IDs, including
+once. Fixed bodies remain addressable by USD prim paths, including
 massless sensor frames.
 """
 

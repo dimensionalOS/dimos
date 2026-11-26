@@ -12,9 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import create_autospec
+
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.protocol.rpc.spec import RPCSpec
+
+
+def _before_retry() -> None:
+    """Spec for the `before_retry` hook `CoordinatorRPC.connect` accepts."""
 
 
 def test_connect_retries_when_coordinator_becomes_ready(mocker) -> None:
@@ -63,6 +71,54 @@ def test_connect_stops_transport_after_retry_budget_expires(mocker) -> None:
     rpc.stop.assert_called_once_with()
 
 
+def test_connect_runs_before_retry_after_each_unanswered_ping(mocker: MockerFixture) -> None:
+    rpc = create_autospec(RPCSpec, spec_set=True, instance=True)
+    rpc.call_sync.side_effect = [
+        TimeoutError("coordinator not ready"),
+        TimeoutError("coordinator not ready"),
+        ("pong", lambda: None),
+    ]
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.rpc_backend",
+        autospec=True,
+        spec_set=True,
+        return_value=create_autospec(RPCSpec, spec_set=True, return_value=rpc),
+    )
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.time.monotonic",
+        autospec=True,
+        spec_set=True,
+        side_effect=[10.0, 10.0, 10.25, 10.5],
+    )
+    before_retry = create_autospec(_before_retry, spec_set=True)
+
+    client = CoordinatorRPC.connect(timeout=1.0, before_retry=before_retry)
+
+    assert client.rpc is rpc
+    assert before_retry.call_count == 2
+    rpc.stop.assert_not_called()
+
+
+def test_connect_gives_up_when_before_retry_raises(mocker: MockerFixture) -> None:
+    rpc = create_autospec(RPCSpec, spec_set=True, instance=True)
+    rpc.call_sync.side_effect = TimeoutError("coordinator not ready")
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.rpc_backend",
+        autospec=True,
+        spec_set=True,
+        return_value=create_autospec(RPCSpec, spec_set=True, return_value=rpc),
+    )
+    before_retry = create_autospec(
+        _before_retry, spec_set=True, side_effect=RuntimeError("dimos exited with 1")
+    )
+
+    with pytest.raises(RuntimeError, match="dimos exited with 1"):
+        CoordinatorRPC.connect(timeout=60.0, before_retry=before_retry)
+
+    before_retry.assert_called_once_with()
+    rpc.stop.assert_called_once_with()
+
+
 def test_serve_and_connect_use_selected_rpc_name(mocker) -> None:
     server_rpc = mocker.Mock()
     client_rpc = mocker.Mock()
@@ -80,7 +136,7 @@ def test_serve_and_connect_use_selected_rpc_name(mocker) -> None:
     client = CoordinatorRPC.connect(timeout=1.0, name=name)
     result = client.call("ping")
 
-    ensure.assert_called_once_with(name)
+    ensure.assert_called_once_with(server_rpc, name)
     server_rpc.serve_module_rpc.assert_called_once_with(coordinator, name=name)
     assert server.name == name
     assert client.name == name

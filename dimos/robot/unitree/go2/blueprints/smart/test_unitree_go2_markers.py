@@ -19,18 +19,22 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2_mar
 
 
 def test_unitree_go2_markers_uses_detector_backed_tf_stack() -> None:
-    assert isinstance(unitree_go2_markers, Blueprint)
+    assert isinstance(unitree_go2_markers.solidify(), Blueprint)
 
-    modules = [bp.module for bp in unitree_go2_markers.blueprints]
+    modules = [bp.module for bp in unitree_go2_markers.solidify().blueprints]
     assert MarkerDetectionStreamModule in modules
     assert MarkerTfModule in modules
 
     detector = next(
-        bp for bp in unitree_go2_markers.blueprints if bp.module is MarkerDetectionStreamModule
+        bp
+        for bp in unitree_go2_markers.solidify().blueprints
+        if bp.module is MarkerDetectionStreamModule
     )
     assert detector.kwargs["marker_length_m"] == 0.1
     assert detector.kwargs["camera_info"].frame_id == "camera_optical"
     assert (
-        unitree_go2_markers.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
+        unitree_go2_markers.solidify()
+        .transport_map[("detections", MarkerDetectionStreamModule)]
+        .topic.topic
         == "/marker_detection/detections"
     )

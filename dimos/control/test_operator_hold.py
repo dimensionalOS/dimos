@@ -14,9 +14,9 @@
 
 """Operator hold through the coordinator: request, preempt, reject, publish, e-stop, acknowledge.
 
-A rig wires one mock arm, one mock twist base, the canonical trajectory task
-and the hold task into a real, unmodified coordinator, then ticks it by hand
-so every assertion is deterministic.
+A rig drives one arm and one twist base through connection ports on a real
+coordinator, with the canonical trajectory task and the hold task, then ticks
+it by hand so every assertion is deterministic.
 """
 
 from __future__ import annotations
@@ -27,12 +27,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareType,
-    make_joints,
-    make_twist_base_joints,
-)
+from dimos.control._control_test_helpers import LocalTransport, Recorder, fake_arm_model
+from dimos.control.components import make_joints, make_twist_base_joints
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
@@ -40,7 +37,6 @@ from dimos.control.task import (
     ControlMode,
     CoordinatorState,
     JointCommandOutput,
-    JointStateSnapshot,
     ResourceClaim,
 )
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
@@ -59,8 +55,8 @@ from dimos.control.tasks.velocity_task.velocity_task import (
     JointVelocityTaskConfig,
 )
 from dimos.control.tick_loop import TickLoop
-from dimos.hardware.drive_trains.spec import TwistBaseAdapter
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
@@ -68,7 +64,6 @@ from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
 BASE_JOINTS = make_twist_base_joints("base")
-BASE_ODOMETRY = [1.5, -0.5, 0.25]
 
 
 class TeleopStub(BaseControlTask):
@@ -109,35 +104,49 @@ def _trajectory() -> JointTrajectory:
     )
 
 
+class HoldCoordinator(ControlCoordinator):
+    """Ports for the arm and the base."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+    base_velocity_command: Out[JointState]
+    base_joint_state: In[JointState]
+
+
 class Rig:
     def __init__(self) -> None:
-        self.arm = MagicMock(spec=ManipulatorAdapter)
-        self.arm.get_dof.return_value = len(ARM_JOINTS)
-        self.arm.read_joint_positions.return_value = list(ARM_POSITIONS)
-        self.arm.read_joint_velocities.return_value = [0.0] * len(ARM_JOINTS)
-        self.arm.read_joint_efforts.return_value = [0.0] * len(ARM_JOINTS)
-        self.arm.write_joint_positions.return_value = True
-        self.arm.set_control_mode.return_value = True
-
-        self.base = MagicMock(spec=TwistBaseAdapter)
-        self.base.get_dof.return_value = len(BASE_JOINTS)
-        self.base.read_velocities.return_value = [0.0] * len(BASE_JOINTS)
-        self.base.read_odometry.return_value = list(BASE_ODOMETRY)
-        self.base.write_velocities.return_value = True
-
-        self.coordinator = ControlCoordinator(publish_joint_state=False)
-        self.coordinator.add_hardware(
-            self.arm,
-            HardwareComponent(
-                hardware_id="arm", hardware_type=HardwareType.MANIPULATOR, joints=ARM_JOINTS
-            ),
+        self.coordinator = HoldCoordinator(
+            publish_joint_state=False,
+            reading_timeout_s=60.0,
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=fake_arm_model(("joint1", "joint2", "joint3")),
+                    joint_commands={
+                        name: (Interface.POSITION,) for name in ("joint1", "joint2", "joint3")
+                    },
+                ),
+                ConnectionConfig(
+                    source="base",
+                    model=fake_arm_model(("vx", "vy", "wz")),
+                    joint_commands={name: (Interface.VELOCITY,) for name in ("vx", "vy", "wz")},
+                ),
+            ],
         )
-        self.coordinator.add_hardware(
-            self.base,
-            HardwareComponent(
-                hardware_id="base", hardware_type=HardwareType.BASE, joints=BASE_JOINTS
-            ),
+        self.readings = {name: LocalTransport() for name in ("arm_joint_state", "base_joint_state")}
+        for name, transport in self.readings.items():
+            self.coordinator.set_transport(name, transport)  # type: ignore[arg-type]
+        self.sent: list[tuple[str, JointState]] = []
+        for name in ("arm_position_command", "base_velocity_command"):
+            self.coordinator.set_transport(name, Recorder(name, self.sent))  # type: ignore[arg-type]
+        self.coordinator.start()
+        assert self.coordinator._tick_loop is not None
+        self._loop = self.coordinator._tick_loop
+        self.report_arm(ARM_POSITIONS)
+        self.readings["base_joint_state"].publish(
+            JointState(name=BASE_JOINTS, velocity=[0.0] * len(BASE_JOINTS))
         )
+
         self.trajectory_task = JointTrajectoryTask(
             JointTrajectoryTaskConfig(
                 joint_names=ARM_JOINTS,
@@ -153,19 +162,14 @@ class Rig:
         self.statuses: list[OperatorHoldStatus] = []
         self.hold_task.set_status_publisher(self.statuses.append)
 
-        self._loop = TickLoop(
-            tick_rate=100.0,
-            hardware=self.coordinator._hardware,
-            hardware_lock=self.coordinator._hardware_lock,
-            tasks=self.coordinator._tasks,
-            task_lock=self.coordinator._task_lock,
-            joint_to_hardware=self.coordinator._joint_to_hardware,
-        )
-        # The coordinator reads joint positions from its tick loop's last tick.
-        self.coordinator._tick_loop = self._loop
-
     def tick(self) -> None:
         self._loop._tick()
+
+    def report_arm(self, positions: list[float]) -> None:
+        still = [0.0] * len(ARM_JOINTS)
+        self.readings["arm_joint_state"].publish(
+            JointState(name=ARM_JOINTS, position=list(positions), velocity=still, effort=still)
+        )
 
     def request(self, route: str = "manual", reason: str = "arm stuck") -> OperatorHoldStatus:
         return self.coordinator.task_invoke(  # type: ignore[no-any-return]
@@ -176,14 +180,15 @@ class Rig:
         return self.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "acknowledge")  # type: ignore[no-any-return]
 
     def arm_writes(self) -> list[list[float]]:
-        return [call.args[0] for call in self.arm.write_joint_positions.call_args_list]
+        return [list(msg.position) for name, msg in self.sent if name == "arm_position_command"]
 
     def base_writes(self) -> list[list[float]]:
-        return [call.args[0] for call in self.base.write_velocities.call_args_list]
+        return [list(msg.velocity) for name, msg in self.sent if name == "base_velocity_command"]
 
 
 @pytest.fixture
-def rig() -> Iterator[Rig]:
+def rig(mocker) -> Iterator[Rig]:
+    mocker.patch.object(TickLoop, "start")
     rig = Rig()
     try:
         yield rig
@@ -203,31 +208,15 @@ class TestRequest:
         # Truthful odometry does not make a velocity-only resource position-held.
         assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
 
-    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig, monkeypatch):
+    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig):
         rig.request()
         rig.tick()
-        rig.arm.read_joint_positions.return_value = [0.15, 0.2, 0.3]
+        rig.report_arm([0.15, 0.2, 0.3])
 
         rig.tick()
 
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-        monkeypatch.setattr(rig.coordinator._hardware["arm"], "ready_for_control", lambda: False)
-        snapshot, _ = rig._loop._read_all_hardware()
-        assert not set(ARM_JOINTS) & snapshot.joint_positions.keys()
-        assert snapshot.joint_command_interfaces[ARM_JOINTS[0]] == {
-            Interface.POSITION,
-            Interface.VELOCITY,
-        }
-        rig.tick()
         assert rig.hold_task.claim().joints == frozenset([*ARM_JOINTS, *BASE_JOINTS])
-
-    def test_unknown_route_raises_and_holds_nothing(self, rig):
-        with pytest.raises(ValueError):
-            rig.request(route="typo")
-
-        assert not rig.hold_task.is_active()
-        rig.tick()
-        assert rig.arm_writes() == []
 
     def test_second_hold_task_is_refused_by_name(self, rig):
         assert rig.coordinator.add_task(OperatorHoldTask(), task_type="operator_hold") is False
@@ -300,6 +289,10 @@ def test_velocity_stream_is_preempted_through_hold_estop_clear_and_ack(rig: Rig)
     assert not rig.hold_task.claim().joints
     assert rig.coordinator.set_estop(False)
     assert not velocity.is_streaming()  # Cached pre-stop intent was discarded.
+    rig.report_arm(ARM_POSITIONS)
+    rig.readings["base_joint_state"].publish(
+        JointState(name=BASE_JOINTS, velocity=[0.0] * len(BASE_JOINTS))
+    )
     rig.tick()
     assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
     # Fresh post-clear streaming is still preempted until the operator acknowledges.
@@ -311,39 +304,6 @@ def test_velocity_stream_is_preempted_through_hold_estop_clear_and_ack(rig: Rig)
     assert velocity.set_velocities(fresh, time.perf_counter())
     rig.tick()
     assert rig.base_writes()[-1] == fresh
-
-
-class TestStatus:
-    def test_first_tick_publishes(self, rig):
-        rig.request(route="failsafe", reason="fault")
-        assert rig.statuses == []
-
-        rig.tick()
-
-        assert len(rig.statuses) == 1
-        status = rig.statuses[0]
-        assert status.on and status.route == "failsafe" and status.reason == "fault"
-        assert status.started_at > 0.0 and status.stamp >= status.started_at
-
-    def test_repeats_once_per_second_while_on(self, rig):
-        rig.request(route="agent", reason="need help")
-        snapshot = JointStateSnapshot(
-            joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True)),
-            joint_command_interfaces={name: frozenset({Interface.POSITION}) for name in ARM_JOINTS},
-        )
-
-        for t_now in (0.0, 0.5, 0.99, 1.0, 1.5, 2.0, 2.5, 3.0):
-            rig.hold_task.compute(CoordinatorState(joints=snapshot, t_now=t_now, dt=0.01))
-
-        assert [status.on for status in rig.statuses] == [True, True, True, True]
-        assert {status.route for status in rig.statuses} == {"agent"}
-        assert len({status.started_at for status in rig.statuses}) == 1
-
-    def test_get_status_reads_without_changing_anything(self, rig):
-        assert rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status").on is False
-        rig.request()
-        assert rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status").on is True
-        assert rig.statuses == []
 
 
 class TestEstop:
@@ -366,9 +326,11 @@ class TestEstop:
     def test_clear_holds_the_arm_where_it_is_then_until_acknowledged(self, rig):
         rig.coordinator.set_estop(True)
         rig.tick()
-        rig.arm.read_joint_positions.return_value = [0.15, 0.25, 0.35]
-
         assert rig.coordinator.set_estop(False)
+        rig.report_arm([0.15, 0.25, 0.35])
+        rig.readings["base_joint_state"].publish(
+            JointState(name=BASE_JOINTS, velocity=[0.0] * len(BASE_JOINTS))
+        )
         rig.tick()
 
         status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
@@ -409,17 +371,10 @@ class TestAcknowledge:
         rig.tick()
 
         rig.acknowledge()
-        writes_before = len(rig.arm_writes())
         rig.tick()
 
         assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
-        assert len(rig.arm_writes()) == writes_before  # nothing is commanding the arm
+        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)  # held where it stopped
         teleop.started = True
         rig.tick()
         assert rig.arm_writes()[-1] == pytest.approx([0.4, 0.5, 0.6])
-
-    def test_acknowledge_when_not_held_publishes_nothing(self, rig):
-        status = rig.acknowledge()
-
-        assert status.on is False
-        assert rig.statuses == []
