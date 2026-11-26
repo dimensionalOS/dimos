@@ -210,6 +210,8 @@ class R1ProConnectionConfig(ConnectionConfig):
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
     sensor_stats_interval_s: float = Field(default=10.0)
+    # The chassis and torso IMUs: ~300 ROS messages/s through Python, unused by Point-LIO navigation.
+    enable_imu: bool = Field(default=True)
     gripper_feedback_timeout_s: float = Field(default=1.0)
     boot_vendor_stack: bool = Field(default=True)
     vendor_profile: str = Field(default="")
@@ -653,8 +655,9 @@ class R1ProConnection(ConnectionModule):
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
 
-        add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
-        add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
+        if self.config.enable_imu:
+            add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
+            add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
 
         # Periodic per-stream stats reporter (joined on stop via _sensor_stop).
         if self.config.sensor_stats_interval_s > 0:

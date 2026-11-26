@@ -37,7 +37,6 @@ from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out, TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -64,7 +63,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadLeftCamera,
     HeadRightCamera,
 )
-from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
+from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig, R1ProPointLio
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -344,9 +343,11 @@ def r1pro_lidar_odometry() -> MetaBlueprint:
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        PointLio.blueprint(tf_frames_local={"odom": "odom", "sensor": lidar_frame}).remappings(
-            [(PointLio, "odometry", "pointlio_odometry")]
-        ),
+        R1ProPointLio.blueprint(
+            tf_frames_local={"odom": "odom", "sensor": lidar_frame},
+            # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
+            lidar_meas_cov=1.0,
+        ).remappings([(R1ProPointLio, "odometry", "pointlio_odometry")]),
         R1ProLio.blueprint(),
     ).remappings(
         [
@@ -358,9 +359,16 @@ def r1pro_lidar_odometry() -> MetaBlueprint:
 
 
 # n_workers keeps the 100 Hz coordinator tick loop out of the interpreter running the connection's sensor threads.
-r1pro_coordinator = autoconnect(
-    r1pro_visualization(),
-    # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-    r1pro_control(publish_odom_tf=False),
-    r1pro_lidar_odometry(),
-).global_config(n_workers=4)
+r1pro_coordinator = (
+    autoconnect(
+        r1pro_visualization(),
+        # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
+        r1pro_control(publish_odom_tf=False),
+        r1pro_lidar_odometry(),
+    )
+    .remappings(
+        # Drive the base from the viewer.
+        [(RerunWebSocketServer, "tele_cmd_vel", "twist_command")]
+    )
+    .global_config(n_workers=4)
+)

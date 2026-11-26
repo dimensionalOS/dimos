@@ -65,7 +65,9 @@ XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
 # put every mesh in one frame, without changing the configured base pose.
 XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
 # The mapper and planner octree use the same resolution.
-XARM_GRASP_VOXEL_SIZE = 0.025
+XARM_GRASP_VOXEL_SIZE = 0.01
+# The arm's reach round link_base, gripper included: the map drops what lies farther.
+XARM_GRASP_WORKSPACE_RADIUS = 0.9
 
 XARM_GRASP_PROMPTS = [
     "black bottle",
@@ -179,6 +181,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
             # Filter only the arm; gripper returns may remain in the map.
             self_filter_model=xarm_model(arm, robot="arm"),
             voxel_size=XARM_GRASP_VOXEL_SIZE,
+            workspace_radius_m=XARM_GRASP_WORKSPACE_RADIUS,
         ),
         RerunBridgeModule.blueprint(),
         control,
