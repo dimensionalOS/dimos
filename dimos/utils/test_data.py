@@ -25,7 +25,6 @@ from typing import Any
 from unittest.mock import call
 
 from filelock import FileLock, Timeout
-from git import Actor, Repo
 from pydantic import TypeAdapter
 import pytest
 from pytest_mock import MockerFixture
@@ -163,28 +162,21 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
 def test_installed_package_finds_archive_added_after_clone(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    origin = tmp_path / "origin"
-    checkout = tmp_path / "repo"
-    author = Actor("DimOS Test", "test@example.invalid")
-    with Repo.init(origin, initial_branch="main") as repo:
-        archive = origin / "data/.lfs/sample.tar.gz"
-        archive.parent.mkdir(parents=True)
-        (origin / "data/.gitkeep").touch()
-        repo.index.add(["data/.gitkeep"])
-        repo.index.commit("Initial data", author=author, committer=author)
-        Repo.clone_from(origin.as_uri(), checkout, depth=1).close()
-        sample = tmp_path / "sample"
-        sample.write_bytes(b"new robot asset")
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(sample, arcname="sample")
-        repo.index.add(["data/.lfs/sample.tar.gz"])
-        repo.index.commit("Add archive", author=author, committer=author)
+    lfs_dir = tmp_path / "data/.lfs"
+    lfs_dir.mkdir(parents=True)
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+    mocker.patch.object(data, "_get_lfs_dir", return_value=lfs_dir)
 
-    mocker.patch.object(data, "get_project_root", return_value=checkout)
-    mocker.patch.object(data, "get_data_dir", return_value=checkout / "data")
-    mocker.patch.object(data, "_get_lfs_dir", return_value=checkout / "data/.lfs")
+    def refresh(
+        command: list[str], *, cwd: Path, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        assert command == ["git", "pull", "--ff-only", "origin", "main"]
+        (cwd / "data/.lfs/sample.tar.gz").write_bytes(b"new archive")
+        return subprocess.CompletedProcess(command, 0)
 
-    assert data.get_data("sample").read_bytes() == b"new robot asset"
+    mocker.patch.object(data.subprocess, "run", side_effect=refresh)
+
+    assert data._pull_lfs_archive("sample").read_bytes() == b"new archive"
 
 
 def test_source_checkout_missing_archive_does_not_fetch(
