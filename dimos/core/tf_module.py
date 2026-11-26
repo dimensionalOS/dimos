@@ -23,7 +23,6 @@ from pydantic import Field, model_validator
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -79,16 +78,11 @@ class TfModule(Module):
             for t in msg.transforms:
                 if (t.frame_id, t.child_frame_id) not in self.tf_edge_ids:
                     raise ValueError(
-                        f"{self.tf_owner_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
+                        f"{self.config.instance_name or type(self).__name__} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
                     )
             publish(msg)
 
         self.tf.publish = checked_publish  # type: ignore[method-assign]
-
-    @property
-    def tf_owner_name(self) -> str:
-        """The name tf errors give for this module."""
-        return self.config.instance_name or type(self).__name__
 
     @cached_property
     def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
@@ -182,30 +176,11 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
-        buffer = TF(
+        return TF(
             port,
             edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
-            module_name=self.tf_owner_name,
+            module_name=self.config.instance_name or type(self).__name__,
         )
-        if self.config.skip_tf_checks:
-            return buffer
-        # Its lookups name only declared frames, so a typo fails loudly instead of waiting on a frame nothing publishes.
-        get = buffer.get
-
-        def checked_get(
-            parent_frame: str, child_frame: str, *args: Any, **kwargs: Any
-        ) -> Transform | None:
-            declared = set(self.tf_frames.values())
-            for frame in (parent_frame, child_frame):
-                if frame not in declared:
-                    raise ValueError(
-                        f"{self.tf_owner_name} looks up undeclared tf frame {frame!r} "
-                        f"(declared: {sorted(declared)}); add it to tf_frames_local or tf_frames_global"
-                    )
-            return get(parent_frame, child_frame, *args, **kwargs)
-
-        buffer.get = checked_get  # type: ignore[method-assign]
-        return buffer
 
 
 def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
