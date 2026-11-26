@@ -39,7 +39,7 @@ from dimos.sim2.l1 import SimL1
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.scene import SimScene, SimSceneConfig
-from dimos.sim2.sim import sim
+from dimos.sim2.sim import on_mount, sim
 from dimos.sim2.spec import SimulatedRobot
 
 pytest.importorskip("pxr")
@@ -132,13 +132,10 @@ def _run(seconds: float, speed: float) -> dict[str, Any]:
         ).remappings([(LivoxSim, "imu", "livox_imu"), (LivoxSim, "lidar", "lidar")]),
         SimL1.attach(_Dog.mounts.l1, period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
     )
-    # The dog and its sensors under the room's mount, as attach() namespaces one module.
-    for segment in reversed(_Room.mounts.dog.frame.split("/")):
-        dog = dog.namespace(segment, shared=SENSOR_STREAMS)
     blueprint = autoconnect(
         sim({"mujoco": MujocoSim.blueprint(speed=speed)}, default="mujoco"),
         _Room.blueprint(),
-        dog,
+        on_mount(dog, _Room.mounts.dog, shared=SENSOR_STREAMS),
         _Readings.blueprint(),
     ).solidify()
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}

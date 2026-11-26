@@ -58,6 +58,9 @@ def _iter_matching_processes(
         except OSError:
             # /proc entry may transiently fail on slow systems.
             continue
+        except SystemError:
+            # macOS psutil raises this for a process that exits while its environment is read.
+            continue
         if env.get(env_var) == run_id:
             matches.append(proc)
     return matches
