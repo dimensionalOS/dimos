@@ -278,7 +278,7 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     sent: list[int] = []
     real_put = t.put
 
-    def spying_put(url: str, body: bytes) -> None:
+    def spying_put(url: str, body: bytes | memoryview) -> None:
         sent.append(int(url.split("/")[1].partition("?")[0]))
         real_put(url, body)
 
@@ -295,7 +295,7 @@ def test_parallel_upload_sends_each_part_once(
     completed: list[int] = []
     real_put, real_request = t.put, t.request
 
-    def spying_put(url: str, body: bytes) -> None:
+    def spying_put(url: str, body: bytes | memoryview) -> None:
         sent.append(int(url.split("/")[1].partition("?")[0]))
         real_put(url, body)
 
@@ -329,7 +329,7 @@ def test_upload_refreshes_expired_part_urls(
     creates: list[str] = []
     real_put, real_request = t.put, t.request
 
-    def put_together(url: str, body: bytes) -> None:
+    def put_together(url: str, body: bytes | memoryview) -> None:
         if url.endswith("?e=0"):
             in_flight.wait(timeout=5)
         real_put(url, body)
@@ -360,7 +360,7 @@ def test_resign_finding_the_upload_complete_reports_it_skipped(
     puts: list[str] = []
     real_put, real_request = t.put, t.request
 
-    def spying_put(url: str, body: bytes) -> None:
+    def spying_put(url: str, body: bytes | memoryview) -> None:
         puts.append(url)
         real_put(url, body)
 
@@ -379,30 +379,45 @@ def test_resign_finding_the_upload_complete_reports_it_skipped(
     assert puts and all(url.endswith("?e=0") for url in puts)
 
 
-def test_failed_part_does_not_wait_for_parts_in_flight(
+def test_failed_part_abandons_the_parts_in_flight(
     env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Part 1 fails for good while the others are mid-send. The upload raises without
+    waiting for them, and when their link drops too they do not try again."""
     cloud, t, db = env
-    cloud.backend.retries = 0
     raw = one_part_per_worker(cloud, t, db.parent)
     in_flight = threading.Barrier(cloud.backend.parallel_parts)
     release = threading.Event()
+    attempts: list[str] = []
     waited_out: list[str] = []
-    real_put = t.put
 
-    def put(url: str, body: bytes) -> None:
-        in_flight.wait(timeout=5)
-        if "/1?" in url:
-            raise OSError("link dropped")
-        if not release.wait(timeout=5):
+    def put(url: str, body: bytes | memoryview) -> None:
+        attempts.append(url)
+        if attempts.count(url) == 1:
+            in_flight.wait(timeout=5)
+        if "/1?" not in url and not release.wait(timeout=5):
             waited_out.append(url)
-        real_put(url, body)
+        raise OSError("link dropped")
 
     monkeypatch.setattr(t, "put", put)
-    with pytest.raises(RuntimeError, match="part 1 failed"):
+    before = set(threading.enumerate())
+    with pytest.raises(RuntimeError, match="part 1 failed after 2 attempts: link dropped"):
         cloud.upload(raw)
     release.set()
+    for worker in set(threading.enumerate()) - before:
+        worker.join(timeout=5)
     assert not waited_out
+    in_flight_urls = {url for url in attempts if "/1?" not in url}
+    assert len(in_flight_urls) == cloud.backend.parallel_parts - 1
+    assert all(attempts.count(url) == 1 for url in in_flight_urls)
+
+
+def test_empty_file_uploads_with_no_parts(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    cloud, t, db = env
+    empty = db.parent / "empty.lz4"  # carries the codec suffix, so it uploads as-is
+    empty.write_bytes(b"")
+    r = cloud.upload(empty)
+    assert r["state"] == "complete" and t.uploads[r["upload_id"]]["blob"] == b""
 
 
 @pytest.mark.parametrize(

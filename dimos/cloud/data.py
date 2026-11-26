@@ -57,6 +57,10 @@ class _AlreadyCompleteError(Exception):
         self.upload = upload
 
 
+class _AbandonedError(Exception):
+    """The upload ended while this part was still being sent."""
+
+
 class DataApi:
     """The /v1/data operations, by name. The only place routes and payloads live."""
 
@@ -220,6 +224,7 @@ class MultipartBackend:
         tick("upload", done, size)
         urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
         resign_lock = threading.Lock()
+        abandoned = threading.Event()
         with artifact.open("rb") as f:
             # Parts are slices of one mapping, so none is copied into memory. It is
             # freed with its last slice, which an interrupted part may still be
@@ -228,9 +233,15 @@ class MultipartBackend:
 
         def send(n: int) -> int:
             chunk = memoryview(data)[(n - 1) * ps : n * ps]
+
+            def put(url: str) -> None:
+                if abandoned.is_set():
+                    raise _AbandonedError
+                self.api.put_part(url, chunk)
+
             url = urls[n]
             try:
-                self._retry(functools.partial(self.api.put_part, url, chunk), f"part {n}")
+                self._retry(functools.partial(put, url), f"part {n}")
             except RuntimeError as e:
                 if "403" not in str(e):
                     raise
@@ -238,12 +249,12 @@ class MultipartBackend:
                 # create is idempotent by sha256 and re-signs every URL. The first part
                 # to notice re-signs and the rest reuse its URLs.
                 with resign_lock:
-                    if urls[n] == url:
+                    if urls[n] == url and not abandoned.is_set():
                         fresh = self.api.create(**spec)
                         if fresh["state"] == "complete":
                             raise _AlreadyCompleteError(fresh) from None
                         urls.update({p["part_number"]: p["url"] for p in fresh["part_urls"]})
-                self._retry(functools.partial(self.api.put_part, urls[n], chunk), f"part {n}")
+                self._retry(functools.partial(put, urls[n]), f"part {n}")
             return len(chunk)
 
         missing = [n for n in sorted(urls) if n not in uploaded]
@@ -256,6 +267,8 @@ class MultipartBackend:
                     tick("upload", done, size)
         except _AlreadyCompleteError as e:
             return e.upload
+        finally:
+            abandoned.set()
         return None
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
