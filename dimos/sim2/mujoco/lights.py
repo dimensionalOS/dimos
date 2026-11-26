@@ -222,6 +222,16 @@ def _sky(pxr: Any, stage: Any, prim: Any, radiance: np.ndarray) -> NDArray[np.fl
     return (sampled * radiance).astype(np.float32)
 
 
+def srgb_to_linear(encoded: NDArray[Any]) -> NDArray[Any]:
+    """sRGB code values in [0, 1] as linear light: the transfer curve IEC 61966-2-1 defines, inverted."""
+    return np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4)
+
+
+def linear_to_srgb(light: NDArray[Any]) -> NDArray[Any]:
+    """Linear light in [0, 1] as sRGB code values: the transfer curve IEC 61966-2-1 defines."""
+    return np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
+
+
 def _linear_image(path: Path) -> NDArray[np.float32] | None:
     """An image file as linear RGB: float files as they are, integer ones decoded from sRGB."""
     import cv2
@@ -232,11 +242,7 @@ def _linear_image(path: Path) -> NDArray[np.float32] | None:
     color = raw[..., None].repeat(3, axis=2) if raw.ndim == 2 else raw[..., 2::-1]
     if np.issubdtype(color.dtype, np.floating):
         return np.ascontiguousarray(color, dtype=np.float32)
-    encoded = color.astype(np.float32) / np.iinfo(color.dtype).max
-    # The sRGB transfer curve as IEC 61966-2-1 defines it, inverted.
-    return np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4).astype(
-        np.float32
-    )
+    return srgb_to_linear(color.astype(np.float32) / np.iinfo(color.dtype).max).astype(np.float32)
 
 
 def _sun_irradiance(UsdLux: Any, prim: Any, radiance: np.ndarray) -> np.ndarray:
