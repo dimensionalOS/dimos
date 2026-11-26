@@ -158,6 +158,12 @@ def test_tfbuffer_get_reads_declared_frames(wired: tuple[Odom, list[TFMessage]])
     assert module.tfbuffer.get("world", "base_link", time_point=1.0) is not None
 
 
+def test_tfbuffer_get_refuses_undeclared_frame(wired: tuple[Odom, list[TFMessage]]) -> None:
+    module, _ = wired
+    with pytest.raises(ValueError, match="Odom looks up undeclared tf frame 'lidar'"):
+        module.tfbuffer.get("world", "lidar")
+
+
 def test_tf_port_skip_tf_checks_is_unchecked() -> None:
     module, sent = _wired(skip_tf_checks=True)
     try:

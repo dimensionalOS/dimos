@@ -176,11 +176,24 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
-        return TF(
-            port,
-            edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
-            module_name=self.config.instance_name or type(self).__name__,
+        name = self.config.instance_name or type(self).__name__
+        buffer = TF(
+            port, edges=None if self.config.skip_tf_checks else self.tf_edge_ids, module_name=name
         )
+        if self.config.skip_tf_checks:
+            return buffer
+        get = buffer.get
+
+        def checked_get(parent_frame: str, child_frame: str, *args: Any, **kwargs: Any) -> Any:
+            for frame in (parent_frame, child_frame):
+                if frame not in self.tf_frames.values():
+                    raise ValueError(
+                        f"{name} looks up undeclared tf frame {frame!r}; add it to tf_frames_local or tf_frames_global"
+                    )
+            return get(parent_frame, child_frame, *args, **kwargs)
+
+        buffer.get = checked_get  # type: ignore[method-assign]
+        return buffer
 
 
 def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
