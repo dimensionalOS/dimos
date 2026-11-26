@@ -44,7 +44,6 @@ if TYPE_CHECKING:
 
     from dimos.memory.replay import Replay, ReplayStream
     from dimos.memory.stream import Stream
-    from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.protocol import DimosMsg
 
@@ -138,13 +137,8 @@ class ReplayModule(Module):
             speed=self.config.speed,
             loop=self.config.loop,
         )
-        # A stream whose rows all carry one timestamp (camera_info recorded from a
-        # constant stamped at import, often long before the run) is published once
-        # when playback starts instead of replayed, and does not set the anchor:
-        # otherwise the replay would spend that lead time emitting nothing.
-        static: dict[str, DimosMsg] = {}
-        # Static TF (a ``*_static`` stream, or edges frozen in a TF stream) is sent
-        # once when playback starts, on the matching ``*_static`` port when there is one.
+        # A ``*_static`` TF stream is static: its latest transform per edge is sent once
+        # when playback starts, on the matching ``*_static`` port, else on ``tf``.
         static_tf: dict[str, dict[tuple[str, str], Transform]] = {}
         timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
         timed_starts = []
@@ -155,41 +149,14 @@ class ReplayModule(Module):
             stream_payload_types(store) if has_window else {n: p.type for n, p in outputs.items()}
         )
         for name, payload_type in types.items():
-            stream: ReplayStream[DimosMsg] = replay.stream(name)
-            if issubclass(payload_type, TFMessage):
-                rows = store.stream(name, TFMessage)
-                static_stream = name.endswith("_static")
-                static_port = name if static_stream else f"{name}_static"
-                if static_port not in outputs or not issubclass(
-                    outputs[static_port].type, TFMessage
-                ):
-                    static_port = name
-                # Frozen frames describe the coordinate system even when their
-                # original source stamp is outside the selected time window.
-                frozen, edges = (
-                    (_latest_transforms(rows), set()) if static_stream else _frozen_tf(rows)
-                )
-                if frozen.transforms and static_port in outputs:
-                    port_edges = static_tf.setdefault(static_port, {})
-                    for transform in frozen.transforms:
+            if issubclass(payload_type, TFMessage) and name.endswith("_static"):
+                port_name = name if _is_tf_port(outputs, name) else "tf"
+                if _is_tf_port(outputs, port_name):
+                    port_edges = static_tf.setdefault(port_name, {})
+                    for transform in _latest_transforms(store.stream(name, TFMessage)).transforms:
                         port_edges[(transform.frame_id, transform.child_frame_id)] = transform
-                if static_stream:
-                    continue
-                if frozen.transforms:
-                    dynamic = rows.filter(partial(_has_dynamic_tf, edges))
-                    try:
-                        start = dynamic.order_by("ts").first().ts
-                    except LookupError:
-                        continue
-                    stream = replay.stream(
-                        name,
-                        autocast=partial(_dynamic_tf, edges),
-                        source=dynamic.time_range(start, float("inf")),
-                    )
-            elif stream.count() > 1 and stream.first_ts() == stream.last_ts():
-                if name in outputs and (message := stream.first()) is not None:
-                    static[name] = message
                 continue
+            stream: ReplayStream[DimosMsg] = replay.stream(name)
             first_ts = stream.first_ts()
             if first_ts is not None:
                 timed_starts.append(first_ts)
@@ -205,9 +172,7 @@ class ReplayModule(Module):
                 ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
             ]
 
-        # Consumers keep the last value, so constant messages are sent once, before any timed frame.
-        for name, message in static.items():
-            outputs[name].publish(message)
+        # Consumers keep the last value, so static tf is sent once, before any timed frame.
         for port_name, transforms in static_tf.items():
             outputs[port_name].publish(TFMessage(*transforms.values()))
         progress = ReplayProgress(str(path))
@@ -231,17 +196,8 @@ class ReplayModule(Module):
             self._store = None
 
 
-def _has_dynamic_tf(edges: set[tuple[str, str]], row: Observation[TFMessage]) -> bool:
-    return not row.data.transforms or any(
-        (t.frame_id, t.child_frame_id) not in edges for t in row.data.transforms
-    )
-
-
-def _dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> TFMessage:
-    # Older recordings can carry both fixed and changing edges in one row.
-    return TFMessage(
-        *(t for t in message.transforms if (t.frame_id, t.child_frame_id) not in edges)
-    )
+def _is_tf_port(outputs: dict[str, Out[Any]], name: str) -> bool:
+    return name in outputs and issubclass(outputs[name].type, TFMessage)
 
 
 def _latest_transforms(rows: Stream[TFMessage]) -> TFMessage:
@@ -251,32 +207,6 @@ def _latest_transforms(rows: Stream[TFMessage]) -> TFMessage:
         for transform in row.data.transforms:
             latest[(transform.frame_id, transform.child_frame_id)] = transform
     return TFMessage(*latest.values())
-
-
-def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]]:
-    """Find fixed edges in a finite recording, independent of playback bounds."""
-    all_static = rows.count() > 1 and rows.order_by("ts").first().ts == rows.last().ts
-    # A changing stamp disqualifies the edge. Only the last stamp and count
-    # are kept for each edge, irrespective of the length of the recording.
-    stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
-    for row in rows:
-        for transform in row.data.transforms:
-            edge = (transform.frame_id, transform.child_frame_id)
-            previous = stamps.get(edge, (transform.ts, 0))
-            if previous is not None:
-                stamps[edge] = (
-                    (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
-                )
-    edges = {
-        edge for edge, stamp in stamps.items() if stamp is not None and (all_static or stamp[1] > 1)
-    }
-    transforms: dict[bytes, Transform] = {}
-    if edges:
-        for row in rows:
-            for transform in row.data.transforms:
-                if (transform.frame_id, transform.child_frame_id) in edges:
-                    transforms[transform.lcm_encode()] = transform
-    return TFMessage(*transforms.values()), edges
 
 
 def _port_names(topics: str, types: dict[str, type]) -> list[str]:

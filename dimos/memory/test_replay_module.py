@@ -196,57 +196,23 @@ def _replay_to_the_end(module: Any, mocker: MockerFixture, wait_until: Any) -> N
         module.stop()
 
 
-def test_single_timestamp_stream_is_published_once_and_not_the_anchor(
-    tmp_path: Path, wait_until: Any
-) -> None:
-    """camera_info stamped at import sits 39 s before the run; the run must start at odom."""
-    path = tmp_path / "memory.db"
-    with SqliteStore(path=str(path)) as store:
-        info = store.stream("camera_info", PoseStamped)
-        for _ in range(3):
-            info.append(PoseStamped(ts=1.0), ts=1.0)
-        odom = store.stream("odom", PoseStamped)
-        for ts in (40.0, 40.1):
-            odom.append(PoseStamped(ts=ts), ts=ts)
-    module = replay_module(str(path))(dataset=str(path), loop=True, speed=10.0)
-    published = _publications(module)
-    try:
-        module.start()
-        # Two passes of odom within the deadline, not 39 s later.
-        wait_until(lambda: [name for name, _ in published].count("odom") >= 4, timeout=5)
-    finally:
-        module.stop()
-    assert [name for name, _ in published].count("camera_info") == 1
-    assert published[0][0] == "camera_info"
-
-
-def _tf_recording(path: Path, *, split: bool = True) -> None:
-    """A fixed base -> camera edge and a moving world -> base edge, as recorded now
-    (one transform per row, mounts on tf_static) or by older recorders (mixed rows)."""
-    camera = Transform(frame_id="base", child_frame_id="camera", ts=10.0)
+def _tf_recording(path: Path) -> None:
+    """A moving world -> base edge on tf, and base -> camera / lidar mounts on tf_static."""
     with SqliteStore(path=str(path)) as store:
         tf = store.stream("tf", TFMessage)
         for ts in (1000.0, 1001.0):
-            base = Transform(frame_id="world", child_frame_id="base", ts=ts)
-            if split:
-                tf.append(TFMessage(camera), ts=10.0)
-                tf.append(TFMessage(base), ts=ts)
-            else:
-                tf.append(TFMessage(camera, base), ts=ts)
-        if split:
-            lidar = Transform(frame_id="base", child_frame_id="lidar", ts=5.0)
-            store.stream("tf_static", TFMessage).append(TFMessage(lidar), ts=5.0)
+            tf.append(TFMessage(Transform(frame_id="world", child_frame_id="base", ts=ts)), ts=ts)
+        tf_static = store.stream("tf_static", TFMessage)
+        for child, ts in (("camera", 5.0), ("lidar", 10.0)):
+            transform = Transform(frame_id="base", child_frame_id=child, ts=ts)
+            tf_static.append(TFMessage(transform), ts=ts)
 
 
-@pytest.mark.parametrize(
-    ("split", "static_port", "static_edges"),
-    [(True, "tf_static", ["camera", "lidar"]), (False, "tf", ["camera"])],
-)
-def test_static_tf_is_sent_once_before_playback_and_not_on_loop(
-    tmp_path: Path, wait_until: Any, split: bool, static_port: str, static_edges: list[str]
+def test_static_tf_is_sent_once_at_start_on_the_static_port(
+    tmp_path: Path, wait_until: Any
 ) -> None:
     path = tmp_path / "memory.db"
-    _tf_recording(path, split=split)
+    _tf_recording(path)
     module = replay_module(str(path))(dataset=str(path), loop=True, speed=20.0)
     published = _publications(module)
     try:
@@ -255,8 +221,8 @@ def test_static_tf_is_sent_once_before_playback_and_not_on_loop(
     finally:
         module.stop()
     edges = [(name, sorted(t.child_frame_id for t in msg.transforms)) for name, msg in published]
-    assert edges[0] == (static_port, static_edges)
-    # Then only the moving edge, pass after pass.
+    assert edges[0] == ("tf_static", ["camera", "lidar"])
+    # Then tf as recorded, pass after pass.
     assert edges[1:5] == [("tf", ["base"])] * 4
     assert [msg.transforms[0].ts for _, msg in published[1:5]] == [1000.0, 1001.0] * 2
 
@@ -278,7 +244,7 @@ def test_window_is_measured_from_the_first_timed_row(
     expected_odom: list[float],
     expected_tf: list[float],
 ) -> None:
-    # Odometry starts half a second before the moving tf; the fixed edges set no origin.
+    # Odometry starts half a second before the moving tf; tf_static sets no origin.
     path = tmp_path / "memory.db"
     _tf_recording(path)
     with SqliteStore(path=str(path)) as store:
@@ -290,7 +256,7 @@ def test_window_is_measured_from_the_first_timed_row(
     assert [msg.ts for name, msg in published if name == "odom"] == expected_odom
     tf = [t for name, msg in published if name == "tf" for t in msg.transforms]
     assert [t.ts for t in tf] == expected_tf
-    # The fixed edges are sent even when the window holds no frames.
+    # tf_static is sent even when the window holds no frames.
     assert published[0][0] == "tf_static"
 
 
@@ -377,14 +343,7 @@ def test_dataset_path_resolves_names_and_skips_the_default(recording: str) -> No
     assert dataset_path("no-such-dataset-for-this-test") == ""
 
 
-@pytest.mark.parametrize("static", [False, True])
-def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mocker, static):
-    # Static metadata must not extend the reported duration or prevent completion.
-    with SqliteStore(path=recording) as store:
-        if static:
-            info = store.stream("camera_info", PoseStamped)
-            for _ in range(2):
-                info.append(PoseStamped(ts=0.0), ts=0.0)
+def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mocker):
     scheduler = TestScheduler()
     mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
     log = mocker.patch("dimos.memory.replay_progress.logger")
@@ -405,26 +364,3 @@ def test_replay_logs_source_and_finishes_after_all_timed_streams(recording, mock
         assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=recording)]
     finally:
         module.stop()
-
-
-def test_replay_with_only_static_metadata_reports_completion(recording, mocker):
-    with SqliteStore(path=recording) as store:
-        for _ in range(2):
-            store.stream("camera_info", PoseStamped).append(PoseStamped(ts=0.0), ts=0.0)
-    log = mocker.patch("dimos.memory.replay_progress.logger")
-    module = replay_module(recording, topics="camera_info")(dataset=recording, topics="camera_info")
-    received = []
-    with Disposable(module.outputs["camera_info"].subscribe(received.append)), module:
-        pass
-    assert [message.ts for message in received] == [0.0]
-    assert log.info.call_args_list == [
-        mocker.call(
-            "Replay started",
-            source=recording,
-            path=recording,
-            duration_s=0.0,
-            speed=1.0,
-            loop=False,
-        ),
-        mocker.call("Replay finished", source=recording),
-    ]
