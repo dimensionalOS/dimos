@@ -18,6 +18,7 @@ import argparse
 import hashlib
 from importlib import import_module
 import json
+import math
 from pathlib import Path
 import shutil
 
@@ -33,7 +34,12 @@ BASE = "world/m20/base_link"
 
 
 def prepare(
-    patch: Path, model: Path, meshes: Path, output: Path, profile: Profile = "sdk57"
+    patch: Path,
+    model: Path,
+    meshes: Path,
+    output: Path,
+    profile: Profile = "sdk57",
+    heading_degrees: float = 0.0,
 ) -> Path:
     import_module("mujoco._usd")  # Registers the native MJCF Sdf reader.
     output.mkdir(parents=True, exist_ok=True)
@@ -54,6 +60,8 @@ def prepare(
     position = list(spec.body("base_link").pos)
     position[2] -= lowest - 0.005
     spec.body("base_link").pos = position
+    angle = math.radians(heading_degrees) / 2
+    spec.body("base_link").quat = [math.cos(angle), 0, 0, math.sin(angle)]
     for key in list(spec.keys):
         spec.delete(key)
     # MjSpec serialization uses its compiled snapshot; refresh after changing pose.
@@ -117,6 +125,7 @@ def prepare(
         "mjcf_sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
         "source": str(model),
         "policy_contract": profile,
+        "heading_degrees": heading_degrees,
         "stairs_validated": False,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -128,6 +137,7 @@ def main() -> None:
     for name in ("patch", "model", "meshes", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--profile", choices=("sdk57", "dreamwaq342"), default="sdk57")
+    parser.add_argument("--heading-degrees", type=float, default=0)
     args = parser.parse_args()
     print(
         prepare(
@@ -136,6 +146,7 @@ def main() -> None:
             args.meshes.resolve(),
             args.output.resolve(),
             args.profile,
+            args.heading_degrees,
         )
     )
 

@@ -213,6 +213,7 @@ def main() -> None:
                     policy = deployment.get_instance(M20PolicyModule if is_m20 else G1PolicyModule)
                     wait_until(partial(physics_ready, sim), timeout=40)
                     if not observer_loaded:
+                        # Layer order participates in scene identity; match physics exactly.
                         scene = compose_scene(
                             [
                                 deployment.get_instance(atom.name)

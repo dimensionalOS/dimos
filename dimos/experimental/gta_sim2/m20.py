@@ -28,6 +28,7 @@ from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import ActionCommand, JointCommand
 from dimos_lcm.std_msgs import Header, Time
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
@@ -85,6 +86,8 @@ class M20PolicyModule(Module):
         self._last_action: ActionCommand | None = None
         self._clock_id: str | None = None
         self._inferences = self._missed = 0
+        self._standing = True
+        self._park_wheels: NDArray[np.float64] | None = None
 
     @rpc
     def build(self) -> None:
@@ -166,14 +169,32 @@ class M20PolicyModule(Module):
                 .inv()
                 .apply([0, 0, -1])
             )
-            q, dq = self._actor.act(
-                np.asarray(joints.position)[order],
-                np.asarray(joints.velocity)[order],
-                np.array([gyro.x, gyro.y, gyro.z]),
-                gravity,
-                self._velocity if time.monotonic() < self._until else np.zeros(3),
-            )
-            q[:12] = np.clip(q[:12], self._lower, self._upper)
+            velocity = self._velocity if time.monotonic() < self._until else np.zeros(3)
+            standing = bool(np.max(np.abs(velocity)) < 1e-6)
+            if standing:
+                if not self._standing:
+                    self._actor.reset()
+                if self._park_wheels is None or not self._standing:
+                    self._park_wheels = np.asarray(joints.position)[order][12:].copy()
+                q, dq = home_pose(self.config.profile), np.zeros(16)
+                q[12:] = self._park_wheels
+            else:
+                q, dq = self._actor.act(
+                    np.asarray(joints.position)[order],
+                    np.asarray(joints.velocity)[order],
+                    np.array([gyro.x, gyro.y, gyro.z]),
+                    gravity,
+                    velocity,
+                )
+                self._inferences += 1
+            self._standing = standing
+            kp = np.r_[KP[:12], np.full(4, 20.0)] if standing else KP
+            kd = np.r_[KD[:12], np.full(4, 2.0)] if standing else KD
+            bounded_q = q.copy()
+            bounded_q[:12] = np.clip(q[:12], self._lower, self._upper)
+            # Preserve the policy's PD torque when Sim2 requires an in-range
+            # position target. Actuator force limits still bound the total torque.
+            feedforward = kp * (q - bounded_q)
             packet = ActionCommand(
                 header=SampleHeader(
                     clock_id=self._clock_id,
@@ -196,18 +217,17 @@ class M20PolicyModule(Module):
                         values=list(values),
                     )
                     for interface, values in (
-                        ("position", q),
+                        ("position", bounded_q),
                         ("velocity", dq),
-                        ("kp", KP),
-                        ("kd", KD),
-                        ("effort", np.zeros(16)),
+                        ("kp", kp),
+                        ("kd", kd),
+                        ("effort", feedforward),
                     )
                 ],
             )
             if self._identity >= 0:
                 self._missed += max(0, (stamp - self._identity) // self.config.period_ns - 1)
             self._identity, self._last_action = stamp, packet
-            self._inferences += 1
             return packet
 
     @rpc
@@ -218,6 +238,7 @@ class M20PolicyModule(Module):
                 "missed_samples": self._missed,
                 "active": self._actor is not None,
                 "contract": self.config.profile,
+                "mode": "stand" if self._standing else "policy",
                 "stairs_validated": False,
             }
 

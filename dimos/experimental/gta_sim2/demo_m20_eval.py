@@ -40,6 +40,11 @@ def fixture(scene: Path, output: Path, terrain: str) -> Path:
     """Synthetic evaluation only; never replace the interactive map collision."""
     stage = Usd.Stage.Open(str(scene.resolve()))
     stage.RemovePrim("/world/gta_patch")
+    # Evaluation fixtures run along +X regardless of the street spawn heading.
+    body = UsdGeom.Xformable(stage.GetPrimAtPath("/" + BASE))
+    transform = Gf.Matrix4d(1.0)
+    transform.SetTranslate(body.GetLocalTransformation().ExtractTranslation())
+    body.MakeMatrixXform().Set(transform)
     boxes: list[tuple[str, tuple[float, float, float], tuple[float, float, float]]] = [
         ("ground", (0, 0, -0.05), (40, 10, 0.1))
     ]
@@ -83,7 +88,8 @@ def main() -> None:
         policy = deployment.get_instance(M20PolicyModule)
         wait_until(partial(physics_ready, sim), timeout=40)
         start = time.monotonic()
-        rows = []
+        rows: list[list[float]] = []
+        forward_axis = np.zeros(2)
         while time.monotonic() - start < args.seconds:
             tick = time.monotonic()
             policy.move(Twist(linear=Vector3(args.speed, 0, 0)), duration=0.35)
@@ -91,6 +97,9 @@ def main() -> None:
             body = poses_by_id(sample)[BASE]
             q, p = body.orientation, body.position
             rotation = Rotation.from_quat([q.x, q.y, q.z, q.w])
+            if not rows:
+                forward_axis = rotation.as_matrix()[:2, 0]
+                forward_axis /= np.linalg.norm(forward_axis)
             rows.append([sample.header.time_ns / 1e9, p.x, p.y, p.z, rotation.as_matrix()[2, 2]])
             time.sleep(max(0, 0.05 - (time.monotonic() - tick)))
         policy.move(Twist(), duration=0.35)
@@ -100,7 +109,10 @@ def main() -> None:
             "command_mps": args.speed,
             "duration_s": float(a[-1, 0] - a[0, 0]),
             "distance_xy_m": float(np.linalg.norm(a[-1, 1:3] - a[0, 1:3])),
-            "forward_mps": float((a[-1, 1] - a[0, 1]) / (a[-1, 0] - a[0, 0])),
+            "forward_axis_xy": forward_axis.tolist(),
+            "forward_mps": float(
+                np.dot(a[-1, 1:3] - a[0, 1:3], forward_axis) / (a[-1, 0] - a[0, 0])
+            ),
             "min_upright": float(a[:, 4].min()),
             "z_range_m": [float(a[:, 3].min()), float(a[:, 3].max())],
             "sim": sim.status(),
