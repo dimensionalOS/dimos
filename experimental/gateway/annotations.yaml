@@ -381,24 +381,36 @@ robots:
         go2-dds:
           title: 'Go2 over DDS'
           description: 'The Go2''s own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials.'
+          recommended_config: &go2_dds_config
+          - module: go2dds
+            field: iface
+            label: DDS network interface
         go2-dds-mid360:
           title: 'Go2 over DDS + Mid-360'
           description: 'DDS Go2 with a Mid-360: Point-LIO odometry in place of the head lidar''s.'
+          recommended_config: *go2_dds_config
         go2-nav:
           title: 'Go2: navigation'
           description: 'DDS Go2 with a Mid-360 (Point-LIO), MLS global planner and local planner; headless, watch it with the nav viewer.'
+          recommended_config: *go2_dds_config
         go2-nav-l1:
           title: 'Go2: navigation + head L1'
           description: 'go2-nav plus the head L1 lidar''s deskewed scans, in Point-LIO''s odometry frame.'
+          recommended_config: *go2_dds_config
         go2-nav-viewer:
           title: 'Go2: nav viewer'
           description: 'The screen for go2-nav on another machine: dials the Go2''s zenoh router and shows its maps and plans.'
+          recommended_config: &go2_nav_viewer_config
+          - global: zenoh_connect
+            label: Robot router endpoint
         go2-nav-viewer-mesh:
           title: 'Go2: nav viewer (meshed map)'
           description: 'The go2-nav viewer, meshing the map regions on this machine''s GPU.'
+          recommended_config: *go2_nav_viewer_config
         go2-nav-hosted:
           title: 'Go2: navigation across hosts'
           description: 'go2-nav split over dimos hosts: the stack on the Go2''s host, the mesher on the GPU host, the viewer here.'
+          recommended_config: *go2_dds_config
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
@@ -414,6 +426,7 @@ robots:
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
+          recommended_config: []
           hidden: true
         go2-localize:
           title: 'Go2 with object localization'
