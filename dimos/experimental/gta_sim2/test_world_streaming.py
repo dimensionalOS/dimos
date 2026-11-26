@@ -430,3 +430,21 @@ def test_compiler_exit_preserves_current_physics(tmp_path: Path) -> None:
     assert backend.data.time > 0
     assert "compiler exited" in backend._load_error
     assert backend._pending is None
+
+
+def test_visual_state_survives_reopen_at_both_original_and_moved_locations(tmp_path: Path) -> None:
+    model = fixture_model(door=True)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    snapshot = object_snapshot(model, data, "prop", "gta_object/door", 2)
+    snapshot["position"] = [100, 0, 1]
+    snapshot["visual"] = {"source_position_local": [20, 0, 1], "pivot": [0.5, 0, 0]}
+    store = ObjectStateStore(tmp_path / "objects.sqlite", "catalog")
+    store.save([snapshot])
+    store.close()
+    for center in (np.array([20.0, 0, 1]), np.array([100.0, 0, 1])):
+        result = ObjectStateStore.visual_nearby(store.path, center, 5)
+        assert result["prop"]["position"] == [100, 0, 1]
+        assert result["prop"]["visual"]["pivot"] == [0.5, 0, 0]
+    assert not ObjectStateStore.visual_nearby(store.path, np.array([50.0, 0, 1]), 5)
+    assert not ObjectStateStore.nearby(store.path, np.array([20.0, 0, 1]), 5)

@@ -14,11 +14,19 @@
 
 """Check frame conventions and geometry boundaries before using policy observations."""
 
+from typing import Any
+
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.experimental.gta_sim2.prepare import clip_triangle, ground_height
-from dimos.experimental.gta_sim2.renderer import RAGE_TO_RENDER, projection, renderer_transform
+from dimos.experimental.gta_sim2.renderer import (
+    RAGE_TO_RENDER,
+    object_visual,
+    projection,
+    renderer_transform,
+)
 from dimos.sim2.sensors.camera.config import CameraConfig
 
 
@@ -59,3 +67,33 @@ def test_patch_clipping_and_overpass_layer_selection() -> None:
     surfaces = np.stack([triangle, triangle + np.array([0, 0, 10])])
     assert ground_height(surfaces, (0, 0), 2) == 1
     assert ground_height(surfaces, (0, 0), 12) == 11
+
+
+def test_moving_prop_rotates_about_physics_pivot_in_gltf_coordinates() -> None:
+    rotation = Rotation.from_euler("xyz", [0.2, -0.4, 1.1])
+    pivot = np.array([0.5, 0.1, 0.0])
+    scale = 1.3
+    position = np.array([12.0, 4.0, 1.0])
+    origin = np.array([-458.0, -66.0, 1.3])
+    state: dict[str, Any] = {
+        "identity": "map/entity/7",
+        "position": position,
+        "quaternion_wxyz": rotation.as_quat(scalar_first=True),
+        "visual": {
+            "source_map": "map",
+            "source_model": "asset",
+            "source_position": [0, 0, 0],
+            "pivot": pivot,
+            "scale": scale,
+        },
+    }
+    matrix = np.array(object_visual(state, origin)["transform"]).reshape(4, 4).T
+    np.testing.assert_allclose(
+        (matrix @ np.r_[RAGE_TO_RENDER @ pivot, 1])[:3], RAGE_TO_RENDER @ (position + origin)
+    )
+    point = np.array([1.0, 0.3, 0.8])
+    expected = RAGE_TO_RENDER @ (rotation.apply((point - pivot) * scale) + position + origin)
+    np.testing.assert_allclose((matrix @ np.r_[RAGE_TO_RENDER @ point, 1])[:3], expected)
+    state["quaternion_wxyz"] = [0, 0, 0, 0]
+    with pytest.raises(ValueError, match="Invalid dynamic"):
+        object_visual(state, origin)

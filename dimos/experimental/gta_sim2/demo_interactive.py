@@ -43,6 +43,7 @@ from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare import ground_height
 from dimos.experimental.gta_sim2.prepare_m20 import BASE as M20_BASE
 from dimos.experimental.gta_sim2.renderer import ObserverOutput, SixNGRenderer
+from dimos.experimental.gta_sim2.world_objects import object_state_path
 from dimos.experimental.gta_sim2.world_streaming import streaming_backend
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -53,6 +54,7 @@ from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
+from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 from dimos.utils.testing.waiting import wait_until
 
 CONTROL_TIMEOUT = 0.35
@@ -148,6 +150,11 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+    object_store = (
+        object_state_path(args.stream_catalog.resolve(), args.runtime / "streaming.json")
+        if args.stream_catalog and args.stream_catalog.suffix == ".json"
+        else None
+    )
     observer = SixNGRenderer(
         args.executable,
         args.game,
@@ -156,6 +163,7 @@ def main() -> None:
         tuple(origin),
         gpu=args.gpu,
         observer=ObserverOutput(args.runtime, args.camera_port),
+        object_store=object_store,
     )
     deployment: ModuleCoordinator | None = None
     last_action = read_json(args.runtime / "action.json").get("id")
@@ -230,6 +238,16 @@ def main() -> None:
                                 ),
                                 command_velocity_limits=(args.max_forward_speed, 0.5, 0.7),
                                 turning_forward_speed=1.5,
+                                renderer=partial(
+                                    SixNGRenderer,
+                                    args.executable,
+                                    args.game,
+                                    args.work,
+                                    args.runtime / "sensor-renderer",
+                                    tuple(origin),
+                                    gpu=args.gpu,
+                                    object_store=object_store,
+                                ),
                             )
                             if is_m20
                             else gta_g1_blueprint(args.scene)
@@ -239,6 +257,7 @@ def main() -> None:
                     )
                     deployment = ModuleCoordinator.build(blueprint)
                     sim = deployment.get_instance(SimModule)
+                    camera_worker = deployment.get_instance(CameraRenderModule)
                     policy = deployment.get_instance(M20PolicyModule if is_m20 else G1PolicyModule)
                     wait_until(partial(physics_ready, sim), timeout=40)
                     if not observer_loaded:
@@ -338,6 +357,7 @@ def main() -> None:
                         ),
                         sim=sim.status(),
                         policy=policy.status(),
+                        camera=camera_worker.statistics(),
                         streaming=read_json(args.runtime / "streaming.json")
                         if args.stream_catalog
                         else None,

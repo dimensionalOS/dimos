@@ -21,7 +21,6 @@ world-scoped CBOR extension; their stable identities belong to the catalog.
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,6 +47,7 @@ from dimos.experimental.gta_sim2.world_objects import (
     ObjectStateStore,
     awake_objects,
     object_snapshot,
+    object_state_path,
     restore_object,
     transfer_named_state,
 )
@@ -120,9 +120,8 @@ class WorldStreamingMujocoBackend(MujocoBackend):
         directory = Path(self._scratch.name)
         scene_path = directory / "scene.usda"
         scene_path.write_text(scene.usd)
-        state_key = hashlib.sha256(str(self._metrics_path.resolve()).encode()).hexdigest()[:16]
-        self._state_path = self._state_path or self._catalog_path.parent / "state" / (
-            state_key + ".sqlite"
+        self._state_path = self._state_path or object_state_path(
+            self._catalog_path, self._metrics_path
         )
         self._state_path = self._state_path.resolve()
         self._store = ObjectStateStore(self._state_path, self._catalog.digest)
@@ -205,6 +204,7 @@ class WorldStreamingMujocoBackend(MujocoBackend):
             identity: object_snapshot(
                 self.model, self.data, identity, actor["body"], actor["radius"]
             )
+            | {"visual": actor["visual"]}
             for identity, actor in self._actors.items()
         }
 
@@ -430,6 +430,7 @@ class WorldStreamingMujocoBackend(MujocoBackend):
                     "identity": identity,
                     "position": self.data.xpos[self.model.body(actor["body"]).id].tolist(),
                     "quaternion_wxyz": self.data.xquat[self.model.body(actor["body"]).id].tolist(),
+                    "visual": actor["visual"],
                 }
                 for identity, actor in self._actors.items()
             ]

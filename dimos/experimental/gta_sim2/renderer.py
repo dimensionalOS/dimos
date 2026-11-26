@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any, cast
 
+import cbor2
 from dimos_lcm.sim_msgs import WorldState
 import mujoco
 import numpy as np
@@ -33,6 +34,7 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 import trimesh
 
+from dimos.experimental.gta_sim2.world_objects import ObjectStateStore
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.sim2.description import scene_revision
@@ -65,6 +67,35 @@ def renderer_transform(
     return matrix
 
 
+def object_visual(state: dict[str, Any], origin: NDArray[np.float64]) -> dict[str, Any]:
+    """Convert a physics pivot pose into the authored GLB model's placement."""
+    visual = state["visual"]
+    position = np.asarray(state["position"], dtype=np.float64)
+    quaternion = np.asarray(state["quaternion_wxyz"], dtype=np.float64)
+    pivot = np.asarray(visual["pivot"], dtype=np.float64)
+    scale = float(visual["scale"])
+    if (
+        position.shape != (3,)
+        or pivot.shape != (3,)
+        or quaternion.shape != (4,)
+        or not np.isfinite(np.r_[position, pivot, quaternion, scale]).all()
+        or scale <= 0
+        or not np.isclose(np.linalg.norm(quaternion), 1, atol=1e-5)
+    ):
+        raise ValueError("Invalid dynamic object pose/scale")
+    rotation = Rotation.from_quat(quaternion, scalar_first=True).as_matrix()
+    matrix = np.eye(4)
+    matrix[:3, :3] = RAGE_TO_RENDER @ rotation @ RAGE_TO_RENDER.T * scale
+    matrix[:3, 3] = RAGE_TO_RENDER @ (position + origin - rotation @ (pivot * scale))
+    return {
+        "id": state["identity"],
+        "source_map": visual["source_map"],
+        "source_model": visual["source_model"],
+        "source_position": visual["source_position"],
+        "transform": matrix.T.ravel().tolist(),
+    }
+
+
 @dataclass(frozen=True)
 class ObserverOutput:
     """Independent browser frames; these are never published as sensor acquisitions."""
@@ -92,11 +123,16 @@ class SixNGRenderer:
         origin: tuple[float, float, float],
         gpu: str | None = None,
         observer: ObserverOutput | None = None,
+        object_store: Path | None = None,
     ) -> None:
         self.executable, self.game, self.work, self.runtime = executable, game, work, runtime
         self.origin = np.asarray(origin, dtype=np.float64)
         self._gpu = gpu
         self._observer = observer
+        self._object_store = object_store
+        self._saved_objects: dict[str, dict[str, Any]] = {}
+        self._objects_read_at = 0.0
+        self._objects_center = np.full(3, np.inf)
         self._process: subprocess.Popen[bytes] | None = None
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
         self._log: Any = None
@@ -175,6 +211,7 @@ class SixNGRenderer:
                 stdin=subprocess.DEVNULL,
                 stdout=self._log,
                 stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
         except BaseException:
             self.close()
@@ -250,6 +287,32 @@ class SixNGRenderer:
         rotation = Rotation.from_quat(
             [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
         ).as_matrix()
+        objects: dict[str, dict[str, Any]] = {}
+        if self._object_store is not None:
+            center = np.array([p.position.x, p.position.y, p.position.z])
+            if self._observer:
+                try:
+                    status = json.loads((self._observer.directory / "status.json").read_text())
+                    center = np.asarray(status["position"], dtype=np.float64) - self.origin
+                except (OSError, ValueError, KeyError):
+                    pass
+            now = time.monotonic()
+            if (
+                now - self._objects_read_at > 0.25
+                or np.linalg.norm(center - self._objects_center) > 10
+            ):
+                self._saved_objects = ObjectStateStore.visual_nearby(
+                    self._object_store, center, 750
+                )
+                self._objects_read_at, self._objects_center = now, center.copy()
+            objects.update(self._saved_objects)
+        for entry in sample.cbor_observations:
+            if entry.entity_id == "world" and entry.key == "gta/objects":
+                values = cbor2.loads(bytes(entry.value))["objects"]
+                for value in values:
+                    objects[value["identity"]] = value
+        if len(objects) > 4096:
+            raise MemoryError("Visible dynamic object budget exceeded")
         self._sequence += 1
         return {
             "version": 1,
@@ -267,6 +330,7 @@ class SixNGRenderer:
             "up": (-RAGE_TO_RENDER @ rotation[:, 1]).tolist(),
             "projection": projection(camera).T.ravel().tolist(),
             "actors": actors,
+            "objects": [object_visual(value, self.origin) for value in objects.values()],
         }
 
     def _send(self, request: dict[str, Any]) -> None:
@@ -359,3 +423,5 @@ class SixNGRenderer:
             self._temporary = None
         self._actor_ids.clear()
         self._cameras.clear()
+        self._saved_objects.clear()
+        self._objects_read_at = 0.0

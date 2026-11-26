@@ -260,6 +260,14 @@ def compile_world_window(
             "radius": radius,
             "state": state,
             "definition": definition,
+            "visual": {
+                "source_model": record["source"],
+                "source_map": json.loads(record["metadata"]).get("map", ""),
+                "source_position": (transform[:3, 3] + catalog.origin).tolist(),
+                "source_position_local": transform[:3, 3].tolist(),
+                "scale": float(scale[0]),
+                "pivot": pivot.tolist(),
+            },
         }
     triangles_count, primitives_count = 0, 0
     missing: list[str] = []

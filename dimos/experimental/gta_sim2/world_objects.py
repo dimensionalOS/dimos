@@ -16,6 +16,7 @@
 
 from collections import OrderedDict
 from collections.abc import Iterable
+import hashlib
 import json
 from pathlib import Path
 from queue import Queue
@@ -30,6 +31,11 @@ from numpy.typing import NDArray
 from dimos.experimental.gta_sim2.world_index import instance_number
 
 OBJECT_PREFIX = "gta_object/"
+
+
+def object_state_path(catalog: Path, metrics: Path) -> Path:
+    key = hashlib.sha256(str(metrics.resolve()).encode()).hexdigest()[:16]
+    return catalog.parent / "state" / (key + ".sqlite")
 
 
 class ObjectStateStore:
@@ -50,6 +56,9 @@ class ObjectStateStore:
             )
             db.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS locations USING rtree(number,minx,maxx,miny,maxy,minz,maxz)"
+            )
+            db.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS visual_origins USING rtree(number,minx,maxx,miny,maxy,minz,maxz)"
             )
             db.execute("CREATE TABLE IF NOT EXISTS generation(value INTEGER NOT NULL)")
             if not db.execute("SELECT 1 FROM generation").fetchone():
@@ -90,8 +99,21 @@ class ObjectStateStore:
                                     p[2] + radius,
                                 ),
                             )
+                            if "visual" in row:
+                                original = row["visual"]["source_position_local"]
+                                db.execute(
+                                    "INSERT OR REPLACE INTO visual_origins VALUES (?,?,?,?,?,?,?)",
+                                    (
+                                        number,
+                                        *(
+                                            float(v)
+                                            for c in original
+                                            for v in (c - radius, c + radius)
+                                        ),
+                                    ),
+                                )
                         db.execute("UPDATE generation SET value=value+1")
-        except Exception as error:
+        except (sqlite3.Error, ValueError, TypeError, KeyError, OverflowError, OSError) as error:
             self._error = error
 
     def save(self, snapshots: list[dict[str, Any]]) -> None:
@@ -136,6 +158,29 @@ class ObjectStateStore:
                 tuple(float(v) for v in (hi[0], lo[0], hi[1], lo[1], hi[2], lo[2])),
             ).fetchall()
             return {identity: json.loads(state) for identity, state in rows}
+
+    @staticmethod
+    def visual_nearby(
+        path: Path, center: NDArray[np.float64], radius: float
+    ) -> dict[str, dict[str, Any]]:
+        """Include original locations so moved props do not reappear at their spawn."""
+        if not path.exists():
+            return {}
+        lo, hi = center - radius, center + radius
+        bounds = tuple(float(v) for v in (hi[0], lo[0], hi[1], lo[1], hi[2], lo[2]))
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.1) as db:
+            rows = db.execute(
+                """SELECT id,state FROM objects WHERE number IN (
+                SELECT number FROM locations WHERE minx<=? AND maxx>=? AND miny<=? AND maxy>=? AND minz<=? AND maxz>=?
+                UNION SELECT number FROM visual_origins WHERE minx<=? AND maxx>=? AND miny<=? AND maxy>=? AND minz<=? AND maxz>=?
+            ) LIMIT 4097""",
+                bounds + bounds,
+            ).fetchall()
+        if len(rows) > 4096:
+            raise MemoryError("Visible persistent objects exceed the 4096-object budget")
+        return {
+            identity: json.loads(state) for identity, state in rows if "visual" in json.loads(state)
+        }
 
     @staticmethod
     def generation(path: Path) -> int:

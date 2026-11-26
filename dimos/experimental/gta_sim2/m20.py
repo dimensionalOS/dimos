@@ -52,7 +52,7 @@ from dimos.sim2.module import SimModule
 from dimos.sim2.physics.drives import usd_drives
 from dimos.sim2.physics.interface import PhysicsBackend
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.sensors.camera.config import CameraConfig
+from dimos.sim2.sensors.camera.config import CameraConfig, CameraRenderer
 from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
@@ -346,6 +346,7 @@ def m20_blueprint(
     profile: Profile = "sdk57",
     *,
     backend: Callable[[], PhysicsBackend] = MujocoBackend,
+    renderer: Callable[[], CameraRenderer] = MujocoRenderer,
     streaming: bool = False,
     command_velocity_limits: tuple[float, float, float] = (1.5, 0.5, 0.7),
     turning_forward_speed: float | None = None,
@@ -369,7 +370,7 @@ def m20_blueprint(
         ).remappings([(SimImuModule, "imu", "imu")]),
         camera,
         CameraRenderModule.blueprint(
-            renderer=MujocoRenderer, cameras=tuple(atom.name for atom in camera.active_blueprints)
+            renderer=renderer, cameras=tuple(atom.name for atom in camera.active_blueprints)
         ),
         SimModule.blueprint(backend=backend, observation_hz=200, joint_ids=ids),
         SimJointEncoderModule.blueprint(sensor=EncoderConfig(ids, hz=50)),
