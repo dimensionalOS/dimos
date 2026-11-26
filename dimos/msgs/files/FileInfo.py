@@ -55,10 +55,6 @@ class FileInfo(Timestamped):
         self.content = content
         self.ts = time.time() if ts is None else ts
 
-    def header(self) -> FileInfo:
-        """The same file without its content."""
-        return FileInfo(self.uri, self.sha256, self.mtime, None, self.ts)
-
     def lcm_encode(self) -> bytes:
         flags = (
             (_HAS_SHA256 if self.sha256 is not None else 0)
