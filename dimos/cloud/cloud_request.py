@@ -24,7 +24,7 @@ from typing import Any, Protocol, cast
 import urllib.error
 import urllib.request
 
-# 64 KiB blocks for splitting chunks
+# split each chunk into blocks of this size
 PUT_BLOCK = 64 << 10
 
 
