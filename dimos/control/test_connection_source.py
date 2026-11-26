@@ -28,7 +28,7 @@ from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
-from dimos.hardware.manipulators.spec import ControlMode
+from dimos.control.task import ControlMode
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState

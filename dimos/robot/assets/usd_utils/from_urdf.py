@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dimos.protocol.tf.frame_paths import check_frame_path
 from dimos.robot.assets.usd_utils.assets import write_asset_info
 from dimos.robot.assets.usd_utils.pxr import (
     Prim,
@@ -69,15 +70,14 @@ def urdf_to_usd(
     include_collision: bool = True,
 ) -> str:
     pxr = load_pxr()
-    root_element = ET.fromstring(model.xml)
-    name = name or root_element.get("name") or "robot"
+    name = _robot_name(model, name)
     links = _urdf_links_of(model.xml, include_collision=include_collision)
     children = _children_by_parent(model.joints)
 
     stage = pxr.Usd.Stage.CreateInMemory(f"{name}.usda")
     pxr.UsdGeom.SetStageUpAxis(stage, pxr.UsdGeom.Tokens.z)
     pxr.UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-    root = pxr.UsdGeom.Xform.Define(stage, f"/{prim_identifier(pxr, name)}")
+    root = pxr.UsdGeom.Xform.Define(stage, f"/{name}")
     stage.SetDefaultPrim(root.GetPrim())
 
     link_extras, joint_extras = _urdf_extras(model.xml)
@@ -104,6 +104,39 @@ def urdf_to_usd(
         extras=joint_extras,
     )
     return str(stage.GetRootLayer().ExportToString())
+
+
+def urdf_link_paths(model: LoadedRobotModel, name: str | None = None) -> dict[str, str]:
+    """Each URDF link's frame in the USD urdf_to_usd writes: ``<robot>/<root link>/.../<link>``."""
+    top = _robot_name(model, name)
+    children = _children_by_parent(model.joints)
+    paths: dict[str, str] = {}
+    stack = [(model.root_link, top)]
+    while stack:
+        link, parent_path = stack.pop()
+        if link in paths:
+            continue
+        paths[link] = f"{parent_path}/{_link_segment(link)}"
+        # Reversed onto the stack so links are visited in the order _write_link_tree writes them.
+        stack.extend((joint.child_link, paths[link]) for joint in reversed(children.get(link, ())))
+    return paths
+
+
+def _robot_name(model: LoadedRobotModel, name: str | None) -> str:
+    """The USD's top prim, which is the first segment of every frame: the URDF robot's name."""
+    name = name or ET.fromstring(model.xml).get("name") or "robot"
+    if "/" in name:
+        raise ValueError(f"the robot name {name!r} cannot be a USD prim name: it has a '/'")
+    check_frame_path(name, "the robot name")
+    return name
+
+
+def _link_segment(link: str) -> str:
+    """The prim name of a URDF link: the link name itself, refused if it cannot be one."""
+    if "/" in link:
+        raise ValueError(f"the URDF link {link!r} cannot be a USD prim name: it has a '/'")
+    check_frame_path(link, "the URDF link")
+    return link
 
 
 def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
@@ -164,14 +197,18 @@ def _write_link_tree(
     inertials: Mapping[str, tuple[float, np.ndarray, np.ndarray]] | None = None,
     joint: JointDescription | None = None,
 ) -> None:
-    prim_path = f"{parent_path}/{_free_identifier(pxr, stage, parent_path, link)}"
     if link in paths:
         logger.warning(f"URDF link {link!r} is reached more than once; ignoring the later edge")
         return
+    prim_path = f"{parent_path}/{_link_segment(link)}"
+    if stage.GetPrimAtPath(prim_path):
+        raise ValueError(
+            f"the URDF link {link!r} would be the prim {prim_path}, which its parent's geometry "
+            f"already is; rename the link"
+        )
     xform = pxr.UsdGeom.Xform.Define(stage, prim_path)
     prim = xform.GetPrim()
     paths[link] = prim_path
-    prim.SetDisplayName(link)
     _set_passthrough(pxr, prim, extras.get(link))
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
     inertial = (inertials or {}).get(link)
@@ -206,12 +243,11 @@ def _write_link_tree(
 
 
 def _free_identifier(pxr: Pxr, stage: Stage, parent_path: str, name: str) -> str:
-    """A USD identifier for `name` that nothing under `parent_path` has taken yet.
+    """A USD identifier for the joint `name` that nothing under `parent_path` has taken yet.
 
     Tf.MakeValidIdentifier is not injective -- `arm-1` and `arm_1` both come out `arm_1` -- so
-    two siblings URDF considers distinct would otherwise define the same prim, and the second
-    would fail on adding a transform op the first already has. The real name is in displayName
-    either way, which is what every reader here maps back from.
+    two joints URDF considers distinct would otherwise define the same prim. A joint's real name
+    is in displayName, which is what every reader here maps back from (links are named by path).
     """
     identifier = prim_identifier(pxr, name)
     tries = itertools.chain([identifier], (f"{identifier}_{n}" for n in itertools.count(2)))
@@ -238,7 +274,11 @@ def _write_geometry(
     gprim = _define_gprim(pxr, stage, path, geometry, base_dir)
     if gprim is None:
         return
+    # The origin goes before the scale: ops apply right to left, so a scale authored first would
+    # scale the URDF offset along with the shape and move it off where the URDF places it.
     gprim.AddTransformOp().Set(usd_matrix(pxr, geometry.origin))
+    if (scale := _scale_of(geometry)) is not None:
+        gprim.AddScaleOp().Set(pxr.Gf.Vec3f(*scale))
     if geometry.color is not None:
         gprim.CreateDisplayColorAttr([pxr.Gf.Vec3f(*geometry.color)])
     if geometry.collision:
@@ -252,7 +292,6 @@ def _define_gprim(
     if geometry.kind == "box":
         cube = pxr.UsdGeom.Cube.Define(stage, path)
         cube.CreateSizeAttr(1.0)
-        cube.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.size))
         return cube
     if geometry.kind == "cylinder":
         cylinder = pxr.UsdGeom.Cylinder.Define(stage, path)
@@ -270,12 +309,20 @@ def _define_gprim(
     return None
 
 
+def _scale_of(geometry: _Geometry) -> tuple[float, ...] | None:
+    """The scale op a shape needs: a unit cube stretched to the box, or the mesh's own scale."""
+    if geometry.kind == "box":
+        return geometry.size
+    if geometry.kind == "mesh":
+        return geometry.mesh_scale
+    return None
+
+
 def _define_mesh(
     pxr: Pxr, stage: Stage, path: str, geometry: _Geometry, base_dir: Path | None
 ) -> Prim:
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
-    mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
     write_asset_info(pxr, mesh.GetPrim(), geometry.filename, base_dir)
     return mesh
 
@@ -289,6 +336,11 @@ def _write_joints(
     paths: Mapping[str, str],
     extras: Mapping[str, Sequence[str]],
 ) -> None:
+    if stage.GetPrimAtPath(f"{root_path}/joints"):
+        raise ValueError(
+            f"the URDF root link is named 'joints', which is the prim {root_path}/joints that "
+            f"holds the joints; rename the link"
+        )
     scope = pxr.UsdGeom.Scope.Define(stage, f"{root_path}/joints")
     for joint in joints:
         parent = paths.get(joint.parent_link)
@@ -382,15 +434,19 @@ def _children_by_parent(
 
 
 def _urdf_links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geometry]]:
+    root = ET.fromstring(xml)
+    colors = _named_colors(root)
     links: dict[str, list[_Geometry]] = {}
-    for link in ET.fromstring(xml).iter("link"):
+    for link in root.iter("link"):
         name = link.get("name")
         if name is None:
             continue
-        geometries = [_geometry_of(element, collision=False) for element in link.iter("visual")]
+        geometries = [
+            _geometry_of(element, colors, collision=False) for element in link.iter("visual")
+        ]
         if include_collision:
             geometries += [
-                _geometry_of(element, collision=True) for element in link.iter("collision")
+                _geometry_of(element, colors, collision=True) for element in link.iter("collision")
             ]
         links[name] = [geometry for geometry in geometries if geometry is not None]
     return links
@@ -432,12 +488,17 @@ def _set_passthrough(pxr: Pxr, prim: Prim, xml: Sequence[str] | None) -> None:
         prim.SetCustomDataByKey(PASSTHROUGH_KEY, pxr.Vt.StringArray(list(xml)))
 
 
-def _geometry_of(element: ET.Element, *, collision: bool) -> _Geometry | None:
+def _geometry_of(
+    element: ET.Element,
+    colors: Mapping[str, tuple[float, float, float]],
+    *,
+    collision: bool,
+) -> _Geometry | None:
     shape = element.find("geometry")
     if shape is None:
         return None
     origin = _origin_of(element.find("origin"))
-    color = _color_of(element.find("material"))
+    color = _material_color(element.find("material"), colors)
     if (box := shape.find("box")) is not None:
         size = _floats(box.get("size"), 3, (1.0, 1.0, 1.0))
         return _Geometry("box", origin, size, None, (1.0, 1.0, 1.0), color, collision)
@@ -470,9 +531,24 @@ def _origin_of(element: ET.Element | None) -> NDArray[np.float64]:
     return transform
 
 
-def _color_of(element: ET.Element | None) -> tuple[float, float, float] | None:
+def _named_colors(root: ET.Element) -> dict[str, tuple[float, float, float]]:
+    """The robot-scope materials a visual can name instead of spelling its color out."""
+    return {
+        name: color
+        for material in root.findall("material")
+        if (name := material.get("name")) is not None and (color := _color_of(material)) is not None
+    }
+
+
+def _material_color(
+    element: ET.Element | None, colors: Mapping[str, tuple[float, float, float]]
+) -> tuple[float, float, float] | None:
     if element is None:
         return None
+    return _color_of(element) or colors.get(element.get("name", ""))
+
+
+def _color_of(element: ET.Element) -> tuple[float, float, float] | None:
     color = element.find("color")
     if color is None:
         return None

@@ -20,6 +20,7 @@ from collections.abc import Mapping, Sequence
 import math
 import threading
 import time
+from typing import Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
@@ -30,6 +31,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -41,6 +43,9 @@ logger = setup_logger()
 
 _TERMINAL = frozenset({ExecutionStatus.COMPLETED, ExecutionStatus.ABORTED, ExecutionStatus.FAULT})
 _FINISHED = _TERMINAL | {ExecutionStatus.UNCERTAIN}
+# These RPCs dispatch or inspect motion; they never wait for it to finish.
+# Bound in-flight calls too, so shutdown cannot wait on the default 120s timeout.
+_COORDINATOR_RPC_TIMEOUT = 1.0
 
 
 class _PlanRejectedError(Exception):
@@ -59,7 +64,7 @@ class PlanExecutionManager:
         self,
         *,
         joint_names: Sequence[str],
-        coordinator: ControlCoordinator,
+        coordinator: ControlCoordinator | RPCClient,
         default_timeout: float,
         poll_interval: float = 0.1,
         bindings: Mapping[str, Sequence[str]] | None = None,
@@ -81,6 +86,17 @@ class PlanExecutionManager:
         self._run_id = 0
         self._run_done = threading.Event()
         self._task_watchdog: threading.Thread | None = None
+
+    def _call_coordinator(self, method: str, *args: Any) -> Any:
+        if isinstance(self._coordinator, RPCClient):
+            result, unsubscribe = self._coordinator.rpc.call_sync(
+                f"{self._coordinator.remote_name}/{method}",
+                (args, {}),
+                rpc_timeout=_COORDINATOR_RPC_TIMEOUT,
+            )
+            unsubscribe()
+            return result
+        return getattr(self._coordinator, method)(*args)
 
     @property
     def status(self) -> ExecutionStatus:
@@ -110,7 +126,7 @@ class PlanExecutionManager:
                 self._cancelled_tasks = set()
 
             try:
-                current_positions = self._coordinator.get_joint_positions()
+                current_positions = self._call_coordinator("get_joint_positions")
             except Exception as exc:
                 logger.exception("Coordinator get_joint_positions RPC failed")
                 execution_result = ExecutionResult(
@@ -211,7 +227,7 @@ class PlanExecutionManager:
         task = self._running_tasks[0]
         with self._operation_lock:
             try:
-                outcome = self._coordinator.task_invoke(task, "cancel", {})
+                outcome = self._call_coordinator("task_invoke", task, "cancel", {})
             except Exception as exc:
                 logger.exception(f"Cancelling {task} failed")
                 result = ExecutionResult(
@@ -341,8 +357,11 @@ class PlanExecutionManager:
     ) -> TrajectoryExecutionResult | ExecutionResult:
         """Dispatch one part of a plan to the task that owns its joints."""
         try:
-            result = self._coordinator.task_invoke(
-                task, "execute", {"trajectory": trajectory, "current_positions": current_positions}
+            result = self._call_coordinator(
+                "task_invoke",
+                task,
+                "execute",
+                {"trajectory": trajectory, "current_positions": current_positions},
             )
         except Exception as exc:
             logger.exception(f"{task} execute RPC failed")
@@ -366,7 +385,7 @@ class PlanExecutionManager:
             if task in self._cancelled_tasks:
                 return True
         try:
-            outcome = self._coordinator.task_invoke(task, "cancel", {})
+            outcome = self._call_coordinator("task_invoke", task, "cancel", {})
             if isinstance(outcome, TrajectoryCancellationResult):
                 if outcome.status is TrajectoryCancellationStatus.UNCERTAIN:
                     return False
@@ -390,7 +409,7 @@ class PlanExecutionManager:
         self, task: str, *, run_id: int | None = None
     ) -> TrajectoryStatus | ExecutionResult:
         try:
-            status = self._coordinator.task_invoke(task, "get_status", {"t_now": None})
+            status = self._call_coordinator("task_invoke", task, "get_status", {"t_now": None})
         except Exception as exc:
             logger.exception(f"{task} get_status RPC failed")
             result = ExecutionResult(

@@ -16,6 +16,7 @@
 
 from collections import defaultdict, deque
 from contextlib import ExitStack
+from dataclasses import replace
 import uuid
 
 from dimos_lcm.common_msgs import SampleHeader
@@ -30,12 +31,14 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.client import materialize_scene
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import (
+    JOINT_IDS,
     LIDAR,
     unitree_g1_sim2,
 )
-from dimos.robot.unitree.g1.sim2_policy import JOINTS, G1PolicyModule
+from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
+from dimos.robot.unitree.g1.sim2_scene import PELVIS, TORSO
+from dimos.sim2.description import compose_scene, scene_revision
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
@@ -51,7 +54,7 @@ pytestmark = pytest.mark.self_hosted
 def deployed_g1(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
-    blueprint = unitree_g1_sim2.global_config(zenoh_domain="sim2-g1-" + uuid.uuid4().hex)
+    blueprint = unitree_g1_sim2.global_config(zenoh_domain="sim2-g1-" + uuid.uuid4().hex).solidify()
     # Exercise the CLI configuration round-trip, including sensor factories.
     parsed = BlueprintConfigParser(blueprint).parse()
     deployment = ModuleCoordinator.build(blueprint, parsed_config=parsed)
@@ -101,12 +104,12 @@ def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(deployed_g1, g1
     assert cloud.ts is not None
     assert 0 <= cloud.ts <= sim.inspect().header.time_ns / 1e9
     raw = g1_measurements["lidar_raw"][-1]
-    assert raw.frame_id == "g1/mid360_link"
+    assert raw.frame_id == TORSO + "/lidar_mount/mid360/lidar_link"
     assert set(np.unique(raw.lines_u8())) == {0, 1, 2, 3}
-    assert g1_measurements["imu"][-1].frame_id == "g1/imu_in_pelvis"
+    assert g1_measurements["imu"][-1].frame_id == PELVIS + "/imu_mount/imu/imu"
     wait_until(
         lambda: any(
-            transform.child_frame_id == "g1/mid360_link"
+            transform.child_frame_id == TORSO + "/lidar_mount/mid360/lidar_link"
             for message in list(g1_measurements["tf"])
             for transform in message.transforms
         ),
@@ -121,13 +124,13 @@ def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(deployed_g1, g1
     for transform in transforms:
         parents[transform.child_frame_id].add(transform.frame_id)
     assert all(len(p) == 1 for p in parents.values()), dict(parents)
-    assert parents["g1/mid360_link"] == {"g1/lidar_mount"}
-    assert parents["g1/lidar_mount"] == {"g1/torso_link"}
-    assert parents["g1/camera"] == {"g1/camera_mount"}
-    assert parents["g1/imu_in_pelvis"] == {"g1/imu_mount"}
+    assert parents[TORSO + "/lidar_mount/mid360/lidar_link"] == {TORSO + "/lidar_mount/mid360"}
+    assert parents[TORSO + "/lidar_mount"] == {TORSO}
+    assert parents[TORSO + "/camera_mount/camera/camera"] == {TORSO + "/camera_mount/camera"}
+    assert parents[PELVIS + "/imu_mount/imu/imu"] == {PELVIS + "/imu_mount/imu"}
     before = sim.inspect()
     before_inferences = policy.status()["inferences"]
-    assert poses_by_id(before)["g1/pelvis"].position.z > 0.68
+    assert poses_by_id(before)[PELVIS].position.z > 0.68
     # This target clears the hip with the shoulder in its parked position.
     policy.arm_joint("g1/left_elbow_joint", 1.1)
     policy.move(Twist(linear=Vector3(0.2, 0, 0)), duration=20)
@@ -135,13 +138,12 @@ def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(deployed_g1, g1
     after = sim.inspect()
     joints = after.joint_truth
     policy.move(Twist(), duration=1)
-    assert poses_by_id(after)["g1/pelvis"].position.z > 0.68
-    assert (
-        poses_by_id(after)["g1/pelvis"].position.x - poses_by_id(before)["g1/pelvis"].position.x
-        > 0.2
-    )
-    assert joints.position[joints.name.index("g1/left_elbow_joint")] == pytest.approx(1.1, abs=0.12)
-    assert poses_by_id(sim.inspect())["g1/pelvis"].position.z > 0.68
+    assert poses_by_id(after)[PELVIS].position.z > 0.68
+    assert poses_by_id(after)[PELVIS].position.x - poses_by_id(before)[PELVIS].position.x > 0.2
+    assert joints.position[
+        joints.name.index(next(n for n in JOINT_IDS if n.endswith("/left_elbow_joint")))
+    ] == pytest.approx(1.1, abs=0.12)
+    assert poses_by_id(sim.inspect())[PELVIS].position.z > 0.68
     assert (
         sim.status()["error"] == camera.statistics()["error"] == lidar.statistics()["error"] == ""
     )
@@ -149,15 +151,23 @@ def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(deployed_g1, g1
 
 
 def test_g1_mid360_mount_observes_the_floor_instead_of_its_head(deployed_g1, tmp_path):
-    manager = deployed_g1.get_instance("scene")
-    scene = materialize_scene(
-        manager.get_scene([])[1], manager.get_asset, cache=tmp_path / "reader"
+    scene = compose_scene(
+        [
+            deployed_g1.get_instance(d.instance_name)
+            for d in deployed_g1.list_modules()
+            if "get_usd" in d.rpc_names
+        ]
     )
     with ExitStack() as cleanup:
         backend = MujocoBackend()
         cleanup.callback(backend.close)
         backend.load(scene, 2_000_000)
-        lidar = SimLidarModule(scene=scene, sensor=LIDAR, raycaster=MujocoRaycaster)
+        lidar = SimLidarModule(
+            scene=scene,
+            usd=scene,
+            sensor=replace(LIDAR, frame_id=TORSO + "/lidar_mount/mid360/lidar_link"),
+            raycaster=MujocoRaycaster,
+        )
         cleanup.callback(lidar.dispose)
         lidar.open_sensor(scene)
         cleanup.callback(lidar.close_sensor)
@@ -165,10 +175,10 @@ def test_g1_mid360_mount_observes_the_floor_instead_of_its_head(deployed_g1, tmp
             bodies = backend.read_bodies()
             state = WorldState(
                 header=SampleHeader(clock_id="g1-mount-test", time_ns=tick * 2_000_000),
-                model_revision=scene.revision,
+                model_revision=scene_revision(scene),
                 bodies_length=len(bodies),
                 bodies=bodies,
-                joint_truth=backend.read_joints(JOINTS),
+                joint_truth=backend.read_joints(JOINT_IDS),
             )
             scan = lidar.measure(state)
         assert scan is not None

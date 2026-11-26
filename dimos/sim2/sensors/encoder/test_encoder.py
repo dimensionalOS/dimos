@@ -23,7 +23,11 @@ pytestmark = pytest.mark.self_hosted  # Joint truth is acquired from a real USD 
 @pytest.fixture
 def encoder():
     module = SimJointEncoderModule(
-        sensor=EncoderConfig(("left/slide_x",), offset=0.013, resolution=0.01)
+        sensor=EncoderConfig(
+            ("world/world/left_mount/cartesian_pusher/joints/slide_x",),
+            offset=0.013,
+            resolution=0.01,
+        )
     )
     yield module
     module.dispose()

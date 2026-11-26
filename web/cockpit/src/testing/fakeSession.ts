@@ -7,6 +7,7 @@ export class FakeSession implements Session {
   store = new ChannelStore();
   published: [string, unknown][] = [];
   reject: PublishError | null = null;
+  rttMs = (): number | null => null;
   watch = () => new Promise<never>(() => {});
   subscribe = () => () => {};
   publish = (ch: string, value: unknown) => {

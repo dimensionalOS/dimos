@@ -15,6 +15,7 @@
 """Shared bounded input/lifecycle for independent camera and lidar modules."""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from queue import Empty, Full, Queue
 import threading
 import time
@@ -27,7 +28,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.description import SceneConfig
+from dimos.sim2.description import SceneConfig, compose_scene
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -62,6 +63,20 @@ class _PoseSensorModule(Module, ABC):
         super().start()
         # Rolling sensors need history, before the async handler's LATEST mailbox.
         self.register_disposable(Disposable(self.observations.subscribe(self._on_observations)))
+
+    @rpc
+    def on_system_modules(self, modules: list[Any]) -> None:
+        if self._thread is not None:
+            return
+        scene = self.config.scene
+        self._scene = (
+            (UsdModel.from_file(scene) if isinstance(scene, Path) else scene)
+            if scene is not None
+            else compose_scene(modules)
+        )
+        self._start_sensor()
+
+    def _start_sensor(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -78,7 +93,7 @@ class _PoseSensorModule(Module, ABC):
 
     def _run(self) -> None:
         try:
-            self.open_sensor(self.config.load_scene(self.rpc))
+            self.open_sensor(self._scene)
             try:
                 while not self._done.is_set():
                     try:

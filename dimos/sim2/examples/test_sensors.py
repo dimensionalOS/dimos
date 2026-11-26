@@ -20,9 +20,10 @@ import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.hardware_module import Mounts
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.geometry.poses import poses_by_id
+from dimos.sim2.hardware import SimHardwareModule
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
@@ -39,27 +40,36 @@ from dimos.utils.testing.waiting import wait_until
 pytestmark = pytest.mark.self_hosted
 
 
+_TOOL = "world/world/left_mount/cartesian_pusher/base_link/carriage/tool"
+_JOINT = "world/world/left_mount/cartesian_pusher/joints/slide_x"
+
+
+class SensorScene(SimHardwareModule):
+    mounts = Mounts(*(_TOOL + "/" + kind for kind in ("camera", "imu", "lidar")))
+
+
 @pytest.fixture
 def deployed_world(world, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
-    manager = UsdManager.blueprint(model=world, instance_name="scene")
+    imu = SimImuModule.attach(SensorScene.mounts.imu, sensor=ImuConfig("imu")).remappings(
+        [(SimImuModule, "imu", "imu")]
+    )
+    camera = SimCameraModule.attach(SensorScene.mounts.camera, sensor=CameraConfig("camera"))
+    lidar = SimLidarModule.attach(
+        SensorScene.mounts.lidar, sensor=LidarConfig("lidar"), raycaster=MujocoRaycaster
+    )
     blueprint = autoconnect(
-        manager,
+        SensorScene.blueprint(usd=world, instance_name="scene"),
         SimModule.blueprint(
-            scene_manager=manager,
-            gravity_world=(0, 0, -1.62),
-            backend=MujocoBackend,
-            joint_ids=("left/slide_x",),
+            gravity_world=(0, 0, -1.62), backend=MujocoBackend, joint_ids=(_JOINT,)
         ),
-        SimImuModule.blueprint(sensor=ImuConfig("left/imu")),
-        SimJointEncoderModule.blueprint(sensor=EncoderConfig(("left/slide_x",))),
-        SimCameraModule.blueprint(sensor=CameraConfig("left/camera")),
+        imu,
+        camera,
+        lidar,
+        SimJointEncoderModule.blueprint(sensor=EncoderConfig((_JOINT,))),
         CameraRenderModule.blueprint(
-            scene_manager=manager, renderer=MujocoRenderer, cameras=("SimCameraModule",)
-        ),
-        SimLidarModule.blueprint(
-            scene_manager=manager, sensor=LidarConfig("left/lidar"), raycaster=MujocoRaycaster
+            renderer=MujocoRenderer, cameras=tuple(a.name for a in camera.active_blueprints)
         ),
     ).global_config(
         viewer="none",
@@ -80,7 +90,13 @@ def test_separate_sensor_modules_run_with_standard_timestamps(deployed_world, co
     camera = deployed_world.get_instance(SimCameraModule)
     lidar = deployed_world.get_instance(SimLidarModule)
     wait_until(lambda: camera.statistics()["acquisitions"] >= 2, timeout=20)
-    wait_until(lambda: lidar.statistics()["acquisitions"] >= 2, timeout=20)
+
+    def acquired():
+        stats = lidar.statistics()
+        assert not stats["error"], stats
+        return stats["acquisitions"] >= 2
+
+    wait_until(acquired, timeout=30)
     # The deployed IMU receives non-Earth gravity through its ordinary simulation_config RPC.
     samples = Queue()
     transport = deployed_world.transports[("imu", Imu)]
@@ -92,7 +108,10 @@ def test_separate_sensor_modules_run_with_standard_timestamps(deployed_world, co
     before = sim.inspect()
     h = before.header
     sim.submit(command(h, positions=(0.65,)))
-    wait_until(lambda: poses_by_id(sim.inspect())["box"].position.x > 0.1, timeout=5)
+    wait_until(
+        lambda: poses_by_id(sim.inspect())["world/world/box_mount/box/box"].position.x > 0.1,
+        timeout=5,
+    )
     count = camera.statistics()["acquisitions"]
     wait_until(lambda: camera.statistics()["acquisitions"] > count, timeout=5)
     assert camera.statistics()["error"] == lidar.statistics()["error"] == ""

@@ -15,30 +15,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 import hashlib
 import itertools
 from pathlib import Path
 import re
 from typing import Any
 
-from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Spec, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import Layer, Prim, Pxr, Spec, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
 _HASH_ALGORITHM = "sha256"
-_ASSET_ROOT_PREFIX = "/dimos/assets/"
-
-
-def is_published_asset(path: str) -> bool:
-    """Whether this asset name is one publish_usd_assets minted for the bus, not a file path.
-
-    A published name says nothing about where the file is; only the module that published it
-    can still hand over the bytes.
-    """
-    return path.startswith(_ASSET_ROOT_PREFIX)
 
 
 def resolve_usd_assets(usd: str, root: str) -> str:
@@ -47,79 +37,145 @@ def resolve_usd_assets(usd: str, root: str) -> str:
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a subtree", root)
     base = Path(root)
-    changed = False
-    stack = [layer.pseudoRoot]
-    while stack:
-        spec = stack.pop()
-        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
-        rebased = []
-        for ref in items:
-            asset = ref.assetPath
-            if asset and not Path(asset).is_absolute():
-                rebased.append(pxr.Sdf.Reference(str(base / asset), ref.primPath))
-                changed = True
-            else:
-                rebased.append(ref)
-        if rebased and changed:
-            if spec.referenceList.explicitItems:
-                spec.referenceList.explicitItems = rebased
-            else:
-                spec.referenceList.prependedItems = rebased
-        identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
-        if identifier is not None and not Path(str(identifier.path)).is_absolute():
-            spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
-            changed = True
-        for attribute, value in asset_attributes(spec):
-            if not Path(str(value.path)).is_absolute():
-                attribute.default = pxr.Sdf.AssetPath(str(base / str(value.path)))
-                changed = True
-        stack.extend(spec.nameChildren)
-    return str(layer.ExportToString()) if changed else usd
+
+    def anchored(asset: str, _where: str, _required: bool) -> str | None:
+        return None if Path(asset).is_absolute() else str(base / asset)
+
+    return str(layer.ExportToString()) if rename_assets(pxr, layer, anchored) else usd
 
 
 def publish_usd_assets(usd: str, root: Path | str | None = None) -> tuple[str, dict[str, str]]:
+    """The layer with each file it needs renamed `<prim path>/<file>`, relative so no host path leaves, and name -> path."""
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a scene", root)
     public: dict[str, str] = {}
     taken: set[str] = set()
-    changed = False
+    for real, where in _required_assets(pxr, layer):
+        if real not in public:
+            public[real] = _public_asset_path(where, real, taken)
+            taken.add(public[real])
 
-    stack = [layer.pseudoRoot]
-    while stack:
-        spec = stack.pop(0)
-        for real in _asset_paths_of(spec):
-            if real not in public:
-                public[real] = _public_asset_path(str(spec.path), real, taken)
-                taken.add(public[real])
-        if _rewrite_assets(pxr, spec, public):
-            changed = True
-        stack.extend(spec.nameChildren)
-
+    changed = rename_assets(pxr, layer, lambda asset, _where, _required: public.get(asset))
     rewritten = str(layer.ExportToString()) if changed else usd
     return rewritten, {name: real for real, name in public.items()}
 
 
-def _asset_paths_of(spec: Spec) -> list[str]:
-    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
-    paths = [ref.assetPath for ref in items if ref.assetPath]
-    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
-    if identifier is not None and str(identifier.path):
-        paths.append(str(identifier.path))
-    paths += [str(value.path) for _, value in asset_attributes(spec)]
-    return paths
+# (asset path, prim path naming it, whether it needs the file) -> its new path, or None to keep it.
+AssetRename = Callable[[str, str, bool], str | None]
+
+_LISTED_ARC_FIELDS = ("explicitItems", "addedItems", "prependedItems", "appendedItems")
+# A delete or a reorder names an arc stated elsewhere: it moves with that arc but needs no file.
+_MATCHING_ARC_FIELDS = ("deletedItems", "orderedItems")
 
 
-def asset_attributes(spec: Spec) -> list[tuple[Any, Any]]:
-    found = []
-    for attribute in spec.attributes:
-        value = attribute.default
-        if value is not None and type(value).__name__ == "AssetPath" and str(value.path):
-            found.append((attribute, value))
+def repointed_arc(pxr: Pxr, arc: Any, asset_path: str, prim_path: Any) -> Any:
+    """The same reference or payload aimed elsewhere, keeping its time offset and custom data."""
+    if isinstance(arc, pxr.Sdf.Payload):
+        return pxr.Sdf.Payload(asset_path, prim_path, arc.layerOffset)
+    return pxr.Sdf.Reference(asset_path, prim_path, arc.layerOffset, arc.customData)
+
+
+def _required_assets(pxr: Pxr, layer: Layer) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+
+    def record(asset: str, where: str, required: bool) -> None:
+        if required:
+            found.append((asset, where))
+
+    rename_assets(pxr, layer, record)
     return found
 
 
+def rename_assets(pxr: Pxr, layer: Layer, rename: AssetRename) -> bool:
+    """Offer every asset path the layer states to rename, writing back what it returns."""
+    changed = False
+    offsets = list(layer.subLayerOffsets)
+    for index, sublayer in enumerate(list(layer.subLayerPaths)):
+        renamed = rename(sublayer, "/", True)
+        if renamed is not None:
+            layer.subLayerPaths[index] = renamed
+            layer.subLayerOffsets[index] = offsets[index]
+            changed = True
+    for spec in _prim_specs(layer):
+        changed = _rename_spec_assets(pxr, spec, rename) or changed
+    return changed
+
+
+def _prim_specs(layer: Layer) -> Iterator[Spec]:
+    """Every prim spec in the layer, breadth first, variants included."""
+    queue = [layer.pseudoRoot]
+    while queue:
+        spec = queue.pop(0)
+        yield spec
+        queue.extend(spec.nameChildren)
+        for variant_set in spec.variantSets.values():
+            queue.extend(variant.primSpec for variant in variant_set.variants.values())
+
+
+def _rename_spec_assets(pxr: Pxr, spec: Spec, rename: AssetRename) -> bool:
+    where = str(spec.path.StripAllVariantSelections())
+    changed = False
+    for has_arcs, key, list_name in (
+        (spec.hasReferences, "references", "referenceList"),
+        (spec.hasPayloads, "payload", "payloadList"),
+    ):
+        if not has_arcs:
+            continue
+        # Read as a list op value: each field read through the spec's list editor costs ~0.1 ms, and a scene has thousands.
+        stated = spec.GetInfo(key)
+        for field in _LISTED_ARC_FIELDS + _MATCHING_ARC_FIELDS:
+            items = list(getattr(stated, field))
+            moved = []
+            for arc in items:
+                renamed = (
+                    rename(arc.assetPath, where, field in _LISTED_ARC_FIELDS)
+                    if arc.assetPath
+                    else None
+                )
+                moved.append(
+                    arc if renamed is None else repointed_arc(pxr, arc, renamed, arc.primPath)
+                )
+            if moved != items:
+                setattr(getattr(spec, list_name), field, moved)
+                changed = True
+    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+    renamed_identifier = _renamed_value(pxr, identifier, where, rename)
+    if renamed_identifier is not None:
+        spec.assetInfo["identifier"] = renamed_identifier
+        changed = True
+    asset_types = (pxr.Sdf.ValueTypeNames.Asset, pxr.Sdf.ValueTypeNames.AssetArray)
+    for attribute in spec.attributes:
+        # Only an asset-typed attribute holds paths; reading any other's value copies its data (a mesh's points) for nothing.
+        if attribute.typeName not in asset_types:
+            continue
+        value = _renamed_value(pxr, attribute.default, where, rename)
+        if value is not None:
+            attribute.default = value
+            changed = True
+        for time in spec.layer.ListTimeSamplesForPath(attribute.path):
+            sample = spec.layer.QueryTimeSample(attribute.path, time)
+            value = _renamed_value(pxr, sample, where, rename)
+            if value is not None:
+                spec.layer.SetTimeSample(attribute.path, time, value)
+                changed = True
+    return changed
+
+
+def _renamed_value(pxr: Pxr, value: Any, where: str, rename: AssetRename) -> Any:
+    """An asset-valued value with its paths renamed, or None when nothing in it changes."""
+    if isinstance(value, pxr.Sdf.AssetPath):
+        renamed = rename(str(value.path), where, True) if str(value.path) else None
+        return None if renamed is None else pxr.Sdf.AssetPath(renamed)
+    if isinstance(value, pxr.Sdf.AssetPathArray):
+        paths = [str(asset.path) for asset in value]
+        moved = [(rename(path, where, True) if path else None) or path for path in paths]
+        return None if moved == paths else pxr.Sdf.AssetPathArray(moved)
+    return None
+
+
 def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
-    stem = f"{_ASSET_ROOT_PREFIX}{prim_path.lstrip('/')}/{Path(real).name}"
+    where = prim_path.strip("/")
+    stem = f"{where + '/' if where else ''}{Path(real).name}"
     if stem not in taken:
         return stem
     base, dot, extension = stem.rpartition(".")
@@ -128,30 +184,6 @@ def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
         if candidate not in taken:
             return candidate
     raise AssertionError("unreachable")
-
-
-def _rewrite_assets(pxr: Pxr, spec: Spec, public: Mapping[str, str]) -> bool:
-    changed = False
-    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
-    rebased = [
-        pxr.Sdf.Reference(public[ref.assetPath], ref.primPath) if ref.assetPath in public else ref
-        for ref in items
-    ]
-    if rebased and rebased != list(items):
-        if spec.referenceList.explicitItems:
-            spec.referenceList.explicitItems = rebased
-        else:
-            spec.referenceList.prependedItems = rebased
-        changed = True
-    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
-    if identifier is not None and str(identifier.path) in public:
-        spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(public[str(identifier.path)])
-        changed = True
-    for attribute, value in asset_attributes(spec):
-        if str(value.path) in public:
-            attribute.default = pxr.Sdf.AssetPath(public[str(value.path)])
-            changed = True
-    return changed
 
 
 def asset_hash(data: bytes) -> str:
@@ -198,8 +230,6 @@ def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
     unopenable: dict[str, str] = {}
     base = Path(root) if root else None
     for asset in referenced_asset_paths(usd, root):
-        if is_published_asset(asset):
-            continue
         path = Path(asset)
         if not path.is_absolute():
             if base is None:
@@ -262,14 +292,12 @@ def _common_parent(assets: Mapping[str, str], root: Path | str | None) -> str:
 
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a layer", root)
-    found: set[str] = set()
-    stack = [layer.pseudoRoot]
-    while stack:
-        spec = stack.pop()
-        found.update(_asset_paths_of(spec))
-        stack.extend(spec.nameChildren)
-    return found
+    return layer_asset_paths(pxr, layer_from(pxr, usd, "a layer", root))
+
+
+def layer_asset_paths(pxr: Pxr, layer: Layer) -> set[str]:
+    """The files an open layer needs, as it names them."""
+    return {asset for asset, _ in _required_assets(pxr, layer)}
 
 
 def unhashed_assets(usd: str, root: Path | str | None = None) -> dict[str, str]:
@@ -285,15 +313,14 @@ def unhashed_assets(usd: str, root: Path | str | None = None) -> dict[str, str]:
 
 
 def _referenced_assets(pxr: Pxr, prim: Prim) -> list[str]:
-    assets = []
+    assets: list[str] = []
+
+    def record(asset: str, _where: str, required: bool) -> None:
+        if required:
+            assets.append(asset)
+
     for spec in prim.GetPrimStack():
-        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
-        assets += [ref.assetPath for ref in items if ref.assetPath]
-        assets += [str(value.path) for _, value in asset_attributes(spec)]
-    identifier = (prim.GetAssetInfo() or {}).get("identifier")
-    if identifier is not None and str(identifier.path):
-        assets.append(str(identifier.path))
-    assert pxr
+        _rename_spec_assets(pxr, spec, record)
     return assets
 
 

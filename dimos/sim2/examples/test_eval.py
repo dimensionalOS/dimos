@@ -101,7 +101,7 @@ class PushEnvironment(Environment):
                 joint_commands=[
                     JointCommand(
                         joint_names_length=1,
-                        joint_names=["left/slide_x"],
+                        joint_names=["world/world/left_mount/cartesian_pusher/joints/slide_x"],
                         interface_name=interface,
                         values_length=1,
                         values=[value],
@@ -119,7 +119,7 @@ class PushEnvironment(Environment):
         # The subject observes elapsed simulation time; physics never waits for it.
         wait_until(lambda: sim.status()["time_ns"] >= end_ns, timeout=5)
         snapshot = sim.inspect()
-        pose = poses_by_id(snapshot)["box"].position
+        pose = poses_by_id(snapshot)["world/world/box_mount/box/box"].position
         self._rows.append([snapshot.header.time_ns / 1e9, pose.x, pose.y, pose.z])
 
     def settle(self, budget_s: float) -> None:

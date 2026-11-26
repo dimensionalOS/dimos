@@ -25,7 +25,10 @@ pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
 @pytest.fixture
 def lidar(world):
     module = SimLidarModule(
-        scene=world, sensor=LidarConfig("left/lidar"), raycaster=MujocoRaycaster
+        scene=world,
+        usd=world,
+        sensor=LidarConfig("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/lidar"),
+        raycaster=MujocoRaycaster,
     )
     module.open_sensor(world)
     yield module
@@ -43,7 +46,7 @@ def test_scan_uses_timed_geometry_history_and_rejects_gap(poses, lidar):
     cloud, world_cloud = scans[0]
     assert cloud.ts == 0
     assert len(cloud) > 30
-    assert cloud.frame_id == "left/lidar"
+    assert cloud.frame_id == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/lidar"
     assert world_cloud.frame_id == "world"
     assert len(world_cloud) == len(cloud)
     assert np.ptp(cloud.offset_times_u32()) > 80_000_000
@@ -56,7 +59,10 @@ def test_raw_scan_retains_motion_while_world_hits_use_each_firing_pose(poses, li
     for tick in range(51):
         sample = poses(tick * 2_000_000)
         for body in sample.bodies:
-            if body.body_id == "left/lidar":
+            if (
+                body.body_id
+                == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/lidar"
+            ):
                 body.pose.position.x += tick * 0.002
         scan = lidar.measure(sample)
     assert scan is not None
@@ -67,4 +73,6 @@ def test_raw_scan_retains_motion_while_world_hits_use_each_firing_pose(poses, li
     decoded = type(raw).lcm_decode(raw.lcm_encode())
     np.testing.assert_array_equal(decoded.offset_times_u32(), raw.offset_times_u32())
     np.testing.assert_array_equal(decoded.lines_u8(), raw.lines_u8())
-    assert decoded.frame_id == "left/lidar"
+    assert (
+        decoded.frame_id == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/lidar"
+    )

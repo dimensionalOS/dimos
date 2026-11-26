@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
@@ -25,7 +25,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
 )
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
-from dimos.robot.usd_manager import UsdManager
+from dimos.robot.urdf_manager import UrdfManager
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
 # Each jaw's task name, its finger joint, its command stream and its open end.
@@ -35,7 +35,7 @@ _GRIPPERS = [
 ]
 
 
-def openarm_connection_control_blueprint() -> Blueprint:
+def openarm_connection_control_blueprint() -> MetaBlueprint:
     """Trajectories and the grippers, with the robot model served to clients."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
@@ -60,7 +60,7 @@ def openarm_connection_control_blueprint() -> Blueprint:
             zero_stiffness_joints=[],
         ),
         arm_connection(OpenArmConnection),
-        UsdManager.blueprint(model=_MODEL.model),
+        UrdfManager.blueprint(model=_MODEL.model),
     ).remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
 
 

@@ -28,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection, Iterable
 
 logger = setup_logger()
 
@@ -96,6 +96,7 @@ class MultiTBuffer:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
         self._cv = threading.Condition()
+        self._has_received_transform = False
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
@@ -104,6 +105,7 @@ class MultiTBuffer:
                 if key not in self.buffers:
                     self.buffers[key] = TBuffer(self.buffer_size)
                 self.buffers[key].add(transform)
+                self._has_received_transform = True
             self._cv.notify_all()
 
     def receive_tfmessage(self, msg: TFMessage) -> None:
@@ -211,15 +213,21 @@ class MultiTBuffer:
         forward_tolerance: float = 0.0,
         warn: bool = True,
     ) -> Transform | None:
-        result = self._get(parent_frame, child_frame, time_point, time_tolerance)
-        if result is None and forward_tolerance > 0:
-            result = self._wait_get(
-                parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
-            )
-        if result is None and warn:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
-            )
+        with self._cv:
+            result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+            if result is None and forward_tolerance > 0:
+                result = self._wait_get(
+                    parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
+                )
+            if result is not None or not warn:
+                return result
+            # Choose the level with the lookup still locked: a first TF arriving
+            # after an empty-buffer miss must not promote it to a warning.
+            # Replay may evict its cache or populate static buffers directly.
+            log = logger.warning if self._has_received_transform or self.buffers else logger.debug
+        log(
+            f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
+        )
         return result
 
     def get_pose(
@@ -326,16 +334,29 @@ class TF(MultiTBuffer):
     works too. Received messages fill the buffer for ``get()`` lookups;
     ``publish()`` stores locally and sends out on the stream. Without a stream
     it is a purely local buffer.
+
+    Given *edges*, publishes refuse any other (parent, child) pair, naming *module_name* in the error.
     """
 
-    def __init__(self, stream: Any | None = None, buffer_size: float = 10.0) -> None:
+    def __init__(
+        self,
+        stream: Any | None = None,
+        buffer_size: float = 10.0,
+        *,
+        edges: "Collection[tuple[str, str]] | None" = None,
+        module_name: str = "TF",
+    ) -> None:
         super().__init__(buffer_size)
         self._stream = stream
+        self._edges = None if edges is None else frozenset(edges)
+        self._module_name = module_name
         self._unsubscribe: Callable[[], None] | None = None
         if stream is not None:
             self._unsubscribe = stream.subscribe(self.receive_tfmessage)
 
     def publish(self, *transforms: Transform) -> None:
+        if self._edges is not None:
+            refuse_undeclared_edges(self._edges, self._module_name, transforms)
         self.receive_transform(*transforms)
         if self._stream is not None:
             self._stream.publish(TFMessage(*transforms))
@@ -344,6 +365,17 @@ class TF(MultiTBuffer):
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+
+
+def refuse_undeclared_edges(
+    edges: "Collection[tuple[str, str]]", module_name: str, transforms: "Iterable[Transform]"
+) -> None:
+    """Raise if any transform's (parent, child) is not in *edges*."""
+    for t in transforms:
+        if (t.frame_id, t.child_frame_id) not in edges:
+            raise ValueError(
+                f"{module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
+            )
 
 
 if TYPE_CHECKING:

@@ -22,6 +22,7 @@ import pytest
 
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.sim2.description import scene_revision
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
@@ -45,40 +46,70 @@ def make_renderer(world):
 
 @pytest.fixture
 def renderer(make_renderer):
-    return make_renderer((CameraConfig("left/camera"), CameraConfig("right/camera")))
+    return make_renderer(
+        (
+            CameraConfig("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"),
+            CameraConfig("world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"),
+        )
+    )
 
 
 def test_camera_renders_recorded_body_poses_without_physics_state(
     backend, poses, renderer, motor_commands
 ):
     sample = poses()
-    rgb, depth = renderer.render(sample, ("left/camera",))["left/camera"]
+    rgb, depth = renderer.render(
+        sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     assert rgb.std() > 5
     assert depth.shape == (240, 320) and np.isfinite(depth).all()
     backend.apply_action(motor_commands(), [])
     for _ in range(300):
         backend.step()
     moved = poses()
-    after, _ = renderer.render(moved, ("left/camera",))["left/camera"]
+    after, _ = renderer.render(
+        moved, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     # Require visible motion without coupling the check to scene brightness.
     changed_pixels = np.count_nonzero(np.max(np.abs(after.astype(float) - rgb), axis=-1) > 10)
     assert changed_pixels > 0.01 * rgb.shape[0] * rgb.shape[1]
-    replay, _ = renderer.render(sample, ("left/camera",))["left/camera"]
+    replay, _ = renderer.render(
+        sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     # Filament color grading dithers by a few 8-bit levels between captures.
     np.testing.assert_allclose(replay.astype(float), rgb.astype(float), atol=5)
-    replay_depth = renderer.render(sample, ("left/camera",))["left/camera"][1]
+    replay_depth = renderer.render(
+        sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"][1]
     np.testing.assert_array_equal(replay_depth, depth)
 
 
 def test_a_camera_renders_only_the_images_it_has(poses, make_renderer):
     renderer = make_renderer(
-        (CameraConfig("left/camera", depth=False), CameraConfig("right/camera", color=False))
+        (
+            CameraConfig(
+                "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",
+                depth=False,
+            ),
+            CameraConfig(
+                "world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",
+                color=False,
+            ),
+        )
     )
-    images = renderer.render(poses(), ("left/camera", "right/camera"))
-    rgb, no_depth = images["left/camera"]
+    images = renderer.render(
+        poses(),
+        (
+            "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",
+            "world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",
+        ),
+    )
+    rgb, no_depth = images["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     assert rgb.shape == (240, 320, 3) and rgb.std() > 5
     assert no_depth.size == 0
-    no_color, depth = images["right/camera"]
+    no_color, depth = images[
+        "world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"
+    ]
     assert no_color.size == 0
     assert depth.shape == (240, 320) and np.isfinite(depth).all()
     with pytest.raises(ValueError, match="color, depth or both"):
@@ -91,47 +122,102 @@ def test_usd_authored_lights_illuminate_camera_image(poses, world, make_renderer
     light = stage.GetPrimAtPath("/world/light")
     light.GetAttribute("inputs:intensity").Set(0.0)
     dark_scene = UsdModel.from_layer(stage.GetRootLayer().ExportToString())
-    cameras = (CameraConfig("left/camera", depth=False),)
-    lit, _ = make_renderer(cameras).render(poses(), ("left/camera",))["left/camera"]
+    cameras = (
+        CameraConfig(
+            "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera", depth=False
+        ),
+    )
+    lit, _ = make_renderer(cameras).render(
+        poses(), ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     sample = poses()
-    sample.model_revision = dark_scene.revision
-    dark, _ = make_renderer(cameras, dark_scene).render(sample, ("left/camera",))["left/camera"]
+    sample.model_revision = scene_revision(dark_scene)
+    dark, _ = make_renderer(cameras, dark_scene).render(
+        sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     assert lit.mean() > dark.mean() + 5
 
 
 def test_two_views_retain_their_pixels(poses, renderer):
     sample = poses(time_ns=200_000_000)
-    images = renderer.render(sample, ("left/camera", "right/camera"))
-    left, right = images["left/camera"][0], images["right/camera"][0]
+    images = renderer.render(
+        sample,
+        (
+            "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",
+            "world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",
+        ),
+    )
+    left, right = (
+        images["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"][0],
+        images["world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"][0],
+    )
     assert np.count_nonzero(np.any(left != right, axis=-1)) > 0.01 * 320 * 240
     saved = left.copy()
-    renderer.render(sample, ("right/camera",))
+    renderer.render(
+        sample, ("world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )
     np.testing.assert_array_equal(left, saved)
 
 
 def test_different_resolutions_keep_intrinsics_and_share_the_model(poses, make_renderer):
     renderer = make_renderer(
         (
-            CameraConfig("left/camera", width=160, height=120, fx=94.18, fy=94.18, cx=80, cy=60),
-            CameraConfig("right/camera"),
+            CameraConfig(
+                "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",
+                width=160,
+                height=120,
+                fx=94.18,
+                fy=94.18,
+                cx=80,
+                cy=60,
+            ),
+            CameraConfig("world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"),
         )
     )
-    images = renderer.render(poses(), ("left/camera", "right/camera"))
-    assert images["left/camera"][0].shape == (120, 160, 3)
-    assert images["left/camera"][1].shape == (120, 160)
-    assert images["right/camera"][0].shape == (240, 320, 3)
-    assert images["right/camera"][1].shape == (240, 320)
+    images = renderer.render(
+        poses(),
+        (
+            "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",
+            "world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",
+        ),
+    )
+    assert images["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"][
+        0
+    ].shape == (120, 160, 3)
+    assert images["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"][
+        1
+    ].shape == (120, 160)
+    assert images["world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"][
+        0
+    ].shape == (240, 320, 3)
+    assert images["world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"][
+        1
+    ].shape == (240, 320)
 
 
 def test_any_pinhole_calibration_renders_where_its_camera_info_says(poses, make_renderer):
     # The same view through an ordinary camera and through one with unequal focal
     # lengths and an off-center principal point: every surface point one sees must
     # be where the other's calibration puts it.
-    centered = CameraConfig("left/camera")
-    skewed = CameraConfig("left/camera", width=300, height=200, fx=150, fy=230, cx=170, cy=80)
+    centered = CameraConfig(
+        "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"
+    )
+    skewed = CameraConfig(
+        "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",
+        width=300,
+        height=200,
+        fx=150,
+        fy=230,
+        cx=170,
+        cy=80,
+    )
     sample = poses()
-    _, reference = make_renderer((centered,)).render(sample, ("left/camera",))["left/camera"]
-    _, depth = make_renderer((skewed,)).render(sample, ("left/camera",))["left/camera"]
+    _, reference = make_renderer((centered,)).render(
+        sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
+    _, depth = make_renderer((skewed,)).render(
+        sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+    )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
     assert depth.shape == (200, 300)
     v, u = np.mgrid[5:195:7, 5:295:7]
     z = depth[v, u]
@@ -153,9 +239,18 @@ def test_sensor_thread_can_capture_rgbd_and_close_without_a_main_thread_event_lo
     def capture():
         renderer = MujocoRenderer()
         try:
-            renderer.load(world, (CameraConfig("left/camera"),))
+            renderer.load(
+                world,
+                (
+                    CameraConfig(
+                        "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"
+                    ),
+                ),
+            )
             process = renderer._process
-            rgb, depth = renderer.render(sample, ("left/camera",))["left/camera"]
+            rgb, depth = renderer.render(
+                sample, ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+            )["world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"]
         finally:
             renderer.close()
         assert process.poll() == 0
@@ -192,13 +287,13 @@ def test_depth_is_optical_axis_metres_and_matches_color_silhouette(distance):
         bodies = backend.read_bodies()
         sample = WorldState(
             header=SampleHeader(),
-            model_revision=scene.revision,
+            model_revision=scene_revision(scene),
             bodies_length=len(bodies),
             bodies=bodies,
         )
-        camera = CameraConfig("camera", width=201, height=151, fx=150, fy=180, cx=110, cy=65)
+        camera = CameraConfig("world/camera", width=201, height=151, fx=150, fy=180, cx=110, cy=65)
         renderer.load(scene, (camera,))
-        rgb, depth = renderer.render(sample, ("camera",))["camera"]
+        rgb, depth = renderer.render(sample, ("world/camera",))["world/camera"]
         valid = depth > 0
         assert valid.sum() > 1000
         # A flat surface has constant Z even away from the principal point;
@@ -220,15 +315,34 @@ def test_depth_is_optical_axis_metres_and_matches_color_silhouette(distance):
 def test_cancel_stops_native_render_process_and_allows_reloading(world, poses):
     renderer = MujocoRenderer()
     try:
-        renderer.load(world, (CameraConfig("left/camera"),))
+        renderer.load(
+            world,
+            (
+                CameraConfig(
+                    "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera"
+                ),
+            ),
+        )
         process = renderer._process
         renderer.cancel()
         process.wait(timeout=5)
         with pytest.raises(RuntimeError, match="closed"):
-            renderer.render(poses(), ("left/camera",))
+            renderer.render(
+                poses(), ("world/world/left_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+            )
         renderer.close()
-        renderer.load(world, (CameraConfig("right/camera", color=False),))
-        _, depth = renderer.render(poses(), ("right/camera",))["right/camera"]
+        renderer.load(
+            world,
+            (
+                CameraConfig(
+                    "world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",
+                    color=False,
+                ),
+            ),
+        )
+        _, depth = renderer.render(
+            poses(), ("world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera",)
+        )["world/world/right_mount/cartesian_pusher/base_link/carriage/tool/camera"]
         assert np.count_nonzero(depth > 0) > 100
     finally:
         renderer.close()

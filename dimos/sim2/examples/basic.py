@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A joint-driven pusher and box: devices contribute USD, one manager composes."""
+"""A joint-driven pusher and box, with independently mounted sensor hardware."""
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.assets.model import UsdModel
-from dimos.robot.usd_manager import UsdManager
+from dimos.sim2.examples.scene import BasicScene
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
@@ -30,31 +28,27 @@ from dimos.sim2.sensors.lidar.config import LidarConfig
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 
-_camera = SimCameraModule.blueprint(
-    instance_name="camera",
-    sensor=CameraConfig("camera"),
+_camera = SimCameraModule.attach(
+    BasicScene.mounts.camera_mount, instance_name="camera", sensor=CameraConfig("camera")
 )
-_lidar = SimLidarModule.blueprint(
+_lidar = SimLidarModule.attach(
+    BasicScene.mounts.lidar_mount,
     instance_name="lidar",
-    scene_manager="scene",
     sensor=LidarConfig("lidar"),
     raycaster=MujocoRaycaster,
 )
-_imu = SimImuModule.blueprint(instance_name="imu", sensor=ImuConfig("imu", orientation="ideal"))
-_scene = UsdManager.blueprint(
-    instance_name="scene",
-    model=UsdModel.from_file(DIMOS_PROJECT_ROOT / "assets/sim2_basic/scene.usda"),
-    mounts={"camera_mount": _camera, "lidar_mount": _lidar, "imu_mount": _imu},
+_imu = SimImuModule.attach(
+    BasicScene.mounts.imu_mount, instance_name="imu", sensor=ImuConfig("imu", orientation="ideal")
 )
 
 sim2_basic = autoconnect(
+    BasicScene.blueprint(instance_name="scene"),
     _camera,
-    CameraRenderModule.blueprint(
-        scene_manager=_scene, renderer=MujocoRenderer, cameras=("camera",)
-    ),
     _lidar,
     _imu,
-    _scene,
-    SimModule.blueprint(scene_manager=_scene, backend=MujocoBackend, joint_ids=("tool_joint",)),
-    SimJointEncoderModule.blueprint(sensor=EncoderConfig(("tool_joint",))),
+    CameraRenderModule.blueprint(
+        renderer=MujocoRenderer, cameras=tuple(atom.name for atom in _camera.active_blueprints)
+    ),
+    SimModule.blueprint(backend=MujocoBackend, joint_ids=("world/joints/tool_joint",)),
+    SimJointEncoderModule.blueprint(sensor=EncoderConfig(("world/joints/tool_joint",))),
 ).global_config(viewer="none", transport="zenoh", n_workers=5)

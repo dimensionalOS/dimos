@@ -16,14 +16,13 @@
 """Load the composed USD directly with MuJoCo's native USD importer."""
 
 from importlib import import_module
-from pathlib import Path
 
 import mujoco
 
-from dimos.robot.assets.client import materialize_scene
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.sim2.description import materialize_scene
 
 
 def build_scene(
@@ -72,7 +71,7 @@ def build_scene(
             for path in remove:
                 pxr.Sdf.CreatePrimInLayer(stage.GetRootLayer(), path).active = False
         usd = str(stage.GetRootLayer().ExportToString())
-    local = materialize_scene(usd, lambda name: Path(name).read_bytes())
+    local = materialize_scene(UsdModel.from_layer(usd))
     spec = mujoco.MjSpec.from_file(str(local.source_path))
     _bind_names(spec, local)
     spec.option.timestep = dt_ns / 1e9
@@ -99,9 +98,7 @@ def build_scene(
 
 
 def _bind_names(spec: mujoco.MjSpec, scene: UsdModel) -> None:
-    """Bind native prim paths to the exact frame IDs published by UsdManager."""
-    pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(str(scene.source_path))
+    """Bind native prim paths to the exact USD prim paths used by HardwareModule."""
     names = {}
     for kind in ("bodies", "joints", "sites", "cameras"):
         used: set[str] = set()
@@ -109,8 +106,7 @@ def _bind_names(spec: mujoco.MjSpec, scene: UsdModel) -> None:
             old = element.name
             if not old:
                 continue
-            prim = stage.GetPrimAtPath(old) if old.startswith("/") else None
-            name = str(prim.GetDisplayName() or prim.GetName()) if prim else old
+            name = old.lstrip("/")
             if name in used:
                 raise ValueError(f"duplicate USD {kind} ID: {name}")
             used.add(name)

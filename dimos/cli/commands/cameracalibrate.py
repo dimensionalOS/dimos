@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from click import ClickException
 import typer
 
 
@@ -62,7 +63,8 @@ def cameracalibrate(
     ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
-    from dimos.cli.cameracalibrate.cameracalibrate import run_calibration
+    # Load the numpy-based implementation only when this command is used.
+    from dimos.cli.cameracalibrate.cameracalibrate import CalibrationAbortedError, run_calibration
 
     if preview_out is not None and out is None:
         raise typer.BadParameter("preview output requires --out")
@@ -84,8 +86,13 @@ def cameracalibrate(
             no_display=no_display,
             distortion_model=distortion_model,
         )
-    except (ValueError, RuntimeError) as exc:
+    except CalibrationAbortedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(130) from exc
+    except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    except RuntimeError as exc:
+        raise ClickException(str(exc)) from exc
 
     typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
     typer.echo(

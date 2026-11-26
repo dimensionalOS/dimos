@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import fcntl
@@ -56,8 +56,8 @@ SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
 REPLAY_FILE = "rerun.rrd"
 RECORD_TOPICS = (
-    "ground_truth,joint_state,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,"
-    "goal_reached,reference_path,phase,lidar,local_map,surface_map"
+    "ground_truth,joint_state,coordinator_joint_state,odometry,tf,scene,contacts,goal,"
+    "planner_path,path,cmd_vel,goal_reached,reference_path,phase,lidar,local_map,surface_map"
 )
 LCM_PORT_BASE = 7800
 ZENOH_SCOUT_GROUP = "224.0.0.224"
@@ -236,8 +236,11 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             raise RuntimeError(
                 f"the first episode produced no terminal record, see {episodes[0].dir}"
             )
-        for future in [pool.submit(one, episode) for episode in episodes[1:]]:
-            future.result()
+        pending = {pool.submit(one, episode) for episode in episodes[1:]}
+        while pending:
+            done, pending = wait(pending, timeout=POLL_S, return_when=FIRST_EXCEPTION)
+            for future in done:
+                future.result()
     except BaseException:
         stopping.set()
         pool.shutdown(wait=False, cancel_futures=True)

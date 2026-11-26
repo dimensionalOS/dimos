@@ -30,9 +30,9 @@ import trimesh
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets, write_asset_info
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_with_frames
-from dimos.robot.assets.usd_utils.layers import graft_usd
-from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.robot.assets.usd_utils.frames import usd_with_frames
+from dimos.robot.assets.usd_utils.layers import overlay_usds, usd_under_namespace
+from dimos.robot.assets.usd_utils.pxr import frame_path, layer_from, load_pxr
 from dimos.robot.unitree.g1.sim2_policy import JOINTS, POLICY
 from dimos.sim2.physics.drives import usd_with_drives
 
@@ -90,24 +90,38 @@ def prepare(g1_source: Path, out: Path) -> None:
             prim.CreateAttribute("newton:friction", Sdf.ValueTypeNames.Float).Set(0.1)
         if prim.HasAttribute("mjc:inertia"):
             prim.RemoveProperty("mjc:inertia")
+    frames = {
+        p.GetName(): frame_path(p) for p in stage.Traverse() if p.HasAPI(UsdPhysics.RigidBodyAPI)
+    }
     usd = usd_with_frames(
         stage.GetRootLayer().ExportToString(),
         {
-            "imu_mount": ("pelvis", (0.04525, 0, -0.08339), (0, 0, 0)),
-            "camera_mount": ("torso_link", (0.05, 0, 0.40), (-math.pi / 2, 0, -math.pi / 2)),
+            "imu_mount": (frames["pelvis"], (0.04525, 0, -0.08339), (0, 0, 0)),
+            "camera_mount": (
+                frames["torso_link"],
+                (0.05, 0, 0.40),
+                (-math.pi / 2, 0, -math.pi / 2),
+            ),
             "lidar_mount": (
-                "torso_link",
+                frames["torso_link"],
                 (0.0002835, 0.00003, 0.41618),
                 (math.pi, 0.04014257279586953, 0),
             ),
         },
         root=out / "g1",
     )
-    usd = prefix_usd_frames(usd, "g1")
+    stage = Usd.Stage.Open(layer_from(pxr, usd, "g1 names", out / "g1"))
+    joint_ids = {}
+    for prim in stage.Traverse():
+        if prim.IsA(UsdPhysics.Joint):
+            name = "g1/" + str(prim.GetDisplayName() or prim.GetName()).removeprefix("g1/")
+            prim.SetDisplayName(name)
+            joint_ids[name] = frame_path(prim)
+    usd = stage.GetRootLayer().ExportToString()
     usd = usd_with_drives(
         usd,
         {
-            n: (kp, kd, q)
+            joint_ids[n]: (kp, kd, q)
             for n, kp, kd, q in zip(
                 JOINTS, G1_GROOT_KP, G1_GROOT_KD, POLICY.default_positions_29, strict=True
             )
@@ -204,36 +218,43 @@ def prepare(g1_source: Path, out: Path) -> None:
             material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
     (out / "desk.usda").write_text(stage.GetRootLayer().ExportToString())
-    box = RobotModel.from_file("assets/g1_desk/box.urdf").with_prefix("box/").to_usd().usd
+    box = RobotModel.from_file("assets/g1_desk/box.urdf").to_usd().usd
     (out / "box.usda").write_text(box)
     print(out)
 
     # These two props belong to the authored environment, with the box free.
-    world = graft_usd(
-        (out / "world.usda").read_text(),
-        {
-            "desk_mount": (out / "desk.usda").read_text(),
-            "box_mount": (out / "box.usda").read_text(),
-        },
-        root=out,
+    world = overlay_usds(
+        resolve_usd_assets((out / "world.usda").read_text(), str(out)),
+        [
+            (
+                usd_under_namespace(
+                    resolve_usd_assets((out / (name + ".usda")).read_text(), str(out)),
+                    "world/" + name + "_mount",
+                ),
+                "world/" + name + "_mount",
+            )
+            for name in ("desk", "box")
+        ],
     )
     stage = Usd.Stage.Open(layer_from(pxr, world, "world", out))
+    # Remove the authored weld for the free box only.
     for prim in list(stage.Traverse()):
-        if prim.GetTypeName() == "PhysicsJoint":
-            if prim.GetName() == "box_mount_mount":
-                stage.RemovePrim(prim.GetPath())
-            else:
-                prim.SetTypeName("PhysicsFixedJoint")
-    (out / "world.usda").write_text(stage.GetRootLayer().ExportToString())
-
-    world = graft_usd(
-        (out / "world.usda").read_text(),
-        {"world": resolve_usd_assets((out / "g1/g1.usda").read_text(), str(out / "g1"))},
-        root=out,
+        if prim.IsA(UsdPhysics.Joint) and prim.GetName() == "world_box_mount_mount":
+            stage.RemovePrim(prim.GetPath())
+    world = overlay_usds(
+        stage.GetRootLayer().ExportToString(),
+        [
+            (
+                usd_under_namespace(
+                    resolve_usd_assets((out / "g1/g1.usda").read_text(), str(out / "g1")), "world"
+                ),
+                "world",
+            )
+        ],
     )
     stage = Usd.Stage.Open(layer_from(pxr, world, "g1 scene", out))
     for prim in list(stage.Traverse()):
-        if prim.GetTypeName() == "PhysicsJoint" and prim.GetName() == "world_mount":
+        if prim.IsA(UsdPhysics.Joint) and prim.GetName() == "world_mount":
             stage.RemovePrim(prim.GetPath())
     # Store relative asset locations, never this author's workspace paths.
     (out / "world.usda").write_text(

@@ -12,12 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
+from pathlib import Path
 import sys
 
 import pytest
 
-from dimos.utils.executable import find_executable
+from dimos.utils.executable import find_executable, spawn_detached
+
+
+def test_spawn_detached_has_own_session_and_no_terminal_streams(tmp_path: Path) -> None:
+    result = tmp_path / "process.json"
+    code = "\n".join(
+        [
+            "import json, os, sys",
+            "from pathlib import Path",
+            "streams = [os.fstat(fd).st_rdev == os.stat(os.devnull).st_rdev for fd in range(3)]",
+            "Path(sys.argv[1]).write_text(json.dumps([os.getsid(0) == os.getpid(), streams]))",
+        ]
+    )
+
+    with spawn_detached([sys.executable, "-c", code, str(result)]) as process:
+        assert process.wait(timeout=10) == 0
+
+    assert json.loads(result.read_text()) == [True, [True, True, True]]
 
 
 @pytest.fixture

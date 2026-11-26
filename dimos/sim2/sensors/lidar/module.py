@@ -16,50 +16,52 @@
 
 from collections import deque
 from collections.abc import Callable
+from dataclasses import replace
 import math
 from typing import Any
 
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
+from pydantic import model_validator
 from scipy.spatial.transform import Rotation
 
-from dimos.core.core import rpc
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.sim2.geometry.poses import pose_array, poses_by_id
+from dimos.sim2.hardware import SimHardwareConfig, SimHardwareModule
 from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.lidar.config import LidarConfig, Raycaster
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
 from dimos.sim2.sensors.sampling import Acquisition
 
 
-class LidarModuleConfig(PoseSensorConfig):
+class LidarModuleConfig(PoseSensorConfig, SimHardwareConfig):
     sensor: LidarConfig
     raycaster: Callable[[], Raycaster]
-    model: UsdModel | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def describe_lidar(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("usd") is None:
+            sensor = data["sensor"]
+            if isinstance(sensor, dict):
+                sensor = LidarConfig(**sensor)
+            model = RobotModel.from_root_link(sensor.frame_id, name="lidar").to_usd()
+            return {**data, "usd": model, "sensor": replace(sensor, frame_id=model.root_link)}
+        return data
 
 
-class SimLidarModule(_PoseSensorModule):
+class SimLidarModule(_PoseSensorModule, SimHardwareModule):
     config: LidarModuleConfig
     lidar: Out[PointCloud2]
     # Privileged, truth-registered hits for inspection/mapping without SLAM.
     # Never connect this stream to a lidar-inertial estimator.
     pointcloud: Out[PointCloud2]
 
-    @rpc
-    def get_usd(self) -> list[str]:
-        model = (
-            self.config.model
-            or RobotModel.from_root_link(self.config.sensor.frame_id, name="lidar").to_usd()
-        )
-        if self.config.sensor.frame_id not in model.frame_names():
-            raise ValueError("lidar USD must describe its measurement frame")
-        return [str(model.source_path.parent) if model.source_path else "", model.usd]
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        c = self.config.sensor
+        c = replace(self.config.sensor, frame_id=self.tf_frames[self.config.sensor.frame_id])
         if (
             not all(
                 map(math.isfinite, (c.scan_hz, c.motion_hz, c.min_range, c.max_range, c.range_std))
@@ -81,7 +83,7 @@ class SimLidarModule(_PoseSensorModule):
         self.raycaster.load(scene, self.config.sensor.excluded_bodies)
 
     def measure(self, sample: WorldState) -> tuple[PointCloud2, PointCloud2] | None:
-        c = self.config.sensor
+        c = replace(self.config.sensor, frame_id=self.tf_frames[self.config.sensor.frame_id])
         # Check the clock even when a scan is not due.
         due = self._sampling.due(sample.header)
         if sample.header.epoch < self._epoch:

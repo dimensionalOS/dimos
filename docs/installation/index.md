@@ -6,11 +6,11 @@ The recommended way to install dimOS is the guided `install.sh` script. It insta
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-The installer asks for a mode and project directory, sets up system dependencies and uv, installs Python and dimOS, and verifies the CLI and native libraries. It can also configure LCM networking and run an optional replay check. Follow the printed activation instructions when it finishes.
+The installer asks for a mode and project directory, sets up system dependencies and uv, installs Python 3.12 and dimOS, and verifies the CLI and native libraries. It can also configure LCM networking and run an optional replay check. Follow the printed activation instructions when it finishes.
 
 | Platform | Installation path | Validation |
 | --- | --- | --- |
-| [Ubuntu 22.04/24.04](/docs/installation/ubuntu.md), x86_64/ARM64 | apt | Both modes pass CPU installation CI |
+| [Ubuntu 22.04/24.04/26.04](/docs/installation/ubuntu.md), x86_64/ARM64 | apt | CI tests both modes in headless containers |
 | [macOS](/docs/installation/osx.md), Apple Silicon | Homebrew | CI paused; local testing needed |
 | [NixOS / other Linux](/docs/installation/nix.md), including Arch | Nix | Not covered by installation CI |
 
@@ -20,6 +20,8 @@ Linux ARM64 excludes `scene` because `usd-core` has no wheel. CUDA extras requir
 
 - **Library (recommended)** installs the published package in a project virtual environment.
 - **Developer** clones `main` and installs the checkout with test and lint dependencies. An existing checkout is reused without pulling or switching branches.
+
+For a headless Unitree Go2 or G1 on Ubuntu 26.04, use **developer** mode until a fixed wheel ships. With dimOS 0.0.15 and `unitree-webrtc-connect` 2.2.0, importing the Unitree connection raises `PortAudioError` if no audio server is running. Follow the [headless Unitree installation instructions](/docs/installation/ubuntu.md#headless-unitree-on-ubuntu-2604).
 
 Install a CPU library environment without prompts or replay:
 

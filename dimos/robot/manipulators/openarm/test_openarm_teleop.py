@@ -76,13 +76,13 @@ def test_openarm_model_uses_canonical_zero_start() -> None:
 
 
 def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
-    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, DamiaoTeleopCoordinator)
-    teleop_kwargs = _module_kwargs(teleop_webxr_openarm, ArmTeleopModule)
-    manipulation_kwargs = _module_kwargs(teleop_webxr_openarm, ManipulationModule)
+    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm.solidify(), DamiaoTeleopCoordinator)
+    teleop_kwargs = _module_kwargs(teleop_webxr_openarm.solidify(), ArmTeleopModule)
+    manipulation_kwargs = _module_kwargs(teleop_webxr_openarm.solidify(), ManipulationModule)
     tasks = coordinator_kwargs["tasks"]
 
     assert coordinator_kwargs.get("hardware", []) == []
-    assert _module_kwargs(teleop_webxr_openarm, OpenArmConnection)["source"] == "arm"
+    assert _module_kwargs(teleop_webxr_openarm.solidify(), OpenArmConnection)["source"] == "arm"
     assert "left_can_port" not in coordinator_kwargs
     assert "right_can_port" not in coordinator_kwargs
     assert len(tasks) == 4
@@ -141,7 +141,7 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}
-    assert teleop_webxr_openarm.remapping_map == {
+    assert teleop_webxr_openarm.solidify().remapping_map == {
         (OpenArmConnection.name, "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
         (ArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
@@ -152,7 +152,7 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
-    for blueprint in (teleop_webxr_openarm, openarm_planner_coordinator):
+    for blueprint in (teleop_webxr_openarm.solidify(), openarm_planner_coordinator.solidify()):
         parsed = BlueprintConfigParser(blueprint).parse(
             ["--left-can-port", "can1", "--right-can-port", "can0"],
             environ={},
@@ -169,7 +169,7 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
     tmp_path: Path,
     released_hand: str,
 ) -> None:
-    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, DamiaoTeleopCoordinator)
+    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm.solidify(), DamiaoTeleopCoordinator)
     mocker.patch.object(OpenArmPinkPoseTargetSolver, "_validate_frame_targets")
     frame_poses = mocker.patch.object(
         OpenArmPinkPoseTargetSolver,

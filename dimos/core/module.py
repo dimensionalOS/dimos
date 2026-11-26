@@ -19,6 +19,7 @@ import inspect
 import json
 import sys
 import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -122,12 +123,11 @@ class ModuleConfig(BaseConfig):
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     frame_id_prefix: str | None = None
     frame_id: str | None = None
-    # Set by the coordinator when the same module class is deployed more than
-    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
-    # from the class name to this name.
+    # Blueprint identity for a named instance (see BlueprintAtom.instance_name).
+    # Also supplies the default RPC alias when set.
     instance_name: str | None = None
-    # Optional RPC-only address. Unlike instance_name, this does not change the
-    # module's Blueprint identity, configuration key, or stream namespace.
+    # Optional RPC alias in a blueprint. The coordinator passes the resolved
+    # wire address to the module, independently of its instance and stream names.
     rpc_name: str | None = None
     g: GlobalConfig = global_config
 
@@ -197,11 +197,27 @@ class ModuleBase(Configurable, CompositeResource):
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
     @property
+    def namespace(self) -> str:
+        """The ``Blueprint.namespace`` levels in the instance name: ``fleet/robot0`` for ``fleet/robot0/odom``."""
+        return (self.config.instance_name or "").rpartition("/")[0]
+
+    @property
+    def frame_id_prefix(self) -> str:
+        """The namespace, then the config's own frame_id_prefix: ``robot0/custom``."""
+        return "/".join(part for part in (self.namespace, self.config.frame_id_prefix) if part)
+
+    @property
     def frame_id(self) -> str:
         base = self.config.frame_id or self.__class__.__name__
-        if self.config.frame_id_prefix:
-            return f"{self.config.frame_id_prefix}/{base}"
-        return base
+        return f"{self.frame_id_prefix}/{base}" if self.frame_id_prefix else base
+
+    def time(self) -> float:
+        """This module's clock, which it stamps with: wall time, or a simulated world's time in a sim module."""
+        return time.time()
+
+    async def sleep(self, seconds: float) -> None:
+        """Wait ``seconds`` of this module's time: wall time, or a simulated world's time in a sim module."""
+        await asyncio.sleep(seconds)
 
     @rpc
     def build(self) -> None:
@@ -323,8 +339,11 @@ class ModuleBase(Configurable, CompositeResource):
                     f"{type(self).__name__}.tf port has no transport yet — "
                     "deploy via a blueprint or call set_transport('tf', ...) first"
                 )
-            self._tf = TF(port)
+            self._tf = self._create_tfbuffer(port)
         return self._tf
+
+    def _create_tfbuffer(self, port: Any) -> TF:
+        return TF(port)
 
     @classproperty
     def rpcs(self) -> dict[str, Callable[..., Any]]:
@@ -380,6 +399,10 @@ class ModuleBase(Configurable, CompositeResource):
                 )
             )
         return descriptors
+
+    @rpc
+    def get_config(self) -> dict[str, Any]:
+        return self.config.model_dump(mode="json", fallback=repr)
 
     @rpc
     def get_rpc_signatures(self) -> list[RpcInfo]:

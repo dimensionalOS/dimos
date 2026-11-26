@@ -23,7 +23,6 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Transport
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
@@ -31,7 +30,6 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.camera.config import CameraConfig, CameraRenderer
-from dimos.sim2.sensors.camera.module import _SimCameraDevice
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
 from dimos.sim2.sensors.sampling import Acquisition
 
@@ -60,20 +58,21 @@ class CameraRenderModule(_PoseSensorModule):
         self._jpeg_quality: dict[str, int | None] = {}
 
     @rpc
-    def build(self) -> None:
-        """Read named devices and their existing wired output transports once."""
-        super().build()
+    def on_system_modules(self, modules: list[Any]) -> None:
+        """Resolve camera RPCs from discovery after every device has started."""
+        if self._thread is not None:
+            return
         if not self.config.cameras or len(set(self.config.cameras)) != len(self.config.cameras):
             raise ValueError("renderer requires a nonempty list of unique camera module names")
-        name = self.config.rpc_name or self.config.instance_name or type(self).__name__
+        name = self.config.instance_name or type(self).__name__
         for device_name in self.config.cameras:
-            device = RPCClient.remote(_SimCameraDevice, device_name, rpc=self.rpc)
-            try:
-                camera: CameraConfig = device.camera_config(name)
-                jpeg_quality: int | None = device.jpeg_quality()
-                outputs = {port.name: port.transport for port in device.get_stream_descriptors()}
-            finally:
-                device.stop_rpc_client()
+            matches = [m for m in modules if m.instance_name == device_name]
+            if len(matches) != 1 or "camera_config" not in matches[0].rpcs:
+                raise ValueError(f"no camera device named {device_name!r}")
+            device = matches[0]
+            camera: CameraConfig = device.camera_config(name)
+            jpeg_quality: int | None = device.jpeg_quality()
+            outputs = {port.name: port.transport for port in device.get_stream_descriptors()}
             if camera.frame_id in self._cameras:
                 raise ValueError(f"duplicate camera frame: {camera.frame_id}")
             self._cameras[camera.frame_id] = camera
@@ -99,6 +98,8 @@ class CameraRenderModule(_PoseSensorModule):
             for transport in transports:
                 if transport is not None:
                     self.register_disposable(Disposable(transport.stop))
+
+        super().on_system_modules(modules)
 
     def open_sensor(self, scene: UsdModel) -> None:
         self.renderer = self.config.renderer()

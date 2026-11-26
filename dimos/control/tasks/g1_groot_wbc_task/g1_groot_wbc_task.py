@@ -26,6 +26,7 @@ from the behavior the policies were trained for.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
@@ -36,7 +37,7 @@ from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.hardware_interface import ConnectedWholeBody
+from dimos.control.connection_source import ConnectionSource
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -48,7 +49,6 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.hardware.whole_body.spec import WholeBodyAdapter
     from dimos.msgs.geometry_msgs.Twist import Twist
 
 logger = setup_logger()
@@ -218,7 +218,7 @@ class G1GrootWBCTaskConfig:
             False - safe for real hardware; the blueprint sets True for
             simulation.
         auto_dry_run: Enter dry-run mode on ``start()``.  Policy still
-            runs but outputs are not emitted to the adapter - useful for
+            runs but outputs are not sent to the robot - useful for
             verifying on real hardware without commanding motors.
         default_ramp_seconds: Duration of the arming ramp (current pose
             -> ``default_15``) when ``arm()`` is called without an
@@ -276,7 +276,7 @@ class G1GrootWBCTask(BaseControlTask):
         self,
         name: str,
         config: G1GrootWBCTaskConfig,
-        adapter: WholeBodyAdapter | None = None,
+        hardware_id: str = "g1",
     ) -> None:
         if len(config.joint_names) != _NUM_ACTIONS:
             raise ValueError(
@@ -298,7 +298,7 @@ class G1GrootWBCTask(BaseControlTask):
 
         self._name = name
         self._config = config
-        self._adapter = adapter
+        self._hardware_id = hardware_id
         self._joint_names_list = list(config.joint_names)
         self._joint_names_set = frozenset(config.joint_names)
         self._all_joint_names = list(config.all_joint_names)
@@ -490,20 +490,18 @@ class G1GrootWBCTask(BaseControlTask):
         q_29 = self._cached_q_29.copy()
         dq_29 = self._cached_dq_29.copy()
 
-        # Prefer IMU from CoordinatorState (populated by the coordinator
-        # each tick from every whole-body adapter); fall back to the
-        # adapter-direct read if state.imu is empty (e.g. unit tests
-        # that build a bare CoordinatorState). The state path is what
-        # decouples this task from the WholeBodyAdapter Protocol.
-        if state.imu:
-            # Single whole-body adapter is the common case - take any.
-            imu = next(iter(state.imu.values()))
-        elif self._adapter is not None:
-            imu = self._adapter.read_imu()
-        else:
-            raise ValueError("GR00T requires an IMU sample in CoordinatorState")
-        gyro = np.asarray(imu.gyroscope, dtype=np.float32)
-        gravity = self._projected_gravity(imu.quaternion)
+        # Select this robot explicitly: neither another robot's IMU nor an
+        # assumed identity orientation is a valid policy observation.
+        reading = state.sensors.readings.get(f"{self._hardware_id}/imu")
+        if reading is None:
+            return None
+        try:
+            quaternion = tuple(reading[key] for key in ("qw", "qx", "qy", "qz"))
+            gyroscope = tuple(reading[key] for key in ("gx", "gy", "gz"))
+        except KeyError:
+            return None
+        gyro = np.asarray(gyroscope, dtype=np.float32)
+        gravity = self._projected_gravity(quaternion)
 
         # Velocity command (with timeout -> zero).
         with self._cmd_lock:
@@ -717,7 +715,7 @@ class G1GrootWBCTask(BaseControlTask):
 
         In dry-run the policy still runs (obs history stays hot) but
         ``compute()`` returns ``None``, so the coordinator forwards no
-        command to the adapter.  Use to verify policy sanity on real
+        command to the robot.  Use to verify policy sanity on real
         hardware before committing motor torques.
         """
         new_val = bool(enabled)
@@ -792,20 +790,13 @@ class G1GrootWBCTaskParams(BaseConfig):
     decimation: int | None = None
 
 
-def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
+def create_task(cfg: Any, connections: Mapping[str, ConnectionSource]) -> G1GrootWBCTask:
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
-    hw = hardware.get(params.hardware_id) if hardware else None
+    hw = connections.get(params.hardware_id)
     if hw is None:
         raise ValueError(
-            f"G1GrootWBCTask {cfg.name!r} references unknown hardware "
-            f"{params.hardware_id!r}. Declare the hardware before the task "
-            f"in the blueprint config."
-        )
-    if not isinstance(hw, ConnectedWholeBody):
-        raise TypeError(
-            f"G1GrootWBCTask {cfg.name!r} requires a WHOLE_BODY hardware "
-            f"component for {params.hardware_id!r}, got {type(hw).__name__}. "
-            f"Set hardware_type=HardwareType.WHOLE_BODY."
+            f"G1GrootWBCTask {cfg.name!r} references robot {params.hardware_id!r}, which "
+            "has no connection declaration on this coordinator."
         )
 
     model_dir = Path(params.model_path)
@@ -824,5 +815,5 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
     return G1GrootWBCTask(
         cfg.name,
         G1GrootWBCTaskConfig(**kwargs),
-        adapter=hw.adapter,
+        hardware_id=params.hardware_id,
     )

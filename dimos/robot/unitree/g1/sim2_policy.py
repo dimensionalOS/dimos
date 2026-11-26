@@ -29,7 +29,7 @@ from dimos_lcm.std_msgs import Header, Time
 import numpy as np
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.task import CoordinatorState, JointStateSnapshot, SensorStateSnapshot
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1_GROOT_KD,
     G1_GROOT_KP,
@@ -38,13 +38,12 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
-from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
+from dimos.sim2.description import SceneConfig, joint_paths
 from dimos.sim2.module import SimModule
 from dimos.utils.data import LfsPath
 from dimos.utils.logging_config import setup_logger
@@ -64,12 +63,12 @@ POLICY = G1GrootWBCTaskConfig(
 
 
 class G1PolicyConfig(SceneConfig):
-    simulation: str = "SimModule"
     period_ns: int = 20_000_000
     command_ttl_ns: int = 100_000_000
 
 
 class G1PolicyModule(Module):
+    _simulation: SimModule
     config: G1PolicyConfig
     imu: In[Imu]
     joint_state: In[JointState]
@@ -98,12 +97,12 @@ class G1PolicyModule(Module):
         super().build()
         if self.config.period_ns <= 0 or self.config.command_ttl_ns < self.config.period_ns:
             raise ValueError("command TTL must cover a positive policy period")
-        simulation = RPCClient.remote(SimModule, self.config.simulation, rpc=self.rpc)
-        try:
-            self._clock_id = simulation.simulation_config()["sim_clock_id"]
-        finally:
-            simulation.stop_rpc_client()
-        scene = self.config.load_scene(self.rpc)
+        self._clock_id = self._simulation.simulation_config()["sim_clock_id"]
+        scene = self.config.scene
+        if not isinstance(scene, UsdModel):
+            raise ValueError("G1PolicyModule requires its robot USD for joint names and limits")
+        paths = joint_paths(scene)
+        self._joint_ids = tuple(paths[name] for name in JOINTS)
         joints = {joint.name: joint for joint in scene.joints}
         self._lower = np.array([joints[n].lower for n in JOINTS], dtype=float)
         self._upper = np.array([joints[n].upper for n in JOINTS], dtype=float)
@@ -199,17 +198,32 @@ class G1PolicyModule(Module):
             q, w, a = imu.orientation, imu.angular_velocity, imu.linear_acceleration
             state = CoordinatorState(
                 joints=JointStateSnapshot(
-                    joint_positions=dict(zip(joints.name, joints.position, strict=True)),
-                    joint_velocities=dict(zip(joints.name, joints.velocity, strict=True)),
+                    joint_positions={
+                        name: joints.position[joints.name.index(path)]
+                        for name, path in zip(JOINTS, self._joint_ids, strict=True)
+                    },
+                    joint_velocities={
+                        name: joints.velocity[joints.name.index(path)]
+                        for name, path in zip(JOINTS, self._joint_ids, strict=True)
+                    },
                     timestamp=now,
                 ),
-                imu={
-                    "g1": IMUState(
-                        quaternion=(q.w, q.x, q.y, q.z),
-                        gyroscope=(w.x, w.y, w.z),
-                        accelerometer=(a.x, a.y, a.z),
-                    )
-                },
+                sensors=SensorStateSnapshot(
+                    readings={
+                        "g1/imu": {
+                            "qw": q.w,
+                            "qx": q.x,
+                            "qy": q.y,
+                            "qz": q.z,
+                            "gx": w.x,
+                            "gy": w.y,
+                            "gz": w.z,
+                            "ax": a.x,
+                            "ay": a.y,
+                            "az": a.z,
+                        }
+                    }
+                ),
                 t_now=now,
                 dt=self.config.period_ns / 1e9,
             )
@@ -235,7 +249,7 @@ class G1PolicyModule(Module):
                     JointCommand(
                         header=Header(stamp=Time(sec=identity // 10**9, nsec=identity % 10**9)),
                         joint_names_length=len(JOINTS),
-                        joint_names=list(JOINTS),
+                        joint_names=list(self._joint_ids),
                         interface_name=interface,
                         values_length=len(JOINTS),
                         values=list(values),

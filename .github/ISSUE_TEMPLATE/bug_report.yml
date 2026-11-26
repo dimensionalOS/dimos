@@ -13,7 +13,7 @@ body:
         ## What did you expect?
 
         ## System
-        <!-- e.g. Ubuntu 24.04, macOS 15.4 -->
+        <!-- e.g. Ubuntu 26.04, macOS 15.4 -->
 
         ## Robot / Sim / Hardware
         <!-- e.g. Unitree Go2 EDU 1.1.7, or MuJoCo sim, with firmware version -->

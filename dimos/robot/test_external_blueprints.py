@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
 from dimos.core.module import Module
 from dimos.robot import external_blueprints as external
 from dimos.robot.get_all_blueprints import get_by_name
@@ -113,8 +113,16 @@ def test_list_external_blueprint_names_without_loading_targets(
     assert external.list_external_blueprint_names() == ["my-test-stack.demo"]
 
 
-def test_resolve_external_blueprint_object(monkeypatch: pytest.MonkeyPatch) -> None:
-    blueprint = ExternalTestModule.blueprint()
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        ExternalTestModule.blueprint(),
+        autoconnect(
+            ChoiceAtom(name="Required", choices={"module": ExternalTestModule.blueprint()})
+        ),
+    ],
+)
+def test_resolve_external_blueprint_object(monkeypatch: pytest.MonkeyPatch, blueprint) -> None:
     patch_distributions(
         monkeypatch,
         FakeDistribution(
@@ -379,6 +387,6 @@ def test_mixed_builtin_and_external_names_resolve_before_composition(
 
     mixed_blueprint = autoconnect(
         get_by_name("demo-mcp-stress-test"), get_by_name("my-test-stack.demo")
-    )
+    ).solidify()
 
     assert any(atom.module is ExternalTestModule for atom in mixed_blueprint.blueprints)

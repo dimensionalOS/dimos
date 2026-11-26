@@ -73,7 +73,10 @@ def prepare() -> None:
     light = UsdLux.DistantLight.Define(stage, "/sim2_basic/light")
     light.CreateIntensityAttr(1)
     Path("assets/sim2_basic/scene.usda").write_text(
-        usd_with_drives(stage.GetRootLayer().ExportToString(), {"tool_joint": (200, 20, 0)})
+        usd_with_drives(
+            stage.GetRootLayer().ExportToString().replace("sim2_basic", "world"),
+            {"world/joints/tool_joint": (200, 20, 0)},
+        )
     )
 
 
