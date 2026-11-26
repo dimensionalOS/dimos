@@ -16,7 +16,7 @@
 
 Only `main` takes `cmd_vel` from outside its namespace, so a joystick drives that one; `left`
 and `right` stand under their own policies. A G1 is driven joint by joint, so its physics is MuJoCo,
-and its walker steps in lockstep with it: the world holds at each policy tick for its command.
+and its walker runs its policy at 50 Hz of wall time, as on the real robot.
 """
 
 import math
@@ -26,7 +26,7 @@ from dimos.core.global_config import global_config
 from dimos.core.hardware_module import Mounts
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.g1.sim2 import G1_ODOM_TF, G1Sim
-from dimos.robot.unitree.g1.sim2_walker import GROOT_PERIOD, G1SimWalker
+from dimos.robot.unitree.g1.sim2_walker import G1SimWalker
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
@@ -63,7 +63,7 @@ def _g1(spot: str) -> MetaBlueprint:
     mount = getattr(Office555.mounts, spot)
     return on_mount(
         autoconnect(
-            G1Sim.blueprint(attached_to=mount.frame, control_period=GROOT_PERIOD),
+            G1Sim.blueprint(attached_to=mount.frame),
             OdomTf.blueprint(**G1_ODOM_TF),
             LivoxSim.attach(G1Sim.mounts.lidar),
             G1SimWalker.blueprint(),

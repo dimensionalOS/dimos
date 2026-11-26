@@ -16,12 +16,12 @@ import asyncio
 from dataclasses import replace
 import math
 import threading
-import time
 from typing import Any, TypeVar
 
 import numpy as np
 import pytest
 
+from dimos.core import hardware_module
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
     BlueprintProtocol,
@@ -301,11 +301,10 @@ def test_hardware_publishes_its_own_tf_and_its_mount() -> None:
         camera.stop()
 
 
-class _ClockedCamera(WristCamera):
-    """A camera on a clock that moves only when slept on, and stops on its third sleep."""
+class _Clock:
+    """Wall time that moves only when slept on, and stops on its third sleep."""
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self) -> None:
         self.now = 100.0
         self.slept: list[float] = []
         self.stopped = threading.Event()
@@ -319,6 +318,15 @@ class _ClockedCamera(WristCamera):
         if len(self.slept) == 3:
             self.stopped.set()
             await asyncio.Future()
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    """HardwareModule's time.time and asyncio.sleep, on a clock the test moves."""
+    fake = _Clock()
+    monkeypatch.setattr(hardware_module, "time", fake)
+    monkeypatch.setattr(hardware_module, "asyncio", fake)
+    return fake
 
 
 def _listening(module: HardwareModule) -> tuple[list[TFMessage], list[list[Transform]]]:
@@ -345,8 +353,8 @@ _CAMERA_STATIC_EDGES = {
 }
 
 
-def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
-    camera = _ClockedCamera(
+def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate(clock: _Clock) -> None:
+    camera = WristCamera(
         attached_to="arm/base/forearm/wrist",
         instance_name=f"{_WRIST}/wristcamera",
         static_tf_rate_hz=4.0,
@@ -354,14 +362,14 @@ def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
     try:
         on_static, on_tf = _listening(camera)
         camera.publish_static_tf()
-        assert camera.stopped.wait(5.0)
+        assert clock.stopped.wait(5.0)
     finally:
         camera.stop()
 
     (static,) = on_static
     assert {(t.frame_id, t.child_frame_id) for t in static.transforms} == _CAMERA_STATIC_EDGES
     assert {t.ts for t in static.transforms} == {100.0}
-    assert camera.slept == [0.25, 0.25, 0.25]
+    assert clock.slept == [0.25, 0.25, 0.25]
     assert [{t.ts for t in published} for published in on_tf] == [{100.0}, {100.25}, {100.5}]
     assert all(
         {(t.frame_id, t.child_frame_id) for t in published} == _CAMERA_STATIC_EDGES
@@ -369,8 +377,8 @@ def test_static_edges_go_out_once_on_tf_static_then_on_tf_at_the_rate() -> None:
     )
 
 
-def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> None:
-    camera = _ClockedCamera(
+def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static(clock: _Clock) -> None:
+    camera = WristCamera(
         attached_to="arm/base/forearm/wrist",
         instance_name=f"{_WRIST}/wristcamera",
         static_tf_rate_hz=0.0,
@@ -383,7 +391,7 @@ def test_a_static_tf_rate_of_zero_publishes_static_edges_only_on_tf_static() -> 
 
     assert len(on_static) == 1
     assert on_tf == []
-    assert camera.slept == []
+    assert clock.slept == []
 
 
 def test_a_subclass_publishes_its_moving_edges_through_the_checked_tf_port(
@@ -479,9 +487,11 @@ def test_the_usd_frames_and_the_mount_are_added_when_it_is_made() -> None:
         camera.stop()
 
 
-def test_the_hardware_transform_ids_are_exactly_what_it_publishes_on_tf_and_tf_static() -> None:
+def test_the_hardware_transform_ids_are_exactly_what_it_publishes_on_tf_and_tf_static(
+    clock: _Clock,
+) -> None:
     arm = Arm(instance_name="left/arm")
-    camera = _ClockedCamera(
+    camera = WristCamera(
         attached_to="arm/base/forearm/wrist",
         instance_name=f"{_WRIST}/wristcamera",
         static_tf_rate_hz=4.0,
@@ -489,7 +499,7 @@ def test_the_hardware_transform_ids_are_exactly_what_it_publishes_on_tf_and_tf_s
     try:
         on_static, on_tf = _listening(camera)
         camera.publish_static_tf()
-        assert camera.stopped.wait(5.0)
+        assert clock.stopped.wait(5.0)
         static_edges = {(t.frame_id, t.child_frame_id) for m in on_static for t in m.transforms}
         static_edges |= {(t.frame_id, t.child_frame_id) for ts in on_tf for t in ts}
         moving = camera.moving_transforms()
@@ -620,27 +630,3 @@ def test_hardware_without_a_usd_is_refused() -> None:
 
     with pytest.raises(ValueError, match="usd"):
         Bare(instance_name="bare")
-
-
-def test_hardware_stamps_with_wall_time_by_default() -> None:
-    arm = Arm()
-    try:
-        before = time.time()
-        stamp = arm.time()
-        after = time.time()
-    finally:
-        arm.stop()
-
-    assert before <= stamp <= after
-
-
-def test_hardware_sleeps_in_wall_time_by_default() -> None:
-    arm = Arm()
-    try:
-        started = time.monotonic()
-        asyncio.run(arm.sleep(0.05))
-        slept = time.monotonic() - started
-    finally:
-        arm.stop()
-
-    assert slept >= 0.05

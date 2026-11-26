@@ -56,7 +56,7 @@ from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import imu_reading
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import OnWorldTime, WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 
 # The G1's root link, its body: the pelvis's prim path in its USD, named here so building a blueprint needs no USD read.
 G1_BODY = "g1_29dof_rev_1_0/Geometry/pelvis"
@@ -101,12 +101,10 @@ class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
     tf_frames_local: dict[str, str] = {"body": G1_BODY}
     # The frame its odometry is in, under its namespace, which its mount holds; its OdomTf publishes odom -> body.
     odom_frame: str = G1_ODOM_FRAME
-    # Sim seconds between its controller's ticks, which the world holds for; None runs the world free of it.
-    control_period: float | None = None
 
 
 # ConnectionModule.frame(name) and TfModule.frame (by role) share a name; G1Sim uses neither, only tf_frames.
-class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc]
+class G1Sim(ConnectionModule, HardwareModule):  # type: ignore[misc]
     """A G1 in a simulated world; mount it on a frame of the scene, which is where it starts.
 
     Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
@@ -159,7 +157,6 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
             self.config.usd,
             held_until_commanded=True,
             odom_frame=self.attach_frame,
-            control_period=self.config.control_period,
         )
 
     @rpc
@@ -213,9 +210,6 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
     def halt(self) -> None:
         """Damping only, as the real G1's halt: no stiffness, so nothing is driven toward a stale target."""
         self._soft_start = None
-        # In lockstep the world holds for its next command, so no stale target ever drives it.
-        if self.config.control_period is not None:
-            return
         if not hasattr(self, "_world") or not self._world.ids:
             return
         names = tuple(usd_joint(name) for name in self.joint_names)
@@ -264,13 +258,13 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         world = self._world
         with world.lock:
             names, rows = world.joints(self.namespace)
-            stamp = world.stamp()
             base = world.entity(self.namespace)
             pose, velocity, acceleration = (
                 (base.pose, base.velocity, base.acceleration)
                 if base is not None
                 else (None, None, None)
             )
+        stamp = time.time()
         by_name = dict(zip(names, rows, strict=True))
         wanted = [usd_joint(name) for name in self.joint_names]
         if not all(joint in by_name for joint in wanted):
@@ -307,7 +301,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         world = self._world
         with world.lock:
             names, rows = world.joints(self.namespace)
-            stamp = world.stamp()
+        stamp = time.time()
         odom = self._odom(stamp)
         if odom is None:
             return

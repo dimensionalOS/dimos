@@ -18,19 +18,18 @@ from typing import Any
 
 from pydantic import model_validator
 
-from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.sim2.mujoco.renders import RenderQuality
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor
+from dimos.sim2.sensor import SimSensor, SimSensorConfig
 from dimos.sim2.sensor_usd import camera_usd
 from dimos.sim2.sim import until_it_stops
 from dimos.sim2.world_observations import geometry
 
 
-class SimCameraConfig(HardwareModuleConfig):
+class SimCameraConfig(SimSensorConfig):
     width: int = 640
     height: int = 480
     fovy: float = 60.0
@@ -105,11 +104,14 @@ class SimCamera(SimSensor):
                         SensorMount("camera", site, site, self.config.fovy),
                         self.config.quality(),
                     )
-                    # Opening took this tick's sim time, so the next tick is the first read on time.
+                    # Opening took this tick, so the next tick is the first read on time.
                     continue
                 view.update(self._world)
                 rgb = view.render(site, self.config.width, self.config.height)
                 stamp = view.time
+                period, tolerance = 1 / self.config.rate_hz, self.config.stamp_tolerance
+                if not self.on_time("color_image", stamp, period, tolerance):
+                    continue
                 self.color_image.publish(
                     Image(data=rgb, format=ImageFormat.RGB, frame_id=site, ts=stamp)
                 )

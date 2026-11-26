@@ -16,6 +16,8 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator, Sequence
+import math
+import time
 from typing import Any
 
 import numpy as np
@@ -26,23 +28,20 @@ pytest.importorskip("pxr")
 TICKS = 3
 
 
+# Off by any amount from wall time and still sent: these worlds keep a clock of their own.
+ANY_STAMP = {"stamp_tolerance": math.inf, "imu_stamp_tolerance": math.inf}
+
+
 class _World:
     """A world that is a second further on every time something casts into it."""
 
     def __init__(self) -> None:
         self.time = 1.0
         self.ticked: list[float] = []
-        self.awaited: list[float] = []
-
-    def stamp(self) -> float:
-        return self.time
 
     def entity(self, name: str) -> None:
         # No world entity, so its geometry never changes and the views are built once.
         return None
-
-    async def reached(self, ts: float) -> None:
-        self.awaited.append(ts)
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
         for _ in range(TICKS):
@@ -119,7 +118,7 @@ def _run(
 def livox() -> Iterator[Any]:
     from dimos.sim2.livox import LivoxSim
 
-    sensor = LivoxSim(instance_name="left/livox")
+    sensor = LivoxSim(instance_name="left/livox", **ANY_STAMP)
     yield sensor
     sensor.stop()
 
@@ -128,7 +127,7 @@ def livox() -> Iterator[Any]:
 def l1(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     from dimos.sim2.l1 import SimL1
 
-    sensor = SimL1(instance_name="left/l1")
+    sensor = SimL1(instance_name="left/l1", stamp_tolerance=math.inf)
     monkeypatch.setattr(sensor, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
     yield sensor
     sensor.stop()
@@ -191,7 +190,7 @@ def test_a_sensor_slow_to_open_still_stamps_each_reading_with_its_own_tick(
 
 
 class _Clock(_World):
-    """A world whose ticks come at their rate in sim time, each loop's interleaved with the others'."""
+    """A world whose ticks come at their rate on its own clock, each loop's interleaved with the others'."""
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
         for tick in range(int(SECONDS * rate_hz)):
@@ -277,7 +276,7 @@ def test_a_livox_lidar_and_imu_rebuild_one_view_when_the_world_changes_shape(
 def test_a_livox_lidar_and_imu_share_one_real_view(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.livox import LivoxSim
 
-    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to=LIDAR_MOUNT)
+    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to=LIDAR_MOUNT, **ANY_STAMP)
     opened: list[Any] = []
     clouds: list[Any] = []
     readings: list[Any] = []
@@ -386,7 +385,7 @@ def _toy_world(sensor: Any, mount: str, monkeypatch: pytest.MonkeyPatch) -> Any:
 def test_a_livox_in_its_housing_sees_past_the_housing(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.livox import LivoxSim
 
-    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to=LIDAR_MOUNT)
+    livox = LivoxSim(instance_name=f"{LIDAR_MOUNT}/livox", attached_to=LIDAR_MOUNT, **ANY_STAMP)
     published: list[Any] = []
     try:
         _toy_world(livox, LIDAR_MOUNT, monkeypatch)
@@ -400,7 +399,7 @@ def test_a_livox_in_its_housing_sees_past_the_housing(monkeypatch: pytest.Monkey
 def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name=f"{L1_MOUNT}/l1", attached_to=L1_MOUNT)
+    l1 = SimL1(instance_name=f"{L1_MOUNT}/l1", attached_to=L1_MOUNT, stamp_tolerance=math.inf)
     published: list[Any] = []
     try:
         _toy_world(l1, L1_MOUNT, monkeypatch)
@@ -421,7 +420,7 @@ def test_an_l1_maps_in_the_odometry_of_the_robot_it_rides(monkeypatch: pytest.Mo
 def test_an_l1_maps_none_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) -> None:
     from dimos.sim2.l1 import SimL1
 
-    l1 = SimL1(instance_name=f"{L1_UP_MOUNT}/l1", attached_to=L1_UP_MOUNT)
+    l1 = SimL1(instance_name=f"{L1_UP_MOUNT}/l1", attached_to=L1_UP_MOUNT, stamp_tolerance=math.inf)
     published: list[Any] = []
     try:
         _toy_world(l1, L1_UP_MOUNT, monkeypatch)
@@ -436,17 +435,38 @@ def test_an_l1_maps_none_of_the_robot_it_rides(monkeypatch: pytest.MonkeyPatch) 
     assert len(points) > 0 and not near_the_head.any(), "the L1 mapped the dog's own head"
 
 
-def test_a_sensor_stamps_and_sleeps_in_the_world_s_time() -> None:
+def test_an_l1_in_a_world_far_off_wall_time_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.sim2.l1 import SimL1
+
+    l1 = SimL1(instance_name="left/l1")
+    monkeypatch.setattr(l1, "_rider_odometry", lambda rider: ("left/odom", np.eye(4)))
+    try:
+        run = _run(l1, "_map", "lidar", monkeypatch)
+    finally:
+        l1.stop()
+    assert run["published"] == []
+
+
+def test_a_reading_off_wall_time_by_more_than_its_tolerance_is_dropped_and_warned_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dimos.sim2 import sensor
     from dimos.sim2.imu import SimImu
 
     imu = SimImu(instance_name="dog/imu/simimu", attached_to="dog/imu")
-    world = _World()
+    warned: list[str] = []
+    monkeypatch.setattr(sensor.logger, "warning", warned.append)
+    period = 1 / imu.config.rate_hz
     try:
-        imu._world = world  # type: ignore[assignment]
-        stamp = imu.time()
-        asyncio.run(imu.sleep(0.25))
+        now = time.time()
+        sent = [imu.on_time("imu", stamp, period, None) for stamp in (now, now - 1, now - 1)]
+        sent.append(imu.on_time("imu", time.time(), period, None))
+        sent.append(imu.on_time("imu", time.time() - 1, period, None))
+        tolerated = imu.on_time("imu", time.time() - 1, period, 2.0)
     finally:
         imu.stop()
 
-    assert stamp == 1.0
-    assert world.awaited == [1.25]
+    assert sent == [True, False, False, True, False]
+    # Once when it fell behind, and again only after it had caught up.
+    assert len(warned) == 2
+    assert tolerated

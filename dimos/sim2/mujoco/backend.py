@@ -28,7 +28,7 @@ from dimos.sim2.mujoco.names import resolve, resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import ODOM_FRAME, Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
+from dimos.sim2.world_observations import REFUSED, WorldWriter
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -79,11 +79,6 @@ class MujocoBackend:
         self._started = time.monotonic()
         self._rebase = True
         self._layers = {id: usd_layer(r.model) for id, r in self._robots.items()}
-        # Each lockstep robot's next control tick, in sim seconds, and the robots the world holds for now.
-        self._next_tick = {
-            id: 0.0 for id, r in self._robots.items() if r.control_period is not None
-        }
-        self._waiting: set[str] = set()
         self._reset()
 
     @property
@@ -91,26 +86,19 @@ class MujocoBackend:
         """Wall seconds between steps at this speed."""
         return float(self.model.opt.timestep) / self._speed
 
-    @property
-    def waiting(self) -> frozenset[str]:
-        """The robots whose control tick the world is held on, until each is commanded."""
-        return frozenset(self._waiting)
-
     def describe(self) -> dict[str, Any]:
         return {"backend": "mujoco", "scene": str(self._scene_layer)}
 
     def step(
         self, actions: Sequence[Action] = (), hold: bool = False
     ) -> tuple[float, WorldObservations]:
-        """Catch the world up to real time, stopping at a robot's control tick; held, only its clock runs and nothing in it moves."""
+        """Catch the world up to real time; held, only its clock runs and nothing in it moves."""
         model, data = self.model, self.data
         if actions:
             self.apply(actions)
         self._apply_pending()
-        if self._hold_for_due_ticks():
-            # No time passes while it waits for a command, and none is owed once it comes.
-            self._rebase = True
-            return float(data.time), self.frame()
+        # A world that waited or dropped time to catch up stamps its frames on wall time again.
+        rebased = self._rebase
         if self._rebase:
             self._started = time.monotonic() - data.time / self._speed
             self._rebase = False
@@ -121,29 +109,19 @@ class MujocoBackend:
         if steps > max_steps:
             self._started += (steps - max_steps) * model.opt.timestep / self._speed
             steps = max_steps
-        for _ in range(steps):
-            if hold:
-                data.time += model.opt.timestep
-            else:
+            rebased = True
+        if hold:
+            data.time += steps * model.opt.timestep
+        else:
+            for _ in range(steps):
                 mujoco.mj_step(model, data)
-            if self._hold_for_due_ticks():
-                break
+        if rebased:
+            self.world.rebase(float(data.time))
         return float(data.time), self.frame()
 
     def apply(self, actions: Sequence[Action]) -> None:
         with self._lock:
             self._pending.extend(actions)
-
-    def _hold_for_due_ticks(self) -> bool:
-        """Hold the world for every robot whose control tick has come; whether it is held."""
-        now = self.data.time + self.model.opt.timestep / 2
-        for robot_id, tick in self._next_tick.items():
-            if now >= tick:
-                self._waiting.add(robot_id)
-                period = self._robots[robot_id].control_period
-                assert period is not None
-                self._next_tick[robot_id] = tick + period
-        return bool(self._waiting)
 
     def restart_clock(self) -> None:
         """Start counting real time from now, so a wait before the first step costs no sim time."""
@@ -186,7 +164,6 @@ class MujocoBackend:
                 )
         if pending:
             mujoco.mj_forward(self.model, self.data)
-        self._waiting -= {a.entity for a in pending if isinstance(a, JointCommand)}
 
     def _apply(self, action: Action) -> None:
         match action:
@@ -320,9 +297,6 @@ class MujocoBackend:
         for target, reason in self._refusals:
             world.set(target if target in world.ids else "world", REFUSED, {"reason": reason})
         self._refusals.clear()
-        # Said on every frame it waits, so a controller that missed one still hears it.
-        for robot_id in self._waiting:
-            world.set(robot_id, ACT, True)
         return world.end_frame(float(data.time))
 
     def _announce(self) -> None:

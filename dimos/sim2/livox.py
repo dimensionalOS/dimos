@@ -19,7 +19,6 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -28,7 +27,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor
+from dimos.sim2.sensor import SimSensor, SimSensorConfig
 from dimos.sim2.sim import until_it_stops
 from dimos.sim2.world_observations import geometry
 from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
@@ -37,10 +36,12 @@ from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.utils.data import get_data
 
 
-class LivoxSimConfig(HardwareModuleConfig):
+class LivoxSimConfig(SimSensorConfig):
     usd: UsdModel = UsdModel.from_file(Path(__file__).parent / "assets" / "mid360.usda")
     rate_hz: float = 10.0
     imu_rate_hz: float = 200.0
+    # stamp_tolerance for its IMU; None is one IMU sample period.
+    imu_stamp_tolerance: float | None = None
     geom_groups: tuple[int, ...] = (0, 3)
     blind_to: tuple[str, ...] = ()
     go2_occlusion: bool = False
@@ -109,7 +110,7 @@ class LivoxSim(SimSensor):
                     else None,
                 )
                 if waited:
-                    # Opening took this tick's sim time, so the next tick is the first read on time.
+                    # Opening took this tick, so the next tick is the first read on time.
                     continue
             assert sensor is not None
             view.update(self._world)
@@ -118,6 +119,9 @@ class LivoxSim(SimSensor):
             points = await asyncio.to_thread(
                 sensor.cast, position, rotation_matrix(orientation), points_per_scan
             )
+            period, tolerance = 1 / self.config.rate_hz, self.config.stamp_tolerance
+            if not self.on_time("lidar", stamp, period, tolerance):
+                continue
             self.lidar.publish(
                 PointCloud2.from_numpy(
                     points,
@@ -140,10 +144,13 @@ class LivoxSim(SimSensor):
                 # Its own poses, as the lidar casts against the shared view's in a thread while this updates.
                 view = shared.twin()
                 if waited:
-                    # Opening took this tick's sim time, so the next tick is the first read on time.
+                    # Opening took this tick, so the next tick is the first read on time.
                     continue
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)
+            period, tolerance = 1 / self.config.imu_rate_hz, self.config.imu_stamp_tolerance
+            if not self.on_time("imu", view.time, period, tolerance):
+                continue
             self.imu.publish(
                 Imu(
                     angular_velocity=Vector3(*gyro),
