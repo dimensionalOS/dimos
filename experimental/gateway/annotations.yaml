@@ -435,6 +435,10 @@ robots:
           required: true
           docs: https://docs.dimensional.org/platforms/humanoid/g1/#1-get-ssh-access
       blueprints:
+        unitree-g1-sim2:
+          title: G1 GR00T in sim2
+          description: A G1 beside a desk with independent sensors and a truth-registered point cloud.
+          recommended_config: []
         unitree-g1:
           title: G1
           description: 'The default G1 stack: onboard sensors, the locomotion SDK and navigation, or GR00T whole-body control under --simulation mujoco.'
