@@ -77,7 +77,7 @@ def _weld_to_mount(pxr: Pxr, world: Stage, part: Stage, mount_frame: str) -> Non
         path for path in root_link.GetPath().GetPrefixes() if path.GetParentPath() == mount_path
     )
     name = prim_identifier(pxr, f"{mount_frame}_mount")
-    joint = pxr.UsdPhysics.Joint.Define(world, top.AppendChild(name))
+    joint = pxr.UsdPhysics.FixedJoint.Define(world, top.AppendChild(name))
     joint.CreateBody0Rel().SetTargets([mount_path])
     joint.CreateBody1Rel().SetTargets([root_link.GetPath()])
     joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))

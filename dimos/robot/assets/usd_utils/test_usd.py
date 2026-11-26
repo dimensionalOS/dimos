@@ -315,7 +315,8 @@ def test_a_mounted_part_is_welded_to_its_mount_with_no_offset(toy: Any) -> None:
     from pxr import Gf
 
     stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
-    welds = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
+    welds = [prim for prim in stage.Traverse() if prim.GetDisplayName() == "base_link_mount"]
+    assert all(prim.GetTypeName() == "PhysicsFixedJoint" for prim in welds)
 
     assert len(welds) == 1
     weld = welds[0]
