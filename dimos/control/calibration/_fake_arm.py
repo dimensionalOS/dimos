@@ -64,7 +64,8 @@ class FakeArm:
         self.friction = np.asarray([(friction_nm or {}).get(j, 0.0) for j in arm.joint_names])
         self.truth = arm.model.copy()
         apply_inertial_overrides(self.truth, true_links or {})
-        self.t, self.q = 0.0, arm.home.copy()
+        # At rest, every joint zero, as an arm sits with its motors off before a run.
+        self.t, self.q = 0.0, np.zeros(arm.dof)
         self.target = self.q.copy()
         self.defaults = {joint: (kp, kd) for joint in arm.joint_names}
         self.live: dict[str, tuple[float, float]] = {}

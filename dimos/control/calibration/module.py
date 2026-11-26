@@ -469,6 +469,7 @@ class Calibration:
         self.friction: dict[str, float] = {}
         self.proposed: dict[str, dict[str, float]] = {}
         self.at_home = self.at_rest = False
+        self.start = np.zeros(self.arm.dof)
 
     def feed(self, msg: JointState) -> None:
         """Take one ``joint_state``: keep it, and send the running motion's next target."""
@@ -668,11 +669,11 @@ class Calibration:
         self.move(self.arm.home, "home", patch=patch)
 
     def park(self) -> None:
-        """Go home unless there, then to rest: every joint at zero, where the arm sits with its
+        """Go home unless there, then to rest: where the arm sat when the run began, with its
         motors off."""
         if not self.at_home:
             self.home()
-        self.move(np.zeros(self.arm.dof), "rest")
+        self.move(self.start, "rest")
 
     def _step(self, name: str, reason: str | None) -> str:
         """Step ``name``'s result, run unless ``reason`` says why not; its row follows it."""

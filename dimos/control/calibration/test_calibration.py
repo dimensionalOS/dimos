@@ -130,7 +130,7 @@ def test_a_full_run_saves_the_fit_and_the_gains_and_parks_at_rest(bent: ArmModel
     assert all(row["passed"] for row in fake.file["checks"]["float"]["joints"].values())
     assert "2 poses compared" in text
     assert fake.live == {} and fake.floating == {}
-    np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
+    np.testing.assert_allclose(fake.q, run.start, atol=1e-3)
 
 
 def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel) -> None:
@@ -140,7 +140,8 @@ def test_every_move_is_confirmed_and_a_skipped_step_moves_nothing(arm: ArmModel)
 
     assert operator.done is not None and operator.done[0], operator.done
     assert "gravity_poses: skipped by the operator" in operator.done[1]
-    assert [p for p in operator.asked if "Move to" in p] == ["Move to rest [0.0, 0.0, 0.0] deg?"]
+    [parking] = [p for p in operator.asked if "Move to" in p]
+    assert parking.startswith("Move to rest [")
     moving = FakeOperator()
     calibration(arm, moving, FakeArm(arm), steps=["confirm_tracking"]).run()
     assert sum("Move to" in prompt for prompt in moving.asked) == 2 + 1 + 1
@@ -179,6 +180,16 @@ def test_abort_stops_streaming_so_the_deadman_holds_then_home_is_offered(bent: A
     resumed = [t for t in fake.commands if t > t_abort]
     assert resumed[0] > held[0]
     np.testing.assert_allclose(fake.q, np.zeros(3), atol=1e-3)
+
+
+def test_parking_returns_to_where_the_run_began(bent: ArmModel) -> None:
+    fake, operator = FakeArm(bent), FakeOperator()
+    fake.q, fake.target = np.radians([3.0, -6.0, 12.0]), np.radians([3.0, -6.0, 12.0])
+    calibration(bent, operator, fake, steps=["summary"]).run()
+
+    assert operator.done is not None and operator.done[2], operator.done
+    assert "Move to rest [3.0, -6.0, 12.0] deg?" in operator.asked
+    np.testing.assert_allclose(fake.q, np.radians([3.0, -6.0, 12.0]), atol=1e-3)
 
 
 def started(run: Calibration) -> threading.Thread:
