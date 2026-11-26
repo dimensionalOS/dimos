@@ -203,28 +203,30 @@ def _tf_recording(path: Path) -> None:
         for ts in (1000.0, 1001.0):
             tf.append(TFMessage(Transform(frame_id="world", child_frame_id="base", ts=ts)), ts=ts)
         tf_static = store.stream("tf_static", TFMessage)
-        for child, ts in (("camera", 5.0), ("lidar", 10.0)):
+        for child, ts in (("camera", 1000.25), ("lidar", 1000.5)):
             transform = Transform(frame_id="base", child_frame_id=child, ts=ts)
             tf_static.append(TFMessage(transform), ts=ts)
 
 
-def test_static_tf_is_sent_once_at_start_on_the_static_port(
-    tmp_path: Path, wait_until: Any
-) -> None:
+def test_static_tf_replays_as_recorded(tmp_path: Path, wait_until: Any) -> None:
     path = tmp_path / "memory.db"
     _tf_recording(path)
-    module = replay_module(str(path))(dataset=str(path), loop=True, speed=20.0)
+    # Slow enough that the 0.25 s gaps between streams keep their order.
+    module = replay_module(str(path))(dataset=str(path), loop=True, speed=1.0)
     published = _publications(module)
     try:
         module.start()
-        wait_until(lambda: len(published) >= 5, timeout=5)
+        wait_until(lambda: len(published) >= 8, timeout=5)
     finally:
         module.stop()
-    edges = [(name, sorted(t.child_frame_id for t in msg.transforms)) for name, msg in published]
-    assert edges[0] == ("tf_static", ["camera", "lidar"])
-    # Then tf as recorded, pass after pass.
-    assert edges[1:5] == [("tf", ["base"])] * 4
-    assert [msg.transforms[0].ts for _, msg in published[1:5]] == [1000.0, 1001.0] * 2
+    edges = [(name, [t.child_frame_id for t in msg.transforms]) for name, msg in published]
+    one_pass = [
+        ("tf", ["base"]),
+        ("tf_static", ["camera"]),
+        ("tf_static", ["lidar"]),
+        ("tf", ["base"]),
+    ]
+    assert edges[:8] == one_pass * 2
 
 
 @pytest.mark.parametrize(
@@ -244,7 +246,7 @@ def test_window_is_measured_from_the_first_timed_row(
     expected_odom: list[float],
     expected_tf: list[float],
 ) -> None:
-    # Odometry starts half a second before the moving tf; tf_static sets no origin.
+    # Odometry starts half a second before the moving tf.
     path = tmp_path / "memory.db"
     _tf_recording(path)
     with SqliteStore(path=str(path)) as store:
@@ -256,8 +258,6 @@ def test_window_is_measured_from_the_first_timed_row(
     assert [msg.ts for name, msg in published if name == "odom"] == expected_odom
     tf = [t for name, msg in published if name == "tf" for t in msg.transforms]
     assert [t.ts for t in tf] == expected_tf
-    # tf_static is sent even when the window holds no frames.
-    assert published[0][0] == "tf_static"
 
 
 def test_seek_on_late_topic_uses_recording_origin(

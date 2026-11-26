@@ -35,7 +35,6 @@ from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, 
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
@@ -43,8 +42,6 @@ if TYPE_CHECKING:
     from reactivex import Observable
 
     from dimos.memory.replay import Replay, ReplayStream
-    from dimos.memory.stream import Stream
-    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
@@ -137,48 +134,33 @@ class ReplayModule(Module):
             speed=self.config.speed,
             loop=self.config.loop,
         )
-        # A ``*_static`` TF stream is static: its latest transform per edge is sent once
-        # when playback starts, on the matching ``*_static`` port, else on ``tf``.
-        static_tf: dict[str, dict[tuple[str, str], Transform]] = {}
-        timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
-        timed_starts = []
+        streams: dict[str, ReplayStream[DimosMsg]] = {}
+        starts = []
         outputs = self.outputs
         has_window = self.config.seek is not None or self.config.duration is not None
         # Relative offsets use the whole recording, even when only one topic is published.
         types = (
             stream_payload_types(store) if has_window else {n: p.type for n, p in outputs.items()}
         )
-        for name, payload_type in types.items():
-            if issubclass(payload_type, TFMessage) and name.endswith("_static"):
-                port_name = name if _is_tf_port(outputs, name) else "tf"
-                if _is_tf_port(outputs, port_name):
-                    port_edges = static_tf.setdefault(port_name, {})
-                    for transform in _latest_transforms(store.stream(name, TFMessage)).transforms:
-                        port_edges[(transform.frame_id, transform.child_frame_id)] = transform
-                continue
+        for name in types:
             stream: ReplayStream[DimosMsg] = replay.stream(name)
             first_ts = stream.first_ts()
             if first_ts is not None:
-                timed_starts.append(first_ts)
+                starts.append(first_ts)
                 if name in outputs:
-                    timed_streams[name] = stream
+                    streams[name] = stream
 
-        if timed_starts and has_window:
+        if starts and has_window:
             replay.set_relative_window(
-                min(timed_starts), seek=self.config.seek, duration=self.config.duration
+                min(starts), seek=self.config.seek, duration=self.config.duration
             )
             # Pin the wall clock to the first frame inside the requested window.
-            timed_starts = [
-                ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
-            ]
+            starts = [ts for stream in streams.values() if (ts := stream.first_ts()) is not None]
 
-        # Consumers keep the last value, so static tf is sent once, before any timed frame.
-        for port_name, transforms in static_tf.items():
-            outputs[port_name].publish(TFMessage(*transforms.values()))
         progress = ReplayProgress(str(path))
-        progress.start(replay, timed_streams.values())
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        for name, stream in timed_streams.items():
+        progress.start(replay, streams.values())
+        replay.pin_anchor(min(starts) if starts else None)
+        for name, stream in streams.items():
             port = outputs[name]
             logger.info("Replaying %s -> %s", name, port)
             # Not a late subscriber, just behind by the setup of the streams
@@ -194,19 +176,6 @@ class ReplayModule(Module):
         if self._store is not None:
             self._store.stop()
             self._store = None
-
-
-def _is_tf_port(outputs: dict[str, Out[Any]], name: str) -> bool:
-    return name in outputs and issubclass(outputs[name].type, TFMessage)
-
-
-def _latest_transforms(rows: Stream[TFMessage]) -> TFMessage:
-    """The last recorded transform of every edge."""
-    latest: dict[tuple[str, str], Transform] = {}
-    for row in rows.order_by("ts"):
-        for transform in row.data.transforms:
-            latest[(transform.frame_id, transform.child_frame_id)] = transform
-    return TFMessage(*latest.values())
 
 
 def _port_names(topics: str, types: dict[str, type]) -> list[str]:
