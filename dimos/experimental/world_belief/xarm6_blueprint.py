@@ -33,8 +33,8 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
-from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm_coordinator
+from dimos.robot.manipulators.xarm.config import make_xarm6_model_config
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 if TYPE_CHECKING:
@@ -76,14 +76,12 @@ def _rerun_blueprint() -> rrb.Blueprint:
     )
 
 
-_hw = xarm6_hardware("arm")
-_hw.auto_enable = True
-
 xarm6_worldbelief = autoconnect(
     # Provides wrist-camera FK/TF.
     ManipulationModule.blueprint(
         model=make_xarm6_model_config(
             add_gripper=False,
+            robot="arm",
             # Enables TF publication.
             tf_extra_links=["link_base"],
         ),
@@ -127,8 +125,6 @@ xarm6_worldbelief = autoconnect(
         clip_model_name="openai/clip-vit-base-patch32",
     ),
     McpServer.blueprint(),
-    coordinator(
-        hardware=[_hw],
-        tasks=[trajectory_task(_hw)],
-    ),
+    # The arm's address: --xarmconnection.ip.
+    xarm_coordinator("xarm6", gripper=False),
 ).global_config(n_workers=8)

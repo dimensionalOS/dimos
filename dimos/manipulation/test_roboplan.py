@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from pytest_mock import MockerFixture
 
@@ -110,8 +111,8 @@ class FakeCartesianPlannerOptions:
         self.max_angular_speed = 0.5
         self.max_linear_acceleration = 0.5
         self.max_angular_acceleration = 2.5
-        self.max_position_error = 0.005
-        self.max_orientation_error = 0.01
+        self.position_tolerance = 0.005
+        self.orientation_tolerance = 0.01
         self.position_cost = 1.0
         self.orientation_cost = 1.0
         self.task_gain = 1.0
@@ -264,6 +265,22 @@ class FakeScene:
 
     def setJointPositions(self, q: np.ndarray) -> None:
         self.current_positions = np.asarray(q, dtype=np.float64)
+
+    def getCurrentJointPositions(self) -> NDArray[np.float64]:
+        return self.current_positions.copy()
+
+    def clampToValidConfiguration(self, q: NDArray[np.float64]) -> NDArray[np.float64]:
+        result = q.copy()
+        root = ET.fromstring(self.constructor_kwargs["urdf"])
+        for index, name in enumerate(self.native_joint_names):
+            limit = root.find(f"joint[@name='{name}']/limit")
+            if limit is not None:
+                result[index] = np.clip(
+                    result[index],
+                    float(limit.get("lower", "-inf")),
+                    float(limit.get("upper", "inf")),
+                )
+        return result
 
     def getJointNames(self) -> list[str]:
         return list(self.native_joint_names)
@@ -1771,8 +1788,8 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
         "max_angular_speed": 0.6,
         "max_linear_acceleration": 0.7,
         "max_angular_acceleration": 2.0,
-        "max_position_error": 0.006,
-        "max_orientation_error": 0.02,
+        "position_tolerance": 0.006,
+        "orientation_tolerance": 0.02,
         "position_cost": 2.0,
         "orientation_cost": 3.0,
         "task_gain": 0.8,

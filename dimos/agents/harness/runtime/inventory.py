@@ -271,7 +271,7 @@ def _stream_imports(path: str | None) -> dict[str, str]:
 
 
 def _find(app: Dimos, module: str) -> ModuleInfo:
-    instance = app.get_module(module).remote_name
+    instance = app.get_module(module).instance_name
     info = next((item for item in app.list_modules() if item.name == instance), None)
     if info is None:
         raise KeyError(f"Module {module!r} is not running")

@@ -19,8 +19,6 @@ import difflib
 import math
 import time
 
-from unitree_webrtc_connect.constants import RTC_TOPIC
-
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -32,6 +30,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
+from dimos.robot.unitree.webrtc_connect import RTC_TOPIC
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -294,6 +293,10 @@ class UnitreeSkillContainer(Module):
             elif idle_since is None:
                 idle_since = time.monotonic()
             elif time.monotonic() - idle_since > settle:
+                reason = self._navigation.get_goal_cancel_reason()
+                if reason is not None:
+                    outcome = "cancelled" if self._navigation.is_goal_cancelled() else "failed"
+                    return f"Navigation {outcome}: {reason}"
                 return "Navigation was cancelled or failed"
             time.sleep(0.1)
         return "Navigation timed out"

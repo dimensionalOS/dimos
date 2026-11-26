@@ -231,17 +231,21 @@ def test_io_port_publisher_qos_reaches_the_native_process() -> None:
 
 def test_autoconnect(args_file: str) -> None:
     """autoconnect passes correct topic args to the native subprocess."""
-    blueprint = autoconnect(
-        StubNativeModule.blueprint(
-            some_param=2.5,
-            output_file=args_file,
-        ),
-        StubConsumer.blueprint(),
-        StubProducer.blueprint(),
-    ).transports(
-        {
-            ("pointcloud", PointCloud2): make_transport("/my/custom/lidar", PointCloud2),
-        },
+    blueprint = (
+        autoconnect(
+            StubNativeModule.blueprint(
+                some_param=2.5,
+                output_file=args_file,
+            ),
+            StubConsumer.blueprint(),
+            StubProducer.blueprint(),
+        )
+        .solidify()
+        .transports(
+            {
+                ("pointcloud", PointCloud2): make_transport("/my/custom/lidar", PointCloud2),
+            },
+        )
     )
 
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
@@ -457,6 +461,73 @@ def test_json_mode_level_alias_is_case_insensitive() -> None:
     assert calls[0][0] == "warning"
 
 
+@pytest.fixture
+def log_module():
+    module = NativeModule(executable=_ECHO)
+    yield module
+    module.dispose()
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("dimos_module::tf", "No transform found between frames"),
+        (
+            "dimos_voxel_ray_tracing::module",
+            "No transform within tolerance of the cloud stamp, dropped a cloud.",
+        ),
+    ],
+)
+def test_native_tf_warnings_are_info_only_during_startup(log_module, mocker, target, message):
+    logger = mocker.patch.object(native_module_mod, "logger")
+    times = iter([100.0, 100.0, 109.999, 110.0])
+    mocker.patch.object(native_module_mod.time, "monotonic", side_effect=lambda: next(times, 110.0))
+    record = {
+        "level": "WARN",
+        "target": target,
+        "fields": {"message": message, "parent": "odom", "child": "base_link"},
+    }
+    with BytesIO((json.dumps(record).encode() + b"\n") * 3) as stream:
+        log_module._read_log_stream(stream, "warning", pid=123)
+
+    fields = {
+        "module": "NativeModule(native_echo.py)",
+        "pid": 123,
+        "target": target,
+        "parent": "odom",
+        "child": "base_link",
+    }
+    assert logger.method_calls == [
+        mocker.call.info(message, **fields),
+        mocker.call.info(message, **fields),
+        mocker.call.warning(message, **fields),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target", "message", "level", "expected"),
+    [
+        ("dimos_module::tf", "Invalid transform rotation", "WARN", "warning"),
+        ("another_module", "No transform found between frames", "WARN", "warning"),
+        ("dimos_module::tf", "No transform found between frames", "ERROR", "error"),
+    ],
+)
+def test_native_startup_preserves_other_diagnostics(
+    log_module, mocker, target, message, level, expected
+):
+    logger = mocker.patch.object(native_module_mod, "logger")
+    mocker.patch.object(native_module_mod.time, "monotonic", return_value=100.0)
+    record = {"level": level, "target": target, "message": message}
+    with BytesIO(json.dumps(record).encode() + b"\n") as stream:
+        log_module._read_log_stream(stream, "warning", pid=123)
+
+    assert logger.method_calls == [
+        getattr(mocker.call, expected)(
+            message, module="NativeModule(native_echo.py)", pid=123, target=target
+        )
+    ]
+
+
 def test_json_mode_reads_tracing_subscriber_fields_message() -> None:
     calls = _capture_logs(
         LogFormat.JSON,
@@ -569,7 +640,11 @@ def test_builtin_build_outputs_use_shared_checkout(
 ):
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     module_class = getattr(importlib.import_module(module_path), class_name)
-    options = {"setup_network": False} if class_name == "VirtualMid360" else {}
+    options = (
+        {"setup_network": False, "pcap": "capture.pcap", "host_ip": "192.168.1.5"}
+        if class_name == "VirtualMid360"
+        else {}
+    )
     module = module_class(**options)
     try:
         module.config.model_validate(module.config.model_dump())

@@ -24,12 +24,19 @@ pytestmark = pytest.mark.self_hosted  # Motion truth is acquired from a real USD
 
 
 @pytest.fixture
-def imu(mocker):
+def imu(mocker, world):
     module = SimImuModule(
-        sensor=ImuConfig("left/imu", gyro_bias=(0.1, 0.2, 0.3), accel_std=0.02, seed=4)
+        usd=world,
+        sensor=ImuConfig(
+            "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu",
+            gyro_bias=(0.1, 0.2, 0.3),
+            accel_std=0.02,
+            seed=4,
+        ),
     )
-    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client = mocker.Mock()
     client.simulation_config.return_value = {"sim_gravity_world": (0, 0, -9.81)}
+    module._simulation = client
     module.build()
     yield module
     module.dispose()
@@ -43,10 +50,16 @@ def test_noise_is_acquired_once_and_timestamp_survives_codec(poses, imu):
     assert a.angular_velocity.x == pytest.approx(0.1)
     restored = Imu.lcm_decode(a.lcm_encode())
     assert restored.ts == 0
-    assert restored.frame_id == "left/imu"
+    assert (
+        restored.frame_id == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu"
+    )
     assert restored.linear_acceleration.z == a.linear_acceleration.z
     assert restored.orientation_covariance[0] == -1
-    truth.header = SampleHeader(clock_id="test", epoch=1, frame_id="left/imu")
+    truth.header = SampleHeader(
+        clock_id="test",
+        epoch=1,
+        frame_id="world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu",
+    )
     c = imu.measure(truth)
     assert c.ts == 0
     assert c.linear_acceleration.z != a.linear_acceleration.z
@@ -54,23 +67,38 @@ def test_noise_is_acquired_once_and_timestamp_survives_codec(poses, imu):
 
 def test_wrong_frame_cannot_feed_imu(poses, imu):
     truth = poses()
-    next(b for b in truth.bodies if b.body_id == "left/imu").body_id = "other/imu"
+    next(
+        b
+        for b in truth.bodies
+        if b.body_id == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu"
+    ).body_id = "other/imu"
     with pytest.raises(ValueError, match="lacks configured IMU body"):
         imu.measure(truth)
 
 
 @pytest.fixture
-def ideal_imu(mocker):
-    module = SimImuModule(sensor=ImuConfig(frame_id="left/imu", orientation="ideal"))
-    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+def ideal_imu(mocker, world):
+    module = SimImuModule(
+        usd=world,
+        sensor=ImuConfig(
+            frame_id="world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu",
+            orientation="ideal",
+        ),
+    )
+    client = mocker.Mock()
     client.simulation_config.return_value = {"sim_gravity_world": (0, 0, -9.81)}
+    module._simulation = client
     module.build()
     yield module
     module.dispose()
 
 
 def test_stationary_motion_is_kinematic_and_imu_adds_specific_force(backend, poses, ideal_imu):
-    body = next(b for b in backend.read_bodies() if b.body_id == "left/imu")
+    body = next(
+        b
+        for b in backend.read_bodies()
+        if b.body_id == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu"
+    )
     a = body.acceleration.linear
     assert [a.x, a.y, a.z] == pytest.approx([0, 0, 0], abs=1e-9)
     sample = ideal_imu.measure(poses())
@@ -81,11 +109,16 @@ def test_stationary_motion_is_kinematic_and_imu_adds_specific_force(backend, pos
 
 @pytest.mark.parametrize("gravity", [(0.0, 0.0, -1.62), (0.0, 0.0, 0.0)])
 def test_configured_gravity_is_rotated_into_sensor_axes(poses, ideal_imu, gravity, mocker):
-    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client = mocker.Mock()
     client.simulation_config.return_value = {"sim_gravity_world": gravity}
+    ideal_imu._simulation = client
     ideal_imu.build()
     truth = poses()
-    body = next(b for b in truth.bodies if b.body_id == "left/imu")
+    body = next(
+        b
+        for b in truth.bodies
+        if b.body_id == "world/world/left_mount/cartesian_pusher/base_link/carriage/tool/imu"
+    )
     body.pose.orientation = Quaternion(*Rotation.from_euler("y", 90, degrees=True).as_quat())
     measured = ideal_imu.measure(truth)
     assert measured is not None
@@ -95,16 +128,17 @@ def test_configured_gravity_is_rotated_into_sensor_axes(poses, ideal_imu, gravit
 
 @pytest.mark.parametrize("gravity", [(0, 0), (0, 0, float("nan"))])
 def test_invalid_gravity_fails_build(ideal_imu, gravity, mocker):
-    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client = mocker.Mock()
     client.simulation_config.return_value = {"sim_gravity_world": gravity}
+    ideal_imu._simulation = client
     with pytest.raises(ValueError, match="finite 3-vector"):
         ideal_imu.build()
-    client.stop_rpc_client.assert_called_once()
 
 
 async def test_rate_warning_counts_only_successfully_published_imu_samples(
     imu, poses, publication_clock, mocker
 ):
+    mocker.patch.object(imu, "_tf")  # TF transport is outside this publication-rate check.
     publish = mocker.patch.object(imu.imu, "publish")
     warning = mocker.patch("dimos.sim2.publication.logger.warning")
     for tick in range(10):

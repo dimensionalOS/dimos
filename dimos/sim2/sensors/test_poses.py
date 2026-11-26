@@ -22,6 +22,7 @@ from reactivex.subject import Subject
 
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.sensors.camera.render_module import CameraRenderModule
+from dimos.sim2.sensors.poses import _PoseSensorModule
 
 
 @pytest.fixture
@@ -51,6 +52,7 @@ def sensor_input(mocker):
         )
         cleanup.callback(module.stop)
         module.start()
+        _PoseSensorModule.on_system_modules(module, [])
         blocked, unblock = threading.Event(), threading.Event()
 
         async def busy_loop():

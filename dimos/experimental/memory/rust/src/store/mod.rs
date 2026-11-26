@@ -26,14 +26,27 @@ use crate::StreamConfig;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum RecordingStoreConfig {
-    Sqlite { path: String },
-    Mcap { path: String },
+    Sqlite {
+        path: String,
+    },
+    Mcap {
+        path: String,
+        #[serde(default)]
+        attachments: Vec<McapAttachmentConfig>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct McapAttachmentConfig {
+    pub name: String,
+    pub media_type: String,
+    pub path: String,
 }
 
 impl RecordingStoreConfig {
     pub fn path(&self) -> &str {
         match self {
-            Self::Sqlite { path } | Self::Mcap { path } => path,
+            Self::Sqlite { path } | Self::Mcap { path, .. } => path,
         }
     }
 }
@@ -64,10 +77,21 @@ pub fn open(
         RecordingStoreConfig::Sqlite { path } => {
             Ok(Box::new(sqlite::SqliteRecordingStore::open(path, streams)?))
         }
-        RecordingStoreConfig::Mcap { path } => Ok(Box::new(mcap::McapRecordingStore::open(
-            path,
-            streams,
-            compression_threads,
-        )?)),
+        RecordingStoreConfig::Mcap { path, attachments } => Ok(Box::new(
+            mcap::McapRecordingStore::open(path, streams, compression_threads, attachments)?,
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcap_attachments_default_to_empty_when_omitted() {
+        let config = serde_json::from_str(r#"{"kind":"mcap","path":"recording.mcap"}"#).unwrap();
+        assert!(
+            matches!(config, RecordingStoreConfig::Mcap { attachments, .. } if attachments.is_empty())
+        );
     }
 }

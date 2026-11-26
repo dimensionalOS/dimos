@@ -14,35 +14,48 @@
 
 """R1 Pro whole-body planning and execution on mock hardware.
 
-The chassis is a mock twist base that integrates its commands into
-odometry, so base plans run through the same base trajectory task as on
-the robot.
+A mock connection stands in for ``R1ProConnection``: the upper body takes
+positions, the chassis takes body speeds and adds them up into odometry, so
+base plans run through the same base trajectory task as on the robot.
 """
 
 import math
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
-from dimos.control.coordinator import TaskConfig
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.mock_base_connection import MockBaseConnection
+from dimos.control.contract.keys import Interface
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In, Out
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_BODY_AXES,
+    R1PRO_CONTROL_MODEL,
     R1PRO_PLANAR_BASE,
     R1PRO_UPPER_BODY_PLANNING_JOINTS,
     make_r1pro_planar_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
+from dimos.robot.manipulators.common.blueprints import planner
 
-_r1pro_hardware = HardwareComponent(
-    hardware_id="r1pro",
-    hardware_type=HardwareType.WHOLE_BODY,
-    joints=list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
-    adapter_type="mock_whole_body",
-)
-_chassis_hardware = HardwareComponent(
-    hardware_id="chassis",
-    hardware_type=HardwareType.BASE,
-    joints=make_twist_base_joints("chassis"),
-    adapter_type="mock_twist_base",
-    adapter_kwargs={"integrate_odometry": True},
+
+class _PreviewCoordinator(ControlCoordinator):
+    """The mock R1 Pro's ports, robot name "r1pro", plus the base's odometry."""
+
+    r1pro_position_command: Out[JointState]
+    r1pro_velocity_command: Out[JointState]
+    r1pro_joint_state: In[JointState]
+    odometry: In[Odometry]
+
+
+_r1pro = ConnectionConfig(
+    source="r1pro",
+    model=R1PRO_CONTROL_MODEL,
+    joint_commands={
+        **dict.fromkeys(R1PRO_UPPER_BODY_PLANNING_JOINTS, (Interface.POSITION,)),
+        **dict.fromkeys(R1PRO_BODY_AXES, (Interface.VELOCITY,)),
+    },
 )
 _vx_limit, _vy_limit, _wz_limit = R1PRO_PLANAR_BASE.velocity_limits
 
@@ -50,22 +63,20 @@ r1pro_planar_preview = autoconnect(
     planner(
         model=make_r1pro_planar_model_config(),
         visualization={"backend": "viser"},
-        joint_state_aliases=dict(
-            zip(_chassis_hardware.joints, R1PRO_PLANAR_BASE.joint_names, strict=True)
-        ),
         trajectory_tasks={
             "joint_trajectory": list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
             "base_trajectory": list(R1PRO_PLANAR_BASE.joint_names),
         },
     ),
-    coordinator(
-        hardware=[_r1pro_hardware, _chassis_hardware],
+    _PreviewCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[_r1pro],
         tasks=[
-            trajectory_task(_r1pro_hardware),
+            joint_trajectory_task(R1PRO_UPPER_BODY_PLANNING_JOINTS),
             TaskConfig(
                 name="base_trajectory",
                 type="planar_base_trajectory",
-                joint_names=_chassis_hardware.joints,
+                joint_names=list(R1PRO_BODY_AXES),
                 # The planner limits x and y separately, so a diagonal is faster.
                 params={
                     "max_linear": math.hypot(_vx_limit, _vy_limit),
@@ -74,4 +85,11 @@ r1pro_planar_preview = autoconnect(
             ),
         ],
     ),
+    MockBaseConnection.blueprint(**{**_r1pro.model_dump(), "instance_name": "r1pro"}),
+).remappings(
+    [
+        ("r1pro", "position_command", "r1pro_position_command"),
+        ("r1pro", "velocity_command", "r1pro_velocity_command"),
+        ("r1pro", "joint_state", "r1pro_joint_state"),
+    ]
 )

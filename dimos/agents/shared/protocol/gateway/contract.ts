@@ -6,6 +6,7 @@ import type { JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
 import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
 import type { LoadStatus } from "#dimos/agents/shared/protocol/runtime/load.ts";
 import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { SkillSummary } from "#dimos/agents/shared/protocol/skills.ts";
 import type { Settings } from "#dimos/agents/shared/protocol/settings.ts";
 import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
 import { Type } from "typebox";
@@ -25,6 +26,7 @@ export const GatewayState = {
   modules: carried<readonly ModuleRow[]>(),
   streams: carried<readonly StreamRef[]>(),
   jobs: carried<readonly JobRow[]>(),
+  skills: carried<readonly SkillSummary[]>(),
   settings: carried<Settings>(),
   accounts: carried<Accounts>(),
 } as const;

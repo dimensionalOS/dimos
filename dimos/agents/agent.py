@@ -270,7 +270,8 @@ class Agent(BaseAgent):
         self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream_message)
 
     @rpc
-    def on_system_modules(self, _modules: list[RPCClient]) -> None:
+    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
+        # McpServer must finish collecting skills before we fetch and bind its tools.
         if self._server_url() is None:
             logger.info("No MCP server; the agent runs without tools.")
             self._agent_tools = []
