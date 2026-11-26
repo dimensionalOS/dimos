@@ -337,7 +337,6 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "mjcf-to-urdf>=0.1.1",
-    "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
 
@@ -675,7 +674,6 @@ opencv-contrib-python = "cv2"
 Pillow = "PIL"
 pin = "pinocchio"
 pin-pink = "pink"
-playground = "mujoco_playground"
 plum-dispatch = "plum"
 python-can = "can"
 python-dotenv = "dotenv"
@@ -784,7 +782,6 @@ module = [
     "mcap.*",
     "mcap_ros2.*",
     "mujoco",
-    "mujoco_playground.*",
     "nav_msgs.*",
     "openevals.*",
     "pinocchio",

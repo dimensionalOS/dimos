@@ -27,7 +27,6 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
-from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
 
@@ -51,7 +50,7 @@ def get_assets() -> dict[str, bytes]:
     _update_assets(assets, data_dir, "*.xml")
     _update_assets(assets, data_dir / "scene_office1/textures", "*.png")
     _update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
-    menagerie = menagerie_path()
+    menagerie = get_data("mujoco_menagerie")
     _update_assets(assets, menagerie / "unitree_go1" / "assets")
     _update_assets(assets, menagerie / "unitree_g1" / "assets")
 
