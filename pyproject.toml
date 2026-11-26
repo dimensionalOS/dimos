@@ -406,6 +406,8 @@ all = [
 ]
 
 [dependency-groups]
+# Isolated GTA/Sim2 research tools; not part of the production runtime.
+gta-sim2 = ["shapely>=2.1,<3", "types-shapely>=2.1,<3"]
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
 
