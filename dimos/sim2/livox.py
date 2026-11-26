@@ -29,6 +29,7 @@ from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rota
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor import SimSensor, SimSensorConfig
 from dimos.sim2.sim import until_it_stops
+from dimos.sim2.world_observations import geometry
 from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
 from dimos.simulation.sensors.mid360.lidar import sim_mid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
@@ -51,8 +52,8 @@ class LivoxSim(SimSensor):
     config: LivoxSimConfig
     lidar: Out[PointCloud2]
     imu: Out[Imu]
-    # The one view the lidar and IMU loops read, opened by whichever ticks first.
-    _opening: "asyncio.Future[WorldView] | None" = None
+    # The one view the lidar and IMU loops read, of the world's shapes at a geometry() count, opened by whichever asks first.
+    _opening: "tuple[int, asyncio.Future[WorldView]] | None" = None
 
     @property
     def imu_frame_id(self) -> str:
@@ -75,22 +76,28 @@ class LivoxSim(SimSensor):
             SensorMount("lidar", self.frame_id, self.frame_id),
         )
 
-    async def _view(self) -> tuple[WorldView, bool]:
-        """The shared view, and whether this tick was spent waiting for it to open."""
-        if self._opening is None:
-            self._opening = asyncio.ensure_future(asyncio.to_thread(self._open))
-        waited = not self._opening.done()
+    async def _view(self, built: int) -> tuple[WorldView, bool]:
+        """The shared view of the world at geometry count `built`, and whether this tick was spent waiting for it to open."""
+        if self._opening is None or self._opening[0] != built:
+            self._opening = (built, asyncio.ensure_future(asyncio.to_thread(self._open)))
+        opening = self._opening[1]
+        waited = not opening.done()
         # Shielded, so one loop stopping mid-open leaves the other its view.
-        return await asyncio.shield(self._opening), waited
+        return await asyncio.shield(opening), waited
 
     async def _scan(self) -> None:
         site = self.frame_id
         view: WorldView | None = None
         sensor: SimLidar | None = None
+        built = 0
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
         async for _ in self._world.ticks(self.config.rate_hz):
+            if view is not None and geometry(self._world) != built:
+                view.close()
+                view = None
             if view is None:
-                view, waited = await self._view()
+                built = geometry(self._world)
+                view, waited = await self._view(built)
                 sensor = sim_mid360(
                     view.raycaster(
                         self.config.geom_groups,
@@ -126,10 +133,14 @@ class LivoxSim(SimSensor):
             self.publish_moving_tf(stamp)
 
     async def _read_imu(self) -> None:
-        site, view = self.imu_frame_id, None
+        site, view, built = self.imu_frame_id, None, 0
         async for _ in self._world.ticks(self.config.imu_rate_hz):
+            if view is not None and geometry(self._world) != built:
+                view.close()
+                view = None
             if view is None:
-                shared, waited = await self._view()
+                built = geometry(self._world)
+                shared, waited = await self._view(built)
                 # Its own poses, as the lidar casts against the shared view's in a thread while this updates.
                 view = shared.twin()
                 if waited:

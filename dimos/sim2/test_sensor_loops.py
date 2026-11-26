@@ -39,6 +39,10 @@ class _World:
         self.time = 1.0
         self.ticked: list[float] = []
 
+    def entity(self, name: str) -> None:
+        # No world entity, so its geometry never changes and the views are built once.
+        return None
+
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
         for _ in range(TICKS):
             self.ticked.append(self.time)
@@ -82,6 +86,9 @@ class _View:
 
     def twin(self) -> "_View":
         return self
+
+    def close(self) -> None:
+        pass
 
     def imu(self, sensor: str) -> tuple[Any, Any, Any]:
         self.imu_frames.append(sensor)
@@ -226,6 +233,43 @@ def test_a_livox_opens_one_view_for_its_lidar_and_imu_and_reads_both_at_their_ra
         assert stamps == pytest.approx(
             [1.0 + tick / rate for tick in range(1, int(SECONDS * rate))]
         )
+
+
+class _Reshaped(_Clock):
+    """A clock whose world changes its shapes once, half way through."""
+
+    def entity(self, name: str) -> Any:
+        from types import SimpleNamespace
+
+        from dimos.sim2.world_observations import GEOMETRY
+
+        return SimpleNamespace(cbor={GEOMETRY: int(self.time >= 1.0 + SECONDS / 2)})
+
+
+@pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data
+def test_a_livox_lidar_and_imu_rebuild_one_view_when_the_world_changes_shape(
+    livox: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _Reshaped()
+    opened: list[_View] = []
+    published: dict[str, list[float]] = {"lidar": [], "imu": []}
+    livox._world = world
+
+    def open_view() -> _View:
+        opened.append(_View(world))
+        return opened[-1]
+
+    monkeypatch.setattr(livox, "_open", open_view)
+    for stream, stamps in published.items():
+        monkeypatch.setattr(getattr(livox, stream), "publish", lambda m, s=stamps: s.append(m.ts))
+
+    async def both() -> None:
+        await asyncio.gather(livox._scan(), livox._read_imu())
+
+    asyncio.run(both())
+    assert len(opened) == 2
+    reshaped = 1.0 + SECONDS / 2
+    assert all(any(stamp > reshaped for stamp in stamps) for stamps in published.values())
 
 
 @pytest.mark.self_hosted  # the Mid-360 scan pattern is Git LFS data

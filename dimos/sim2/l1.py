@@ -30,6 +30,7 @@ from dimos.sim2.sensor import SimSensor, SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.sim import until_it_stops
 from dimos.sim2.spec import ODOM_FRAME
+from dimos.sim2.world_observations import geometry
 from dimos.simulation.sensors.lidar import Raycaster
 
 _KEY_BITS = 21
@@ -70,12 +71,17 @@ class SimL1(SimSensor):
         view: WorldView | None = None
         raycaster: Raycaster | None = None
         rider: str | None = None
+        built = 0
         odom_frame, from_world = "", np.eye(4)
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
         cells = np.zeros(0, dtype=np.int64)
         async for _ in self._world.ticks(1 / config.period):
+            if view is not None and geometry(self._world) != built:
+                view.close()
+                view = None
             if view is None:
+                built = geometry(self._world)
                 view = await asyncio.to_thread(self._open)
                 rider = view.owner(site)
                 # The real L1's voxel map has no returns off the robot it rides (none within 0.3 m of a Go2's base, two recordings).
@@ -84,7 +90,8 @@ class SimL1(SimSensor):
                     mounted_at=site,
                     blind_to_robots=() if rider is None else (rider,),
                 )
-                odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
+                if not odom_frame:
+                    odom_frame, from_world = await asyncio.to_thread(self._rider_odometry, rider)
                 # Opening took this tick, so the next tick is the first read on time.
                 continue
             assert raycaster is not None

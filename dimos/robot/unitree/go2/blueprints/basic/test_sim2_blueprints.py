@@ -31,13 +31,22 @@ from dimos.sim2.sim import compose_usds, fetched_usd
 
 pytest.importorskip("pxr")
 
-_BLUEPRINTS = ["unitree_go2_sim2_mid360", "unitree_go2_sim2_l1"]
+# A blueprint's module name, then any choices it is built with (`sim=dimsim`).
+_BLUEPRINTS = [
+    "unitree_go2_sim2_mid360",
+    "unitree_go2_sim2_l1",
+    "unitree_go2_sim2_l1 sim=dimsim",
+    "unitree_go2_dimsim",
+]
 
 
 def _atoms(name: str) -> list[Any]:
     from importlib import import_module
 
-    return list(getattr(import_module(f"{__package__}.{name}"), name).solidify().active_blueprints)
+    module, *choices = name.split()
+    blueprint = getattr(import_module(f"{__package__}.{module}"), module)
+    selected = dict(choice.split("=") for choice in choices)
+    return list(blueprint.solidify(choices=selected).active_blueprints)
 
 
 def _hardware_atoms(name: str) -> list[Any]:
@@ -96,16 +105,18 @@ def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
     assert sensed <= frames, f"{name} leaves {sorted(sensed - frames)} out of the world"
 
 
-@pytest.mark.self_hosted  # Go2Sim loads its policy and meshes from Git LFS
-def test_a_simulated_go2_publishes_the_tf_a_real_one_does() -> None:
+@pytest.mark.self_hosted  # the Go2 policy, meshes and the apartment are Git LFS data
+@pytest.mark.parametrize("name", _BLUEPRINTS[1:])
+def test_a_simulated_go2_publishes_the_tf_a_real_one_does(name: str) -> None:
     from dimos.robot.unitree.go2.connection import ConnectionConfig
     from dimos.robot.unitree.go2.sim2 import Go2Sim
+    from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
     from dimos.sim2.odom_tf import OdomTf
 
-    (odom_atom,) = [atom for atom in _atoms("unitree_go2_sim2_l1") if atom.module is OdomTf]
+    (odom_atom,) = [atom for atom in _atoms(name) if atom.module is OdomTf]
     odom_tf = OdomTf(**odom_atom.kwargs)
-    with _hardware("unitree_go2_sim2_l1") as hardware:
-        go2 = next(module for module in hardware if isinstance(module, Go2Sim))
+    with _hardware(name) as hardware:
+        go2 = next(module for module in hardware if isinstance(module, (Go2Sim, SimKinematicBase)))
         edges = {(go2.attached_to(), go2.attach_frame), *odom_tf.tf_edge_ids}
         robot, body = go2.namespace, go2.tf_frames[go2.config.usd.root_link]
         announced = go2.simulated_robot().odom_frame

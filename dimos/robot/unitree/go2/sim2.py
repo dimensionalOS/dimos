@@ -46,6 +46,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.dimsim.kinematic_base import SimKinematicBase, SimKinematicBaseConfig
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
@@ -253,3 +254,15 @@ class Go2Sim(HardwareModule):
         transforms = self.moving_transforms(positions, ts=stamp)
         if transforms:
             self.tfbuffer.publish(*transforms)
+
+
+class Go2KinematicBaseConfig(SimKinematicBaseConfig):
+    usd: UsdModel = GO2_USD
+    odom_frame: str = GO2_ODOM_FRAME
+
+
+class Go2KinematicBase(SimKinematicBase):
+    """A Go2 as DimSim's kinematic base: moved as a box on cmd_vel, with a Go2's USD, mounts and odometry frame."""
+
+    config: Go2KinematicBaseConfig
+    mounts = Go2Sim.mounts
