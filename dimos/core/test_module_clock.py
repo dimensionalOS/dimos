@@ -13,32 +13,34 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import Iterator
 import time
-
-import pytest
 
 from dimos.core.module import Module
 
 
-class _Clocked(Module):
+class _Plain(Module):
     pass
 
 
-@pytest.fixture
-def module() -> Iterator[_Clocked]:
-    clocked = _Clocked()
-    yield clocked
-    clocked.stop()
+def test_a_module_stamps_with_wall_time_by_default() -> None:
+    module = _Plain()
+    try:
+        before = time.time()
+        stamp = module.time()
+        after = time.time()
+    finally:
+        module.stop()
+
+    assert before <= stamp <= after
 
 
-def test_module_time_is_wall_time(module: _Clocked) -> None:
-    before = time.time()
-    now = module.time()
-    assert before <= now <= time.time()
+def test_a_module_sleeps_in_wall_time_by_default() -> None:
+    module = _Plain()
+    try:
+        started = time.monotonic()
+        asyncio.run(module.sleep(0.05))
+        slept = time.monotonic() - started
+    finally:
+        module.stop()
 
-
-def test_module_sleep_waits_its_time(module: _Clocked) -> None:
-    start = module.time()
-    asyncio.run(module.sleep(0.05))
-    assert module.time() - start >= 0.05
+    assert slept >= 0.05

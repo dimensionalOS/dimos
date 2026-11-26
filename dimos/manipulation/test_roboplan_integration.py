@@ -27,6 +27,7 @@ roboplan_planner_module = importlib.import_module(
     "dimos.manipulation.planning.planners.roboplan_planner"
 )
 
+from dimos.core.coordination.blueprints import MetaBlueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -50,7 +51,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
+from dimos.robot.manipulators.openyam.blueprints.basic import openyam_planner_coordinator
+from dimos.robot.manipulators.openyam.blueprints.teleop import keyboard_teleop_openyam_planner
 from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
     seeed_b601_dm_planner_coordinator,
 )
@@ -295,6 +298,97 @@ def test_real_rrt_and_toppra_use_finite_prepared_limits(scalar_world, roboplan_t
     assert np.max(np.abs(velocities)) <= 0.2 * 1.05
     assert np.max(np.abs(accelerations)) <= 0.4 * 1.05
     assert world.check_edge_collision_free(start, goal)
+
+
+@pytest.mark.parametrize("lower, upper, expected", [(0.01, 0.06, 0.01), (-0.06, -0.01, -0.01)])
+def test_real_rrt_initializes_unplanned_joints_within_limits(
+    scalar_world: Any,
+    roboplan_types: tuple[type[Any], type[Any]],
+    lower: float,
+    upper: float,
+    expected: float,
+) -> None:
+    config = scalar_world.get_prepared_model().config
+    config = config.model_copy(
+        update={
+            "model": config.model.with_added_joints(
+                JointDescription(
+                    name="finger",
+                    type="prismatic",
+                    parent_link="arm",
+                    child_link="finger_link",
+                    lower=lower,
+                    upper=upper,
+                    velocity=1.0,
+                    effort=1.0,
+                )
+            )
+        }
+    )
+    world = roboplan_types[0]()
+    world.load_model(prepare_robot_model(config))
+    world.finalize()
+    start = JointState(name=["slide"], position=[0.0])
+    goal = JointState(name=["slide"], position=[0.5])
+    world.sync_from_joint_state(start)
+    planner = roboplan_types[1](world, RoboPlanPlannerConfig())
+
+    result = planner.plan_joint_path(world, start, goal, timeout=1.0)
+
+    assert result.is_success(), result.message
+    np.testing.assert_allclose(result.path[0].position, start.position)
+    np.testing.assert_allclose(result.path[-1].position, goal.position)
+    with world.parametrization_model() as model:
+        np.testing.assert_allclose(model.scene.getCurrentJointPositions(), [0.0, expected])
+    # Initialization must not clamp an invalid measured planning joint.
+    with pytest.raises(RuntimeError, match="Invalid start configuration"):
+        planner.plan_joint_path(world, JointState(name=["slide"], position=[3.0]), goal)
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [openyam_planner_coordinator, keyboard_teleop_openyam_planner],
+    ids=["openyam-planner-coordinator", "keyboard-teleop-openyam-planner"],
+)
+def test_openyam_blueprints_plan_from_mock_home(
+    roboplan_types: tuple[type[Any], type[Any]], blueprint: MetaBlueprint
+) -> None:
+    atom = next(
+        a
+        for a in blueprint.solidify().active_blueprints
+        if issubclass(a.module, ManipulationModule)
+    )
+    config = atom.kwargs["model"]
+    world = roboplan_types[0]()
+    world.load_model(prepare_robot_model(config))
+    world.finalize()
+    start = JointState(name=config.joint_names, position=config.home_joints)
+    goal_positions = list(config.home_joints)
+    goal_positions[0] += 0.3
+    goal = JointState(name=config.joint_names, position=goal_positions)
+    world.sync_from_joint_state(start)
+    planner = roboplan_types[1](world, RoboPlanPlannerConfig())
+
+    assert world.check_config_collision_free(start)
+    result = planner.plan_joint_path(world, start, goal, timeout=1.0)
+
+    assert result.is_success(), result.message
+    np.testing.assert_allclose(result.path[0].position, start.position)
+    np.testing.assert_allclose(result.path[-1].position, goal.position)
+    assert world.check_edge_collision_free(start, goal)
+    # Internal gripper exclusions must preserve collisions with the environment.
+    with world.scratch_context() as ctx:
+        world.set_joint_state(ctx, start)
+        hand_pose = world.get_link_pose(ctx, "hand")
+    world.add_obstacle(
+        Obstacle(
+            name="hand_obstacle",
+            obstacle_type=ObstacleType.BOX,
+            dimensions=(0.1, 0.1, 0.1),
+            pose=PoseStamped(frame_id="world", position=hand_pose[:3, 3].tolist()),
+        )
+    )
+    assert not world.check_config_collision_free(start)
 
 
 @pytest.mark.parametrize("speed_mode", ["bounded", "time_optimal"])

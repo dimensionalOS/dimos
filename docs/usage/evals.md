@@ -221,7 +221,8 @@ program on the shell's PATH. Use `no_dimos` to keep dimOS off that path.
   Totals cover recorded assistant responses; interrupted requests may have
   unreported usage. Keep raw attempts when auditing spend.
 
-Errors stay in the summary denominator. An agent error preserves completed
+`mean_score` and `pass_rate` skip `error` rows; `n` and `errors` still count
+the whole suite. An agent error preserves completed
 steps, returns `ended_by=error`, and cannot pass. The runner saves a returned
 trajectory before environment teardown so teardown failures retain evidence.
 Raw requests preserve the actual tools/schemas used on each call; the ATIF
@@ -298,7 +299,8 @@ n=1 mean=1.0 pass_rate=1.0 errors=0
 ```
 
 That's the whole loop: environment -> agent -> trajectory + artifacts ->
-grade -> run dir.
+grade -> run dir. ``mean_score`` and ``pass_rate`` skip cases with ``error``
+(preflight, crash); ``n`` and ``errors`` still count the whole suite.
 
 To run your cases through the CLI, put them in an importable module with
 `SUITE: Suite = [case]`, importing `Suite` from `dimos.evals.types`.
@@ -547,11 +549,11 @@ run <blueprint> <modules>` without `--simulation`. It needs an operator at an in
 `dimos.evals.suites.hardware_go2` (walk forward and turn around) hold one case each,
 so one run is one robot and one scene. Keep the e-stop within reach. The robot's
 address reaches the launched dimos through the environment: `ROBOT_IP` for the Go2,
-and the coordinator's `addresses` for the xArm:
+and `XArmConnection`'s `ip` for the xArm:
 
 ```bash
 ROBOT_IP=192.168.123.161 dimos evals run dimos.evals.suites.hardware_go2 --agent dimos.evals.agents.pi
-CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.168.1.185"}' dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
+XARMCONNECTION__IP=192.168.1.185 dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
 ```
 
 ## Running

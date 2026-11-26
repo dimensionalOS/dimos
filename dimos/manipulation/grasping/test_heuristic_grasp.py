@@ -155,3 +155,23 @@ def test_heuristic_grasp_aims_the_finger_pads(height: float, tip_z: float) -> No
 
     assert proposals.candidates[0].pose.position.z == pytest.approx(tip_z)
     module.stop()
+
+
+@pytest.mark.parametrize("spread", [0.0, 0.001, 0.004])
+def test_top_face_cloud_gets_a_grasp_with_pads_on_the_visible_surface(
+    module: HeuristicGraspModule,
+    spread: float,
+) -> None:
+    module.config.pad_behind_tcp = 0.0167
+    module.config.fingertip_reach = 0.0031
+    module.config.palm_behind_tcp = 0.0499
+    points = np.asarray(
+        [[0.38, 0.08, 0.16], [0.42, 0.08, 0.16], [0.38, 0.12, 0.16], [0.42, 0.12, 0.16]]
+    )
+    points[:2, 2] -= spread
+
+    proposals = module.propose_grasps(_cloud(points))
+
+    assert [candidate.pose.position.z for candidate in proposals.candidates] == pytest.approx(
+        [0.1433 - spread / 2.0]
+    )
