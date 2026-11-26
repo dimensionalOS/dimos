@@ -624,13 +624,12 @@ def test_getter_ondemand() -> None:
 
 
 def test_getter_ondemand_timeout() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    disposed = threading.Event()
+    source = rx.never().pipe(ops.finally_action(disposed.set))
     getter = getter_ondemand(source, timeout=0.1)
-    with pytest.raises(Exception):
+    with pytest.raises(TimeoutError):
         getter()
-    assert source.is_disposed(), "Observable should be disposed"
-    # Wait for background interval timer threads to finish
-    time.sleep(0.3)
+    assert disposed.is_set(), "Timeout should dispose the subscription"
 
 
 def test_callback_to_observable() -> None:

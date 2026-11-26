@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from pytest_mock import MockerFixture
 
@@ -264,6 +265,22 @@ class FakeScene:
 
     def setJointPositions(self, q: np.ndarray) -> None:
         self.current_positions = np.asarray(q, dtype=np.float64)
+
+    def getCurrentJointPositions(self) -> NDArray[np.float64]:
+        return self.current_positions.copy()
+
+    def clampToValidConfiguration(self, q: NDArray[np.float64]) -> NDArray[np.float64]:
+        result = q.copy()
+        root = ET.fromstring(self.constructor_kwargs["urdf"])
+        for index, name in enumerate(self.native_joint_names):
+            limit = root.find(f"joint[@name='{name}']/limit")
+            if limit is not None:
+                result[index] = np.clip(
+                    result[index],
+                    float(limit.get("lower", "-inf")),
+                    float(limit.get("upper", "inf")),
+                )
+        return result
 
     def getJointNames(self) -> list[str]:
         return list(self.native_joint_names)

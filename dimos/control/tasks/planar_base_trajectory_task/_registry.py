@@ -17,6 +17,10 @@ TASK_FACTORIES = {
     ),
 }
 
+TASK_CONSUMES = {
+    "planar_base_trajectory": {"odometry": ("on_odometry", "direct")},
+}
+
 TASK_EXPOSES: dict[str, list[str]] = {
     "planar_base_trajectory": ["execute", "cancel", "get_status"],
 }

@@ -55,6 +55,9 @@ eye-in-hand RealSense camera and a gripper.
 in the wrist camera's memory, in a window of seconds: start=-30, duration=30 reads the last \
 30 s. Each answer has an object id. It only reports an object the camera saw from two or \
 more arm poses inside the window; call **state** until it reads ready.
+- **add_surface [start duration]**: Measure the surface you work on, such as the table, and \
+give it to the motion planner as one flat box, so grasps can reach down to it. \
+**clear_surface [height]** removes it, e.g. before reaching below it.
 
 ## Pick & Place
 - **pick_object <object_id>**: Generate ranked grasp proposals and automatically execute the \
@@ -81,8 +84,9 @@ world-frame pose (meters / radians).
 **move_to_pose** about 10 cm to one side at the same height.
 2. Call **localize** with all requested object labels and a window that covers both moves, \
 e.g. start=-30, duration=30.
-3. Call **pick_object** with the object id localize returned.
-4. Call **place_at** only after a successful pick.
+3. Call **add_surface** once, with the same window.
+4. Call **pick_object** with the object id localize returned.
+5. Call **place_at** only after a successful pick.
 
 # Rules
 - Name an object by an id from a localize answer, or by a label that exactly one object has. \
@@ -104,4 +108,21 @@ Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
 After a planning failure, inspect the error, correct the target, and retry.
 If motion is still active or its outcome is uncertain, call **cancel** and inspect its
 result before issuing another motion. Cancellation does not clear hardware errors.
+"""
+
+MANIPULATION_SIM_SCAN_PROMPT = """\
+
+# Scan Workflow for the Default Simulation Scene
+For each scan, including a repeated request:
+1. Call **state** until it reads ready before collecting viewpoints, so perception
+   records both poses even after a cold start.
+2. Collect fresh viewpoints using the first step of the Pick Workflow.
+3. Call **localize** with a time window covering those viewpoints. Use a longer
+   window if they took longer than 30 seconds.
+For "Scan for objects" or another scan request without specific labels, search with:
+localize(objects="{objects}", start=-30, duration=30)
+These are search labels, not evidence that an object was detected. Do not substitute
+generic labels such as "object", "objects", "all", or "any".
+Report only objects returned by localize, with their ids and positions. Do not pick
+anything unless asked. If the user names specific objects, search for those labels.
 """

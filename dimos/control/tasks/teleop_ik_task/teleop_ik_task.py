@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 import threading
@@ -42,7 +42,6 @@ from dimos.teleop.webxr.controller_types import Buttons
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
-    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
 
 
 class OperatorHand(str, Enum):
@@ -313,7 +312,6 @@ class TeleopIKTaskParams(PoseTargetIKTaskParams):
 
 def create_task(
     cfg: TaskConfig,
-    hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
 ) -> TeleopIKTask:
     """Create and validate a pose-target teleop task from registry configuration."""
     params = TeleopIKTaskParams.model_validate(cfg.params)
@@ -324,7 +322,6 @@ def create_task(
         )
         for binding in params.bindings
     )
-    del hardware
     task_config = TeleopIKTaskConfig(
         joint_names=tuple(cfg.joint_names),
         robot_model=params.robot_model,

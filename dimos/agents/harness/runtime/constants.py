@@ -48,6 +48,7 @@ LIFECYCLE_RPCS = frozenset(
         "get_skills",
         "get_stream_descriptors",
         "on_system_modules",
+        "on_system_modules_ready",
         "peek_stream",
         "set_module_ref",
         "set_transport",
