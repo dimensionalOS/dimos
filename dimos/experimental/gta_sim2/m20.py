@@ -18,6 +18,7 @@ The actor consumes synchronous IMU/encoder acquisitions. Joint targets use the
 same clock, IDs, atomic five-interface action and expiry contract as the G1.
 """
 
+from collections.abc import Callable
 import math
 from pathlib import Path
 import threading
@@ -46,6 +47,7 @@ from dimos.sim2.description import SceneConfig, joint_paths
 from dimos.sim2.hardware import SimHardwareModule
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.drives import usd_drives
+from dimos.sim2.physics.interface import PhysicsBackend
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import SimCameraModule
@@ -262,7 +264,13 @@ class M20PolicyModule(Module):
             self._applied_velocity.fill(0)
 
 
-def m20_blueprint(scene_path: Path, policy_path: Path, profile: Profile = "sdk57") -> MetaBlueprint:
+def m20_blueprint(
+    scene_path: Path,
+    policy_path: Path,
+    profile: Profile = "sdk57",
+    *,
+    backend: Callable[[], PhysicsBackend] = MujocoBackend,
+) -> MetaBlueprint:
     scene = UsdModel.from_file(scene_path)
     paths = joint_paths(scene)
     ids = tuple(paths[n] for n in JOINTS)
@@ -284,7 +292,7 @@ def m20_blueprint(scene_path: Path, policy_path: Path, profile: Profile = "sdk57
         CameraRenderModule.blueprint(
             renderer=MujocoRenderer, cameras=tuple(atom.name for atom in camera.active_blueprints)
         ),
-        SimModule.blueprint(backend=MujocoBackend, observation_hz=200, joint_ids=ids),
+        SimModule.blueprint(backend=backend, observation_hz=200, joint_ids=ids),
         SimJointEncoderModule.blueprint(sensor=EncoderConfig(ids, hz=50)),
         M20PolicyModule.blueprint(scene=scene, model_path=policy_path, profile=profile),
     ).global_config(viewer="none", transport="zenoh", n_workers=6)

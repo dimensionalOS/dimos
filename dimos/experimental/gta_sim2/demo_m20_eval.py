@@ -31,11 +31,13 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.experimental.gta_sim2.demo_interactive import physics_ready
 from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare_m20 import BASE
+from dimos.experimental.gta_sim2.streaming import StreamingMujocoBackend
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.sim2.description import compose_scene
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
+from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -76,6 +78,7 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--seconds", type=float, default=4)
     parser.add_argument("--step-height", type=float, default=0.1)
+    parser.add_argument("--stream-catalog", type=Path)
     parser.add_argument(
         "--record", action="store_true", help="Save composed USD and measured body poses"
     )
@@ -88,7 +91,21 @@ def main() -> None:
     if args.terrain != "road":
         scene = fixture(scene, args.output, args.terrain, args.step_height)
     blueprint = (
-        m20_blueprint(scene, args.policy.resolve(), args.profile)
+        m20_blueprint(
+            scene,
+            args.policy.resolve(),
+            args.profile,
+            backend=(
+                partial(
+                    StreamingMujocoBackend,
+                    catalog=args.stream_catalog.resolve(),
+                    focus_body=BASE,
+                    metrics=args.output.with_suffix(".streaming.json"),
+                )
+                if args.stream_catalog
+                else MujocoBackend
+            ),
+        )
         .global_config(zenoh_domain="m20-eval-" + uuid.uuid4().hex)
         .solidify()
     )
@@ -166,6 +183,12 @@ def main() -> None:
         }
         args.output.write_text(json.dumps(report, indent=2))
         print(json.dumps({k: v for k, v in report.items() if k != "trajectory"}), flush=True)
+    except Exception:
+        print(
+            json.dumps({"simulation_failure": deployment.get_instance(SimModule).status()}),
+            flush=True,
+        )
+        raise
     finally:
         if recording is not None:
             recording.close()

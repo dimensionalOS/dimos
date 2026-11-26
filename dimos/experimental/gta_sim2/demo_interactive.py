@@ -42,6 +42,7 @@ from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare import ground_height
 from dimos.experimental.gta_sim2.prepare_m20 import BASE as M20_BASE
 from dimos.experimental.gta_sim2.renderer import ObserverOutput, SixNGRenderer
+from dimos.experimental.gta_sim2.streaming import StreamingMujocoBackend
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
@@ -49,6 +50,7 @@ from dimos.robot.unitree.g1.sim2_scene import PELVIS, TORSO
 from dimos.sim2.description import compose_scene
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
+from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.utils.testing.waiting import wait_until
 
@@ -118,10 +120,13 @@ def main() -> None:
     parser.add_argument("--robot", choices=("g1", "m20"), default="g1")
     parser.add_argument("--policy", type=Path)
     parser.add_argument("--policy-profile", choices=("sdk57", "dreamwaq342"), default="sdk57")
+    parser.add_argument("--stream-catalog", type=Path)
     args = parser.parse_args()
     if args.robot == "m20" and args.policy is None:
         parser.error("--robot m20 requires the explicit --policy checkpoint")
     is_m20 = args.robot == "m20"
+    if args.stream_catalog and not is_m20:
+        parser.error("Collision streaming is currently validated with M20 only")
     focus_body = M20_BASE if is_m20 else PELVIS
     camera_frame = (M20_BASE if is_m20 else TORSO) + "/camera_mount/camera/camera"
     speed = (1.5, 0.3, 0.7) if is_m20 else (0.2, 0.15, 0.4)
@@ -131,6 +136,7 @@ def main() -> None:
     bounds = np.asarray(manifest["bounds_rage_m"], dtype=np.float64) - origin
     lo, hi = bounds[0, :2] + 2, bounds[1, :2] - 2
     surfaces = np.load(args.scene.with_name("surfaces.npz"))["triangles"]
+    surface_lo, surface_hi = surfaces.min(axis=1)[:, :2], surfaces.max(axis=1)[:, :2]
     done = threading.Event()
 
     def shutdown(signum: int, frame: FrameType | None) -> None:
@@ -201,7 +207,21 @@ def main() -> None:
                     )
                     blueprint = (
                         (
-                            m20_blueprint(args.scene, args.policy, args.policy_profile)
+                            m20_blueprint(
+                                args.scene,
+                                args.policy,
+                                args.policy_profile,
+                                backend=(
+                                    partial(
+                                        StreamingMujocoBackend,
+                                        catalog=args.stream_catalog.resolve(),
+                                        focus_body=M20_BASE,
+                                        metrics=args.runtime / "streaming.json",
+                                    )
+                                    if args.stream_catalog
+                                    else MujocoBackend
+                                ),
+                            )
                             if is_m20
                             else gta_g1_blueprint(args.scene)
                         )
@@ -243,7 +263,21 @@ def main() -> None:
                     }
                     # Never replay input received during a long reset/load.
                     accept_after = time.monotonic()
-                sample = sim.inspect()
+                try:
+                    sample = sim.inspect()
+                except RuntimeError:
+                    fault = sim.status()
+                    if fault["status"] != "fault":
+                        raise
+                    policy.move(Twist(), duration=CONTROL_TIMEOUT)
+                    state.update(
+                        state="error",
+                        message=f"Physics stopped: {fault['error']} — use Reset",
+                        sim=fault,
+                    )
+                    write_json(args.runtime / "simulation.json", state)
+                    done.wait(0.1)
+                    continue
                 pose = poses_by_id(sample)[focus_body]
                 p, q = pose.position, pose.orientation
                 xyz = np.array([p.x, p.y, p.z])
@@ -255,11 +289,16 @@ def main() -> None:
                     command, time.monotonic(), xyz[:2], yaw, lo, hi, speed
                 )
                 try:
-                    clearance = p.z - ground_height(surfaces, (p.x, p.y), p.z - 0.3)
+                    under = np.all(surface_lo <= xyz[:2] + 1e-7, axis=1) & np.all(
+                        surface_hi >= xyz[:2] - 1e-7, axis=1
+                    )
+                    clearance = p.z - ground_height(surfaces[under], (p.x, p.y), p.z - 0.3)
                 except ValueError:
                     clearance = 0.0
                 upright = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()[2, 2]
-                fallen = clearance < (0.23 if is_m20 else 0.5) or p.z < -0.2 or upright < 0.3
+                fallen = clearance < (0.23 if is_m20 else 0.5) or upright < 0.3
+                if not args.stream_catalog:
+                    fallen |= p.z < -0.2
                 if fallen or not visible:
                     vx = vy = wz = 0.0
                 policy.move(
@@ -281,6 +320,9 @@ def main() -> None:
                         ),
                         sim=sim.status(),
                         policy=policy.status(),
+                        streaming=read_json(args.runtime / "streaming.json")
+                        if args.stream_catalog
+                        else None,
                         updated_unix=time.time(),
                     )
                     write_json(args.runtime / "simulation.json", state)
