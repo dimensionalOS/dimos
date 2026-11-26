@@ -31,7 +31,7 @@ class CloudConfig(BaseSettings):
     keyring_timeout: float = 5.0
     upload_codec: str = "lz4"
     upload_retries: int = 2
-    upload_chunk_mb: int | None = None
+    upload_chunk_mb: int | None = 8
     upload_parallel_parts: int = Field(default=32, ge=1)
     upload_quiet_s: float = 30.0
     staging_dir: Path | None = None

@@ -12,23 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 import contextlib
 import errno
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from multiprocessing.pool import ThreadPool
 import os
 from pathlib import Path
 import shutil
+import socket
 import sqlite3
 import tarfile
 import tempfile
 import threading
 import time
 from typing import Any, Literal
-import urllib.request
 
 import pytest
+import requests
 import typer
 
 from dimos.cloud import cli, data as cd
@@ -165,6 +168,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cd, "BYTES_PER_CONNECTION", t.part_size)  # a connection per part
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1, parallel_parts=4))
     return cloud, t, recording(tmp_path)
 
@@ -416,6 +420,19 @@ def test_empty_file_uploads_with_no_parts(env: tuple[CloudData, FakeTransport, P
     assert r["state"] == "complete" and t.uploads[r["upload_id"]]["blob"] == b""
 
 
+def test_upload_opens_a_connection_per_share_of_the_file(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four parts that fill two connections between them go out over two."""
+    cloud, t, db = env
+    raw = one_part_per_worker(cloud, t, db.parent)
+    pools: list[int] = []
+    monkeypatch.setattr(cd, "BYTES_PER_CONNECTION", 2 * t.part_size)
+    monkeypatch.setattr(cd, "ThreadPool", lambda n: pools.append(n) or ThreadPool(n))
+    assert cloud.upload(raw)["state"] == "complete"
+    assert pools == [2]
+
+
 @pytest.mark.parametrize(
     "bad,why",
     [("x.db-shm", "sidecar"), ("live.bin", "still being written"), ("missing.db", "missing.db")],
@@ -633,25 +650,86 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         t.request("POST", "/v1/data/uploads", {})
 
 
-def test_put_sends_the_body_in_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The timeout bounds each socket send. A part sent whole is cut off after that
-    long even while data is moving, so the body must reach the socket in blocks."""
-    requests: list[urllib.request.Request] = []
+class PartStore(BaseHTTPRequestHandler):
+    """Takes part PUTs over HTTP/1.1, which keeps the connection open between them."""
 
-    def opener(req: urllib.request.Request, timeout: float) -> Any:
-        requests.append(req)
-        return contextlib.nullcontext()
+    protocol_version = "HTTP/1.1"
 
-    monkeypatch.setattr(urllib.request, "urlopen", opener)
+    def do_PUT(self) -> None:
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        self.server.puts.append(  # type: ignore[attr-defined]
+            (self.client_address, self.headers["Transfer-Encoding"], body)
+        )
+        self.send_response(403 if "expired" in self.path else 200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+class PartStoreServer(ThreadingHTTPServer):
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), PartStore)
+        self.puts: list[tuple[Any, str | None, bytes]] = []
+        self.connections: list[socket.socket] = []
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        connection, address = super().get_request()
+        self.connections.append(connection)
+        return connection, address
+
+
+@pytest.fixture
+def part_store() -> Iterator[PartStoreServer]:
+    server = PartStoreServer()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server
+    server.shutdown()
+    server.server_close()
+    for connection in server.connections:  # ends the threads serving open connections
+        with contextlib.suppress(OSError):
+            connection.shutdown(socket.SHUT_RDWR)
+
+
+def test_put_sends_blocks_over_one_connection(
+    part_store: PartStoreServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The timeout bounds each socket send, so a part sent whole is cut off after that
+    long even while data is moving. A thread's parts all go over one connection."""
+    sent: list[list[int]] = []
+    real_send = requests.Session.send
+
+    def spying_send(
+        session: requests.Session, request: requests.PreparedRequest, **kwargs: Any
+    ) -> requests.Response:
+        sent.append([len(block) for block in request.body])  # type: ignore[union-attr]
+        return real_send(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", spying_send)
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
+    url = f"http://127.0.0.1:{part_store.server_address[1]}/part"
     body = os.urandom(2 * PUT_BLOCK + 123)
-    HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=1).put(
-        "https://s3.test/part", memoryview(body)
-    )
-    (req,) = requests
-    blocks = [bytes(block) for block in req.data]  # type: ignore[union-attr]
-    assert [len(block) for block in blocks] == [PUT_BLOCK, PUT_BLOCK, 123]
-    assert b"".join(blocks) == body
-    assert req.get_header("Content-length") == str(len(body))
+    t.put(url, memoryview(body))
+    t.put(url, memoryview(body))
+    assert sent == [[PUT_BLOCK, PUT_BLOCK, 123]] * 2
+    (first, encoding, received), (second, _, _) = part_store.puts
+    assert first == second and encoding is None and received == body
+
+
+def test_put_errors_leave_out_the_signed_url(part_store: PartStoreServer) -> None:
+    """A 403 in the message triggers a re-sign, and a signature can hold those digits."""
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=5)
+    signed = "X-Amz-Signature=a403b"
+    with pytest.raises(OSError, match="HTTP Error 403: Forbidden") as expired:
+        t.put(f"http://127.0.0.1:{part_store.server_address[1]}/expired?{signed}", b"x")
+    assert signed not in str(expired.value)
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        closed_port = unused.getsockname()[1]
+    with pytest.raises(OSError, match="Connection refused") as refused:
+        t.put(f"http://127.0.0.1:{closed_port}/part?{signed}", b"x")
+    assert "403" not in str(refused.value)
 
 
 @pytest.mark.parametrize(

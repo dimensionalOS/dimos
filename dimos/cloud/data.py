@@ -26,6 +26,7 @@ from datetime import datetime
 import functools
 import hashlib
 import json
+import math
 import mmap
 from multiprocessing.pool import ThreadPool
 import os
@@ -48,6 +49,9 @@ from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
+
+# an upload opens one connection per this much data, since each new one starts slow
+BYTES_PER_CONNECTION = 64 << 20
 
 
 class _AlreadyCompleteError(Exception):
@@ -216,8 +220,8 @@ class MultipartBackend:
     def _send_parts(
         self, artifact: Path, spec: dict[str, Any], create: dict[str, Any], tick: Progress
     ) -> dict[str, Any] | None:
-        """Send the parts the server lacks, `parallel_parts` at a time. Returns the
-        upload if a re-sign finds it already complete."""
+        """Send the parts the server lacks, up to `parallel_parts` at a time. Returns
+        the upload if a re-sign finds it already complete."""
         size, ps = spec["size"], create["part_size"]
         uploaded = {p["part_number"] for p in self.status(create["upload_id"])["parts"]}
         done = sum(min(ps, size - (n - 1) * ps) for n in uploaded)
@@ -258,10 +262,14 @@ class MultipartBackend:
             return len(chunk)
 
         missing = [n for n in sorted(urls) if n not in uploaded]
+        # request workers so each one is roughly allocated that many bytes
+        wanted = math.ceil((size - done) / BYTES_PER_CONNECTION)
+        # but then cap it to the maximum number configured
+        connections = max(1, min(wanted, self.parallel_parts))
         try:
             # daemon workers, so the process can exit immediately instead
             # of waiting for the parts in flight.
-            with ThreadPool(self.parallel_parts) as pool:
+            with ThreadPool(connections) as pool:
                 for sent in pool.imap_unordered(send, missing):
                     done += sent
                     tick("upload", done, size)
