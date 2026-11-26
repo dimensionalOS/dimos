@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import json
 import math
 import time
 from types import SimpleNamespace
@@ -338,3 +339,27 @@ def test_physical_assembly_parses_body_resources_without_hardware(name, monkeypa
     assert not {"r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"} & set(source.joint_names)
     for task in config.tasks:
         assert "yaw_joint" not in task.params
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_sysid_diagnostics_record_raw_rx_and_actual_tx(rig, enabled):
+    r = rig(start=False, diagnostic_tap=enabled, tracking_speed=0.42)
+    r.module.connect()
+    r.feed(100.125)
+    r.module._send_joint_targets(TORSO_Q + LEFT_Q + RIGHT_Q, connection_module._ros_stamp_now())
+    r.module._send_chassis_speed(0.5, 0.0, 0.8, connection_module._ros_stamp_now())
+    stream = r.ports["r1pro_diagnostics"].sent
+    assert r.speeds()[-1].twist.angular.z == 0.8
+    if not enabled:
+        assert r.module._tap is None and not stream
+        return
+    wait_until(lambda: len(stream) == 7, timeout=2.0)
+    events = [json.loads(msg.data) for msg in stream]
+    rx = next(e for e in events if e["topic"] == "/hdas/feedback_torso")
+    assert rx["direction"] == "rx" and rx["header_ns"] == 100125000000
+    assert rx["values"]["position"] == list(TORSO_Q)
+    torso = next(e for e in events if e["topic"] == TORSO_TOPIC)
+    assert torso["direction"] == "tx" and torso["values"]["velocity"] == [0.42] * 4
+    tx = next(e for e in events if e["topic"] == SPEED_TOPIC)
+    assert tx["values"]["linear"] == [0.5, 0.0, 0.0] and tx["values"]["angular"] == [0.0, 0.0, 0.8]
+    assert 0 < rx["monotonic_ns"] <= tx["monotonic_ns"]

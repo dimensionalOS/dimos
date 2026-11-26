@@ -80,9 +80,11 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES, R1PRO_CONTROL_MODEL
+from dimos.robot.galaxea.r1pro.diagnostic_tap import DiagnosticTap
 from dimos.robot.galaxea.r1pro.joints import GRIPPER_JOINTS, UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -189,6 +191,8 @@ class R1ProConnectionConfig(ConnectionConfig):
         publish_rate_hz: How often the aggregated joint_state goes out.
         sensor_stats_interval_s: Seconds between per-stream stats log lines
             (0 disables).
+        enable_head_depth: Subscribe to and publish vendor head depth.
+        diagnostic_tap: Capture ROS control feedback, IMUs, and commands.
         gripper_feedback_timeout_s: How old a jaw's feedback may be before
             its commands are dropped and its readback withheld.
         boot_vendor_stack: Boot the vendor stack (HDAS, mobiman), which
@@ -210,7 +214,9 @@ class R1ProConnectionConfig(ConnectionConfig):
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
     sensor_stats_interval_s: float = Field(default=10.0)
+    enable_head_depth: bool = True
     gripper_feedback_timeout_s: float = Field(default=1.0)
+    diagnostic_tap: bool = False
     boot_vendor_stack: bool = Field(default=True)
     vendor_profile: str = Field(default="")
 
@@ -244,6 +250,8 @@ class R1ProConnection(ConnectionModule):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
+    r1pro_diagnostics: Out[String]
+
     # Perception.
     head_depth: Out[Image]
 
@@ -254,6 +262,7 @@ class R1ProConnection(ConnectionModule):
         self._ros: RawROS | None = None
         self._sensors: RawROS | None = None
         self._cmd_torso_topic: RawROSTopic | None = None
+        self._tap: DiagnosticTap | None = None
         self._cmd_left_topic: RawROSTopic | None = None
         self._cmd_right_topic: RawROSTopic | None = None
         self._speed_topic: RawROSTopic | None = None
@@ -324,6 +333,8 @@ class R1ProConnection(ConnectionModule):
         self._sensors = RawROS(node_name="r1pro_sensors")
         self._sensors.start()
 
+        if self.config.diagnostic_tap:
+            self._tap = DiagnosticTap(self.r1pro_diagnostics.publish)
         self._setup_control_topics()
         self._setup_sensor_streams()
 
@@ -406,6 +417,9 @@ class R1ProConnection(ConnectionModule):
                     logger.warning(f"RawROS stop raised: {e}")
         self._sensors = None
         self._ros = None
+        if self._tap is not None:
+            self._tap.stop()
+            self._tap = None
 
         with self._lock:
             self._torso_seen = self._left_seen = self._right_seen = False
@@ -518,7 +532,7 @@ class R1ProConnection(ConnectionModule):
             cmd.position = segment
             cmd.velocity = [speed] * len(segment)
             cmd.effort = [0.0]
-            ros.publish(topic, cmd)
+            self._publish_ros(ros, topic, cmd)
 
     def _send_chassis_speed(self, vx: float, vy: float, wz: float, stamp: Any) -> None:
         from geometry_msgs.msg import TwistStamped
@@ -532,7 +546,7 @@ class R1ProConnection(ConnectionModule):
         cmd.twist.linear.x = vx
         cmd.twist.linear.y = vy
         cmd.twist.angular.z = wz
-        ros.publish(self._speed_topic, cmd)
+        self._publish_ros(ros, self._speed_topic, cmd)
 
     def _send_gripper_target(self, side: str, opening_m: float, stamp: Any) -> None:
         """One jaw's opening target on its vendor topic, in millimetres."""
@@ -546,7 +560,16 @@ class R1ProConnection(ConnectionModule):
         cmd.header.stamp = stamp
         cmd.name = [f"{side}_gripper"]
         cmd.position = [opening_m * _GRIPPER_MM_PER_M]
-        ros.publish(topic, cmd)
+        self._publish_ros(ros, topic, cmd)
+
+    def _publish_ros(self, ros: RawROS, topic: RawROSTopic, msg: Any) -> None:
+        tap = self._tap
+        if tap is None:
+            ros.publish(topic, msg)
+            return
+        mono, unix = time.monotonic_ns(), time.time_ns()
+        ros.publish(topic, msg)
+        tap.offer("tx", topic.topic, msg, mono, unix)
 
     # Control topics
 
@@ -576,6 +599,7 @@ class R1ProConnection(ConnectionModule):
             for side in self._grippers
         }
 
+        wrap = self._tap.wrap_rx if self._tap is not None else lambda cb: cb
         for topic, cb in (
             (RawROSTopic("/hdas/feedback_torso", RosJointState, qos=qos), self._on_feedback_torso),
             (
@@ -587,13 +611,13 @@ class R1ProConnection(ConnectionModule):
                 self._on_feedback_right,
             ),
         ):
-            self._control_unsubs.append(self._ros.subscribe(topic, cb))
+            self._control_unsubs.append(self._ros.subscribe(topic, wrap(cb)))
 
         for side in self._grippers:
             self._control_unsubs.append(
                 self._ros.subscribe(
                     RawROSTopic(_GRIPPER_FEEDBACK_TOPIC.format(side), RosJointState, qos=qos),
-                    self._on_gripper_feedback,
+                    wrap(self._on_gripper_feedback),
                 )
             )
         from hdas_msg.msg import FeedbackStatus  # type: ignore[import-not-found, import-untyped]
@@ -602,7 +626,7 @@ class R1ProConnection(ConnectionModule):
             self._control_unsubs.append(
                 self._ros.subscribe(
                     RawROSTopic(_GRIPPER_STATUS_TOPIC.format(segment), FeedbackStatus, qos=qos),
-                    self._on_gripper_status,
+                    wrap(self._on_gripper_status),
                 )
             )
 
@@ -610,7 +634,7 @@ class R1ProConnection(ConnectionModule):
         self._control_unsubs.append(
             self._ros.subscribe(
                 RawROSTopic("/motion_control/chassis_speed", TwistStamped, qos=qos),
-                self._on_chassis_speed,
+                wrap(self._on_chassis_speed),
             )
         )
 
@@ -642,17 +666,21 @@ class R1ProConnection(ConnectionModule):
             q: queue.Queue[Any] = queue.Queue(maxsize=maxsize)
             self._queues[stream] = q
             assert self._sensors is not None
+            callback = self._make_rx_cb(stream, q)
+            if self._tap is not None and stream.startswith("imu_"):
+                callback = self._tap.wrap_rx(callback)
             self._sensor_unsubs.append(
                 self._sensors.subscribe(
                     RawROSTopic(ros_topic, ros_type, qos=qos),
-                    self._make_rx_cb(stream, q),
+                    callback,
                 )
             )
             self._sensor_workers.append(
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
 
-        add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
+        if self.config.enable_head_depth:
+            add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
 
         add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
         add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
