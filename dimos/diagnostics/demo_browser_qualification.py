@@ -34,9 +34,11 @@ import threading
 import time
 from typing import Any
 
+from fastapi import FastAPI
 import numpy as np
 from playwright.sync_api import sync_playwright
 import psutil
+import uvicorn
 
 from dimos.control._control_test_helpers import FakeArm
 from dimos.control.connection_source import ConnectionSource
@@ -54,11 +56,13 @@ from dimos.diagnostics.evaluation import matched_paths
 from dimos.diagnostics.model import current_context
 from dimos.diagnostics.report import write_report
 from dimos.diagnostics.runtime import configure, get_runtime, publication
+from dimos.diagnostics.session import SessionSettings, SessionStore
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig, RustRecorder
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohPubSubBase
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
+from experimental.gateway.routes.diagnostics import router as diagnostics_router
 
 
 def child(
@@ -179,6 +183,26 @@ def run(
             check=True,
             capture_output=True,
         )
+        # Use the real shared ingress instead of an app-private trace backend.
+        if mode != "off":
+            SessionStore(directory).start(SessionSettings(run_id=run_id, mode=mode))
+        api = FastAPI()
+        api.include_router(diagnostics_router)
+        api_socket = cleanup.enter_context(socket.socket())
+        api_socket.bind(("127.0.0.1", 0))
+        api_socket.listen(16)
+        api_url = f"http://127.0.0.1:{api_socket.getsockname()[1]}"
+        api_server = uvicorn.Server(uvicorn.Config(api, log_level="error"))
+        api_thread = threading.Thread(
+            target=api_server.run, kwargs={"sockets": [api_socket]}, daemon=True
+        )
+        api_thread.start()
+
+        def stop_api() -> None:
+            api_server.should_exit = True
+            api_thread.join(5)
+
+        cleanup.callback(stop_api)
         web = child(
             cleanup,
             [
@@ -190,7 +214,7 @@ def run(
                 str(desktop / "tests/diagnostics-browser-server.ts"),
                 str(desktop),
                 str(client),
-                str(directory),
+                api_url,
             ],
             directory / "web.log",
         )
@@ -270,12 +294,11 @@ def run(
             arms[name].command(values)
 
         loop = TickLoop(
-            100,
-            {},
-            threading.Lock(),
-            {name: task for name, task in tasks.items()},
-            task_lock,
-            routing,
+            tick_rate=100,
+            hardware_lock=threading.Lock(),
+            tasks={name: task for name, task in tasks.items()},
+            task_lock=task_lock,
+            joint_to_hardware=routing,
             connections=sources,
             connection_command_callback=dispatch,
         )
@@ -379,7 +402,7 @@ def run(
             "[...fixture.diagnostics.watches.values()].every(w => w.shown >= 10)", timeout=20000
         )
         if runtime:
-            page.wait_for_function("fixture.diagnostics.traceUpload.bytesSent > 0")
+            page.wait_for_function("(fixture.session?.upload.bytesSent ?? 0) > 0")
         if steady_seconds:
             # Four timestamps bound the loopback browser/Python clock relation;
             # no wall-clock subtraction or RTT/2 assumption. Reprobe after load.
@@ -396,7 +419,7 @@ def run(
 
             clock_offset = probe_clock()
             before_cpu = cpu_snapshot()
-            before_bytes = page.evaluate("fixture.diagnostics.traceUpload.bytesSent")
+            before_bytes = page.evaluate("(fixture.session?.upload.bytesSent ?? 0)")
             started = time.perf_counter()
             measuring = True
             page.evaluate("fixture.startInputs()")
@@ -431,7 +454,7 @@ def run(
                 "clock_offset_uncertainty_ms": clock_offset[1] - clock_offset[0],
                 "clock_endpoint_change_ms": drift,
                 "telemetry_bytes_per_s": (
-                    page.evaluate("fixture.diagnostics.traceUpload.bytesSent") - before_bytes
+                    page.evaluate("(fixture.session?.upload.bytesSent ?? 0)") - before_bytes
                 )
                 / elapsed,
                 "arms": 2,

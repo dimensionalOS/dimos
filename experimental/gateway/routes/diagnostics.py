@@ -12,21 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only diagnostics under the existing gateway access boundary."""
+"""Session control and evidence under the existing gateway access boundary."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from threading import BoundedSemaphore
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from dimos.constants import STATE_DIR
 from dimos.diagnostics.analysis import analyze, load_bundle
 from dimos.diagnostics.capabilities import capabilities as describe_capabilities
+from dimos.diagnostics.ingest import WIRE_LIMIT, decode_batch, ingest
 from dimos.diagnostics.probe import clock_reply
+from dimos.diagnostics.session import Requirement, SessionSettings, SessionStore
+from dimos.diagnostics.session_network import SessionNetwork
 from dimos.diagnostics.store import DiagnosticsStore
 from dimos.diagnostics.topology import topology as build_topology
 
@@ -47,6 +53,78 @@ def capabilities() -> dict[str, Any]:
 @router.get("/clock")
 def clock() -> dict[str, Any]:
     return clock_reply()
+
+
+class CaptureControl(BaseModel):
+    action: Literal["mark", "flush", "stop"]
+    reason: str = Field(default="manual", max_length=512)
+
+
+class ReadinessRequest(BaseModel):
+    requirements: list[Requirement] = Field(min_length=1, max_length=128)
+
+
+_upload_slots = BoundedSemaphore(4)
+network_observer = SessionNetwork()
+
+
+@router.get("/session")
+def active_session() -> dict[str, Any]:
+    return {
+        "schema": "dimos.diagnostics.session/v1",
+        "session": SessionStore(store().root).active(),
+    }
+
+
+@router.put("/session")
+def start_session(settings: SessionSettings) -> dict[str, Any]:
+    try:
+        result = SessionStore(store().root).start(settings)
+        network_observer.start(store().root, settings)
+        return result
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/{run_id}/control")
+def control(run_id: str, request: CaptureControl) -> dict[str, Any]:
+    try:
+        count = SessionStore(store().root).control(run_id, request.action, request.reason)
+        if request.action == "stop":
+            network_observer.stop()
+        return {"run_id": run_id, "requested": request.action, "collectors": count}
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/{run_id}/readiness")
+def readiness(run_id: str, request: ReadinessRequest) -> dict[str, Any]:
+    try:
+        return SessionStore(store().root).readiness(run_id, request.requirements)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post("/browser")
+async def browser(request: Request) -> dict[str, Any]:
+    if not _upload_slots.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="diagnostics busy; retry this batch")
+    try:
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > WIRE_LIMIT:
+                raise HTTPException(status_code=413, detail="batch too large")
+        batch = await run_in_threadpool(
+            decode_batch, bytes(body), request.headers.get("content-encoding")
+        )
+        return await run_in_threadpool(ingest, store().root, batch)
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(status_code=503, detail="diagnostic storage unavailable") from error
+    finally:
+        _upload_slots.release()
 
 
 @router.get("/{run_id}/status")

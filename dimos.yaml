@@ -18,6 +18,32 @@ provides:
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
       carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
+    /diagnostics/session:
+      get:
+        summary: Discover the explicitly started diagnostic session on this host
+      put:
+        summary: Start one diagnostic session on this host without restarting the robot
+    /diagnostics/browser:
+      post:
+        summary: Persist bounded browser metadata in the shared incident store
+    /diagnostics/{run_id}/control:
+      post:
+        summary: Control capture without controlling the blueprint
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
+    /diagnostics/{run_id}/readiness:
+      post:
+        summary: Check required collectors have fresh durable evidence
+        parameters:
+          - name: run_id
+            in: path
+            required: true
+            schema:
+              type: string
     /diagnostics/capabilities:
       get:
         summary: Instrumentation capabilities and qualification coverage

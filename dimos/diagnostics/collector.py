@@ -100,6 +100,7 @@ class Collector:
         self.evicted = 0
         self.errors = 0
         self.counts: Counter[str] = Counter()
+        self.last_events: dict[str, int] = {}
         self.active_spans: dict[str, tuple[str, int, str]] = {}
         self.durations: dict[str, dict[str, Any]] = {}
         self.ring = TraceRing(self.ring_limit)
@@ -147,6 +148,7 @@ class Collector:
             "ring_evictions": self.ring.evictions,
             "io_errors": self.errors,
             "counts": dict(self.counts),
+            "last_events": dict(self.last_events),
             "stages": self.durations,
             "mode": self.mode,
             "ring_bytes": self.ring.size,
@@ -173,6 +175,8 @@ class Collector:
 
     def _measure(self, event: dict[str, Any]) -> None:
         name = event.get("event", "")
+        if name in self.last_events or len(self.last_events) < 512:
+            self.last_events[name] = time.time_ns()
         identity = event.get("span_id")
         if not identity or not isinstance(event.get("mono_ns"), int):
             return

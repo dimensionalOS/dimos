@@ -102,7 +102,7 @@ def monitor(
     if not 0 < seconds <= 86400 or not 1 <= interval <= 60:
         raise ValueError("monitor duration must be 0..86400s and interval 1..60s")
     stop = stop or threading.Event()
-    runtime = Runtime(run, directory / run)
+    runtime = Runtime(run, directory / run, collector="network")
     history = RadioHistory()
     ap_histories: dict[str, RadioHistory] = {}
     try:

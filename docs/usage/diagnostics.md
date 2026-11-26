@@ -1,8 +1,93 @@
 # Runtime diagnostics
 
-DimOS diagnostics records where time is spent and which input produced an output. It is opt-in, independent of recording robot datasets, and does not publish robot commands. The backend includes a local collector, CLI, read-only gateway API, Python transport/queue/control hooks, and Rust SDK hooks.
+DimOS diagnostics records where time is spent and which input produced an output. It is opt-in, independent of recording robot datasets, and does not publish robot commands. The backend includes a local collector, CLI, session and evidence gateway API, Python transport/queue/control hooks, and Rust SDK hooks.
 
 This is an instrumentation implementation, **not an end-to-end teleop qualification**. In particular, camera-driver timestamps do not establish physical exposure time, and adapter publication does not prove that an actuator applied a command. Source publication identity now survives the native gateway encoder/RTP metadata path and browser presentation callbacks. Missing coverage remains explicit.
+
+## One session across hosts
+
+Use the existing DimOS gateway on each participating **computer**, not a new
+service. A headset uploads through the operator's gateway and is an expected
+browser participant, not another backend to deploy.
+
+Create one session config with a new run ID and the existing gateway addresses:
+
+```json
+{
+  "run_id": "office-nav-01",
+  "hosts": {
+    "robot": {
+      "url": "http://robot.local:5555/gateways/dimos/diagnostics",
+      "network": {"interface": "wlan0", "peers": ["operator.local"], "interval_s": 2},
+      "required": [
+        {"name": "runtime", "kind": "python"},
+        {"name": "native modules", "kind": "native"},
+        {"name": "media gateway", "kind": "gateway"},
+        {"name": "radio observations", "event": "network.wifi"}
+      ]
+    },
+    "operator": {
+      "url": "http://localhost:5555/gateways/dimos/diagnostics",
+      "required": [{"name": "viewer", "kind": "browser", "event": "video.render_submit"}]
+    }
+  }
+}
+```
+
+Replace the example addresses and interface. For an immersive test require
+`video.xr_submit` instead. `minimum` sets how many distinct collector processes
+must match a requirement; a count of one does not certify every camera/module.
+Authenticated endpoints can specify `token_env` naming an environment variable;
+credentials never belong in this file. All host processes use the normal host-local
+state root; if overriding it, configure that **same root on every collector and
+gateway on that host**.
+
+```bash
+dimos diagnostics session start session.json -- dimos run YOUR_BLUEPRINT --daemon
+# Open/reload the ordinary viewer after starting the session; no special URL.
+dimos diagnostics session status session.json --wait 30
+dimos diagnostics session mark session.json --reason visible-stall
+dimos diagnostics session collect session.json ./office-nav-01
+dimos diagnostics session stop session.json
+```
+
+`start` checks every endpoint before activation and only runs the optional launch
+command after all hosts accept the session. It supplies the existing runtime flags
+through environment variables; normal hosted workers receive the run ID through
+GlobalConfig. It does not attach instrumentation to an already-running blueprint.
+Omit the launch command if another normal launcher will start the instrumented run.
+A failed activation reports the affected hosts; rerun the same command or stop the
+partial session explicitly. It never stops robot programs or takes a control lease.
+
+The updated native gateway discovers the active host session without restarting.
+An explicit `DIMOS_DIAGNOSTICS` environment setting takes precedence; remove old
+fixed-run overrides to use session discovery. The shared browser SDK discovers the
+session when the app connects and uploads bounded, retry-safe batches directly to
+DimOS. An existing viewer must reload to join a new session; session changes never
+silently reconnect command publishers during teleoperation.
+
+`status` returns exit code 2 until every requirement has fresh evidence **and an
+artifact on disk**. Missing/stale processes, missing events, storage failures and
+incompatible endpoints are not green. Radio-observation presence does not imply
+good signal or available station counters. Readiness is capture readiness, not a
+latency qualification. Required counts and event names must cover the test's actual
+participants; the tool cannot infer an unlisted headset or camera.
+
+The optional `network` field runs the existing network observer inside that host's
+DimOS gateway, sampling endpoint resources, routes, radio counters and low-rate
+pings. It stops with the session. Omit it if the blueprint already includes
+`WifiMonitor`/`NetworkSurvey`; those modules contribute the same measurements.
+For a spatial coverage map, retain the existing `wifi_survey` composition and its
+explicit odometry connection. No new map implementation is introduced here.
+
+`collect` creates one directory with host subfolders, `collection.json`,
+`readiness.json`, and the existing `report.html`. It downloads only metadata with a
+1 GiB total bound, preserves source identities and reports partial downloads.
+Collection is a snapshot of retained artifacts, **not an unlimited recording of
+the entire lap**. Runtime flight recorders retain bounded windows and cumulative
+metrics; mark a fault while it occurs. The returned download completeness is not a
+claim that all links were measured. `stop` stops diagnostics only. A new capture
+uses a new run ID so delayed uploads cannot contaminate it.
 
 ## Component ownership
 
@@ -17,8 +102,8 @@ required.
 | Hardware sensors | `dimos/hardware/sensors/wifi/` | Radio observations, ICMP probes and interval host/interface rates. CLI collection and blueprint modules use these same collectors. |
 | Mapping | `dimos/mapping/wifi/` | Optional timestamped join with odometry and an ordinary point-cloud overlay. It does not own transport or process instrumentation. |
 | Shared native gateway and browser SDK | `dimensionalOS/zenoh-gateway` | Encode, pacing, delivery, decoding and browser frame identity. Any application can consume these hooks. |
-| Existing Python gateway | `experimental/gateway/routes/diagnostics.py` | Read-only status, capabilities, topology, metrics and incident downloads under the normal gateway boundary. |
-| Spatial Desktop app | `data/diagnostics.js`, `server/trace.ts` in its app repository | Render/XR observations and bounded uploads through the app's declared routes. It consumes the shared SDK instead of implementing another streaming stack. |
+| Existing Python gateway | `experimental/gateway/routes/diagnostics.py` | Session lifecycle, browser ingestion, readiness, status, topology, metrics and incident downloads under the normal gateway boundary. |
+| Spatial Desktop app | `data/diagnostics.js` in its app repository | Render/XR observations only. Discovery, batching and upload come from the shared SDK; storage and session control belong to DimOS. |
 
 For the integration revisions, review boundaries and remaining qualification, see
 [diagnostics integration](/docs/development/diagnostics-integration.md).
@@ -206,11 +291,17 @@ These routes are under the existing DimOS gateway access boundary and are listed
 | `GET /diagnostics/{run_id}/incidents/{process}/{incident}` | Bounded NDJSON incident download |
 | `GET /diagnostics/{run_id}/incidents/{process}/{incident}/analysis` | Offline analysis of that incident |
 
-Artifacts live at `<root>/<run>/<publisher-process>/`. The first NDJSON row is a `dimos.incident/v1` manifest; events use `dimos.trace/v1`. Native/Python telemetry stays on the machine. Opt-in browser tracing uploads bounded gzip batches to the existing authenticated Spatial Desktop route; one unacknowledged batch is retained and retried with the same ID. Uploads have a separate 80 KiB/s payload budget and do not run in XR rendering callbacks. Combine host artifacts offline under one run directory for cross-host inspection. The frontend should label stale/missing processes and coverage gaps instead of treating an empty response as healthy.
+Artifacts live at `<root>/<run>/<publisher-process>/`. The first NDJSON row is a `dimos.incident/v1` manifest; events use `dimos.trace/v1`. Native/Python telemetry stays on the machine. Opt-in browser tracing uploads bounded gzip batches to the existing authenticated DimOS gateway route; one unacknowledged batch is retained and retried with the same ID. Uploads have a separate 80 KiB/s payload budget and do not run in XR rendering callbacks. Use `dimos diagnostics session collect` to combine host artifacts for cross-host inspection. The frontend should label stale/missing processes and coverage gaps instead of treating an empty response as healthy.
 
 ## Browser capture and exports
 
-Run the matching gateway/Spatial Desktop diagnostics branches together. Add `?diagnosticsRun=<same-run-id>` to the Spatial Desktop URL to opt in. The browser negotiates the trace contract when opening command publishers; an older incompatible gateway rejects setup. Camera frames use source attachments and RTP timestamps scoped to the current subscription generation. Reconnects clear the old frame correlation cache. Repeated command transmission retains the original input identity and age.
+Use the matching shared gateway SDK and DimOS session API. Apps call
+`openDiagnostics()` once when opening their gateway connection, pass its recorder
+to `connect()`, then start the SDK upload lifecycle. Spatial supplies only render/XR
+events. The browser negotiates the trace contract when opening command publishers;
+an older incompatible gateway rejects traced framing. Camera correlation uses source
+attachments and RTP timestamps scoped to the subscription generation. Reconnects
+clear old frame correlations; retransmitted commands retain their input identity.
 
 `video.presented` is a browser callback, `video.texture_upload` an observed renderer texture update, and `video.xr_submit` the render submission following that update. These are software estimates with explicit correlation provenance, not optical display measurements. Hidden panels are not reported as submitting a new frame merely because they remain subscribed.
 

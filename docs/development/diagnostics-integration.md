@@ -44,10 +44,15 @@ The key consolidation changes are:
 2. **Gateway:** upstream the streaming recovery and tracing changes in the shared
    gateway/SDK. Desktop then updates its normal pinned gateway dependency. No
    permanent private Desktop build or patched local dependency is the release path.
-3. **Spatial app:** release the app against that SDK. Ordinary viewing works
-   without tracing; opting into `?diagnosticsRun=RUN` requires the instrumented
-   SDK and explicitly reports an unsupported client. The app keeps its own
-   presentation callbacks and declared upload route.
+3. **Spatial app:** only presentation/XR callbacks and the shared SDK integration
+   remain. Its private trace store, upload route and uploader are removed. Session
+   discovery and persistence use the existing DimOS gateway, declared in `uses:`.
+
+Session lifecycle, host readiness, browser storage and multi-host collection now
+live in `dimos/diagnostics/` and its existing CLI/API. The shared gateway SDK owns
+browser batching/retries and the native gateway follows the host session without
+restarting. See the [single-session workflow](/docs/usage/diagnostics.md). These are
+package boundaries for instrumentation, not separately operated diagnostic systems.
 
 A source branch is not a released dependency. Until the gateway changes are
 released and Desktop's dependency is updated, a stock Desktop does not provide
@@ -62,7 +67,8 @@ and a new archive path. Explicitly connect the survey to the mapper's pose strea
 (Point-LIO for the tested R1 mapping stack). Wheel odometry is not interchangeable
 just because both streams use a frame named `odom`.
 
-Enable runtime diagnostics with the same run ID on participating processes.
+Use one diagnostics session config to activate participating hosts and launch
+the normal blueprint with a shared run ID.
 Enable `dtop` independently if its live resource UI is needed. Collect the robot,
 gateway and browser evidence for that run before evaluating latency. The survey
 archive and incident bundle contain metadata; enabling them does not enable the

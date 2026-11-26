@@ -14,6 +14,7 @@
 
 """Diagnostics routes expose bounded local evidence without accepting arbitrary paths."""
 
+import gzip
 import json
 
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from dimos.diagnostics.store import DiagnosticsStore
+from dimos.diagnostics.test_session import browser_batch
 from experimental.gateway.routes.diagnostics import router
 
 
@@ -86,3 +88,28 @@ def test_clock_endpoint_and_incident_download(client, tmp_path):
         ]
         == "incomplete"
     )
+
+
+def test_session_upload_and_readiness_through_public_routes(client):
+    assert client.put("/diagnostics/session", json={"run_id": "lap"}).status_code == 200
+    assert client.get("/diagnostics/session").json()["session"]["run_id"] == "lap"
+    required = {
+        "requirements": [{"name": "browser", "kind": "browser", "event": "video.presented"}]
+    }
+    assert client.post("/diagnostics/lap/readiness", json=required).json()["ready"] is False
+    response = client.post(
+        "/diagnostics/browser",
+        content=gzip.compress(json.dumps(browser_batch()).encode()),
+        headers={"content-encoding": "gzip"},
+    )
+    assert response.status_code == 200, response.text
+    assert client.post("/diagnostics/lap/readiness", json=required).json()["ready"] is True
+    assert client.post("/diagnostics/lap/control", json={"action": "stop"}).status_code == 200
+    assert client.get("/diagnostics/session").json()["session"] is None
+    assert client.post("/diagnostics/browser", json=browser_batch()).status_code == 400
+
+
+def test_unknown_host_session_and_overlarge_upload_never_pass(client):
+    assert client.post("/diagnostics/absent/control", json={"action": "stop"}).status_code == 409
+    assert client.post("/diagnostics/browser", content=b"x" * 600_000).status_code == 413
+    assert client.post("/diagnostics/browser", content=b"invalid").status_code == 400

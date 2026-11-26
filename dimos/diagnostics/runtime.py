@@ -41,7 +41,9 @@ from dimos.diagnostics.store import validate_run_id
 
 
 class Runtime:
-    def __init__(self, run_id: str, directory: Path, mode: str = "trace") -> None:
+    def __init__(
+        self, run_id: str, directory: Path, mode: str = "trace", *, collector: str = "python"
+    ) -> None:
         validate_run_id(run_id)
         self.pid = os.getpid()
         self.mode = mode
@@ -64,6 +66,7 @@ class Runtime:
                 "wall_ns": time.time_ns(),
                 "mono_ns": time.monotonic_ns(),
                 "coverage": "instrumented boundaries only",
+                "collector": collector,
             },
             mode=mode,
             storage_root=directory.parent,

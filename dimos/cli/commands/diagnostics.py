@@ -38,11 +38,86 @@ from dimos.diagnostics.otlp import otlp, send as send_otlp
 from dimos.diagnostics.probe import exchange
 from dimos.diagnostics.report import write_report
 from dimos.diagnostics.ros_trace import import_trace
+from dimos.diagnostics.session_client import SessionClient, SessionPlan
 from dimos.diagnostics.socket_probe import echo as serve_echo, socket_probe as measure_socket
 from dimos.diagnostics.store import DiagnosticsStore
 from dimos.diagnostics.topology import topology as build_topology
 
 app = typer.Typer(help="Bounded runtime tracing and offline incident inspection.")
+sessions = typer.Typer(help="One explicit session across existing host gateways and browsers.")
+app.add_typer(sessions, name="session")
+
+
+def session_client(config: Path) -> SessionClient:
+    plan = SessionPlan.model_validate_json(config.read_text())
+    headers = {}
+    for name, host in plan.hosts.items():
+        if host.token_env:
+            token = os.environ.get(host.token_env)
+            if not token:
+                raise typer.BadParameter(f"missing token environment variable for {name}")
+            headers[name] = {"Authorization": f"Bearer {token}"}
+    return SessionClient(plan, headers)
+
+
+@sessions.command(
+    "start", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def session_start(ctx: typer.Context, config: Path) -> None:
+    """Activate the same run on all hosts; optionally launch the normal blueprint command after --."""
+    client = session_client(config)
+    result = client.start()
+    typer.echo(json.dumps(result, indent=2))
+    if not result["started"]:
+        raise typer.Exit(2)
+    if ctx.args:
+        env = {
+            **os.environ,
+            "DIMOS_DIAGNOSTICS": client.plan.mode,
+            "DIMOS_DIAGNOSTICS_RUN": client.plan.run_id,
+        }
+        # Do not transmit a Mac-local diagnostics directory to remote Linux workers.
+        env.pop("DIMOS_DIAGNOSTICS_DIR", None)
+        raise typer.Exit(subprocess.call(ctx.args, env=env))
+
+
+@sessions.command("status")
+def session_status(config: Path, wait: float = typer.Option(0, min=0, max=60)) -> None:
+    """Require fresh, durably written evidence from every configured participant."""
+    client = session_client(config)
+    deadline = time.monotonic() + wait
+    while True:
+        result = client.status()
+        if result["ready"] or time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(0 if result["ready"] else 2)
+
+
+@sessions.command("mark")
+def session_mark(config: Path, reason: str = "manual") -> None:
+    result = session_client(config).control("mark", reason)
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(2 if any("error" in r for r in result.values()) else 0)
+
+
+@sessions.command("stop")
+def session_stop(config: Path) -> None:
+    """Stop diagnostic collectors on all hosts; never stop the blueprint."""
+    result = session_client(config).control("stop")
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(2 if any("error" in r for r in result.values()) else 0)
+
+
+@sessions.command("collect")
+def session_collect(config: Path, destination: Path) -> None:
+    """Download bounded evidence into one bundle and generate its report."""
+    result = session_client(config).collect(destination)
+    manifests, events = load_bundle(destination)
+    write_report(destination / "report.html", manifests, events)
+    typer.echo(json.dumps(result, indent=2))
+    raise typer.Exit(0 if result["complete"] else 2)
 
 
 @app.command()

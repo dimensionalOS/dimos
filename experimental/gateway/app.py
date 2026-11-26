@@ -52,6 +52,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
                 asyncio.create_task(events.watch_logs(state.bus, state.dimos_dir)),
             ]
         yield
+        diagnostics.network_observer.stop()
         state.uploads.shutdown()
         for task in state.background:
             task.cancel()
