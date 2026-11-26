@@ -56,7 +56,8 @@ dimos --simulation run unitree-g1-sim    # humanoid
 
 !!! note
 
-    The first simulation run downloads the [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) robot models, about **2 GB**, before the simulator opens.
+    The first run downloads any missing simulation data, including the Unitree robot meshes
+    (about 19 MB compressed). Once the data is cached, both simulations can start offline.
 
 ### Real robot
 
