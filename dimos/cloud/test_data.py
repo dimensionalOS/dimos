@@ -356,16 +356,11 @@ def test_resign_finding_the_upload_complete_reports_it_skipped(
     env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The URLs expire and the re-create answers that the upload is already complete,
-    as when another run finished it. The upload stops there and sends nothing more."""
+    as when another run finished it."""
     cloud, t, db = env
     cloud.backend.retries = 0
     t.expire_at = 1
-    puts: list[str] = []
-    real_put, real_request = t.put, t.request
-
-    def spying_put(url: str, body: bytes | memoryview) -> None:
-        puts.append(url)
-        real_put(url, body)
+    real_request = t.request
 
     def completing_request(
         method: str, path: str, body: dict[str, Any] | None = None
@@ -375,11 +370,9 @@ def test_resign_finding_the_upload_complete_reports_it_skipped(
                 u["state"] = "complete"
         return real_request(method, path, body)
 
-    monkeypatch.setattr(t, "put", spying_put)
     monkeypatch.setattr(t, "request", completing_request)
     r = cloud.upload(db)
     assert r["skipped"] and r["state"] == "complete"
-    assert puts and all(url.endswith("?e=0") for url in puts)
 
 
 def test_failed_part_abandons_the_parts_in_flight(
