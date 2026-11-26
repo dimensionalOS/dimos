@@ -50,9 +50,6 @@ STRUCTURED = ("global", "modules", "secrets")
 
 # held across every change to what runs (start, stop, relaunch), so none sees another half done
 _lock = threading.RLock()
-# how often this gateway changed what runs (each stop request, each spawn): a replacement is validated
-# outside the lock, and goes ahead only if this and the running process are as it found them
-_changes = 0
 # the gateway's own children, by pid: set once reaped, which is when the gateway stops counting it as running
 _reaped: dict[int, threading.Event] = {}
 # called from a thread when a launched child exits (the launch watcher wakes on it)
@@ -643,8 +640,6 @@ def run_args(
 
 
 def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) -> int:
-    global _changes
-    _changes += 1
     launch_log().parent.mkdir(parents=True, exist_ok=True)
     launch_log().write_text(f"$ {shlex.join(shown)}\n")
     with launch_log().open("a") as log:
@@ -740,20 +735,17 @@ def _prepare(
         **launch_env,
     }
     command = [str(program), *run_args(blueprint, launch, targets)]
-    # Raw exec requests may contain other CLI options. A structured launch has only
-    # module flags after its target, and can use the checkout's own parser before stop.
-    if validate and not launch.exact and not launch.args:
-        module_args = command[command.index("run") + 2 :]
+    if validate:
         try:
             checked = asyncio.run(
                 introspect.run_child(
                     dimos_dir,
-                    ["validate_launch", blueprint],
-                    stdin={"global": launch.global_, "args": module_args, "env": launch_env},
+                    ["validate_launch"],
+                    stdin={"argv": command[1:], "env": launch_env},
                 )
             )
         except introspect.IntrospectError as error:
-            # not a verdict on the settings: the checkout could not be asked (a timeout, an import error)
+            # the checkout couldn't be asked (a timeout, an import error), which says nothing about the settings
             raise RunError(
                 f"could not validate the launch, so nothing was stopped or started: {error}"
             ) from error
@@ -822,10 +814,7 @@ def _wait_reaped(pid: int) -> None:
 
 def stop() -> str:
     """Exactly `dimos stop`: SIGTERM the newest run, SIGKILL after 5 s. A launch that hasn't registered yet is killed."""
-    global _changes
     with _lock:
-        # also with nothing running: a replacement still being validated must not start after a stop
-        _changes += 1
         entry = get_most_recent(alive_only=True)
         record = _record()
         if entry is None:
@@ -857,11 +846,6 @@ def _running() -> tuple[int, float | None] | None:
     return None
 
 
-def _stop_if_running() -> None:
-    if _running() is not None:
-        stop()
-
-
 def relaunch(
     dimos_dir: Path,
     check_known: Callable[[str], None],
@@ -883,22 +867,26 @@ def relaunch(
             blueprint = check_name(request.get("blueprint"))
             if "copy" in request:
                 # An externally started process can belong to a different checkout.
-                _stop_if_running()
+                if _running() is not None:
+                    stop()
                 return start_copy(blueprint, request["copy"])
             config = LaunchConfig.from_json(request)
         else:
             blueprint, config = replacement
-        found = _changes, _running()
-    check_known(blueprint)
-    # Not under the lock: the run to replace is still alive, and a stop must not wait minutes behind this.
+        check_known(blueprint)
+        running = _running()
+        if running is None:
+            # nothing to keep alive, so this is an ordinary start
+            check_idle()
+            return _prepare(dimos_dir, blueprint, config.normalized())()
+    # outside the lock: the run being replaced keeps running, and a stop mustn't wait minutes behind this check
     spawn = _prepare(dimos_dir, blueprint, config.normalized(), validate=True)
     with _lock:
-        if (_changes, _running()) != found:
+        if _running() != running:
             raise ApiError(
                 409,
-                "not started: the run changed or a stop was requested while this launch was being"
-                " validated",
+                "not started: what runs changed (a stop, another launch) during the launch's check",
             )
-        _stop_if_running()
+        stop()
         check_idle()
         return spawn()

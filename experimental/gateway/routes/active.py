@@ -132,26 +132,18 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
     return await started(state, check_name(name), LaunchConfig(args=rest, exact=True))
 
 
-async def relaunched(
-    state: State, replacement: tuple[str, LaunchConfig] | None = None
-) -> dict[str, Any]:
+@router.post("/relaunch", response_model=responses.Launch)
+async def relaunch(state: GatewayState, request: LaunchRequest | None = None) -> dict[str, Any]:
     launch = await asyncio.to_thread(
-        launches.relaunch, state.dimos_dir, partial(check_known, state), replacement
+        launches.relaunch,
+        state.dimos_dir,
+        partial(check_known, state),
+        request.prepared() if request is not None else None,
     )
     if launch.get("blueprint"):
         state.cache.forget_name(str(launch["blueprint"]))
     state.bus.launch(launch)
     return launch
-
-
-@router.post("/relaunch", response_model=responses.Launch)
-async def relaunch(state: GatewayState) -> dict[str, Any]:
-    return await relaunched(state)
-
-
-@router.post("/replace", response_model=responses.Launch)
-async def replace_active(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
-    return await relaunched(state, request.prepared())
 
 
 @router.post("/stop", response_model=responses.Stopped)

@@ -9,11 +9,9 @@ dimos --record --simulation run unitree-go2
 dimos --record --robot-ip 192.168.123.161 run unitree-go2
 ```
 
-Bare `--record` means `--record sqlite`. SQLite writes `<run-id>/memory.db`
-and MCAP writes `<run-id>/memory.mcap` under the recording root. The Desktop
-Launcher uses the folder shown in the Recordings app (`GET /history/recordings`).
-A standalone run uses `DIMOS_RECORDINGS_DIR` if set. Otherwise it writes to
-the checkout's `recordings/` directory or, with default XDG settings,
+Bare `--record` means `--record sqlite`. SQLite lands at
+`recordings/<run-id>/memory.db`; MCAP lands at
+`recordings/<run-id>/memory.mcap`. The root is under the checkout, or
 `~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
 same `YYYYMMDD-HHMMSS-<4 hex>-<blueprint>` used by the run's `logs/` directory.
 

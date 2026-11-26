@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 9.3.0
+    version: 9.4.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -169,21 +169,15 @@ provides:
         description: >-
           Launch {blueprint} or {module} with all of its config {global, modules, secrets?} (the gateway saves none); 409 if
           something runs
-    /active/replace:
-      post:
-        description: >-
-          Validate the same blueprint or module request as /active/launch before stopping the active run.
-          Invalid settings leave the current process and saved request intact. Starts the replacement if idle.
-          409, and nothing is started, if the run changed or a stop was requested during validation.
     /active/exec:
       post:
         summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module)
     /active/relaunch:
       post:
         description: >-
-          Check a saved structured launch with the current checkout's config parser before stopping and restarting the blueprint.
-          A run started elsewhere is relaunched as a copy of its command.
-          409, and nothing is started, if the run changed or a stop was requested during the check.
+          Stop the running blueprint and start the same launch again, or the {blueprint|module, config} body in its place
+          (one started elsewhere repeats as a copy of its command). A structured launch is first checked by the checkout's
+          own `dimos run`: 400 if it refuses, and the current run keeps running; 409 if what runs changes during the check
     /active/stop:
       post:
         summary: Exactly `dimos stop`

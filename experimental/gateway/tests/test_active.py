@@ -550,14 +550,14 @@ def test_replace_checks_the_new_settings_before_stopping_the_current_run(
     until(running(client))
     saved = launches.request_file().read_bytes()
 
-    refused = client.post("/active/replace", json={**module, "config": {"global": values}})
+    refused = client.post("/active/relaunch", json={**module, "config": {"global": values}})
 
     assert refused.status_code == 400 and error in refused.json()["error"]
     assert client.get("/active").json()["pid"] == first["pid"]
     assert launches.request_file().read_bytes() == saved
 
     replaced = client.post(
-        "/active/replace", json={**module, "config": {"global": {"n_workers": 2}}}
+        "/active/relaunch", json={**module, "config": {"global": {"n_workers": 2}}}
     )
     assert replaced.status_code == 200 and replaced.json()["pid"] != first["pid"]
     until(running(client))
@@ -595,7 +595,7 @@ def test_replace_validates_checkout_dotenv_and_honors_launch_environment(
     saved = launches.request_file().read_bytes()
     (checkout / ".env").write_text("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT=invalid\n")
 
-    refused = client.post("/active/replace", json=module)
+    refused = client.post("/active/relaunch", json=module)
 
     assert refused.status_code == 400 and "default_rpc_timeout" in refused.json()["error"]
     active = client.get("/active").json()
@@ -605,7 +605,7 @@ def test_replace_validates_checkout_dotenv_and_honors_launch_environment(
         "modules": {"democalculatorskill": {"default_rpc_timeout": 2}},
         "secrets": ["democalculatorskill.default_rpc_timeout"],
     }
-    accepted = client.post("/active/replace", json={**module, "config": config})
+    accepted = client.post("/active/relaunch", json={**module, "config": config})
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["pid"] != started.json()["pid"]
     until(running(client))
@@ -629,10 +629,6 @@ def stop_here(client: TestClient) -> None:
     assert client.post("/active/stop").status_code == 200
 
 
-def stop_with_nothing_running(client: TestClient) -> None:
-    assert client.post("/active/stop").status_code == 409
-
-
 def stop_in_a_terminal(client: TestClient) -> None:
     """`dimos stop`: the gateway only finds the run gone from the registry."""
     entry = get_most_recent()
@@ -640,42 +636,31 @@ def stop_in_a_terminal(client: TestClient) -> None:
     stop_entry(entry)
 
 
-def launch_one_that_fails(client: TestClient) -> None:
-    assert client.post("/active/launch", json={"blueprint": "fail"}).status_code == 200
-    until(lambda: launch_of(client).get("phase") == "failed")
-
-
 @pytest.mark.parametrize(
-    ("route", "launched", "change"),
+    ("body", "change"),
     [
-        ("/active/relaunch", True, stop_here),
-        ("/active/replace", True, stop_here),
-        ("/active/replace", False, stop_with_nothing_running),
-        ("/active/replace", True, stop_in_a_terminal),
-        ("/active/replace", False, launch_one_that_fails),
+        (None, stop_here),
+        ({"blueprint": "demo"}, stop_here),
+        ({"blueprint": "demo"}, stop_in_a_terminal),
     ],
 )
-def test_a_replacement_does_not_start_after_a_stop_or_change_during_its_validation(
+def test_a_relaunch_does_not_start_after_a_stop_during_its_check(
     client: TestClient,
     launch_targets: AsyncMock,
     mocker: MockerFixture,
-    route: str,
-    launched: bool,
+    body: dict[str, Any] | None,
     change: Callable[[TestClient], None],
 ) -> None:
-    pid = None
-    if launched:
-        pid = client.post("/active/launch", json={"blueprint": "demo"}).json()["pid"]
-        until(running(client))
+    pid = client.post("/active/launch", json={"blueprint": "demo"}).json()["pid"]
+    until(running(client))
     entered, release = hold_validation(launch_targets)
-    body = {"blueprint": "demo"} if route == "/active/replace" else None
     with ThreadPoolExecutor() as pool:
         try:
-            replacing = pool.submit(client.post, route, json=body)
+            replacing = pool.submit(client.post, "/active/relaunch", json=body)
             assert entered.acquire(timeout=10)
-            # answered while the replacement is still being validated
+            # answered while the relaunch is still being checked
             pool.submit(change, client).result(timeout=20)
-            until(lambda: pid is None or not launches.alive(pid))
+            until(lambda: not launches.alive(pid))
             spawn = mocker.spy(launches, "_spawn")
         finally:
             release.set()
@@ -683,8 +668,8 @@ def test_a_replacement_does_not_start_after_a_stop_or_change_during_its_validati
     assert refused.status_code == 409 and refused.json()["error"].startswith("not started")
     spawn.assert_not_called()
     assert not client.get("/active").json()["running"]
-    # and nothing is left held: the next replacement starts
-    assert client.post("/active/replace", json={"blueprint": "demo"}).status_code == 200
+    # and nothing is left held: with nothing running, the next one is an ordinary start
+    assert client.post("/active/relaunch", json={"blueprint": "demo"}).status_code == 200
 
 
 def test_one_of_two_replacements_validated_against_the_same_run_starts(
@@ -699,7 +684,7 @@ def test_one_of_two_replacements_validated_against_the_same_run_starts(
             replacing = [
                 pool.submit(
                     client.post,
-                    "/active/replace",
+                    "/active/relaunch",
                     json={"blueprint": "demo", "config": {"global": {"n_workers": workers}}},
                 )
                 for workers in (2, 3)
@@ -928,11 +913,7 @@ def test_latest_log_uses_the_same_run_as_history(client: TestClient, home: Path)
 
 
 def test_recordings_is_the_standard_directory(
-    client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    checkout: Path,
-    mocker: MockerFixture,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
 ) -> None:
     # the served checkout isn't the gateway's own (Desktop's pinned copy serves the user's): its default, as its own
     # dimos would pick it, never the copy's recordings/ (replaced on the next move)
@@ -946,28 +927,7 @@ def test_recordings_is_the_standard_directory(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
     shared_config.shared_config.cache_clear()
-    folder = client.get("/history/recordings").json()["path"]
-    assert folder == str(tmp_path / "recs")
-    # A launch and an app must see the same folder even if Desktop's inherited hint predates the setting.
-    monkeypatch.setenv("DIMOS_RECORDINGS_DIR", str(tmp_path / "old"))
-    spawn = mocker.spy(launches, "_spawn")
-    assert (
-        client.post(
-            "/active/launch", json={"blueprint": "demo", "config": {"record": "sqlite"}}
-        ).status_code
-        == 200
-    )
-    run_env = spawn.call_args.args[3]
-    writer = subprocess.check_output(
-        [
-            sys.executable,
-            "-c",
-            "from dimos.memory.tap import recording_dir; print(recording_dir())",
-        ],
-        env={**run_env, "DIMOS_RUN_ID": "one-run"},
-        text=True,
-    )
-    assert Path(writer.strip()) == Path(folder) / "one-run"
+    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
 
 
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:

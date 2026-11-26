@@ -24,6 +24,7 @@ import functools
 import importlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 from pathlib import Path
@@ -776,46 +777,35 @@ def packages() -> dict[str, Any]:
     }
 
 
-def validate_launch(name: str, request: dict[str, Any]) -> dict[str, Any]:
-    """Validate a structured launch in the served checkout before replacing a process.
+class _ValidatedError(Exception):
+    """Raised where `dimos run` has checked the whole command and would start the run."""
 
-    `rejected` is the checkout's refusal of the settings, as `dimos run` would word it. Any other
-    failure is raised: the launch could not be checked, which says nothing about its settings.
-    """
-    # This child serves one request. Let the checkout's CLI load its .env with the
-    # launch environment already in place, before config and state paths are imported.
+
+def validate_launch(request: dict[str, Any]) -> dict[str, Any]:
+    """Run the checkout's own `dimos run` on a launch's argv up to the start; `rejected` is its refusal."""
+    # this child serves one request, so the launch environment can go in before the CLI loads .env
     os.environ.update(request["env"])
-    importlib.import_module("dimos.cli.dimos")
+    from dimos.cli.dimos import main, normalize_argv
+    from dimos.core import run_registry
 
-    from dimos.cli.commands.lifecycle import DEFAULT_CONFIG_PATH, _with_relay_bridge
-    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-    from dimos.core.coordination.module_coordinator import stream_name_types
-    from dimos.core.global_config import global_config
-    from dimos.memory.tap import check_topics
-    from dimos.robot.get_all_blueprints import get_by_name
+    def validated() -> int:
+        raise _ValidatedError
 
-    config_path = DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else None
-    args = request["args"]
-    overrides = {key: value for key, value in request["global"].items() if value is not None}
+    # run() calls cleanup_stale once every check has passed, before it registers or spawns anything
+    run_registry.cleanup_stale = validated
+    output = io.StringIO()
     try:
-        global_config.update(
-            **BlueprintConfigParser.preparse_global_config(
-                args, config_path=config_path, environ=os.environ, global_overrides=overrides
-            )
-        )
-        blueprint = _with_relay_bridge(solid_blueprint(get_by_name(name)))
-        if global_config.record:
-            check_topics(
-                global_config.record_topics, {stream for stream, _ in stream_name_types(blueprint)}
-            )
-        BlueprintConfigParser(blueprint).parse(
-            args, config_path=config_path, environ=os.environ, global_overrides=overrides
-        )
-    except ValueError as error:
-        # what `dimos run` exits on as bad settings: BlueprintConfigError, pydantic's ValidationError,
-        # an unknown name and unmatched --record-topics are all ValueErrors
-        return {"rejected": f"{type(error).__name__}: {error}"}
-    return {}
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            main(normalize_argv(["dimos", *request["argv"]])[1:], prog_name="dimos")
+    except _ValidatedError:
+        return {}
+    except SystemExit as exit_:
+        if not exit_.code:
+            return {"rejected": "dimos run finished without reaching its start"}
+        lines = [line for line in output.getvalue().splitlines() if line.strip()]
+        error = next((line for line in reversed(lines) if line.startswith("Error")), None)
+        return {"rejected": error or (lines[-1] if lines else f"dimos run exited {exit_.code}")}
+    return {"rejected": "dimos run finished without reaching its start"}
 
 
 def main(argv: list[str]) -> None:
