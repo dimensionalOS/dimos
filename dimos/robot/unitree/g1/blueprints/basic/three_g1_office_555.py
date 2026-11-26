@@ -27,7 +27,7 @@ from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.hardware_module import Mounts
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
+from dimos.robot.assets.usd_utils.lfs import pull_lfs_files, pull_usd_assets
 from dimos.robot.unitree.g1.sim2 import G1_ODOM_TF, G1Sim
 from dimos.robot.unitree.g1.sim2_walker import G1SimWalker
 from dimos.sim2.camera import SimCamera
@@ -51,8 +51,9 @@ DRIVEN = "main"
 
 
 def _office_usd() -> UsdModel:
-    # The layer is Git LFS, a pointer in a checkout that skips smudging; a blueprint's checks read it before any module starts.
+    # The layer and its meshes are Git LFS, pointers in a checkout that skips smudging; a blueprint's checks open it before any module starts.
     pull_lfs_files([SCENE])
+    pull_usd_assets([SCENE.read_text()], root=SCENE.parent)
     return UsdModel.from_file(SCENE).with_frames(
         {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
         | {"overview": ("office_555", *OVERVIEW)}
