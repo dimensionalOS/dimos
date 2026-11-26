@@ -124,3 +124,20 @@ def test_the_sim_protocol_imports_no_engine() -> None:
         " assert not [m for m in sys.modules if m.startswith('mujoco')], sorted(sys.modules)"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_on_mount_shares_the_sim_streams_its_blueprint_has_and_namespaces_the_rest() -> None:
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.hardware_module import Mount
+    from dimos.sim2.assets.logistics import Logistics
+    from dimos.sim2.sim import _stream_names, on_mount
+
+    mounted = on_mount(autoconnect(Logistics.blueprint()), Mount("room/spot")).solidify()
+
+    assert _stream_names(mounted) == {
+        "room/spot/hardware_file_request",
+        "room/spot/hardware_file_response",
+        "tf",
+        "tf_static",
+        "world_observations",
+    }
