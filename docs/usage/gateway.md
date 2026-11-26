@@ -32,6 +32,15 @@ The catalog reads blueprints from the checkout it serves. It uses the default op
    and `config`, and `extras`) is reused for ten minutes, and read again once a scan is asked for or the checkout
    changes (an edit, a commit, an install).
 
+For Relaunch with edited settings, send one launch request to `POST /active/replace`.
+The gateway validates the replacement before stopping the current process. Discover this route in
+the gateway manifest or OpenAPI document. On an older gateway, leave the run active.
+A bodyless `POST /active/relaunch` repeats the previously saved launch.
+Both answer 400 when the checkout rejects the settings and 500 (`could not validate the launch`) when its
+check could not run; the current run keeps running either way. Validation does not hold up
+`POST /active/stop`: after a stop, or any other change to what runs, during validation, the replacement
+answers 409 and starts nothing.
+
 ## Routes
 
 | | |
