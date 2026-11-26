@@ -400,6 +400,7 @@ all_modules = {
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
     "sim-hardware-module": "dimos.sim2.hardware.SimHardwareModule",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",
+    "sim-module": "dimos.sim2.module.SimModule",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",

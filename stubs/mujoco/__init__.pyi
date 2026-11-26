@@ -6,6 +6,9 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+# MuJoCo 4's native Filament extension, like the other large pybind APIs below.
+mjrf: Any
+
 # --- model / data -----------------------------------------------------
 
 class MjModel:
@@ -53,11 +56,25 @@ class MjvOption:
     def __init__(self) -> None: ...
 
 class MjvCamera:
+    type: int
+    fixedcamid: int
     lookat: NDArray[np.float64]
     distance: float
     azimuth: float
     elevation: float
     def __init__(self) -> None: ...
+
+class MjvGLCamera:
+    pos: NDArray[np.float32]
+    forward: NDArray[np.float32]
+    up: NDArray[np.float32]
+    frustum_bottom: float
+    frustum_top: float
+    frustum_near: float
+    frustum_far: float
+    frustum_width: float
+    frustum_center: float
+    orthographic: int
 
 class MjvScene:
     flags: NDArray[np.uint8]
@@ -76,14 +93,16 @@ class Renderer:
         camera: int | str | Any = ...,
         scene_option: MjvOption | None = ...,
     ) -> None: ...
-    def render(self) -> NDArray[np.uint8]: ...
+    def render(self) -> NDArray[Any]: ...
     def enable_depth_rendering(self) -> None: ...
+    def disable_depth_rendering(self) -> None: ...
     def enable_segmentation_rendering(self) -> None: ...
     def close(self) -> None: ...
 
 # --- top-level functions ----------------------------------------------
 
 def mj_forward(model: MjModel, data: MjData) -> None: ...
+def mjv_camera2GLCamera(model: MjModel, data: MjData, camera: MjvCamera) -> MjvGLCamera: ...
 def mjv_initGeom(
     geom: Any,
     type: int,
@@ -122,6 +141,7 @@ def get_mju_user_warning() -> Callable[[str], None] | None: ...
 class mjtObj:
     mjOBJ_ACTUATOR: int
     mjOBJ_BODY: int
+    mjOBJ_XBODY: int
     mjOBJ_CAMERA: int
     mjOBJ_GEOM: int
     mjOBJ_JOINT: int
@@ -131,6 +151,7 @@ class mjtObj:
     mjOBJ_TENDON: int
 
 class mjtCamera:
+    mjCAMERA_FIXED: int
     mjCAMERA_FREE: int
     mjCAMERA_TRACKING: int
 
@@ -146,12 +167,15 @@ class mjtGeom:
     mjGEOM_MESH: int
 
 class mjtTexture:
+    mjTEXTURE_SKYBOX: int
     mjTEXTURE_2D: int
 
 class mjtBuiltin:
+    mjBUILTIN_GRADIENT: int
     mjBUILTIN_CHECKER: int
 
 class mjtTextureRole:
+    mjNTEXROLE: int
     mjTEXROLE_RGB: int
 
 class mjtLightType:
@@ -159,6 +183,7 @@ class mjtLightType:
     mjLIGHT_SPOT: int
 
 class mjtJoint:
+    mjJNT_FREE: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
 
@@ -168,3 +193,55 @@ class mjtTrn:
 
 class mjtWrap:
     mjWRAP_JOINT: int
+
+class mjtIntegrator:
+    mjINT_IMPLICITFAST: int
+
+class mjtBias:
+    mjBIAS_AFFINE: int
+
+class mjtSensor:
+    mjSENS_ACCELEROMETER: int
+    mjSENS_GYRO: int
+
+def mj_resetData(model: MjModel, data: MjData) -> None: ...
+def mj_kinematics(model: MjModel, data: MjData) -> None: ...
+def mj_comPos(model: MjModel, data: MjData) -> None: ...
+def mj_camlight(model: MjModel, data: MjData) -> None: ...
+def mj_applyFT(
+    model: MjModel,
+    data: MjData,
+    force: NDArray[np.float64],
+    torque: NDArray[np.float64],
+    point: NDArray[np.float64],
+    body: int,
+    qfrc_target: NDArray[np.float64],
+) -> None: ...
+def mj_objectVelocity(
+    model: MjModel,
+    data: MjData,
+    objtype: int,
+    objid: int,
+    result: NDArray[np.float64],
+    flg_local: int,
+) -> None: ...
+def mj_objectAcceleration(
+    model: MjModel,
+    data: MjData,
+    objtype: int,
+    objid: int,
+    result: NDArray[np.float64],
+    flg_local: int,
+) -> None: ...
+def mj_rnePostConstraint(m: MjModel, d: MjData) -> None: ...
+def mj_ray(
+    model: MjModel,
+    data: MjData,
+    pnt: NDArray[np.float64],
+    vec: NDArray[np.float64],
+    geomgroup: NDArray[np.uint8] | None,
+    flg_static: int,
+    bodyexclude: int,
+    geomid: NDArray[np.int32],
+    normal: NDArray[np.float64] | None = ...,
+) -> float: ...
