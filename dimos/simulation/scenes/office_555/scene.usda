@@ -147563,7 +147563,7 @@ def Xform "office_555" (
             def Shader "mjcTexture_ground" (
                 assetInfo = {
                     asset identifier = @meshes/ground_grid.png@
-                    string version = "sha256:0cdf3b0b6b7bdc320a431b34286dfbfdeac5951247050e89e4ecfdf78c47279f"
+                    string version = "sha256:381c912caa08b51816cc97bfdaf833ec2cba1264dbf657c0248ef2721ba1ce77"
                 }
             )
             {
@@ -147642,7 +147642,7 @@ def Xform "office_555" (
             def Shader "mjcTexture_concrete_0" (
                 assetInfo = {
                     asset identifier = @meshes/concrete_0.png@
-                    string version = "sha256:db31043554357287222b7927c66bdf4d99e3d44cba3c53655a05ca4167d93e21"
+                    string version = "sha256:ff0a72542b60bcb42f8c3c6cfe1f2a50deca212b940f626b222e7d0d065e3e06"
                 }
             )
             {
@@ -147721,7 +147721,7 @@ def Xform "office_555" (
             def Shader "mjcTexture_wood_1" (
                 assetInfo = {
                     asset identifier = @meshes/wood_1.png@
-                    string version = "sha256:11bb253ed68301423bdcb2d8eca46a9a2fd4f9ee35e8258894c1901f97479cdf"
+                    string version = "sha256:d796def63ab931ac7a9ab312c7313f5e798b6446a3f447c9e8dca88c5445af61"
                 }
             )
             {

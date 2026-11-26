@@ -28,11 +28,16 @@ import threading
 import uuid
 
 from dimos.constants import CACHE_DIR
-from dimos.core.hardware_files import HARDWARE_USD, hardware_file_topics, is_relative_uri
+from dimos.core.hardware_files import (
+    HARDWARE_USD,
+    declared_hashes,
+    hardware_file_topics,
+    is_relative_uri,
+)
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.files.FileInfo import FileInfo
-from dimos.robot.assets.usd_utils.assets import asset_hash, is_asset_hash, rename_assets
-from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.robot.assets.usd_utils.assets import asset_hash, is_asset_hash
+from dimos.robot.assets.usd_utils.pxr import load_pxr
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -158,7 +163,7 @@ def _fetch_named(
     directory = posixpath.dirname(uri)
     named = {}
     # Through pxr, since a layer may be a binary crate (.usd, .usdc) rather than text.
-    for name, sha256 in _named_files(
+    for name, sha256 in declared_hashes(
         str(pxr.Sdf.Layer.OpenAsAnonymous(str(stored)).ExportToString())
     ).items():
         reached = posixpath.normpath(posixpath.join(directory, name))
@@ -185,25 +190,3 @@ def _fetch_named(
     for reached, kept_at in kept.items():
         _link(tree, reached, kept_at)
         _fetch_named(asking, cache, tree, reached, kept_at, visited)
-
-
-def _named_files(usd: str) -> dict[str, str | None]:
-    """Each file a provided layer names, with the sha256 its prim's assetInfo gives it, if any."""
-    pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a provided layer", None)
-    named: dict[str, str | None] = {}
-
-    def record(asset: str, where: str, required: bool) -> None:
-        if not required:
-            return
-        spec = layer.GetPrimAtPath(where) if where != "/" else None
-        info = (spec.assetInfo or {}) if spec else {}
-        identifier = info.get("identifier")
-        version = info.get("version")
-        if identifier is not None and str(identifier.path) == asset and is_asset_hash(version):
-            named[asset] = str(version)
-        else:
-            named.setdefault(asset, None)
-
-    rename_assets(pxr, layer, record)
-    return named

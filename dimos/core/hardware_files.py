@@ -18,52 +18,45 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import posixpath
-import threading
-import uuid
 
-from dimos.constants import CACHE_DIR
 from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
+    is_asset_hash,
     layer_asset_paths,
     publish_usd_assets,
+    rename_assets,
     resolve_usd_assets,
 )
 from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
-from dimos.robot.assets.usd_utils.pxr import Pxr, load_pxr
+from dimos.robot.assets.usd_utils.pxr import Pxr, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 HARDWARE_USD = "hardware.usda"
-# Where a module keeps the layers it rewrote, so it provides them from disk like any other file.
-PROVIDED_LAYERS = CACHE_DIR / "hardware_files" / "provided"
-
-# A file's sha256 by (path, size, mtime in ns), so a file is hashed again only once it changes.
-_hashes: dict[tuple[str, int, int], str] = {}
-_hashes_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
 class _Layer:
-    """A layer provided rewritten (so the names in it are relative to where it is provided), kept on disk."""
+    """A layer as provided: rewritten so the names in it are relative to where it is provided."""
 
-    path: Path
+    content: bytes
     sha256: str
     mtime: float | None
 
 
-def _written_layer(text: str, name: str, mtime: float | None) -> _Layer:
-    """``text`` stored once under its sha256, so providing it holds no copy of it in memory."""
+@dataclass(frozen=True)
+class _File:
+    """A file as it is on disk, with the sha256 the layer naming it declares, so it is never hashed here."""
+
+    path: Path
+    sha256: str
+
+
+def _layer(text: str, mtime: float | None) -> _Layer:
     content = text.encode()
-    sha256 = asset_hash(content)
-    path = PROVIDED_LAYERS / sha256.partition(":")[2] / name
-    if not path.is_file():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        staged = path.with_name(f".{name}.{uuid.uuid4().hex}")
-        staged.write_bytes(content)
-        staged.replace(path)
-    return _Layer(path, sha256, mtime)
+    return _Layer(content, asset_hash(content), mtime)
 
 
 def hardware_file_topics(namespace: str) -> tuple[str, str]:
@@ -77,17 +70,26 @@ def is_relative_uri(uri: str) -> bool:
     return bool(uri) and not uri.startswith("/") and ".." not in uri.split("/")
 
 
-def file_hash(path: Path) -> tuple[str, float]:
-    """The file's sha256 and mtime, hashed only when its size or mtime moved since the last time."""
-    stat = path.stat()
-    key = (str(path), stat.st_size, stat.st_mtime_ns)
-    with _hashes_lock:
-        known = _hashes.get(key)
-    if known is None:
-        known = asset_hash(path.read_bytes())
-        with _hashes_lock:
-            _hashes[key] = known
-    return known, stat.st_mtime
+def declared_hashes(usd: str) -> dict[str, str | None]:
+    """Each file a layer names, with the sha256 the assetInfo of the prim naming it declares, if it declares one."""
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd, "a provided layer", None)
+    named: dict[str, str | None] = {}
+
+    def record(asset: str, where: str, required: bool) -> None:
+        if not required:
+            return
+        spec = layer.GetPrimAtPath(where) if where != "/" else None
+        info = (spec.assetInfo or {}) if spec else {}
+        identifier = info.get("identifier")
+        version = info.get("version")
+        if identifier is not None and str(identifier.path) == asset and is_asset_hash(version):
+            named[asset] = str(version)
+        else:
+            named.setdefault(asset, None)
+
+    rename_assets(pxr, layer, record)
+    return named
 
 
 def inline_meshes(pxr: Pxr, usd: str) -> list[str]:
@@ -107,8 +109,12 @@ def inline_meshes(pxr: Pxr, usd: str) -> list[str]:
 
 class HardwareFiles:
     def __init__(self, usd: str, mtime: float | None = None) -> None:
-        """``usd`` names its files by absolute path; what is provided names them relative to it."""
-        # Before any layer is opened or hashed: a clone without LFS smudging has pointers, not meshes.
+        """``usd`` names its files by absolute path; what is provided names them relative to it.
+
+        Every file a layer names, other than a layer, needs its sha256 declared in the assetInfo of
+        the prim naming it (urdf_to_usd writes it), so nothing is hashed here but the rewritten layers.
+        """
+        # Before any layer is opened: a clone without LFS smudging has pointers, not meshes.
         pull_usd_assets([usd])
         # Reserved, so a sublayer that is also called hardware.usda never takes the root's name.
         provided, published = publish_usd_assets(usd, reserved={HARDWARE_USD})
@@ -118,15 +124,24 @@ class HardwareFiles:
                 f"{HARDWARE_USD} holds mesh geometry itself ({', '.join(inline)}); keep it to "
                 f"links, joints and sensors and reference meshes from their own files"
             )
-        self._usd = _written_layer(provided, HARDWARE_USD, mtime)
+        self._usd = _layer(provided, mtime)
         # None: named by a provided layer but not providable, which is said in a header with no sha256.
-        self._files: dict[str, Path | _Layer | None] = {}
-        self._provide_reached("", published, frozenset())
+        self._files: dict[str, _File | _Layer | None] = {}
+        self._unhashed: dict[str, Path] = {}
+        self._provide_reached("", provided, published, frozenset())
+        if self._unhashed:
+            listed = "\n".join(f"  {uri}  ({path})" for uri, path in sorted(self._unhashed.items()))
+            raise ValueError(
+                f"{len(self._unhashed)} file(s) this hardware provides have no sha256 declared, "
+                f'so a renderer cannot tell whether its copy is current. Set assetInfo["version"] '
+                f'to "sha256:<64 hex digits>" (and assetInfo["identifier"] to the file) on the '
+                f"prim naming each one, one file per prim:\n{listed}"
+            )
 
     @property
     def usd(self) -> str:
-        """``hardware.usda`` as provided, read from where it is kept."""
-        return self._usd.path.read_text()
+        """``hardware.usda`` as provided."""
+        return self._usd.content.decode()
 
     @property
     def uris(self) -> list[str]:
@@ -151,36 +166,42 @@ class HardwareFiles:
         if isinstance(found, _Layer):
             if request.sha256 == found.sha256:
                 return FileInfo(uri, found.sha256, found.mtime)
-            return FileInfo(uri, found.sha256, found.mtime, found.path.read_bytes())
+            return FileInfo(uri, found.sha256, found.mtime, found.content)
         try:
-            sha256, mtime = file_hash(found)
-            if request.sha256 == sha256:
-                return FileInfo(uri, sha256, mtime)
-            content = found.read_bytes()
+            mtime = found.path.stat().st_mtime
+            if request.sha256 == found.sha256:
+                return FileInfo(uri, found.sha256, mtime)
+            content = found.path.read_bytes()
         except OSError as error:
-            logger.warning(f"hardware_file_request for {uri!r}: {found} cannot be read: {error}")
+            logger.warning(
+                f"hardware_file_request for {uri!r}: {found.path} cannot be read: {error}"
+            )
             return FileInfo(uri)
-        # Hashed as read, so the content and its sha256 never disagree.
-        return FileInfo(uri, asset_hash(content), mtime, content)
+        # The declared sha256, not one computed here: the renderer checks the content against it.
+        return FileInfo(uri, found.sha256, mtime, content)
 
     def _provide_reached(
-        self, directory: str, published: Mapping[str, str], walking: frozenset[Path]
+        self, directory: str, layer: str, published: Mapping[str, str], walking: frozenset[Path]
     ) -> None:
-        """Provide each published file under ``directory``, and what each layer among them names, rewritten the same way."""
+        """Provide each file ``layer`` (provided under ``directory``) names, and what each layer among them names, rewritten the same way."""
         pxr = load_pxr()
+        declared = declared_hashes(layer)
         for name, real in published.items():
             uri = posixpath.join(directory, name)
             path = Path(real)
             if uri in self._files:
                 logger.warning(f"{path} would be provided as {uri!r}, already another file's name")
                 continue
-            self._files[uri] = self._provided(pxr, uri, path, walking)
+            self._files[uri] = self._provided(pxr, uri, path, declared.get(name), walking)
 
     def _provided(
-        self, pxr: Pxr, uri: str, path: Path, walking: frozenset[Path]
-    ) -> Path | _Layer | None:
+        self, pxr: Pxr, uri: str, path: Path, sha256: str | None, walking: frozenset[Path]
+    ) -> _File | _Layer | None:
         if pxr.Sdf.FileFormat.FindByExtension(path.suffix[1:]) is None or not path.is_file():
-            return path
+            if sha256 is None:
+                self._unhashed[uri] = path
+                return None
+            return _File(path, sha256)
         if path.resolve() in walking:
             logger.warning(
                 f"{path} reaches itself through what it names, so {uri!r} is not provided"
@@ -192,7 +213,9 @@ class HardwareFiles:
             logger.warning(f"{path} does not open as a layer, so {uri!r} is not provided: {error}")
             return None
         if not layer_asset_paths(pxr, layer):
-            return path
+            # A layer is read whole when it is opened anyway, so it needs no declared sha256.
+            content = path.read_bytes()
+            return _Layer(content, asset_hash(content), path.stat().st_mtime)
         if path.suffix == ".usdc":
             logger.warning(
                 f"{path} is a binary layer naming other files, so its names cannot be made "
@@ -205,5 +228,5 @@ class HardwareFiles:
         provided, reached = publish_usd_assets(
             text, reserved={HARDWARE_USD} if not directory else ()
         )
-        self._provide_reached(directory, reached, walking | {path.resolve()})
-        return _written_layer(provided, path.name, path.stat().st_mtime)
+        self._provide_reached(directory, provided, reached, walking | {path.resolve()})
+        return _layer(provided, path.stat().st_mtime)
