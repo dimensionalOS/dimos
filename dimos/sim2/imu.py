@@ -15,7 +15,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from dimos.core.hardware_module import HardwareModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -23,12 +22,12 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor
+from dimos.sim2.sensor import SimSensor, SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.sim import until_it_stops
 
 
-class SimImuConfig(HardwareModuleConfig):
+class SimImuConfig(SimSensorConfig):
     usd: UsdModel = frame_usd("imu_link", name="sim_imu")
     rate_hz: float = 200.0
 
@@ -50,11 +49,13 @@ class SimImu(SimSensor):
             if view is None:
                 layer = await asyncio.to_thread(self.world_layer)
                 view = open_view(layer, robot_ids(self._world), SensorMount("imu", site, site))
-                # Opening took this tick's sim time, so the next tick is the first read on time.
+                # Opening took this tick, so the next tick is the first read on time.
                 continue
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)
             stamp = view.time
+            if not self.on_time("imu", stamp, 1 / self.config.rate_hz, self.config.stamp_tolerance):
+                continue
             self.imu.publish(
                 Imu(
                     angular_velocity=Vector3(*gyro),
