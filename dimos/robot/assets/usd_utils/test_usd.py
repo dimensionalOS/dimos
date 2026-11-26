@@ -31,7 +31,7 @@ from dimos.robot.assets.usd_utils.assets import (
 )
 from dimos.robot.assets.usd_utils.frames import usd_frame_names, usd_with_frames
 from dimos.robot.assets.usd_utils.from_urdf import PASSTHROUGH_KEY, urdf_to_usd
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import overlay_usds, usd_under_namespace
 
 pytest.importorskip("pxr")
 
@@ -286,61 +286,93 @@ def test_the_layer_authors_no_custom_attributes(toy: Any) -> None:
     assert "dimos:" not in usd
 
 
-def test_a_subtree_is_grafted_under_the_frame_it_names(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert stage.GetPrimAtPath("/toy/base_link/mount/arm_sub/base_link")
+# The toy's frame an arm mounts on in these tests, and so the arm's namespace.
+_MOUNT = "toy/base_link/mount"
 
 
-def test_a_grafted_subtree_keeps_its_joints_pointing_at_its_own_links(toy: Any) -> None:
-    root = urdf_to_usd(toy)
+def _mounted_arm(toy: Any, mount: str = _MOUNT) -> tuple[str, str]:
+    """A second toy as a part provides it on ``mount``: its prims under that frame."""
+    return usd_under_namespace(urdf_to_usd(toy, name="arm_sub"), mount), mount
 
-    stage = _stage(graft_usd(root, {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")}))
-    joint = stage.GetPrimAtPath("/toy/base_link/mount/arm_sub/joints/base_to_mount")
+
+def test_a_mounted_part_overlays_at_its_own_prim_paths(toy: Any) -> None:
+    stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
+
+    assert stage.GetPrimAtPath(f"/{_MOUNT}/arm_sub/base_link")
+    assert stage.GetDefaultPrim().GetName() == "toy"
+
+
+def test_a_mounted_part_keeps_its_joints_pointing_at_its_own_links(toy: Any) -> None:
+    stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
+    joint = stage.GetPrimAtPath(f"/{_MOUNT}/arm_sub/joints/base_to_mount")
 
     assert joint
     targets = joint.GetRelationship("physics:body0").GetTargets()
-    assert str(targets[0]) == "/toy/base_link/mount/arm_sub/base_link"
+    assert str(targets[0]) == f"/{_MOUNT}/arm_sub/base_link"
 
 
-def test_a_graft_joins_the_subtree_to_its_mount_with_a_floating_joint(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")}))
-    mounted = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
-
-    assert len(mounted) == 1
-    joint = mounted[0]
-    assert joint.GetDisplayName() == "base_link_mount"
-    assert str(joint.GetRelationship("physics:body0").GetTargets()[0]) == "/toy/base_link/mount"
-    assert str(joint.GetRelationship("physics:body1").GetTargets()[0]) == (
-        "/toy/base_link/mount/arm_sub/base_link"
-    )
-
-
-def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
+def test_a_mounted_part_is_welded_to_its_mount_with_no_offset(toy: Any) -> None:
     from pxr import Gf
 
-    stage = _stage(
-        graft_usd(urdf_to_usd(toy), {"toy/base_link/mount": urdf_to_usd(toy, name="arm_sub")})
-    )
-    joint = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint")
+    stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
+    welds = [prim for prim in stage.Traverse() if prim.GetDisplayName() == "base_link_mount"]
+    assert all(prim.GetTypeName() == "PhysicsFixedJoint" for prim in welds)
 
+    assert len(welds) == 1
+    weld = welds[0]
+    assert weld.GetDisplayName() == "base_link_mount"
+    assert str(weld.GetRelationship("physics:body0").GetTargets()[0]) == f"/{_MOUNT}"
+    assert str(weld.GetRelationship("physics:body1").GetTargets()[0]) == (
+        f"/{_MOUNT}/arm_sub/base_link"
+    )
     for attribute in ("physics:localPos0", "physics:localPos1"):
-        assert joint.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
+        assert weld.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
     for attribute in ("physics:localRot0", "physics:localRot1"):
-        assert joint.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
+        assert weld.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
+
+
+def test_a_mounted_part_without_a_rigid_body_is_not_welded(toy: Any) -> None:
+    marker = '#usda 1.0\n(\n    defaultPrim = "marker"\n)\n\ndef Xform "marker"\n{\n}\n'
+    mounted = (usd_under_namespace(marker, _MOUNT), _MOUNT)
+
+    stage = _stage(overlay_usds(urdf_to_usd(toy), [mounted]))
+
+    assert stage.GetPrimAtPath(f"/{_MOUNT}/marker")
+    assert not [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
+
+
+def test_only_the_root_s_physics_scene_survives(toy: Any) -> None:
+    from pxr import UsdPhysics
+
+    def with_scene(usd: str) -> str:
+        stage = _stage(usd)
+        UsdPhysics.Scene.Define(stage, "/PhysicsScene")
+        return str(stage.GetRootLayer().ExportToString())
+
+    arm = usd_under_namespace(with_scene(urdf_to_usd(toy, name="arm_sub")), _MOUNT)
+    stage = _stage(overlay_usds(with_scene(urdf_to_usd(toy)), [(arm, _MOUNT)]))
+
+    scenes = [str(prim.GetPath()) for prim in stage.Traverse() if prim.IsA(UsdPhysics.Scene)]
+    assert scenes == ["/PhysicsScene"]
+
+
+def test_a_mounted_part_s_frames_are_its_own_under_the_mount(toy: Any) -> None:
+    """Every frame of the overlay is a frame of the root or of the mounted part, already under its mount."""
+    root = urdf_to_usd(toy)
+    arm, mount = _mounted_arm(toy)
+
+    composed = usd_frame_names(overlay_usds(root, [(arm, mount)]))
+
+    assert composed == usd_frame_names(root) | usd_frame_names(arm)
 
 
 def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
-    root = urdf_to_usd(toy)
+    grown = usd_with_frames(
+        urdf_to_usd(toy), {"spot": ("toy/base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+    stage = _stage(overlay_usds(grown, [_mounted_arm(toy, "toy/base_link/spot")]))
 
-    grown = usd_with_frames(root, {"spot": ("toy/base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
-    stage = _stage(graft_usd(grown, {"toy/base_link/spot": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert _prim_by_link(stage, "spot"), "the frame is a link, so graft_usd can match it"
+    assert _prim_by_link(stage, "spot"), "the frame is a link, so a part can mount on it"
     assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
 
 
@@ -492,57 +524,9 @@ def test_a_frame_is_named_by_its_prim_path_through_any_scope_on_the_way() -> Non
     assert edges["go2/Geometry", "go2/Geometry/base_link"][2, 3] == pytest.approx(0.3)
 
 
-def test_a_grafted_subtree_s_frames_are_its_own_under_the_mount(toy: Any) -> None:
-    """Every frame of the composed stage is a frame of the root, or the mount + a frame of the subtree."""
-    root = urdf_to_usd(toy)
-    sensor = urdf_to_usd(toy, name="arm_sub")
-
-    composed = usd_frame_names(graft_usd(root, {"toy/base_link/mount": sensor}))
-
-    assert composed == usd_frame_names(root) | {
-        f"toy/base_link/mount/{frame}" for frame in usd_frame_names(sensor)
-    }
-
-
 def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no frame 'nowhere'"):
         usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-
-
-def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
-    with pytest.raises(ValueError, match="no prim for that frame"):
-        graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
-
-
-def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    stage = _stage(graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert stage.GetPrimAtPath("/toy/arm_sub/base_link")
-
-
-def test_grafting_two_copies_of_one_description_at_one_frame_is_an_error(toy: Any) -> None:
-    root = graft_usd(urdf_to_usd(toy), {"toy": urdf_to_usd(toy, name="arm_sub")})
-
-    with pytest.raises(ValueError, match="is taken"):
-        graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")})
-
-
-def test_a_link_and_the_root_that_share_a_name_are_two_frames(toy: Any) -> None:
-    root = urdf_to_usd(toy, name="base_link")
-
-    on_link = _stage(graft_usd(root, {"base_link/base_link": urdf_to_usd(toy, name="arm_sub")}))
-    on_root = _stage(graft_usd(root, {"base_link": urdf_to_usd(toy, name="arm_sub")}))
-
-    assert on_link.GetPrimAtPath("/base_link/base_link/arm_sub/base_link")
-    assert on_root.GetPrimAtPath("/base_link/arm_sub/base_link")
-
-
-def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
-    root = urdf_to_usd(toy)
-
-    assert graft_usd(root, {}) == root
 
 
 _EXTRAS_URDF = """<?xml version="1.0"?>
@@ -1002,231 +986,3 @@ def test_an_unfetched_pointer_is_refused_and_a_merely_missing_file_is_not(
 
     (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
     require_fetched_assets(unopenable_assets(_REFERENCING_LAYER, root), root, what="the scene")
-
-
-_SCENE_WITH_ITS_OWN_SHADER = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-over "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (1, 0, 0)
-    }
-}
-
-def Xform "room"
-{
-}
-"""
-
-_SUBTREE_WITH_AN_OUTSIDE_SHADER = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-over "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (0, 1, 0)
-    }
-}
-
-def Xform "arm_sub"
-{
-    def Material "paint" (
-        prepend references = </Shared>
-    )
-    {
-    }
-}
-"""
-
-
-def test_a_grafted_subtree_keeps_its_own_shaders_when_the_scene_has_prims_by_the_same_name() -> (
-    None
-):
-    from pxr import Gf
-
-    stage = _stage(graft_usd(_SCENE_WITH_ITS_OWN_SHADER, {"room": _SUBTREE_WITH_AN_OUTSIDE_SHADER}))
-
-    surface = stage.GetPrimAtPath("/room/arm_sub/paint/Surface")
-    assert surface, "the grafted material composed no shader at all"
-    assert surface.GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(0.0, 1.0, 0.0), (
-        "the grafted subtree is wearing the scene's shader instead of its own: a converted "
-        "asset keeps its shader networks beside its default prim, and grafting left the "
-        "reference pointing at whatever owns that path in the scene"
-    )
-
-
-_SCENE_WIRED_BY_CONNECTION = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-def Scope "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (1, 0, 0)
-        token outputs:surface
-    }
-}
-
-def Xform "room"
-{
-}
-"""
-
-_SUBTREE_WIRED_BY_CONNECTION = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-def Scope "Shared"
-{
-    def Shader "Surface"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (0, 1, 0)
-        token outputs:surface
-    }
-}
-
-def Xform "arm_sub"
-{
-    def Material "paint"
-    {
-        token outputs:surface.connect = </Shared/Surface.outputs:surface>
-    }
-}
-"""
-
-
-def test_a_grafted_material_wired_by_connection_keeps_its_own_shader() -> None:
-    """Not every asset wires its network through a reference; some connect straight to it."""
-    from pxr import Gf
-
-    stage = _stage(graft_usd(_SCENE_WIRED_BY_CONNECTION, {"room": _SUBTREE_WIRED_BY_CONNECTION}))
-
-    paint = stage.GetPrimAtPath("/room/arm_sub/paint").GetAttribute("outputs:surface")
-    connections = paint.GetConnections()
-    assert connections, "the grafted material lost its surface connection"
-    shader = stage.GetPrimAtPath(connections[0].GetPrimPath())
-    assert shader.GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(0.0, 1.0, 0.0), (
-        "the grafted subtree is wearing the scene's shader: its connection named a prim "
-        "beside the subtree, and grafting left the absolute path alone"
-    )
-
-
-_SUBTREE_WIRED_TO_WHAT_IT_DOES_NOT_STATE = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-def Xform "arm_sub"
-{
-    def Material "paint"
-    {
-        token outputs:surface.connect = </Flattened_Prototype_1.outputs:surface>
-    }
-}
-"""
-
-
-def test_a_graft_leaves_alone_a_connection_to_a_prim_the_layer_does_not_state() -> None:
-    """An instancing prototype is composed, not authored, so Sdf.CopySpec cannot carry it."""
-    grafted = graft_usd(
-        _SCENE_WIRED_BY_CONNECTION, {"room": _SUBTREE_WIRED_TO_WHAT_IT_DOES_NOT_STATE}
-    )
-
-    stage = _stage(grafted)
-    paint = stage.GetPrimAtPath("/room/arm_sub/paint").GetAttribute("outputs:surface")
-    assert [str(path) for path in paint.GetConnections()] == [
-        "/Flattened_Prototype_1.outputs:surface"
-    ]
-
-
-_SCENE_WITH_TWO_SHADERS = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-over "Shared"
-{
-    def Shader "Surface"
-    {
-        color3f inputs:diffuseColor = (1, 0, 0)
-    }
-}
-
-over "Deeper"
-{
-    def Shader "Underneath"
-    {
-        color3f inputs:diffuseColor = (1, 0, 0)
-    }
-}
-
-def Xform "room"
-{
-}
-"""
-
-_SUBTREE_REACHING_TWO_HOPS = """#usda 1.0
-(
-    defaultPrim = "arm_sub"
-)
-
-over "Deeper"
-{
-    def Shader "Underneath"
-    {
-        color3f inputs:diffuseColor = (0, 0, 1)
-    }
-}
-
-over "Shared" (
-    prepend references = </Deeper>
-)
-{
-    def Shader "Surface"
-    {
-        color3f inputs:diffuseColor = (0, 1, 0)
-    }
-}
-
-def Xform "arm_sub"
-{
-    def Material "paint" (
-        prepend references = </Shared>
-    )
-    {
-    }
-}
-"""
-
-
-def test_carrying_a_referenced_prim_also_carries_what_that_prim_reaches() -> None:
-    from pxr import Gf
-
-    stage = _stage(graft_usd(_SCENE_WITH_TWO_SHADERS, {"room": _SUBTREE_REACHING_TWO_HOPS}))
-
-    paint = stage.GetPrimAtPath("/room/arm_sub/paint")
-    assert paint, "the grafted material is missing"
-    composed = paint.GetPrototype() if paint.IsInstance() else paint
-    shaders = {child.GetName(): child for child in composed.GetChildren()}
-    assert sorted(shaders) == ["Surface", "Underneath"], (
-        f"the second hop did not compose: got {sorted(shaders)}"
-    )
-    for name, expected in (("Surface", (0.0, 1.0, 0.0)), ("Underneath", (0.0, 0.0, 1.0))):
-        assert shaders[name].GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(*expected), (
-            f"{name} resolved to the scene's shader, so a prim carried over for the subtree "
-            f"kept an arc pointing at whatever owned that path in the scene"
-        )
