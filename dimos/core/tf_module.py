@@ -62,61 +62,24 @@ class TfModuleConfig(ModuleConfig):
         return self
 
 
-class TfIO(IO[TFMessage]):
-    """A TfModule's tf port: ``publish`` refuses undeclared edges, ``get`` refuses undeclared frames."""
-
-    owner: "TfModule"
-
-    def publish(self, msg: TFMessage) -> None:
-        if not self.owner.config.skip_tf_checks:
-            refuse_undeclared_edges(
-                self.owner.tf_edge_ids, self.owner.tf_owner_name, msg.transforms
-            )
-        super().publish(msg)
-
-    def get(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-        warn: bool = True,
-    ) -> Transform | None:
-        """Look ``parent_frame -> child_frame`` up in the module's tfbuffer; both must be declared frames."""
-        if not self.owner.config.skip_tf_checks:
-            declared = set(self.owner.tf_frames.values())
-            for frame in (parent_frame, child_frame):
-                if frame not in declared:
-                    raise ValueError(
-                        f"{self.owner.tf_owner_name} looks up undeclared tf frame {frame!r} "
-                        f"(declared: {sorted(declared)}); add it to tf_frames_local or tf_frames_global"
-                    )
-        return self.owner.tfbuffer.get(
-            parent_frame,
-            child_frame,
-            time_point,
-            time_tolerance,
-            forward_tolerance=forward_tolerance,
-            warn=warn,
-        )
-
-
 class TfModule(Module):
     """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-    if TYPE_CHECKING:
-        tf: TfIO
-    else:
-        # Module binds ports from the runtime annotation, so it stays a plain IO.
-        tf: IO[TFMessage]
+    tf: IO[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # Same name and type as the port Module bound, so wiring and topics are unchanged.
-        self.tf = TfIO(TFMessage, "tf", self)
+        if self.config.skip_tf_checks:
+            return
+        # The port stays the plain IO Module bound; only its publish is wrapped with the edge check.
+        publish = self.tf.publish
+
+        def checked_publish(msg: TFMessage) -> None:
+            refuse_undeclared_edges(self.tf_edge_ids, self.tf_owner_name, msg.transforms)
+            publish(msg)
+
+        self.tf.publish = checked_publish  # type: ignore[method-assign]
 
     @property
     def tf_owner_name(self) -> str:
@@ -217,11 +180,30 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
-        return TF(
+        buffer = TF(
             port,
             edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
             module_name=self.tf_owner_name,
         )
+        if self.config.skip_tf_checks:
+            return buffer
+        # Its lookups name only declared frames, so a typo fails loudly instead of waiting on a frame nothing publishes.
+        get = buffer.get
+
+        def checked_get(
+            parent_frame: str, child_frame: str, *args: Any, **kwargs: Any
+        ) -> Transform | None:
+            declared = set(self.tf_frames.values())
+            for frame in (parent_frame, child_frame):
+                if frame not in declared:
+                    raise ValueError(
+                        f"{self.tf_owner_name} looks up undeclared tf frame {frame!r} "
+                        f"(declared: {sorted(declared)}); add it to tf_frames_local or tf_frames_global"
+                    )
+            return get(parent_frame, child_frame, *args, **kwargs)
+
+        buffer.get = checked_get  # type: ignore[method-assign]
+        return buffer
 
 
 def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
