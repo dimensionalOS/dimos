@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from collections.abc import Callable
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -342,6 +344,23 @@ def test_launch_refuses_unreadable_schema_before_spawning_or_saving_config(
     spawn.assert_not_called()
     assert not launches.launch_file().exists()
     assert not launches.request_file().exists()
+
+
+def test_a_launch_forgets_what_was_read_of_its_blueprint(client: TestClient, state: State) -> None:
+    async def remember(answer: str) -> str:
+        return answer
+
+    other = state.introspect_key(["blueprint", "other"])
+    for args in (["blueprint", "demo"], ["config", "demo"], ["blueprint", "other"]):
+        key = state.introspect_key(args)
+        asyncio.run(state.cache.get(key, 600, partial(remember, key)))
+    assert client.post("/active/exec", json={"args": ["demo"]}).status_code == 200
+    assert set(state.cache.entries) == {other}
+    until(running(client))
+    key = state.introspect_key(["blueprint", "demo"])
+    asyncio.run(state.cache.get(key, 600, partial(remember, "again")))
+    assert client.post("/active/relaunch").status_code == 200
+    assert set(state.cache.entries) == {other}
 
 
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
