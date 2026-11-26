@@ -59,6 +59,12 @@ class SimSensor(HardwareModule):
         """The sensor's frame: its USD's root link, under its namespace."""
         return self.tf_frames[self.config.usd.root_link]
 
+    def publish_moving_tf(self, ts: float) -> None:
+        """Publish its USD's moving edges (at zero: a sensor drives no joint) stamped ``ts``, so a sensor USD with a joint keeps it on tf."""
+        transforms = self.moving_transforms(ts=ts)
+        if transforms:
+            self.tfbuffer.publish(*transforms)
+
     def on_time(self, stream: str, stamp: float, period: float, tolerance: float | None) -> bool:
         """Whether a ``stream`` reading stamped ``stamp`` is within ``tolerance`` (None: ``period``) of wall time: one that is not, the real sensor would have missed."""
         off = time.time() - stamp
