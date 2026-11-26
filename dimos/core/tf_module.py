@@ -14,6 +14,7 @@
 
 """A module whose tf frames are declared in its config, so a blueprint can namespace and check them."""
 
+from functools import cached_property
 from typing import Any, TypeAlias
 
 from pydantic import Field, model_validator
@@ -51,21 +52,61 @@ class TfModuleConfig(ModuleConfig):
             )
         return self
 
-    @property
-    def tf_edge_frames(self) -> set[tuple[str, str]]:
-        frames = {**self.tf_frames_global, **self.tf_frames_local}
-        return {(frames[parent], frames[child]) for parent, child in self.tf_edges}
-
 
 class TfModule(Module):
-    """Its ``tfbuffer`` publishes only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
+    """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges`` and look up only
+    declared frames, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
     tf: IO[TFMessage]
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        if self.config.skip_tf_checks:
+            return
+        # The port stays the IO Module bound; only its publish gains the edge check.
+        publish = self.tf.publish
+
+        def checked_publish(msg: TFMessage) -> None:
+            for transform in msg.transforms:
+                if (transform.frame_id, transform.child_frame_id) not in self.tf_edge_ids:
+                    raise ValueError(
+                        f"{self.config.instance_name or type(self).__name__} publishes undeclared "
+                        f"tf edge ({transform.frame_id!r}, {transform.child_frame_id!r}); "
+                        "add it to tf_edges"
+                    )
+            publish(msg)
+
+        self.tf.publish = checked_publish  # type: ignore[method-assign]
+
+    @cached_property
+    def tf_frames(self) -> dict[str, str]:
+        """Every role -> frame id, local and global together."""
+        return {**self.config.tf_frames_global, **self.config.tf_frames_local}
+
+    @cached_property
+    def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
+        """The declared edges as (parent frame id, child frame id)."""
+        frames = self.tf_frames
+        return frozenset((frames[parent], frames[child]) for parent, child in self.config.tf_edges)
+
     def _create_tfbuffer(self, port: Any) -> TF:
-        return TF(
-            port,
-            edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames,
-            module_name=self.config.instance_name or type(self).__name__,
+        name = self.config.instance_name or type(self).__name__
+        buffer = TF(
+            port, edges=None if self.config.skip_tf_checks else self.tf_edge_ids, module_name=name
         )
+        if self.config.skip_tf_checks:
+            return buffer
+        get = buffer.get
+
+        def checked_get(parent_frame: str, child_frame: str, *args: Any, **kwargs: Any) -> Any:
+            for frame in (parent_frame, child_frame):
+                if frame not in self.tf_frames.values():
+                    raise ValueError(
+                        f"{name} looks up undeclared tf frame {frame!r}; "
+                        "add it to tf_frames_local or tf_frames_global"
+                    )
+            return get(parent_frame, child_frame, *args, **kwargs)
+
+        buffer.get = checked_get  # type: ignore[method-assign]
+        return buffer
