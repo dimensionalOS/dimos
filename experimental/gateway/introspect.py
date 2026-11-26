@@ -18,6 +18,7 @@ import asyncio
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 import contextlib
+from dataclasses import fields as dataclass_fields, is_dataclass
 import enum
 import functools
 import importlib
@@ -157,6 +158,36 @@ def type_name(kind: Any) -> str:
     module = getattr(kind, "__module__", "")
     name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or repr(kind)
     return str(name) if module in ("builtins", "") else f"{module}.{name}"
+
+
+def catalog_value(value: Any) -> tuple[Any, bool]:
+    """Preview packaged paths by name. Only project containers that hold one."""
+    from pydantic import BaseModel
+
+    found = False
+
+    def preview(item: Any) -> Any:
+        nonlocal found
+        if isinstance(item, Path):
+            from dimos.utils.data import LfsPath
+
+            if isinstance(item, LfsPath):
+                found = True
+                # Instance operations resolve the file. Older served checkouts also store its name here.
+                return Path(object.__getattribute__(item, "_lfs_filename"))
+            return item
+        if isinstance(item, BaseModel):
+            item = dict(item)
+        elif is_dataclass(item) and not isinstance(item, type):
+            item = {field.name: getattr(item, field.name) for field in dataclass_fields(item)}
+        if isinstance(item, dict):
+            return {key: preview(child) for key, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [preview(child) for child in item]
+        return item
+
+    result = preview(value)
+    return (result if found else value), found
 
 
 def jsonable(value: Any) -> Any:
@@ -447,12 +478,15 @@ def field_args(
 ) -> dict[str, dict[str, Any]]:
     """Each config field's type, default, description and choices, by name; `value` is what the blueprint itself sets."""
     args = {}
+    values = values or {}
     for name, field in fields.items():
         required, kind = field.is_required(), field.annotation
         try:
             default = None if required else field.get_default(call_default_factory=True)
         except Exception:  # a default factory is the module's own code
             default = None
+        default, default_assets = catalog_value(default)
+        value, value_assets = catalog_value(values.get(name))
         entry = {
             "type": type_name(kind) if isinstance(kind, type) else str(kind).replace("typing.", ""),
             "default": jsonable(default),
@@ -462,7 +496,7 @@ def field_args(
                 is_secret_name(name)
                 or secret_annotation(kind)
                 or secret_value(default)
-                or secret_value((values or {}).get(name))
+                or secret_value(value)
             ),
             "base": name in base,
         }
@@ -470,11 +504,19 @@ def field_args(
         if options is not None:
             entry["choices"] = options
         schema = field_schema(kind)
-        entry["json_compatible"] = schema is not None and json_safe(kind, default)
+        effective, has_assets = (
+            (value, value_assets) if name in values else (default, default_assets)
+        )
+        # Reposting a collection of asset names would turn untouched lazy references into local paths.
+        entry["json_compatible"] = (
+            schema is not None
+            and (not has_assets or isinstance(effective, Path))
+            and json_safe(kind, effective if default_assets else default)
+        )
         if schema is not None:
             entry["schema"] = schema
-        if values and name in values:
-            entry["value"] = jsonable(values[name])
+        if name in values:
+            entry["value"] = jsonable(value)
         args[name] = entry
     return args
 
