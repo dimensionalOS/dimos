@@ -31,7 +31,6 @@ from dimos.core.coordination.blueprints import (
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.core.stream import IO
-from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.joint_transforms import joint_position
@@ -88,7 +87,7 @@ def _verify(blueprint: MetaBlueprint) -> None:
 
 
 def test_mounts_are_named_on_the_class() -> None:
-    assert Arm.mounts.wrist == "arm/base/forearm/wrist"
+    assert Arm.mounts.wrist.frame == "arm/base/forearm/wrist"
     with pytest.raises(AttributeError, match="the mounts are \\['wrist'\\]"):
         Arm.mounts.elbow  # noqa: B018
     with pytest.raises(ValueError, match="both end in 'wrist'"):
@@ -99,18 +98,11 @@ def test_mount_namespaces_under_the_mount_name() -> None:
     (atom,) = WristCamera.attach(Arm.mounts.wrist).active_blueprints
     assert atom.name == "arm/base/forearm/wrist/wristcamera"
     assert atom.kwargs["attached_to"] == "arm/base/forearm/wrist"
-    # blueprint() fills in the USD's frames, plus the mount: the namespace frame itself (role and frame ""), hung over the USD's top prim.
-    assert atom.kwargs["tf_frames_local"][""] == ""
-    assert "camera/camera_link/optical" in atom.kwargs["tf_frames_local"]
-    assert ("", "camera") in atom.kwargs["tf_edges"]
 
 
-def test_the_mount_frame_is_the_namespace_and_needs_one() -> None:
-    from dimos.core.tf_module import _frame_ids
-
-    assert _frame_ids({"": ""}, {}, "left/wrist") == {"": "left/wrist"}
-    with pytest.raises(ValueError, match="has no namespace"):
-        _frame_ids({"": ""}, {}, "")
+def test_attach_takes_a_mount_not_a_string() -> None:
+    with pytest.raises(TypeError, match=r"attach takes a mount \(Robot.mounts.<name>\)"):
+        WristCamera.attach("arm/base/forearm/wrist")  # type: ignore[arg-type]
 
 
 def test_one_unmounted_with_mounted_hardware_passes() -> None:
@@ -209,7 +201,7 @@ def test_a_chain_of_mounts_under_a_namespace_passes() -> None:
         Arm.blueprint(),
         Gripper.attach(Arm.mounts.wrist),
         # The camera mounts on the gripper, so it goes under the gripper's namespace.
-        _under(WristCamera.attach(Gripper.mounts.palm), Arm.mounts.wrist),
+        _under(WristCamera.attach(Gripper.mounts.palm), Arm.mounts.wrist.frame),
     )
     _verify(robot.namespace("left"))
 
@@ -225,7 +217,7 @@ def test_build_refuses_two_unmounted() -> None:
         _build(autoconnect(Arm.blueprint(), WristCamera.blueprint()))
 
 
-def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
+def test_each_hardware_provides_its_own_usd_named_as_on_tf() -> None:
     pytest.importorskip("pxr")
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
@@ -237,7 +229,7 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
         camera = coordinator.get_instance("left/arm/base/forearm/wrist/wristcamera")
         assert arm.attached_to() is None
         assert camera.attached_to() == "left/arm/base/forearm/wrist"
-        # Served under the namespace, so each frame's prim path is its tf frame.
+        # Provided under the namespace, so each frame's prim path is its tf frame.
         arm_frames = {"left/arm", "left/arm/base", "left/arm/base/forearm", _WRIST}
         assert usd_frame_names(arm.get_usd()) == {"left", *arm_frames}
         camera_frames = {
@@ -255,7 +247,7 @@ def test_each_hardware_serves_its_own_usd_named_as_on_tf() -> None:
         coordinator.stop()
 
 
-def test_a_usd_with_no_source_path_is_served_and_published() -> None:
+def test_a_usd_with_no_source_path_is_provided_and_published() -> None:
     pytest.importorskip("pxr")
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
@@ -470,17 +462,16 @@ def test_a_frame_id_prefix_is_refused_since_tf_is_the_namespace_and_the_prim_pat
         Arm(instance_name="left/arm", frame_id_prefix="spare")
 
 
-def test_the_usd_fills_the_tf_config_so_every_edge_is_declared() -> None:
+def test_the_usd_frames_and_the_mount_are_added_when_it_is_made() -> None:
     camera = WristCamera(
         attached_to="arm/base/forearm/wrist", instance_name=f"{_WRIST}/wristcamera"
     )
     try:
-        assert camera.config.tf_frames_local == {
-            frame: frame
-            for frame in ("", "camera", "camera/camera_link", "camera/camera_link/optical")
-        }
-        assert camera.config.tf_frames_global == {}
-        assert camera.tf_frames[""] == _WRIST
+        # Nothing is written into its config: the USD's frames and its mount are added when it is made.
+        assert camera.config.tf_frames_local == {}
+        assert (
+            camera.tf_frames["camera/camera_link/optical"] == f"{_WRIST}/camera/camera_link/optical"
+        )
         assert camera.tf_edge_ids == _CAMERA_STATIC_EDGES
         assert camera.attach_frame == f"{_WRIST}/camera"
     finally:
@@ -567,7 +558,7 @@ def test_a_hardware_module_publishes_no_edge_but_its_usd_s_and_its_mount(
 
 def test_a_local_frame_its_usd_does_not_have_is_refused() -> None:
     with pytest.raises(
-        ValueError, match=r"tf_frames_local\['odom'\] is 'odom', which is not a frame"
+        ValueError, match=r"tf_frames_local\['odom'\] is 'odom', which is not a prim path"
     ):
         Arm(instance_name="arm", tf_frames_local={"odom": "odom"})
 
@@ -578,49 +569,11 @@ def test_a_mount_its_usd_does_not_have_is_refused_in_the_blueprint() -> None:
         mounts = Mounts("arm/base/nowhere")
 
     with pytest.raises(ValueError, match="the mount 'arm/base/nowhere' is not a frame of the USD"):
-        _check_tf(autoconnect(Elsewhere.blueprint()))
-
-
-def _check_tf(blueprint: MetaBlueprint) -> None:
-    """TfModule's check, which sees each HardwareModule's tf as its config fills it in."""
-    TfModule.blueprint_checks(
-        [
-            replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
-            for atom in blueprint.solidify().active_blueprints
-        ]
-    )
-
-
-def test_an_attached_assembly_is_one_tf_tree() -> None:
-    _check_tf(autoconnect(Arm.blueprint(), WristCamera.attach(Arm.mounts.wrist)).namespace("left"))
-
-
-class _Estimator(TfModule):
-    config: TfModuleConfig
-
-
-def test_the_mount_edge_goes_through_the_normal_tf_check() -> None:
-    # camera -> arm/base closes a loop only through the mount edge wrist -> wrist/camera.
-    looped = autoconnect(
-        Arm.blueprint(),
-        WristCamera.attach(Arm.mounts.wrist),
-        _Estimator.blueprint(
-            tf_frames_global={
-                "camera": "arm/base/forearm/wrist/camera",
-                "base": "arm/base",
-            },
-            tf_edges=[("camera", "base")],
-        ),
-    )
-    with pytest.raises(
-        ValueError,
-        match=r"form a cycle.*arm/base/forearm/wrist/camera -> arm/base/forearm/wrist ->",
-    ):
-        _check_tf(looped)
+        _build(autoconnect(Elsewhere.blueprint()))
 
 
 def test_every_frame_on_tf_is_its_prim_path_in_the_composed_usd() -> None:
-    """Served layers overlay as they are: every frame published is a prim of the assembly, and every frame prim is published (bar the namespace's own)."""
+    """Provided layers overlay as they are: every frame published is a prim of the assembly, and every frame prim is published (bar the namespace's own)."""
     pytest.importorskip("pxr")
     from pxr import Sdf, Usd
 

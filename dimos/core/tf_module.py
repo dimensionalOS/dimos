@@ -225,14 +225,8 @@ class TfModule(Module):
 
 
 def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
-    # A local frame "" is the namespace frame itself (a HardwareModule's mount).
-    if "" in local.values() and not prefix:
-        roles = sorted(role for role, frame in local.items() if not frame)
-        raise ValueError(
-            f"tf_frames_local {roles} name the frame '' (the namespace frame), but the module has no namespace"
-        )
     if prefix:
-        local = {role: f"{prefix}/{frame}" if frame else prefix for role, frame in local.items()}
+        local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
     return {**shared, **local}
 
 
