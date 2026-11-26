@@ -24,8 +24,8 @@ from typing import Any, Protocol, cast
 import urllib.error
 import urllib.request
 
-# 1 mb blocks for splitting chunks
-PUT_BLOCK = 1 << 20
+# 64 KiB blocks for splitting chunks
+PUT_BLOCK = 64 << 10
 
 
 class CloudRequest(Protocol):
