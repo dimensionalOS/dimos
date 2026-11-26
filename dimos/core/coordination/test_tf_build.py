@@ -153,6 +153,21 @@ def test_cycle_is_refused() -> None:
         )
 
 
+def test_a_loop_whose_frames_all_have_a_root_is_refused() -> None:
+    # world -> base_link, world -> odom_frame -> base_link: every frame reaches world, but by two paths.
+    with pytest.raises(ValueError, match="form a cycle"):
+        _verify(
+            autoconnect(
+                Odom.blueprint(),
+                Lidar.blueprint(
+                    tf_frames_local={"body": "base_link", "lidar": "odom_frame"},
+                    tf_edges=[("lidar", "body")],
+                ),
+                BackupOdom.blueprint(tf_frames_local={"body": "odom_frame"}),
+            )
+        )
+
+
 def test_skip_tf_checks_leaves_a_module_out_of_the_tree_check() -> None:
     second_parent = Lidar.blueprint(
         tf_frames_local={"body": "base_link", "lidar": "odom_frame"},

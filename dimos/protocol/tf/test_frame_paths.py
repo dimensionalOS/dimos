@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
 import pytest
 
-from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.tf.frame_paths import check_frame_path, frame_path_error
@@ -68,51 +65,3 @@ def test_a_frame_with_two_parents_is_found_both_ways() -> None:
     top = buffer.get("odom", "go2", time_tolerance=10.0)
     assert top is not None
     assert (top.translation.x, top.translation.z) == pytest.approx((2.0, -0.3))
-
-
-class _Edges(TfModuleConfig):
-    pass
-
-
-class _Edged(TfModule):
-    config: _Edges
-
-
-def _atoms(*declared: tuple[dict[str, str], list[tuple[str, str]]]) -> list[Any]:
-    from dimos.core.coordination.blueprints import Blueprint, autoconnect, config_defaults
-
-    blueprint = autoconnect(
-        *(
-            Blueprint.create(_Edged, tf_frames_global=frames, tf_edges=edges).namespace(f"m{index}")
-            for index, (frames, edges) in enumerate(declared)
-        )
-    )
-    from dataclasses import replace
-
-    return [
-        replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
-        for atom in blueprint.solidify().active_blueprints
-    ]
-
-
-def test_a_frame_with_two_parents_and_no_loop_passes() -> None:
-    TfModule.blueprint_checks(
-        _atoms(
-            ({"map": "map", "base": "go2/base"}, [("map", "base")]),
-            ({"odom": "odom", "base": "go2/base"}, [("odom", "base")]),
-        )
-    )
-
-
-def test_an_edge_closing_a_loop_is_refused() -> None:
-    # odom -> go2/base, go2 -> go2/base and odom -> go2: two paths from odom to go2/base.
-    with pytest.raises(ValueError, match=r"form a cycle: .*closes the loop"):
-        TfModule.blueprint_checks(
-            _atoms(
-                ({"top": "go2", "base": "go2/base"}, [("top", "base")]),
-                (
-                    {"odom": "odom", "base": "go2/base", "top": "go2"},
-                    [("odom", "base"), ("odom", "top")],
-                ),
-            )
-        )
