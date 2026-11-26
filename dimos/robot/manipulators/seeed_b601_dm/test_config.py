@@ -247,3 +247,14 @@ def test_mock_coordinator_executes_trajectory_and_gripper_command(tmp_path, mock
         rig.tick()
         # finger_left is fully open at 0.05 m.
         assert rig.positions["arm/finger_left"] == pytest.approx(0.05)
+
+
+def test_the_b601_gripper_stops_short_of_its_open_stop_and_other_damiao_arms_do_not():
+    from dimos.robot.manipulators.openarm.config import OPENARM
+    from dimos.robot.manipulators.openyam.config import OPENYAM
+    from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM, GRIPPER_OPEN_LIMIT
+
+    assert GRIPPER_OPEN_LIMIT == 0.99
+    assert [g.open_limit for g in B601_DM.grippers] == [0.99]
+    for robot in (OPENARM, OPENYAM):
+        assert all(g.open_limit == 1.0 for g in robot.grippers)

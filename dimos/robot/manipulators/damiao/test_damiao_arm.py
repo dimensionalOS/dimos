@@ -185,3 +185,54 @@ def test_read_before_connect_is_rejected():
         DamiaoArm(TEST_ROBOT, ["can1", "can0"]).read()
     with pytest.raises(RuntimeError, match="disconnected"):
         DamiaoArm(TEST_ROBOT, ["can1", "can0"]).enable()
+
+
+def _limited(open_limit: float) -> DamiaoRobot:
+    bus = TEST_ROBOT.buses[0]
+    return replace(
+        TEST_ROBOT,
+        buses=[
+            replace(bus, gripper=replace(bus.gripper, open_limit=open_limit)),
+            *TEST_ROBOT.buses[1:],
+        ],
+    )
+
+
+def test_an_open_limit_maps_fully_open_short_of_the_stop_and_keeps_closed(boundary):
+    # left_finger opens toward 0.04 m; with open_limit 0.9 fully open is 0.9 of the calibrated stroke
+    arm = _arm(boundary, robot=_limited(0.9))
+    native = boundary[0]
+    arm.command({"left_finger": 0.04, "right_finger": -0.02})
+    assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.9)
+    assert native.groups["right_gripper"].commands[-1] == pytest.approx(1.0)
+    arm.command({"left_finger": 0.02})
+    assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.45)
+    arm.command({"left_finger": 0.0})
+    assert native.groups["left_gripper"].commands[-1] == 0.0
+
+
+def test_a_jaw_at_its_open_limit_or_on_the_stop_reads_fully_open(boundary):
+    arm = _arm(boundary, robot=_limited(0.9))
+    native = boundary[0]
+    native.groups["left_gripper"].opening = 0.9
+    assert arm.read().position[-2] == pytest.approx(0.04)
+    native.groups["left_gripper"].opening = 1.0  # on the stop, e.g. right after calibration
+    assert arm.read().position[-2] == pytest.approx(0.04)
+    native.groups["left_gripper"].opening = 0.45
+    assert arm.read().position[-2] == pytest.approx(0.02)
+
+
+def test_enabling_brings_a_limited_jaw_in_from_the_open_stop(boundary):
+    arm = _arm(boundary, robot=_limited(0.9))
+    native = boundary[0]
+    assert native.groups["left_gripper"].commands[0] == pytest.approx(0.9)
+    # a jaw without a limit gets no extra command at enable
+    assert not native.groups["right_gripper"].commands
+    del arm
+
+
+def test_an_open_limit_outside_its_range_is_refused():
+    gripper = TEST_ROBOT.buses[0].gripper
+    for bad in (0.0, -0.1, 1.01):
+        with pytest.raises(ValueError, match="open_limit"):
+            replace(gripper, open_limit=bad)

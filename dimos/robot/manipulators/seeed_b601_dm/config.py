@@ -44,6 +44,11 @@ B601_DM_FINGER_JOINTS = ("finger_left", "finger_right")
 # past the full stroke so it reaches both stops from any start.
 GRIPPER_CALIBRATION_TRAVEL_RAD = 7.0
 GRIPPER_CURRENT = 0.15
+# "Fully open" stops just short of the open stop. Measured on a B601 by
+# sweeping the opening from 0.80 to 1.00 in steps of 0.01: the jaw moves freely
+# up to 0.99 (|torque| <= 0.29 N m) and at 1.00 sits on the stop at -2.87 N m;
+# held there at GRIPPER_CURRENT the motor winding reached 65 C in about 30 min.
+GRIPPER_OPEN_LIMIT = 0.99
 B601_DM_SOURCE = RobotDescriptionSource(
     url="https://github.com/Seeed-Projects/reBot-DevArm",
     ref="8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af",
@@ -139,6 +144,7 @@ B601_DM = DamiaoRobot(
                 opening="decreasing_position",
                 current=GRIPPER_CURRENT,
                 calibration_travel=GRIPPER_CALIBRATION_TRAVEL_RAD,
+                open_limit=GRIPPER_OPEN_LIMIT,
             ),
             name="arm",
         )

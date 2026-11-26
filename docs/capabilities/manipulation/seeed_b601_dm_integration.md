@@ -61,6 +61,11 @@ the planner.
 - **Activation** switches the arm motors to MIT mode, enables them and
   calibrates the gripper by driving it, current-limited, to its closed and open
   stops. The motors return to their stored mode on power-up.
+- **Gripper open limit**: fully open (1.0) drives the jaw to 0.99 of its
+  calibrated stroke (`open_limit` on its `DamiaoGripper`), and activation leaves
+  it there rather than on the open stop. Held on the stop at its holding
+  current the gripper motor stalls and heats: 65 C in the winding after about
+  30 minutes, measured on a B601.
 - **Control** sends MIT position targets with Seeed's SDK gains and gravity
   compensation from the vendor URDF.
 - **Feedback** is published as measured, even past a URDF limit; the

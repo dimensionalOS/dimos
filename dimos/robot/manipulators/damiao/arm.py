@@ -204,6 +204,8 @@ class DamiaoArm:
         self._physical: PhysicalModel | None = None
         # Each gripper joint's (closed, open) positions.
         self._travel: dict[str, tuple[float, float]] = {}
+        # Each gripper's fraction of its calibrated stroke that fully open maps to.
+        self._open_limits = {gripper.name: gripper.open_limit for gripper in robot.grippers}
         self._targets: dict[str, float] = {}
         self._active = False
         # How each arm joint is held, from the bottom layer up: the bus
@@ -292,6 +294,11 @@ class DamiaoArm:
             arm.set_mode("mit")
         native.enable()
         self._enable_passive_grippers()
+        # Enabling calibrates each jaw against its stops; a jaw with an open
+        # limit is brought in from the open stop rather than left pressing it.
+        for gripper in self._robot.grippers:
+            if gripper.name not in self._passive and gripper.open_limit < 1.0:
+                self._grippers[gripper.name].set_opening(gripper.open_limit)
         self._active = True
         self._targets = dict(zip(self.joint_names, self._sample().position, strict=True))
 
@@ -671,7 +678,8 @@ class DamiaoArm:
             if name in self._passive:
                 group.mit_control(0.0, 0.0, float(group.motor.position), 0.0, 0.0)
             else:
-                group.set_opening(openings[name])
+                # The joint's open end is the jaw's open limit, not its stop.
+                group.set_opening(openings[name] * self._open_limits[name])
         native.tick(1_000)
 
     def _sample(self) -> ArmReading:
@@ -694,6 +702,8 @@ class DamiaoArm:
             opening = float(self._grippers[gripper.name].opening) if self._active else 0.0
             if not np.isfinite(opening) or not 0 <= opening <= 1:
                 raise RuntimeError(f"gripper {gripper.name!r} returned invalid opening {opening}")
+            # Beyond the open limit (at the stop, e.g. after calibration) reads as fully open.
+            opening = min(1.0, opening / gripper.open_limit)
             closed, opened = self._travel[gripper.joint]
             q.append(closed * (1.0 - opening) + opened * opening)
             dq.append(0.0)
