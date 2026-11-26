@@ -40,6 +40,11 @@ from dimos.simulation.mujoco.constants import (
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
+from dimos.simulation.mujoco.shadows import (
+    SLOW_RENDER_SHARE,
+    disable_shadows,
+    measure_render_ms,
+)
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
@@ -79,22 +84,9 @@ def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
     shadowed render that eats a large slice of the frame budget cannot keep up.
     """
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
-    renderer = mujoco.Renderer(model, height=VIDEO_HEIGHT, width=VIDEO_WIDTH)
-    try:
-        for _ in range(3):  # warmup: first renders pay asset-upload cost
-            renderer.update_scene(data, camera=camera_id)
-            renderer.render()
-        n = 5
-        start = time.perf_counter()
-        for _ in range(n):
-            renderer.update_scene(data, camera=camera_id)
-            renderer.render()
-        render_ms = (time.perf_counter() - start) / n * 1e3
-    finally:
-        renderer.close()
-
+    render_ms = measure_render_ms(model, data, camera_id, width=VIDEO_WIDTH, height=VIDEO_HEIGHT)
     budget_ms = 1.0 / VIDEO_FPS * 1e3
-    is_slow = render_ms > budget_ms * 0.3
+    is_slow = render_ms > budget_ms * SLOW_RENDER_SHARE
     if is_slow:
         logger.warning(
             f"Shadowed render took {render_ms:.1f} ms of the {budget_ms:.0f} ms frame "
@@ -136,12 +128,7 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
         # the shadow framebuffer is allocated at context creation, so the
         # viewer would keep shadow-rendering the whole scene regardless of
         # per-render flags.
-        model.vis.quality.shadowsize = 0
-        # without a shadow map MuJoCo darkens everything outside a narrow spot light's cone, so those lights go off too
-        narrow_spots = (model.light_type == mujoco.mjtLightType.mjLIGHT_SPOT) & (
-            model.light_cutoff < 90
-        )
-        model.light_active[narrow_spots] = 0
+        disable_shadows(model)
 
     lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
     lidar_right_camera_id = mujoco.mj_name2id(

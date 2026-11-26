@@ -23,7 +23,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
@@ -38,6 +38,11 @@ from dimos.simulation.engines.robot_sim_binding import (
     resolve_robot_sim_binding,
 )
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
+from dimos.simulation.mujoco.shadows import (
+    SLOW_RENDER_SHARE,
+    disable_shadows,
+    measure_render_ms,
+)
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -51,6 +56,8 @@ StepHook = Callable[["MujocoEngine"], None]
 
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
+# Simulated time further behind the wall clock than this is let go, not made up.
+_MAX_BEHIND_S = 0.5
 
 
 def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
@@ -170,9 +177,11 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        shadows: Literal["auto", "on", "off"] = "auto",
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         configure_mujoco_logging()
+        self._shadows = shadows
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
         self._spawn_xy = spawn_xy
@@ -367,11 +376,15 @@ class MujocoEngine(SimulationEngine):
     def _init_cameras(self) -> dict[str, _CameraRendererState]:
         """Create renderers for all configured cameras"""
         cam_renderers: dict[str, _CameraRendererState] = {}
+        cameras: list[tuple[CameraConfig, int]] = []
         for cfg in self._camera_configs:
             cam_id = self._camera_id(cfg.name)
             if cam_id < 0:
                 logger.warning("Camera not found in MJCF, skipping", camera_name=cfg.name)
                 continue
+            cameras.append((cfg, cam_id))
+        self._settle_shadows(cameras)
+        for cfg, cam_id in cameras:
             max_geom = cfg.max_geom
             if max_geom is None:
                 max_geom = max(10000, int(self._model.ngeom) + 1000)
@@ -414,6 +427,32 @@ class MujocoEngine(SimulationEngine):
                 base_body_id=base_body_id,
             )
         return cam_renderers
+
+    def _settle_shadows(self, cameras: list[tuple[CameraConfig, int]]) -> None:
+        """Turn shadow mapping off when forced, or under "auto" when the renderer is slow.
+
+        "auto" times one shadowed colour render per camera. When those renders
+        would take more than ``SLOW_RENDER_SHARE`` of real time at the cameras'
+        rates (software GL, no GPU), shadows go off. Must run before any
+        renderer or the viewer builds its GL context.
+        """
+        if self._shadows == "on":
+            return
+        if self._shadows == "auto":
+            share = 0.0
+            for cfg, cam_id in cameras:
+                if cfg.fps > 0:
+                    ms = measure_render_ms(
+                        self._model, self._data, cam_id, width=cfg.width, height=cfg.height
+                    )
+                    share += ms * cfg.fps / 1e3
+            if share <= SLOW_RENDER_SHARE:
+                return
+            logger.warning(
+                f"Shadowed camera renders would take {share:.0%} of real time, so shadows are off"
+                " (force with --mujocosimmodule.shadows on)"
+            )
+        disable_shadows(self._model)
 
     def _init_raycast_lidars(self) -> dict[str, _RaycastLidarState]:
         lidar_states: dict[str, _RaycastLidarState] = {}
@@ -623,8 +662,11 @@ class MujocoEngine(SimulationEngine):
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
+        next_step = 0.0  # set as the loop starts, so opening the viewer is not lost time
+        fell_behind = False
 
         def _step_once(sync_viewer: bool) -> None:
+            nonlocal next_step, fell_behind
             loop_start = time.time()
             reset_done_events: list[threading.Event] = []
             with self._lock:
@@ -653,18 +695,33 @@ class MujocoEngine(SimulationEngine):
             self._render_cameras(loop_start, cam_renderers)
             self._raycast_lidars(loop_start, lidar_states)
 
-            elapsed = time.time() - loop_start
-            sleep_time = dt - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            # Sleep to a fixed schedule, not for what is left of this pass. A
+            # slow render or a late wake-up then only delays the next steps,
+            # which run without sleeping until the sim has caught up. The
+            # cameras and lidars stay due between those steps, so they keep
+            # their rate.
+            next_step += dt
+            now = time.perf_counter()
+            if next_step > now:
+                time.sleep(next_step - now)
+            elif now - next_step > _MAX_BEHIND_S:
+                if not fell_behind:
+                    fell_behind = True
+                    logger.warning(
+                        f"MuJoCo sim fell more than {_MAX_BEHIND_S} s behind the wall clock,"
+                        " skipping ahead. Physics may be slower than real time."
+                    )
+                next_step = now
 
         if headless:
+            next_step = time.perf_counter()
             while not self._stop_event.is_set():
                 _step_once(sync_viewer=False)
         else:
             with viewer.launch_passive(
                 self._model, self._data, show_left_ui=False, show_right_ui=False
             ) as m_viewer:
+                next_step = time.perf_counter()
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
 

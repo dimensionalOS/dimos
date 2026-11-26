@@ -28,7 +28,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 import mujoco
 import numpy as np
@@ -267,6 +267,9 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # "auto" times one shadowed render per camera at start and turns shadows
+    # off when they would take over 30% of real time (software GL, no GPU).
+    shadows: Literal["auto", "on", "off"] = "auto"
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -501,6 +504,7 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            shadows=self.config.shadows,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)

@@ -55,11 +55,15 @@ dimos --simulation mujoco run unitree-go2 \
   --go2connection.mujoco.start-pos '[2.0, -1.0]' \
   --go2connection.mujoco.shadows off
 
+dimos --simulation mujoco run xarm-perception-sim --mujocosimmodule.shadows on
+
 GO2CONNECTION__MUJOCO__STEPS_PER_FRAME=5 dimos --simulation mujoco run unitree-go2
 
 dimos run unitree-go2-temporal-memory --temporalmemory.new-memory true
 dimos run unitree-go2 --help
 ```
+
+Both MuJoCo sims time a shadowed camera render at start and turn shadows off when the renderer is too slow for them, for example software GL on a machine without a GPU. `shadows` takes `auto` (the default), `on` or `off`.
 
 Use `--config robot.json` for structured settings:
 
