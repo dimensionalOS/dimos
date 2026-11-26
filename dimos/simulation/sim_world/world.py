@@ -56,6 +56,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
 from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
@@ -255,6 +256,7 @@ class Sim:
         rig: Rig,
         body: Callable[[mujoco.MjModel, mujoco.MjData], Body],
     ) -> None:
+        configure_mujoco_logging()
         self.scene = scene
         self.rig = rig
         self.model = build_model(scene, rig)

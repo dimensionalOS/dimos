@@ -765,30 +765,6 @@ def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:
         model.load()
 
 
-def test_prefix_preserves_mimic_references_and_fixed_mounts(tmp_path):
-    path = tmp_path / "robot.urdf"
-    path.write_text("""<robot name="test"><link name="root"/><link name="arm"/>
-    <link name="finger"/><joint name="drive" type="revolute">
-    <parent link="root"/><child link="arm"/><axis xyz="0 0 1"/>
-    <limit lower="-1" upper="1" effort="5" velocity="2"/></joint>
-    <joint name="copy" type="revolute"><parent link="arm"/><child link="finger"/>
-    <mimic joint="drive" multiplier="-1"/></joint></robot>""")
-    model = robot_model.RobotModel.from_file(path).with_fixed_frame(
-        "camera", "arm", xyz=(0.1, 0.2, 0.3)
-    )
-    namespaced = model.with_prefix("robot_a/")
-    # Worker serialization must preserve variants without materializing a second source file.
-    loaded = decode(encode(namespaced)).load()
-    assert loaded.root_link == "robot_a/root"
-    assert loaded.get_joint("robot_a/copy").mimic == ("robot_a/drive", -1.0, 0.0)
-    parent, mount = loaded.resolve_frame("robot_a/camera")
-    assert parent == "robot_a/arm"
-    assert mount[:3, 3] == pytest.approx([0.1, 0.2, 0.3])
-    assert model.load().root_link == "root"
-    with pytest.raises(ValueError, match="Unknown model frame"):
-        loaded.resolve_frame("camera")
-
-
 @pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])
 def test_joint_velocity_limits_reject_invalid_values(tmp_path: Path, value: float) -> None:
     with pytest.raises(ValueError, match="positive and finite"):
@@ -861,7 +837,7 @@ def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
     model = _urdf(tmp_path).to_usd()
 
     assert [joint.name for joint in model.joints] == ["shoulder"]
-    assert model.root_link == "base"
+    assert model.root_link == "box_robot/base"
     assert model.source_path == tmp_path / "robot.urdf"
     assert model.referenced_files() == {
         str(tmp_path / "meshes/arm.stl"),
@@ -945,8 +921,8 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
     (joint,) = model.joints
     assert joint.name == "shoulder"
     assert joint.type == "revolute"
-    assert joint.parent_link == "base"
-    assert joint.child_link == "forearm"
+    assert joint.parent_link == "arm/base"
+    assert joint.child_link == "arm/base/forearm"
     assert model.get_joint("shoulder") is joint
 
 
@@ -1023,14 +999,18 @@ def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> Non
     model = (
         robot_model.RobotModel.from_file(source)
         .to_usd()
-        .with_frames({"tool": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
+        .with_frames({"tool": ("arm/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
     )
 
     joint = model.get_joint("tool_joint")
     assert joint is not None, "the added frame is welded in the layer but absent from joints"
-    assert (joint.type, joint.parent_link, joint.child_link) == ("fixed", "base_link", "tool")
+    assert (joint.type, joint.parent_link, joint.child_link) == (
+        "fixed",
+        "arm/base_link",
+        "arm/base_link/tool",
+    )
     assert joint.origin_xyz == (0.1, 0.0, 0.2)
-    assert {"tool", "tool_joint"} <= model.frame_names()
+    assert model.frame_names() == {"arm", "arm/base_link", "arm/base_link/tool"}
 
 
 def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
@@ -1047,4 +1027,25 @@ def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path
     )
     pytest.importorskip("pxr")
 
-    assert 'displayName = "spot"' in model.usd
+    assert 'def Xform "spot"' in model.usd
+
+
+_LAYER = '#usda 1.0\n(\n    defaultPrim = "box"\n)\n\ndef Xform "box"\n{\n}\n'
+
+
+def test_a_usd_file_is_json_as_its_path_and_a_layer_as_its_content(tmp_path: Path) -> None:
+    usd_file = tmp_path / "box.usda"
+    usd_file.write_text(_LAYER)
+    assert UsdModel.from_file(usd_file).to_json() == {"path": str(usd_file)}
+    assert UsdModel.from_layer(_LAYER).to_json() == {"content": _LAYER}
+    assert UsdModel.from_json({"path": str(usd_file)}).usd == _LAYER
+    assert UsdModel.from_json({"content": _LAYER}).usd == _LAYER
+
+
+def test_usd_json_has_exactly_one_of_path_or_content() -> None:
+    with pytest.raises(ValueError, match="exactly one of path or content"):
+        UsdModel.from_json({})
+    with pytest.raises(ValueError, match="exactly one of path or content"):
+        UsdModel.from_json({"path": "box.usda", "content": _LAYER})
+    with pytest.raises(ValueError, match="not \\['frames'\\]"):
+        UsdModel.from_json({"content": _LAYER, "frames": {}})

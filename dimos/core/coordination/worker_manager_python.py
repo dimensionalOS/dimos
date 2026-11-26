@@ -16,10 +16,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
+from dimos.core.resource_monitor.logger import RESOURCE_STATS_TOPIC
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -30,15 +32,13 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def _rpc_name(kwargs: dict[str, Any]) -> str | None:
-    return kwargs.get("rpc_name") or kwargs.get("instance_name")
-
-
 class WorkerManagerPython:
     deployment_identifier: str = "python"
 
-    def __init__(self, g: GlobalConfig) -> None:
+    def __init__(self, g: GlobalConfig, *, module_rpc_namespace: str | None = None) -> None:
         self._cfg = g
+        # Each coordinator owns its worker pool, including dynamically loaded modules.
+        self._module_rpc_namespace = module_rpc_namespace or f"runs/{uuid4().hex}/modules"
         self._n_workers = g.n_workers
         self._workers: list[PythonWorker] = []
         self._closed = False
@@ -60,6 +60,7 @@ class WorkerManagerPython:
 
             self._stats_monitor = StatsMonitor(self)
             self._stats_monitor.start()
+            logger.info("Resource monitor started", topic=RESOURCE_STATS_TOPIC)
 
     def add_workers(self, n: int) -> None:
         """Spawn *n* additional worker processes into the pool."""
@@ -88,8 +89,7 @@ class WorkerManagerPython:
 
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
         worker = self._select_worker(dedicated=module_class.dedicated_worker)
-        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class, _rpc_name(kwargs))
+        return self._deploy_on(worker, (module_class, global_config, kwargs))
 
     def deploy_fresh(
         self,
@@ -114,8 +114,18 @@ class WorkerManagerPython:
         self._n_workers += 1
         if module_class.dedicated_worker:
             worker.dedicated = True
-        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class, _rpc_name(kwargs))
+        return self._deploy_on(worker, (module_class, global_config, kwargs))
+
+    def _deploy_on(self, worker: PythonWorker, spec: ModuleSpec) -> RPCClient:
+        module_class, global_config, kwargs = spec
+        instance_name = kwargs.get("instance_name") or module_class.__name__
+        # A compiled hosted address already carries this coordinator's namespace.
+        # Local aliases always live under the fresh namespace chosen for their run.
+        prefix = self._module_rpc_namespace + "/"
+        alias = kwargs.get("rpc_name") or instance_name
+        rpc_name = prefix + alias.removeprefix(prefix).lstrip("/")
+        actor = worker.deploy_module(module_class, global_config, {**kwargs, "rpc_name": rpc_name})
+        return RPCClient(actor, module_class, rpc_name, instance_name=instance_name)
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
         """Undeploy a module and shut down its worker if it is now empty."""
@@ -168,12 +178,7 @@ class WorkerManagerPython:
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]
 
         def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
-            worker, (module_class, global_config, kwargs) = item
-            return RPCClient(
-                worker.deploy_module(module_class, global_config, kwargs),
-                module_class,
-                _rpc_name(kwargs),
-            )
+            return self._deploy_on(*item)
 
         try:
             return safe_thread_map(assignments, _deploy)

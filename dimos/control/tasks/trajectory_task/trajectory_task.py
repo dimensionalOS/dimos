@@ -617,7 +617,7 @@ class JointTrajectoryTaskParams(BaseConfig):
     velocity_limits: dict[str, float] | None = None
 
 
-def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
+def create_task(cfg: Any) -> JointTrajectoryTask:
     if cfg.name != JOINT_TRAJECTORY_TASK_NAME:
         raise ValueError(
             f"trajectory task must be named {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"

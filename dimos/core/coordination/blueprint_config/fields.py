@@ -22,14 +22,18 @@ import inspect
 from types import UnionType
 from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic.errors import PydanticInvalidForJsonSchema, PydanticSchemaGenerationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.errors import (
+    BlueprintConfigError,
+    format_validation_error,
+)
 from dimos.core.coordination.blueprint_config.values import plain, plain_mapping
 from dimos.core.coordination.blueprints import BlueprintAtom
+from dimos.core.global_config import GlobalConfig
 
 
 def module_config_cls(atom: BlueprintAtom) -> type[BaseModel]:
@@ -44,6 +48,20 @@ def module_config_cls(atom: BlueprintAtom) -> type[BaseModel]:
             f"{atom.module.__name__}.config must be a pydantic BaseModel type."
         )
     return config_cls
+
+
+def validate_module_config(
+    atom: BlueprintAtom, values: Mapping[str, Any], g: GlobalConfig
+) -> BaseModel:
+    """Validate a module's config against the globals it will receive in its worker."""
+    config_cls = module_config_cls(atom)
+    prepared = prepare_model_input(config_cls, values)
+    if "g" in config_cls.model_fields:
+        prepared["g"] = g.model_copy(deep=True)
+    try:
+        return config_cls.model_validate(prepared)
+    except ValidationError as error:
+        raise BlueprintConfigError(format_validation_error(atom.name, error)) from error
 
 
 def leaf_fields(

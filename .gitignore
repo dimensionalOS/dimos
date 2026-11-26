@@ -63,6 +63,7 @@ data/*
 !data/.lfs/
 
 # Runtime output
+MUJOCO_LOG.TXT
 /logs
 /recordings
 /downloads
@@ -82,6 +83,16 @@ results/
 
 # Memory autorecord
 recording*.db
+
+# Generated premaps, point-cloud exports, and timestamped premap backups
+*.map.db
+*.map.*.db
+*_map.db
+# Atomic premap saves and SQLite sidecars
+*.map.db.tmp
+*.map.db-*
+*.map.db.tmp-*
+*_map.db-*
 
 # Rerun recordings
 *.rrd

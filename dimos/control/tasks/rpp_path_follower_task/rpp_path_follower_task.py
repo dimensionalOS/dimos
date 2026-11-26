@@ -213,7 +213,7 @@ class RPPPathFollowerTaskParams(BaseConfig):
     v_max_override: float | None = None
 
 
-def create_task(cfg: Any, hardware: Any) -> RPPPathFollowerTask:
+def create_task(cfg: Any) -> RPPPathFollowerTask:
     params = RPPPathFollowerTaskParams.model_validate(cfg.params)
     return RPPPathFollowerTask(
         cfg.name,

@@ -134,10 +134,23 @@ def test_save_client_launches_without_venv_on_path(mocker, monkeypatch, tmp_path
 
     output = tmp_path / "recordings" / "test-run" / "rerun.rrd"
     launch.assert_called_once_with(
-        [str(rerun), "--save", str(output), "--bind", "127.0.0.1", "--port", "auto", server_uri],
+        [
+            str(tmp_path / "python"),
+            "-c",
+            ANY,
+            str(rerun),
+            "--save",
+            str(output),
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            "auto",
+            server_uri,
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
     assert output.parent.is_dir()
 

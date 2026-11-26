@@ -15,6 +15,9 @@
 import pickle
 import time
 
+import pytest
+import rerun as rr
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -38,6 +41,35 @@ def test_lcm_encode_decode() -> None:
     print(pose_dest.position)
     print(pose_dest.orientation)
     assert pose_dest == pose_source
+
+
+def test_a_zero_quaternion_survives_lcm_round_trip() -> None:
+    pose = PoseStamped(position=[1.0, 2.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0])
+    assert PoseStamped.lcm_decode(pose.lcm_encode()).orientation.is_zero()
+
+
+@pytest.mark.parametrize(
+    ("orientation", "expected_rotation"),
+    [
+        ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)),
+        ((0.5, 0.5, 0.5, 0.5), (0.5, 0.5, 0.5, 0.5)),
+    ],
+    ids=["no-heading", "identity", "heading"],
+)
+def test_to_rerun_renders_rotation_without_changing_pose(
+    orientation: tuple[float, float, float, float],
+    expected_rotation: tuple[float, float, float, float],
+) -> None:
+    pose = PoseStamped(position=(1.0, 2.0, 3.0), orientation=orientation)
+    encoded = pose.lcm_encode()
+
+    transform = pose.to_rerun()
+
+    assert isinstance(transform, rr.Transform3D)
+    assert transform.translation.as_arrow_array().to_pylist() == [[1.0, 2.0, 3.0]]
+    assert transform.quaternion.as_arrow_array().to_pylist() == [list(expected_rotation)]
+    assert pose.lcm_encode() == encoded
 
 
 def test_pickle_encode_decode() -> None:

@@ -1,6 +1,51 @@
 {
   "vectors": [
     {
+      "name": "invalid_pong_aborted_0",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": -1
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_1",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": 0.5
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_2",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": null
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_3",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": true
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_4",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": 9007199254740992
+      }
+    },
+    {
       "name": "invalid_rate_update_0",
       "message": {
         "t": "topic_activate",
@@ -199,6 +244,25 @@
           "profiles": [
             ""
           ]
+        }
+      }
+    },
+    {
+      "name": "invalid_capabilities_4",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "videoReconfigure": 1
         }
       }
     },
@@ -437,7 +501,7 @@
         "id": "c1",
         "revision": 2,
         "options": {
-          "maxBitrate": 1
+          "bandwidth": 1
         }
       }
     },
@@ -449,6 +513,50 @@
         "revision": 2,
         "options": {
           "keepEvery": -1
+        }
+      }
+    },
+    {
+      "name": "fractional_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": 100000.5
+        }
+      }
+    },
+    {
+      "name": "negative_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": -1
+        }
+      }
+    },
+    {
+      "name": "unsafe_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": 9007199254740992
+        }
+      }
+    },
+    {
+      "name": "boolean_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": true
         }
       }
     },

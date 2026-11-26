@@ -1127,4 +1127,4 @@ def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return autoconnect(
         blueprint,
         RelayBridgeModule.blueprint(available_channels=available_channels),
-    )
+    ).solidify()
