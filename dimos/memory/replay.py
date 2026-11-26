@@ -254,9 +254,7 @@ class ReplayStream(Generic[T]):
             return None
         return self._decode(obs)
 
-    def observable(
-        self, *, skip_late: bool = True, on_loop: Callable[[], None] | None = None
-    ) -> Observable[T]:
+    def observable(self, *, skip_late: bool = True) -> Observable[T]:
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
@@ -269,8 +267,6 @@ class ReplayStream(Generic[T]):
         time are emitted at once, in order, and the rest keep their timing.
         Disabled by a subscriber that is only behind by its own setup, like a module
         subscribing every stream right after pinning the anchor.
-
-        With *loop*, *on_loop* runs just before the first frame of each new pass.
 
         Disposing cancels pending emissions and waits for an active callback
         before releasing its iterator, so the store can then be closed safely.
@@ -291,8 +287,7 @@ class ReplayStream(Generic[T]):
             emission_lock = threading.RLock()
             pending = SerialDisposable()
 
-            def make_iterator() -> Generator[tuple[float, Any, bool], None, None]:
-                wrapped = False
+            def make_iterator() -> Generator[tuple[float, Any], None, None]:
                 while True:
                     emitted = False
                     obs: Any
@@ -300,15 +295,13 @@ class ReplayStream(Generic[T]):
                     try:
                         for obs in rows:
                             emitted = True
-                            yield (obs.ts, obs, wrapped)
-                            wrapped = False
+                            yield (obs.ts, obs)  # decoded at emission, keeping subscribe cheap
                     finally:
                         close = getattr(rows, "close", None)
                         if close is not None:
                             close()
                     if not loop or not emitted:
                         break
-                    wrapped = True
 
             iterator = make_iterator()
 
@@ -330,7 +323,7 @@ class ReplayStream(Generic[T]):
                     observer.on_error(error)
 
             try:
-                first_ts, first_data, _ = next(iterator)
+                first_ts, first_data = next(iterator)
             except StopIteration:
                 terminate()
                 return Disposable()
@@ -345,20 +338,18 @@ class ReplayStream(Generic[T]):
             # if the iterator wraps (ts < prev) — that means we've exhausted
             # one full pass without finding a forward frame.
             wrap_offset = 0.0
-            skipped_wrap = False
             prev_skip = first_ts
             while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
                 try:
-                    cand_ts, cand_data, wrapped = next(iterator)
+                    cand_ts, cand_data = next(iterator)
                 except StopIteration:
                     terminate()
                     return Disposable()
                 except Exception as error:
                     terminate(error)
                     return Disposable()
-                if wrapped or cand_ts < prev_skip:
+                if cand_ts < prev_skip:
                     wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
-                    skipped_wrap = True
                     first_ts, first_data = cand_ts, cand_data
                     break
                 first_ts, first_data = cand_ts, cand_data
@@ -366,18 +357,12 @@ class ReplayStream(Generic[T]):
 
             prev_ts = first_ts
 
-            def schedule(
-                message: tuple[float, Any, bool],
-                wrap_off: float,
-                prev: float,
-                restarted: bool = False,
-            ) -> None:
+            def schedule(message: tuple[float, Any], wrap_off: float, prev: float) -> None:
                 if disposed.is_set():
                     return
-                ts, data, wrapped = message
-                if wrapped or ts < prev:
+                ts, data = message
+                if ts < prev:
                     wrap_off += (prev - ts) + _LOOP_GAP
-                    restarted = True
                 target = wall_t0 + ((ts + wrap_off) - replay_t0) / speed
                 delay = max(0.0, target - time.time())
 
@@ -391,8 +376,6 @@ class ReplayStream(Generic[T]):
                         except Exception as error:
                             terminate(error)
                             return None
-                        if restarted and on_loop is not None:
-                            on_loop()
                         observer.on_next(value)
                         # An observer may dispose from on_next, including closing
                         # the store. Do not advance its cursor after that.
@@ -418,7 +401,7 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            schedule((first_ts, first_data, False), wrap_offset, prev_ts, skipped_wrap)
+            schedule((first_ts, first_data), wrap_offset, prev_ts)
 
             return Disposable(dispose)
 

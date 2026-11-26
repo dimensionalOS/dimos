@@ -27,8 +27,6 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any
 
-from reactivex import interval
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -42,6 +40,8 @@ from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from reactivex import Observable
+
     from dimos.memory.replay import Replay, ReplayStream
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
@@ -139,12 +139,12 @@ class ReplayModule(Module):
             loop=self.config.loop,
         )
         # A stream whose rows all carry one timestamp (camera_info recorded from a
-        # constant stamped at import, often long before the run) is republished at
-        # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
-        # would spend that lead time emitting nothing.
+        # constant stamped at import, often long before the run) is published once
+        # when playback starts instead of replayed, and does not set the anchor:
+        # otherwise the replay would spend that lead time emitting nothing.
         static: dict[str, DimosMsg] = {}
         # Static TF (a ``*_static`` stream, or edges frozen in a TF stream) is sent
-        # once per pass, on the matching ``*_static`` port when there is one.
+        # once when playback starts, on the matching ``*_static`` port when there is one.
         static_tf: dict[str, dict[tuple[str, str], Transform]] = {}
         timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
         timed_starts = []
@@ -205,29 +205,22 @@ class ReplayModule(Module):
                 ts for stream in timed_streams.values() if (ts := stream.first_ts()) is not None
             ]
 
-        def publish_static_tf() -> None:
-            for port_name, transforms in static_tf.items():
-                outputs[port_name].publish(TFMessage(*transforms.values()))
-
-        publish_static_tf()
+        # Consumers keep the last value, so constant messages are sent once, before any timed frame.
+        for name, message in static.items():
+            outputs[name].publish(message)
+        for port_name, transforms in static_tf.items():
+            outputs[port_name].publish(TFMessage(*transforms.values()))
         progress = ReplayProgress(str(path))
         progress.start(replay, timed_streams.values())
         replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        # The earliest stream marks each new pass of a looping replay.
-        starts = {n: ts for n, s in timed_streams.items() if (ts := s.first_ts()) is not None}
-        pass_clock = min(starts, key=starts.__getitem__) if starts else None
-        for name, port in outputs.items():
+        for name, stream in timed_streams.items():
+            port = outputs[name]
             logger.info("Replaying %s -> %s", name, port)
-            if name in static:
-                self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, static[name]))
-                )
-            if name in timed_streams:
-                timed = timed_streams[name].observable(
-                    skip_late=False,
-                    on_loop=publish_static_tf if name == pass_clock and static_tf else None,
-                )
-                self.register_disposable(progress.track(timed).subscribe(port.publish))
+            # Not a late subscriber, just behind by the setup of the streams
+            # subscribed before it, which on a loaded machine exceeds the
+            # late tolerance and would drop its first frames.
+            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
+            self.register_disposable(progress.track(timed).subscribe(port.publish))
         progress.seal()
 
     @rpc
@@ -284,10 +277,6 @@ def _frozen_tf(rows: Stream[TFMessage]) -> tuple[TFMessage, set[tuple[str, str]]
                 if (transform.frame_id, transform.child_frame_id) in edges:
                     transforms[transform.lcm_encode()] = transform
     return TFMessage(*transforms.values()), edges
-
-
-def _republish(port: Out[Any], msg: Any, _tick: int) -> None:
-    port.publish(msg)
 
 
 def _port_names(topics: str, types: dict[str, type]) -> list[str]:
