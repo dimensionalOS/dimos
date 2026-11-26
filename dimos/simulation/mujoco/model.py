@@ -54,11 +54,6 @@ def get_assets() -> dict[str, bytes]:
     _update_assets(assets, menagerie / "unitree_go1" / "assets")
     _update_assets(assets, menagerie / "unitree_g1" / "assets")
 
-    # From: https://sketchfab.com/3d-models/jeong-seun-34-42956ca979404a038b8e0d3e496160fd
-    person_dir = get_data("person")
-    _update_assets(assets, person_dir, "*.obj")
-    _update_assets(assets, person_dir, "*.png")
-
     return assets
 
 
@@ -126,36 +121,7 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
     root.set("model", scene_name)
     root.insert(0, ET.Element("include", file=f"{asset_robot}.xml"))
 
-    _add_person_object(root)
-
     return ET.tostring(root, encoding="unicode")
-
-
-def _add_person_object(root: ET.Element) -> None:
-    asset = root.find("asset")
-
-    if asset is None:
-        asset = ET.SubElement(root, "asset")
-
-    ET.SubElement(asset, "mesh", name="person_mesh", file="jeong_seun_34.obj")
-    ET.SubElement(asset, "texture", name="person_texture", file="material_0.png", type="2d")
-    ET.SubElement(asset, "material", name="person_material", texture="person_texture")
-
-    worldbody = root.find("worldbody")
-
-    if worldbody is None:
-        worldbody = ET.SubElement(root, "worldbody")
-
-    person_body = ET.SubElement(worldbody, "body", name="person", pos="0 0 0", mocap="true")
-
-    ET.SubElement(
-        person_body,
-        "geom",
-        type="mesh",
-        mesh="person_mesh",
-        material="person_material",
-        euler="1.5708 0 0",
-    )
 
 
 def load_scene_xml(config: MujocoConfig) -> str:
