@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import posixpath
 import threading
+import uuid
 
 from dimos.constants import CACHE_DIR
 from dimos.msgs.files.FileInfo import FileInfo
@@ -59,7 +60,7 @@ def _written_layer(text: str, name: str, mtime: float | None) -> _Layer:
     path = PROVIDED_LAYERS / sha256.partition(":")[2] / name
     if not path.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
-        staged = path.with_name(f".{name}.{threading.get_ident()}")
+        staged = path.with_name(f".{name}.{uuid.uuid4().hex}")
         staged.write_bytes(content)
         staged.replace(path)
     return _Layer(path, sha256, mtime)
@@ -109,7 +110,8 @@ class HardwareFiles:
         """``usd`` names its files by absolute path; what is provided names them relative to it."""
         # Before any layer is opened or hashed: a clone without LFS smudging has pointers, not meshes.
         pull_usd_assets([usd])
-        provided, published = publish_usd_assets(usd)
+        # Reserved, so a sublayer that is also called hardware.usda never takes the root's name.
+        provided, published = publish_usd_assets(usd, reserved={HARDWARE_USD})
         inline = inline_meshes(load_pxr(), provided)
         if inline:
             logger.warning(
@@ -199,6 +201,9 @@ class HardwareFiles:
             return None
         text = resolve_usd_assets(str(layer.ExportToString()), str(path.parent))
         pull_usd_assets([text])
-        provided, reached = publish_usd_assets(text)
-        self._provide_reached(posixpath.dirname(uri), reached, walking | {path.resolve()})
+        directory = posixpath.dirname(uri)
+        provided, reached = publish_usd_assets(
+            text, reserved={HARDWARE_USD} if not directory else ()
+        )
+        self._provide_reached(directory, reached, walking | {path.resolve()})
         return _written_layer(provided, path.name, path.stat().st_mtime)
