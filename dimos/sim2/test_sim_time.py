@@ -167,26 +167,21 @@ def _steady(stamps: dict[str, list[float]]) -> bool:
     )
 
 
-def _per_sim_second(stamps: list[float], start: float) -> float:
+def _per_second(stamps: list[float], start: float) -> float:
     steady = [stamp for stamp in stamps if stamp >= start + WARM_UP]
     assert len(steady) > 5, f"only {len(steady)} after warming up"
     return (len(steady) - 1) / (steady[-1] - steady[0])
 
 
 @pytest.mark.self_hosted  # reads the Mid-360 pattern from Git LFS
-@pytest.mark.parametrize("speed", [0.5, 4.0], ids=["half_speed", "four_times_speed"])
-def test_sensors_keep_their_rates_per_sim_second(speed: float, renders: None) -> None:
-    readings = _run(seconds=8.0, speed=speed)
+def test_sensors_keep_their_rates_in_real_time(renders: None) -> None:
+    readings = _run(seconds=8.0, speed=1.0)
     stamps = readings["stamps"]
     counts = {name: len(stamps[name]) for name in RATES}
     assert all(count > 5 for count in counts.values()), counts
     start = min(stamps[name][0] for name in RATES)
     for name, rate in RATES.items():
-        measured = _per_sim_second(stamps[name], start)
-        if speed <= 1.0:
-            assert measured == pytest.approx(rate, rel=0.1), (name, measured)
-        else:
-            # A busy sensor skips ticks faster than real time; ticking on the wall clock would give rate / speed.
-            assert rate / speed < measured < rate * 1.1, (name, measured)
+        measured = _per_second(stamps[name], start)
+        assert measured == pytest.approx(rate, rel=0.1), (name, measured)
     settled = readings["accelerations"][len(readings["accelerations"]) // 2 :]
     assert np.mean(settled) == pytest.approx(9.81, abs=0.3)

@@ -111,6 +111,8 @@ class MujocoBackend:
             # No time passes while it waits for a command, and none is owed once it comes.
             self._rebase = True
             return float(data.time), self.frame()
+        # A world that waited or dropped time to catch up stamps its frames on wall time again.
+        rebased = self._rebase
         if self._rebase:
             self._started = time.monotonic() - data.time / self._speed
             self._rebase = False
@@ -121,6 +123,7 @@ class MujocoBackend:
         if steps > max_steps:
             self._started += (steps - max_steps) * model.opt.timestep / self._speed
             steps = max_steps
+            rebased = True
         for _ in range(steps):
             if hold:
                 data.time += model.opt.timestep
@@ -128,6 +131,8 @@ class MujocoBackend:
                 mujoco.mj_step(model, data)
             if self._hold_for_due_ticks():
                 break
+        if rebased:
+            self.world.rebase(float(data.time))
         return float(data.time), self.frame()
 
     def apply(self, actions: Sequence[Action]) -> None:

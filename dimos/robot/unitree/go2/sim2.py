@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from functools import cached_property
 import math
 from pathlib import Path
+import time
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -49,7 +50,7 @@ from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_observations import OnWorldTime, WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.go2_legged.policy import Go2Policy, Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import (
     COMMAND_SLEW,
@@ -120,7 +121,7 @@ class Go2SimConfig(HardwareModuleConfig):
     odom_frame: str = GO2_ODOM_FRAME
 
 
-class Go2Sim(OnWorldTime, HardwareModule):
+class Go2Sim(HardwareModule):
     """A Go2 in a simulated world; mount it on a frame of the scene, which is where it starts.
 
     Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
@@ -183,7 +184,7 @@ class Go2Sim(OnWorldTime, HardwareModule):
             logger.warning(f"go2 sim: ignoring a non-finite cmd_vel (vx, vy, vyaw) = {desired}")
             return
         self._desired = desired
-        self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
+        self._desired_expires = time.time() + CMD_VEL_TIMEOUT
 
     async def _run(self) -> None:
         async for _ in self._world.ticks(1.0 / CONTROL_DT):
@@ -194,7 +195,7 @@ class Go2Sim(OnWorldTime, HardwareModule):
         with world.lock:
             base = world.entity(robot)
             names, rows = world.joints(robot)
-            stamp = world.stamp()
+        stamp = time.time()
         if base is None or base.pose is None or base.velocity is None:
             return
         x, y, z, w = base.pose[3:]

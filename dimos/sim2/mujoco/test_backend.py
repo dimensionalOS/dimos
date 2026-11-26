@@ -290,8 +290,8 @@ async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
 
 async def _ran_for(backend: MujocoBackend, published: _Collect, seconds: float) -> None:
     """Until the published world has run ``seconds`` of sim time, however long that takes on the wall."""
-    assert backend.world.start_ns is not None
-    await published.world.reached(backend.world.start_ns / 1e9 + seconds)
+    while not published.world.frame or backend.data.time < seconds:
+        await asyncio.sleep(backend.timestep)
 
 
 def test_backend_steps_physics_and_takes_commands(world: UsdModel, robot_model: UsdModel) -> None:
@@ -317,7 +317,7 @@ def test_backend_steps_physics_and_takes_commands(world: UsdModel, robot_model: 
 def test_a_held_robot_stands_still_on_a_running_clock_until_it_is_commanded(
     world: UsdModel, robot_model: UsdModel
 ) -> None:
-    """A policy commands on fresh readings, which tick on world time, so a held world keeps its clock running."""
+    """A policy commands on fresh readings, which tick on wall time, so a held world keeps its clock running."""
     held = SimulatedRobot("dog", robot_model, held_until_commanded=True)
     backend = MujocoBackend(world, [held])
     published = _Collect()
