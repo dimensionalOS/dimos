@@ -41,9 +41,11 @@ from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
 from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
 from dimos.sim2.mujoco.sensor_mount import SensorMount, mount_sensor
-from dimos.sim2.mujoco.sensor_world import GRAVITY
 from dimos.sim2.mujoco.world import USD_SUFFIXES, compile_world
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
+
+# Standard gravity in world axes (z up): an accelerometer at rest reads its negative.
+_GRAVITY = np.array([0.0, 0.0, -9.81])
 
 
 def _open_stage(scene: Path) -> Any:
@@ -276,7 +278,7 @@ class MujocoView:
         self._previous[sensor] = (self.time, velocity)
         elapsed = self.time - before[0] if before else 0.0
         acceleration = (velocity - before[1]) / elapsed if before and elapsed > 0 else np.zeros(3)
-        return angular, world_from_sensor.T @ (acceleration - GRAVITY), quat
+        return angular, world_from_sensor.T @ (acceleration - _GRAVITY), quat
 
     def _frame(self, frame: str) -> tuple[int, int]:
         if frame not in self._frames:

@@ -24,6 +24,8 @@ from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 import numpy as np
+from numpy.typing import NDArray
+from scipy.spatial.transform import Rotation
 
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.core.core import rpc
@@ -45,7 +47,6 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
     G1TfPublisherConfig,
 )
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.mujoco.sensor_world import imu_reading
 from dimos.sim2.sim import SimulatedWorldSpec
 from dimos.sim2.sim_robot import SimRobot
 from dimos.sim2.spec import SimulatedRobot
@@ -68,6 +69,36 @@ G1_ODOM_FRAME: str = PointLioConfig.model_fields["frame_id"].default
 G1_ODOM_TF: dict[str, dict[str, str]] = {
     "tf_frames_local": {"odom": G1_ODOM_FRAME, "body": G1_BODY},
 }
+
+
+# Standard gravity in world axes (z up): an accelerometer at rest reads its negative.
+_GRAVITY = np.array([0.0, 0.0, -9.81])
+
+
+def imu_reading(
+    pose: NDArray[np.float64],
+    velocity: NDArray[np.float64],
+    acceleration: NDArray[np.float64],
+    imu_in_body: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """The gyro, accelerometer (specific force) and x, y, z, w orientation of an IMU fixed at ``imu_in_body`` (a 4x4) on a body.
+
+    ``pose`` is the body's x, y, z, qx, qy, qz, qw; ``velocity`` and ``acceleration`` are linear then
+    angular, world axes, at the body's origin, without gravity: a BodyState as world_observations carries it.
+    """
+    world_from_body = Rotation.from_quat(pose[3:7]).as_matrix()
+    world_from_imu = world_from_body @ imu_in_body[:3, :3]
+    angular_velocity, linear_acceleration = velocity[3:], acceleration[:3]
+    lever = world_from_body @ imu_in_body[:3, 3]
+    # A point fixed on the body: tangential and centripetal acceleration on top of the origin's.
+    at_imu = (
+        linear_acceleration
+        + np.cross(acceleration[3:], lever)
+        + np.cross(angular_velocity, np.cross(angular_velocity, lever))
+    )
+    gyro = world_from_imu.T @ angular_velocity
+    accelerometer = world_from_imu.T @ (at_imu - _GRAVITY)
+    return gyro, accelerometer, Rotation.from_matrix(world_from_imu).as_quat()
 
 
 def usd_joint(name: str) -> str:
