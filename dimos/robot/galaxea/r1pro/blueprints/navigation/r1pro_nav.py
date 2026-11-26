@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,45 +12,106 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro click-to-drive navigation: raytracing costmap + A* replanning.
-
-Mirrors ``unitree_g1_nav_simple``, fed by the chassis Mid-360 and Point-LIO.
-
-Usage:
-    dimos run r1pro-nav        # click a goal in the rerun viewer
-"""
+"""R1 Pro 3D navigation on Point-LIO: lidar + lidar-anchored head depth into one ray-traced map: ``dimos run r1pro-nav``."""
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig
+from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_coordinator
+from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
+    r1pro_control,
+    r1pro_lidar_odometry,
+)
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_WIDTH_M,
+    R1PRO_MAX_STEP_HEIGHT_M,
+    R1PRO_OVERHEAD_CLEARANCE_M,
+    R1PRO_ROTATION_DIAMETER_M,
+    R1PRO_URDF_MANAGER_CONFIG,
+)
+from dimos.robot.galaxea.r1pro.head_depth import R1ProHeadDepth, r1pro_head_depth
+from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
+from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.visualization.vis_module import vis_module
 
-# First-pass R1 Pro clearances — tune on the robot.
-_r1pro_width = 0.65  # chassis width + margin (m)
-_r1pro_rotation_diameter = 0.9  # in-place rotation footprint (m)
-_r1pro_overhead_clearance = 1.9  # torso-up height + margin (m)
-_r1pro_max_step_height = 0.03  # wheeled base: essentially flat floors only (m)
-_voxel_resolution = 0.05
+VOXEL_SIZE_M = 0.07
+# Turn-in-place radius plus half a voxel, since voxel centres sit up to half a voxel inside the surface they stand for.
+WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2 + VOXEL_SIZE_M / 2
+PLANNER_VIZ_HZ = 0.0
+# Sample-to-tf gap allowed: the mount tf is 5 Hz, Point-LIO's 10 Hz with jitter, and Livox clouds lag ~0.11 s (0.1 s dropped them).
+TF_TOLERANCE_S = 0.5
+# Grazing spare lasts 2 s of frames (Point-LIO + ~5 fps head depth): on the office box recording 1 s ate floor, 3 s left a crouching person's layer up.
+HEAD_DEPTH_HZ = 5.0
+GRAZE_RECENT_FRAMES = round(
+    2.0 * (PointLioConfig.model_fields["scan_rate"].default + HEAD_DEPTH_HZ)
+)
+
 
 r1pro_nav = autoconnect(
-    r1pro_coordinator,
-    RayTracingVoxelMap.blueprint(voxel_size=_voxel_resolution),
-    CostMapper.blueprint(
-        config=HeightCostConfig(
-            resolution=_voxel_resolution,
-            can_pass_under=_r1pro_overhead_clearance,
-            can_climb=_r1pro_max_step_height,
-        ),
-        initial_safe_radius_meters=_r1pro_width + 0.4,
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=r1pro_nav_rerun_config(VOXEL_SIZE_M, WALL_CLEARANCE_M, PLANNER_VIZ_HZ),
     ),
-    ReplanningAStarPlanner.blueprint(
-        robot_width=_r1pro_width,
-        robot_rotation_diameter=_r1pro_rotation_diameter,
+    # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
+    r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
+    r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
+    # Joints on tf (the head cameras ride the torso), and the robot's body cut out of both the Mid-360 and head depth.
+    UrdfManagerPointClearing.blueprint(
+        **R1PRO_URDF_MANAGER_CONFIG,
+        tf_tolerance_s=TF_TOLERANCE_S,
+        tf_forward_tolerance_s=TF_TOLERANCE_S,
+    ).remappings(
+        [
+            (UrdfManagerPointClearing, "pointcloud", "lidar_with_robot"),
+            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar"),
+        ]
+    ),
+    # Head depth within a voxel of the floor lands in the floor's layer, so it is anchored as floor.
+    r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S, floor_tolerance_m=VOXEL_SIZE_M).remappings(
+        [(R1ProHeadDepth, "head_cloud", "lidar_with_robot")]
+    ),
+    RayTracingVoxelMap.blueprint(
+        voxel_size=VOXEL_SIZE_M,
+        max_range=10.0,
+        # Live, heavier head depth fell ~10 s behind; skipping stale clouds means it never works through a queue.
+        max_cloud_age_s=1.0,
+        emit_every=1,
+        global_emit_every=50,
+        support_min=4,
+        graze_recent_frames=GRAZE_RECENT_FRAMES,
+        worker_threads=3,
+        tf_match_tolerance_s=TF_TOLERANCE_S,
+    ),
+    MLSPlannerNative.blueprint(
+        voxel_size=VOXEL_SIZE_M,
+        robot_height=R1PRO_OVERHEAD_CLEARANCE_M,
+        start_z_offset_m=0.0,
+        wall_clearance_m=WALL_CLEARANCE_M,
+        wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
+        wall_buffer_weight=100.0,
+        # MLS rounds steps down to whole voxels and the fused floor spans up to three layers, so floor two layers apart must connect.
+        step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, 2 * VOXEL_SIZE_M),
+        step_penalty_weight=4.0,
+        viz_publish_hz=PLANNER_VIZ_HZ,
+        worker_threads=2,
+    ).remappings(
+        [
+            (MLSPlannerNative, "global_map", "global_map_unused"),
+        ]
+    ),
+    DanHolonomicTC.blueprint(control_frequency=10.0).remappings(
+        [(DanHolonomicTC, "odom", "chassis_odom")]
     ),
     MovementManager.blueprint(),
-).global_config(n_workers=8)
+).global_config(
+    # One per module, so no two share a Python process (and its GIL).
+    n_workers=15,
+    robot_width=R1PRO_CHASSIS_WIDTH_M,
+    robot_rotation_diameter=R1PRO_ROTATION_DIAMETER_M,
+)

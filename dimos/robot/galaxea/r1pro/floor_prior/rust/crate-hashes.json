@@ -1,0 +1,6 @@
+{
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#dimos-lcm@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#lcm-msgs@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
+  "git+https://github.com/dimensionalOS/dimos?rev=4e17871fc14b6197ee1783b46ec5f23923645190#dimos-module-macros@0.1.0": "sha256-2zTugTxx4gD0FRHOLn41ilpn0yMJ6L+wyceuM+d2MOM=",
+  "git+https://github.com/dimensionalOS/dimos?rev=4e17871fc14b6197ee1783b46ec5f23923645190#dimos-module@0.1.0": "sha256-2zTugTxx4gD0FRHOLn41ilpn0yMJ6L+wyceuM+d2MOM="
+}

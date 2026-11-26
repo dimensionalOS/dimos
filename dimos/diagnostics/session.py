@@ -36,6 +36,7 @@ class NetworkSettings(BaseModel):
     interface: str = Field(min_length=1, max_length=64)
     peers: list[str] = Field(default_factory=list, max_length=8)
     interval_s: float = Field(default=2, ge=1, le=60)
+    probe_url: str | None = Field(default=None, pattern=r"^https?://", max_length=2048)
 
     @field_validator("interface")
     @classmethod

@@ -47,11 +47,10 @@ in that pane; until then the wrist cameras log and retry.
 ## Blueprints
 
 ```bash
-dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer
-dimos run r1pro-teleop          # + chassis teleop from the viewer
-dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
-dimos run r1pro-manipulation    # + dual-arm planning (experimental)
-dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-coordinator      # the base: connection, head cameras, Mid-360 + Point-LIO, viewer
+dimos run r1pro-nav              # base + head depth + 3D ray-traced map + MLS planner (click a goal)
+dimos run r1pro-manipulation     # dual-arm planning (experimental)
+dimos run r1pro-planar-preview   # planar-base planning preview on mock hardware
 ```
 
 ## Control path
@@ -116,14 +115,18 @@ hardware.
 
 ## Point-LIO
 
-Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
-the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
-`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
-The Mid-360 driver and Point-LIO are native binaries built on first run, so
-`cargo` must be on the path.
+## Point-LIO and head depth
 
-**Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
-holds LCM's default port, so set
+`base_link` is placed by Point-LIO on the chassis Mid-360, not by wheel odometry.
+The connection still publishes wheel odometry on `odometry`, just not on tf.
+`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry on tf.
+`r1pro-nav` adds a dense cloud from the left head camera: Depth Anything,
+calibrated per pixel to the last few seconds of Point-LIO scans (`Depth2DepthCloud`).
+The Mid-360 driver, Point-LIO and the head depth are native binaries built on
+first run, so `cargo` (and on an Orin, `nvcc` for CUDA) must be on the path.
+
+**Transport.** The blueprints run on zenoh. On LCM, the vendor's
+`realsense2_camera` holds LCM's default port, so set
 `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
 
 **Other vendor profiles.** With a `--r1proconnection.vendor-profile` that starts

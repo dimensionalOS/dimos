@@ -52,6 +52,7 @@ class SessionNetwork:
                         network.interval_s,
                         interface=network.interface,
                         peers=tuple(network.peers),
+                        probe_url=network.probe_url,
                         stop=self.stop_event,
                     )
                 except Exception:

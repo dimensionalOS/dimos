@@ -213,6 +213,8 @@ class R1ProConnectionConfig(ConnectionConfig):
     odom_frame_id: str = Field(default="odom")
     sensor_stats_interval_s: float = Field(default=10.0)
     gripper_feedback_timeout_s: float = Field(default=1.0)
+    # The chassis and torso IMUs: ~300 ROS messages/s through Python, unused by Point-LIO navigation.
+    enable_imu: bool = Field(default=True)
     boot_vendor_stack: bool = Field(default=True)
     vendor_profile: str = Field(default="")
 
@@ -679,8 +681,9 @@ class R1ProConnection(ConnectionModule):
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
 
-        add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
-        add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
+        if self.config.enable_imu:
+            add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
+            add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
 
         # Periodic per-stream stats reporter (joined on stop via _sensor_stop).
         if self.config.sensor_stats_interval_s > 0:
@@ -705,9 +708,7 @@ class R1ProConnection(ConnectionModule):
                     runtime.watch(f"sensor/{stream}", 250)
                     stamp = getattr(getattr(msg, "header", None), "stamp", None)
                     runtime.event(
-                        "camera.acquired"
-                        if stream in _COLOR_CAMERAS or "depth" in stream
-                        else "sensor.received",
+                        "camera.acquired" if "depth" in stream else "sensor.received",
                         channel=stream,
                         timestamp_provenance="vendor_ros_header_unmapped",
                         driver_timestamp_ns=(

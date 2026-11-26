@@ -72,6 +72,8 @@ DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
 WORKER_SHUTDOWN_TIMEOUT = 10.0
 # Cover both worker waits plus escalation and coordinator cleanup before killing the run.
 RUN_SHUTDOWN_TIMEOUT = 2 * WORKER_SHUTDOWN_TIMEOUT + 10.0
+# Timeout (seconds) for a test whose only bound should be "it never happened", however loaded the machine.
+LONG_TEST_TIMEOUT_S = 3600.0
 
 DEFAULT_BUILD_NATIVE = False
 

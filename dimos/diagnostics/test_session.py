@@ -16,12 +16,14 @@
 
 import gzip
 import json
+from threading import Event
 import time
 
 import pytest
 
 from dimos.diagnostics.ingest import decode_batch, ingest
-from dimos.diagnostics.session import Requirement, SessionSettings, SessionStore
+from dimos.diagnostics.session import NetworkSettings, Requirement, SessionSettings, SessionStore
+from dimos.diagnostics.session_network import SessionNetwork
 
 
 @pytest.fixture
@@ -136,3 +138,32 @@ def test_browser_file_retention_is_bounded_independently_of_byte_budget(session)
         "browser-test/incident-3.jsonl",
     ]
     assert session.store.statuses("lap")[0]["storage_evictions_this_batch"] == 1
+
+
+def test_session_network_runs_clock_probe_until_stopped(tmp_path, mocker):
+    entered = Event()
+    stopped = Event()
+
+    def monitor(*args, stop, **kwargs):
+        entered.set()
+        stop.wait(timeout=3)
+        stopped.set()
+
+    probe = mocker.patch("dimos.diagnostics.session_network.monitor", side_effect=monitor)
+    observer = SessionNetwork()
+    try:
+        observer.start(
+            tmp_path,
+            SessionSettings(
+                run_id="clock-lap",
+                network=NetworkSettings(
+                    interface="en0", probe_url="http://robot/diagnostics/clock"
+                ),
+            ),
+        )
+        assert entered.wait(timeout=3)
+        assert probe.call_args.kwargs["probe_url"] == "http://robot/diagnostics/clock"
+    finally:
+        observer.stop()
+    assert stopped.is_set()
+    assert not observer.thread.is_alive()
