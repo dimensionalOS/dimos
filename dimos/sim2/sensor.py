@@ -15,21 +15,38 @@
 """A simulated sensor: hardware with its own USD, reading the world the physics backend publishes."""
 
 from pathlib import Path
+import time
+from typing import Any
 
 from dimos_lcm.world_msgs import WorldObservations
 
 from dimos.core.core import rpc
-from dimos.core.hardware_module import HardwareModule
+from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig
 from dimos.core.stream import In
 from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.sim2.sim import SimulatedWorldSpec
 from dimos.sim2.usd_layer import layer_file
-from dimos.sim2.world_observations import OnWorldTime, WorldMirror
+from dimos.sim2.world_observations import WorldMirror
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
-class SimSensor(OnWorldTime, HardwareModule):
+class SimSensorConfig(HardwareModuleConfig):
+    # Seconds a reading's stamp (the world time it read) may be off wall time and still go out; None is one sample period.
+    stamp_tolerance: float | None = None
+
+
+class SimSensor(HardwareModule):
+    """Stamps each reading with the world time it read, which is wall time when the world keeps up; a reading too far off it is not sent."""
+
     world: SimulatedWorldSpec
     world_observations: In[WorldObservations]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # The streams whose last reading was too far off wall time, warned about once until one is not.
+        self._late: set[str] = set()
 
     @rpc
     def start(self) -> None:
@@ -41,6 +58,19 @@ class SimSensor(OnWorldTime, HardwareModule):
     def frame_id(self) -> str:
         """The sensor's frame: its USD's root link, under its namespace."""
         return self.tf_frames[self.config.usd.root_link]
+
+    def on_time(self, stream: str, stamp: float, period: float, tolerance: float | None) -> bool:
+        """Whether a ``stream`` reading stamped ``stamp`` is within ``tolerance`` (None: ``period``) of wall time: one that is not, the real sensor would have missed."""
+        off = time.time() - stamp
+        if abs(off) <= (period if tolerance is None else tolerance):
+            self._late.discard(stream)
+            return True
+        if stream not in self._late:
+            self._late.add(stream)
+            logger.warning(
+                f"{self.frame_id} {stream}: the world is {off:.3f} s off wall time, so its readings are dropped until it is back"
+            )
+        return False
 
     def mirror_world(self) -> WorldMirror:
         world = WorldMirror()

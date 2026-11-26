@@ -23,11 +23,11 @@ from dimos.sim2.sensor import SimSensor
 
 
 class SimSceneConfig(HardwareModuleConfig):
-    """A scene's mounts have no reading to ride on: they go out on tf at static_tf_rate_hz of sim time."""
+    """A scene's mounts have no reading to ride on: they go out on tf at static_tf_rate_hz."""
 
 
 class SimScene(SimSensor):
-    """Static hardware: a room whose mounts are where robots start. Its tf goes out stamped with the world's time."""
+    """Static hardware: a room whose mounts are where robots start. Its tf goes out stamped with wall time."""
 
     config: SimSceneConfig
 
