@@ -147,6 +147,7 @@ class M20CameraRelay(Module):
             self._stop_event.wait(1.0)
 
     def _relay(self, url: str, output: Out[CompressedVideo], camera_name: str) -> None:
+        unavailable = False
         while not self._stop_event.is_set():
             try:
                 with av.open(
@@ -158,6 +159,7 @@ class M20CameraRelay(Module):
                     if video.codec_context.name != "hevc":
                         raise ValueError(f"expected H.265, got {video.codec_context.name}")
                     logger.info("M20 camera stream connected", camera=camera_name)
+                    unavailable = False
                     for packet in container.demux(video):
                         if self._stop_event.is_set():
                             return
@@ -175,11 +177,13 @@ class M20CameraRelay(Module):
                             )
                         )
             except (av.FFmpegError, IndexError, ValueError) as exc:
-                logger.warning(
+                # Warn once per outage; the retries every 2 s go to debug
+                (logger.debug if unavailable else logger.warning)(
                     "M20 camera stream unavailable",
                     camera=camera_name,
                     error=str(exc),
                 )
+                unavailable = True
                 self._stop_event.wait(2.0)
 
     @rpc

@@ -66,8 +66,7 @@ class RemoteModuleSource(ModuleSource):
         if self._closed:
             raise RuntimeError("This module source has been stopped")
         descriptors = self._coord.call("list_modules")
-        # rpc_name is empty when talking to an older daemon.
-        self._descriptors = {(d.rpc_name or d.class_name): d for d in descriptors}
+        self._descriptors = {d.display_name: d for d in descriptors}
         return self._descriptors
 
     def _get_descriptor(self, name: str) -> ModuleDescriptor:
@@ -82,7 +81,7 @@ class RemoteModuleSource(ModuleSource):
             if len(matches) == 1:
                 return matches[0]
             if len(matches) > 1:
-                instance_names = ", ".join(sorted(d.rpc_name for d in matches))
+                instance_names = ", ".join(sorted(d.display_name for d in matches))
                 raise ValueError(
                     f"Multiple instances of {name!r} are deployed "
                     f"({instance_names}); use the instance name."
@@ -108,7 +107,8 @@ class RemoteModuleSource(ModuleSource):
         with self._lock:
             descriptor = self._get_descriptor(name)
             remote_name = descriptor.rpc_name or descriptor.class_name
-            cached = self._cache.get(remote_name)
+            instance_name = descriptor.display_name
+            cached = self._cache.get(instance_name)
             if cached is not None:
                 return cached
 
@@ -121,29 +121,31 @@ class RemoteModuleSource(ModuleSource):
                     cls,
                     remote_name,
                     rpc=self._coord.rpc,
-                    stream_lookup=functools.partial(self._get_stream, remote_name),
+                    instance_name=instance_name,
+                    stream_lookup=functools.partial(self._get_stream, instance_name),
                 )
             except (ImportError, AttributeError):
                 proxy = RemoteModuleProxy(
                     self._coord.rpc,
                     remote_name,
                     set(descriptor.rpc_names),
-                    functools.partial(self._get_stream, remote_name),
+                    functools.partial(self._get_stream, instance_name),
+                    instance_name=instance_name,
                 )
-            self._cache[remote_name] = proxy
+            self._cache[instance_name] = proxy
             return proxy
 
-    def _get_stream(self, remote_name: str, name: str) -> RemoteOut[Any]:
+    def _get_stream(self, instance_name: str, name: str) -> RemoteOut[Any]:
         with self._lock:
             if self._closed:
                 raise RuntimeError("This module source has been stopped")
-            key = (remote_name, name)
+            key = (instance_name, name)
             if key not in self._streams:
                 descriptor = next(
                     (d for d in self.list_stream_descriptors() if (d.module, d.name) == key), None
                 )
                 if descriptor is None:
-                    raise AttributeError(f"{remote_name!r} has no stream named {name!r}")
+                    raise AttributeError(f"{instance_name!r} has no stream named {name!r}")
                 spec = descriptor.transport
                 if issubclass(
                     spec.cls, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
@@ -154,7 +156,7 @@ class RemoteModuleSource(ModuleSource):
                     )
                 # Expose a subscription view for inputs, outputs and IO ports. Only the
                 # requested stream's transport is built; descriptors are data.
-                self._streams[key] = RemoteOut(descriptor.type, name, remote_name, spec.build())
+                self._streams[key] = RemoteOut(descriptor.type, name, instance_name, spec.build())
             return self._streams[key]
 
     def invalidate(self, name: str) -> None:
@@ -203,8 +205,8 @@ class RemoteModuleSource(ModuleSource):
         with self._lock:
             deployed = set(self._refresh_descriptors())
             undeployed = {*self._cache, *(module for module, _ in self._streams)} - deployed
-        for remote_name in undeployed:
-            self.invalidate(remote_name)
+        for instance_name in undeployed:
+            self.invalidate(instance_name)
 
     def close(self) -> None:
         with self._lock:

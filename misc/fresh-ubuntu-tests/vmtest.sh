@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # vmtest.sh -- run the documented dimos install + tests on a fresh, official,
-# unmodified Ubuntu Desktop 24.04 VM (VirtualBox).
+# unmodified Ubuntu Desktop 26.04 VM (VirtualBox).
 #
 # Why: CI tests dimos from a maintainer's angle (pre-built images, cached deps).
 # It does not verify that a brand-new user following docs/installation/ubuntu.md
@@ -26,9 +26,9 @@ export VBOX_RELEASE_LOG_DEST=nofile
 
 # --- constants ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; readonly SCRIPT_DIR
-readonly RELEASE="24.04"
-readonly VM="dimos-vmtest-base"
-readonly MEM=12288        # MiB
+readonly RELEASE="26.04"
+readonly VM="dimos-vmtest-base-$RELEASE"  # per release, so a VM built for an older one is never reused
+readonly MEM=16384        # MiB (8 xdist workers peak near 13 GB)
 readonly CPUS=8
 readonly DISK=40960       # MiB (dynamic; only grows as used)
 readonly SSH_PORT=2222
@@ -99,7 +99,7 @@ remove_vm() {  # power off + delete
 ensure_iso() {
   need wget
   mkdir -p "$ISO_DIR"
-  local fname="ubuntu-24.04.4-desktop-amd64.iso"
+  local fname="ubuntu-26.04.1-desktop-amd64.iso"
   ISO_PATH="$ISO_DIR/$fname"
 
   if [[ -f "$ISO_PATH" ]]; then

@@ -37,7 +37,7 @@ from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
-API_VERSION = "9.3.0"
+API_VERSION = "9.5.0"
 
 
 @dataclass
@@ -60,7 +60,10 @@ class State:
     @staticmethod
     def introspect_key(args: list[str], stdin: Any = None, source: RunSource | None = None) -> str:
         """The cache key of one introspection, for introspected() and for forgetting its answer."""
-        return " ".join(args) + (repr(stdin) if stdin is not None else "") + repr(source or "")
+        # the args stay apart from the rest, so forget_name can find a blueprint's name in them
+        return (
+            " ".join(args) + "\t" + (repr(stdin) if stdin is not None else "") + repr(source or "")
+        )
 
     async def introspected(
         self, args: list[str], stdin: Any = None, source: RunSource | None = None

@@ -32,21 +32,22 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-07T01:13:40.343231374Z"
+exclude-newer = "2026-11-17T05:21:28.418866Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-can-motor-control = false
-dim-odom = false
-dimos-cdrgen = false
-dimos-lcm = false
-dimos-viewer = false
-eclipse-zenoh = false
-edgetam-dimos = false
-lcm = false
-md-babel-py = false
-mjcf-to-urdf = false
 roboplan = false
+dimos-cdrgen = false
+dimos-viewer = false
+dimos-lcm = false
+lcm = false
+edgetam-dimos = false
+eclipse-zenoh = false
+can-motor-control = false
+md-babel-py = false
+dim-odom = false
+cel-expr-python = false
+mjcf-to-urdf = false
 
 [manifest]
 constraints = [
@@ -759,6 +760,28 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5f/e3/74fddce015b171ee087a6e0185a233f3d29c7fda80cfa3041c796a67d100/cbor2-6.1.5-cp312-cp312-win32.whl", hash = "sha256:789ef813f416d353aecd5c8824860ee4be94e0f1179a385eb2beccfbeb615e4f", size = 281010, upload-time = "2026-10-01T18:08:23.614Z" },
     { url = "https://files.pythonhosted.org/packages/5e/f5/ecc8d6a9ff9322405b23a4d3226504e7d7a44424e0d831a02b49bac8e605/cbor2-6.1.5-cp312-cp312-win_amd64.whl", hash = "sha256:9677ce1c3c0cb1fa5a4f721a127fc2cc06e8efc43ee8e5f94e292186d6b51953", size = 304308, upload-time = "2026-10-01T18:08:25.077Z" },
     { url = "https://files.pythonhosted.org/packages/a8/90/23b702147b0858dbbc8a3136f288248118bb32f2785cc35c470a3b3f5571/cbor2-6.1.5-cp312-cp312-win_arm64.whl", hash = "sha256:b73d982e35a60e602a200feb2a9d272e850efdc9ff767b0f4887bdbc16d23e52", size = 293958, upload-time = "2026-10-01T18:08:26.493Z" },
+]
+
+[[package]]
+name = "cel-expr-python"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/5a/a13f6b58c7f5f03f27bdeb43fddb7681f5593c2a5adfadf6456be1fd5d1b/cel_expr_python-0.1.4-cp310-cp310-macosx_10_13_x86_64.whl", hash = "sha256:6cffe4d2665d9a6a0822394f4c51dfa2aac1c84a5e6f3ce2d22a2f98958adb6c", size = 15251108, upload-time = "2026-11-06T23:05:30.759Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/ad/479f8b5510d35f22704727bdd7a72844780d478b446f92ca4f5bb38136a9/cel_expr_python-0.1.4-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e214057b6d1b4847be477e3bce2e1133e8de77dbed185ac85a04df4348a815e6", size = 14486435, upload-time = "2026-11-06T23:05:33.247Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/41/27e41cdaad302f145df60ceeb0aca0dac02b32375c8a379a19915907434c/cel_expr_python-0.1.4-cp310-cp310-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d576d971a8fe06eef6231a753874e5e190041acc1480179ea7c05c73414d828f", size = 18365015, upload-time = "2026-11-06T23:05:36.818Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/95/eebe4d9be98320959f30b6ad9abb38490d13a62c65e63a20da6306bf58cb/cel_expr_python-0.1.4-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d2a23654af69c2be63478fbeecd85290c6d6e10d06f9e907b23195dcfde309e9", size = 19457098, upload-time = "2026-11-06T23:05:40.747Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/71/5fe761657686032c4314d3258920290493c040b1f756ddcfc4919b3c8989/cel_expr_python-0.1.4-cp310-cp310-win_amd64.whl", hash = "sha256:2d88d3386ec0609c16ac41c33c417cb301e01e5c1eab74f4b642f54c2d36346f", size = 9443495, upload-time = "2026-11-06T23:05:43.532Z" },
+    { url = "https://files.pythonhosted.org/packages/00/cb/9fd31f26f2047adcf95b8e6689fbfd6487f0a1edc6287e8440ee652ff7e3/cel_expr_python-0.1.4-cp311-cp311-macosx_10_13_x86_64.whl", hash = "sha256:6f44c54c86ce82bdd6377dc7c3b8f696aac789933f23d49123f4f24e7b1742e9", size = 15261162, upload-time = "2026-11-06T23:05:46.48Z" },
+    { url = "https://files.pythonhosted.org/packages/60/53/5547aec9df78c7432ec0b64a427d1525292d33fe9f4893acde1d578ca5df/cel_expr_python-0.1.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:c76c67afec346b555b9642a9338d0d788b76dd17f17e6f4af42f975001c4ae26", size = 14494431, upload-time = "2026-11-06T23:05:49.394Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/05/97c940a108d321df59847a01f31938471cd1c595db4de52a9158e229815b/cel_expr_python-0.1.4-cp311-cp311-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:14a5e27772c081fe8083e7dc9d84b87d7429a78d8781e7ef70e369158da3f779", size = 18371100, upload-time = "2026-11-06T23:05:52.644Z" },
+    { url = "https://files.pythonhosted.org/packages/83/62/8c475452086e10f1886bbc64f03ec34a8087c08fb0a784580e203832a424/cel_expr_python-0.1.4-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b11cea744dcb797f333ff57ffaafe3bd7ed6ca824e5dbadaf200ccd3df978d61", size = 19462175, upload-time = "2026-11-06T23:05:56.083Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/18/c4cb472a1bde07da3bf36fafc800163fba33d1396c6eb340f38536369797/cel_expr_python-0.1.4-cp311-cp311-win_amd64.whl", hash = "sha256:9683899b47f5a31c797e684ce4a656c9da5261b0333530d90dfe36eb79512eac", size = 9449375, upload-time = "2026-11-06T23:05:58.649Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/89/9e76c9a1200d48b5a9c75c4cc3cf7da5a3cc10b3377834389b9bb28e9370/cel_expr_python-0.1.4-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:814fd3faad83ea0cc0d0dc9dbe4b99293b031976b5ffb8cc57e034fc02cbf47c", size = 15271895, upload-time = "2026-11-06T23:06:01.242Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/d0/8e946b1b5941a0a6ce7eea504ea4779f7b424f7fd4c0b3a7388931606acb/cel_expr_python-0.1.4-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:42319e038e1360c780177702ba62edee928a0244f42f57f760d4d376bea833ca", size = 14497013, upload-time = "2026-11-06T23:06:03.952Z" },
+    { url = "https://files.pythonhosted.org/packages/de/e0/f56ec9e90993cdf25df554019c29f3ee9ea133f1f59e653ad918fc614d1a/cel_expr_python-0.1.4-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a2b8a9392682272f01dde7645501b7b707944bc1aa4221001b2bdc74c834e4eb", size = 18375336, upload-time = "2026-11-06T23:06:07.534Z" },
+    { url = "https://files.pythonhosted.org/packages/07/9c/3e1373e9f3844c30bf17c02e2d7247c1da6cfb518d50ae84feea511e1d89/cel_expr_python-0.1.4-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a90817c3cd7897398ece71615fb228e3f37061e6a3da100d9fae0c07d4ac4b37", size = 19468407, upload-time = "2026-11-06T23:06:11.424Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/be/dcf6827f963b935fd11b96ce2ae7d902981cd6f052bbe5b4a3fb4671f071/cel_expr_python-0.1.4-cp312-cp312-win_amd64.whl", hash = "sha256:05074dc5d83012db45b0caefeb216981c3875af9f7c412e37b3706d2a711089b", size = 9456704, upload-time = "2026-11-06T23:06:15.353Z" },
 ]
 
 [[package]]
@@ -1856,13 +1879,14 @@ wheels = [
 
 [[package]]
 name = "dimos"
-version = "0.0.15"
+version = "0.0.16"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
     { name = "attrs" },
     { name = "bleak" },
     { name = "cbor2" },
+    { name = "cel-expr-python" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
     { name = "dimos-lcm" },
@@ -2555,6 +2579,7 @@ requires-dist = [
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "can-motor-control", marker = "extra == 'control'", specifier = "==0.0.12" },
     { name = "cbor2", specifier = ">=6.1.5,<7" },
+    { name = "cel-expr-python", specifier = "==0.1.4" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
@@ -2573,7 +2598,7 @@ requires-dist = [
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'planning'", specifier = ">=1.40.0" },
-    { name = "eclipse-zenoh", specifier = ">=1.10.1,<2.0" },
+    { name = "eclipse-zenoh", specifier = "==1.10.2" },
     { name = "edgetam-dimos", marker = "extra == 'perception'", specifier = ">=1.0.1" },
     { name = "einops", marker = "extra == 'perception'", specifier = ">=0.8.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.6" },
@@ -3049,18 +3074,18 @@ wheels = [
 
 [[package]]
 name = "eclipse-zenoh"
-version = "1.10.1"
+version = "1.10.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4d/1f/54e50d0fdd2d41499b18fd2066add8a53460cddb85b5c2585afd0d3159ed/eclipse_zenoh-1.10.1.tar.gz", hash = "sha256:e601b9883746b742eb7210ec73348c9980a2e65cbd54b4a8017662de9aeb15cb", size = 170364, upload-time = "2026-09-07T15:25:53.179Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/6d/1a71883d4d515a4c30a702ec14dc86150ed5dfb1315b7a2ecfb740f053cb/eclipse_zenoh-1.10.2.tar.gz", hash = "sha256:a338f4d1a0a736cbae4e1f5becdd2e81a6a2e5934ffa8a4b1436cf0fbac7fb2e", size = 170193, upload-time = "2026-10-28T12:32:40.289Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/24/d0802eec65a925bfef6f96924faa8c0285c8c584660881af938d92a92c7b/eclipse_zenoh-1.10.1-cp39-abi3-linux_armv6l.whl", hash = "sha256:f2351b810dbda09f6dbe668ca965560bf8cee98075b28b8b71e88428f613ed35", size = 10952070, upload-time = "2026-09-07T15:25:35.566Z" },
-    { url = "https://files.pythonhosted.org/packages/54/6d/2ffd5e7a18c5b90c6d8468fd48c3416a4615b3d346dd2bbfe88849adad14/eclipse_zenoh-1.10.1-cp39-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:9e99d5801e0e12a10dbc5d976d227ec7a1ff73d86c20ff4315102b8237ac3ee8", size = 19315408, upload-time = "2026-09-07T15:25:37.87Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/e8/02f615c757ddc983152ce9fabe1f94f073678593b57a93654e10aeb827e5/eclipse_zenoh-1.10.1-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:ad269f1cb3e4a66a0130ea63a0b2bca214cbbe75181baa4fe12f27ddb5c42221", size = 9876094, upload-time = "2026-09-07T15:25:40.379Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/29/e856a2115f3a43cab68ec24d09f0d253466d7bc4083841bfd9bc1f6a1adb/eclipse_zenoh-1.10.1-cp39-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:476bfca6f15f1c68e71037efbbf61b880719ea1a8eaadc6f9df978e144cf44d2", size = 10796254, upload-time = "2026-09-07T15:25:42.969Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/32/b524fcf38ebc80f9c39e5104473a55a3354bbc3ac151d1cb79514cb0b8ad/eclipse_zenoh-1.10.1-cp39-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:eb73bce18afe43fdd799d2cf3f066c7ce353d2552ae2776badffe6144352e79f", size = 11747371, upload-time = "2026-09-07T15:25:44.906Z" },
-    { url = "https://files.pythonhosted.org/packages/b0/a2/5a54606f5202581256a8bb405e51b6d69254aa84a44e716aedae21fb2964/eclipse_zenoh-1.10.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:faa4071aea57650594e8f4ea39147f791fbd6105cbd7afe15e96dc3589bd83db", size = 10331829, upload-time = "2026-09-07T15:25:46.947Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/21/976cd9e4091362bc25ed5031f229d72032363c611bd5260950284583861e/eclipse_zenoh-1.10.1-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:1950fdc8de72e5a3847d845d57e72dedf35275725e42be46a26454cfabb54c8c", size = 10905687, upload-time = "2026-09-07T15:25:48.924Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/24/10f71ebd91d1cfbfd68449a1c52b6e38303f4302f8dc5d612d0b0ff385a8/eclipse_zenoh-1.10.1-cp39-abi3-win_amd64.whl", hash = "sha256:44e368a6a509cf385d3657f48ed99f1d677ce9877e8893e15b9cf1b504dc9150", size = 9130747, upload-time = "2026-09-07T15:25:51.229Z" },
+    { url = "https://files.pythonhosted.org/packages/33/83/c5b27e3ad43841c7f2236e89ca42cd618731da649f7f3f9d743769295f3b/eclipse_zenoh-1.10.2-cp39-abi3-linux_armv6l.whl", hash = "sha256:21f1fe4016f2b508193d3a50b00621d084ac351db0e390211eae87a77a0dec6a", size = 10908371, upload-time = "2026-10-28T12:32:24.434Z" },
+    { url = "https://files.pythonhosted.org/packages/32/5b/2ea4d1763458f649efe8da780d800be2ca3bf977532d1c6d8b914df78192/eclipse_zenoh-1.10.2-cp39-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:e7903cb5d8a28e0056c10e0bc872e07ca6e11463b41013c3bdf05fb586f0c768", size = 19256165, upload-time = "2026-10-28T12:32:26.629Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/eb/c92b2d55f08a32cd68db820f94ced2c4083567aa0dee05a51243340ac0ac/eclipse_zenoh-1.10.2-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a1a36b27671a2a1bd958248c6adfb1ca13456f7de1865d9669f50f0b0e85e602", size = 9870819, upload-time = "2026-10-28T12:32:28.659Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/7d/49ca3a5f5385ceedf15336a60a56b4c72eee744748ea35e232022650355b/eclipse_zenoh-1.10.2-cp39-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:39ab8569449bd655ae8a4ae99422303b5c09a515df38d90135387854baccf796", size = 10758400, upload-time = "2026-10-28T12:32:30.595Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/1d/f78e91f24e4017adeacbb6b0f4c29c4f380e6320f301f95256f6eaa711d0/eclipse_zenoh-1.10.2-cp39-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:945e6df323befcea5b8dc281e5493d4fec192c2bb6ab1d9e91bcaf13632235be", size = 11719767, upload-time = "2026-10-28T12:32:32.489Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/cb/f8fe2e8a8cc4129797667429484bf978c9821aca4efe25f5f7b30f7c0fae/eclipse_zenoh-1.10.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cd3c922c9f018568f9c7c8747f1aad81b646f5d8e98cc24bfa4aa160f35cdb96", size = 10324413, upload-time = "2026-10-28T12:32:34.586Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/77/109bfe0339b16e81fe2f3428dc6098c4d4e7586a2a317b1e91f190a4c023/eclipse_zenoh-1.10.2-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d732e89381c1ad28ee587ad11da4ed2d8b12d985f32d0485658c81b125f4ef9b", size = 10859406, upload-time = "2026-10-28T12:32:36.414Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/bb/0e1585315a8e27e0496d6576e02c71652393371b8eba89864bc302904b4d/eclipse_zenoh-1.10.2-cp39-abi3-win_amd64.whl", hash = "sha256:545fd22a684b7023423e3a85c17b615a0a7a791344bbc7aade67e121e78ca2d5", size = 9140335, upload-time = "2026-10-28T12:32:38.585Z" },
 ]
 
 [[package]]

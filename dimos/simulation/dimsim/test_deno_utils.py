@@ -47,7 +47,7 @@ def test_missing_chromium_runs_installer(
     ensure_playwright_chromium("deno")
 
     install.assert_called_once_with(
-        ["deno", "run", "--allow-all", "npm:playwright@1.58.2", "install", "chromium"],
+        ["deno", "run", "--allow-all", "npm:playwright@1.61.0", "install", "chromium"],
         check=True,
     )
 

@@ -544,7 +544,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        os: [ubuntu-latest, ubuntu-26.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     env:
       CARGO_INCREMENTAL: "0"
@@ -772,13 +772,10 @@ jobs:
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12']
-        # Not ubuntu-latest: on 26.04 `import sounddevice` raises without an audio
-        # server. PortAudio there has a PulseAudio backend that fails to start when
-        # it cannot connect, and unitree_webrtc_connect imports sounddevice.
-        os: ["macos-latest", "ubuntu-24.04"]
+        os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
-          - os: "ubuntu-24.04-arm"
+          - os: "ubuntu-26.04-arm"
             pyver: "3.12"
             experimental: false
       fail-fast: true
@@ -1039,6 +1036,10 @@ jobs:
             echo "ROS_VERSION=$ROS_VERSION"
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
+          # The skipif_no_ros tests skip when rclpy does not import, so an image
+          # whose ROS is built for another Python than the venv's would pass
+          # without running them.
+          uv run python -c "import rclpy"
       - name: Install Nix (with Cachix substituter)
         if: contains(matrix.markers, 'skipif_no_ros')
         # /nix is bind-mounted from the self-hosted runner's host filesystem
@@ -1075,7 +1076,14 @@ jobs:
             exit 1
           fi
           echo "$bin" >> "$GITHUB_PATH"
-          echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
+          # The daemon honours the substituter and key only if the runner user is trusted; otherwise the host's nix.conf must list them.
+          {
+            echo "NIX_CONFIG<<EOF"
+            echo "experimental-features = nix-command flakes"
+            echo "extra-substituters = https://dimensionalos.cachix.org"
+            echo "extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI="
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - name: Configure LCM networking (macOS)
         # LCM sends datagrams up to 64 KB; macOS caps UDP at 9216 bytes by default, so point clouds never leave the sender.
         if: matrix.os == 'macOS'
@@ -1113,7 +1121,12 @@ jobs:
         # Without a marker (expired artifact) this falls back to the full nix build.
         run: |
           if [ "${{ steps.native-marker.outcome }}" = "success" ]; then
-            python3 bin/native-modules --link-results .cachix-marker/links.txt
+            # A macOS host whose store lacks the paths and whose daemon distrusts Cachix cannot substitute, so it builds them into its persistent store once.
+            python3 bin/native-modules --link-results .cachix-marker/links.txt || {
+              [ "${{ matrix.os }}" = "macOS" ] || exit 1
+              echo "::warning::$RUNNER_NAME could not substitute the native modules from Cachix (add dimensionalos.cachix.org's key to its /etc/nix/nix.conf); building them instead"
+              python3 bin/native-modules --build
+            }
           else
             python3 bin/native-modules --build
           fi

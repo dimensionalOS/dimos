@@ -29,6 +29,7 @@ from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.core.coordination.coordinator_rpc import CoordinatorAlreadyRunningError
 from dimos.core.daemon import (
     DAEMON_STATUS_FD_ENV,
     fork_daemon,
@@ -142,6 +143,7 @@ def _run_hosted(
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     try:
+        typer.echo("Waiting for Hosts...")
         with root_rpc(connect) as rpc:
             descriptors = wait_for_hosts(rpc, named, tag_sets=tag_sets)
             with deployed(
@@ -179,7 +181,7 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
 @cache_usage_locked
 def run(
     ctx: typer.Context,
-    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    robot_types: list[str] | None = typer.Argument(None, help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     choice: list[str] = typer.Option(
@@ -202,6 +204,12 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
+
+    if not robot_types:
+        if show_help:
+            typer.echo(ctx.get_help())
+            return
+        ctx.fail("Missing blueprint name.")
 
     # Log this at the start so that people get immediate feedback that the program has started.
     logger.info("Starting DimOS")
@@ -335,7 +343,7 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
-    # A macOS daemon re-execs this command. Preserve the launcher's run/log
+    # A daemon re-execs this command. Preserve the launcher's run/log
     # identity rather than generating a second one in the fresh interpreter.
     inherited_run_id = (
         os.environ.get(DIMOS_RUN_ID_ENV) if daemon and DAEMON_STATUS_FD_ENV in os.environ else None
@@ -425,14 +433,22 @@ def run(
         except Exception as exc:
             if started:
                 raise
-            traceback.print_exc()
-            write_daemon_status(status_fd, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            if isinstance(exc, CoordinatorAlreadyRunningError):
+                startup_error = str(exc)
+            else:
+                traceback.print_exc()
+                startup_error = f"{type(exc).__name__}: {exc}"
+            write_daemon_status(status_fd, {"ok": False, "error": startup_error})
             sys.stderr.flush()
             # os._exit: never unwind the launcher's typer/atexit state in a
             # forked image.
             os._exit(1)
     else:
-        _run_registered(blueprint, parsed_config, entry)
+        try:
+            _run_registered(blueprint, parsed_config, entry)
+        except CoordinatorAlreadyRunningError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
 
 
 def status() -> None:
