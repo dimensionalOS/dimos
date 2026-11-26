@@ -58,6 +58,8 @@ _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
 # Simulated time further behind the wall clock than this is let go, not made up.
 _MAX_BEHIND_S = 0.5
+# While the sim catches up, the sensors wait at most this long between passes.
+_MAX_CATCH_UP_S = 0.02
 
 
 def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
@@ -664,9 +666,10 @@ class MujocoEngine(SimulationEngine):
         lidar_states = self._init_raycast_lidars()
         next_step = 0.0  # set as the loop starts, so opening the viewer is not lost time
         fell_behind = False
+        sensors_done = 0.0
 
         def _step_once(sync_viewer: bool) -> None:
-            nonlocal next_step, fell_behind
+            nonlocal next_step, fell_behind, sensors_done
             loop_start = time.time()
             reset_done_events: list[threading.Event] = []
             with self._lock:
@@ -692,14 +695,19 @@ class MujocoEngine(SimulationEngine):
                     self._on_after_step(self)
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
-            self._render_cameras(loop_start, cam_renderers)
-            self._raycast_lidars(loop_start, lidar_states)
+            # While the sim is behind, give physics up to _MAX_CATCH_UP_S
+            # before the sensors run again. Otherwise a camera that takes
+            # longer to render than its interval is due on every pass, and the
+            # sim makes one step per render.
+            now = time.perf_counter()
+            if now < next_step + dt or now - sensors_done >= _MAX_CATCH_UP_S:
+                self._render_cameras(loop_start, cam_renderers)
+                self._raycast_lidars(loop_start, lidar_states)
+                sensors_done = time.perf_counter()
 
             # Sleep to a fixed schedule, not for what is left of this pass. A
             # slow render or a late wake-up then only delays the next steps,
-            # which run without sleeping until the sim has caught up. The
-            # cameras and lidars stay due between those steps, so they keep
-            # their rate.
+            # which run without sleeping until the sim has caught up.
             next_step += dt
             now = time.perf_counter()
             if next_step > now:
