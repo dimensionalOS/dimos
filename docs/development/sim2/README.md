@@ -240,11 +240,11 @@ a separate dimOS-only type; its two manipulation publishers now emit named
 `control_msgs.JointCommand` position records. Trajectories must provide joint
 names and Cartesian feedback must name each joint in the IK result's order.
 
-Review the shared foundation first: [#5551](https://github.com/dimensionalOS/dimos/pull/5551)
-(TF checks, included in #5519), [#5519](https://github.com/dimensionalOS/dimos/pull/5519)
-(USD tooling), [#5553](https://github.com/dimensionalOS/dimos/pull/5553) (module clock),
+Review the shared foundation first: [#5519](https://github.com/dimensionalOS/dimos/pull/5519)
+(USD tooling), [#5551](https://github.com/dimensionalOS/dimos/pull/5551) (TF checks),
+[#5553](https://github.com/dimensionalOS/dimos/pull/5553) (module clock),
 then [#5520](https://github.com/dimensionalOS/dimos/pull/5520) (hardware, mounts and files).
-The small USD overlay prerequisite extracts Jeff's composition helper from #5521;
+[#5561](https://github.com/dimensionalOS/dimos/pull/5561) extracts Jeff's USD composition helper from #5521;
 none of his Sim2 implementation is imported. The existing nine PRs then follow below.
 The independent schema prerequisite is
 [dimos-lcm #31](https://github.com/dimensionalOS/dimos-lcm/pull/31); its pinned Git
@@ -253,7 +253,7 @@ commit installs automatically through uv until the message package is released.
 | PR | Review scope |
 | --- | --- |
 | [#5033](https://github.com/dimensionalOS/dimos/pull/5033) | Message integration |
-| [#5034](https://github.com/dimensionalOS/dimos/pull/5034) | Shared models and scenes |
+| [#5034](https://github.com/dimensionalOS/dimos/pull/5034) | Hardware USD composition and owned TF |
 | [#5035](https://github.com/dimensionalOS/dimos/pull/5035) | SimModule and physics backend |
 | [#5036](https://github.com/dimensionalOS/dimos/pull/5036) | IMU |
 | [#5037](https://github.com/dimensionalOS/dimos/pull/5037) | Joint encoders |
