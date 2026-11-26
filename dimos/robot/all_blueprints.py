@@ -428,6 +428,7 @@ all_modules = {
     "urdf-manager-point-clearing": "dimos.robot.urdf_manager_point_clearing.UrdfManagerPointClearing",
     "v4-l2-camera": "dimos.hardware.sensors.camera.v4l2.module.V4L2Camera",
     "video-arm-teleop-module": "dimos.teleop.webxr.extensions.VideoArmTeleopModule",
+    "view-sensor": "dimos.sim2.view_sensor.ViewSensor",
     "virtual-mid360": "dimos.hardware.sensors.lidar.virtual_mid360.module.VirtualMid360",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",
     "voice-input": "dimos.agents.voice_input.VoiceInput",

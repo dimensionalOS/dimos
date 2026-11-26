@@ -22,10 +22,11 @@ import pytest
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.toy import toy_robot
+from dimos.sim2.mujoco.sensor_mount import SensorMount
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.view import MujocoView
-from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sim import compose_usds
+from dimos.sim2.spec import ROBOT
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
@@ -70,7 +71,7 @@ class _World:
         self.writer, self.mirror = WorldWriter(), WorldMirror()
         self.writer.start_ns = 0
         self.writer.add("world")
-        self.writer.add("dog", model="dog.usda")
+        self.writer.add("dog", **{ROBOT: True})
         self.writer.add("dog/neck")
         self.writer.add("crate")
         self.writer.body_state("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1], _STILL, _STILL)
@@ -173,20 +174,6 @@ def test_a_sensor_does_not_see_the_housing_it_is_mounted_in() -> None:
     view.close()
 
 
-def test_blind_to_lets_the_rays_through_further_frames(composed: Path) -> None:
-    view = _view(composed)
-    view.update(_World().at(0.0, 0.0, 0.0))
-    base, _ = view.pose("dog/base")
-    origin = base + np.array([0.0, -1.0, 0.0])
-    at_the_robot = np.array([[0.0, 1.0, 0.0]])
-
-    stopped, _ = view.raycaster((0,)).cast(origin, at_the_robot, 10.0)
-    through, _ = view.raycaster((0,), blind_to=["dog/base"]).cast(origin, at_the_robot, 10.0)
-
-    assert stopped[0] == pytest.approx(0.9, abs=1e-3)
-    assert through[0] < 0
-
-
 def test_blind_to_a_robot_lets_the_rays_through_all_of_its_links(composed: Path) -> None:
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, np.pi / 2))
@@ -210,7 +197,7 @@ def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed:
     origin = base + np.array([0.0, -1.0, 0.0])
     at_the_robot = np.array([[0.0, 1.0, 0.0]])
 
-    through, _ = view.raycaster((0,), blind_to=["dog/base"]).cast(origin, at_the_robot, 10.0)
+    through, _ = view.raycaster((0,), blind_to_robots=["dog"]).cast(origin, at_the_robot, 10.0)
     again, _ = view.raycaster((0,)).cast(origin, at_the_robot, 10.0)
 
     assert through[0] < 0, "the blind cast should have passed through"
@@ -220,7 +207,7 @@ def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed:
 def test_a_view_of_one_robot_is_not_moved_by_a_robot_it_does_not_hold(composed: Path) -> None:
     view = open_view(composed, ["cat", "dog"], SensorMount("imu", "dog/imu", "dog/imu"))
     world = _World()
-    world.writer.add("cat", model="cat.usda")
+    world.writer.add("cat", **{ROBOT: True})
     world.writer.add("cat/neck")
     world.writer.body_state("cat", [9.0, 0.0, 1.0, 0, 0, 0, 1], _STILL, _STILL)
     world.writer.joint("cat/neck", np.pi / 2, 0.0, 0.0)
@@ -265,7 +252,8 @@ def test_a_view_reads_its_scene_from_one_parse(
 def test_a_sensor_named_for_a_site_the_world_has_is_mounted_without_compiling(
     composed: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dimos.sim2.mujoco.world import compile_world, mount_sensor
+    from dimos.sim2.mujoco.sensor_mount import mount_sensor
+    from dimos.sim2.mujoco.world import compile_world
 
     spec = compile_world(composed, ids=["dog"])
     mount_sensor(spec, SensorMount("imu", "dog/imu", "dog/imu"))

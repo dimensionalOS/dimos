@@ -13,18 +13,16 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import Coroutine
+from typing import Any
 
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.robot.assets.model import UsdModel
-from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
-from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor import SimSensor, SimSensorConfig
+from dimos.sim2.mujoco.sensor_mount import SensorMount
+from dimos.sim2.sensor import SimSensorConfig
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.sim import until_it_stops
+from dimos.sim2.view_sensor import ViewSensor, imu_message
 
 
 class SimImuConfig(SimSensorConfig):
@@ -32,37 +30,24 @@ class SimImuConfig(SimSensorConfig):
     rate_hz: float = 200.0
 
 
-class SimImu(SimSensor):
+class SimImu(ViewSensor):
     config: SimImuConfig
     imu: Out[Imu]
 
-    async def main(self) -> AsyncIterator[None]:
-        self._world = self.mirror_world()
-        self._reading = asyncio.create_task(until_it_stops(f"{self.frame_id} imu", self._read()))
-        yield
-        self._reading.cancel()
+    def loops(self) -> list[Coroutine[Any, Any, None]]:
+        return [self._read()]
 
     async def _read(self) -> None:
         site = self.frame_id
         view = None
         async for _ in self._world.ticks(self.config.rate_hz):
             if view is None:
-                layer = await asyncio.to_thread(self.world_layer)
-                view = open_view(layer, robot_ids(self._world), SensorMount("imu", site, site))
+                view = await asyncio.to_thread(self.open_view, SensorMount("imu", site, site))
                 # Opening took this tick, so the next tick is the first read on time.
                 continue
             view.update(self._world)
-            gyro, accelerometer, (w, x, y, z) = view.imu(site)
             stamp = view.time
             if not self.on_time("imu", stamp, 1 / self.config.rate_hz, self.config.stamp_tolerance):
                 continue
-            self.imu.publish(
-                Imu(
-                    angular_velocity=Vector3(*gyro),
-                    linear_acceleration=Vector3(*accelerometer),
-                    orientation=Quaternion(x, y, z, w),
-                    frame_id=site,
-                    ts=stamp,
-                )
-            )
+            self.imu.publish(imu_message(view, site))
             self.publish_moving_tf(stamp)

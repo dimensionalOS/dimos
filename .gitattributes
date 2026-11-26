@@ -30,6 +30,8 @@ docs/capabilities/mapping/assets/** filter=lfs diff=lfs merge=lfs -text
 docs/assets/dimensional-logo-master-transparent.png -filter -diff -merge
 docs/assets/favicon.png -filter -diff -merge
 # DimSim scene data and agent model
+# Blender's AgX Base LUT, which the sim's camera tone maps through.
+dimos/sim2/mujoco/assets/*.npz filter=lfs diff=lfs merge=lfs -text binary
 misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text

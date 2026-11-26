@@ -20,6 +20,7 @@ import mujoco
 import numpy as np
 import pytest
 
+from dimos.sim2.mujoco.lights import apply_lights
 from dimos.sim2.mujoco.renders import Renders
 from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.usd_layer import layer_file
@@ -88,10 +89,17 @@ def _lit() -> Path:
     return layer_file(scene + EXPOSURE, called="lights")
 
 
+def _lit_world(scene: Path) -> mujoco.MjSpec:
+    """The world as a view that draws it compiles it: with the stage's lights and sky."""
+    spec = compile_world(scene)
+    apply_lights(spec, scene)
+    return spec
+
+
 def test_a_stage_with_lights_is_lit_by_them_in_blenders_units_and_not_by_a_headlight():
     from pxr import UsdLux
 
-    model = compile_world(_lit()).compile()
+    model = _lit_world(_lit()).compile()
     camera = 0.5
     sky, sun, warm = (model.light(f"/scene/{name}") for name in ("sky", "sun", "warm"))
     assert model.nlight == 3, "the invisible light and the sphere light are not carried across"
@@ -116,7 +124,7 @@ def test_a_stage_with_lights_is_lit_by_them_in_blenders_units_and_not_by_a_headl
 
 
 def test_a_stage_without_lights_keeps_the_headlight():
-    model = compile_world(SCENE).compile()
+    model = _lit_world(SCENE).compile()
     assert model.nlight == 0
     assert model.vis.headlight.active != 0
 
@@ -128,14 +136,14 @@ def _skybox(model: mujoco.MjModel) -> np.ndarray:
 
 
 def test_a_dome_without_a_texture_is_a_sky_of_its_color_in_the_lights_units():
-    model = compile_world(_lit()).compile()
+    model = _lit_world(_lit()).compile()
     sky = _skybox(model)
     assert sky.shape == (6, 1, 3)
     assert sky.reshape(-1, 3) == pytest.approx(np.tile([255, 128, 64], (6, 1)), abs=1)
 
 
 def test_a_stage_without_a_dome_keeps_mujocos_default_sky():
-    assert compile_world(SCENE).compile().ntex == 0
+    assert _lit_world(SCENE).compile().ntex == 0
 
 
 def test_a_latlong_dome_is_the_sky_as_hydra_maps_it(renders: None, tmp_path: Path):
@@ -159,7 +167,7 @@ def test_a_latlong_dome_is_the_sky_as_hydra_maps_it(renders: None, tmp_path: Pat
     }}
 """
     geometry = '    def Scope "Geometry"'
-    spec = compile_world(
+    spec = _lit_world(
         layer_file(SCENE.read_text().replace(geometry, dome + geometry, 1), called="dome")
     )
     # The rotation stands the dome's +Y pole up along +Z and its +Z (u = 0.5) along -Y.
