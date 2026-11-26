@@ -19,7 +19,7 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.core.stream import IO, Transport
-from dimos.core.tf_module import TfIO, TfModule, TfModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
@@ -133,7 +133,7 @@ def wired() -> Iterator[tuple[Odom, list[TFMessage]]]:
 
 
 def test_tf_port_keeps_its_name_and_kind(odom: Odom) -> None:
-    assert isinstance(odom.tf, TfIO) and isinstance(odom.tf, IO)
+    assert type(odom.tf) is IO
     assert odom.tf.name == "tf" and odom.ios["tf"] is odom.tf
 
 
@@ -152,16 +152,16 @@ def test_tf_port_refuses_undeclared_edge(wired: tuple[Odom, list[TFMessage]]) ->
     assert sent == []
 
 
-def test_tf_port_get_reads_declared_frames(wired: tuple[Odom, list[TFMessage]]) -> None:
+def test_tfbuffer_get_reads_declared_frames(wired: tuple[Odom, list[TFMessage]]) -> None:
     module, _ = wired
     module.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id="base_link", ts=1.0)))
-    assert module.tf.get("world", "base_link", time_point=1.0) is not None
+    assert module.tfbuffer.get("world", "base_link", time_point=1.0) is not None
 
 
-def test_tf_port_get_refuses_undeclared_frame(wired: tuple[Odom, list[TFMessage]]) -> None:
+def test_tfbuffer_get_refuses_undeclared_frame(wired: tuple[Odom, list[TFMessage]]) -> None:
     module, _ = wired
     with pytest.raises(ValueError, match="Odom looks up undeclared tf frame 'lidar'"):
-        module.tf.get("world", "lidar")
+        module.tfbuffer.get("world", "lidar")
 
 
 def test_tf_port_skip_tf_checks_is_unchecked() -> None:
@@ -171,7 +171,7 @@ def test_tf_port_skip_tf_checks_is_unchecked() -> None:
             TFMessage(Transform(frame_id="base_link", child_frame_id="lidar", ts=1.0))
         )
         assert len(sent) == 1
-        assert module.tf.get("base_link", "lidar", time_point=1.0) is not None
+        assert module.tfbuffer.get("base_link", "lidar", time_point=1.0) is not None
     finally:
         module.stop()
 
