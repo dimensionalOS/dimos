@@ -632,3 +632,97 @@ class SourceFile(Body):
     file: str
     line: int | None
     text: str
+
+
+class AgentConversationId(Body):
+    conversation: int
+
+
+class AgentParent(Body):
+    conversation: int
+    at: int
+
+
+class AgentRunning(Body):
+    kind: Literal["answering", "tool", "compaction", "summary"]
+    since: int
+    name: NotRequired[str]
+
+
+class AgentConversationRow(Body):
+    id: int
+    parent: AgentParent | None
+    title: str
+    cwd: str | None
+    running: AgentRunning | None
+    queued: int
+    unread: int
+    costUsd: float
+    updatedAt: int
+
+
+class AgentTranscript(Body):
+    items: list[dict[str, Any]]
+    omitted: int
+
+
+class AgentRun(Body):
+    taskId: int
+    inputs: list[int]
+
+
+class AgentTurn(Body):
+    run: AgentRun
+    messageTimestamp: int | None
+    text: str
+
+
+class AgentConversation(Body):
+    transcript: AgentTranscript
+    turn: AgentTurn | None
+
+
+class AgentSubmissionId(Body):
+    submission: int
+
+
+class AgentQueuedText(Body):
+    mode: Literal["steer", "followUp"]
+    text: str
+
+
+class AgentJobOutcome(Body):
+    kind: Literal["submitted", "ok", "error", "interrupted"]
+    text: NotRequired[str]
+
+
+class AgentJobTrigger(Body):
+    kind: Literal["scheduled", "manual", "requested"]
+    due: NotRequired[int]
+    toolCall: NotRequired[str]
+    request: NotRequired[str]
+
+
+class AgentJobAction(Body):
+    kind: Literal["notify", "skill"]
+    text: NotRequired[str]
+    skill: NotRequired[str]
+    arguments: NotRequired[dict[str, Any]]
+
+
+class AgentJobRun(Body):
+    run: AgentJobTrigger
+    firedAt: int
+    outcome: AgentJobOutcome
+
+
+class AgentJob(Body):
+    name: str
+    conversation: int
+    cron: str
+    timeZone: str
+    action: AgentJobAction
+    nextDue: int | None
+    upcoming: list[int]
+    createdAt: int
+    runs: list[AgentJobRun]

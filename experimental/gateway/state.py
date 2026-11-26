@@ -28,6 +28,7 @@ from pydantic import BeforeValidator
 
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, events, introspect, store
+from experimental.gateway.agent_client import AgentClient
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
@@ -37,7 +38,7 @@ from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
-API_VERSION = "9.2.0"
+API_VERSION = "9.3.0"
 
 
 @dataclass
@@ -56,6 +57,10 @@ class State:
     exit: Callable[[], None] = lambda: os._exit(0)
     started_at: int = field(default_factory=lambda: int(time.time()))
     background: list[asyncio.Task[Any]] = field(default_factory=list)
+    agent: AgentClient = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.agent = AgentClient(self.bus)
 
     @staticmethod
     def introspect_key(args: list[str], stdin: Any = None, source: RunSource | None = None) -> str:
