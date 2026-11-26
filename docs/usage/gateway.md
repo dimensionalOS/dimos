@@ -34,7 +34,7 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | -- | -- |
 | `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema and `{name}/source` (its .py file; a module's `?blueprint=` reads it from that blueprint's live run's checkout) |
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `config`, `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
-| `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
+| `/history` | every run with a log; `{runId}` (or `latest`, the newest across every registered checkout), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
 | views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
