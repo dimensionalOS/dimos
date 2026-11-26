@@ -29,7 +29,7 @@ class CloudRequest(Protocol):
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
-    def put(self, url: str, body: bytes) -> None: ...
+    def put(self, url: str, body: bytes | memoryview) -> None: ...
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
     ) -> None: ...
@@ -59,7 +59,7 @@ class HttpCloudRequest:
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(f"{method} {path}: {e}") from e
 
-    def put(self, url: str, body: bytes) -> None:
+    def put(self, url: str, body: bytes | memoryview) -> None:
         with urllib.request.urlopen(
             # urllib's default form content-type makes some S3-compatible servers parse the body
             urllib.request.Request(

@@ -21,12 +21,13 @@ callers. Transfer settings live on CloudConfig."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextlib
 from datetime import datetime
 import functools
 import hashlib
 import json
+import mmap
+from multiprocessing.pool import ThreadPool
 import os
 from pathlib import Path
 import shutil
@@ -90,7 +91,7 @@ class DataApi:
     def confirm_video(self, upload_id: str) -> dict[str, Any]:
         return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
 
-    def put_part(self, url: str, chunk: bytes) -> None:
+    def put_part(self, url: str, chunk: bytes | memoryview) -> None:
         self.t.put(url, chunk)
 
     def fetch(
@@ -109,7 +110,7 @@ class MultipartBackend:
         codec_id: str,
         staging_dir: Path | None,
         retries: int,
-        parallel_parts: int = 1,
+        parallel_parts: int,
     ) -> None:
         self.api, self.codec_id, self.staging_dir, self.retries, self.parallel_parts = (
             api,
@@ -195,47 +196,8 @@ class MultipartBackend:
                     else None,
                 }
             uid = create["upload_id"]
-            uploaded = {p["part_number"] for p in self.status(uid)["parts"]}
-            ps = create["part_size"]
-            done = sum(min(ps, size - (n - 1) * ps) for n in uploaded)
-            tick("upload", done, size)
-            urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
-            resign = threading.Lock()
-
-            def send(n: int) -> int:
-                with artifact.open("rb") as f:
-                    f.seek((n - 1) * ps)
-                    chunk = f.read(ps)
-                url = urls[n]
-                try:
-                    self._retry(functools.partial(self.api.put_part, url, chunk), f"part {n}")
-                except RuntimeError as e:
-                    if "403" not in str(e):
-                        raise
-                    # Part URLs are presigned at create and share one expiry
-                    # clock; an upload slower than the TTL outlives them and
-                    # S3 answers 403. create is idempotent by sha256 and
-                    # re-signs every URL, so only the first part to get here
-                    # re-signs and the rest pick up its URLs.
-                    with resign:
-                        if urls[n] == url:
-                            fresh = self.api.create(**spec)
-                            if fresh["state"] == "complete":
-                                raise _AlreadyCompleteError(fresh) from None
-                            urls.update({p["part_number"]: p["url"] for p in fresh["part_urls"]})
-                    self._retry(functools.partial(self.api.put_part, urls[n], chunk), f"part {n}")
-                return len(chunk)
-
-            pool = ThreadPoolExecutor(self.parallel_parts)
-            try:
-                missing = [n for n in sorted(urls) if n not in uploaded]
-                for sent in as_completed([pool.submit(send, n) for n in missing]):
-                    done += sent.result()
-                    tick("upload", done, size)
-            except _AlreadyCompleteError as e:
-                return {**e.upload, "skipped": True}
-            finally:
-                pool.shutdown(cancel_futures=True)
+            if finished := self._send_parts(artifact, spec, create, tick):
+                return {**finished, "skipped": True}
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
             return {
@@ -246,6 +208,55 @@ class MultipartBackend:
                 if kind_of(path) == "recording"
                 else None,
             }
+
+    def _send_parts(
+        self, artifact: Path, spec: dict[str, Any], create: dict[str, Any], tick: Progress
+    ) -> dict[str, Any] | None:
+        """Send the parts the server lacks, `parallel_parts` at a time. Returns the
+        upload if a re-sign finds it already complete."""
+        size, ps = spec["size"], create["part_size"]
+        uploaded = {p["part_number"] for p in self.status(create["upload_id"])["parts"]}
+        done = sum(min(ps, size - (n - 1) * ps) for n in uploaded)
+        tick("upload", done, size)
+        urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
+        resign_lock = threading.Lock()
+        with artifact.open("rb") as f:
+            # Parts are slices of one mapping, so none is copied into memory. It is
+            # freed with its last slice, which an interrupted part may still be
+            # sending. An empty file cannot be mapped.
+            data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) if size else b""
+
+        def send(n: int) -> int:
+            chunk = memoryview(data)[(n - 1) * ps : n * ps]
+            url = urls[n]
+            try:
+                self._retry(functools.partial(self.api.put_part, url, chunk), f"part {n}")
+            except RuntimeError as e:
+                if "403" not in str(e):
+                    raise
+                # Part URLs share one presign expiry, so a slow upload gets 403 from S3.
+                # create is idempotent by sha256 and re-signs every URL. The first part
+                # to notice re-signs and the rest reuse its URLs.
+                with resign_lock:
+                    if urls[n] == url:
+                        fresh = self.api.create(**spec)
+                        if fresh["state"] == "complete":
+                            raise _AlreadyCompleteError(fresh) from None
+                        urls.update({p["part_number"]: p["url"] for p in fresh["part_urls"]})
+                self._retry(functools.partial(self.api.put_part, urls[n], chunk), f"part {n}")
+            return len(chunk)
+
+        missing = [n for n in sorted(urls) if n not in uploaded]
+        try:
+            # daemon workers, so the process can exit immediately instead
+            # of waiting for the parts in flight.
+            with ThreadPool(self.parallel_parts) as pool:
+                for sent in pool.imap_unordered(send, missing):
+                    done += sent
+                    tick("upload", done, size)
+        except _AlreadyCompleteError as e:
+            return e.upload
+        return None
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
