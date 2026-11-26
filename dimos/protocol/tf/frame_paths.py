@@ -52,9 +52,3 @@ def check_frame_path(path: str, what: str) -> None:
     error = frame_path_error(path)
     if error is not None:
         raise ValueError(f"{what} {path!r} cannot be a tf frame / USD prim path: {error}")
-
-
-def is_hardware_edge(parent: str, child: str) -> bool:
-    """Whether ``parent -> child`` is a hardware edge (the child's path-parent), not an imaginary one (an estimate, a localization)."""
-    # An imaginary frame whose name happens to be the child's path-parent is misclassified; rare enough to ignore.
-    return child.rpartition("/")[0] == parent
