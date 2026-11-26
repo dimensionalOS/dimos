@@ -133,4 +133,5 @@ METAL = DamiaoRobot(
     base_link="base_link",
     joint_names=[*METAL_ARM_JOINTS, METAL_FINGER_JOINTS[0]],
     gravity=False,
+    name="metal",
 )

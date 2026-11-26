@@ -84,7 +84,9 @@ def test_native_collection_records_typed_zenoh_streams(
     directory = tmp_path / "native-openyam"
     artifact = directory / "recording.db"
     atom = next(
-        atom for atom in openyam_quest_collection.active_blueprints if atom.name == "recorder"
+        atom
+        for atom in openyam_quest_collection.solidify().active_blueprints
+        if atom.name == "recorder"
     )
     recorder = atom.module(
         executable=str(native_recorder_executable),

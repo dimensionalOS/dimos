@@ -259,7 +259,7 @@ def test_autoconnect_matches_generated_ports_with_static_modules():
     generated = make_relay_bridge_class(_AUTOCONNECT_SPECS)
     blueprint = autoconnect(
         _PingProducer.blueprint(), generated.blueprint(), _NoteConsumer.blueprint()
-    )
+    ).solidify()
     # Group ports by (name, type) exactly as ModuleCoordinator._connect_streams
     # does; a shared key means a shared transport, i.e. a connection.
     groups: dict[tuple[str, type], list[tuple[str, str]]] = {}
@@ -280,7 +280,7 @@ def test_blueprint_roundtrip_preserves_generated_class_identity():
     generated = make_relay_bridge_class(_AUTOCONNECT_SPECS)
     blueprint = autoconnect(
         _PingProducer.blueprint(), generated.blueprint(), _NoteConsumer.blueprint()
-    )
+    ).solidify()
     restored = decode(encode(blueprint))
     assert restored == blueprint
     restored_atom = next(a for a in restored.blueprints if a.name == generated.name)

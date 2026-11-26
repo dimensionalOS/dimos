@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future, wait
 from dataclasses import dataclass, fields
 import json
 import math
@@ -23,9 +24,11 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_lcm.sensor_msgs import BatteryState as LCMBatteryState
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -66,6 +69,7 @@ ERROR_LIST_REPORT = 3
 BATTERY_STATUS_REPORT = 5
 BASIC_STATUS_REPORT = 6
 CHARGE_MESSAGE = (2, 24)
+LIGHT_MESSAGE = (1101, 2)
 HEARTBEAT_MESSAGE = (100, 100)
 
 
@@ -113,7 +117,9 @@ class FakeBasicServer:
         self.usage_mode = USAGE_MODE_NAVIGATION
         self.errors: list[int] = []
         self.battery: dict[str, Any] = dict(BATTERY_STATUS)
+        self.lights = {"Front": 0, "Back": 0}
         self.received: list[dict[str, Any]] = []
+        self.requests: list[dict[str, Any]] = []
         self.raw: list[bytes] = []
         self.reporting = True
         self._stop = Event()
@@ -121,13 +127,22 @@ class FakeBasicServer:
         self._socket.bind(("127.0.0.1", 0))
         self._socket.settimeout(0.02)
         self.port = int(self._socket.getsockname()[1])
-        self._thread = Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self._listener.settimeout(0.02)
+        self.tcp_port = int(self._listener.getsockname()[1])
+        self._threads = [
+            Thread(target=self._run, daemon=True),
+            Thread(target=self._serve_requests, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
 
     def close(self) -> None:
         self._stop.set()
-        self._thread.join()
+        for thread in self._threads:
+            thread.join()
         self._socket.close()
+        self._listener.close()
 
     def charge_commands(self) -> list[int]:
         return [
@@ -151,7 +166,10 @@ class FakeBasicServer:
                 b"garbage",
                 MAGIC + b"\0" * 12 + b"{not json",
                 self._report(MOTION_STATUS_REPORT, {"MotionStatus": {"Height": 0.5}}),
-                self._report(BATTERY_STATUS_REPORT, {"BatteryStatus": self.battery}),
+                self._report(
+                    BATTERY_STATUS_REPORT,
+                    {"BatteryStatus": self.battery, "Led": {"Fill": dict(self.lights)}},
+                ),
                 self._report(
                     BASIC_STATUS_REPORT,
                     {
@@ -169,6 +187,25 @@ class FakeBasicServer:
             ):
                 self._socket.sendto(frame, peer)
 
+    def _serve_requests(self) -> None:
+        while not self._stop.is_set():
+            try:
+                client, _address = self._listener.accept()
+            except TimeoutError:
+                continue
+            with client:
+                _magic, length, message_id, _encoding, _reserved = HEADER.unpack(
+                    client.recv(HEADER.size, socket.MSG_WAITALL)
+                )
+                request = json.loads(client.recv(length, socket.MSG_WAITALL))["PatrolDevice"]
+                self.requests.append(request)
+                if (request["Type"], request["Command"]) == LIGHT_MESSAGE:
+                    self.lights = dict(request["Items"])
+                body = json.dumps({"PatrolDevice": {**request, "Items": {"ErrorCode": 0}}}).encode()
+                client.sendall(
+                    HEADER.pack(MAGIC, len(body), message_id, JSON_ENCODING, b"\0" * 7) + body
+                )
+
     @staticmethod
     def _report(command: int, items: dict[str, Any]) -> bytes:
         body = json.dumps(
@@ -184,9 +221,6 @@ class Mocks:
     motion_state_cmd: MagicMock
     gait_cmd: MagicMock
     battery: MagicMock
-    start_tool: MagicMock
-    tool_update: MagicMock
-    stop_tool: MagicMock
     stand: MagicMock
 
 
@@ -210,6 +244,7 @@ def connection(
 ) -> Iterator[M20Connection]:
     module = M20Connection(
         basic_server_host="127.0.0.1",
+        basic_server_tcp_port=server.tcp_port,
         basic_server_udp_port=server.port,
         dock_settle_s=0.05,
         dock_start_timeout_s=0.4,
@@ -217,8 +252,6 @@ def connection(
         undock_timeout_s=1.5,
     )
     for name in ("cmd_vel", "goal", "motion_state_cmd", "gait_cmd", "battery"):
-        mocker.patch.object(module, name, getattr(mocks, name))
-    for name in ("start_tool", "tool_update", "stop_tool"):
         mocker.patch.object(module, name, getattr(mocks, name))
     mocks.stand.return_value = True
     mocker.patch.object(module, "_stand", mocks.stand)
@@ -274,8 +307,25 @@ def _wait_for_status(module: M20Connection, status: int) -> None:
     _wait_until(lambda: module._fresh_charge_status() == status)
 
 
-def _updates(mocks: Mocks) -> list[str]:
-    return [call.args[1] for call in mocks.tool_update.call_args_list]
+def _in_background(call: Callable[[], None]) -> Future[None]:
+    future: Future[None] = Future()
+
+    def run() -> None:
+        try:
+            call()
+        except Exception as error:
+            future.set_exception(error)
+        else:
+            future.set_result(None)
+
+    Thread(target=run, daemon=True).start()
+    return future
+
+
+def _failure(future: Future[None]) -> str:
+    with pytest.raises(RuntimeError) as error:
+        future.result(timeout=3.0)
+    return str(error.value)
 
 
 @pytest.mark.parametrize(
@@ -341,6 +391,27 @@ def test_battery_reports_publish_one_state_for_both_packs(
     assert state.temperature == pytest.approx(35.8, abs=0.01)
 
 
+@pytest.mark.parametrize(
+    ("charge", "power_supply_status"),
+    [
+        (CHARGE_CHARGING, LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING),
+        (CHARGE_ON_DOCK, LCMBatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING),
+        (CHARGE_IDLE, LCMBatteryState.POWER_SUPPLY_STATUS_DISCHARGING),
+    ],
+)
+def test_battery_state_carries_the_charge_state(
+    started: Callable[..., M20Connection],
+    server: FakeBasicServer,
+    charge: int,
+    power_supply_status: int,
+) -> None:
+    server.charge = charge
+    conn = started()
+    _wait_for_status(conn, charge)
+    sent = _transport(conn.battery).sent
+    _wait_until(lambda: any(s.power_supply_status == power_supply_status for s in sent))
+
+
 def test_a_pack_at_zero_volts_is_left_out(
     started: Callable[..., M20Connection], server: FakeBasicServer
 ) -> None:
@@ -369,12 +440,21 @@ def test_a_report_without_a_usable_pack_is_dropped(
     assert conn.charge_status() == "idle"
 
 
-def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
+def test_set_lights_sends_the_flashlight_request_and_waits_for_the_report(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    assert connection.set_lights(True, False)
+    assert [(r["Type"], r["Command"], r["Items"]) for r in server.requests] == [
+        (*LIGHT_MESSAGE, {"Front": 1, "Back": 0})
+    ]
+
+
+def test_dock_cancels_nav_then_sends_the_vendor_command_and_returns_once_charging(
     connection: M20Connection, server: FakeBasicServer, mocks: Mocks
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
 
-    assert "Docking" in connection.dock()
+    docked = _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
 
     mocks.goal.publish.assert_called_once()
@@ -387,12 +467,11 @@ def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
     assert (magic, encoding, length) == (MAGIC, JSON_ENCODING, len(apdu) - HEADER.size)
 
     server.charge = CHARGE_ENTERING
-    _wait_until(lambda: "Charge status: entering the dock." in _updates(mocks))
+    _wait_for_status(connection, CHARGE_ENTERING)
+    assert not docked.done()
     server.charge = CHARGE_CHARGING
-    _wait_until(lambda: "Docked and charging." in _updates(mocks))
 
-    mocks.start_tool.assert_called_once_with("dock")
-    mocks.stop_tool.assert_called_once_with("dock")
+    assert docked.result(timeout=3.0) is None
     assert connection._charge_job is None
 
 
@@ -419,12 +498,11 @@ def test_dock_refuses_from_a_bad_state(
     prepare(connection, server)
     _wait_for_status(connection, status)
 
-    message = connection.dock()
+    with pytest.raises(RuntimeError, match=reason):
+        connection.dock()
 
-    assert reason in message
     assert server.charge_commands() == []
     mocks.goal.publish.assert_not_called()
-    mocks.stop_tool.assert_called_once_with("dock")
 
 
 def test_dock_refuses_without_status_reports(
@@ -432,11 +510,11 @@ def test_dock_refuses_without_status_reports(
 ) -> None:
     server.reporting = False
     module = M20Connection(basic_server_host="127.0.0.1", basic_server_udp_port=server.port)
-    for name in ("cmd_vel", "start_tool", "stop_tool"):
-        mocker.patch.object(module, name)
+    mocker.patch.object(module, "cmd_vel")
     module._basic_server.start()
     try:
-        assert "not reporting" in module.dock()
+        with pytest.raises(RuntimeError, match="not reporting"):
+            module.dock()
     finally:
         module.stop()
     assert server.charge_commands() == []
@@ -446,7 +524,7 @@ def test_dock_failure_names_the_vendor_error_even_after_it_clears(
     connection: M20Connection, server: FakeBasicServer, mocks: Mocks
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
     server.charge = CHARGE_ENTERING
     _wait_for_status(connection, CHARGE_ENTERING)
@@ -455,9 +533,7 @@ def test_dock_failure_names_the_vendor_error_even_after_it_clears(
     server.errors = []
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: connection._charge_job is None)
-
-    assert _updates(mocks)[-1] == (
+    assert _failure(docked) == (
         "Docking failed: the robot stopped docking and returned to idle "
         "(0x8503 no location, reflectors not found). The robot is standing ready to navigate."
     )
@@ -469,16 +545,14 @@ def test_dock_failure_leaves_a_sitting_robot_sitting(
     connection: M20Connection, server: FakeBasicServer, mocks: Mocks
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
     server.charge = CHARGE_ERROR
     _wait_for_status(connection, CHARGE_ERROR)
     connection._on_motion_state(Int32(MOTION_SIT))
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: connection._charge_job is None)
-
-    assert _updates(mocks)[-1].endswith("Call standup() before navigating.")
+    assert _failure(docked).endswith("Call standup() before navigating.")
     mocks.stand.assert_not_called()
 
 
@@ -497,19 +571,15 @@ def test_gait_is_resent_when_the_robot_drops_it(connection: M20Connection, mocks
     assert sends == [GAIT_STAIR_AGILE, GAIT_STAIR_AGILE]
 
 
-def test_dock_timeout_sends_stop(
-    connection: M20Connection, server: FakeBasicServer, mocks: Mocks
-) -> None:
+def test_dock_timeout_sends_stop(connection: M20Connection, server: FakeBasicServer) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
     server.charge = CHARGE_ENTERING
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START, CHARGE_COMMAND_STOP])
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: connection._charge_job is None)
-
-    assert "timed out" in _updates(mocks)[-1]
+    assert "timed out" in _failure(docked)
 
 
 def test_undock_leaves_the_dock_and_stands(
@@ -518,34 +588,34 @@ def test_undock_leaves_the_dock_and_stands(
     server.charge = CHARGE_CHARGING
     _wait_for_status(connection, CHARGE_CHARGING)
 
-    assert "Undocking" in connection.undock()
+    undocked = _in_background(connection.undock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_STOP])
     server.charge = CHARGE_EXITING
+    _wait_for_status(connection, CHARGE_EXITING)
+    assert not undocked.done()
     mocks.stand.assert_not_called()
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: "Off the dock and ready to navigate." in _updates(mocks))
+    assert undocked.result(timeout=3.0) is None
     mocks.stand.assert_called_once()
-    mocks.stop_tool.assert_called_once_with("undock")
 
 
 def test_undock_cancels_a_running_dock(
     connection: M20Connection, server: FakeBasicServer, mocks: Mocks
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
     server.charge = CHARGE_ENTERING
     _wait_for_status(connection, CHARGE_ENTERING)
 
-    connection.undock()
+    undocked = _in_background(connection.undock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START, CHARGE_COMMAND_STOP])
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: connection._charge_job is None)
-    updates = _updates(mocks)
-    assert "Docking cancelled by undock." in updates
-    assert "Off the dock and ready to navigate." in updates
+    assert _failure(docked) == "Docking cancelled by undock."
+    assert undocked.result(timeout=3.0) is None
+    mocks.stand.assert_called_once()
 
 
 def test_stop_during_the_settle_cancels_without_commanding_the_robot(
@@ -553,11 +623,12 @@ def test_stop_during_the_settle_cancels_without_commanding_the_robot(
 ) -> None:
     connection.config.dock_settle_s = 5.0
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
+    _wait_until(lambda: connection._charge_job is not None)
 
     connection.stop_movement()
 
-    _wait_until(lambda: "Docking cancelled before it started." in _updates(mocks))
+    assert _failure(docked) == "Docking cancelled before it started."
     assert connection._charge_job is None
     assert server.charge_commands() == []
     mocks.stand.assert_not_called()
@@ -566,55 +637,57 @@ def test_stop_during_the_settle_cancels_without_commanding_the_robot(
     assert thread is not None
     _wait_until(lambda: not thread.is_alive())
     connection.config.dock_settle_s = 0.05
-    assert "Docking." in connection.dock()
+    _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
 
 
 def test_undock_racing_the_dock_start_stops_after_it(
-    connection: M20Connection, server: FakeBasicServer, mocks: Mocks, mocker: MockerFixture
+    connection: M20Connection, server: FakeBasicServer, mocker: MockerFixture
 ) -> None:
     send = connection._basic_server.send_charge
+    undocks: list[Future[None]] = []
 
     def undock_while_starting(command: int) -> bool:
         if command == CHARGE_COMMAND_START:
-            racer = Thread(target=connection.undock, daemon=True)
-            racer.start()
-            racer.join(timeout=0.2)
+            undocks.append(_in_background(connection.undock))
+            wait(undocks, timeout=0.2)
         return send(command)
 
     mocker.patch.object(connection._basic_server, "send_charge", side_effect=undock_while_starting)
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
 
-    _wait_until(lambda: connection._charge_job is None)
+    assert _failure(docked) == "Docking cancelled by undock."
+    assert undocks[0].result(timeout=3.0) is None
     assert server.charge_commands() == [CHARGE_COMMAND_START, CHARGE_COMMAND_STOP]
-    assert "Docking cancelled by undock." in _updates(mocks)
 
 
 def test_stop_movement_cancels_a_running_dock(
     connection: M20Connection, server: FakeBasicServer, mocks: Mocks
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
-    connection.dock()
+    docked = _in_background(connection.dock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
     server.charge = CHARGE_ENTERING
     _wait_for_status(connection, CHARGE_ENTERING)
 
     connection.stop_movement()
+    undock = connection._charge_job
+    assert undock is not None and undock.task == "undock"
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START, CHARGE_COMMAND_STOP])
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: connection._charge_job is None)
-    assert "Off the dock and ready to navigate." in _updates(mocks)
+    assert _failure(docked) == "Docking cancelled by undock."
+    assert undock.done.wait(timeout=3.0) and undock.failure is None
     mocks.cmd_vel.publish.assert_not_called()
 
 
-def test_undock_refuses_when_not_on_the_dock(
+def test_undock_returns_at_once_when_not_on_the_dock(
     connection: M20Connection, server: FakeBasicServer
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
 
-    assert "not on the dock" in connection.undock()
+    connection.undock()
 
     assert server.charge_commands() == []
 
@@ -624,15 +697,21 @@ def test_undock_stays_off_when_the_vendor_reports_an_exit_timeout(
 ) -> None:
     server.charge = CHARGE_CHARGING
     _wait_for_status(connection, CHARGE_CHARGING)
-    connection.undock()
+    undocked = _in_background(connection.undock)
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_STOP])
     server.errors = [0x8510]
     server.charge = CHARGE_IDLE
 
-    _wait_until(lambda: connection._charge_job is None)
-
-    assert _updates(mocks)[-1] == "Undocking failed: 0x8510 dock exit timeout."
+    assert _failure(undocked) == "Undocking failed: 0x8510 dock exit timeout."
     mocks.stand.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["dock", "undock"])
+def test_dock_and_undock_are_rpcs_without_parameters(name: str) -> None:
+    method = getattr(M20Connection, name)
+
+    assert getattr(method, "__rpc__", False)
+    assert extract_rpc_info(method).params == []
 
 
 def test_commands_are_refused_on_the_dock(
@@ -720,12 +799,12 @@ def test_auto_stand_undocks_when_on_the_dock(
     server.charge = CHARGE_CHARGING
     _wait_for_status(connection, CHARGE_CHARGING)
 
-    connection._auto_stand()
+    stood = _in_background(connection._auto_stand)
 
     _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_STOP])
     mocks.stand.assert_not_called()
     server.charge = CHARGE_IDLE
-    _wait_until(lambda: "Off the dock and ready to navigate." in _updates(mocks))
+    assert stood.result(timeout=3.0) is None
     mocks.stand.assert_called_once()
 
 

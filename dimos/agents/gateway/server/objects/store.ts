@@ -41,6 +41,7 @@ export const serveStore: ServeObject = (host, deps) =>
         streams: self.derive([runtime], (view) => view.streams),
         inventory: self.derive([runtime], (view) => view.inventory),
         jobs: jobRows(self, agent.harness),
+        skills: self.state("skills", GatewayState.skills, { init: () => agent.skills }),
         settings: feed(self, "settings", GatewayState.settings, deps.config.status),
         accounts: feed(self, "accounts", GatewayState.accounts, deps.catalog.status),
       };

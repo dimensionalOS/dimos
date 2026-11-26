@@ -32,8 +32,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.spec import NO_HEADING, cancel_goal
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -57,7 +59,7 @@ class MovementManager(Module):
     nav_cmd_vel: In[Twist]
     tele_cmd_vel: In[Twist]
 
-    goal: Out[PointStamped]
+    goal: Out[PoseStamped]
     way_point: Out[PointStamped]
     cmd_vel: Out[Twist]
     stop_movement: Out[Bool]
@@ -95,7 +97,14 @@ class MovementManager(Module):
 
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
         self.way_point.publish(msg)
-        self.goal.publish(msg)
+        self.goal.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=[msg.x, msg.y, msg.z],
+                orientation=NO_HEADING,
+            )
+        )
 
     def _cancel_goal(self) -> None:
         self.stop_movement.publish(Bool(data=True))
@@ -106,8 +115,7 @@ class MovementManager(Module):
             ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
         )
         self.way_point.publish(cancel)
-        self.goal.publish(cancel)
-        logger.debug("Navigation cancelled — waiting for new goal")
+        self.goal.publish(cancel_goal(frame_id="map"))
 
     def _on_nav(self, msg: Twist) -> None:
         with self._lock:
@@ -121,6 +129,14 @@ class MovementManager(Module):
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:
+            if (
+                not self._teleop_active
+                or time.monotonic() - self._last_teleop_time >= self.config.tele_cooldown_sec
+            ):
+                logger.info(
+                    "MovementManager: cancelling navigation via stop_movement",
+                    reason="Received tele_cmd_vel",
+                )
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
 

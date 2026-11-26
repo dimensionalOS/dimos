@@ -46,7 +46,7 @@ from pydantic import Field
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
-from dimos.constants import RECORDINGS_DIR
+from dimos.constants import RECORDINGS_DIR, WORKER_SHUTDOWN_TIMEOUT
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
@@ -785,12 +785,20 @@ class RerunBridgeModule(Module):
             rr.get_global_data_recording().flush()  # type: ignore[union-attr]
         except Exception:
             logger.warning("Rerun flush before closing the .rrd failed", exc_info=True)
-        client.send_signal(signal.SIGINT)
+        # The CLI may be a Python wrapper around the actual recorder.
         try:
-            client.wait(timeout=15)
+            os.killpg(client.pid, signal.SIGINT)
+        except ProcessLookupError:
+            # The client can exit between poll() and signaling its process group.
+            pass
+        try:
+            client.wait(timeout=WORKER_SHUTDOWN_TIMEOUT / 2)
         except subprocess.TimeoutExpired:
             logger.warning("rerun --save did not exit; killing it, the .rrd may be truncated")
-            client.kill()
+            try:
+                os.killpg(client.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             client.wait()
 
 
@@ -815,12 +823,22 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     path = RECORDINGS_DIR / run_id / "rerun.rrd"
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving the Rerun stream", path=str(path))
+    # Workers ignore SIGINT, and ignored signals survive exec. Reset it in a fresh
+    # interpreter, not preexec_fn (unsafe in our multithreaded workers). A separate
+    # session keeps terminal Ctrl+C from interrupting the recorder before our flush.
+    launcher = [
+        sys.executable,
+        "-c",
+        "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+        "os.execv(sys.argv[1], sys.argv[1:])",
+    ]
     # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.
     return subprocess.Popen(
-        [cli, "--save", str(path), "--bind", "127.0.0.1", "--port", "auto", server_uri],
+        [*launcher, cli, "--save", str(path), "--bind", "127.0.0.1", "--port", "auto", server_uri],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
 
 

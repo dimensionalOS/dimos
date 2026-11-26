@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Layer surgery: grafting one layer's subtree into another, and repointing the arcs and
-relationships that move with it."""
+"""Layer surgery: nesting a layer under a namespace (repointing the paths that move with it), and
+overlaying namespaced layers into one world."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping, Sequence
 import itertools
 from pathlib import Path
 from typing import Any
 
-from dimos.robot.assets.usd_utils.frames import link_prim_paths
+from dimos.protocol.tf.frame_paths import check_frame_path
+from dimos.robot.assets.usd_utils.assets import repointed_arc
 from dimos.robot.assets.usd_utils.pxr import (
     Layer,
     Prim,
@@ -35,49 +36,49 @@ from dimos.robot.assets.usd_utils.pxr import (
 )
 
 
-def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | None = None) -> str:
+def overlay_usds(root_usd: str, mounted: Sequence[tuple[str, str]]) -> str:
+    """The root layer with each mounted (usd, mount frame) layer under it, flattened into one layer.
+
+    Each layer is already namespaced, so its prims sit at their tf frames and they overlay as they
+    are; the root's opinions are the strongest and its metadata (defaultPrim, units) the world's.
+    Only the root's PhysicsScene survives, and each mounted part with a rigid body is welded to its
+    mount prim by a joint (a physics backend frees a floating robot itself).
+    """
+    from pxr import UsdUtils
+
     pxr = load_pxr()
-    root_layer = layer_from(pxr, root_usd, "root", root)
-    root_stage = pxr.Usd.Stage.Open(root_layer)
-    by_link = link_prim_paths(root_stage)
-
-    for frame_id, subtree_usd in subtrees.items():
-        attach_path = by_link.get(frame_id)
-        if attach_path is None:
-            raise ValueError(
-                f"cannot attach a subtree at {frame_id!r}: the root USD has no prim for that "
-                f"frame (it has {sorted(by_link)})"
-            )
-        sub_layer = layer_from(pxr, subtree_usd, frame_id, root)
-        sub_stage = pxr.Usd.Stage.Open(sub_layer)
-        source = sub_stage.GetDefaultPrim()
-        if not source:
-            raise ValueError(f"the subtree USD for {frame_id!r} declares no defaultPrim")
-        target = pxr.Sdf.Path(attach_path).AppendChild(source.GetName())
-        if root_stage.GetPrimAtPath(target):
-            raise ValueError(
-                f"cannot attach a subtree at {frame_id!r}: {target} is taken. Two copies of one "
-                f"description mount under the same prim name, because prefixing renames frames "
-                f"and not prims -- so grafting both would keep only the last, silently. Give "
-                f"the scene a frame per copy."
-            )
-        if not pxr.Sdf.CopySpec(sub_layer, source.GetPath(), root_layer, target):
-            raise ValueError(f"could not copy the subtree USD for {frame_id!r} into the scene")
-        _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
-        _carry_outside_references(pxr, sub_layer, str(source.GetPath()), root_layer, str(target))
-        _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
-
-    return str(root_layer.ExportToString())
+    root_layer = layer_from(pxr, root_usd, "the root", None)
+    # Kept in a name: a sublayer is found by its identifier, and an anonymous layer lives only as long as its handle.
+    mounted_layers = [(_without_physics_scenes(pxr, usd), frame) for usd, frame in mounted]
+    root_layer.subLayerPaths = [layer.identifier for layer, _ in mounted_layers]
+    flattened = UsdUtils.FlattenLayerStack(pxr.Usd.Stage.Open(root_layer))
+    world = pxr.Usd.Stage.Open(flattened)
+    for layer, frame in mounted_layers:
+        _weld_to_mount(pxr, world, pxr.Usd.Stage.Open(layer), frame)
+    return str(flattened.ExportToString())
 
 
-def _mount_joint(pxr: Pxr, stage: Stage, mount_path: str, subtree_path: str, frame_id: str) -> None:
-    root_link = _first_link(pxr, stage, subtree_path)
+def _without_physics_scenes(pxr: Pxr, usd: str) -> Layer:
+    # A mounted part's PhysicsScene would be a second one for the world, so it goes.
+    layer = layer_from(pxr, usd, "a mounted part", None)
+    stage = pxr.Usd.Stage.Open(layer)
+    for path in [prim.GetPath() for prim in stage.Traverse() if prim.IsA(pxr.UsdPhysics.Scene)]:
+        stage.RemovePrim(path)
+    return layer
+
+
+def _weld_to_mount(pxr: Pxr, world: Stage, part: Stage, mount_frame: str) -> None:
+    mount_path = pxr.Sdf.Path(f"/{mount_frame}")
+    root_link = _first_link(pxr, part, mount_path)
     if root_link is None:
         return
-    mount = stage.GetPrimAtPath(pxr.Sdf.Path(mount_path))
-    name = prim_identifier(pxr, f"{frame_id}_mount")
-    joint = pxr.UsdPhysics.Joint.Define(stage, f"{subtree_path}/{name}")
-    joint.CreateBody0Rel().SetTargets([mount.GetPath()])
+    # The part's own top prim, the child of its mount on the way to its first link.
+    top = next(
+        path for path in root_link.GetPath().GetPrefixes() if path.GetParentPath() == mount_path
+    )
+    name = prim_identifier(pxr, f"{mount_frame}_mount")
+    joint = pxr.UsdPhysics.FixedJoint.Define(world, top.AppendChild(name))
+    joint.CreateBody0Rel().SetTargets([mount_path])
     joint.CreateBody1Rel().SetTargets([root_link.GetPath()])
     joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
@@ -86,8 +87,8 @@ def _mount_joint(pxr: Pxr, stage: Stage, mount_path: str, subtree_path: str, fra
     joint.GetPrim().SetDisplayName(f"{frame_name(root_link)}_mount")
 
 
-def _first_link(pxr: Pxr, stage: Stage, path: str) -> Prim:
-    root = stage.GetPrimAtPath(pxr.Sdf.Path(path))
+def _first_link(pxr: Pxr, stage: Stage, path: Any) -> Prim:
+    root = stage.GetPrimAtPath(path)
     if not root:
         return None
     for prim in pxr.Usd.PrimRange(root):
@@ -96,148 +97,85 @@ def _first_link(pxr: Pxr, stage: Stage, path: str) -> Prim:
     return None
 
 
-def _specs_under(layer: Layer, root: Any) -> Iterator[Any]:
-    """Every prim spec at or below root, in this layer alone."""
-    stack = [layer.GetPrimAtPath(root)]
-    while stack:
-        spec = stack.pop()
-        if spec is None:
-            continue
-        yield spec
-        stack.extend(spec.nameChildren)
-
-
-def _rebase_relationships(
-    pxr: Pxr, layer: Layer, root: Any, old_prefix: str, new_prefix: str
-) -> None:
-    # By prim, not by text: a sibling named "arm_sub_2" also starts with "arm_sub".
-    old_path, new_path = pxr.Sdf.Path(old_prefix), pxr.Sdf.Path(new_prefix)
-    for spec in _specs_under(layer, root):
-        for prop in spec.properties:
-            if not isinstance(prop, pxr.Sdf.RelationshipSpec):
-                continue
-            targets = list(prop.targetPathList.explicitItems)
-            rebased = [
-                t.ReplacePrefix(old_path, new_path) if t.HasPrefix(old_path) else t for t in targets
-            ]
-            if rebased != targets:
-                prop.targetPathList.explicitItems = rebased
-
-
-_REFERENCE_FIELDS = ("explicitItems", "addedItems", "prependedItems", "appendedItems")
-
-
 def _free_root_name(layer: Layer, name: str) -> str:
     """A root-level prim name this layer does not already use."""
     taken = itertools.chain([name], (f"{name}_{n}" for n in itertools.count(1)))
     return next(candidate for candidate in taken if not layer.GetPrimAtPath(f"/{candidate}"))
 
 
-def _carry_one(pxr: Pxr, sub_layer: Layer, prim_path: Any, root_layer: Layer) -> str:
-    """Copy a prim the subtree referenced from outside itself, under a free name."""
-    at = pxr.Sdf.Path.absoluteRootPath.AppendChild(_free_root_name(root_layer, prim_path.name))
-    if not pxr.Sdf.CopySpec(sub_layer, prim_path, root_layer, at):
-        raise ValueError(f"could not carry over {prim_path}, which the subtree references")
-    _rebase_relationships(pxr, root_layer, at, str(prim_path), str(at))
-    return str(at)
+_LIST_OP_FIELDS = ("addedItems", "prependedItems", "appendedItems", "deletedItems", "orderedItems")
 
 
-def _carry_outside_references(
-    pxr: Pxr, sub_layer: Layer, source: str, root_layer: Layer, target: str
-) -> None:
-    """Repoint the arcs of a subtree we just copied, carrying what they reach outside it.
+def usd_under_namespace(usd: str, namespace: str, root: Path | str | None = None) -> str:
+    """The layer with every root prim moved under ``/<namespace>``, so each frame's prim path is its tf frame.
 
-    A converted asset often keeps its shader networks as root-level prims beside its
-    default prim, and the prims inside reach them by absolute path. Copying the default
-    prim alone leaves those arcs pointing at whatever happens to own that path in the
-    scene, which is how a grafted robot ends up wearing the room's materials -- so bring
-    the referenced prims along under names the scene has not taken. Arcs that point back
-    inside the subtree just move with it.
+    The namespace's own prims are typeless ``def``s (an ``over`` would hide what is under it from a
+    traversal), the first of them is the defaultPrim, and every path the layer states into a moved
+    prim (targets, connections, internal references, inherits) follows it.
     """
-    inside, landed = pxr.Sdf.Path(source), pxr.Sdf.Path(target)
-    carried: dict[str, str] = {}
-    pending = [target]
-    while pending:
-        for spec in _specs_under(root_layer, pending.pop()):
-            for field in _REFERENCE_FIELDS:
-                arcs = list(getattr(spec.referenceList, field))
-                moved = [
-                    _moved_reference(
-                        pxr, arc, sub_layer, root_layer, inside, landed, carried, pending
-                    )
-                    for arc in arcs
-                ]
-                if moved != arcs:
-                    setattr(spec.referenceList, field, moved)
-            _carry_outside_connections(
-                pxr, spec, sub_layer, root_layer, inside, landed, carried, pending
-            )
+    if not namespace:
+        return usd
+    check_frame_path(namespace, "the namespace")
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd, "a layer", root)
+    parent = pxr.Sdf.Path(f"/{namespace}")
+    # Parked first, so a root prim named like the namespace's first segment can move under it.
+    parked = pxr.Sdf.Path(f"/{_free_root_name(layer, '_dimos_namespace')}")
+    moves = {spec.path: parent.AppendChild(spec.name) for spec in layer.rootPrims}
+    pxr.Sdf.CreatePrimInLayer(layer, parked)
+    _apply_moves(pxr, layer, {old: parked.AppendChild(old.name) for old in moves})
+    for prefix in parent.GetPrefixes():
+        pxr.Sdf.CreatePrimInLayer(layer, prefix).specifier = pxr.Sdf.SpecifierDef
+    _apply_moves(pxr, layer, {parked.AppendChild(old.name): new for old, new in moves.items()})
+    edit = pxr.Sdf.BatchNamespaceEdit()
+    edit.Add(parked, pxr.Sdf.Path.emptyPath)
+    layer.Apply(edit)
+    _repath(pxr, layer, moves)
+    layer.defaultPrim = parent.GetPrefixes()[0].name
+    return str(layer.ExportToString())
 
 
-def _carry_outside_connections(
-    pxr: Pxr,
-    spec: Any,
-    sub_layer: Layer,
-    root_layer: Layer,
-    inside: Any,
-    landed: Any,
-    carried: dict[str, str],
-    pending: list[str],
-) -> None:
-    """Carry what a shader connection reaches outside the subtree, as its arcs already are.
-
-    Sdf.CopySpec repoints a connection that names a prim inside the copy, but one that names a
-    prim beside it -- the shape a converted asset's shader network takes when it is wired
-    directly rather than through a reference -- keeps its absolute path, which in the scene
-    belongs to whatever already sits there. Same failure as a stale arc: the graft wears the
-    room's materials.
-    """
-    for prop in spec.properties:
-        if not isinstance(prop, pxr.Sdf.AttributeSpec):
-            continue
-        targets = list(prop.connectionPathList.explicitItems)
-        moved = []
-        for target in targets:
-            prim_path = target.GetPrimPath()
-            if target.HasPrefix(inside) or target.HasPrefix(landed):
-                moved.append(target)
-                continue
-            at = carried.get(str(prim_path))
-            if at is None:
-                if sub_layer.GetPrimAtPath(prim_path) is None:
-                    # Nothing to carry: the target is not a prim this layer states, it is
-                    # composed -- an instancing prototype, say -- so leave the arc alone.
-                    moved.append(target)
-                    continue
-                at = _carry_one(pxr, sub_layer, prim_path, root_layer)
-                carried[str(prim_path)] = at
-                pending.append(at)
-            moved.append(
-                pxr.Sdf.Path(at).AppendProperty(target.name) if target.IsPropertyPath() else at
-            )
-        if moved != targets:
-            prop.connectionPathList.explicitItems = moved
+def _apply_moves(pxr: Pxr, layer: Layer, moves: Mapping[Any, Any]) -> None:
+    edit = pxr.Sdf.BatchNamespaceEdit()
+    for old, new in moves.items():
+        edit.Add(old, new)
+    if not layer.Apply(edit):
+        raise ValueError(f"could not move {sorted(map(str, moves))} in the layer")
 
 
-def _moved_reference(
-    pxr: Pxr,
-    arc: Any,
-    sub_layer: Layer,
-    root_layer: Layer,
-    inside: Any,
-    landed: Any,
-    carried: dict[str, str],
-    pending: list[str],
-) -> Any:
-    if arc.assetPath or not arc.primPath:
-        # A file of its own, which brings its own namespace with it.
-        return arc
-    if arc.primPath.HasPrefix(inside):
-        at = str(arc.primPath.ReplacePrefix(inside, landed))
-    elif str(arc.primPath) in carried:
-        at = carried[str(arc.primPath)]
-    else:
-        at = _carry_one(pxr, sub_layer, arc.primPath, root_layer)
-        carried[str(arc.primPath)] = at
-        pending.append(at)
-    return pxr.Sdf.Reference(arc.assetPath, at, arc.layerOffset, arc.customData)
+def _repath(pxr: Pxr, layer: Layer, moves: Mapping[Any, Any]) -> None:
+    """Point every path the layer states into a moved prim at where it went (Sdf moves do not)."""
+
+    def moved(path: Any) -> Any:
+        for old, new in moves.items():
+            if path.HasPrefix(old):
+                return path.ReplacePrefix(old, new)
+        return path
+
+    def arc(item: Any) -> Any:
+        # Only an internal arc (no asset) names a prim of this layer.
+        if item.assetPath or item.primPath.isEmpty:
+            return item
+        return repointed_arc(pxr, item, item.assetPath, moved(item.primPath))
+
+    def fix(list_op: Any, change: Any) -> None:
+        fields = ("explicitItems",) if list_op.isExplicit else _LIST_OP_FIELDS
+        for field in fields:
+            items = list(getattr(list_op, field))
+            changed = [change(item) for item in items]
+            if changed != items:
+                setattr(list_op, field, changed)
+
+    def visit(path: Any) -> None:
+        spec = layer.GetObjectAtPath(path)
+        if isinstance(spec, pxr.Sdf.RelationshipSpec):
+            fix(spec.targetPathList, moved)
+        elif isinstance(spec, pxr.Sdf.AttributeSpec):
+            fix(spec.connectionPathList, moved)
+        elif isinstance(spec, pxr.Sdf.PrimSpec):
+            fix(spec.referenceList, arc)
+            fix(spec.payloadList, arc)
+            fix(spec.inheritPathList, moved)
+            fix(spec.specializesList, moved)
+
+    layer.Traverse(pxr.Sdf.Path.absoluteRootPath, visit)

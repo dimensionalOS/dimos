@@ -7,7 +7,7 @@ Agent checks need the configured LLM credentials. Most run on replay data or in 
 Needs Ollama running (`ollama serve`) and `OPENAI_API_KEY`, since `SpeakSkill` speaks through OpenAI TTS. Run each stage below separately: `agent-send` returns when the message is sent, before the model has finished responding.
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3-vl:8b
 uv run dimos --replay run unitree-go2-agentic-ollama --daemon
 ```
 
@@ -33,7 +33,7 @@ ls "$RELEASE_TRACE_DIR"
 uv run dimos stop
 ```
 
-Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start.
+Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start. Start it only once `ollama ps` lists no model: Ollama keeps its model on the GPU for 5 minutes after the last request, and with both loaded a 12 GB card fails the start with `CUDA out of memory`.
 
 ## 7.2 Tool streams and capability conflicts
 
@@ -50,21 +50,28 @@ Type these prompts in `humancli`, one at a time:
 
 Expected result: the first prompt shows two live tool boxes that stream at the same time. The second returns `Cannot start 'turn_in_place': capability 'movement' is held by 'start_patrol'. Call the appropriate stop tool first, then retry.` and the agent reports it without stopping the patrol. After the third the patrol box closes and the turn completes.
 
-## 7.3 Point navigation skill
+## 7.3 Point navigation RPC
 
 Needs the Habitat setup from the [Habitat check](08_navigation.md#87-habitat-simulation).
 
 ```bash
-uv run dimos run habitat-nav mcp-server
+uv run dimos run habitat-nav
 # In another terminal:
-uv run dimos mcp call go_to --arg x=<x> --arg y=<y>
-uv run dimos mcp call go_to --arg x=<x2> --arg y=<y2>
-uv run dimos mcp call stop_navigation
+uv run dimos shell
 ```
 
-* For each `<x>` and `<y>`, hover over a free spot on the planner surface a few metres away in Rerun and read its coordinates. Send the second goal after the robot arrives, and stop it on the way.
+* For each goal, hover over a free spot on the planner surface a few metres away in Rerun and read the `Hover position` line of the tooltip. The `positions` line below it is in the camera frame when the pointer is on a scan point. Send the second goal after the robot arrives, and stop it on the way.
 
-Expected result: each `go_to` prints a line starting with "Navigating." and draws a path. The robot stops at the first point, and `stop_navigation` prints "Stopped." and halts it short of the second.
+...in the shell:
+
+```python
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+app.MLSPlannerNative.go_to(PoseStamped(position=(<x>, <y>, <z>), frame_id="world"))
+app.MLSPlannerNative.go_to(PoseStamped(position=(<x2>, <y2>, <z2>), frame_id="world"))
+app.MLSPlannerNative.stop_navigation()
+```
+
+Expected result: each `go_to` returns a `Time` stamp at once and draws a path. The robot stops at the first point, and `stop_navigation` halts it short of the second.
 
 ## 7.4 TypeSafe navigation agent
 
@@ -117,7 +124,7 @@ uv run dimos run desk-marker-tf rerun-bridge-module --marker-length-m 0.1
 ```
 
 * Calibration: `<square-m>` is the measured edge of one printed square in meters. Press Space on about 20 sharp views of the board.
-* Markers: hold the tag in front of the webcam.
+* Markers: hold the tag in front of the webcam. Scroll in the 3D view to zoom out: the camera frustum points straight up from the origin, and the feed and the box are drawn at its far end. The box is labelled `DICT_APRILTAG_36h11:0 id=0`.
 
 `desk-marker-tf` uses its bundled `fixtures/camera_info.yaml`, not the file the calibration wrote.
 
@@ -130,7 +137,7 @@ The live case needs the DimSim assets from the [DimSim check](02_replay-and-simu
 ```bash
 uv run dimos evals list
 uv run dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.question_answer
-DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
+DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.agent_adapter --set 'modules=["unitree-go2-agentic"]'
 ```
 
 Expected result: `list` prints the suites. The examples run prints `PASS` for both cases and a summary line that ends in the run directory, which holds `results.jsonl` and `summary.json`. In the live run the robot tours the apartment and drives to the bed, and `dimsim_go_to_bed` passes.
@@ -150,7 +157,9 @@ uv run dimos evals vqa run ~/.local/state/dimos/datasets/vqa/memory-frames --mod
 
 The first recorded images can precede the first `camera_info` or `tf` message. If generation reports missing calibration or pose at the selected image timestamp, increase `--start` until the first selected image is after both streams begin. `20` skipped the startup gap in this check.
 
-Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors.
+The simulated robot stands still until it is driven, so the three selected frames show the same view and the same questions repeat for each frame.
+
+Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors. The summary line ends in the run directory, which holds `results.jsonl` and `summary.json`. A `fail` line is a wrong answer from the model, not an error.
 
 ## 7.10 xArm6 WorldBelief
 
@@ -169,7 +178,7 @@ Expected result: `scan` prints `Scan complete: <n> object(s) present` with a con
 
 ## 7.11 Depth2DepthCloud
 
-Needs a Go2 whose Jetson has a dimos checkout and nix. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
+Needs a Go2 whose Jetson has a dimos checkout and nix, and the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)). Without it the run stops with `no Host router on this machine`. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
 
 ```bash
 # On the Jetson:

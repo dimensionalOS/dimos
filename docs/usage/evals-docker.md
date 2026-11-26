@@ -112,7 +112,7 @@ skip what you have.
    ```bash
    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list && sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
    echo '{"features":{"buildkit":true},"runtimes":{"nvidia":{"path":"nvidia-container-runtime","runtimeArgs":[]}}}' | sudo tee /etc/docker/daemon.json && sudo systemctl restart docker
-   docker run --rm --gpus all ubuntu:24.04 nvidia-smi
+   docker run --rm --gpus all ubuntu:26.04 nvidia-smi
    ```
 
 3. A headless Xorg on the GPU. DimSim's Chromium gets hardware WebGL on
@@ -158,7 +158,7 @@ skip what you have.
    from (a few packages build from source, hence the compilers):
 
    ```bash
-   sudo apt-get install -y build-essential pkg-config portaudio19-dev libturbojpeg0-dev libgl1 libegl1
+   sudo apt-get install -y build-essential pkg-config portaudio19-dev libturbojpeg0-dev libgl1
    curl -LsSf https://astral.sh/uv/install.sh | sh && source ~/.bashrc
    git clone -b <branch> https://github.com/dimensionalOS/dimos.git ~/dimos && cd ~/dimos && git lfs pull --include="misc/DimSim/**" && uv sync
    ```

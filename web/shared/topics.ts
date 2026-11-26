@@ -39,6 +39,7 @@ export const TOPIC_SETTING_NAMES = [
   "quality",
   "keepEvery",
   "fields",
+  "maxBitrate",
 ] as const;
 export type TopicSettingName = typeof TOPIC_SETTING_NAMES[number];
 /** Little-endian "DIMP": distinguishes a bulk bidi stream from length-prefixed
@@ -67,6 +68,9 @@ export interface TopicCapabilities {
   /** Updatable settings per profile. An older provider omits this and
    * accepts nothing beyond rate changes. */
   profileOptions?: Record<string, OptionRanges>;
+  /** An open video variant takes new settings in place from `topic_variant`.
+   * An older provider opens another variant for every settings change. */
+  videoReconfigure?: boolean;
 }
 /** The settings a subscription runs with. Keys beyond maxHz exist only where
  * the profile supports them; the acknowledgement reports the values in force. */
@@ -74,6 +78,7 @@ export interface TopicSettings {
   maxHz: number;
   maxResolution?: [number, number];
   quality?: number;
+  maxBitrate?: number;
   keepEvery?: number;
   fields?: string[];
 }
@@ -411,6 +416,7 @@ const settingOk = (name: string, v: unknown): boolean => {
       return Array.isArray(v) && v.length === 2 && v.every(count);
     case "quality":
     case "keepEvery":
+    case "maxBitrate":
       return count(v);
     case "fields":
       return names(v, 8);
@@ -447,6 +453,7 @@ const profileOptionsOk = (v: unknown): boolean =>
 export const topicCapabilitiesOk = (v: unknown): v is TopicCapabilities =>
   record(v) && typeof v.read === "boolean" && typeof v.write === "boolean" &&
   (v.guardedPublishers === undefined || typeof v.guardedPublishers === "boolean") &&
+  (v.videoReconfigure === undefined || typeof v.videoReconfigure === "boolean") &&
   (v.profileOptions === undefined || profileOptionsOk(v.profileOptions)) &&
   Array.isArray(v.profiles) && v.profiles.length <= 16 && v.profiles.every((p) => string(p, 64));
 
@@ -459,7 +466,8 @@ function clamp(name: string, range: OptionRange, value: unknown): unknown {
       const n = value as number;
       if (
         !(range.kind === "number" ? finite(n) : count(n)) || (name === "maxHz" && !rate(n)) ||
-        (range.min !== undefined && n < range.min) || (range.max !== undefined && n > range.max)
+        (range.min !== undefined && n < range.min) ||
+        (range.max !== undefined && n > range.max && name !== "maxBitrate")
       ) return null;
       if (typeof d !== "number") return n;
       // The profile bounds the data: a coarser stride is a smaller output.
@@ -515,7 +523,18 @@ export function normalizeTopicSettings(
     if (normalized === null) return { error: "option_out_of_range" };
     settings[name] = normalized;
   }
+  if (typeof settings.maxBitrate === "number" && Array.isArray(settings.maxResolution)) {
+    settings.maxBitrate = Math.min(
+      settings.maxBitrate,
+      videoBitrate(settings.maxResolution as [number, number]),
+    );
+  }
   return { settings: settings as unknown as TopicSettings };
+}
+/** H.264 class ceilings, mirrored by topic_profiles.video_bitrate. */
+export function videoBitrate([width, height]: readonly [number, number]): number {
+  const pixels = width * height;
+  return pixels <= 640 * 360 ? 1_000_000 : pixels <= 1280 * 720 ? 2_500_000 : 4_500_000;
 }
 const sourceInfo = (v: unknown) =>
   record(v) && topicSourceOk(v.source) && topicGenerationOk(v.gen) && topicCapabilitiesOk(v);

@@ -17,6 +17,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -24,6 +25,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.utils.testing.waiting import wait_until
 
 
 class RecordedTeardown(Module):
@@ -42,6 +44,11 @@ class RecordedTeardown(Module):
     @rpc
     def build(self) -> None:
         self._note("build")
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._note("start")
 
     @rpc
     def stop(self) -> None:
@@ -66,7 +73,9 @@ def test_restart_stops_old_instance_once_before_replacement_build(
     coordinator.start()
     try:
         coordinator.load_blueprint(
-            autoconnect(RecordedTeardown.blueprint(record=str(record)), Companion.blueprint())
+            autoconnect(
+                RecordedTeardown.blueprint(record=str(record)), Companion.blueprint()
+            ).solidify()
         )
         old_proxy = coordinator.get_instance(RecordedTeardown)
         stop_rpc = mocker.spy(old_proxy, "stop")
@@ -81,7 +90,41 @@ def test_restart_stops_old_instance_once_before_replacement_build(
     assert len(builds) == 2 and builds[0] != builds[1], events
     assert [event for event, instance in events if instance == builds[0]] == [
         "build",
+        "start",
         "stop",
         "stopped",
     ], events
     assert ["stopped", builds[0]] in events[: events.index(["build", builds[1]])], events
+
+
+@pytest.mark.parametrize("rpc_name", [None, "shared-alias"])
+def test_companion_stack_lifecycle_calls_reach_only_its_own_module(
+    tmp_path: Path, rpc_name: str | None
+) -> None:
+    first_record = tmp_path / "first"
+    second_record = tmp_path / "second"
+    with ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none")) as first:
+        first.start_rpc_service()
+        first.load_blueprint(
+            RecordedTeardown.blueprint(record=str(first_record), rpc_name=rpc_name)
+        )
+        with ModuleCoordinator(
+            g=GlobalConfig(n_workers=1, viewer="none", serve_coordinator_rpc=False)
+        ) as second:
+            second.start_rpc_service()
+            second.load_blueprint(
+                RecordedTeardown.blueprint(record=str(second_record), rpc_name=rpc_name)
+            )
+            assert [line.split()[0] for line in first_record.read_text().splitlines()] == [
+                "build",
+                "start",
+            ]
+            second.get_instance(RecordedTeardown).stop()
+            wait_until(lambda: "stopped " in second_record.read_text(), timeout=5)
+
+        first.get_instance(RecordedTeardown).build()
+        assert [line.split()[0] for line in first_record.read_text().splitlines()] == [
+            "build",
+            "start",
+            "build",
+        ]

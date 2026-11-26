@@ -139,17 +139,21 @@ async def test_custom_module_reload_keeps_descriptors_data_and_source(
             viewer.send_control(TopicActivate(route=ready.route, gen=ready.gen))
             frames = viewer.frames()
             try:
-                metadata = autoconnect(TopicMetadataModule.blueprint()).global_config(
-                    n_workers=1,
-                    viewer="none",
-                    build_native=False,
-                    transport="zenoh",
-                    zenoh_connect=endpoint,
-                    zenoh_mode="client",
-                    zenoh_scouting=False,
-                    zenoh_multicast=False,
-                    zenoh_gossip=False,
-                    serve_coordinator_rpc=False,
+                metadata = (
+                    autoconnect(TopicMetadataModule.blueprint())
+                    .solidify()
+                    .global_config(
+                        n_workers=1,
+                        viewer="none",
+                        build_native=False,
+                        transport="zenoh",
+                        zenoh_connect=endpoint,
+                        zenoh_mode="client",
+                        zenoh_scouting=False,
+                        zenoh_multicast=False,
+                        zenoh_gossip=False,
+                        serve_coordinator_rpc=False,
+                    )
                 )
                 coordinator = await asyncio.to_thread(ModuleCoordinator.build, metadata)
                 custom = CustomReadingModule.blueprint().transports(

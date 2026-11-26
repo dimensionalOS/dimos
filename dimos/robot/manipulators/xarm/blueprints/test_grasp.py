@@ -29,7 +29,7 @@ from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
-from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.spec.utils import spec_structural_compliance
 
 
@@ -44,13 +44,13 @@ def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
     }
 
 
-@pytest.mark.parametrize("blueprint", [xarm_grasp, xarm_grasp_graspgenx])
+@pytest.mark.parametrize("blueprint", [xarm_grasp.solidify(), xarm_grasp_graspgenx.solidify()])
 def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> None:
     topics = _topics(blueprint)
     planner_map = topics[ManipulationModule, "voxel_map"]
 
     assert (
-        topics[UsdManagerPointClearing, "filtered_pointcloud"]
+        topics[UrdfManagerPointClearing, "filtered_pointcloud"]
         == topics[RayTracingVoxelMap, "lidar"]
     )
     assert topics[RayTracingVoxelMap, "global_map"] == topics[PointCloudBoxFilter, "cloud"]
@@ -62,7 +62,7 @@ def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> 
     }
 
 
-@pytest.mark.parametrize("blueprint", [xarm_grasp, xarm_grasp_graspgenx])
+@pytest.mark.parametrize("blueprint", [xarm_grasp.solidify(), xarm_grasp_graspgenx.solidify()])
 def test_pick_and_place_finds_the_box_filter(blueprint: Blueprint) -> None:
     providers = [
         atom.module

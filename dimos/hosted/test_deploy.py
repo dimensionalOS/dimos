@@ -38,11 +38,73 @@ def _host(host_id: str) -> HostDescriptor:
     return HostDescriptor(host_id, host_id, {}, "r", ())
 
 
+@pytest.mark.parametrize(
+    ("names", "tag_sets", "expected"),
+    [
+        ({"lab-id", "lab"}, [{"go2": True}, {"gpu": True}], "no live Host matches tags (go2)"),
+        ({"lab-id", "robot"}, [{"gpu": True}], "no live Host named or identified by 'robot'"),
+        (
+            {"lab"},
+            [{"gpu": "jetson"}],
+            "no live Host matches tags (gpu=jetson)",
+        ),
+        (
+            {"lab"},
+            [{"gpu": True, "go2": True}],
+            "no live Host matches tags (go2, gpu)",
+        ),
+    ],
+)
+def test_wait_for_hosts_reports_only_unmatched_requirements(
+    mocker: MockerFixture,
+    names: set[str],
+    tag_sets: list[dict[str, str | bool]],
+    expected: str,
+) -> None:
+    lab = HostDescriptor("lab-id", "lab", {"gpu": "RTX 4070"}, "r", ())
+    mocker.patch.object(deploy, "describe_all", return_value=(lab,))
+    mocker.patch.object(deploy.time, "monotonic", side_effect=[0.0, 0.0, 2.0])
+    mocker.patch.object(deploy.time, "sleep")
+
+    with pytest.raises(TimeoutError) as exc:
+        deploy.wait_for_hosts(mocker.Mock(), names, timeout=1.0, tag_sets=tag_sets)
+
+    assert str(exc.value) == f"Timed out waiting for Hosts: {expected}; found: lab[gpu=RTX 4070]"
+
+
+def test_wait_for_hosts_reports_no_discovered_hosts(mocker: MockerFixture) -> None:
+    mocker.patch.object(deploy, "describe_all", side_effect=TimeoutError)
+    mocker.patch.object(deploy.time, "monotonic", side_effect=[0.0, 0.0, 2.0])
+    mocker.patch.object(deploy.time, "sleep")
+
+    with pytest.raises(TimeoutError) as exc:
+        deploy.wait_for_hosts(mocker.Mock(), {"lab"}, timeout=1.0, tag_sets=[{"go2": True}])
+
+    assert str(exc.value) == (
+        "Timed out waiting for Hosts: no live Host named or identified by 'lab'; "
+        "no live Host matches tags (go2); found: none"
+    )
+
+
+def test_wait_for_hosts_returns_when_all_requirements_are_satisfied(mocker: MockerFixture) -> None:
+    lab = HostDescriptor("lab-id", "lab", {"gpu": "RTX 4070"}, "r", ())
+    robot = HostDescriptor("robot-id", "robot", {"go2": ""}, "r", ())
+    mocker.patch.object(deploy, "describe_all", side_effect=[(lab,), (lab, robot)])
+    mocker.patch.object(deploy.time, "monotonic", return_value=0.0)
+    mocker.patch.object(deploy.time, "sleep")
+
+    assert deploy.wait_for_hosts(
+        mocker.Mock(), {"lab-id", "lab"}, tag_sets=[{"go2": True}, {"gpu": True}]
+    ) == (lab, robot)
+
+
 def test_deployed_holds_the_run_token_and_starts_and_stops_hosts_side_by_side(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch("dimos.hosted.deploy.code_revision", return_value="r")
-    blueprint = autoconnect(Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b"))
+    blueprint = autoconnect(
+        Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b")
+    ).solidify()
     rpc = mocker.MagicMock()
     # Both start calls, then both stop calls, must be in flight at once, or a barrier breaks.
     both_started = threading.Barrier(2, timeout=5)
@@ -147,7 +209,9 @@ def test_a_failed_start_stops_the_run_without_waiting_for_the_other_starts(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch("dimos.hosted.deploy.code_revision", return_value="r")
-    blueprint = autoconnect(Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b"))
+    blueprint = autoconnect(
+        Left.blueprint().hosted(host="a"), Right.blueprint().hosted(host="b")
+    ).solidify()
     rpc = mocker.MagicMock()
     b_started, release_b = threading.Event(), threading.Event()
     stopped: list[str] = []
