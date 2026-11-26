@@ -273,10 +273,10 @@ class Scanner:
         self.blueprints, self.modules, self.errors = {}, {}, []
         self.names, self.finished_modules = {"blueprints": [], "modules": []}, set()
         self.current = None
-        # taken before the imports, so a change made while scanning still reads as stale
-        before = await asyncio.to_thread(fingerprint, self.dimos_dir)
         ok = False
         try:
+            # Taken before the imports, so a change made while scanning still reads as stale.
+            before = await asyncio.to_thread(fingerprint, self.dimos_dir)
             problem = await self.child(None)
             tried: Any = None
             while problem is not None and any(self.pending()):
@@ -354,22 +354,29 @@ class Scanner:
                 tail.append(line.decode("utf-8", "replace").rstrip())
 
         draining = asyncio.create_task(drain())
+        self.current = None
         try:
             while True:
                 try:
                     line = await asyncio.wait_for(child.stdout.readline(), self.item_timeout_s)
                 except asyncio.TimeoutError:
-                    return f"no answer in {self.item_timeout_s:g} s (hung while importing)"
+                    problem = f"no scanner output in {self.item_timeout_s:g} s"
+                    break
                 if not line:
                     await child.wait()
                     last = next(
                         (tail_line for tail_line in reversed(tail) if tail_line.strip()),
-                        "no output",
+                        "no stderr",
                     )
-                    return f"the import crashed its process (exit {child.returncode}): {last}"
+                    problem = f"scanner exited before reporting completion (exit {child.returncode}): {last}"
+                    break
                 text = line.decode("utf-8", "replace")
                 if MARKER in text and self.take(json.loads(text.rpartition(MARKER)[2])):
                     return None
+            # Recover from a broken item only once this child has actually named one.
+            if self.current is None:
+                raise RuntimeError(problem)
+            return problem
         finally:
             if child.returncode is None:
                 kill_group(child.pid)
@@ -377,7 +384,7 @@ class Scanner:
             draining.cancel()
 
     def take(self, message: dict[str, Any]) -> bool:
-        kind = message.pop("kind", None)
+        kind: str | None = message.pop("kind", None)
         if kind == "names":
             self.names = {"blueprints": message["blueprints"], "modules": message["modules"]}
         elif kind == "start":
@@ -387,13 +394,15 @@ class Scanner:
         elif kind == "module":
             self.modules[message["class"]] = message
             self.finished_modules.add(message["name"])
-        elif kind == "error" or "error" in message:
+        elif kind is None and "error" in message:
+            raise RuntimeError(message["error"])
+        elif kind == "error":
             self.error(str(message.get("error")))
             current = str(self.current or "")
             if current.startswith("module:"):
                 self.finished_modules.add(current[7:])
         self.tick()
-        return kind == "end" or (kind is None and "error" in message)
+        return kind == "end"
 
     def finish(self) -> dict[str, dict[str, Any]]:
         """The scan's records by name, in its order, with each one's robot and the extras that would fix it."""
@@ -434,6 +443,8 @@ def applies(requirement: Requirement, environment: dict[str, str], extra: str = 
 def declared(dimos_dir: Path, probe: dict[str, Any]) -> dict[str, list[str]]:
     try:
         project = tomllib.loads((dimos_dir / "pyproject.toml").read_text())["project"]
+        if not isinstance(project, dict):
+            raise ValueError("pyproject.toml: project must be a table")
         if project.get("name") == "dimos":
             return {
                 extra_name: list(requirements)
