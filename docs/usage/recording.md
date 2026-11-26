@@ -13,7 +13,7 @@ Bare `--record` means `--record sqlite`. SQLite lands at
 `recordings/<run-id>/memory.db`; MCAP lands at
 `recordings/<run-id>/memory.mcap`. The root is under the checkout, or
 `~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
-same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
+same `YYYYMMDD-HHMMSS-<4 hex>-<blueprint>` used by the run's `logs/` directory.
 
 ## Experimental Rust engine
 
@@ -67,6 +67,20 @@ none of the selected streams is recordable, startup fails.
 
 ## Inspecting and replaying
 
+`dimos mem summary` and `dimos mem rerun` accept a `.db` or `.mcap` path, a
+dataset name in cwd/project/data (including LFS), or a recording folder name
+such as `20260830-120000-1a2b-unitree-go2`. They also find cloud downloads by their
+stored filename or stem, original filename or stem, timestamp-and-ID tag, or
+upload ID prefix. Downloads store only the first eight ID characters; use that
+stored ID or a shorter unique prefix, not the full upload ID.
+
+Lookup checks cwd and the project root, then data/LFS, before searching the
+default recording and download directories. An installed package may need to
+clone the data repository before finding an existing local recording, and a
+network failure can prevent that fallback. If recording or download aliases
+match multiple files, the error lists every candidate; use an explicit path to
+choose one. Recordings or downloads saved under a custom root require a path.
+
 View contents of the memory by stream:
 ```console
 $ dimos mem summary recordings/<run-id>/memory.db
@@ -114,7 +128,7 @@ dimos map pose-fill recordings/<run-id>/memory.db --target color_image --pose-so
 
 - `--target` is the stream that gets the poses (default `lidar`).
 - `--pose-source` is a stream of pose messages, such as `PoseStamped` or `Odometry` (default `odom`). Each target observation takes the pose nearest in time.
-- The copy lands beside the source as `memory_posed.db`. Run the command on the copy to fill another stream.
+- By default, the copy lands beside the source as `<source>_posed.db`. The printed `dimos mem summary` command shows pose counts for the copied streams. Run pose-fill on the copy to fill another stream.
 - Target observations with no pose within `--tolerance` (default 0.1 s) are left out of the copy.
 - MCAP recordings cannot be pose-filled. Record with `--record sqlite` for spatial queries.
 

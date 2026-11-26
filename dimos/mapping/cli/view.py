@@ -38,10 +38,14 @@ def main(
         None, "--out", help="Write a .rrd instead of opening the viewer"
     ),
 ) -> None:
-    """Load a recording's last map cloud and display it in rerun."""
+    """Load a recording's last map cloud and display it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
-    from dimos.mapping.relocalization.module import load_premap
+    from dimos.mapping.relocalization.utils import load_premap
     from dimos.visualization.rerun.init import rerun_init
 
     cloud = load_premap(str(path), stream)

@@ -20,9 +20,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dimos.control.components import make_humanoid_joints
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
+
+G1_JOINT_NAMES = make_humanoid_joints("g1")
+G1_JOINT_MODEL = RobotModel.from_file(Path(__file__).parent / "g1.urdf").with_renamed_joints(
+    {f"{name.partition('/')[2]}_joint": name for name in G1_JOINT_NAMES}
+)
 
 
 @dataclass(frozen=True)
@@ -30,17 +37,20 @@ class G1Config:
     """Physical metadata used by G1 navigation and sensor blueprints."""
 
     name: str
-    model_path: Path
     height_clearance: float
     width_clearance: float
+    lidar_ip: str | None = None
+    lidar_host_ip: str | None = None
     internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
 
 
 G1 = G1Config(
     name="unitree_g1",
-    model_path=Path(__file__).parent / "g1.urdf",
     height_clearance=1.2,
     width_clearance=0.6,
+    # Unitree onboard subnet: MID-360 lidar and the Jetson's NIC facing it.
+    lidar_ip="192.168.123.120",
+    lidar_host_ip="192.168.123.164",
     internal_odom_offsets={
         # Mid-360 lidar: 1.2 m above ground.
         "mid360_link": Pose(0.0, 0.0, 1.2, *Quaternion.from_euler(Vector3(0, 0, 0))),

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""UsdManager's self-filter backend on RoboPlan's narrowphase robot body filter."""
+"""UrdfManager's self-filter backend on RoboPlan's narrowphase robot body filter."""
 
 from __future__ import annotations
 

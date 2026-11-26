@@ -47,6 +47,7 @@ from dimos.hosted.protocol import (
     DeploymentStatus,
     HostDescriptor,
     run_coordinator_rpc_name,
+    run_module_rpc_namespace,
 )
 from dimos.hosted.tags import as_tags, live_tags
 from dimos.protocol.service.zenohservice import ZenohSessionPool, split_csv
@@ -427,6 +428,7 @@ def _run_fragment(
             run_id=fragment.run_id,
             log_dir=log_dir,
             rpc_name=run_coordinator_rpc_name(fragment.run_id, fragment.host_id),
+            module_rpc_namespace=run_module_rpc_namespace(fragment.run_id, fragment.host_id),
             remote_module_refs=remote_module_refs,
             on_ready=lambda _: ready.send((True, None)),
         )

@@ -169,7 +169,15 @@ export function slashCommands(): readonly SlashCommand[] {
       usage: "/help",
       run: async (_args, app) =>
         app.transcript.note(
-          [...commands.map((command) => command.usage), "", "Keys", ...KEYS].map((text) => muted(text)).join("\n"),
+          [
+            ...commands.map((command) => command.usage),
+            "/skill:NAME [REQUEST]  load and follow a skill",
+            "",
+            "Keys",
+            ...KEYS,
+          ]
+            .map((text) => muted(text))
+            .join("\n"),
         ),
     },
     { name: "exit", usage: "/exit  detach; the conversation keeps running", run: async (_args, app) => app.exit(0) },
@@ -218,7 +226,7 @@ export function slashCommands(): readonly SlashCommand[] {
         const call = conversation.detachable.value.find((candidate) => candidate.call === target?.call.id);
         if (call === undefined) throw new Error("No running call can move to the background.");
         await app.ui.actions.observe(
-          `send call ${call.call} to the background`,
+          `send ${call.tool} to the background`,
           owner(conversation).background({ call: call.call }),
         );
       },

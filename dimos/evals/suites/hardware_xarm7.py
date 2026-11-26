@@ -14,9 +14,9 @@
 
 """A real xArm7 at a table: one pick, graded by the operator who watched it.
 
-The arm's address is the coordinator's ``addresses`` setting, here as an env override:
+The arm's address is the xArm connection's ``ip`` setting, here as an env override:
 
-    CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.168.1.185"}' \
+    XARMCONNECTION__IP=192.168.1.185 \
         dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
 """
 

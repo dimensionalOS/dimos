@@ -37,7 +37,7 @@ def test_physics_advances_without_any_controller(make_sim):
 
 
 def test_delayed_valid_action_applies_without_rewinding_or_waiting(make_sim, command):
-    sim = make_sim(joint_ids=("left/slide_x",))
+    sim = make_sim(joint_ids=("world/world/left_mount/cartesian_pusher/joints/slide_x",))
     sample = sim.inspect()
     wait_until(lambda: sim.status()["time_ns"] >= sample.header.time_ns + 100_000_000, timeout=3)
     sim.submit(command(sample.header, positions=(0.3,)))
@@ -73,7 +73,7 @@ def test_wrong_clock_and_duplicate_commands_are_rejected(make_sim, command):
 
 
 def test_future_action_waits_for_its_time_without_stalling_physics(make_sim, command):
-    sim = make_sim(joint_ids=("left/slide_x",))
+    sim = make_sim(joint_ids=("world/world/left_mount/cartesian_pusher/joints/slide_x",))
     initial = sim.inspect()
     action = command(initial.header, positions=(0.3,))
     action.apply_at_ns += 500_000_000
@@ -88,7 +88,7 @@ def test_future_action_waits_for_its_time_without_stalling_physics(make_sim, com
 
 
 def test_command_expiry_holds_motor_while_physics_continues(make_sim, command):
-    sim = make_sim(joint_ids=("left/slide_x",))
+    sim = make_sim(joint_ids=("world/world/left_mount/cartesian_pusher/joints/slide_x",))
     action = command(sim.inspect().header, positions=(0.6,), ttl=0.1)
     # Give RPC delivery time without changing the 100 ms active command window.
     action.apply_at_ns += 500_000_000
@@ -123,9 +123,12 @@ def test_place_is_atomic_and_does_not_restart_time(make_sim):
     sim = make_sim()
     before = sim.inspect()
     with pytest.raises(ValueError, match="free root"):
-        sim.place("left/tool", (0.2, 0.2, 0.4, 0, 0, 0, 1))
-    placed = sim.place("box", (0.2, 0.2, 0.4, 0, 0, 0, 1))
-    position = poses_by_id(placed)["box"].position
+        sim.place(
+            "world/world/left_mount/cartesian_pusher/base_link/carriage/tool",
+            (0.2, 0.2, 0.4, 0, 0, 0, 1),
+        )
+    placed = sim.place("world/world/box_mount/box/box", (0.2, 0.2, 0.4, 0, 0, 0, 1))
+    position = poses_by_id(placed)["world/world/box_mount/box/box"].position
     assert (position.x, position.y, position.z) == pytest.approx((0.2, 0.2, 0.4))
     assert placed.header.epoch == before.header.epoch
     assert placed.header.time_ns >= before.header.time_ns
@@ -135,11 +138,23 @@ class ExtendedMujocoBackend(MujocoBackend):
     """Optional truth disappears when the pusher leaves its starting position."""
 
     def read_cbor_observations(self):
-        if self.data.qpos[self.model.joint("left/slide_x").qposadr[0]] > 0.01:
+        if (
+            self.data.qpos[
+                self.model.joint("world/world/left_mount/cartesian_pusher/joints/slide_x").qposadr[
+                    0
+                ]
+            ]
+            > 0.01
+        ):
             return []
         value = cbor2.dumps({"temperature_c": 21.5})
         return [
-            CborObservation(entity_id="box", key="thermal", value_length=len(value), value=value)
+            CborObservation(
+                entity_id="world/world/box_mount/box/box",
+                key="thermal",
+                value_length=len(value),
+                value=value,
+            )
         ]
 
 
@@ -157,8 +172,10 @@ def test_complete_state_replaces_extensions_and_keeps_one_acquisition(make_sim, 
     assert stamp.sec * 10**9 + stamp.nsec == second.header.time_ns
     assert {p.body_id for p in second.bodies} == {p.body_id for p in first.bodies}
     joints = second.joint_truth
-    q = joints.position[joints.name.index("left/slide_x")]
-    assert poses_by_id(second)["left/carriage"].position.x == pytest.approx(-0.4 + q)
+    q = joints.position[joints.name.index("world/world/left_mount/cartesian_pusher/joints/slide_x")]
+    assert poses_by_id(second)[
+        "world/world/left_mount/cartesian_pusher/base_link/carriage"
+    ].position.x == pytest.approx(-0.4 + q)
 
 
 class CommandMujocoBackend(MujocoBackend):
@@ -247,4 +264,6 @@ def test_invalid_action_has_no_partial_effect(make_sim, cbor_action, invalid):
     after = sim.inspect()
     assert cbor2.loads(bytes(after.cbor_observations[0].value)) == 1
     joints = after.joint_truth
-    assert joints.position[joints.name.index("left/slide_x")] == pytest.approx(0)
+    assert joints.position[
+        joints.name.index("world/world/left_mount/cartesian_pusher/joints/slide_x")
+    ] == pytest.approx(0)

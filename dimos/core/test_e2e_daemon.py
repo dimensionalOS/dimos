@@ -68,7 +68,7 @@ def _clean_registry(tmp_path, monkeypatch):
 def coordinator():
     """Build a PingPong blueprint (1 worker) and yield the coordinator."""
     global_config.update(viewer="none", n_workers=1)
-    bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
+    bp = autoconnect(PingModule.blueprint(), PongModule.blueprint()).solidify()
     coord = ModuleCoordinator.build(bp)
     yield coord
     coord.stop()
@@ -78,7 +78,7 @@ def coordinator():
 def coordinator_2w():
     """Build a PingPong blueprint with 2 workers."""
     global_config.update(viewer="none", n_workers=2)
-    bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
+    bp = autoconnect(PingModule.blueprint(), PongModule.blueprint()).solidify()
     coord = ModuleCoordinator.build(bp)
     yield coord
     coord.stop()
@@ -200,7 +200,7 @@ class TestDaemonE2E:
 def live_blueprint():
     """Build PingPong and register. Yields (coord, entry). Cleans up on teardown."""
     global_config.update(viewer="none", n_workers=1)
-    bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
+    bp = autoconnect(PingModule.blueprint(), PongModule.blueprint()).solidify()
     coord = ModuleCoordinator.build(bp)
     run_id = f"e2e-cli-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
     entry = RunEntry(

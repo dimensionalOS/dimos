@@ -6,7 +6,7 @@ When you are ready for more, the same install works with physics simulation, a r
 
 ## Before you begin
 
-You need a machine running **Ubuntu 22.04 or newer** or **macOS 15 or newer**, with about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
+You need a machine running **Ubuntu 22.04 or newer** or **macOS 14 or newer**, with about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
 
 The full hardware matrix, including tested configurations and Jetson boards, is on the [system requirements](/docs/requirements.md) page.
 
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 If you prefer to read the script before running it, it lives at [scripts/install.sh](https://github.com/dimensionalOS/dimos/blob/main/scripts/install.sh) in the repository.
 
-When the installer finishes, follow its activation command and continue to [Run your first replay](#run-your-first-replay). Python is installed automatically if needed.
+When the installer finishes, follow its activation command and continue to [Run your first replay](#run-your-first-replay). Python 3.12 is installed automatically if needed.
 
 See [installation](/docs/installation/index.md) for library/developer modes, platform support, and extras.
 
@@ -113,7 +113,7 @@ The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) 
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |
 | `dimos --replay run drone-agentic` | Drone with an LLM agent and flight skills, replayed |
 | `dimos run demo-camera` | Webcam demo, no robot needed |
-| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
+| `dimos run keyboard-teleop-xarm7 --choice arm=mock` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agent using a local LLM (needs Ollama running via `ollama serve`) |
 
 To learn how blueprints are composed, or to write your own, see the [blueprints guide](/docs/usage/blueprints.md).

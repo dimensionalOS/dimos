@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
@@ -40,7 +40,7 @@ def _trajectory_task() -> TaskConfig:
     )
 
 
-def openarm_control(tasks: list[TaskConfig] | None = None) -> Blueprint:
+def openarm_control(tasks: list[TaskConfig] | None = None) -> MetaBlueprint:
     """A coordinator named ControlCoordinator over the OpenArm connection."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
