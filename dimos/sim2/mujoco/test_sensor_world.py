@@ -19,10 +19,11 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
+from dimos.sim2.sim import compose_usds
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
@@ -33,6 +34,8 @@ from dimos.sim2.world_observations import WorldMirror, WorldWriter
 pytest.importorskip("pxr")
 
 SCENE = Path(__file__).parent / "assets" / "scene.usda"
+# The scene's frame the dog mounts on, and so the dog's namespace.
+_DOG = "scene/dog"
 
 
 @pytest.fixture
@@ -47,8 +50,8 @@ def composed() -> Path:
     scene = UsdModel.from_file(SCENE).with_frames(
         {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
     )
-    layer = graft_usd(scene.usd, {"scene/dog": robot.usd})
-    return layer_file(layer, called="sensor-world")
+    world = compose_usds([(scene.usd, None), (usd_under_namespace(robot.usd, _DOG), _DOG)])
+    return layer_file(world.usd, called="sensor-world")
 
 
 def _view(composed: Path, kind: str = "lidar", frame: str = "dog/lidar"):
@@ -141,12 +144,18 @@ def test_a_sensor_does_not_see_the_housing_it_is_mounted_in():
     robot = toy_robot().with_frames(
         {"lidar": ("toy/Geometry/base/head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
     )
-    housed = graft_usd(robot.usd, {"toy/Geometry/base/head/lidar": _HOUSING})
     scene = UsdModel.from_file(SCENE).with_frames(
         {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
     )
-    layer = graft_usd(scene.usd, {"scene/dog": housed})
-    view = _view(layer_file(layer, called="housed-sensor-world"))
+    lidar = f"{_DOG}/toy/Geometry/base/head/lidar"
+    world = compose_usds(
+        [
+            (scene.usd, None),
+            (usd_under_namespace(robot.usd, _DOG), _DOG),
+            (usd_under_namespace(_HOUSING, lidar), lidar),
+        ]
+    )
+    view = _view(layer_file(world.usd, called="housed-sensor-world"))
     view.update(_World().at(0.0, 0.0, 0.0))
     origin, _ = view.pose("dog/lidar")
     out_and_down = np.array([[1.0, 0.0, -1.0]]) / np.sqrt(2.0)

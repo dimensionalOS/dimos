@@ -234,7 +234,7 @@ class MujocoBackend:
         }
         robot_roots = set(roots.values())
         # The body a robot hangs off is not a thing in its own right. In a composed scene the
-        # robot is grafted under a frame of the scene's -- `/office_555/main` -- which is where
+        # robot is mounted under a frame of the scene's -- `/office_555/main` -- which is where
         # `_free_if_unjointed` then puts the freejoint, so it is parented to the world and it is
         # jointed, and it would come through here as an object. Worse, it shortens to the same
         # name as the robot it holds, so it overwrote the robot's own entity: every consumer was

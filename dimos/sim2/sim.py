@@ -17,7 +17,7 @@
 
 There is no simulation module: a backend (MuJoCo, DimSim) is a module that meets ``PhysicsBackend``.
 It asks every running HardwareModule (from ``on_system_modules``) for its USD and what it is
-mounted on, grafts them into one world, steps it, and publishes it as ``world_observations``.
+mounted on, overlays them into one world, steps it, and publishes it as ``world_observations``.
 Robots and sensors are HardwareModules that read those observations and send ``world_actions`` back.
 """
 
@@ -72,28 +72,35 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
     return [module for module in modules if rpcs <= set(module.rpcs)]
 
 
-def compose_world(hardware: Sequence[HardwareSpec]) -> UsdModel:
-    """Graft every hardware's USD onto the frame it is mounted on, into the one unmounted USD."""
+class RunningHardware(HardwareSpec, Protocol):
+    """A HardwareModule as ``on_system_modules`` hands it over: its rpcs, and its instance name, whose front is its namespace."""
+
+    instance_name: str
+
+
+def compose_world(hardware: Sequence[RunningHardware]) -> UsdModel:
+    """Overlay every hardware's USD (each already at its tf frames) into one world over the one unmounted USD."""
     # Asked all at once: each part serves its own files, from this machine or another.
     described = safe_thread_map(
-        list(hardware), lambda part: (fetched_usd(part), part.attached_to())
+        list(hardware),
+        lambda part: (fetched_usd(part.instance_name.rpartition("/")[0]), part.attached_to()),
     )
     return compose_usds(described)
 
 
-def fetched_usd(part: HardwareSpec) -> str:
-    """The part's USD fetched over its hardware_file streams, its files named where this machine keeps them."""
+def fetched_usd(namespace: str) -> str:
+    """The USD of the HardwareModule in ``namespace``, fetched over its hardware_file streams, its files named where this machine keeps them."""
     from dimos.core.hardware_file_client import fetch_hardware_files
     from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 
-    local = fetch_hardware_files(part.get_namespace())
+    local = fetch_hardware_files(namespace)
     return resolve_usd_assets(local.read_text(), str(local.parent))
 
 
 def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
-    """Graft each USD onto the frame it names, into the one USD that names none."""
+    """Overlay each (namespaced USD, mount frame) onto the one USD that is mounted on nothing."""
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
-    from dimos.robot.assets.usd_utils.layers import graft_usd
+    from dimos.robot.assets.usd_utils.layers import overlay_usds
     from dimos.robot.assets.usd_utils.lfs import pull_usd_assets
 
     roots = [usd for usd, attached_to in described if attached_to is None]
@@ -105,19 +112,20 @@ def compose_usds(described: Sequence[tuple[str, str | None]]) -> UsdModel:
     # Before any stage is opened on them: a stage opens every layer they reference, such as a scene's hulls.
     pull_usd_assets(usd for usd, _ in described)
     mounted = [(usd, attached_to) for usd, attached_to in described if attached_to is not None]
-    placed: set[str] = set()
-
-    def grafted(usd: str) -> str:
-        frames = usd_frame_names(usd)
-        placed.update(frames)
-        children = {frame: grafted(child) for child, frame in mounted if frame in frames}
-        return graft_usd(usd, children) if children else usd
-
-    world = grafted(roots[0])
-    unplaced = sorted(frame for _, frame in mounted if frame not in placed)
+    # A mounted USD holds its mount's path itself, so a mount frame is real only if some other part offers it.
+    offered = usd_frame_names(roots[0]).union(
+        *(usd_frame_names(usd) - _path_to(frame) for usd, frame in mounted)
+    )
+    unplaced = sorted(frame for _, frame in mounted if frame not in offered)
     if unplaced:
         raise ValueError(f"no hardware in the world has the mount frames {unplaced}")
-    return UsdModel.from_layer(world)
+    return UsdModel.from_layer(overlay_usds(roots[0], mounted))
+
+
+def _path_to(frame: str) -> set[str]:
+    """The frame and every frame above it: the namespace prims a USD mounted on it holds."""
+    segments = frame.split("/")
+    return {"/".join(segments[:depth]) for depth in range(1, len(segments) + 1)}
 
 
 async def until_it_stops(what: str, loop: Coroutine[Any, Any, None]) -> None:

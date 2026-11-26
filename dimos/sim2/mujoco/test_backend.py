@@ -31,13 +31,13 @@ from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig, Mounts
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
-from dimos.sim2.sim import sim
+from dimos.sim2.sim import compose_usds, sim
 from dimos.sim2.spec import ODOM_FRAME, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
@@ -56,7 +56,7 @@ def _spot(x: float, y: float, z: float) -> tuple[float, float, float]:
 
 
 def _scene(**spots: tuple[float, float, float]) -> UsdModel:
-    """The test room with a frame at each spot a robot is grafted onto, plus an overhead frame."""
+    """The test room with a frame at each spot a robot is mounted on, plus an overhead frame."""
     frames = {name: ("scene", xyz, (0.0, 0.0, 0.0)) for name, xyz in spots.items()}
     return UsdModel.from_file(SCENE).with_frames(
         {"overhead": ("scene", (0.0, 0.0, 3.0), (0.0, 0.0, 0.0)), **frames}
@@ -64,9 +64,12 @@ def _scene(**spots: tuple[float, float, float]) -> UsdModel:
 
 
 def _composed(scene: UsdModel, robots: dict[str, UsdModel]) -> UsdModel:
-    """Each robot grafted onto the scene's frame of its own name, as compose_world does."""
-    grafts = {f"scene/{robot_id}": robot.usd for robot_id, robot in robots.items()}
-    return UsdModel.from_layer(graft_usd(scene.usd, grafts))
+    """Each robot mounted on the scene's frame of its own name, its prims under that frame, as compose_world composes them."""
+    mounted = [
+        (usd_under_namespace(robot.usd, f"scene/{robot_id}"), f"scene/{robot_id}")
+        for robot_id, robot in robots.items()
+    ]
+    return compose_usds([(scene.usd, None), *mounted])
 
 
 @pytest.fixture
@@ -79,7 +82,7 @@ def world(robot_model) -> UsdModel:
     return _composed(_scene(dog=_spot(0.0, 0.0, 1.0)), {"dog": robot_model})
 
 
-def test_robots_grafted_into_a_scene_compile_into_one_world(robot_model):
+def test_robots_mounted_in_a_scene_compile_into_one_world(robot_model):
     composed = _composed(
         _scene(left=_spot(-1.0, 0.0, 0.3), right=_spot(1.0, 0.0, 0.3)),
         {"left": robot_model, "right": robot_model},
@@ -114,7 +117,7 @@ def test_a_sensor_mounts_itself_in_a_world_of_its_own(world, robot_model):
     assert model.nsensor == 0
 
 
-def test_a_robot_grafted_into_a_scene_is_still_free_to_move(world, robot_model):
+def test_a_robot_mounted_in_a_scene_is_still_free_to_move(world, robot_model):
     model = compile_world(usd_layer(world), [SimulatedRobot("dog", robot_model)]).compile()
 
     data = mujoco.MjData(model)
@@ -132,7 +135,7 @@ def test_mounting_at_a_frame_the_world_does_not_have_is_rejected():
         mount_sensor(spec, SensorMount("imu", "nowhere", "nowhere"))
 
 
-def test_a_robot_grafted_under_a_frame_still_reports_its_own_pose(robot_model):
+def test_a_robot_mounted_under_a_frame_still_reports_its_own_pose(robot_model):
     """The frame a robot hangs off is jointed and shortens to the robot's name; it must not take the robot's place."""
     mount = 2.0
     composed = _composed(_scene(dog=(0.0, 0.0, mount)), {"dog": robot_model})
@@ -166,7 +169,7 @@ class _RoomConfig(HardwareModuleConfig):
 
 class _Room(HardwareModule):
     config: _RoomConfig
-    mounts = Mounts("dog")
+    mounts = Mounts("scene/dog")
 
 
 class _DogConfig(HardwareModuleConfig):
@@ -185,7 +188,7 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
     blueprint = autoconnect(
         sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
         _Room.blueprint(),
-        _Dog.blueprint(attached_to="dog").namespace("dog"),
+        _Dog.attach(_Room.mounts.dog),
     ).solidify()
     # Its own zenoh domain, so no other sim running on this machine answers its RPCs.
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
@@ -193,10 +196,16 @@ def test_the_sim_builds_its_world_from_the_blueprints_hardware():
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
         sim_module = coordinator.get_instance(MujocoSim)
-        assert {"dog", "dog/base", "dog/neck"} <= usd_frame_names(sim_module.get_world_usd())
+        frames = usd_frame_names(sim_module.get_world_usd())
+        assert {
+            "scene/dog",
+            "scene/dog/toy/Geometry/base",
+            "scene/dog/toy/Geometry/base/head",
+        } <= frames
         mirror = WorldMirror()
         mirror._load(sim_module.snapshot()["entities"], 0)
-        assert mirror.entity("dog") is not None
+        # A robot's id is its namespace, the mount frame it sits on.
+        assert mirror.entity("scene/dog") is not None
     finally:
         coordinator.stop()
 
