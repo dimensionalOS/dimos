@@ -32,7 +32,7 @@ from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalCo
 
 
 def test_blueprint_parses_main_mount_options_and_required_can_ports():
-    parsed = BlueprintConfigParser(dual_makermods_metal_planner_coordinator).parse(
+    parsed = BlueprintConfigParser(dual_makermods_metal_planner_coordinator.solidify()).parse(
         [
             "--left-can-port",
             "left",
@@ -61,7 +61,7 @@ def test_blueprint_parses_main_mount_options_and_required_can_ports():
 def test_independent_grippers_through_the_coordinator(tmp_path):
     [atom] = [
         a
-        for a in dual_makermods_metal_planner_coordinator.blueprints
+        for a in dual_makermods_metal_planner_coordinator.solidify().blueprints
         if issubclass(a.module, ControlCoordinator)
     ]
     coordinator = atom.module(**atom.kwargs)

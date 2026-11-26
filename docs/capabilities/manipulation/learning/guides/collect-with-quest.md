@@ -11,7 +11,7 @@ camera, then launch the collection stack:
 
 ```bash skip
 dimos run openyam-quest-collection --daemon \
-  --controlcoordinator.can-port follower_l \
+  --can-port follower_l \
   --recorder.recording recordings/quest-001 \
   --episodes.task "pick up the cube" \
   --wrist.hardware.camera-index /dev/video0
@@ -41,8 +41,8 @@ same episode controls:
 dimos run dual-openyam-quest-collection --daemon \
   --recorder.recording recordings/fold-001 \
   --episodes.task "fold the towel" \
-  --controlcoordinator.left-can-port follower_l \
-  --controlcoordinator.right-can-port follower_r \
+  --left-can-port follower_l \
+  --right-can-port follower_r \
   --left-wrist.hardware.camera-index /dev/video0 \
   --right-wrist.hardware.camera-index /dev/video2
 dimos imitation control

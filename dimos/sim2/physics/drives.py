@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, frame_name, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, frame_path, layer_from, load_pxr
 
 
 def usd_with_drives(
@@ -31,7 +31,7 @@ def usd_with_drives(
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a robot", root)
     stage = pxr.Usd.Stage.Open(layer)
-    joints = {frame_name(prim): prim for prim in stage.Traverse() if _is_joint(pxr, prim)}
+    joints = {frame_path(prim): prim for prim in stage.Traverse() if _is_joint(pxr, prim)}
     actuators = {
         str(targets[0]): prim
         for prim in stage.Traverse()
@@ -94,7 +94,7 @@ def usd_drives(usd: str, root: Path | str | None = None) -> dict[str, tuple[floa
         stiffness = drive.GetStiffnessAttr()
         if not stiffness or not stiffness.HasAuthoredValue():
             continue
-        drives[frame_name(prim)] = (
+        drives[frame_path(prim)] = (
             float(stiffness.Get()),
             float(drive.GetDampingAttr().Get() or 0.0),
             float(drive.GetTargetPositionAttr().Get() or 0.0)

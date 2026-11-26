@@ -292,6 +292,7 @@ def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifa
     assert recorder.config.to_config_dict()["store"] == {
         "kind": "mcap",
         "path": str(path),
+        "attachments": [],
     }
 
 

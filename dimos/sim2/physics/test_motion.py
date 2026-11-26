@@ -21,13 +21,13 @@ pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
 
 def test_placing_a_body_preserves_physics_time(backend):
     backend.step()
-    backend.place("box", (0, 0, 2, 0, 0, 0, 1))
+    backend.place("world/world/box_mount/box/box", (0, 0, 2, 0, 0, 0, 1))
     assert backend.data.time == pytest.approx(0.002)
 
 
 def test_free_fall_motion_contains_gravity(backend):
-    backend.place("box", (0, 0, 2, 0, 0, 0, 1))
-    motion = next(b for b in backend.read_bodies() if b.body_id == "box")
+    backend.place("world/world/box_mount/box/box", (0, 0, 2, 0, 0, 0, 1))
+    motion = next(b for b in backend.read_bodies() if b.body_id == "world/world/box_mount/box/box")
     assert [
         motion.acceleration.linear.x,
         motion.acceleration.linear.y,
@@ -46,13 +46,17 @@ def test_free_fall_motion_contains_gravity(backend):
 
 
 def test_offset_frame_acceleration_includes_rotation(backend):
-    joint = backend.model.joint("door/hinge")
+    joint = backend.model.joint("world/world/door_mount/door/joints/hinge")
     dof = joint.dofadr[0]
     backend.data.qvel[dof] = 2
     backend.data.qfrc_applied[dof] = 1
     mujoco.mj_forward(backend.model, backend.data)
     angular_acceleration = backend.data.qacc[dof]
-    motion = next(b for b in backend.read_bodies() if b.body_id == "door/imu")
+    motion = next(
+        b
+        for b in backend.read_bodies()
+        if b.body_id == "world/world/door_mount/door/base/panel/imu"
+    )
     assert [
         motion.twist.angular.x,
         motion.twist.angular.y,

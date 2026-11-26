@@ -14,10 +14,12 @@ import type { JsonValue } from "@earendil-works/chord";
 import type { OutputLimiter } from "#dimos/agents/harness/limit/limit.ts";
 import type { QueuedText } from "#dimos/agents/shared/protocol/conversation/queue.ts";
 import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
+import type { SkillInfo } from "#dimos/agents/harness/skills/catalog.ts";
 import type { RuntimeObserver } from "#dimos/agents/harness/context/observer.ts";
 import { ConversationBusy, InboxDoc, LiveDoc, defineDoc } from "@earendil-works/pi-durable";
 import { DimosInputEntry, requestIdFor } from "#dimos/agents/harness/inputs/source.ts";
 import { changeMessage } from "#dimos/agents/harness/context/messages.ts";
+import { loadedSkillMessage, resolveSkill } from "#dimos/agents/harness/skills/catalog.ts";
 import { readFile } from "node:fs/promises";
 
 export type InputDraft = {
@@ -45,6 +47,7 @@ export type WriteResult =
 export type SubmitResult =
   | { readonly kind: "submitted"; readonly submission: SubmissionId; readonly repeated: boolean }
   | { readonly kind: "unknown_conversation" }
+  | { readonly kind: "invalid"; readonly problem: string }
   /** `whenBusy: "reject"` while a run is in progress. */
   | { readonly kind: "busy" }
   /** A runtime steer with no change to report. */
@@ -69,6 +72,7 @@ export type Withdrawn = {
 
 type InputGateOptions = {
   readonly harness: Harness;
+  readonly skills: readonly SkillInfo[];
   readonly observer: RuntimeObserver;
   /** The `max_chars` cut tool results get, at its default. */
   readonly limiter: OutputLimiter;
@@ -88,6 +92,10 @@ export class InputGate {
     const requestId = requestIdFor(draft.source);
     const prior = await handle.commit((tx) => tx.submissionByRequest(conversation, requestId), context);
     if (prior !== undefined) return { kind: "submitted", submission: prior.id, repeated: true };
+    const resolved =
+      draft.source.kind === "user" ? await resolveSkill(draft.text, this.options.skills) : { kind: "none" as const };
+    if (resolved.kind === "invalid") return resolved;
+    const skill = resolved.kind === "loaded" ? resolved.skill : undefined;
     const { change, told } = await this.options.observer.changeFor(handle, context);
     if (draft.source.kind === "runtime" && change === null) return { kind: "nothing_to_say" };
     const limited = await this.options.limiter.limit(draft.text, {
@@ -100,10 +108,12 @@ export class InputGate {
     const content: (TextContent | ImageContent)[] = [];
     if (change !== null) content.push({ type: "text", text: changeMessage(change, told) });
     if (limited.text !== "") content.push({ type: "text", text: limited.text });
+    if (skill !== undefined) content.push({ type: "text", text: loadedSkillMessage(skill) });
     content.push(...draft.images);
     const data: DimosInput = {
       source: draft.source,
       text: limited.text,
+      ...(skill === undefined ? {} : { skill }),
       change,
       render: draft.render,
       limit: limited.record,

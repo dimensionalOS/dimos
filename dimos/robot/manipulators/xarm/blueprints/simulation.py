@@ -16,32 +16,24 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import (
-    coordinator,
-    eef_twist_task,
-    trajectory_task,
-)
-from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm_coordinator, xarm_gripper_task
+from dimos.robot.manipulators.xarm.blueprints.teleop import XArmJogCoordinator, xarm_jog_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     XARM_HEURISTIC_AIM,
-    make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
 from dimos.robot.raw_robot_bridge import RawRobotBridge
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-_xarm7_sim_model = make_xarm7_sim_robot_config()
-_xarm7_sim_hw = make_xarm7_sim_hardware()
+_xarm7_sim_model = make_xarm7_sim_robot_config(robot="arm")
 _xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
@@ -54,60 +46,29 @@ xarm_perception_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
-    MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-    ),
-    coordinator(
-        hardware=[_xarm7_sim_hw],
-        tasks=[
-            trajectory_task(_xarm7_sim_hw),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-        ],
-    ),
+    ManipulationLocalize.blueprint(world_frame="world"),
+    xarm_coordinator("xarm7", simulated=True, sim_module_kwargs=_xarm7_sim_kwargs),
     RerunBridgeModule.blueprint(),
 )
 
 # Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
 xarm_sim = autoconnect(
-    MujocoSimModule.blueprint(
-        **{
-            **_xarm7_sim_kwargs,
-            "base_frame_id": "world",
-        }
-    ),
-    coordinator(
-        hardware=[_xarm7_sim_hw],
+    xarm_coordinator(
+        "xarm7",
+        cls=XArmJogCoordinator,
         tasks=[
-            eef_twist_task(
-                _xarm7_sim_hw,
-                robot_model=_xarm7_sim_model,
-                target_frame="link_tcp",
-                max_joint_velocity_rad_s=0.5,
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
+            xarm_jog_task(_xarm7_sim_model, "link_tcp", max_joint_velocity_rad_s=0.5),
+            xarm_gripper_task(),
         ],
-        cls=ArmTwistCoordinator,
-        instance_name="ControlCoordinator",
+        simulated=True,
+        sim_module_kwargs={**_xarm7_sim_kwargs, "base_frame_id": "world"},
         publish_frame_poses=True,
     ),
     RawRobotBridge.blueprint(
         camera_frame="wrist_camera_color_optical_frame",
         ee_frame="link_tcp",
-        gripper_joint="arm/gripper",
-        gripper_range=(0.0, 0.85),
+        gripper_joint="arm/drive_joint",
+        # drive_joint is closed at 0.85 rad and open at 0.
+        gripper_range=(0.85, 0.0),
     ),
 )

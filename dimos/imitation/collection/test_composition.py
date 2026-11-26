@@ -80,11 +80,15 @@ def test_collect_only_declares_recorder_and_preserves_joint_semantics(profile, t
 @pytest.mark.parametrize("camera_module", [WebcamModule, RealSenseCamera])
 def test_three_cameras_can_be_replaced_without_changing_profile(profile, camera_module):
     names = ("left_wrist", "right_wrist", "overhead")
-    graph = autoconnect(
-        collect(profile=profile),
-        EpisodeMonitorModule.blueprint(instance_name="episodes"),
-        *(camera_module.blueprint(instance_name=name) for name in names),
-    ).remappings([(name, "color_image", f"{name}_image") for name in names])
+    graph = (
+        autoconnect(
+            collect(profile=profile),
+            EpisodeMonitorModule.blueprint(instance_name="episodes"),
+            *(camera_module.blueprint(instance_name=name) for name in names),
+        )
+        .solidify()
+        .remappings([(name, "color_image", f"{name}_image") for name in names])
+    )
     recorder = next(atom for atom in graph.active_blueprints if atom.name == "recorder")
     effective_outputs = {
         (graph.remapping_map.get((atom.name, stream.name), stream.name), stream.type)
@@ -105,7 +109,7 @@ def test_collect_does_not_require_a_unique_coordinator(profile):
         collect(profile=profile),
         ControlCoordinator.blueprint(instance_name="left"),
         ControlCoordinator.blueprint(instance_name="right"),
-    )
+    ).solidify()
     assert [atom.name for atom in graph.active_blueprints] == ["recorder", "left", "right"]
 
 

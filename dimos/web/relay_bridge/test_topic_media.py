@@ -233,3 +233,22 @@ def test_media_rejects_truncation_wrong_fingerprint_and_trailing_bytes(vector):
     for corrupt in (data[:-1], b"wrong-fp" + data[8:], data + b"\0"):
         with pytest.raises(ValueError):
             encode_media(vector["profile"], corrupt)
+
+
+@pytest.mark.parametrize(
+    ("box", "requested", "expected"),
+    [
+        ([1280, 720], 10_000_000, 2_500_000),
+        ([640, 360], None, 1_000_000),
+        ([1920, 1080], 200_000, 200_000),
+    ],
+)
+def test_video_bitrate_is_clamped_to_the_resolution_class(box, requested, expected):
+    settings = normalize_settings("video.h264.v1", {"maxResolution": box, "maxBitrate": requested})
+    assert settings["maxBitrate"] == expected
+
+
+@pytest.mark.parametrize("bitrate", [0, 99_999, True, 200_000.5])
+def test_video_bitrate_rejects_invalid_targets(bitrate):
+    with pytest.raises(ValueError, match="option_out_of_range"):
+        normalize_settings("video.h264.v1", {"maxBitrate": bitrate})

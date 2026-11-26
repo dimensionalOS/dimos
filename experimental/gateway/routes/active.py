@@ -117,7 +117,6 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
         raise ApiError(400, "give exactly one of blueprint or module")
     name = check_name(request.module if request.blueprint is None else request.blueprint)
     launch_config = launches.parse(request.config)
-    launches.check_global(launch_config.global_)
     return await started(state, name, launch_config)
 
 
