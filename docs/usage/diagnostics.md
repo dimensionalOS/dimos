@@ -75,7 +75,7 @@ participants; the tool cannot infer an unlisted headset or camera.
 
 The optional `network` field runs the existing network observer inside that host's
 DimOS gateway, sampling endpoint resources, routes, radio counters and low-rate
-pings. It stops with the session. Omit it if the blueprint already includes
+pings. `network.probe_url` can additionally name another host's `/diagnostics/clock` endpoint to measure clock-offset bounds and application RTT. It stops with the session. Omit it if the blueprint already includes
 `WifiMonitor`/`NetworkSurvey`; those modules contribute the same measurements.
 For a spatial coverage map, retain the existing `wifi_survey` composition and its
 explicit odometry connection. No new map implementation is introduced here.
