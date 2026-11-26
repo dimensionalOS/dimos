@@ -27,7 +27,6 @@ from numpy.typing import NDArray
 
 WORLD = 0
 PATH = "path"
-ACT = "act"
 REFUSED = "refused"
 _BODY = "_body"
 _JOINT = "_joint"
@@ -134,6 +133,10 @@ class WorldWriter:
             "entities": {entity: dict(state) for entity, state in self._state.items()},
         }
 
+    def rebase(self, sim_time: float) -> None:
+        """Stamp ``sim_time`` as now, so the frames after a world paused or fell behind are on wall time again."""
+        self.start_ns = time.time_ns() - round(sim_time * 1e9)
+
     def end_frame(self, sim_time: float) -> WorldObservations:
         sim_ns = round(sim_time * 1e9)
         if self.start_ns is None:
@@ -183,7 +186,7 @@ class WorldMirror:
         self.entities: dict[int, Entity] = {}
         self.ids: dict[str, int] = {}
         self.received: list[tuple[int, str, Any]] = []
-        self._waiters: list[tuple[float, asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
+        self._waiters: list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
         self._listeners: list[Callable[[WorldMirror], None]] = []
         self._snapshot: Callable[[], dict[str, Any]] | None = None
 
@@ -219,9 +222,8 @@ class WorldMirror:
                 return
             self._load(snapshot["entities"], snapshot["ts"])
             self.frame, self.ts, self.time = snapshot["frame"], snapshot["ts"], snapshot["ts"] / 1e9
-            due = [w for w in self._waiters if w[0] <= self.time]
-            self._waiters = [w for w in self._waiters if w[0] > self.time]
-        for _, loop, future in due:
+            waiters, self._waiters = self._waiters, []
+        for loop, future in waiters:
             loop.call_soon_threadsafe(_resolve, future)
 
     def on_frame(self, listener: Callable[["WorldMirror"], None]) -> None:
@@ -249,9 +251,8 @@ class WorldMirror:
                 if entity is not None:
                     entity.joint = np.array([item.position, item.velocity, item.effort])
             self.frame, self.ts, self.time = message.frame, message.ts, message.ts / 1e9
-            due = [w for w in self._waiters if w[0] <= self.time]
-            self._waiters = [w for w in self._waiters if w[0] > self.time]
-        for _, loop, future in due:
+            waiters, self._waiters = self._waiters, []
+        for loop, future in waiters:
             loop.call_soon_threadsafe(_resolve, future)
         for listener in self._listeners:
             listener(self)
@@ -260,9 +261,6 @@ class WorldMirror:
         with self.lock:
             entity_id = self.ids.get(path)
             return None if entity_id is None else self.entities.get(entity_id)
-
-    def stamp(self) -> float:
-        return self.time
 
     def joint_ids(self, robot: str) -> list[int]:
         prefix = f"{robot}/"
@@ -281,39 +279,28 @@ class WorldMirror:
             entity_id = self.ids.get(path)
             return any(e == entity_id and k == key for e, k, _ in self.received)
 
-    async def reached(self, ts: float) -> None:
+    async def ready(self) -> None:
+        """Until it has a frame of the world, taking the world as it is if its first frame went out before it listened."""
         if not self.frame and self._snapshot is not None:
             await asyncio.to_thread(self._pull)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         with self.lock:
-            if self.frame and self.time >= ts:
+            if self.frame:
                 return
-            self._waiters.append((ts, loop, future))
+            self._waiters.append((loop, future))
         await future
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
+        """Wall times ``rate_hz`` apart, from its first frame of the world on."""
         period = 1.0 / rate_hz
-        # The first tick is the first frame, not sim time 0, which would leave a backlog to burst through.
-        await self.reached(0.0)
-        due = self.time
+        await self.ready()
+        due = time.time()
         while True:
-            await self.reached(due)
-            ticked = self.time
+            await asyncio.sleep(due - time.time())
+            ticked = time.time()
             yield ticked
             due += period
-            if self.time >= due:
+            if time.time() >= due:
                 # Busy past its next tick: the missed ones are skipped, and none comes within a period of this one.
-                due = max(self.time, ticked + period)
-
-
-class OnWorldTime:
-    """Mixed into a module ahead of Module: its time() and sleep() are the sim time of the world its main() mirrors."""
-
-    _world: WorldMirror
-
-    def time(self) -> float:
-        return self._world.stamp()
-
-    async def sleep(self, seconds: float) -> None:
-        await self._world.reached(self.time() + seconds)
+                due = max(time.time(), ticked + period)

@@ -210,14 +210,6 @@ class HardwareModule(TfModule):
     # The edges that never move, once at start (not latched: only what listens then gets them).
     tf_static: Out[TFMessage]
 
-    def time(self) -> float:
-        """The clock this hardware stamps its tf with: wall time, or a simulated world's time in sim hardware."""
-        return time.time()
-
-    async def sleep(self, seconds: float) -> None:
-        """Wait ``seconds`` of this hardware's time: wall time, or a simulated world's time in sim hardware."""
-        await asyncio.sleep(seconds)
-
     @classmethod
     def attach(cls, mount: Mount, **kwargs: Any) -> "Blueprint":
         """This hardware on ``mount`` (``Robot.mounts.<name>``), under the namespace of its frame's path (``a/b/c/<module>``)."""
@@ -301,15 +293,15 @@ class HardwareModule(TfModule):
         """Publish the edges that never move once on tf_static, then on tf at static_tf_rate_hz; start() does this."""
         if not self._static_edges:
             return
-        self.tf_static.publish(TFMessage(*self.static_transforms(ts=self.time())))
+        self.tf_static.publish(TFMessage(*self.static_transforms(ts=time.time())))
         if self.config.static_tf_rate_hz > 0:
             republishing = self.spawn(self._republish_static_tf())
             self.register_disposable(Disposable(republishing.cancel))
 
     async def _republish_static_tf(self) -> None:
         while True:
-            self.tfbuffer.publish(*self.static_transforms(ts=self.time()))
-            await self.sleep(1 / self.config.static_tf_rate_hz)
+            self.tfbuffer.publish(*self.static_transforms(ts=time.time()))
+            await asyncio.sleep(1 / self.config.static_tf_rate_hz)
 
     def provide_hardware_files(self) -> None:
         """Answer hardware_file_request and announce hardware.usda; start() does this once its streams are wired."""
