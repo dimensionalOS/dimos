@@ -86,10 +86,10 @@ def Xform "robot"
 
 
 @pytest.fixture(autouse=True)
-def _served_layers_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _provided_layers_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import dimos.core.hardware_files as hardware_files
 
-    monkeypatch.setattr(hardware_files, "SERVED_LAYERS", tmp_path / "served")
+    monkeypatch.setattr(hardware_files, "PROVIDED_LAYERS", tmp_path / "provided")
 
 
 def _files(tmp_path: Path) -> HardwareFiles:
@@ -99,21 +99,21 @@ def _files(tmp_path: Path) -> HardwareFiles:
     return HardwareFiles(resolve_usd_assets(robot.read_text(), str(robot.parent)))
 
 
-def _served(files: HardwareFiles) -> dict[str, bytes]:
-    served = {}
+def _provided(files: HardwareFiles) -> dict[str, bytes]:
+    provided = {}
     for uri in files.uris:
         reply = files.reply(FileInfo(uri))
         assert reply is not None and reply.content is not None, uri
-        served[uri] = reply.content
-    return served
+        provided[uri] = reply.content
+    return provided
 
 
-def test_rewritten_layers_are_served_from_disk_not_held_in_memory(tmp_path: Path) -> None:
+def test_rewritten_layers_are_provided_from_disk_not_held_in_memory(tmp_path: Path) -> None:
     files = _files(tmp_path)
-    kept = {path.name: path.read_bytes() for path in (tmp_path / "served").rglob("*.usda")}
+    kept = {path.name: path.read_bytes() for path in (tmp_path / "provided").rglob("*.usda")}
 
     assert "hardware.usda" in kept
-    for uri, content in _served(files).items():
+    for uri, content in _provided(files).items():
         if uri.endswith(".usda"):
             assert content in kept.values(), uri
 
@@ -163,7 +163,7 @@ def test_a_request_holding_the_current_sha256_gets_only_the_header(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    "uri", ["/etc/passwd", "../robot.usda", "robot/../../robot.usda", "", "not/served.obj"]
+    "uri", ["/etc/passwd", "../robot.usda", "robot/../../robot.usda", "", "not/provided.obj"]
 )
 def test_a_uri_it_did_not_publish_gets_no_reply(tmp_path: Path, uri: str) -> None:
     files = _files(tmp_path)
@@ -173,21 +173,21 @@ def test_a_uri_it_did_not_publish_gets_no_reply(tmp_path: Path, uri: str) -> Non
     assert files.reply(FileInfo(str(absolute))) is None
 
 
-def test_no_served_file_or_uri_holds_a_host_path_nested_layers_included(tmp_path: Path) -> None:
-    served = _served(_files(tmp_path))
+def test_no_provided_file_or_uri_holds_a_host_path_nested_layers_included(tmp_path: Path) -> None:
+    provided = _provided(_files(tmp_path))
 
     host = str(tmp_path.resolve())
-    for uri, content in served.items():
+    for uri, content in provided.items():
         assert not uri.startswith("/") and ".." not in uri.split("/")
         assert host not in uri
         assert host.encode() not in content and str(tmp_path).encode() not in content, uri
-    layers = {uri: content for uri, content in served.items() if uri.endswith(".usda")}
-    assert len(layers) == 2, "the part layer is served rewritten too"
+    layers = {uri: content for uri, content in provided.items() if uri.endswith(".usda")}
+    assert len(layers) == 2, "the part layer is provided rewritten too"
     for uri, content in layers.items():
         for name in referenced_asset_paths(content.decode()):
             reached = posixpath.normpath(posixpath.join(posixpath.dirname(uri), name))
-            assert reached in served, f"{uri} names {name}, which is not served"
-    assert sorted(content for uri, content in served.items() if uri.endswith(".obj")) == sorted(
+            assert reached in provided, f"{uri} names {name}, which is not provided"
+    assert sorted(content for uri, content in provided.items() if uri.endswith(".obj")) == sorted(
         [_HULL, _FOREARM]
     )
 
