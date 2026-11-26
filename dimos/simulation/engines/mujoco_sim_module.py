@@ -65,6 +65,7 @@ from dimos.simulation.engines.mujoco_shm import (
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
+from dimos.simulation.mujoco.shadows import AutoSwitch
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
@@ -267,6 +268,12 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # "auto" times one shadowed render per camera at start: when shadowed renders
+    # would take over 30% of real time (software GL, no GPU), shadows go off and
+    # the sim makes up the steps renders held up, in short bursts that leave the
+    # cameras their rate. "on"/"off" force either one.
+    shadows: AutoSwitch = "auto"
+    keep_realtime: AutoSwitch = "auto"
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -501,6 +508,8 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            shadows=self.config.shadows,
+            keep_realtime=self.config.keep_realtime,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)

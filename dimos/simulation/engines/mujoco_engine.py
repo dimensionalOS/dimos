@@ -38,6 +38,12 @@ from dimos.simulation.engines.robot_sim_binding import (
     resolve_robot_sim_binding,
 )
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
+from dimos.simulation.mujoco.shadows import (
+    SLOW_RENDER_SHARE,
+    AutoSwitch,
+    disable_shadows,
+    render_ms,
+)
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -51,6 +57,12 @@ StepHook = Callable[["MujocoEngine"], None]
 
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
+# Keeping real time: lost time beyond this is let go, not made up.
+_MAX_BEHIND_S = 0.5
+# One catch-up burst takes at most this much wall time, nor more than half the
+# shortest camera or lidar interval: when physics itself is slower than real
+# time, the sensors keep their rate and the sim falls behind instead.
+_MAX_CATCH_UP_S = 0.02
 
 
 def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
@@ -105,6 +117,41 @@ class CameraFrame:
     base_mat: NDArray[np.float64] | None = None
 
 
+class _RealtimeKeeper:
+    """Counts the physics steps the wall clock asked for that the sim loop has not made.
+
+    The loop makes one step per pass and sleeps off what is left of ``dt``, so a
+    camera render longer than ``dt`` holds simulated time back for good. Asked
+    after each pass, this says how many steps the clock asks for now; the loop
+    reports how many it made. Lost time beyond ``max_behind_s`` (physics slower
+    than real time, or the machine busy elsewhere) is let go: the clock moves on.
+    Times are ``time.perf_counter()`` seconds.
+    """
+
+    def __init__(self, dt: float, start: float, *, max_behind_s: float = _MAX_BEHIND_S) -> None:
+        self._dt = dt
+        self._start = start
+        self._max_behind = int(max_behind_s / dt)
+        self._steps = 0
+        self.made_up = 0
+        self.skipped_s = 0.0
+
+    def steps_due(self, now: float) -> int:
+        """Call once after each loop pass's own step; returns the steps to make now."""
+        self._steps += 1
+        behind = int((now - self._start) / self._dt) - self._steps
+        if behind > self._max_behind:
+            self.skipped_s += (behind - self._max_behind) * self._dt
+            self._start += (behind - self._max_behind) * self._dt
+            behind = self._max_behind
+        return max(0, behind)
+
+    def made(self, steps: int) -> None:
+        """Count the catch-up steps the loop made after ``steps_due``."""
+        self._steps += steps
+        self.made_up += steps
+
+
 @dataclass
 class RaycastLidarConfig:
     name: str
@@ -146,6 +193,38 @@ class _RaycastLidarState:
     last_cast_time: float = 0.0
 
 
+def _slow_render_message(
+    share: float,
+    shadows: AutoSwitch,
+    shadows_off: bool,
+    keep_realtime: AutoSwitch,
+    keeping: bool,
+) -> str:
+    """The slow-render warning, naming what the engine does with each setting."""
+    if shadows_off:
+        drawing = "rendering without shadows" + (" (forced off)" if shadows == "off" else "")
+    else:
+        drawing = "rendering with shadows (forced on)"
+    if keeping:
+        clock = "keeping the sim on the wall clock" + (
+            " (forced on)" if keep_realtime == "on" else ""
+        )
+    else:
+        clock = "letting the sim fall behind the wall clock (keep-realtime forced off)"
+    overrides = [
+        flag
+        for setting, flag in (
+            (shadows, "--mujocosimmodule.shadows on"),
+            (keep_realtime, "--mujocosimmodule.keep-realtime off"),
+        )
+        if setting == "auto"
+    ]
+    return (
+        f"Shadowed camera renders would take {share:.0%} of real time; {drawing}, {clock}"
+        f" (force with {', '.join(overrides)})"
+    )
+
+
 class MujocoEngine(SimulationEngine):
     """
     MuJoCo simulation engine.
@@ -170,8 +249,28 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        shadows: AutoSwitch = "auto",
+        keep_realtime: AutoSwitch = "auto",
     ) -> None:
+        """Load the model; the sim thread starts on ``connect()``.
+
+        Args:
+            shadows: Shadow mapping for the cameras and the viewer. "auto" turns
+                it off when the renderer is slow (see ``keep_realtime``).
+            keep_realtime: After a pass's camera renders, make the physics steps
+                that came due meanwhile, so simulated time follows the wall
+                clock when rendering is slow. Each burst is bounded in wall
+                time, so with physics slower than real time the cameras keep
+                their rate and the sim falls behind. "auto" turns it on when the
+                renderer is slow: one shadowed colour render per camera, timed
+                at start, would take more than ``SLOW_RENDER_SHARE`` of real time
+                at the cameras' rates (software GL, no GPU). A GPU renders far
+                below that, so it runs as before.
+        """
         super().__init__(config_path=config_path, headless=headless)
+        self._shadows = shadows
+        self._keep_realtime_setting = keep_realtime
+        self._keep_realtime = keep_realtime == "on"
         configure_mujoco_logging()
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
@@ -225,6 +324,7 @@ class MujocoEngine(SimulationEngine):
         self._reset_done_events: list[threading.Event] = []
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
+        self._realtime_keeper: _RealtimeKeeper | None = None
 
         self._joint_positions = [0.0] * self._num_joints
         self._joint_velocities = [0.0] * self._num_joints
@@ -367,11 +467,15 @@ class MujocoEngine(SimulationEngine):
     def _init_cameras(self) -> dict[str, _CameraRendererState]:
         """Create renderers for all configured cameras"""
         cam_renderers: dict[str, _CameraRendererState] = {}
+        cameras: list[tuple[CameraConfig, int]] = []
         for cfg in self._camera_configs:
             cam_id = self._camera_id(cfg.name)
             if cam_id < 0:
                 logger.warning("Camera not found in MJCF, skipping", camera_name=cfg.name)
                 continue
+            cameras.append((cfg, cam_id))
+        self._settle_render_settings(cameras)
+        for cfg, cam_id in cameras:
             max_geom = cfg.max_geom
             if max_geom is None:
                 max_geom = max(10000, int(self._model.ngeom) + 1000)
@@ -414,6 +518,35 @@ class MujocoEngine(SimulationEngine):
                 base_body_id=base_body_id,
             )
         return cam_renderers
+
+    def _settle_render_settings(self, cameras: list[tuple[CameraConfig, int]]) -> None:
+        """Decide the "auto" shadows and keep_realtime; before any renderer or viewer is built."""
+        slow = False
+        share = 0.0
+        if "auto" in (self._shadows, self._keep_realtime_setting):
+            for cfg, cam_id in cameras:
+                if cfg.fps > 0:
+                    ms = render_ms(
+                        self._model, self._data, cam_id, width=cfg.width, height=cfg.height
+                    )
+                    share += ms * cfg.fps / 1e3
+            slow = share > SLOW_RENDER_SHARE
+        shadows_off = self._shadows == "off" or (self._shadows == "auto" and slow)
+        self._keep_realtime = self._keep_realtime_setting == "on" or (
+            self._keep_realtime_setting == "auto" and slow
+        )
+        if slow:
+            logger.warning(
+                _slow_render_message(
+                    share,
+                    self._shadows,
+                    shadows_off,
+                    self._keep_realtime_setting,
+                    self._keep_realtime,
+                )
+            )
+        if shadows_off:
+            disable_shadows(self._model)
 
     def _init_raycast_lidars(self) -> dict[str, _RaycastLidarState]:
         lidar_states: dict[str, _RaycastLidarState] = {}
@@ -623,18 +756,13 @@ class MujocoEngine(SimulationEngine):
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
+        keeper = _RealtimeKeeper(dt, time.perf_counter()) if self._keep_realtime else None
+        self._realtime_keeper = keeper
+        intervals = [state.interval for state in cam_renderers.values()]
+        intervals += [state.interval for state in lidar_states.values()]
+        burst_s = min([_MAX_CATCH_UP_S] + [interval / 2 for interval in intervals])
 
-        def _step_once(sync_viewer: bool) -> None:
-            loop_start = time.time()
-            reset_done_events: list[threading.Event] = []
-            with self._lock:
-                if self._reset_requested:
-                    self._reset_requested = False
-                    self._reset_unlocked()
-                    reset_done_events = self._reset_done_events
-                    self._reset_done_events = []
-            for reset_done_event in reset_done_events:
-                reset_done_event.set()
+        def _physics_step(sync_viewer: bool) -> None:
             if self._on_before_step is not None:
                 try:
                     self._on_before_step(self)
@@ -650,8 +778,31 @@ class MujocoEngine(SimulationEngine):
                     self._on_after_step(self)
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
+
+        def _step_once(sync_viewer: bool) -> None:
+            loop_start = time.time()
+            reset_done_events: list[threading.Event] = []
+            with self._lock:
+                if self._reset_requested:
+                    self._reset_requested = False
+                    self._reset_unlocked()
+                    reset_done_events = self._reset_done_events
+                    self._reset_done_events = []
+            for reset_done_event in reset_done_events:
+                reset_done_event.set()
+            _physics_step(sync_viewer)
             self._render_cameras(loop_start, cam_renderers)
             self._raycast_lidars(loop_start, lidar_states)
+            if keeper is not None:
+                due = keeper.steps_due(time.perf_counter())
+                burst_end = time.perf_counter() + burst_s
+                made = 0
+                while (
+                    made < due and time.perf_counter() < burst_end and not self._stop_event.is_set()
+                ):
+                    _physics_step(sync_viewer=False)
+                    made += 1
+                keeper.made(made)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed
