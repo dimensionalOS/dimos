@@ -16,6 +16,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from functools import cached_property
 import math
 from pathlib import Path
 import time
@@ -42,6 +43,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.usd_utils.frames import usd_frame_pose
 from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.robot.unitree.g1.config import G1_JOINT_MODEL, G1_JOINT_NAMES
 from dimos.robot.unitree.g1.g1_tf_publisher import (
@@ -51,26 +53,27 @@ from dimos.robot.unitree.g1.g1_tf_publisher import (
 )
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.mount_odometry import MountOdometry
-from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
-from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.sim import SimulatedWorldSpec, compose_usds, until_it_stops
+from dimos.sim2.mujoco.sensor_world import imu_reading
+from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import OnWorldTime, WorldMirror
 
-G1_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_frames(
-    {"lidar": ("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))}
-)
-IMU_FRAME = "imu_in_pelvis"
+# The G1's root link, its body: the pelvis's prim path in its USD, named here so building a blueprint needs no USD read.
+G1_BODY = "g1_29dof_rev_1_0/Geometry/pelvis"
+G1_TORSO = f"{G1_BODY}/waist_yaw_link/waist_roll_link/torso_link"
 
-# What a real G1 publishes: odom is Point-LIO's frame, namespaced as Point-LIO composes it; the body its root link.
-G1_TF_FRAMES: dict[str, dict[str, str]] = {
-    "tf_frames_local": {
-        "odom": PointLioConfig.model_fields["frame_id"].default,
-        # G1_USD's root link, named here so building a blueprint needs no USD read.
-        "body": "pelvis",
-    },
+G1_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_frames(
+    {"lidar": (G1_TORSO, _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))}
+)
+# The pelvis IMU: a site fixed on the root link, so no frame of the tf.
+IMU_FRAME = f"{G1_BODY}/imu_in_pelvis"
+
+# The frame a real G1 reports its odometry in: Point-LIO's, which it namespaces itself.
+G1_ODOM_FRAME: str = PointLioConfig.model_fields["frame_id"].default
+
+# The frames of the odometry tf a real G1 publishes, for the OdomTf beside a simulated one.
+G1_ODOM_TF: dict[str, dict[str, str]] = {
+    "tf_frames_local": {"odom": G1_ODOM_FRAME, "body": G1_BODY},
 }
 
 
@@ -95,16 +98,21 @@ class G1SimConfig(HardwareModuleConfig, ConnectionConfig):
     publish_rate_hz: float = 500.0
     # The real G1's tf goes out at its mount publisher's rate, not at lowstate's 500 Hz.
     tf_rate_hz: float = G1TfPublisherConfig.model_fields["publish_hz"].default
-    tf_frames_local: dict[str, str] = G1_TF_FRAMES["tf_frames_local"]
-    tf_edges: list[tuple[str, str]] = [("odom", "body")]
+    tf_frames_local: dict[str, str] = {"body": G1_BODY}
+    # The frame its odometry is in, under its namespace, which its mount holds; its OdomTf publishes odom -> body.
+    odom_frame: str = G1_ODOM_FRAME
 
 
 # ConnectionModule.frame(name) and TfModule.frame (by role) share a name; G1Sim uses neither, only tf_frames.
 class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc]
-    """A G1 in a simulated world; mount it on a frame of the scene, which is where it starts."""
+    """A G1 in a simulated world; mount it on a frame of the scene, which is where it starts.
+
+    Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
+    and an ``OdomTf`` beside it (``G1_ODOM_TF``) turns that into odom -> body.
+    """
 
     config: G1SimConfig
-    mounts = Mounts("lidar")
+    mounts = Mounts(f"{G1_TORSO}/lidar")
     world: SimulatedWorldSpec
     position_command: In[JointState]
     joint_state: Out[JointState]
@@ -124,11 +132,32 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
 
     @property
     def attach_frame(self) -> str:
-        return self.tf_frames["odom"]
+        """Its odometry frame: the mount it started on holds odom, and odom holds its body."""
+        odom = self.config.odom_frame
+        return f"{self.namespace}/{odom}" if self.namespace else odom
+
+    @cached_property
+    def _static_edges(self) -> list[Transform]:
+        """The USD's static edges below its body, and the mount: odometry holds the body, so the prims above it go out on no edge."""
+        body = f"{self.tf_frames[self.config.usd.root_link]}/"
+        return [t for t in super()._static_edges if not body.startswith(f"{t.child_frame_id}/")]
+
+    @cached_property
+    def _imu_in_body(self) -> np.ndarray:
+        """Where the pelvis IMU sits on the root link, as a 4x4; fixed, as the site is."""
+        usd = self.config.usd
+        root = usd.source_path.parent if usd.source_path is not None else None
+        body = usd_frame_pose(usd.usd, usd.root_link, root)
+        return np.linalg.inv(body) @ usd_frame_pose(usd.usd, IMU_FRAME, root)
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        return SimulatedRobot(self.namespace, self.config.usd, held_until_commanded=True)
+        return SimulatedRobot(
+            self.namespace,
+            self.config.usd,
+            held_until_commanded=True,
+            odom_frame=self.attach_frame,
+        )
 
     @rpc
     def start(self) -> None:
@@ -209,7 +238,7 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         relative = self._odometry(base.pose)
         return PoseStamped(
             ts=stamp,
-            frame_id=self.tf_frames["odom"],
+            frame_id=self.attach_frame,
             position=[relative.translation.x, relative.translation.y, relative.translation.z],
             orientation=[
                 relative.rotation.x,
@@ -220,32 +249,22 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
         )
 
     async def _publish(self) -> None:
-        imu_frame = self.usd_frame(IMU_FRAME)
-        view = None
+        imu_in_body = await asyncio.to_thread(lambda: self._imu_in_body)
         async for _ in self._world.ticks(self.config.publish_rate_hz):
-            if view is None:
-                view = await asyncio.to_thread(self._own_view, imu_frame)
             # Off the event loop: it is the loop that keeps the connection's deadman fed.
-            await asyncio.to_thread(self._publish_tick, view, imu_frame)
+            await asyncio.to_thread(self._publish_tick, imu_in_body)
 
-    def _own_view(self, imu_frame: str) -> WorldView:
-        """A view of this G1 alone, mounted as in the world: its IMU reads its own body, and compiling the room for it costs seconds."""
-        mount = self.attached_to()
-        assert mount is not None
-        alone = compose_usds(
-            [(frame_usd(mount, name="world").usd, None), (self._local_usd(), mount)]
-        )
-        return open_view(
-            layer_file(alone.usd, "g1"),
-            robot_ids(self._world),
-            SensorMount("imu", imu_frame, imu_frame),
-        )
-
-    def _publish_tick(self, view: Any, imu_frame: str) -> None:
+    def _publish_tick(self, imu_in_body: np.ndarray) -> None:
         world = self._world
         with world.lock:
             names, rows = world.joints(self.namespace)
             stamp = world.stamp()
+            base = world.entity(self.namespace)
+            pose, velocity, acceleration = (
+                (base.pose, base.velocity, base.acceleration)
+                if base is not None
+                else (None, None, None)
+            )
         by_name = dict(zip(names, rows, strict=True))
         wanted = [_usd_joint(name) for name in self.joint_names]
         if not all(joint in by_name for joint in wanted):
@@ -261,8 +280,9 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
                 effort=ordered[:, 2].tolist(),
             )
         )
-        view.update(world)
-        gyro, accelerometer, (w, x, y, z) = view.imu(imu_frame)
+        if pose is None or velocity is None or acceleration is None:
+            return
+        gyro, accelerometer, (x, y, z, w) = imu_reading(pose, velocity, acceleration, imu_in_body)
         self.imu.publish(
             Imu(
                 angular_velocity=Vector3(*gyro),
@@ -287,7 +307,6 @@ class G1Sim(OnWorldTime, ConnectionModule, HardwareModule):  # type: ignore[misc
             return
         self.odom.publish(odom)
         positions = {joint: float(row[0]) for joint, row in zip(names, rows, strict=True)}
-        self.tfbuffer.publish(
-            Transform.from_pose(self.tf_frames["body"], odom),
-            *self.moving_transforms(positions, ts=stamp),
-        )
+        transforms = self.moving_transforms(positions, ts=stamp)
+        if transforms:
+            self.tfbuffer.publish(*transforms)

@@ -36,7 +36,10 @@ def test_the_lidar_mount_is_a_frame_and_the_pelvis_imu_is_a_site() -> None:
 
     assert set(G1Sim.mounts) <= G1_USD.frame_names()
     assert IMU_FRAME not in G1_USD.frame_names()
-    assert IMU_FRAME in {site.name for site in compile_world(usd_layer(G1_USD)).sites}
+    # MuJoCo names a site by its prim path's last segment.
+    assert IMU_FRAME.rpartition("/")[2] in {
+        site.name for site in compile_world(usd_layer(G1_USD)).sites
+    }
 
 
 def test_every_g1_asset_resolves_to_a_file() -> None:
