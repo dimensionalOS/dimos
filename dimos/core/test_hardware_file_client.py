@@ -25,7 +25,7 @@ from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles, hardware_file
 from dimos.core.test_hardware_files import _robot
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.files.FileInfo import FileInfo
-from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.assets import asset_hash, resolve_usd_assets
 from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
 pytest.importorskip("pxr")
@@ -132,3 +132,63 @@ def Xform "robot"
         announce()
         usd = fetch_hardware_files(namespace, tmp_path / "cache")
         assert Usd.Stage.Open(str(usd)).GetPrimAtPath(f"/{namespace}/robot/base")
+
+
+def test_a_sublayer_also_called_hardware_usda_is_fetched_as_itself(tmp_path: Path) -> None:
+    from pxr import Usd
+
+    root = tmp_path / "robot"
+    (root / "base").mkdir(parents=True)
+    (root / "base" / HARDWARE_USD).write_text('#usda 1.0\n\ndef Xform "base"\n{\n}\n')
+    robot = root / "robot.usda"
+    robot.write_text(
+        '#usda 1.0\n(\n    subLayers = [@base/hardware.usda@]\n)\n\ndef Xform "robot"\n{\n}\n'
+    )
+    namespace = f"files_{uuid.uuid4().hex[:8]}"
+    with _providing(robot, namespace) as (_files, announce):
+        announce()
+        usd = fetch_hardware_files(namespace, tmp_path / "cache")
+        assert Usd.Stage.Open(str(usd)).GetPrimAtPath("/base")
+
+
+def test_a_relative_cache_still_links_to_its_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pxr import Usd
+
+    namespace = f"files_{uuid.uuid4().hex[:8]}"
+    monkeypatch.chdir(tmp_path)
+    with _providing(_robot(tmp_path / "robot"), namespace) as (_files, announce):
+        announce()
+        usd = fetch_hardware_files(namespace, Path("cache"))
+        assert Usd.Stage.Open(str(usd)).GetPrimAtPath(f"/{namespace}/robot/arm/forearm")
+
+
+def test_a_layer_that_names_itself_is_fetched_once(tmp_path: Path) -> None:
+    layers = {
+        HARDWARE_USD: b'#usda 1.0\n\ndef Xform "robot" (\n    prepend references = @a.usda@\n)\n{\n}\n',
+        "a.usda": b'#usda 1.0\n\ndef Xform "a" (\n    prepend references = @a.usda@\n)\n{\n}\n',
+    }
+    namespace = f"files_{uuid.uuid4().hex[:8]}"
+    request_topic, response_topic = hardware_file_topics(namespace)
+    requests, responses = (
+        make_transport(request_topic, FileInfo),
+        make_transport(response_topic, FileInfo),
+    )
+    requests.start()
+    responses.start()
+    asked: list[str] = []
+
+    def answer(request: FileInfo) -> None:
+        asked.append(request.uri)
+        content = layers[request.uri]
+        responses.publish(FileInfo(request.uri, asset_hash(content), None, content))
+
+    unsubscribe = requests.subscribe(answer)
+    try:
+        fetch_hardware_files(namespace, tmp_path / "cache")
+    finally:
+        unsubscribe()
+        requests.stop()
+        responses.stop()
+    assert asked == [HARDWARE_USD, "a.usda"]
