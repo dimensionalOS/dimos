@@ -15,6 +15,7 @@
 """Experimental SixNG RGB-D adapter for the existing Sim2 CameraRenderer seam."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -64,6 +65,16 @@ def renderer_transform(
     return matrix
 
 
+@dataclass(frozen=True)
+class ObserverOutput:
+    """Independent browser frames; these are never published as sensor acquisitions."""
+
+    directory: Path
+    control_port: int
+    width: int = 960
+    height: int = 540
+
+
 class SixNGRenderer:
     """Own a separate renderer process and match each response to its acquisition.
 
@@ -80,10 +91,12 @@ class SixNGRenderer:
         runtime: Path,
         origin: tuple[float, float, float],
         gpu: str | None = None,
+        observer: ObserverOutput | None = None,
     ) -> None:
         self.executable, self.game, self.work, self.runtime = executable, game, work, runtime
         self.origin = np.asarray(origin, dtype=np.float64)
         self._gpu = gpu
+        self._observer = observer
         self._process: subprocess.Popen[bytes] | None = None
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
         self._log: Any = None
@@ -124,6 +137,13 @@ class SixNGRenderer:
                 WGPU_BACKEND="vulkan",
             )
             env.pop("SIXNG_WEB_DIR", None)
+            env.pop("SIXNG_SIM2_OBSERVER", None)
+            if self._observer:
+                env.update(
+                    SIXNG_WEB_DIR=str(self._observer.directory),
+                    SIXNG_WEB_CONTROL_PORT=str(self._observer.control_port),
+                    SIXNG_SIM2_OBSERVER="1",
+                )
             self._log = (self.runtime / "sixng.log").open("wb")
             self._process = subprocess.Popen(
                 [
@@ -132,7 +152,9 @@ class SixNGRenderer:
                     "map3d",
                     *(["--gpu", self._gpu] if self._gpu else []),
                     "--size",
-                    "640x480",
+                    f"{self._observer.width}x{self._observer.height}"
+                    if self._observer
+                    else "640x480",
                     "--center",
                     f"{self.origin[0]},{self.origin[1]}",
                     "--height",
@@ -202,51 +224,73 @@ class SixNGRenderer:
                 assets.append({"id": name, "path": str(asset)})
         (self.directory / "assets.json").write_text(json.dumps(assets))
 
-    def render(
-        self, sample: WorldState, camera_ids: tuple[str, ...]
-    ) -> dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]]:
-        if len(set(camera_ids)) != len(camera_ids) or not set(camera_ids) <= self._cameras.keys():
-            raise ValueError("Unknown or duplicate camera IDs")
+    def _make_request(self, sample: WorldState, name: str) -> dict[str, Any]:
         self.geometry.set_poses(sample)
         poses = poses_by_id(sample)
         actors = []
-        for name in self._actor_ids:
-            p = poses[name]
+        for body in self._actor_ids:
+            p = poses[body]
             rotation = Rotation.from_quat(
                 [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
             ).as_matrix()
             matrix = renderer_transform(
                 np.array([p.position.x, p.position.y, p.position.z]), rotation, self.origin
             )
-            actors.append({"id": name, "transform": matrix.T.ravel().tolist()})
+            actors.append({"id": body, "transform": matrix.T.ravel().tolist()})
+        camera = self._cameras[name]
+        p = poses[name]
+        rotation = Rotation.from_quat(
+            [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
+        ).as_matrix()
+        self._sequence += 1
+        return {
+            "version": 1,
+            "id": self._sequence,
+            "size": [camera.width, camera.height],
+            "clock_id": sample.header.clock_id,
+            "epoch": sample.header.epoch,
+            "time_ns": sample.header.time_ns,
+            "model_revision": sample.model_revision,
+            "eye": (
+                RAGE_TO_RENDER
+                @ (np.array([p.position.x, p.position.y, p.position.z]) + self.origin)
+            ).tolist(),
+            "forward": (RAGE_TO_RENDER @ rotation[:, 2]).tolist(),
+            "up": (-RAGE_TO_RENDER @ rotation[:, 1]).tolist(),
+            "projection": projection(camera).T.ravel().tolist(),
+            "actors": actors,
+        }
+
+    def _send(self, request: dict[str, Any]) -> None:
+        if self._process is None or self._process.poll() is not None:
+            raise RuntimeError(f"SixNG exited; see {self.runtime / 'sixng.log'}")
+        error = self.directory / "error.txt"
+        if error.exists():
+            raise RuntimeError(error.read_text())
+        pending = self.directory / "request.tmp"
+        pending.write_text(json.dumps(request))
+        pending.replace(self.directory / "request.json")
+
+    def publish_observer(self, sample: WorldState, focus_body: str) -> None:
+        """Publish latest poses without blocking physics on browser frame readback."""
+        if self._observer is None:
+            raise RuntimeError("Observer output is not configured")
+        request = self._make_request(sample, next(iter(self._cameras)))
+        p = poses_by_id(sample)[focus_body].position
+        request["focus"] = (RAGE_TO_RENDER @ (np.array([p.x, p.y, p.z]) + self.origin)).tolist()
+        self._send(request)
+
+    def render(
+        self, sample: WorldState, camera_ids: tuple[str, ...]
+    ) -> dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]]:
+        if self._observer is not None:
+            raise RuntimeError("Observer frames cannot be used as sensor acquisitions")
+        if len(set(camera_ids)) != len(camera_ids) or not set(camera_ids) <= self._cameras.keys():
+            raise ValueError("Unknown or duplicate camera IDs")
         images = {}
         for name in camera_ids:
             camera = self._cameras[name]
-            p = poses[name]
-            rotation = Rotation.from_quat(
-                [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
-            ).as_matrix()
-            self._sequence += 1
-            request = {
-                "version": 1,
-                "id": self._sequence,
-                "size": [camera.width, camera.height],
-                "clock_id": sample.header.clock_id,
-                "epoch": sample.header.epoch,
-                "time_ns": sample.header.time_ns,
-                "model_revision": sample.model_revision,
-                "eye": (
-                    RAGE_TO_RENDER
-                    @ (np.array([p.position.x, p.position.y, p.position.z]) + self.origin)
-                ).tolist(),
-                "forward": (RAGE_TO_RENDER @ rotation[:, 2]).tolist(),
-                "up": (-RAGE_TO_RENDER @ rotation[:, 1]).tolist(),
-                "projection": projection(camera).T.ravel().tolist(),
-                "actors": actors,
-            }
-            pending = self.directory / "request.tmp"
-            pending.write_text(json.dumps(request))
-            pending.replace(self.directory / "request.json")
+            self._send(self._make_request(sample, name))
             pixels = self._receive(60 if self._sequence == 1 else 10)
             _, sequence, width, height = struct.unpack_from("<8sQII", pixels)
             if (
