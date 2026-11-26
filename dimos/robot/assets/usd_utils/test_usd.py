@@ -23,15 +23,9 @@ import pytest
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
-    describe_unopenable_assets,
-    require_asset_hashes,
-    require_fetched_assets,
-    unhashed_assets,
-    unopenable_assets,
 )
 from dimos.robot.assets.usd_utils.frames import usd_frame_names, usd_with_frames
 from dimos.robot.assets.usd_utils.from_urdf import PASSTHROUGH_KEY, urdf_to_usd
-from dimos.robot.assets.usd_utils.layers import overlay_usds, usd_under_namespace
 
 pytest.importorskip("pxr")
 
@@ -203,12 +197,6 @@ def test_collision_geometry_is_carried_but_not_rendered(toy: Any) -> None:
     assert "PhysicsCollisionAPI" in collision.GetAppliedSchemas()
 
 
-def test_collision_geometry_can_be_left_out(toy: Any) -> None:
-    stage = _stage(urdf_to_usd(toy, include_collision=False))
-
-    assert not stage.GetPrimAtPath("/toy/base_link/collision_1")
-
-
 def test_a_box_is_a_unit_cube_scaled_to_its_extents(toy: Any) -> None:
     stage = _stage(urdf_to_usd(toy))
     cube = stage.GetPrimAtPath("/toy/base_link/visual_0")
@@ -286,95 +274,6 @@ def test_the_layer_authors_no_custom_attributes(toy: Any) -> None:
     assert "dimos:" not in usd
 
 
-# The toy's frame an arm mounts on in these tests, and so the arm's namespace.
-_MOUNT = "toy/base_link/mount"
-
-
-def _mounted_arm(toy: Any, mount: str = _MOUNT) -> tuple[str, str]:
-    """A second toy as a part provides it on ``mount``: its prims under that frame."""
-    return usd_under_namespace(urdf_to_usd(toy, name="arm_sub"), mount), mount
-
-
-def test_a_mounted_part_overlays_at_its_own_prim_paths(toy: Any) -> None:
-    stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
-
-    assert stage.GetPrimAtPath(f"/{_MOUNT}/arm_sub/base_link")
-    assert stage.GetDefaultPrim().GetName() == "toy"
-
-
-def test_a_mounted_part_keeps_its_joints_pointing_at_its_own_links(toy: Any) -> None:
-    stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
-    joint = stage.GetPrimAtPath(f"/{_MOUNT}/arm_sub/joints/base_to_mount")
-
-    assert joint
-    targets = joint.GetRelationship("physics:body0").GetTargets()
-    assert str(targets[0]) == f"/{_MOUNT}/arm_sub/base_link"
-
-
-def test_a_mounted_part_is_welded_to_its_mount_with_no_offset(toy: Any) -> None:
-    from pxr import Gf
-
-    stage = _stage(overlay_usds(urdf_to_usd(toy), [_mounted_arm(toy)]))
-    welds = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
-
-    assert len(welds) == 1
-    weld = welds[0]
-    assert weld.GetDisplayName() == "base_link_mount"
-    assert str(weld.GetRelationship("physics:body0").GetTargets()[0]) == f"/{_MOUNT}"
-    assert str(weld.GetRelationship("physics:body1").GetTargets()[0]) == (
-        f"/{_MOUNT}/arm_sub/base_link"
-    )
-    for attribute in ("physics:localPos0", "physics:localPos1"):
-        assert weld.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
-    for attribute in ("physics:localRot0", "physics:localRot1"):
-        assert weld.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
-
-
-def test_a_mounted_part_without_a_rigid_body_is_not_welded(toy: Any) -> None:
-    marker = '#usda 1.0\n(\n    defaultPrim = "marker"\n)\n\ndef Xform "marker"\n{\n}\n'
-    mounted = (usd_under_namespace(marker, _MOUNT), _MOUNT)
-
-    stage = _stage(overlay_usds(urdf_to_usd(toy), [mounted]))
-
-    assert stage.GetPrimAtPath(f"/{_MOUNT}/marker")
-    assert not [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
-
-
-def test_only_the_root_s_physics_scene_survives(toy: Any) -> None:
-    from pxr import UsdPhysics
-
-    def with_scene(usd: str) -> str:
-        stage = _stage(usd)
-        UsdPhysics.Scene.Define(stage, "/PhysicsScene")
-        return str(stage.GetRootLayer().ExportToString())
-
-    arm = usd_under_namespace(with_scene(urdf_to_usd(toy, name="arm_sub")), _MOUNT)
-    stage = _stage(overlay_usds(with_scene(urdf_to_usd(toy)), [(arm, _MOUNT)]))
-
-    scenes = [str(prim.GetPath()) for prim in stage.Traverse() if prim.IsA(UsdPhysics.Scene)]
-    assert scenes == ["/PhysicsScene"]
-
-
-def test_a_mounted_part_s_frames_are_its_own_under_the_mount(toy: Any) -> None:
-    """Every frame of the overlay is a frame of the root or of the mounted part, already under its mount."""
-    root = urdf_to_usd(toy)
-    arm, mount = _mounted_arm(toy)
-
-    composed = usd_frame_names(overlay_usds(root, [(arm, mount)]))
-
-    assert composed == usd_frame_names(root) | usd_frame_names(arm)
-
-
-def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
-    grown = usd_with_frames(
-        urdf_to_usd(toy), {"spot": ("toy/base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
-    )
-    stage = _stage(overlay_usds(grown, [_mounted_arm(toy, "toy/base_link/spot")]))
-
-    assert _prim_by_link(stage, "spot"), "the frame is a link, so a part can mount on it"
-    assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
-
-
 def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
     from pxr import UsdPhysics
 
@@ -408,7 +307,7 @@ def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
     xyz, rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
     scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy/base_link", xyz, rpy)})
 
-    joint = UsdModel.from_layer(scene).get_joint("spot_joint")
+    joint = next((j for j in UsdModel.from_layer(scene).joints if j.name == "spot_joint"), None)
     assert joint is not None, "the added frame is a joint of the description"
     placed = joint.parent_from_child(0.0)
     expected = np.eye(4)
@@ -737,91 +636,6 @@ def test_the_asset_identifier_is_the_path_it_references(hashy: Any) -> None:
     assert prim.GetAssetInfo()["identifier"].path.endswith("meshes/arm.stl")
 
 
-def test_a_hashed_layer_passes_the_requirement(hashy: Any) -> None:
-    require_asset_hashes(urdf_to_usd(hashy), what="this layer")
-
-
-def test_a_layer_with_no_assets_at_all_passes(toy: Any) -> None:
-    require_asset_hashes(urdf_to_usd(toy), what="this layer")
-
-
-def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: Any) -> None:
-    usd = urdf_to_usd(hashy).replace("string version", "string notversion")
-
-    with pytest.raises(ValueError) as caught:
-        require_asset_hashes(usd, what="the subtree from SomeSensor")
-
-    message = str(caught.value)
-    assert "the subtree from SomeSensor" in message
-    assert "meshes/arm.stl" in message
-    assert asset_hash(b"solid arm\nendsolid arm\n") in message
-
-
-def test_a_release_number_in_the_version_field_is_not_taken_for_a_hash(hashy: Any) -> None:
-    """USD's version is free-form, so only a sha256 digest can satisfy the hash requirement."""
-    layer = urdf_to_usd(hashy)
-    posing = layer.replace(
-        next(line for line in layer.splitlines() if "sha256:" in line).strip(),
-        'string version = "1.0"',
-    )
-
-    assert unhashed_assets(posing), "a release number passed as the digest consumers need"
-    with pytest.raises(ValueError, match="no usable hash"):
-        require_asset_hashes(posing, what="the layer")
-
-
-def test_an_unreadable_asset_is_refused_but_says_where_to_hash_it(toy: Any, tmp_path: Path) -> None:
-    urdf = tmp_path / "gone.urdf"
-    urdf.write_text(
-        '<?xml version="1.0"?><robot name="gone"><link name="base_link">'
-        '<visual><geometry><mesh filename="/nowhere/at/all.stl"/></geometry></visual>'
-        "</link></robot>"
-    )
-    usd = urdf_to_usd(RobotModel.from_file(urdf).load())
-
-    with pytest.raises(ValueError, match="hash it where the file lives"):
-        require_asset_hashes(usd, what="this layer")
-
-
-def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
-    usd = urdf_to_usd(hashy).replace("string version", "string notversion")
-
-    missing = unhashed_assets(usd)
-
-    assert list(missing.values()) == ["/hashy/base_link/visual_0"]
-
-
-def test_a_texture_is_an_asset_the_hash_check_sees(tmp_path: Any) -> None:
-    from pxr import Sdf, Usd, UsdGeom, UsdShade
-
-    image = tmp_path / "wood.png"
-    image.write_bytes(b"not really a png, but it is a file")
-    stage = Usd.Stage.CreateInMemory()
-    root = UsdGeom.Xform.Define(stage, "/scene")
-    stage.SetDefaultPrim(root.GetPrim())
-    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
-    texture.CreateIdAttr("UsdUVTexture")
-    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
-
-    assert str(image) in unhashed_assets(stage.GetRootLayer().ExportToString())
-
-
-def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
-    from pxr import Sdf, Usd, UsdGeom, UsdShade
-
-    image = tmp_path / "wood.png"
-    image.write_bytes(b"not really a png, but it is a file")
-    stage = Usd.Stage.CreateInMemory()
-    root = UsdGeom.Xform.Define(stage, "/scene")
-    stage.SetDefaultPrim(root.GetPrim())
-    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
-    texture.CreateIdAttr("UsdUVTexture")
-    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
-    texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
-
-    assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
-
-
 def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
     from pxr import UsdPhysics
 
@@ -843,7 +657,7 @@ def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: P
 </robot>
 """
     )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="weighed"))
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load()))
 
     base = _prim_by_link(stage, "base")
     assert base.HasAPI(UsdPhysics.MassAPI)
@@ -873,115 +687,9 @@ def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: P
 </robot>
 """
     )
-    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="tilted"))
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load()))
     mass = UsdPhysics.MassAPI(_prim_by_link(stage, "base"))
     moments = tuple(mass.GetDiagonalInertiaAttr().Get())
     assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
     axes = mass.GetPrincipalAxesAttr().Get()
     assert axes is not None
-
-
-_REFERENCING_LAYER = """#usda 1.0
-(
-    defaultPrim = "room"
-)
-
-def Xform "room"
-{
-    def Mesh "there" (
-        prepend references = @meshes/there.usdc@
-    )
-    {
-    }
-
-    def Mesh "pointer" (
-        prepend references = @meshes/pointer.usdc@
-    )
-    {
-    }
-
-    def Mesh "gone" (
-        prepend references = @meshes/gone.usdc@
-    )
-    {
-    }
-}
-"""
-
-
-def _referencing_layer(tmp_path: Path) -> Path:
-    meshes = tmp_path / "meshes"
-    meshes.mkdir()
-    (meshes / "there.usdc").write_bytes(b"not really a crate, but readable")
-    (meshes / "pointer.usdc").write_bytes(
-        b"version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
-    )
-    return tmp_path
-
-
-def test_unopenable_assets_separates_a_pointer_stub_from_a_missing_file(tmp_path: Path) -> None:
-    root = _referencing_layer(tmp_path)
-
-    unopenable = unopenable_assets(_REFERENCING_LAYER, root)
-
-    assert set(unopenable) == {"meshes/pointer.usdc", "meshes/gone.usdc"}
-    assert "Git LFS pointer" in unopenable["meshes/pointer.usdc"]
-    assert "No such file" in unopenable["meshes/gone.usdc"]
-
-
-def test_unopenable_assets_counts_every_relative_asset_when_no_root_was_given(
-    tmp_path: Path,
-) -> None:
-    _referencing_layer(tmp_path)
-
-    unopenable = unopenable_assets(_REFERENCING_LAYER, None)
-
-    assert set(unopenable) == {
-        "meshes/there.usdc",
-        "meshes/pointer.usdc",
-        "meshes/gone.usdc",
-    }
-    assert all("no asset root" in why for why in unopenable.values())
-
-
-def test_unopenable_assets_passes_a_layer_whose_every_reference_is_on_disk(
-    tmp_path: Path,
-) -> None:
-    root = _referencing_layer(tmp_path)
-    (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
-    (root / "meshes" / "gone.usdc").write_bytes(b"here now")
-
-    assert unopenable_assets(_REFERENCING_LAYER, root) == {}
-
-
-def test_describe_unopenable_assets_says_which_files_and_how_to_fetch_them(
-    tmp_path: Path,
-) -> None:
-    root = _referencing_layer(tmp_path)
-
-    message = describe_unopenable_assets(
-        unopenable_assets(_REFERENCING_LAYER, root), root, what="the office scene"
-    )
-
-    assert "the office scene names 2 asset(s)" in message
-    assert "meshes/pointer.usdc" in message
-    assert f'git lfs checkout "{root / "meshes"}"' in message
-
-
-def test_an_unfetched_pointer_is_refused_and_a_merely_missing_file_is_not(
-    tmp_path: Path,
-) -> None:
-    root = _referencing_layer(tmp_path)
-    unopenable = unopenable_assets(_REFERENCING_LAYER, root)
-
-    with pytest.raises(FileNotFoundError) as error:
-        require_fetched_assets(unopenable, root, what="the office scene")
-
-    message = str(error.value)
-    assert "names 1 asset(s)" in message, "only the pointer stub, not the missing file"
-    assert "meshes/pointer.usdc" in message
-    assert "meshes/gone.usdc" not in message
-    assert "GIT_LFS_SKIP_SMUDGE" in message
-
-    (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
-    require_fetched_assets(unopenable_assets(_REFERENCING_LAYER, root), root, what="the scene")

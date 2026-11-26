@@ -97,9 +97,6 @@ class Mounts:
     def __iter__(self) -> Iterator[str]:
         return iter(sorted(self._frames.values()))
 
-    def __contains__(self, frame: object) -> bool:
-        return frame in self._frames.values()
-
 
 class HardwareModuleConfig(TfModuleConfig):
     # This hardware alone: a robot's USD has no sensors in it, they mount on with their own.
@@ -189,15 +186,12 @@ class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     # possible to have a namespace without being mounted, this differentiates that
     def attached_to(self) -> str | None: ...
-    # The (parent, child) frame ids it publishes, so a recorder can tell which edges are hardware.
-    def get_hardware_transform_ids(self) -> list[tuple[str, str]]: ...
 
 
 class HardwareModule(TfModule):
     """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted.
 
-    It publishes only its USD's edges and its mount, never an estimate; ``get_hardware_transform_ids()``
-    names them, which is how a recorder tells which edges are hardware.
+    It publishes only its USD's edges and its mount, never an estimate.
     """
 
     config: HardwareModuleConfig
@@ -243,16 +237,10 @@ class HardwareModule(TfModule):
         )
         return frozenset(declared | usd_edges | mount)
 
-    @rpc
-    def get_hardware_transform_ids(self) -> list[tuple[str, str]]:
-        """Every (parent, child) frame id pair this hardware publishes on tf and tf_static: its USD's edges and its mount."""
-        return sorted(self.tf_edge_ids)
-
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse a namespace with more than one unmounted HardwareModule, and mounts that do not form a tree."""
+        """Refuse a HardwareModule whose tf does not name its USD, and mounts that do not form a tree."""
         hardware = [atom for atom in atoms if issubclass(atom.module, HardwareModule)]
-        unmounted: dict[str, list[str]] = defaultdict(list)
         for atom in hardware:
             namespace = atom.name.rpartition("/")[0]
             # Its namespace is a prefix of its USD's prim paths, so each segment must be a prim name.
@@ -264,23 +252,6 @@ class HardwareModule(TfModule):
                 vars(config), cast("type[HardwareModule]", atom.module).mounts
             )
             check_attached_namespace(atom.kwargs.get("attached_to"), namespace)
-            if atom.kwargs.get("attached_to") is None:
-                unmounted[atom.name.rpartition("/")[0]].append(atom.name)
-        errors = [
-            f"    - {namespace or 'the top level'}: {', '.join(sorted(names))}"
-            for namespace, names in sorted(unmounted.items())
-            if len(names) > 1
-        ]
-        if errors:
-            raise ValueError(
-                "\n".join(
-                    [
-                        "Blueprint cannot start: a namespace has more than one unmounted "
-                        "HardwareModule (attach all but one with .attach(mount)).",
-                        *errors,
-                    ]
-                )
-            )
         _check_mount_tree(hardware)
 
     @rpc
