@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
 import textwrap
@@ -64,7 +63,8 @@ def test_the_layer_names_every_frame_a_sensor_mounts_at(robot: str) -> None:
 
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_every_file_the_layer_names_is_beside_it_and_hashes(robot: str) -> None:
-    source = Path(_usd(robot).source_path)
+    source = _usd(robot).source_path
+    assert source is not None
     layer = UsdModel.from_file(source)
 
     named = layer.referenced_files()
@@ -141,12 +141,12 @@ def test_the_physics_and_the_tf_chain_place_a_frame_the_same(robot: str) -> None
     model = mujoco.MjSpec.from_file(str(usd_layer(usd))).compile()
     data = mujoco.MjData(model)
     angles = {}
-    for joint in range(model.njnt):
-        if int(model.jnt_type[joint]) != mujoco.mjtJoint.mjJNT_HINGE:
+    for joint_id in range(model.njnt):
+        if int(model.jnt_type[joint_id]) != mujoco.mjtJoint.mjJNT_HINGE:
             continue
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint)
-        angle = 0.1 + 0.01 * joint  # distinct per joint, so a swapped pair cannot pass
-        data.qpos[model.jnt_qposadr[joint]] = angle
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+        angle = 0.1 + 0.01 * joint_id  # distinct per joint, so a swapped pair cannot pass
+        data.qpos[model.jnt_qposadr[joint_id]] = angle
         angles[(name or "").rsplit("/", 1)[-1]] = angle
     mujoco.mj_forward(model, data)
     physics = _mujoco_frames(model, data)
@@ -163,13 +163,15 @@ def test_the_physics_and_the_tf_chain_place_a_frame_the_same(robot: str) -> None
                 grew = True
         if not grew:
             break
+    # A frame is its prim path, and MuJoCo names a body by the path's last segment.
+    root_position = physics[usd.root_link.rpartition("/")[2]][0]
     compared = 0
     for frame, pose in placed.items():
-        if frame not in physics:
+        if frame.rpartition("/")[2] not in physics:
             continue
-        position, rotation = physics[frame]
+        position, rotation = physics[frame.rpartition("/")[2]]
         compared += 1
-        assert np.allclose(pose[:3, 3], position - physics[usd.root_link][0], atol=2e-3), (
+        assert np.allclose(pose[:3, 3], position - root_position, atol=2e-3), (
             f"{robot}: {frame} sits somewhere else in physics than on tf"
         )
         assert np.allclose(pose[:3, :3], rotation, atol=2e-3), (

@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 import cbor2
-from dimos_lcm.world_msgs import CborKeyValue, JointState, Position, WorldObservations
+from dimos_lcm.world_msgs import BodyState, CborKeyValue, JointState, WorldObservations
 import numpy as np
 from numpy.typing import NDArray
 
@@ -32,7 +32,7 @@ REFUSED = "refused"
 # The world entity's count of changes to the world's shapes (an object swapping its geometry):
 # a view built from get_world_usd() at another count is out of date, so it rebuilds from it.
 GEOMETRY = "geometry"
-_POSE = "_pose"
+_BODY = "_body"
 _JOINT = "_joint"
 
 
@@ -41,8 +41,15 @@ def cbor_key_value(entity: int, key: str, value: Any) -> CborKeyValue:
     return CborKeyValue(entity_id=entity, key=key, value_length=len(encoded), value=encoded)
 
 
-def position(entity: int, pose: Sequence[float]) -> Position:
-    return Position(entity_id=entity, pose=list(map(float, pose)))
+def body_state(
+    entity: int, pose: Sequence[float], velocity: Sequence[float], acceleration: Sequence[float]
+) -> BodyState:
+    return BodyState(
+        entity_id=entity,
+        pose=list(map(float, pose)),
+        velocity=list(map(float, velocity)),
+        acceleration=list(map(float, acceleration)),
+    )
 
 
 def joint_state(entity: int, position: float, velocity: float, effort: float) -> JointState:
@@ -58,17 +65,17 @@ def geometry(world: "WorldMirror") -> int:
 
 
 def merged(earlier: WorldObservations, later: WorldObservations) -> WorldObservations:
-    """One frame saying what both did: every cbor value in order, the latest pose and joint of each entity."""
+    """One frame saying what both did: every cbor value in order, the latest body state and joint of each entity."""
     cbor = [*earlier.cbor_key_values, *later.cbor_key_values]
-    positions = {p.entity_id: p for p in [*earlier.positions, *later.positions]}
+    body_states = {b.entity_id: b for b in [*earlier.body_states, *later.body_states]}
     joint_states = {j.entity_id: j for j in [*earlier.joint_states, *later.joint_states]}
     return WorldObservations(
         ts=later.ts,
         frame=later.frame,
         cbor_key_values_length=len(cbor),
         cbor_key_values=cbor,
-        positions_length=len(positions),
-        positions=list(positions.values()),
+        body_states_length=len(body_states),
+        body_states=list(body_states.values()),
         joint_states_length=len(joint_states),
         joint_states=list(joint_states.values()),
     )
@@ -85,7 +92,7 @@ class WorldWriter:
         self.paths: dict[int, str] = {WORLD: "world"}
         self._next = WORLD + 1
         self._cbor: list[CborKeyValue] = []
-        self._positions: list[Position] = []
+        self._body_states: list[BodyState] = []
         self._joint_states: list[JointState] = []
         self.frame = 0
         self.start_ns: int | None = None
@@ -108,9 +115,21 @@ class WorldWriter:
         self._cbor.append(cbor_key_value(self.ids[path], key, value))
         self._state.setdefault(self.ids[path], {})[key] = value
 
-    def position(self, path: str, pose: Sequence[float]) -> None:
-        self._positions.append(position(self.ids[path], pose))
-        self._state.setdefault(self.ids[path], {})[_POSE] = list(map(float, pose))
+    def body_state(
+        self,
+        path: str,
+        pose: Sequence[float],
+        velocity: Sequence[float],
+        acceleration: Sequence[float],
+    ) -> None:
+        """Pose x, y, z, qx, qy, qz, qw; velocity and acceleration linear then angular, world axes, at the body's origin; no gravity."""
+        state = body_state(self.ids[path], pose, velocity, acceleration)
+        self._body_states.append(state)
+        self._state.setdefault(self.ids[path], {})[_BODY] = [
+            state.pose,
+            state.velocity,
+            state.acceleration,
+        ]
 
     def joint(self, path: str, position: float, velocity: float, effort: float) -> None:
         self._joint_states.append(joint_state(self.ids[path], position, velocity, effort))
@@ -131,15 +150,15 @@ class WorldWriter:
         self.frame += 1
         self._last_ts = self.start_ns + sim_ns
         cbor, self._cbor = self._cbor, []
-        positions, self._positions = self._positions, []
+        body_states, self._body_states = self._body_states, []
         joint_states, self._joint_states = self._joint_states, []
         return WorldObservations(
             ts=self.start_ns + sim_ns,
             frame=self.frame,
             cbor_key_values_length=len(cbor),
             cbor_key_values=cbor,
-            positions_length=len(positions),
-            positions=positions,
+            body_states_length=len(body_states),
+            body_states=body_states,
             joint_states_length=len(joint_states),
             joint_states=joint_states,
         )
@@ -149,37 +168,19 @@ class WorldWriter:
 class Entity:
     path: str
     cbor: dict[str, Any] = field(default_factory=dict)
+    # A body's x, y, z, qx, qy, qz, qw in the world frame.
     pose: NDArray[np.float64] | None = None
+    # Linear then angular, world axes, at the body's origin; acceleration without gravity.
     velocity: NDArray[np.float64] | None = None
+    acceleration: NDArray[np.float64] | None = None
+    # The ts of pose, nanoseconds.
     ts: int = 0
+    # A joint's position, velocity, effort.
     joint: NDArray[np.float64] | None = None
 
-    def _move(self, pose: NDArray[np.float64], ts: int) -> None:
-        if self.pose is not None and ts > self.ts:
-            self.velocity = _difference(self.pose, pose, (ts - self.ts) / 1e9)
-        elif self.velocity is None:
-            self.velocity = np.zeros(6)
-        self.pose, self.ts = pose, ts
-
-
-def _difference(
-    before: NDArray[np.float64], after: NDArray[np.float64], dt: float
-) -> NDArray[np.float64]:
-    (x0, y0, z0, w0), (x1, y1, z1, w1) = before[3:], after[3:]
-    w = w1 * w0 + x1 * x0 + y1 * y0 + z1 * z0
-    v = np.array(
-        [
-            -w1 * x0 + x1 * w0 - y1 * z0 + z1 * y0,
-            -w1 * y0 + y1 * w0 - z1 * x0 + x1 * z0,
-            -w1 * z0 + z1 * w0 - x1 * y0 + y1 * x0,
-        ]
-    )
-    if w < 0:
-        w, v = -w, -v
-    norm = float(np.linalg.norm(v))
-    angle = 2.0 * np.arctan2(norm, w)
-    angular = v * (angle / norm) if norm > 1e-12 else 2.0 * v
-    return np.concatenate([(after[:3] - before[:3]) / dt, angular / dt])
+    def _move(self, state: Sequence[Sequence[float]], ts: int) -> None:
+        pose, velocity, acceleration = (np.array(part, dtype=np.float64) for part in state)
+        self.pose, self.velocity, self.acceleration, self.ts = pose, velocity, acceleration, ts
 
 
 class WorldMirror:
@@ -201,7 +202,7 @@ class WorldMirror:
         stream.subscribe(self.apply)
 
     def _catch_up(self, message: WorldObservations) -> None:
-        mentioned = {item.entity_id for item in message.positions} | {
+        mentioned = {item.entity_id for item in message.body_states} | {
             item.entity_id for item in message.joint_states
         }
         if self._snapshot is None or (self.entities and mentioned <= self.entities.keys()):
@@ -212,9 +213,9 @@ class WorldMirror:
         for entity_id, state in entities.items():
             entity = self.entities.setdefault(entity_id, Entity(state[PATH]))
             self.ids[state[PATH]] = entity_id
-            entity.cbor.update({k: v for k, v in state.items() if k not in (_POSE, _JOINT)})
-            if _POSE in state:
-                entity._move(np.array(state[_POSE], dtype=np.float64), ts)
+            entity.cbor.update({k: v for k, v in state.items() if k not in (_BODY, _JOINT)})
+            if _BODY in state:
+                entity._move(state[_BODY], ts)
             if _JOINT in state:
                 entity.joint = np.array(state[_JOINT])
 
@@ -248,23 +249,14 @@ class WorldMirror:
                 if entity is not None:
                     entity.cbor[item.key] = value
                 self.received.append((item.entity_id, item.key, value))
-            moved = set()
-            for item in message.positions:
+            for item in message.body_states:
                 entity = self.entities.get(item.entity_id)
                 if entity is not None:
-                    entity._move(np.array(item.pose, dtype=np.float64), message.ts)
-                    moved.add(item.entity_id)
+                    entity._move((item.pose, item.velocity, item.acceleration), message.ts)
             for item in message.joint_states:
                 entity = self.entities.get(item.entity_id)
                 if entity is not None:
                     entity.joint = np.array([item.position, item.velocity, item.effort])
-            for entity_id, entity in self.entities.items():
-                if (
-                    entity_id not in moved
-                    and entity.velocity is not None
-                    and message.ts > entity.ts
-                ):
-                    entity.velocity = np.zeros_like(entity.velocity)
             self.frame, self.ts, self.time = message.frame, message.ts, message.ts / 1e9
             due = [w for w in self._waiters if w[0] <= self.time]
             self._waiters = [w for w in self._waiters if w[0] > self.time]

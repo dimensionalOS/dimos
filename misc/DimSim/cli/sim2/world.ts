@@ -7,8 +7,10 @@
  *   {op:"velocity", entity, linear:[x,y,z], angular:[x,y,z]}   (in the entity's own frame, held)
  *   {op:"pose", entity, pos:[x,y,z], quat:[x,y,z,w]}
  *   {op:"attach", entity, to}   {op:"detach", entity}   (carry an entity with another, as placed now)
- *   {op:"step", steps}  -> {time, entities:{name:{pos, quat, linear, angular}}}  (only the awake: Rapier's
- *   sleeping bodies have not moved; init's reply has every one)
+ *   {op:"step", steps}  -> {time, entities:{name:{pos, quat, velocity, acceleration}}}  (only the awake and
+ *   those that fell asleep since the last reply: Rapier's sleeping bodies have not moved; init's reply has every one)
+ * A velocity or acceleration is linear then angular, world axes, at the body's origin; an acceleration is
+ * the change in velocity over the last timestep, so it leaves gravity out.
  * Z is up. A robot is a kinematic box moved by DimSim's character controller, so it slides along
  * static geometry and pushes dynamic bodies; everything else is ordinary Rapier rigid bodies.
  */
@@ -64,6 +66,9 @@ const robots = new Map<
 >()
 const velocities = new Map<string, { linear: V3; angular: V3 }>() // held velocities of non-robot bodies
 const carried = new Map<string, { to: string; offset: any; rotation: any }>() // entity -> its carrier and pose in it
+const motions = new Map<string, { velocity: number[]; acceleration: number[] }>() // entity -> its motion after the last timestep
+const awake = new Set<string>() // the entities the last reply held awake
+const STILL = [0, 0, 0, 0, 0, 0]
 
 const floats = (b64: string) => {
     const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
@@ -228,24 +233,57 @@ function holdVelocities(): void {
     }
 }
 
+// Rapier's velocity, which is its center of mass's, moved to the body's origin: v + w x (origin - com).
+function velocityAtOrigin(body: any): number[] {
+    const v = body.linvel()
+    const w = body.angvel()
+    // From its local center of mass: worldCom() is stale on a kinematic body, which Rapier never re-masses.
+    const offset = rotate(body.rotation(), body.localCom())
+    const r = { x: -offset.x, y: -offset.y, z: -offset.z }
+    return [v.x + w.y * r.z - w.z * r.y, v.y + w.z * r.x - w.x * r.z, v.z + w.x * r.y - w.y * r.x, w.x, w.y, w.z]
+}
+
+// Each moving body's velocity, and its change over this timestep, after a step.
+function measureMotions(dt: number): void {
+    for (const [name, body] of named) {
+        if (body.isFixed() || body.isSleeping()) {
+            motions.delete(name)
+            continue
+        }
+        const velocity = velocityAtOrigin(body)
+        const before = motions.get(name)?.velocity ?? STILL
+        motions.set(name, { velocity, acceleration: velocity.map((value, i) => (value - before[i]) / dt) })
+    }
+}
+
 function state(awakeOnly: boolean): unknown {
     const entities: Record<string, unknown> = {}
+    const nowAwake = new Set<string>()
     for (const [name, body] of named) {
-        if (body.isFixed() || (awakeOnly && body.isSleeping() && !robots.has(name))) {
+        if (body.isFixed()) {
+            continue
+        }
+        const sleeping = body.isSleeping() && !robots.has(name)
+        if (!sleeping) {
+            nowAwake.add(name)
+        }
+        // One that fell asleep since the last reply is told once more, still.
+        if (awakeOnly && sleeping && !awake.has(name)) {
             continue
         }
         const p = body.translation()
         const q = body.rotation()
-        const robot = robots.get(name)
-        const v = body.linvel()
-        const w = body.angvel()
-        // A robot's velocity is the one commanded (its own frame); a body's is Rapier's (world frame).
+        const motion = sleeping ? undefined : motions.get(name)
         entities[name] = {
             pos: [p.x, p.y, p.z],
             quat: [q.x, q.y, q.z, q.w],
-            linear: robot ? robot.linear : [v.x, v.y, v.z],
-            angular: robot ? robot.angular : [w.x, w.y, w.z],
+            velocity: motion?.velocity ?? STILL,
+            acceleration: motion?.acceleration ?? STILL,
         }
+    }
+    awake.clear()
+    for (const name of nowAwake) {
+        awake.add(name)
     }
     return { time, entities }
 }
@@ -259,6 +297,8 @@ function handle(request: any): unknown {
             robots.clear()
             velocities.clear()
             carried.clear()
+            motions.clear()
+            awake.clear()
             time = 0
             for (const body of request.bodies) {
                 addBody(body, request.meshes ?? {})
@@ -280,6 +320,8 @@ function handle(request: any): unknown {
                 world.removeRigidBody(body)
                 named.delete(request.entity)
                 velocities.delete(request.entity)
+                motions.delete(request.entity)
+                awake.delete(request.entity)
             }
             return {}
         }
@@ -334,6 +376,7 @@ function handle(request: any): unknown {
                 holdVelocities()
                 holdCarried()
                 world.step()
+                measureMotions(world.timestep)
                 time += world.timestep
             }
             return state(true)

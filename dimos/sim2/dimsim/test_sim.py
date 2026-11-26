@@ -16,23 +16,29 @@
 from collections.abc import Iterator
 from typing import Any
 
+import numpy as np
 import pytest
 
+from dimos.core.hardware_files import hardware_file_topics
+from dimos.core.hardware_module import HardwareModule
+from dimos.core.transport_factory import make_transport
+from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand
 from dimos.sim2.dimsim.backend import BASE_JOINTS, HELD_BY, DimSimBackend
 from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 from dimos.sim2.dimsim.sim import DimSimSim
 from dimos.sim2.scene import SimScene
-from dimos.sim2.sim import compose_world
+from dimos.sim2.sim import compose_usds, fetched_usd
 from dimos.sim2.spec import ODOM_FRAME
 from dimos.sim2.world_observations import REFUSED, WorldMirror
-from dimos.utils.testing.hardware_files import serving_hardware_files
 
 pytest.importorskip("pxr")
 
 TIMESTEP = 0.02
 REACH = 1.5
+# The room's frame the bot mounts on, and so the bot's namespace and robot id.
+BOT = "room/bot"
 
 _ROOM = """#usda 1.0
 (
@@ -107,8 +113,17 @@ def Xform "bot"
 
 def _bot() -> SimKinematicBase:
     return SimKinematicBase(
-        usd=UsdModel.from_layer(_BOT), attached_to="bot", instance_name="bot/SimKinematicBase"
+        usd=UsdModel.from_layer(_BOT), attached_to=BOT, instance_name=f"{BOT}/SimKinematicBase"
     )
+
+
+def _fetched(module: HardwareModule) -> tuple[str, str | None]:
+    """``module``'s USD fetched over its hardware_file streams (wired as a blueprint wires them), and its mount."""
+    request_topic, response_topic = hardware_file_topics(module.namespace)
+    module.hardware_file_request.transport = make_transport(request_topic, FileInfo)
+    module.hardware_file_response.transport = make_transport(response_topic, FileInfo)
+    module.provide_hardware_files()
+    return fetched_usd(module.namespace), module.attached_to()
 
 
 class _Stepped:
@@ -146,7 +161,7 @@ def backend() -> Iterator[_Stepped]:
     bot = _bot()
     try:
         world, robot = (
-            compose_world([serving_hardware_files(room), serving_hardware_files(bot)]),
+            compose_usds([_fetched(room), _fetched(bot)]),
             bot.simulated_robot(),
         )
     finally:
@@ -160,14 +175,14 @@ def backend() -> Iterator[_Stepped]:
 def test_the_world_says_what_is_in_it_and_stands_the_robot_on_its_mount(backend: _Stepped) -> None:
     world = backend.step(5)
     assert _cbor(world, "world")["backend"] == "dimsim"
-    assert backend.pose("bot")[:3] == pytest.approx([0.0, 0.0, 0.2], abs=0.02)
+    assert backend.pose(BOT)[:3] == pytest.approx([0.0, 0.0, 0.2], abs=0.02)
     assert backend.pose("crate")[:3] == pytest.approx([1.0, 0.0, 0.2], abs=0.02)
     assert _cbor(world, "cup") == {"path": "cup", "title": "Cup", HELD_BY: None}
 
 
 def test_odometry_puts_the_base_where_the_world_does(backend: _Stepped) -> None:
     """Its odometry frame is its mount's, so the height it stands above that mount stays in it."""
-    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
     world = backend.step(50)
     bot = _bot()
     try:
@@ -177,27 +192,55 @@ def test_odometry_puts_the_base_where_the_world_does(backend: _Stepped) -> None:
         bot.stop()
     assert odom is not None
     assert [odom.position.x, odom.position.y, odom.position.z] == pytest.approx(
-        backend.pose("bot")[:3], abs=1e-6
+        backend.pose(BOT)[:3], abs=1e-6
     )
     assert odom.position.z == pytest.approx(0.2, abs=0.02)
 
 
 def test_the_base_moves_on_a_base_joint_velocity_and_pushes_a_crate(backend: _Stepped) -> None:
-    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
     backend.step(100)
-    assert backend.pose("bot")[0] > 0.5
+    assert backend.pose(BOT)[0] > 0.5
     assert backend.pose("crate")[0] > 1.1
-    assert backend.world.joints("bot")[1][:, 1].tolist() == [1.0, 0.0, 0.0]
+    assert backend.world.joints(BOT)[1][:, 1].tolist() == [1.0, 0.0, 0.0]
+
+
+def test_a_moving_body_sends_its_velocity_and_acceleration(backend: _Stepped) -> None:
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(0.0, -0.5, 0.3)))
+    backend.step(5)
+    bot = backend.world.entity(BOT)
+    assert bot is not None and bot.velocity is not None and bot.acceleration is not None
+    # Its own y, turned by the yaw it has come round to, in world axes.
+    yaw = 0.3 * 5 * TIMESTEP
+    assert bot.velocity[:2] == pytest.approx([0.5 * np.sin(yaw), -0.5 * np.cos(yaw)], abs=0.02)
+    assert bot.velocity[5] == pytest.approx(0.3, abs=1e-3)
+    # Turning at a steady rate swings its velocity round, which is its whole acceleration.
+    assert np.linalg.norm(bot.acceleration[:2]) == pytest.approx(0.5 * 0.3, abs=0.02)
+
+
+def test_the_last_state_sent_of_a_body_that_stopped_is_still(backend: _Stepped) -> None:
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
+    backend.step(40)
+    crate = backend.world.entity("crate")
+    assert crate is not None and crate.velocity is not None
+    assert crate.velocity[0] > 0.1, "the pushed crate sent no velocity"
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(0.0, 0.0, 0.0)))
+    # Long enough for the crate to sleep and the base to rise to its character controller's offset.
+    backend.step(800)
+    for name in (BOT, "crate"):
+        entity = backend.world.entity(name)
+        assert entity is not None and entity.velocity is not None
+        assert entity.velocity.tolist() == pytest.approx([0.0] * 6, abs=1e-3), name
 
 
 def test_static_geometry_stops_the_base(backend: _Stepped) -> None:
-    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(0.0, 1.0, 0.0)))
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(0.0, 1.0, 0.0)))
     backend.step(200)
-    assert backend.pose("bot")[1] == pytest.approx(2.7, abs=0.06)
+    assert backend.pose(BOT)[1] == pytest.approx(2.7, abs=0.06)
 
 
 def test_what_a_kinematic_base_cannot_do_is_refused(backend: _Stepped) -> None:
-    backend.apply(JointCommand("bot", ("neck",), position=(1.0,)))
+    backend.apply(JointCommand(BOT, ("neck",), position=(1.0,)))
     backend.step()
     assert any(key == REFUSED for _, key, _ in backend.received)
 
@@ -205,13 +248,13 @@ def test_what_a_kinematic_base_cannot_do_is_refused(backend: _Stepped) -> None:
 def test_a_picked_up_object_rides_with_its_robot_and_stays_where_it_is_put_down(
     backend: _Stepped,
 ) -> None:
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, "bot"))
+    backend.apply(CborKeyValueCommand("cup", HELD_BY, BOT))
     backend.step()
-    assert _cbor(backend.world, "cup")[HELD_BY] == "bot"
-    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(0.0, -1.0, 0.0)))
+    assert _cbor(backend.world, "cup")[HELD_BY] == BOT
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(0.0, -1.0, 0.0)))
     backend.step(50)
     cup = backend.pose("cup")
-    assert cup[1] == pytest.approx(backend.pose("bot")[1], abs=1e-6)
+    assert cup[1] == pytest.approx(backend.pose(BOT)[1], abs=1e-6)
     assert cup[1] < -0.5
     backend.apply(CborKeyValueCommand("cup", HELD_BY, None))
     backend.step(50)
@@ -220,26 +263,26 @@ def test_a_picked_up_object_rides_with_its_robot_and_stays_where_it_is_put_down(
 
 
 def test_an_object_out_of_reach_or_not_pickable_is_refused(backend: _Stepped) -> None:
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, "bot"))
+    backend.apply(CborKeyValueCommand("cup", HELD_BY, BOT))
     backend.step()
     backend.apply(CborKeyValueCommand("cup", HELD_BY, None))
-    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(3.0, 0.0, 0.0)))
+    backend.apply(JointCommand(BOT, BASE_JOINTS, velocity=(3.0, 0.0, 0.0)))
     backend.step(50)
-    backend.apply(CborKeyValueCommand("cup", HELD_BY, "bot"))
-    backend.apply(CborKeyValueCommand("crate", HELD_BY, "bot"))
+    backend.apply(CborKeyValueCommand("cup", HELD_BY, BOT))
+    backend.apply(CborKeyValueCommand("crate", HELD_BY, BOT))
     backend.step()
     refused = [value["reason"] for _, key, value in backend.world.received if key == REFUSED]
     assert len(refused) == 2
-    assert "out of bot's reach" in refused[0] or "out of bot's reach" in refused[1]
+    assert any(f"out of {BOT}'s reach" in reason for reason in refused)
 
 
 def test_the_robot_is_named_by_its_namespace() -> None:
-    bot = serving_hardware_files(_bot())
+    bot = _bot()
     try:
         robot = bot.simulated_robot()
     finally:
         bot.stop()
-    assert robot.robot_id == "bot"
+    assert robot.robot_id == BOT
     assert robot.root_body == "bot/base"
 
 
@@ -261,7 +304,7 @@ def test_the_world_announces_the_frame_the_base_reports_its_odometry_in(
     finally:
         bot.stop()
     assert odom is not None
-    assert _cbor(world, "bot")[ODOM_FRAME] == odom.frame_id
+    assert _cbor(world, BOT)[ODOM_FRAME] == odom.frame_id
 
 
 def test_a_usd_request_is_answered_with_the_world_as_it_is_now() -> None:

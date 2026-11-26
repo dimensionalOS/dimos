@@ -20,13 +20,13 @@ Only DimSim runs this scene: its meshes are MuJoCo-visible (for the sensors) but
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.sim2 import GO2_TF_FRAMES, GO2_USD, Go2Sim
+from dimos.robot.unitree.go2.sim2 import GO2_ODOM_TF, Go2KinematicBase, Go2Sim
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.dimsim.apartment import DimSimApartment
-from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 from dimos.sim2.dimsim.sim import DimSimSim
 from dimos.sim2.l1 import SimL1
-from dimos.sim2.sim import sim
+from dimos.sim2.odom_tf import OdomTf
+from dimos.sim2.sim import on_mount, sim
 from dimos.visualization.vis_module import vis_module
 
 ROBOT = DimSimApartment.mounts.go2
@@ -34,10 +34,15 @@ ROBOT = DimSimApartment.mounts.go2
 unitree_go2_dimsim = autoconnect(
     sim({"dimsim": DimSimSim.blueprint()}, default="dimsim"),
     DimSimApartment.blueprint(),
-    autoconnect(
-        SimKinematicBase.blueprint(usd=GO2_USD, attached_to=ROBOT, **GO2_TF_FRAMES),
-        SimL1.attach(Go2Sim.mounts.l1),
-        SimCamera.attach(Go2Sim.mounts.camera),
-    ).namespace(ROBOT, shared={"cmd_vel"}),
+    on_mount(
+        autoconnect(
+            Go2KinematicBase.blueprint(attached_to=ROBOT.frame),
+            OdomTf.blueprint(**GO2_ODOM_TF),
+            SimL1.attach(Go2Sim.mounts.l1),
+            SimCamera.attach(Go2Sim.mounts.camera),
+        ),
+        ROBOT,
+        shared={"cmd_vel"},
+    ),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")

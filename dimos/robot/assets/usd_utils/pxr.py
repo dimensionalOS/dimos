@@ -36,7 +36,7 @@ Vector = tuple[float, float, float]
 _NO_USD = (
     "Reading or writing USD needs usd-core (pxr), which is in the 'sim' and 'scene' extras: "
     "uv sync --extra sim. On linux-aarch64 a wheel exists only from usd-core 26.11 and only for "
-    "Python 3.11 and up, so a 3.10 arm robot cannot serve USD at all."
+    "Python 3.11 and up, so a 3.10 arm robot cannot provide USD at all."
 )
 _PXR: Pxr | None = None
 _PXR_LOCK = Lock()

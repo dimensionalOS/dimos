@@ -15,29 +15,31 @@
 
 from collections.abc import Iterator
 import json
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from dimos.robot.assets.model import UsdModel
+from dimos.core.hardware_files import hardware_file_topics
+from dimos.core.hardware_module import HardwareModule
+from dimos.core.transport_factory import make_transport
+from dimos.msgs.files.FileInfo import FileInfo
+from dimos.robot.unitree.go2.sim2 import Go2KinematicBase
 from dimos.sim2.actions import CborKeyValueCommand
 from dimos.sim2.dimsim.apartment import DimSimApartment
 from dimos.sim2.dimsim.backend import ACTION, ACTIONS, DimSimBackend
 from dimos.sim2.dimsim.dimsim_scene import DIMSIM_SCENES, STATE
-from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sim import compose_world
+from dimos.sim2.sim import compose_usds, fetched_usd
 from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import REFUSED, WorldMirror, geometry
-from dimos.utils.testing.hardware_files import serving_hardware_files
 
 pytest.importorskip("pxr")
 
 _SCENE = DIMSIM_SCENES / "apartment"
-_GO2 = Path(__file__).parents[2] / "robot" / "unitree" / "go2" / "assets" / "go2.usda"
+# The apartment's frame the Go2 mounts on, and so its namespace.
+_GO2 = DimSimApartment.mounts.go2.frame
 _Apartment = tuple[DimSimBackend, WorldMirror]
 _MANIFEST = json.loads((_SCENE / "objects" / "manifest.json").read_text())
 
@@ -48,12 +50,10 @@ pytestmark = pytest.mark.self_hosted
 @pytest.fixture(scope="module")
 def apartment() -> Iterator[_Apartment]:
     scene = DimSimApartment()
-    go2 = SimKinematicBase(
-        usd=UsdModel.from_file(_GO2), attached_to="go2", instance_name="go2/SimKinematicBase"
-    )
+    go2 = Go2KinematicBase(attached_to=_GO2, instance_name=f"{_GO2}/Go2KinematicBase")
     try:
         world, robot = (
-            compose_world([serving_hardware_files(scene), serving_hardware_files(go2)]),
+            compose_usds([_fetched(scene), _fetched(go2)]),
             go2.simulated_robot(),
         )
     finally:
@@ -64,6 +64,15 @@ def apartment() -> Iterator[_Apartment]:
     mirror.apply(backend.frame())
     yield backend, mirror
     backend.close()
+
+
+def _fetched(module: HardwareModule) -> tuple[str, str | None]:
+    """``module``'s USD fetched over its hardware_file streams (wired as a blueprint wires them), and its mount."""
+    request_topic, response_topic = hardware_file_topics(module.namespace)
+    module.hardware_file_request.transport = make_transport(request_topic, FileInfo)
+    module.hardware_file_response.transport = make_transport(response_topic, FileInfo)
+    module.provide_hardware_files()
+    return fetched_usd(module.namespace), module.attached_to()
 
 
 def _act(apartment: _Apartment, entity: str, action: str) -> WorldMirror:

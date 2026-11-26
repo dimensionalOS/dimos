@@ -16,6 +16,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Sequence
+from functools import cached_property
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -29,7 +30,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.dimsim.backend import BASE_JOINTS, MOUNTED_AT
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
@@ -41,13 +41,16 @@ class SimKinematicBaseConfig(HardwareModuleConfig):
     # Sim seconds a cmd_vel holds before the base stops, as a real base's command watchdog does.
     cmd_vel_timeout: float = 0.5
     odom_rate_hz: float = 50.0
-    # The body is the USD's root link (a Go2's is `base`).
-    tf_frames_local: dict[str, str] = {"odom": "odom", "body": "base"}
-    tf_edges: list[tuple[str, str]] = [("odom", "body")]
+    # The frame its odometry is in, which its mount holds; an OdomTf beside it publishes odom -> body.
+    odom_frame: str = "odom"
 
 
 class SimKinematicBase(OnWorldTime, HardwareModule):
-    """Mount it on a frame of the scene, which is where it starts; its robot id is its namespace."""
+    """Mount it on a frame of the scene, which is where it starts; its robot id is its namespace.
+
+    Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
+    and an ``OdomTf`` beside it turns that into odom -> body (its USD's root link).
+    """
 
     config: SimKinematicBaseConfig
     world: SimulatedWorldSpec
@@ -63,13 +66,18 @@ class SimKinematicBase(OnWorldTime, HardwareModule):
 
     @property
     def attach_frame(self) -> str:
-        return str(self.frame.odom)
+        """Its odometry frame: the mount it started on holds odom, and odom holds its body."""
+        return self.config.odom_frame
+
+    @cached_property
+    def _static_edges(self) -> list[Transform]:
+        """The USD's static edges below its body, and the mount: odometry holds the body, so the prims above it go out on no edge."""
+        body = f"{self.tf_frames[self.config.usd.root_link]}/"
+        return [t for t in super()._static_edges if not body.startswith(f"{t.child_frame_id}/")]
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
-        return SimulatedRobot(
-            self.namespace, UsdModel.from_layer(self._local_usd()), odom_frame=self.frame.odom
-        )
+        return SimulatedRobot(self.namespace, self.config.usd, odom_frame=self.config.odom_frame)
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
@@ -95,9 +103,9 @@ class SimKinematicBase(OnWorldTime, HardwareModule):
             if odom is None:
                 continue
             self.odom.publish(odom)
-            self.tfbuffer.publish(
-                Transform.from_pose(self.frame.body, odom), *self.moving_transforms(ts=stamp)
-            )
+            transforms = self.moving_transforms(ts=stamp)
+            if transforms:
+                self.tfbuffer.publish(*transforms)
 
     def _odom(self, stamp: float) -> PoseStamped | None:
         base = self._world.entity(self.namespace)
@@ -110,7 +118,7 @@ class SimKinematicBase(OnWorldTime, HardwareModule):
         translation, rotation = relative.translation, relative.rotation
         return PoseStamped(
             ts=stamp,
-            frame_id=self.frame.odom,
+            frame_id=self.config.odom_frame,
             position=[translation.x, translation.y, translation.z],
             orientation=[rotation.x, rotation.y, rotation.z, rotation.w],
         )

@@ -17,12 +17,12 @@ import pytest
 
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.logistics_props import LOGISTICS_PROPS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.dimsim.scene import dimsim_bodies
+from dimos.sim2.sim import compose_usds
 
 # Every body here is read out of a USD layer, and the test runners that have no usd-core
 # cannot read one: without this the three scene tests fail on an ImportError that says so,
@@ -73,15 +73,16 @@ def test_a_robot_in_a_composed_scene_is_left_out_of_it():
     room = UsdModel.from_file(LOGISTICS_PROPS).with_frames(
         {"dog": ("logistics", (0.0, 0.0, 0.3), (0.0, 0.0, 0.0))}
     )
-    composed = UsdModel.from_layer(
-        graft_usd(
-            resolve_usd_assets(room.usd, str(LOGISTICS_PROPS.parent)),
-            {"dog": prefix_usd_frames(toy_robot().usd, "dog")},
-        )
+    dog = "logistics/dog"
+    composed = compose_usds(
+        [
+            (resolve_usd_assets(room.usd, str(LOGISTICS_PROPS.parent)), None),
+            (usd_under_namespace(toy_robot().usd, dog), dog),
+        ]
     )
     whole, _meshes = dimsim_bodies(composed)
-    assert len(whole) == 14, "the dog's two links were never grafted in"
-    bodies = _by_name(composed, exclude=("dog",))
+    assert len(whole) == 14, "the dog's two links were never mounted in"
+    bodies = _by_name(composed, exclude=(dog,))
     assert len(bodies) == 12
     assert not [
         geom for body in bodies.values() for geom in body["geoms"] if "/dog/" in geom["name"]

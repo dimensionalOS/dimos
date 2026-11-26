@@ -21,22 +21,36 @@ from typing import Any
 import pytest
 
 from dimos.core.coordination.blueprints import config_defaults
+from dimos.core.hardware_files import hardware_file_topics
 from dimos.core.hardware_module import HardwareModule
+from dimos.core.transport_factory import make_transport
+from dimos.msgs.files.FileInfo import FileInfo
 from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.sim2.sensor import SimSensor
-from dimos.sim2.sim import compose_world
-from dimos.utils.testing.hardware_files import serving_hardware_files
+from dimos.sim2.sim import compose_usds, fetched_usd
 
 pytest.importorskip("pxr")
 
-_BLUEPRINTS = ["unitree_go2_sim2_mid360", "unitree_go2_sim2_l1"]
+# A blueprint's module name, then any choices it is built with (`sim=dimsim`).
+_BLUEPRINTS = [
+    "unitree_go2_sim2_mid360",
+    "unitree_go2_sim2_l1",
+    "unitree_go2_sim2_l1 sim=dimsim",
+    "unitree_go2_dimsim",
+]
+
+
+def _atoms(name: str) -> list[Any]:
+    from importlib import import_module
+
+    module, *choices = name.split()
+    blueprint = getattr(import_module(f"{__package__}.{module}"), module)
+    selected = dict(choice.split("=") for choice in choices)
+    return list(blueprint.solidify(choices=selected).active_blueprints)
 
 
 def _hardware_atoms(name: str) -> list[Any]:
-    from importlib import import_module
-
-    blueprint = getattr(import_module(f"{__package__}.{name}"), name).solidify()
-    return [atom for atom in blueprint.active_blueprints if issubclass(atom.module, HardwareModule)]
+    return [atom for atom in _atoms(name) if issubclass(atom.module, HardwareModule)]
 
 
 @contextlib.contextmanager
@@ -47,6 +61,15 @@ def _hardware(name: str) -> Iterator[list[Any]]:
     finally:
         for module in modules:
             module.stop()
+
+
+def _providing_hardware_files(module: HardwareModule) -> str:
+    """Wire ``module``'s hardware_file streams to the topics a blueprint gives them and answer on them; its namespace."""
+    request_topic, response_topic = hardware_file_topics(module.namespace)
+    module.hardware_file_request.transport = make_transport(request_topic, FileInfo)
+    module.hardware_file_response.transport = make_transport(response_topic, FileInfo)
+    module.provide_hardware_files()
+    return module.namespace
 
 
 @pytest.mark.parametrize("name", _BLUEPRINTS)
@@ -64,7 +87,12 @@ def test_each_namespace_has_one_unmounted_hardware(name: str) -> None:
 def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
     with _hardware(name) as hardware:
         frames = usd_frame_names(
-            compose_world([serving_hardware_files(module) for module in hardware]).usd
+            compose_usds(
+                [
+                    (fetched_usd(_providing_hardware_files(module)), module.attached_to())
+                    for module in hardware
+                ]
+            ).usd
         )
         # The scene is a SimSensor too, but the only unmounted one.
         sensed = {
@@ -78,21 +106,24 @@ def test_the_room_robot_and_sensors_compose_into_one_world(name: str) -> None:
 
 
 @pytest.mark.self_hosted  # the Go2 policy, meshes and the apartment are Git LFS data
-@pytest.mark.parametrize("name", ["unitree_go2_sim2_l1", "unitree_go2_dimsim"])
+@pytest.mark.parametrize("name", _BLUEPRINTS[1:])
 def test_a_simulated_go2_publishes_the_tf_a_real_one_does(name: str) -> None:
     from dimos.robot.unitree.go2.connection import ConnectionConfig
     from dimos.robot.unitree.go2.sim2 import Go2Sim
     from dimos.sim2.dimsim.kinematic_base import SimKinematicBase
+    from dimos.sim2.odom_tf import OdomTf
 
-    robot_class = (Go2Sim, SimKinematicBase)
+    (odom_atom,) = [atom for atom in _atoms(name) if atom.module is OdomTf]
+    odom_tf = OdomTf(**odom_atom.kwargs)
     with _hardware(name) as hardware:
-        go2 = next(module for module in hardware if isinstance(module, robot_class))
-        edges = {
-            (go2.tf_frames[parent], go2.tf_frames[child]) for parent, child in go2.config.tf_edges
-        }
-        edges.add((go2.attached_to(), go2.attach_frame))
-        robot, announced = go2.namespace, go2.simulated_robot().odom_frame
+        go2 = next(module for module in hardware if isinstance(module, (Go2Sim, SimKinematicBase)))
+        edges = {(go2.attached_to(), go2.attach_frame), *odom_tf.tf_edge_ids}
+        robot, body = go2.namespace, go2.tf_frames[go2.config.usd.root_link]
+        announced = go2.simulated_robot().odom_frame
+    odom_tf.stop()
 
     real_odom = ConnectionConfig.model_fields["odom_frame_id"].default
-    assert edges == {(robot, real_odom), (real_odom, f"{robot}/base_link")}
+    # The mount holds odom, and odom (the OdomTf beside it) holds the body, as on a real Go2.
+    assert edges == {(robot, real_odom), (real_odom, body)}
+    assert body == f"{robot}/go2/Geometry/base_link"
     assert announced == real_odom

@@ -23,11 +23,13 @@ from dimos.sim2.scene import SimScene, SimSceneConfig
 
 # DimSim's spawn point for this scene (scenes/apartment/index.js), z up, on the rug there.
 SPOTS = {"go2": ((3.0, 2.0, 0.12), (0.0, 0.0, 0.0))}
+# The DimSim scene, which names its top prim too, so each spot is a frame under it.
+_SCENE = "apartment"
 
 
 def apartment_usd() -> UsdModel:
-    return UsdModel.from_layer(dimsim_scene_usd("apartment")).with_frames(
-        {name: ("apartment", xyz, rpy) for name, (xyz, rpy) in SPOTS.items()}
+    return UsdModel.from_layer(dimsim_scene_usd(_SCENE)).with_frames(
+        {name: (_SCENE, xyz, rpy) for name, (xyz, rpy) in SPOTS.items()}
     )
 
 
@@ -38,4 +40,4 @@ class DimSimApartmentConfig(SimSceneConfig):
 
 class DimSimApartment(SimScene):
     config: DimSimApartmentConfig
-    mounts = Mounts(*SPOTS)
+    mounts = Mounts(*(f"{_SCENE}/{name}" for name in SPOTS))

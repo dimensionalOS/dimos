@@ -56,7 +56,7 @@ class LivoxSim(SimSensor):
 
     @property
     def imu_frame_id(self) -> str:
-        return self.usd_frame("imu_link")
+        return self.tf_frames[f"{self.config.usd.root_link}/imu_link"]
 
     async def main(self) -> AsyncIterator[None]:
         self._world = self.mirror_world()
@@ -126,7 +126,7 @@ class LivoxSim(SimSensor):
                     offset_times=np.zeros(len(points), np.uint32),
                 )
             )
-            self.publish_usd_tf(ts=stamp)
+            self.publish_moving_tf(stamp)
 
     async def _read_imu(self) -> None:
         site, view, built = self.imu_frame_id, None, 0

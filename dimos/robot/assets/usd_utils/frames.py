@@ -164,10 +164,12 @@ def usd_frame_edges(
 
 
 def usd_frame_pose(usd: str, frame: str, root: Path | str | None = None) -> NDArray[np.float64]:
-    """Where ``frame`` sits in the frame this USD is mounted on (its default prim's parent), as a 4x4."""
+    """Where ``frame`` (a frame, or any prim's path, such as a site's) sits in the frame this USD is mounted on (its default prim's parent), as a 4x4."""
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
-    prim = stage.GetPrimAtPath(link_prim_paths(stage)[frame])
+    prim = stage.GetPrimAtPath(link_prim_paths(stage).get(frame, f"/{frame}"))
+    if not prim.IsValid():
+        raise KeyError(f"the USD has no frame or prim {frame!r}")
     pose = pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
     # Gf matrices are row-vector, so transposed.
     return np.array(pose, dtype=np.float64).T

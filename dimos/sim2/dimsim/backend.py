@@ -51,6 +51,8 @@ ACTIONS = "actions"
 HELD_BY = "held_by"
 # A robot's pose of the frame it is mounted on, where its odometry starts from.
 MOUNTED_AT = "mounted_at"
+# The velocity and acceleration of a body that is not moving.
+_STILL = (0.0,) * 6
 
 
 def _world_dir() -> Path:
@@ -137,6 +139,8 @@ class DimSimBackend:
         self._base = {robot_id: [0.0, 0.0, 0.0] for robot_id in robot_ids}
         self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
+        # Each entity's pose and velocity as last sent.
+        self._sent: dict[str, NDArray[np.float64]] = {}
         self._mounts: dict[str, list[float]] = {}
         self._reshaped = 0
         self._refusals: list[tuple[str, str]] = []
@@ -398,7 +402,7 @@ class DimSimBackend:
                 world.add(f"{robot_id}/{name}")
         for name, thing in self._objects.items():
             world.add(name, **thing.cbor())
-            world.position(name, _pose(self._placed(thing)))
+            self._send(name, _pose(self._placed(thing)), _STILL, _STILL)
         self._known = set(world.ids)
 
     def frame(self) -> WorldObservations:
@@ -413,10 +417,14 @@ class DimSimBackend:
             if name not in self._known:
                 world.add(name)
                 self._known.add(name)
-            world.position(name, [*entity["pos"], *entity["quat"]])
+            self._send(
+                name, [*entity["pos"], *entity["quat"]], entity["velocity"], entity["acceleration"]
+            )
         for name, thing in self._objects.items():
             if thing.held_by is not None and thing.held_by in moved:
-                world.position(name, _pose(self._carried(thing)))
+                carrier = moved[thing.held_by]
+                pose = _pose(self._carried(thing))
+                self._send(name, pose, *_carried_motion(carrier, pose[:3]))
         for robot_id, held in self._base.items():
             if robot_id not in self._base_sent:
                 for name, value in zip(BASE_JOINTS, held, strict=True):
@@ -426,6 +434,20 @@ class DimSimBackend:
             world.set(target if target in world.ids else "world", REFUSED, {"reason": reason})
         self._refusals.clear()
         return world.end_frame(self._time)
+
+    def _send(
+        self,
+        name: str,
+        pose: Sequence[float],
+        velocity: Sequence[float],
+        acceleration: Sequence[float],
+    ) -> None:
+        # A body is sent when it moved or its velocity changed, so the last one sent of a body that stopped is still.
+        state = np.array([*pose, *velocity], dtype=float)
+        sent = self._sent.get(name)
+        if sent is None or not np.array_equal(sent, state):
+            self.world.body_state(name, pose, velocity, acceleration)
+            self._sent[name] = state
 
     def _usd_pose(self, path: str) -> NDArray[np.float64]:
         """The prim's pose in the world as its USD places it, scale left out."""
@@ -451,9 +473,8 @@ class DimSimBackend:
             )
         # Its frames are under its namespace on tf; its prims are named as its own layer names them.
         root = bodies[resolve(bodies, robot.root_body.rpartition("/")[2])]
-        mount = root
-        while mount.GetName() != robot.robot_id:
-            mount = mount.GetParent()
+        # Its namespace is the frame it is mounted on, which may be many segments (office_555/left).
+        mount = stage.GetPrimAtPath(f"/{robot.robot_id}")
         at = pxr.Usd.TimeCode.Default()
         placed = pxr.UsdGeom.Xformable(root).ComputeLocalToWorldTransform(at)
         inverse = placed.GetInverse()
@@ -493,6 +514,18 @@ def _robot_mass(pxr: Any, prims: Iterable[Any]) -> float:
             "a dimsim robot pushes what it walks into as hard as its mass, and this one has none in its USD"
         )
     return total
+
+
+def _carried_motion(
+    carrier: dict[str, Any], at: Sequence[float]
+) -> tuple[list[float], list[float]]:
+    """The velocity and acceleration at ``at`` of a point fixed to ``carrier`` (an entity of a step's reply)."""
+    velocity, acceleration = np.asarray(carrier["velocity"]), np.asarray(carrier["acceleration"])
+    spin, spin_rate = velocity[3:], acceleration[3:]
+    arm = np.asarray(at) - np.asarray(carrier["pos"])
+    linear = velocity[:3] + np.cross(spin, arm)
+    linear_rate = acceleration[:3] + np.cross(spin_rate, arm) + np.cross(spin, np.cross(spin, arm))
+    return [*linear.tolist(), *spin.tolist()], [*linear_rate.tolist(), *spin_rate.tolist()]
 
 
 def _matrix(pos: Sequence[float], quat: Sequence[float]) -> NDArray[np.float64]:

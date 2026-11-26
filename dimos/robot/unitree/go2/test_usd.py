@@ -34,5 +34,5 @@ def test_the_layer_carries_the_gains_the_policy_runs_on() -> None:
 def test_every_sensor_mount_the_rig_has_is_a_frame_of_the_layer() -> None:
     from dimos.robot.unitree.go2.sim2 import GO2_USD, Go2Sim
 
-    assert set(Go2Sim.mounts) == {"l1", "lidar", "camera"}
+    assert {frame.rpartition("/")[2] for frame in Go2Sim.mounts} == {"l1", "lidar", "camera"}
     assert set(Go2Sim.mounts) <= GO2_USD.frame_names()

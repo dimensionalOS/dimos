@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -25,6 +26,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport_factory import transport_topic
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class Cloud:
@@ -81,7 +84,7 @@ class FleetCommander(Module):
     cmd: Out[Command]
 
 
-def _fleet_blueprint():
+def _fleet_blueprint() -> Blueprint:
     return (
         autoconnect(
             Aggregator.blueprint(),
@@ -111,7 +114,7 @@ def _parsed_config(
 
 
 @pytest.fixture
-def fleet_coordinator():
+def fleet_coordinator() -> Iterator[ModuleCoordinator]:
     blueprint = _fleet_blueprint()
     parsed = _parsed_config(blueprint, {"robot0_sensor": {"sensitivity": 2.0}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
@@ -121,7 +124,7 @@ def fleet_coordinator():
         coordinator.stop()
 
 
-def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
+def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator) -> None:
     coordinator = fleet_coordinator
     sensor0 = coordinator.get_instance("robot0/sensor")
     sensor1 = coordinator.get_instance("robot1/sensor")
@@ -176,7 +179,7 @@ def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
     assert sensor1.cmd.transport.topic != sensor0.cmd.transport.topic
 
 
-def test_restart_preserves_parsed_instance_config(fleet_coordinator: ModuleCoordinator):
+def test_restart_preserves_parsed_instance_config(fleet_coordinator: ModuleCoordinator) -> None:
     fleet_coordinator.restart_module("robot0/sensor", reload_source=False)
 
     restarted_sensor = fleet_coordinator.get_instance("robot0/sensor")
@@ -229,7 +232,7 @@ def test_fleet_blueprint_config_keys() -> None:
     assert parsed.module_kwargs("robot0/sensor")["sensitivity"] == 5.0
 
 
-def test_load_blueprint_resolves_existing_provider_in_same_namespace():
+def test_load_blueprint_resolves_existing_provider_in_same_namespace() -> None:
     blueprint = autoconnect(
         Sensor.blueprint().namespace("robot0"),
         Sensor.blueprint().namespace("robot1"),
@@ -242,3 +245,34 @@ def test_load_blueprint_resolves_existing_provider_in_same_namespace():
         assert mapper0.sensor_name() == "robot0/sensor"
     finally:
         coordinator.stop()
+
+
+class WorldReader(Module):
+    world_observations: In[Image]
+    world_actions: Out[Image]
+    color_image: Out[Image]
+    tf_static: Out[TFMessage]
+
+
+def test_the_simulated_world_is_shared_by_default_under_any_namespace() -> None:
+    blueprint = WorldReader.blueprint().namespace("lidar").namespace("robot1")
+
+    for stream in ("world_observations", "world_actions"):
+        assert ("robot1/lidar/worldreader", stream) not in blueprint.remapping_map
+    assert (
+        blueprint.remapping_map[("robot1/lidar/worldreader", "color_image")]
+        == "robot1/lidar/color_image"
+    )
+    assert ("robot1/lidar/worldreader", "tf_static") not in blueprint.remapping_map
+
+    private = WorldReader.blueprint().namespace("lidar", share_tf=False)
+    assert private.remapping_map[("lidar/worldreader", "tf_static")] == "lidar/tf_static"
+
+
+def test_share_sim_false_keeps_the_simulated_world_inside_the_namespace() -> None:
+    private = WorldReader.blueprint().namespace("lidar", share_sim=False)
+    for stream in ("world_observations", "world_actions"):
+        assert private.remapping_map[("lidar/worldreader", stream)] == f"lidar/{stream}"
+
+    with pytest.raises(ValueError, match="share_sim=False"):
+        WorldReader.blueprint().namespace("lidar", shared={"world_observations"}, share_sim=False)

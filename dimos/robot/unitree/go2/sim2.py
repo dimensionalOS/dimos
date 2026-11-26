@@ -16,6 +16,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from functools import cached_property
 import math
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_utils.lfs import pull_model_assets
 from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
-from dimos.robot.unitree.go2.connection import GO2_MODEL, ConnectionConfig
+from dimos.robot.unitree.go2.connection import ConnectionConfig
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -44,6 +45,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     OPTICAL_RPY,
 )
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.dimsim.kinematic_base import SimKinematicBase, SimKinematicBaseConfig
 from dimos.sim2.mount_odometry import MountOdometry
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.sim import SimulatedWorldSpec, until_it_stops
@@ -60,25 +62,30 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# The Go2's root link, its body: the prim path a real Go2's base_link has in its USD.
+GO2_BODY = "go2/Geometry/base_link"
+
 GO2_USD = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
     {
         "l1": (
-            "base_link",
+            GO2_BODY,
             L1_XYZ,
             (math.radians(L1_MOUNT[0]), math.radians(L1_MOUNT[1]), math.radians(L1_MOUNT[2])),
         ),
-        "front_camera": ("base_link", CAMERA_XYZ, (0.0, 0.0, 0.0)),
-        "lidar": ("front_camera", MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
-        "camera": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
+        "front_camera": (GO2_BODY, CAMERA_XYZ, (0.0, 0.0, 0.0)),
+        "lidar": (f"{GO2_BODY}/front_camera", MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
+        "camera": (f"{GO2_BODY}/front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
     }
 )
 
 
-# What a real Go2 publishes, for any module simulating one: odom unprefixed, the body its root link.
-GO2_TF_FRAMES: dict[str, dict[str, str]] = {
-    # The real Go2's root link, which needs no USD read to build a blueprint; GO2_USD's matches it.
-    "tf_frames_local": {"body": GO2_MODEL.load().root_link},
-    "tf_frames_global": {"odom": ConnectionConfig.model_fields["odom_frame_id"].default},
+# The frame a real Go2 reports its odometry in, unprefixed.
+GO2_ODOM_FRAME: str = ConnectionConfig.model_fields["odom_frame_id"].default
+
+# The frames of the odometry tf a real Go2 publishes, for the OdomTf beside a simulated one; GO2_BODY needs no USD read.
+GO2_ODOM_TF: dict[str, dict[str, str]] = {
+    "tf_frames_local": {"body": GO2_BODY},
+    "tf_frames_global": {"odom": GO2_ODOM_FRAME},
 }
 
 
@@ -110,16 +117,21 @@ class Go2SimConfig(HardwareModuleConfig):
     policy: Path | None = None
     # Proportional yaw hold while no turn is commanded, rad/s per rad of drift.
     heading_gain: float = 2.0
-    tf_frames_local: dict[str, str] = GO2_TF_FRAMES["tf_frames_local"]
-    tf_frames_global: dict[str, str] = GO2_TF_FRAMES["tf_frames_global"]
-    tf_edges: list[tuple[str, str]] = [("odom", "body")]
+    # The frame its odometry is in, which its mount holds; its OdomTf publishes odom -> body.
+    odom_frame: str = GO2_ODOM_FRAME
 
 
 class Go2Sim(OnWorldTime, HardwareModule):
-    """A Go2 in a simulated world; mount it on a frame of the scene, which is where it starts."""
+    """A Go2 in a simulated world; mount it on a frame of the scene, which is where it starts.
+
+    Its odometry is an estimate, which a HardwareModule never puts on tf: it publishes ``odom``,
+    and an ``OdomTf`` beside it (``GO2_ODOM_TF``) turns that into odom -> body.
+    """
 
     config: Go2SimConfig
-    mounts = Mounts("l1", "lidar", "camera")
+    mounts = Mounts(
+        f"{GO2_BODY}/l1", f"{GO2_BODY}/front_camera/lidar", f"{GO2_BODY}/front_camera/camera"
+    )
     world: SimulatedWorldSpec
     cmd_vel: In[Twist]
     world_observations: In[WorldObservations]
@@ -141,12 +153,22 @@ class Go2Sim(OnWorldTime, HardwareModule):
 
     @property
     def attach_frame(self) -> str:
-        return str(self.frame.odom)
+        """Its odometry frame: the mount it started on holds odom, and odom holds its body."""
+        return self.config.odom_frame
+
+    @cached_property
+    def _static_edges(self) -> list[Transform]:
+        """The USD's static edges below its body, and the mount: odometry holds the body, so the prims above it go out on no edge."""
+        body = f"{self.tf_frames[self.config.usd.root_link]}/"
+        return [t for t in super()._static_edges if not body.startswith(f"{t.child_frame_id}/")]
 
     @rpc
     def simulated_robot(self) -> SimulatedRobot:
         return SimulatedRobot(
-            self.namespace, self.config.usd, held_until_commanded=True, odom_frame=self.frame.odom
+            self.namespace,
+            self.config.usd,
+            held_until_commanded=True,
+            odom_frame=self.config.odom_frame,
         )
 
     async def main(self) -> AsyncIterator[None]:
@@ -216,7 +238,7 @@ class Go2Sim(OnWorldTime, HardwareModule):
         relative = self._odometry(pose)
         return PoseStamped(
             ts=stamp,
-            frame_id=self.frame.odom,
+            frame_id=self.config.odom_frame,
             position=[relative.translation.x, relative.translation.y, relative.translation.z],
             orientation=[
                 relative.rotation.x,
@@ -227,8 +249,19 @@ class Go2Sim(OnWorldTime, HardwareModule):
         )
 
     def _publish_pose(self, pose: np.ndarray, stamp: float, positions: dict[str, float]) -> None:
-        odom = self._odom(pose, stamp)
-        self.odom.publish(odom)
-        self.tfbuffer.publish(
-            Transform.from_pose(self.frame.body, odom), *self.moving_transforms(positions, ts=stamp)
-        )
+        self.odom.publish(self._odom(pose, stamp))
+        transforms = self.moving_transforms(positions, ts=stamp)
+        if transforms:
+            self.tfbuffer.publish(*transforms)
+
+
+class Go2KinematicBaseConfig(SimKinematicBaseConfig):
+    usd: UsdModel = GO2_USD
+    odom_frame: str = GO2_ODOM_FRAME
+
+
+class Go2KinematicBase(SimKinematicBase):
+    """A Go2 as DimSim's kinematic base: moved as a box on cmd_vel, with a Go2's USD, mounts and odometry frame."""
+
+    config: Go2KinematicBaseConfig
+    mounts = Go2Sim.mounts

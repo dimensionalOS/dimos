@@ -33,12 +33,13 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import G1Sim, G1SimConfig
+from dimos.robot.unitree.g1.sim2 import G1_ODOM_TF, G1Sim, G1SimConfig
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.mujoco.sim import MujocoSim
+from dimos.sim2.odom_tf import OdomTf
 from dimos.sim2.scene import SimScene, SimSceneConfig
-from dimos.sim2.sim import sim
+from dimos.sim2.sim import on_mount, sim
 from dimos.simulation.scenes.office_555.room import SCENE
 from dimos.utils.data import LfsPath
 from dimos.visualization.vis_module import vis_module
@@ -65,7 +66,7 @@ class Office555Config(SimSceneConfig):
 
 class Office555(SimScene):
     config: Office555Config
-    mounts = Mounts(*SPOTS, "overview")
+    mounts = Mounts(*(f"office_555/{name}" for name in [*SPOTS, "overview"]))
 
 
 class _G1Walker(TeleopControlCoordinator):
@@ -105,21 +106,23 @@ def _walker() -> Blueprint:
 
 
 def _g1(spot: str) -> MetaBlueprint:
-    return (
+    mount = getattr(Office555.mounts, spot)
+    return on_mount(
         autoconnect(
-            G1Sim.blueprint(attached_to=spot),
+            G1Sim.blueprint(attached_to=mount.frame),
+            OdomTf.blueprint(**G1_ODOM_TF),
             LivoxSim.attach(G1Sim.mounts.lidar),
             _walker(),
-        )
-        .remappings(
+        ).remappings(
             [
                 (G1Sim, "position_command", "g1_position_command"),
                 (_G1Walker, "g1_joint_state", "joint_state"),
                 (_G1Walker, "g1_imu", "imu"),
                 (LivoxSim, "imu", "lidar_imu"),
             ]
-        )
-        .namespace(spot, shared={"cmd_vel"} if spot == DRIVEN else set())
+        ),
+        mount,
+        shared={"cmd_vel"} if spot == DRIVEN else set(),
     )
 
 

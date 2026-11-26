@@ -24,7 +24,7 @@ from dimos.robot.assets.usd_utils.assets import (
     referenced_asset_paths,
     resolve_usd_assets,
 )
-from dimos.robot.assets.usd_utils.layers import graft_usd, usd_under_namespace
+from dimos.robot.assets.usd_utils.layers import overlay_usds, usd_under_namespace
 
 pytest.importorskip("pxr")
 
@@ -199,12 +199,17 @@ def Xform "Parts"
 """
 
 
+def _mounted_in_the_room(usd: str) -> Any:
+    """The scene with ``usd`` mounted on its room, as a part provides it: its prims under that frame."""
+    return _stage(overlay_usds(_SCENE, [(usd_under_namespace(usd, "room"), "room")]))
+
+
 def _targets(stage: Any, prim_path: str, relationship: str) -> list[Any]:
     return list(stage.GetPrimAtPath(prim_path).GetRelationship(relationship).GetTargets())
 
 
-def test_a_grafted_mesh_keeps_the_material_bound_beside_its_default_prim() -> None:
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
+def test_a_mounted_mesh_keeps_the_material_bound_beside_its_default_prim() -> None:
+    stage = _mounted_in_the_room(_PAINTED_ARM)
 
     (paint,) = _targets(stage, "/room/arm/shell", "material:binding")
     assert str(paint) != "/Materials/paint", "the arm is wearing the room's paint"
@@ -212,15 +217,15 @@ def test_a_grafted_mesh_keeps_the_material_bound_beside_its_default_prim() -> No
     assert stage.GetPrimAtPath("/Materials/paint").GetAttribute("dimos_owner").Get() == "room"
 
 
-def test_a_grafted_physics_binding_is_carried_too() -> None:
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
+def test_a_mounted_physics_binding_follows_it_too() -> None:
+    stage = _mounted_in_the_room(_PAINTED_ARM)
 
     (rubber,) = _targets(stage, "/room/arm/shell", "material:binding:physics")
     assert stage.GetPrimAtPath(rubber), f"the physics material at {rubber} was left behind"
 
 
-def test_a_grafted_collection_binding_carries_its_material_and_members() -> None:
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
+def test_a_mounted_collection_binding_keeps_its_material_and_members() -> None:
+    stage = _mounted_in_the_room(_PAINTED_ARM)
 
     collection, chrome = _targets(stage, "/room/arm/looks", "material:binding:collection:trim")
     assert str(collection) == "/room/arm/looks.collection:trim"
@@ -229,17 +234,17 @@ def test_a_grafted_collection_binding_carries_its_material_and_members() -> None
     assert stage.GetPrimAtPath(trim), f"the collection member at {trim} was left behind"
 
 
-def test_two_bindings_to_one_outside_material_share_one_copy() -> None:
+def test_two_bindings_to_one_material_beside_the_default_prim_stay_one() -> None:
     twice = _PAINTED_ARM.replace("</Materials/rubber>", "</Materials/paint>")
-    stage = _stage(graft_usd(_SCENE, {"room": twice}))
+    stage = _mounted_in_the_room(twice)
 
     assert _targets(stage, "/room/arm/shell", "material:binding") == _targets(
         stage, "/room/arm/shell", "material:binding:physics"
     )
 
 
-def test_a_carried_copy_does_not_swallow_a_source_prim_its_name_now_shadows() -> None:
-    # /Looks/paint is carried first and lands at /paint, where a different source prim lives.
+def test_a_moved_material_does_not_swallow_one_its_name_now_shadows() -> None:
+    # /Looks/paint and /paint both move under the namespace, and neither may land on the other.
     arm = """#usda 1.0
 (
     defaultPrim = "arm"
@@ -269,7 +274,7 @@ def Material "paint"
     custom string dimos_owner = "root"
 }
 """
-    stage = _stage(graft_usd(_SCENE, {"room": arm}))
+    stage = _mounted_in_the_room(arm)
 
     (looks,) = _targets(stage, "/room/arm/shell", "material:binding")
     (root,) = _targets(stage, "/room/arm/shell", "material:binding:physics")
@@ -291,22 +296,6 @@ def test_resolving_assets_already_in_place_opens_no_list_editor(
     for name in ("referenceList", "payloadList"):
         monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
     assert resolve_usd_assets(resolved, _ROOT) == resolved
-
-
-def test_grafting_a_subtree_with_no_arcs_opens_no_list_editor_for_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from pxr import Sdf
-
-    def opened(spec: Any) -> None:
-        pytest.fail(f"opened a list editor on {spec.path}, which a scene does per prim")
-
-    for name in ("referenceList", "payloadList"):
-        monkeypatch.setattr(Sdf.PrimSpec, name, property(opened))
-    monkeypatch.setattr(Sdf.AttributeSpec, "connectionPathList", property(opened))
-    stage = _stage(graft_usd(_SCENE, {"room": _PAINTED_ARM}))
-
-    assert stage.GetPrimAtPath("/room/arm/shell")
 
 
 _BOUND_ARM = """#usda 1.0

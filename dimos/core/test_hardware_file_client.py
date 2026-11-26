@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 import threading
 import uuid
@@ -19,58 +21,67 @@ import uuid
 import pytest
 
 from dimos.core.hardware_file_client import fetch_hardware_files
-from dimos.core.hardware_files import HARDWARE_USD
-from dimos.core.hardware_module import HardwareModule, HardwareModuleConfig
+from dimos.core.hardware_files import HARDWARE_USD, HardwareFiles, hardware_file_topics
 from dimos.core.test_hardware_files import _robot
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.files.FileInfo import FileInfo
-from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 
 pytest.importorskip("pxr")
 
 
-class _RobotConfig(HardwareModuleConfig):
-    usd: UsdModel
-
-
-class _Robot(HardwareModule):
-    config: _RobotConfig
-
-
-def _serving(robot: Path, namespace: str) -> _Robot:
-    module = _Robot(usd=UsdModel.from_file(robot), instance_name=f"{namespace}/robot")
-    module.hardware_file_request.transport = make_transport(
-        f"/{namespace}/hardware_file_request", FileInfo
+@contextmanager
+def _providing(robot: Path, namespace: str) -> Iterator[tuple[HardwareFiles, Callable[[], None]]]:
+    """``robot`` provided as a HardwareModule in ``namespace`` would provide it, over the same two topics; and what announces it."""
+    root = str(robot.parent)
+    files = HardwareFiles(
+        usd_under_namespace(resolve_usd_assets(robot.read_text(), root), namespace, root)
     )
-    module.hardware_file_response.transport = make_transport(
-        f"/{namespace}/hardware_file_response", FileInfo
+    request_topic, response_topic = hardware_file_topics(namespace)
+    requests, responses = (
+        make_transport(request_topic, FileInfo),
+        make_transport(response_topic, FileInfo),
     )
-    return module
+    requests.start()
+    responses.start()
+
+    def answer(request: FileInfo) -> None:
+        reply = files.reply(request)
+        if reply is not None:
+            responses.publish(reply)
+
+    unsubscribe = requests.subscribe(answer)
+    try:
+        yield files, lambda: responses.publish(files.announcement())
+    finally:
+        unsubscribe()
+        requests.stop()
+        responses.stop()
 
 
 def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_file_once(
     tmp_path: Path,
 ) -> None:
     namespace = f"files_{uuid.uuid4().hex[:8]}"
-    module = _serving(_robot(tmp_path / "robot"), namespace)
     cache = tmp_path / "cache"
     fetched: list[str] = []
-    try:
-        # Asked before the module starts: the request is sent again when it announces itself.
+    with _providing(_robot(tmp_path / "robot"), namespace) as (files, announce):
+        # Asked before the files are announced: the request is sent again when they are.
         result: list[Path] = []
         fetching = threading.Thread(
             target=lambda: result.append(fetch_hardware_files(namespace, cache))
         )
         fetching.start()
-        module.start()
+        announce()
         fetching.join()
         (usd,) = result
-        assert usd.read_text() == module.get_usd()
+        assert usd.read_text() == files.usd
 
         from pxr import Usd
 
         stage = Usd.Stage.Open(str(usd))
-        # Served under the namespace, so the prim path is the tf frame.
+        # Provided under the namespace, so the prim path is the tf frame.
         forearm = stage.GetPrimAtPath(f"/{namespace}/robot/arm/forearm")
         assert forearm, "the part layer resolved from the cache"
         skin = forearm.GetAttribute("skin").Get().resolvedPath
@@ -86,8 +97,6 @@ def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_fi
         finally:
             unsubscribe()
             listening.stop()
-    finally:
-        module.stop()
     # Only hardware.usda comes whole again; each mesh is kept by the sha256 in its assetInfo.
     assert set(fetched) <= {HARDWARE_USD}
 
@@ -119,10 +128,7 @@ def Xform "robot"
 """
     )
     namespace = f"files_{uuid.uuid4().hex[:8]}"
-    module = _serving(robot, namespace)
-    try:
-        module.start()
+    with _providing(robot, namespace) as (files, announce):
+        announce()
         usd = fetch_hardware_files(namespace, tmp_path / "cache")
         assert Usd.Stage.Open(str(usd)).GetPrimAtPath(f"/{namespace}/robot/base")
-    finally:
-        module.stop()

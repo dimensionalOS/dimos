@@ -40,10 +40,9 @@ from dimos.sim2.mujoco.look import (
 from dimos.sim2.mujoco.names import resolved
 from dimos.sim2.mujoco.ray_scene import RayScene
 from dimos.sim2.mujoco.renders import RenderProcess, RenderQuality, Renders
+from dimos.sim2.mujoco.sensor_world import GRAVITY
 from dimos.sim2.mujoco.world import USD_SUFFIXES, SensorMount, compile_world, mount_sensor
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
-
-_GRAVITY = np.array([0.0, 0.0, -9.81])
 
 
 def _open_stage(scene: Path) -> Any:
@@ -111,20 +110,21 @@ class MujocoView:
         model, data = self.model, self.data
         with world.lock:
             for entity_id, entity in world.entities.items():
-                owner, joint_of, name = entity.path.partition("/")
                 if entity_id == WORLD:
                     continue
-                if joint_of:
-                    if entity.joint is None:
-                        continue
-                    joint = self._joint(entity.path if owner in self._robots else name)
-                    if joint >= 0:
-                        data.qpos[model.jnt_qposadr[joint]] = entity.joint[0]
-                        data.qvel[model.jnt_dofadr[joint]] = entity.joint[1]
-                elif entity.path in self._robots:
+                if entity.path in self._robots:
                     root = self._root(entity.path)
                     if root >= 0:
                         self._pose_entity(entity, root)
+                elif "/" in entity.path:
+                    if entity.joint is None:
+                        continue
+                    # A robot's joint keeps its robot's id (a namespace, which may itself hold "/"); another's drops its owner.
+                    owned = self._robot_of(entity.path) is not None
+                    joint = self._joint(entity.path if owned else entity.path.partition("/")[2])
+                    if joint >= 0:
+                        data.qpos[model.jnt_qposadr[joint]] = entity.joint[0]
+                        data.qvel[model.jnt_dofadr[joint]] = entity.joint[1]
                 else:
                     body = self._object_body(entity.path)
                     if body >= 0:
@@ -272,7 +272,7 @@ class MujocoView:
         self._previous[sensor] = (self.time, velocity)
         elapsed = self.time - before[0] if before else 0.0
         acceleration = (velocity - before[1]) / elapsed if before and elapsed > 0 else np.zeros(3)
-        return angular, world_from_sensor.T @ (acceleration - _GRAVITY), quat
+        return angular, world_from_sensor.T @ (acceleration - GRAVITY), quat
 
     def _frame(self, frame: str) -> tuple[int, int]:
         if frame not in self._frames:
@@ -291,9 +291,12 @@ class MujocoView:
 
     def owner(self, frame: str) -> str | None:
         kind, index = self._frame(frame)
-        name = mujoco.mj_id2name(self.model, kind, index) or ""
-        robot, _, _ = name.partition("/")
-        return robot if robot in self._robots else None
+        return self._robot_of(mujoco.mj_id2name(self.model, kind, index) or "")
+
+    def _robot_of(self, name: str) -> str | None:
+        """The robot whose namespace ``name`` is under, or None; the deepest, as one robot's namespace may hold another's."""
+        under = [robot for robot in self._robots if name.startswith(f"{robot}/")]
+        return max(under, key=len) if under else None
 
     def _named(self, kind: int) -> list[str]:
         if kind not in self._names:
