@@ -14,6 +14,7 @@
 
 from typing import Any, get_origin, get_type_hints
 
+import numpy as np
 import pytest
 
 from dimos.control.contract.limits import movable_joints
@@ -22,6 +23,7 @@ from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.stream import In
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -32,6 +34,7 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     teleop_webxr_openyam,
 )
 from dimos.robot.manipulators.openyam.config import (
+    OPENYAM,
     OPENYAM_ARM_JOINTS,
     OPENYAM_HOME_JOINTS,
     OPENYAM_MODEL_PATH,
@@ -115,6 +118,15 @@ def test_openyam_jaw_is_joint7_and_joint8_copies_it() -> None:
         pytest.approx(0.0594641),
     )
     assert follower.mimic == ("arm/joint7", 1.0, 0.0)
+
+
+def test_openyam_gravity_torques_are_the_v2_arms_with_the_anvil_gripper() -> None:
+    arm = PhysicalModel(OPENYAM.gravity_model, list(OPENYAM_ARM_JOINTS), gravity_comp=True)
+
+    torques = arm.gravity(np.asarray([0.3, 0.8, 0.6, -0.3, 0.9, 0.4]))
+
+    # N m, from Anvil's own model of the arm at this pose.
+    np.testing.assert_allclose(torques, [0.0, -1.1034, 8.8588, 1.6676, 0.2627, -0.0061], atol=1e-4)
 
 
 def test_make_openyam_model_config_preserves_explicit_home() -> None:

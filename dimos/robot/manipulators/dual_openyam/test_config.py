@@ -12,17 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import pytest
 
+from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM,
     DUAL_OPENYAM_HOME_JOINTS,
+    DUAL_OPENYAM_JOINT_LIMITS,
+    DUAL_OPENYAM_LEADERS,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
+from dimos.robot.manipulators.openyam.config import (
+    OPENYAM,
+    OPENYAM_ARM_JOINTS,
+    OPENYAM_HOME_JOINTS,
+    make_openyam_model_config,
+)
 
 
 def test_dual_openyam_model_has_canonical_groups_and_reference_posture() -> None:
@@ -38,6 +48,37 @@ def test_dual_openyam_model_has_canonical_groups_and_reference_posture() -> None
 
 def test_dual_openyam_reuses_the_single_arm_home_posture() -> None:
     assert DUAL_OPENYAM_HOME_JOINTS == [*OPENYAM_HOME_JOINTS, *OPENYAM_HOME_JOINTS]
+
+
+def test_each_arm_is_compensated_like_a_single_openyam() -> None:
+    single = PhysicalModel(OPENYAM.gravity_model, list(OPENYAM_ARM_JOINTS), gravity_comp=True)
+    dual = PhysicalModel(
+        DUAL_OPENYAM.gravity_model, DUAL_OPENYAM.arm_joint_names, gravity_comp=True
+    )
+    left = np.asarray([0.3, 0.8, 0.6, -0.3, 0.9, 0.4])
+    right = np.asarray(OPENYAM_HOME_JOINTS)
+
+    np.testing.assert_allclose(
+        dual.gravity(np.concatenate([left, right])),
+        np.concatenate([single.gravity(left), single.gravity(right)]),
+        atol=1e-12,
+    )
+
+
+@pytest.mark.self_hosted
+def test_both_arms_and_their_leaders_share_the_single_arms_limits() -> None:
+    single = make_openyam_model_config().model.load()
+    dual = dual_openyam_model_config().model.load()
+    for name, limits in zip(OPENYAM_ARM_JOINTS, DUAL_OPENYAM_JOINT_LIMITS, strict=True):
+        joint = single.get_joint(name)
+        assert joint is not None
+        assert (joint.lower, joint.upper) == limits
+    for bus in DUAL_OPENYAM_LEADERS.buses:
+        for motor, limits in zip(bus.motors, DUAL_OPENYAM_JOINT_LIMITS, strict=True):
+            joint = dual.get_joint(motor.joint)
+            assert joint is not None
+            assert (joint.lower, joint.upper) == limits
+            assert (motor.lower, motor.upper) == limits
 
 
 def test_dual_openyam_connection_declares_both_arms_and_grippers() -> None:

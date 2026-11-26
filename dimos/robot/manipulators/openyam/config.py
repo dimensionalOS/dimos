@@ -38,7 +38,6 @@ from dimos.robot.manipulators.openyam.joints import (
     OPENYAM_GRIPPER_JOINT as OPENYAM_GRIPPER_JOINT,
     OPENYAM_JOINTS as OPENYAM_JOINTS,
 )
-from dimos.utils.data import LfsPath
 
 OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
@@ -48,6 +47,8 @@ OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
 OPENYAM_PACKAGE = OPENYAM_DESCRIPTION_SOURCE / "openyam_single"
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "openyam_single.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"openyam_single": OPENYAM_PACKAGE}
+#: One arm and its gripper as bare masses, with arm joints joint1 to joint6.
+OPENYAM_GRAVITY_MODEL = RobotModel.from_file(Path(__file__).parent / "openyam_gravity.urdf")
 #: Joint damping while an operator guides the arm by hand. Stiffness is zero
 #: and gravity is compensated, so the arm floats instead of holding a pose.
 OPENYAM_TEACH_DAMPING = [2.0, 2.0, 2.0, 0.5, 0.5, 0.5]
@@ -148,8 +149,8 @@ OPENYAM = DamiaoRobot(
         )
     ],
     model=make_openyam_model_config().model,
-    gravity_model=RobotModel.from_file(
-        LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
+    gravity_model=OPENYAM_GRAVITY_MODEL.with_renamed_joints(
+        dict(zip(joint_names(OPENYAM_DOF), OPENYAM_ARM_JOINTS, strict=True))
     ),
     base_link="base",
     joint_names=[*OPENYAM_ARM_JOINTS, OPENYAM_FINGER_JOINTS[0]],

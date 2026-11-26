@@ -37,15 +37,26 @@ from dimos.robot.manipulators.feetech.robot import (
     FeetechRobot,
     FeetechTrigger,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
+from dimos.robot.manipulators.openyam.config import OPENYAM_GRAVITY_MODEL, OPENYAM_HOME_JOINTS
 
 DUAL_OPENYAM_SIDES = ("left", "right")
+# Where each arm base sits on the shared base, m along y, as in dual_openyam.urdf.
+_ARM_MOUNT_Y = {"left": 0.31, "right": -0.31}
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 DUAL_OPENYAM_KP = [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]
 # Arm damping 1.0 (was 5.0): under leader teleop the DM4340s trailed the target by 90-120 ms
 # at 5.0 and by 40-50 ms at 1.0, with no hum; OpenArm runs the same motors at 1.0.
 DUAL_OPENYAM_KD = [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
+# The OpenYAM v2 position limits for joint1 to joint6, rad; both arms share them.
+DUAL_OPENYAM_JOINT_LIMITS = (
+    (-2.61799, 3.14159),
+    (0.0, 3.66519),
+    (0.0, 4.01426),
+    (-1.65806, 1.65806),
+    (-1.5708, 1.5708),
+    (-2.35619, 1.8326),
+)
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -56,9 +67,15 @@ def dual_openyam_arm_joints(side: str) -> list[str]:
 
 def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
     """Build the combined arm-only planning model."""
+    model = DUAL_OPENYAM_MODEL
+    for side in DUAL_OPENYAM_SIDES:
+        for joint, (lower, upper) in zip(
+            dual_openyam_arm_joints(side), DUAL_OPENYAM_JOINT_LIMITS, strict=True
+        ):
+            model = model.with_joint_position_limits(joint, lower=lower, upper=upper)
     return named_for_robot(
         RobotModelConfig(
-            model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
+            model=model.with_default_joint_acceleration_limit(1.0),
             joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
             base_link="dual_openyam_base",
             planning_groups=[
@@ -140,11 +157,24 @@ def _bus(side: str) -> DamiaoBus:
     )
 
 
+def _gravity_model() -> RobotModel:
+    model = RobotModel.from_root_link("dual_openyam_base", name="dual_openyam")
+    for side in DUAL_OPENYAM_SIDES:
+        model = model.with_attached_model(
+            OPENYAM_GRAVITY_MODEL,
+            parent_link="dual_openyam_base",
+            joint_name=f"{side}_arm_fixed_joint",
+            prefix=f"{side}_",
+            xyz=(0.0, _ARM_MOUNT_Y[side], 0.0),
+        )
+    return model
+
+
 #: Two OpenYAM arms, each with its own jaw, on two Damiao buses.
 DUAL_OPENYAM = DamiaoRobot(
     buses=[_bus(side) for side in DUAL_OPENYAM_SIDES],
     model=dual_openyam_control_model(),
-    gravity_model=DUAL_OPENYAM_MODEL,
+    gravity_model=_gravity_model(),
     base_link="dual_openyam_base",
     joint_names=[*DUAL_OPENYAM_ARM_JOINTS, *DUAL_OPENYAM_GRIPPER_JOINTS],
     gravity=True,
@@ -152,15 +182,6 @@ DUAL_OPENYAM = DamiaoRobot(
     name="dual_openyam",
 )
 
-# dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
-DUAL_OPENYAM_JOINT_LIMITS = (
-    (-2.618, 3.1416),
-    (0.0, 3.6652),
-    (0.0, 3.1416),
-    (-1.693, 1.5708),
-    (-1.5708, 1.5708),
-    (-2.0944, 2.0944),
-)
 # Trigger angle from released to fully squeezed on the Dimensional leaders.
 DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS = 1.5
 

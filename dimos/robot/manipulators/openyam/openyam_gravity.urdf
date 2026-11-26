@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+<!-- One OpenYAM v2 arm with the Anvil gripper as bare masses: the model Anvil's
+     gravity compensation uses (anvil-robotics SDK 2.0.0b9). Fingers are fixed closed. -->
+<robot name="openyam">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.0000722812 0.0000252572 0.0159932" rpy="0 0 0"/>
+      <mass value="0.822546"/>
+      <inertia ixx="0.00169415" ixy="0.000000243507" ixz="-0.000000131515" iyy="0.00066093" iyz="-0.000000911171" izz="0.00155626"/>
+    </inertial>
+  </link>
+  <link name="link1">
+    <inertial>
+      <origin xyz="-0.00192861 -0.00795735 0.0208176" rpy="0 0 0"/>
+      <mass value="0.12415"/>
+      <inertia ixx="0.0000598038" ixy="-0.0000045902" ixz="0.000007411" iyy="0.000169215" iyz="0.0000168342" izz="0.000156182"/>
+    </inertial>
+  </link>
+  <joint name="joint1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.0664" rpy="0 0 1.5708"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.61799" upper="3.14159" effort="10" velocity="3"/>
+  </joint>
+  <link name="link2">
+    <inertial>
+      <origin xyz="0.156500918 0.0169758057 0.000293073" rpy="0 0 0"/>
+      <mass value="1.24434"/>
+      <inertia ixx="0.000683304" ixy="0.00000000199503" ixz="0.00000000368337" iyy="0.0121902" iyz="0.00000000320067" izz="0.0121318"/>
+    </inertial>
+  </link>
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/>
+    <child link="link2"/>
+    <origin xyz="0.000025 -0.02 0.0409" rpy="1.5708 0 1.5708"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="3.66519" effort="10" velocity="10"/>
+  </joint>
+  <link name="link3">
+    <inertial>
+      <origin xyz="-0.0963507918 -0.0355265402 -0.0000771271338" rpy="0 0 0"/>
+      <mass value="1.22947334"/>
+      <inertia ixx="0.00120255" ixy="-0.000772865" ixz="-0.0000148502" iyy="0.0100088" iyz="-0.00000919678" izz="0.0100264"/>
+    </inertial>
+  </link>
+  <joint name="joint3" type="revolute">
+    <parent link="link2"/>
+    <child link="link3"/>
+    <origin xyz="0.264 0 0" rpy="-3.14159 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="4.01426" effort="10" velocity="3"/>
+  </joint>
+  <link name="link4">
+    <inertial>
+      <origin xyz="-0.0172346674 -0.0265532195 0.000106646061" rpy="0 0 0"/>
+      <mass value="0.673213752"/>
+      <inertia ixx="0.000845853" ixy="-0.000363695" ixz="-0.0000103957" iyy="0.000713327" iyz="-0.00000468386" izz="0.00108188"/>
+    </inertial>
+  </link>
+  <joint name="joint4" type="revolute">
+    <parent link="link3"/>
+    <child link="link4"/>
+    <origin xyz="-0.245 -0.0600003 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.65806" upper="1.65806" effort="10" velocity="10"/>
+  </joint>
+  <link name="link5">
+    <inertial>
+      <origin xyz="0.00087215762 -0.0075561134 0.0408136765" rpy="0 0 0"/>
+      <mass value="0.39491887"/>
+      <inertia ixx="0.000222572" ixy="-0.000000360083" ixz="-0.000000227026" iyy="0.000194234" iyz="-0.00001249" izz="0.000171365"/>
+    </inertial>
+  </link>
+  <joint name="joint5" type="revolute">
+    <parent link="link4"/>
+    <child link="link5"/>
+    <origin xyz="-0.0739968 -0.0395003 0.0000244738" rpy="-1.5708 1.5708 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5708" upper="1.5708" effort="10" velocity="3"/>
+  </joint>
+  <link name="link6">
+    <inertial>
+      <origin xyz="0.00125289685124 0.0111037437594 -0.06596259975" rpy="0 0 0"/>
+      <mass value="0.573229843134"/>
+      <inertia ixx="0.000649266" ixy="0.0000100035" ixz="-0.00000369568" iyy="0.000517148" iyz="0.0000722837" izz="0.00034546"/>
+    </inertial>
+  </link>
+  <joint name="joint6" type="revolute">
+    <parent link="link5"/>
+    <child link="link6"/>
+    <origin xyz="0 0.0353 0.0395" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.35619" upper="1.8326" effort="10" velocity="10"/>
+  </joint>
+  <link name="hand">
+    <inertial>
+      <origin xyz="0 0.002 0.03" rpy="0 0 0"/>
+      <mass value="0.7"/>
+      <inertia ixx="0.0002473" ixy="0.000001" ixz="0.000001" iyy="0.00001763" iyz="0.000001" izz="0.0002521"/>
+    </inertial>
+  </link>
+  <joint name="hand_joint" type="fixed">
+    <parent link="link6"/>
+    <child link="hand"/>
+    <origin xyz="0 0 0.05" rpy="0 0 1.5708"/>
+  </joint>
+  <link name="right_finger">
+    <inertial>
+      <origin xyz="0.0064528 -0.01702 0.0219685" rpy="0 0 0"/>
+      <mass value="0.03602545343277134"/>
+      <inertia ixx="0.0000023749999999999997" ixy="0.000001" ixz="0.000001" iyy="0.0000023749999999999997" iyz="0.000001" izz="0.00000075"/>
+    </inertial>
+  </link>
+  <joint name="right_finger_joint" type="fixed">
+    <parent link="hand"/>
+    <child link="right_finger"/>
+    <origin xyz="0 -0.006 0.015" rpy="0 0 0"/>
+  </joint>
+  <link name="left_finger">
+    <inertial>
+      <origin xyz="0.0064528 0.01702 0.0219685" rpy="0 0 0"/>
+      <mass value="0.03602545343277134"/>
+      <inertia ixx="0.0000023749999999999997" ixy="0.000001" ixz="0.000001" iyy="0.0000023749999999999997" iyz="0.000001" izz="0.00000075"/>
+    </inertial>
+  </link>
+  <joint name="left_finger_joint" type="fixed">
+    <parent link="hand"/>
+    <child link="left_finger"/>
+    <origin xyz="0 0.006 0.015" rpy="0 0 0"/>
+  </joint>
+  <link name="hand_tcp"/>
+  <joint name="hand_tcp_joint" type="fixed">
+    <parent link="hand"/>
+    <child link="hand_tcp"/>
+    <origin xyz="0 0 0.08" rpy="0 0 0"/>
+  </joint>
+</robot>

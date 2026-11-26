@@ -76,7 +76,7 @@ def robot_specs_or_skip(robot: DamiaoRobot, what: str, **options: Any) -> list[A
 # A camera and bracket on the gripper, a heavier forearm: what the rig likely has.
 # Link: (d mass kg, d(m*c) kg m).
 PERTURBATION: dict[str, tuple[float, NDArray[np.float64]]] = {
-    "left_gripper": (0.25, np.array([-0.02, 0.0, -0.01])),
+    "left_link6": (0.25, np.array([-0.02, 0.0, -0.01])),
     "left_link3": (0.15, np.array([0.0, 0.0, -0.02])),
 }
 
