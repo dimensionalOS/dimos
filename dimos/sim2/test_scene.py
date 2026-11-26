@@ -62,13 +62,13 @@ def test_a_scene_works_its_edges_out_once_and_restamps_them(
     room = _Room()
     try:
         worked_out = []
-        namespaced = room._namespaced
+        namespaced = room._usd_edges_as_namespaced_transforms
 
         def working_out(*args: Any) -> list[Transform]:
             worked_out.append(1)
             return namespaced(*args)
 
-        monkeypatch.setattr(room, "_namespaced", working_out)
+        monkeypatch.setattr(room, "_usd_edges_as_namespaced_transforms", working_out)
         stamps = [room.static_transforms(ts=float(tick)) for tick in range(3)]
     finally:
         room.stop()
