@@ -398,6 +398,7 @@ all_modules = {
     "seeed-b601-dm-coordinator": "dimos.robot.manipulators.seeed_b601_dm.coordinator.SeeedB601DMCoordinator",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
+    "sim-hardware-module": "dimos.sim2.hardware.SimHardwareModule",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
