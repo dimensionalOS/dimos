@@ -655,6 +655,11 @@ def test_every_frame_on_tf_is_its_prim_path_in_the_composed_usd() -> None:
     assert composed == published | {"left"}
 
 
+def test_a_hardware_namespace_is_a_prim_name_so_it_cannot_start_with_a_digit() -> None:
+    with pytest.raises(ValueError, match="'2nd' starts with '2'"):
+        _build(autoconnect(Arm.blueprint().namespace("2nd")))
+
+
 def test_hardware_without_a_usd_is_refused() -> None:
     class Bare(HardwareModule):
         config: HardwareModuleConfig

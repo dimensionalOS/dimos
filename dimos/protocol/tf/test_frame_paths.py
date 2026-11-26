@@ -144,9 +144,3 @@ def test_an_edge_closing_a_loop_is_refused_even_with_one_parent_each() -> None:
                 ),
             )
         )
-
-
-def test_a_namespace_is_a_prim_name_so_it_cannot_start_with_a_digit() -> None:
-    with pytest.raises(ValueError, match="not starting with a digit"):
-        _Edged.blueprint().namespace("2nd")
-    assert _Edged.blueprint().namespace("_2nd").namespace("robot0")

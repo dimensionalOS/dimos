@@ -262,6 +262,10 @@ class HardwareModule(TfModule):
         hardware = [atom for atom in atoms if issubclass(atom.module, HardwareModule)]
         unmounted: dict[str, list[str]] = defaultdict(list)
         for atom in hardware:
+            namespace = atom.name.rpartition("/")[0]
+            # Its namespace is a prefix of its USD's prim paths, so each segment must be a prim name.
+            if namespace:
+                check_frame_path(namespace, f"{atom.name}'s namespace")
             check_attached_namespace(atom.kwargs.get("attached_to"), atom.name.rpartition("/")[0])
             if atom.kwargs.get("attached_to") is None:
                 unmounted[atom.name.rpartition("/")[0]].append(atom.name)
