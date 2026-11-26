@@ -197,7 +197,7 @@ class MultipartBackend:
             uid = create["upload_id"]
             uploaded = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
-            done = min(len(uploaded) * ps, size)
+            done = sum(min(ps, size - (n - 1) * ps) for n in uploaded)
             tick("upload", done, size)
             urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
             resign = threading.Lock()
