@@ -32,6 +32,7 @@ from types import FrameType
 from typing import Any
 import uuid
 
+import cbor2
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
@@ -42,7 +43,7 @@ from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare import ground_height
 from dimos.experimental.gta_sim2.prepare_m20 import BASE as M20_BASE
 from dimos.experimental.gta_sim2.renderer import ObserverOutput, SixNGRenderer
-from dimos.experimental.gta_sim2.streaming import StreamingMujocoBackend
+from dimos.experimental.gta_sim2.world_streaming import streaming_backend
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
@@ -213,13 +214,16 @@ def main() -> None:
                                 args.policy_profile,
                                 backend=(
                                     partial(
-                                        StreamingMujocoBackend,
+                                        streaming_backend,
                                         catalog=args.stream_catalog.resolve(),
                                         focus_body=M20_BASE,
                                         metrics=args.runtime / "streaming.json",
                                     )
                                     if args.stream_catalog
                                     else MujocoBackend
+                                ),
+                                streaming=bool(
+                                    args.stream_catalog and args.stream_catalog.suffix == ".json"
                                 ),
                             )
                             if is_m20
@@ -295,8 +299,16 @@ def main() -> None:
                     clearance = p.z - ground_height(surfaces[under], (p.x, p.y), p.z - 0.3)
                 except ValueError:
                     clearance = 0.0
+                streaming_state: dict[str, Any] = {}
+                for entry in sample.cbor_observations:
+                    if entry.entity_id == "world" and entry.key == "gta/streaming":
+                        streaming_state = cbor2.loads(bytes(entry.value))
+                        clearance = streaming_state.get("clearance_m")
+                        break
                 upright = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()[2, 2]
-                fallen = clearance < (0.23 if is_m20 else 0.5) or upright < 0.3
+                fallen = (
+                    clearance is not None and clearance < (0.23 if is_m20 else 0.5)
+                ) or upright < 0.3
                 if not args.stream_catalog:
                     fallen |= p.z < -0.2
                 if fallen or not visible:
@@ -323,6 +335,7 @@ def main() -> None:
                         streaming=read_json(args.runtime / "streaming.json")
                         if args.stream_catalog
                         else None,
+                        residency=streaming_state,
                         updated_unix=time.time(),
                     )
                     write_json(args.runtime / "simulation.json", state)

@@ -17,6 +17,9 @@
 from pathlib import Path
 from typing import Any
 
+import cbor2
+from dimos_lcm.common_msgs import SampleHeader
+from dimos_lcm.sim_msgs import CborObservation, WorldState
 import numpy as np
 import pytest
 
@@ -109,3 +112,45 @@ def test_stop_duplicate_and_motor_contract(
         module.compute(joints, imu)
     assert module.status()["mode"] == "stand"
     np.testing.assert_allclose(module.status()["policy_velocity"], 0, atol=1e-8)
+
+
+@pytest.mark.asyncio
+async def test_streaming_governor_uses_robot_yaw_and_stops_on_stale_bounds(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    session = CaptureSession(57)
+    monkeypatch.setattr("onnxruntime.InferenceSession", lambda *a, **k: session)
+    module = M20PolicyModule(model_path=Path("fixture.onnx"), streaming_required=True)
+    request.addfinalizer(module.stop)
+    module._actor = M20Actor(Path("fixture.onnx"))
+    module._clock_id, module._ids = "clock", JOINTS
+    module._lower, module._upper = np.full(12, -1.0), np.full(12, 1.0)
+    joints = JointState(ts=0.02, name=list(JOINTS), position=HOME.tolist(), velocity=[0.0] * 16)
+    imu = Imu(ts=0.02, orientation_covariance=[0.0] * 9)
+    imu.orientation.w = imu.orientation.z = np.sqrt(0.5)  # Body +X faces world +Y.
+    module.move(Twist(linear=Vector3(1, 0, 0)), duration=10)
+    module.compute(joints, imu)
+    np.testing.assert_array_equal(module.status()["policy_velocity"], [0, 0, 0])
+    payload = cbor2.dumps(
+        {"position": [0, 9, 0], "safe_bounds": [[-9, -9], [9, 9]], "latency_s": 1}
+    )
+    sample = WorldState(
+        header=SampleHeader(clock_id="clock", epoch=0, time_ns=40_000_000),
+        cbor_observations=[
+            CborObservation(
+                entity_id="world", key="gta/streaming", value=payload, value_length=len(payload)
+            )
+        ],
+    )
+    await module.handle_observations(sample)
+    joints.ts = imu.ts = 0.04
+    module.compute(joints, imu)
+    np.testing.assert_allclose(module.status()["policy_velocity"], 0, atol=1e-12)
+    module.move(Twist(linear=Vector3(-1, 0, 0)), duration=10)
+    joints.ts = imu.ts = 0.06
+    module.compute(joints, imu)
+    assert module.status()["policy_velocity"][0] < 0
+    joints.ts = imu.ts = 0.2
+    module.compute(joints, imu)
+    assert module.status()["streaming_governed"]
+    np.testing.assert_allclose(module.status()["policy_velocity"], 0, atol=1e-12)

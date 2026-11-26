@@ -25,8 +25,10 @@ import threading
 import time
 from typing import Any
 
+import cbor2
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import ActionCommand, JointCommand
+from dimos_lcm.sim_msgs import WorldState
 from dimos_lcm.std_msgs import Header, Time
 import numpy as np
 from numpy.typing import NDArray
@@ -38,6 +40,7 @@ from dimos.core.hardware_module import Mounts
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.experimental.gta_sim2.m20_actor import JOINTS, KD, KP, M20Actor, Profile, home_pose
+from dimos.experimental.gta_sim2.prefetch import govern_velocity
 from dimos.experimental.gta_sim2.prepare_m20 import BASE
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -67,6 +70,7 @@ class M20PolicyConfig(SceneConfig):
     period_ns: int = 20_000_000
     command_ttl_ns: int = 100_000_000
     command_acceleration: tuple[float, float, float] = (2.0, 1.0, 2.0)
+    streaming_required: bool = False
 
 
 class M20PolicyModule(Module):
@@ -75,6 +79,7 @@ class M20PolicyModule(Module):
     imu: In[Imu]
     joint_state: In[JointState]
     cmd_vel: In[Twist]
+    observations: In[WorldState]
     actions: Out[ActionCommand]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -92,6 +97,8 @@ class M20PolicyModule(Module):
         self._inferences = self._missed = 0
         self._standing = True
         self._park_wheels: NDArray[np.float64] | None = None
+        self._safety: dict[int, dict[str, Any]] = {}
+        self._governed = False
 
     @rpc
     def build(self) -> None:
@@ -134,6 +141,23 @@ class M20PolicyModule(Module):
 
     async def handle_joint_state(self, sample: JointState) -> None:
         self._receive(sample)
+
+    async def handle_observations(self, sample: WorldState) -> None:
+        if (
+            not self.config.streaming_required
+            or sample.header.clock_id != self._clock_id
+            or sample.header.epoch != 0
+        ):
+            return
+        for entry in sample.cbor_observations:
+            if entry.entity_id == "world" and entry.key == "gta/streaming":
+                value = cbor2.loads(bytes(entry.value))
+                with self._lock:
+                    self._safety[sample.header.time_ns] = value
+                    cutoff = sample.header.time_ns - 300_000_000
+                    self._safety = {
+                        stamp: state for stamp, state in self._safety.items() if stamp >= cutoff
+                    }
 
     def _boundary(self, stamp: float) -> int | None:
         if not math.isfinite(stamp) or stamp < 0:
@@ -178,7 +202,33 @@ class M20PolicyModule(Module):
                 .inv()
                 .apply([0, 0, -1])
             )
-            velocity = self._velocity if time.monotonic() < self._until else np.zeros(3)
+            velocity = self._velocity.copy() if time.monotonic() < self._until else np.zeros(3)
+            self._governed = False
+            if self.config.streaming_required:
+                available = [key for key in self._safety if key <= stamp]
+                latest = max(available, default=-1)
+                if latest < 0 or stamp - latest > 100_000_000:
+                    velocity.fill(0)
+                    self._governed = True
+                else:
+                    safety = self._safety[latest]
+                    yaw = Rotation.from_quat(
+                        [orientation.x, orientation.y, orientation.z, orientation.w]
+                    ).as_euler("xyz")[2]
+                    rotation = np.array(
+                        [[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]]
+                    )
+                    wanted = rotation @ velocity[:2]
+                    bounds = np.asarray(safety["safe_bounds"], dtype=np.float64)
+                    permitted = govern_velocity(
+                        wanted,
+                        np.asarray(safety["position"][:2]),
+                        bounds[0],
+                        bounds[1],
+                        float(safety["latency_s"]) + (stamp - latest) / 1e9,
+                    )
+                    velocity[:2] = rotation.T @ permitted
+                    self._governed = not np.allclose(permitted, wanted)
             # A hard wheel-position latch at road speed pitches the body down.
             # Decelerate through the actor first, on measured simulation ticks.
             delta = np.asarray(self.config.command_acceleration) * self.config.period_ns / 1e9
@@ -253,6 +303,7 @@ class M20PolicyModule(Module):
                 "contract": self.config.profile,
                 "mode": "stand" if self._standing else "policy",
                 "policy_velocity": self._applied_velocity.tolist(),
+                "streaming_governed": self._governed,
             }
 
     @rpc
@@ -270,6 +321,7 @@ def m20_blueprint(
     profile: Profile = "sdk57",
     *,
     backend: Callable[[], PhysicsBackend] = MujocoBackend,
+    streaming: bool = False,
 ) -> MetaBlueprint:
     scene = UsdModel.from_file(scene_path)
     paths = joint_paths(scene)
@@ -294,5 +346,7 @@ def m20_blueprint(
         ),
         SimModule.blueprint(backend=backend, observation_hz=200, joint_ids=ids),
         SimJointEncoderModule.blueprint(sensor=EncoderConfig(ids, hz=50)),
-        M20PolicyModule.blueprint(scene=scene, model_path=policy_path, profile=profile),
+        M20PolicyModule.blueprint(
+            scene=scene, model_path=policy_path, profile=profile, streaming_required=streaming
+        ),
     ).global_config(viewer="none", transport="zenoh", n_workers=6)

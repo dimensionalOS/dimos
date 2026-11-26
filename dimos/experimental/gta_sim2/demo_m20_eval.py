@@ -23,6 +23,7 @@ import time
 from typing import BinaryIO
 import uuid
 
+import cbor2
 import numpy as np
 from pxr import Gf, Usd, UsdGeom, UsdPhysics
 from scipy.spatial.transform import Rotation
@@ -31,7 +32,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.experimental.gta_sim2.demo_interactive import physics_ready
 from dimos.experimental.gta_sim2.m20 import M20PolicyModule, m20_blueprint
 from dimos.experimental.gta_sim2.prepare_m20 import BASE
-from dimos.experimental.gta_sim2.streaming import StreamingMujocoBackend
+from dimos.experimental.gta_sim2.world_streaming import streaming_backend
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.sim2.description import compose_scene
@@ -79,6 +80,10 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=4)
     parser.add_argument("--step-height", type=float, default=0.1)
     parser.add_argument("--stream-catalog", type=Path)
+    parser.add_argument("--compiler-delay-s", type=float, default=0)
+    parser.add_argument(
+        "--reverse-after-s", type=float, help="Reverse the policy command for revisit evaluation"
+    )
     parser.add_argument(
         "--record", action="store_true", help="Save composed USD and measured body poses"
     )
@@ -87,6 +92,8 @@ def main() -> None:
     args = parser.parse_args()
     if not 0 < args.step_height <= 0.3:
         parser.error("step-height must be in (0, .3] metres")
+    if args.stream_catalog and args.terrain != "road":
+        parser.error("Streamed world evaluation requires road terrain")
     scene = args.scene.resolve()
     if args.terrain != "road":
         scene = fixture(scene, args.output, args.terrain, args.step_height)
@@ -97,14 +104,16 @@ def main() -> None:
             args.profile,
             backend=(
                 partial(
-                    StreamingMujocoBackend,
+                    streaming_backend,
                     catalog=args.stream_catalog.resolve(),
                     focus_body=BASE,
                     metrics=args.output.with_suffix(".streaming.json"),
+                    compiler_delay_s=args.compiler_delay_s,
                 )
                 if args.stream_catalog
                 else MujocoBackend
             ),
+            streaming=bool(args.stream_catalog and args.stream_catalog.suffix == ".json"),
         )
         .global_config(zenoh_domain="m20-eval-" + uuid.uuid4().hex)
         .solidify()
@@ -125,14 +134,25 @@ def main() -> None:
         rows: list[list[float]] = []
         forward_axis = np.zeros(2)
         reached_goal_at: float | None = None
+        residency_rows = []
         outcome = "timeout"
         while time.monotonic() - start < args.seconds:
             tick = time.monotonic()
+            direction = (
+                -1
+                if args.reverse_after_s is not None and tick - start >= args.reverse_after_s
+                else 1
+            )
             policy.move(
-                Twist(linear=Vector3(args.speed if reached_goal_at is None else 0, 0, 0)),
+                Twist(
+                    linear=Vector3(args.speed * direction if reached_goal_at is None else 0, 0, 0)
+                ),
                 duration=0.35,
             )
             sample = sim.inspect()
+            for observation in sample.cbor_observations:
+                if observation.entity_id == "world" and observation.key == "gta/streaming":
+                    residency_rows.append(cbor2.loads(bytes(observation.value)))
             if recording is not None:
                 encoded = sample.lcm_encode()
                 recording.write(struct.pack("<I", len(encoded)))
@@ -180,9 +200,13 @@ def main() -> None:
             "sim": sim.status(),
             "policy": policy.status(),
             "trajectory": rows,
+            "residency": residency_rows,
         }
         args.output.write_text(json.dumps(report, indent=2))
-        print(json.dumps({k: v for k, v in report.items() if k != "trajectory"}), flush=True)
+        print(
+            json.dumps({k: v for k, v in report.items() if k not in ("trajectory", "residency")}),
+            flush=True,
+        )
     except Exception:
         print(
             json.dumps({"simulation_failure": deployment.get_instance(SimModule).status()}),
