@@ -23,9 +23,8 @@ from pydantic import Field, model_validator
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import TF, refuse_undeclared_edges
+from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -62,72 +61,11 @@ class TfModuleConfig(ModuleConfig):
         return self
 
 
-class TfIO(IO[TFMessage]):
-    """A TfModule's tf port: ``publish`` refuses undeclared edges, ``get`` refuses undeclared frames."""
-
-    owner: "TfModule"
-
-    def publish(self, msg: TFMessage) -> None:
-        if not self.owner.config.skip_tf_checks:
-            refuse_undeclared_edges(
-                self.owner.tf_edge_ids, self.owner.tf_owner_name, msg.transforms
-            )
-        super().publish(msg)
-
-    def get(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-        warn: bool = True,
-    ) -> Transform | None:
-        """Look ``parent_frame -> child_frame`` up in the module's tfbuffer; both must be declared frames."""
-        if not self.owner.config.skip_tf_checks:
-            declared = set(self.owner.tf_frames.values())
-            for frame in (parent_frame, child_frame):
-                if frame not in declared:
-                    raise ValueError(
-                        f"{self.owner.tf_owner_name} looks up undeclared tf frame {frame!r} "
-                        f"(declared: {sorted(declared)}); add it to tf_frames_local or tf_frames_global"
-                    )
-        return self.owner.tfbuffer.get(
-            parent_frame,
-            child_frame,
-            time_point,
-            time_tolerance,
-            forward_tolerance=forward_tolerance,
-            warn=warn,
-        )
-
-
 class TfModule(Module):
-    """Its ``tf`` port and ``tfbuffer`` publish only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
+    """Its ``tfbuffer`` publishes only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-    if TYPE_CHECKING:
-        tf: TfIO
-    else:
-        # Module binds ports from the runtime annotation, so it stays a plain IO.
-        tf: IO[TFMessage]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        # Same name and type as the port Module bound, so wiring and topics are unchanged.
-        self.tf = TfIO(TFMessage, "tf", self)
-
-    @property
-    def tf_owner_name(self) -> str:
-        """The name tf errors give for this module."""
-        return self.config.instance_name or type(self).__name__
-
-    @cached_property
-    def tf_edge_ids(self) -> frozenset[tuple[str, str]]:
-        """The declared edges as (parent frame id, child frame id)."""
-        frames = self.tf_frames
-        return frozenset((frames[parent], frames[child]) for parent, child in self.config.tf_edges)
+    tf: IO[TFMessage]
 
     @cached_property
     def tf_frames(self) -> dict[str, str]:
@@ -215,10 +153,13 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
+        frames = self.tf_frames
         return TF(
             port,
-            edges=None if self.config.skip_tf_checks else self.tf_edge_ids,
-            module_name=self.tf_owner_name,
+            edges=None
+            if self.config.skip_tf_checks
+            else {(frames[parent], frames[child]) for parent, child in self.config.tf_edges},
+            module_name=self.config.instance_name or type(self).__name__,
         )
 
 
