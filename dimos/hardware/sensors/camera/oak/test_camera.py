@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 import cv2
 import numpy as np
+from pydantic import ValidationError
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -37,6 +38,7 @@ from dimos.hardware.sensors.camera.oak import camera as oak
 from dimos.hardware.sensors.camera.oak.camera import (
     OAK_UNBOOTED_USB_PRODUCT,
     OakCamera,
+    OakCameraConfig,
     call_within,
     oak_usb_devices,
     usb_permission_problem,
@@ -460,6 +462,8 @@ def test_publishes_color_depth_intrinsics_and_tf(
         assert (info.width, info.height, info.frame_id) == (WIDTH, HEIGHT, optical)
         assert list(info.K) == [500.0, 0.0, 4.0, 0.0, 501.0, 2.0, 0.0, 0.0, 1.0]
         assert list(info.D) == [0.0] * 5
+        # Stamped with the latest colour picture's capture time, as RealSense's and Orbbec's are.
+        assert info.ts == color.ts
     tf: TFMessage = received.messages["tf"][0]
     (mount, optical_edge) = tf.transforms
     assert (mount.frame_id, mount.child_frame_id) == ("arm/wrist_link", "arm/wrist_color_frame")
@@ -816,3 +820,8 @@ def test_a_cloud_pairs_depth_with_the_picture_taken_closest_to_it(
     assert len(received.messages["pointcloud"]) == 1
     points, _ = received.messages["pointcloud"][0].as_numpy()
     assert np.allclose(points[:, 2], 2.0)
+
+
+def test_a_cloud_without_depth_is_refused_when_configured() -> None:
+    with pytest.raises(ValidationError, match="enable_pointcloud needs enable_depth"):
+        OakCameraConfig(enable_pointcloud=True, enable_depth=False)

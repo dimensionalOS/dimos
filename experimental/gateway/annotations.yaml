@@ -1120,7 +1120,7 @@ robots:
           hidden: false
     sensors:
       name: Sensors
-      description: 'Sensors on their own: Livox Mid-360 lidars, RealSense, OAK and other cameras, and the rigs that carry them.'
+      description: 'Sensors on their own: Livox Mid-360 lidars, RealSense, Orbbec, OAK and other cameras, and the rigs that carry them.'
       type: null
       manufacturer: null
       dirs: [dimos/robot/assembly, dimos/hardware/sensors]

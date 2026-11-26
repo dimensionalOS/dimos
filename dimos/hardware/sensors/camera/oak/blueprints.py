@@ -27,8 +27,12 @@ from dimos.hardware.sensors.camera.oak.camera import OakCamera, OakCameraConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.visualization.vis_module import vis_module
+
+# Dot radius in screen-space UI points.
+_CLOUD_RADIUS_UI = 1.0
 
 
 class OakMountTfConfig(StaticTfPublisherConfig):
@@ -73,11 +77,23 @@ def _rerun_blueprint() -> Any:
     )
 
 
+def _cloud(cloud: PointCloud2) -> Any:
+    # The default "spheres" mode is sized for sparse lidar; a dense RGBD cloud
+    # reads better as flat dots that keep their size as you zoom.
+    return cloud.to_rerun(mode="points", ui_radius=_CLOUD_RADIUS_UI)
+
+
+_vis = vis_module(
+    viewer_backend=global_config.viewer,
+    rerun_config={
+        "blueprint": _rerun_blueprint,
+        "visual_override": {"world/pointcloud": _cloud},
+        "tf_axes": 0.2,
+    },
+)
+
 oak_camera_vis = autoconnect(
     OakCamera.blueprint(),
     OakMountTf.blueprint(),
-    vis_module(
-        viewer_backend=global_config.viewer,
-        rerun_config={"blueprint": _rerun_blueprint, "tf_axes": 0.1},
-    ),
-)
+    _vis,
+).global_config(n_workers=4)

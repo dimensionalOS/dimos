@@ -35,7 +35,7 @@ import threading
 import time
 from typing import Any, Literal, TypeVar, cast
 
-from pydantic import Field
+from pydantic import Field, model_validator
 import reactivex as rx
 
 from dimos.core.core import rpc
@@ -108,6 +108,7 @@ class OakCameraConfig(ModuleConfig, DepthCameraConfig):
         retry_interval: Seconds between attempts to bring the camera up.
         stall_timeout: Seconds without a colour picture after which the camera is closed and
             brought up again.
+        depth_trunc_m: Cloud points further than this are dropped.
     """
 
     width: int = Field(default=1280, gt=0)
@@ -119,12 +120,19 @@ class OakCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_depth: bool = True
     enable_pointcloud: bool = False
     pointcloud_fps: float = Field(default=5.0, gt=0.0)
+    depth_trunc_m: float = Field(default=5.0, gt=0.0)
     camera_info_fps: float = Field(default=1.0, gt=0.0)
     device_id: str | None = None
     mjpeg_quality: int = Field(default=90, ge=1, le=100)
     open_timeout: float = Field(default=40.0, gt=0.0)
     retry_interval: float = Field(default=4.0, ge=0.0)
     stall_timeout: float = Field(default=10.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def _a_cloud_needs_depth(self) -> OakCameraConfig:
+        if self.enable_pointcloud and not self.enable_depth:
+            raise ValueError("enable_pointcloud needs enable_depth")
+        return self
 
 
 class OakSetupError(Exception):
@@ -397,6 +405,8 @@ class OakCamera(Module, perception.DepthCamera):
         self._capture_thread: threading.Thread | None = None
         self._color_info: CameraInfo | None = None
         self._depth_info: CameraInfo | None = None
+        # Capture time of the latest colour picture: camera_info carries it, as RealSense's does.
+        self._last_color_ts: float | None = None
         self._recent_colors: deque[Image] = deque(maxlen=_RECENT_COLOURS)
         self._latest_depth: Image | None = None
 
@@ -621,7 +631,7 @@ class OakCamera(Module, perception.DepthCamera):
     def _forget_frames(self) -> None:
         """Drop what the last session saw: a camera brought up again may be another OAK."""
         with self._lock:
-            self._color_info = self._depth_info = None
+            self._color_info = self._depth_info = self._last_color_ts = None
             self._recent_colors.clear()
             self._latest_depth = None
 
@@ -647,6 +657,7 @@ class OakCamera(Module, perception.DepthCamera):
                 self._color_info = _camera_info(
                     frame.getTransformation(), self._color_optical_frame
                 )
+            self._last_color_ts = ts
             if self.config.enable_pointcloud:
                 self._recent_colors.append(image)
         self.color_image.publish(image)
@@ -690,9 +701,10 @@ class OakCamera(Module, perception.DepthCamera):
         )
 
     def _publish_camera_info(self) -> None:
-        ts = time.time()
         with self._lock:
-            color_info, depth_info = self._color_info, self._depth_info
+            color_info, depth_info, ts = self._color_info, self._depth_info, self._last_color_ts
+        if ts is None:
+            return
         if color_info is not None:
             self.camera_info.publish(color_info.with_ts(ts))
         if depth_info is not None:
@@ -715,6 +727,10 @@ class OakCamera(Module, perception.DepthCamera):
         if not paired:
             return
         cloud = PointCloud2.from_rgbd(
-            color_image=color, depth_image=depth, camera_info=info, depth_scale=DEPTH_SCALE
+            color_image=color,
+            depth_image=depth,
+            camera_info=info,
+            depth_scale=DEPTH_SCALE,
+            depth_trunc=self.config.depth_trunc_m,
         )
         self.pointcloud.publish(cloud.voxel_downsample(_POINTCLOUD_VOXEL_M))
