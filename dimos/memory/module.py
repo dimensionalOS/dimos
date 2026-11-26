@@ -34,7 +34,7 @@ from dimos.core.stream import In
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
-from dimos.memory.type.recording import OnExisting, SourceStamps, message_timestamp
+from dimos.memory.type.recording import OnExisting, SourceStamps
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
@@ -349,7 +349,7 @@ class Recorder(MemoryModule):
         async def on_msg(stamped: tuple[float, Any]) -> None:
             recv_ts, msg = stamped
             for payload, ts in source_stamps.rows(
-                name, msg, self._resolve_ts(name, msg), reception_ts=recv_ts
+                name, msg, reception_ts=recv_ts, ts=self._resolve_ts(name, msg)
             ):
                 pose = await self._resolve_pose(name, payload, ts)
                 if not pose and name not in self.config.poseless_streams:
@@ -377,9 +377,9 @@ class Recorder(MemoryModule):
         for stream in targets.intersection(self.store.list_streams()):
             self.store.delete_stream(stream)
 
-    def _resolve_ts(self, name: str, msg: Any) -> float:
-        """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return message_timestamp(msg)
+    def _resolve_ts(self, name: str, msg: Any) -> float | None:
+        """Source time to record *msg* at, None for unstamped. Override to re-base onto another clock."""
+        return getattr(msg, "ts", None)
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with.
@@ -419,6 +419,8 @@ class Recorder(MemoryModule):
         source_stamps = SourceStamps()
 
         def on_tf(msg: TFMessage) -> None:
+            if not msg.transforms:
+                return
             try:
                 for payload, ts in source_stamps.rows("tf", msg, reception_ts=time.time()):
                     tf_stream.append(payload, ts=ts, pose=None)

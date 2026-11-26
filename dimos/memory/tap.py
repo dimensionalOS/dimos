@@ -37,7 +37,7 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.type.recording import SourceStamps, message_timestamp
+from dimos.memory.type.recording import SourceStamps
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -88,9 +88,7 @@ class TransportRecorder:
         self.store = store
         self._topics = topics
         self._source_stamps = SourceStamps()
-        self._queue: queue.Queue[tuple[str, type, Any, float, float] | None] = queue.Queue(
-            queue_size
-        )
+        self._queue: queue.Queue[tuple[str, type, Any, float] | None] = queue.Queue(queue_size)
         self._streams: dict[str, Stream[Any]] = {}
         self.dropped = 0
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
@@ -98,17 +96,15 @@ class TransportRecorder:
 
     def _drain(self) -> None:
         while (item := self._queue.get()) is not None:
-            name, stream_type, msg, ts, received = item
+            name, stream_type, msg, received = item
             try:
                 stream = self._streams.get(name)
                 if stream is None:
                     codec = codec_for(stream_type, sample=msg)
                     stream = self.store.stream(name, stream_type, codec=codec)
                     self._streams[name] = stream
-                for payload, source_ts in self._source_stamps.rows(
-                    name, msg, ts, reception_ts=received
-                ):
-                    stream.append(payload, ts=source_ts)
+                for payload, ts in self._source_stamps.rows(name, msg, reception_ts=received):
+                    stream.append(payload, ts=ts)
             except Exception:
                 logger.exception("--record: failed to append to %s", name)
 
@@ -131,10 +127,7 @@ class TransportRecorder:
 
         def on_msg(msg: Any) -> None:
             try:
-                received = time.time()
-                self._queue.put_nowait(
-                    (name, stream_type, msg, message_timestamp(msg, received), received)
-                )
+                self._queue.put_nowait((name, stream_type, msg, time.time()))
             except queue.Full:
                 self.dropped += 1
                 if self.dropped % 1000 == 1:

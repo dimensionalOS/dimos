@@ -15,8 +15,10 @@
 from collections.abc import Callable
 from contextlib import ExitStack, closing
 from pathlib import Path
+import time
 from typing import Any
 
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -31,6 +33,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.memory.type import recording
 from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.msgs.control_msgs.DynamicJointState import DynamicJointState
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -247,40 +250,28 @@ def test_records_tf_and_odom_at_source_time(sqlite_store):
     assert (replay.first_ts(), replay.last_ts()) == (ts, ts + 2.0)
 
 
-def test_unset_stamps_share_the_wall_clock_replay_window(sqlite_store, mocker):
-    wall = 1_800_000_000.0
-    mocker.patch.object(tap.time, "time", return_value=wall)
-    with closing(TransportRecorder(sqlite_store)) as recorder:
-        odom, frames = _Transport(), _Transport()
-        recorder.tap("odom", PoseStamped, odom)
-        recorder.tap("tf", TFMessage, frames)
-        odom.publish(PoseStamped(ts=0.0))
-        frames.publish(TFMessage(Transform(ts=0.0), Transform(ts=wall + 0.25)))
-
-    replay = sqlite_store.replay(duration=1.0)
-    replay.pin_anchor()
-    assert replay.first_ts() == wall
-    assert replay._anchor is not None and replay._anchor[1] == wall
-    assert [(ts, pose.ts) for ts, pose in replay.stream("odom").iterate_ts()] == [(wall, 0.0)]
-    assert [(ts, batch.transforms[0].ts) for ts, batch in replay.stream("tf").iterate_ts()] == [
-        (wall, 0.0),
-        (wall + 0.25, wall + 0.25),
-    ]
-
-
-def test_zero_stamps_index_at_arrival_and_warn_once_per_topic(sqlite_store, mocker):
-    mocker.patch.object(tap.time, "time", return_value=99.0)
+def test_unstamped_messages_index_at_arrival_and_warn_once_per_topic(sqlite_store, mocker):
     warning = mocker.patch.object(recording.logger, "warning")
+    before = time.time()
     with closing(TransportRecorder(sqlite_store)) as recorder:
-        odom, pose = _Transport(), _Transport()
+        odom, notes, frames = _Transport(), _Transport(), _Transport()
         recorder.tap("odom", PoseStamped, odom)
-        recorder.tap("pose", PoseStamped, pose)
-        for _ in range(3):
+        recorder.tap("notes", String, notes)
+        recorder.tap("tf", TFMessage, frames)
+        for _ in range(2):
             odom.publish(PoseStamped(ts=0.0))
-        pose.publish(PoseStamped(ts=0.0))
+        notes.publish(String("unstamped"))
+        frames.publish(TFMessage(Transform(ts=0.0), Transform(ts=42.25)))
+    after = time.time()
 
-    assert [row.ts for row in sqlite_store.stream("odom", PoseStamped)] == [99.0] * 3
-    assert sorted(call.args[1] for call in warning.call_args_list) == ["odom", "pose"]
+    odom_rows = sqlite_store.stream("odom", PoseStamped).to_list()
+    assert len(odom_rows) == 2
+    assert all(before <= row.ts <= after and row.data.ts == 0.0 for row in odom_rows)
+    assert before <= sqlite_store.stream("notes", String).first().ts <= after
+    tf_rows = sqlite_store.stream("tf", TFMessage).order_by("id").to_list()
+    assert before <= tf_rows[0].ts <= after
+    assert tf_rows[1].ts == 42.25
+    assert sorted(call.args[1] for call in warning.call_args_list) == ["notes", "odom", "tf"]
 
 
 @pytest.mark.parametrize(
@@ -289,17 +280,15 @@ def test_zero_stamps_index_at_arrival_and_warn_once_per_topic(sqlite_store, mock
         Header(0.25),
         JointCommand(timestamp=0.25),
         ControlValues("test", source_ts=0.25),
-        String("unstamped"),
+        DynamicJointState(header=LCMHeader(stamp=LCMTime(sec=0, nsec=250_000_000))),
     ],
 )
-def test_tap_indexes_other_source_clocks_and_unstamped_messages(sqlite_store, message, mocker):
+def test_tap_records_types_that_keep_their_stamp_under_another_name(sqlite_store, message):
     transport = _Transport()
-    mocker.patch.object(tap.time, "time", return_value=99.0)
     with closing(TransportRecorder(sqlite_store)) as recorder:
         recorder.tap("samples", type(message), transport)
         transport.publish(message)
-    row = sqlite_store.stream("samples", type(message)).first()
-    assert row.ts == (99.0 if isinstance(message, String) else 0.25)
+    assert sqlite_store.stream("samples", type(message)).first().ts == 0.25
 
 
 class _SourceRecorder(Recorder):

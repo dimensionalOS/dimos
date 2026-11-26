@@ -27,7 +27,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Literal
 
-from dimos_lcm.control_msgs import DynamicJointState
 import numpy as np
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation, Slerp
@@ -36,6 +35,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.control_msgs.DynamicJointState import DynamicJointState
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry

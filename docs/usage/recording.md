@@ -15,9 +15,9 @@ Bare `--record` means `--record sqlite`. SQLite lands at
 `~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
 same `YYYYMMDD-HHMMSS-<4 hex>-<blueprint>` used by the run's `logs/` directory.
 
-Recorders index supported stamped messages at their source time. A zero stamp
-means the publisher never set it: that message is indexed at packet arrival, its
-payload keeps the original zero, and the recorder warns once per topic.
+Recorders index each message at its source time, its `ts`. A missing or zero
+`ts` means the publisher never set it: that message is indexed at packet arrival,
+its payload keeps the original zero, and the recorder warns once per topic.
 A TF batch produces one row per transform, each indexed by its own header stamp.
 Pose arrays such as `pgo_keyframes` use the array header. The Rust engine keeps
 arrival time in MCAP log time and in SQLite reception tags for non-TF streams.
