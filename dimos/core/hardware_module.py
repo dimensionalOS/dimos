@@ -33,10 +33,12 @@ relative to itself, so whatever needs the whole assembly (a simulator, on this m
 fetches them with ``fetch_hardware_files`` and composes them (each already sits at its tf frames).
 """
 
+import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import cached_property
+import time
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, get_type_hints
 
 import numpy as np
@@ -207,6 +209,14 @@ class HardwareModule(TfModule):
     hardware_file_response: Out[FileInfo]
     # The edges that never move, once at start (not latched: only what listens then gets them).
     tf_static: Out[TFMessage]
+
+    def time(self) -> float:
+        """The clock this hardware stamps its tf with: wall time, or a simulated world's time in sim hardware."""
+        return time.time()
+
+    async def sleep(self, seconds: float) -> None:
+        """Wait ``seconds`` of this hardware's time: wall time, or a simulated world's time in sim hardware."""
+        await asyncio.sleep(seconds)
 
     @classmethod
     def attach(cls, mount: Mount, **kwargs: Any) -> "Blueprint":
