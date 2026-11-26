@@ -16,11 +16,10 @@ from typing import Any
 
 import pytest
 
-from dimos.core.hardware_module import HardwareModule
 from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.tf.frame_paths import check_frame_path, frame_path_error, is_hardware_edge
+from dimos.protocol.tf.frame_paths import check_frame_path, frame_path_error
 from dimos.protocol.tf.tf import MultiTBuffer
 
 
@@ -46,13 +45,7 @@ def test_a_frame_path_is_prim_names_joined_by_slashes(path: str, complaint: str 
             check_frame_path(path, "the frame")
 
 
-def test_a_hardware_edge_is_one_a_hardware_module_names() -> None:
-    hardware_ids = {("go2_A/go2", "go2_A/go2/base")}
-    assert is_hardware_edge("go2_A/go2", "go2_A/go2/base", hardware_ids)
-    assert not is_hardware_edge("odom", "go2_A/go2/base", hardware_ids)
-
-
-def test_a_frame_with_a_hardware_and_an_imaginary_parent_is_found_both_ways() -> None:
+def test_a_frame_with_two_parents_is_found_both_ways() -> None:
     buffer = MultiTBuffer()
     buffer.receive_transform(
         Transform(
@@ -85,20 +78,12 @@ class _Edged(TfModule):
     config: _Edges
 
 
-class _Hardware(HardwareModule):
-    """A HardwareModule's atom, made without a USD: only its class marks its edges as hardware."""
-
-
-def _atoms(
-    *declared: tuple[dict[str, str], list[tuple[str, str]]], hardware: tuple[int, ...] = ()
-) -> list[Any]:
+def _atoms(*declared: tuple[dict[str, str], list[tuple[str, str]]]) -> list[Any]:
     from dimos.core.coordination.blueprints import Blueprint, autoconnect, config_defaults
 
     blueprint = autoconnect(
         *(
-            Blueprint.create(
-                _Hardware if index in hardware else _Edged, tf_frames_global=frames, tf_edges=edges
-            ).namespace(f"m{index}")
+            Blueprint.create(_Edged, tf_frames_global=frames, tf_edges=edges).namespace(f"m{index}")
             for index, (frames, edges) in enumerate(declared)
         )
     )
@@ -110,30 +95,17 @@ def _atoms(
     ]
 
 
-def test_a_hardware_and_an_imaginary_parent_are_allowed() -> None:
+def test_a_frame_with_two_parents_and_no_loop_passes() -> None:
     TfModule.blueprint_checks(
         _atoms(
-            ({"top": "go2", "base": "go2/base"}, [("top", "base")]),
+            ({"map": "map", "base": "go2/base"}, [("map", "base")]),
             ({"odom": "odom", "base": "go2/base"}, [("odom", "base")]),
-            hardware=(0,),
         )
     )
 
 
-def test_two_imaginary_parents_are_refused() -> None:
-    with pytest.raises(
-        ValueError, match=r"'go2/base' has several parents: map .*odom .*\(all imaginary"
-    ):
-        TfModule.blueprint_checks(
-            _atoms(
-                ({"map": "map", "base": "go2/base"}, [("map", "base")]),
-                ({"odom": "odom", "base": "go2/base"}, [("odom", "base")]),
-            )
-        )
-
-
-def test_an_edge_closing_a_loop_is_refused_even_with_one_parent_each() -> None:
-    # odom -> go2/base, go2 -> go2/base and odom -> go2: no frame has two parents of one kind, but they loop.
+def test_an_edge_closing_a_loop_is_refused() -> None:
+    # odom -> go2/base, go2 -> go2/base and odom -> go2: two paths from odom to go2/base.
     with pytest.raises(ValueError, match=r"form a cycle: .*closes the loop"):
         TfModule.blueprint_checks(
             _atoms(

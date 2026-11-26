@@ -104,17 +104,19 @@ class HardwareModuleConfig(TfModuleConfig):
     @model_validator(mode="after")
     def _check_roles(self) -> "HardwareModuleConfig":
         # Filled before TfModuleConfig's role check runs, so tf_edges may name the USD's frames.
-        self.tf_frames_local, self.tf_frames_global, self.tf_edges = usd_tf(self)
+        self.tf_frames_local, self.tf_frames_global, self.tf_edges = (
+            validate_and_extend_tf_from_usd(self)
+        )
         check_attached_namespace(self.attached_to, (self.instance_name or "").rpartition("/")[0])
         # The parent's validator is a plain function at runtime; mypy sees pydantic's decorator proxy.
         cast("Callable[[TfModuleConfig], TfModuleConfig]", TfModuleConfig._check_roles)(self)
         return self
 
 
-def usd_tf(
+def validate_and_extend_tf_from_usd(
     config: Any, mounts: "Mounts | None" = None
 ) -> tuple[dict[str, str], dict[str, str], list[tuple[str, str]]]:
-    """A HardwareModule's tf: its USD's frames (role = frame path) and edges, its mount edge, then what its config adds.
+    """Check a HardwareModule's declared tf against its USD, then extend it with the USD's frames (role = frame path) and edges and its mount edge.
 
     ``config`` is a HardwareModuleConfig or a blueprint atom's kwargs (read the same way).
     """
@@ -197,7 +199,7 @@ class HardwareSpec(Spec, Protocol):
     def get_usd(self) -> str: ...
     # possible to have a namespace without being mounted, this differentiates that
     def attached_to(self) -> str | None: ...
-    # The (parent, child) frame ids it publishes, so a recorder can tell hardware edges from imaginary ones.
+    # The (parent, child) frame ids it publishes, so a recorder can tell which edges are hardware.
     def get_hardware_transform_ids(self) -> list[tuple[str, str]]: ...
 
 
@@ -205,7 +207,7 @@ class HardwareModule(TfModule):
     """Hardware with its own USD; each namespace has one unmounted HardwareModule, the rest are mounted.
 
     It publishes only its USD's edges and its mount, never an estimate; ``get_hardware_transform_ids()``
-    names them, which is how a recorder tells hardware edges from imaginary ones.
+    names them, which is how a recorder tells which edges are hardware.
     """
 
     config: HardwareModuleConfig
@@ -228,7 +230,7 @@ class HardwareModule(TfModule):
 
         def create(**kwargs: Any) -> Blueprint:
             values = {**config_defaults(cls), **kwargs}
-            local, shared, edges = usd_tf(values, cls.mounts)
+            local, shared, edges = validate_and_extend_tf_from_usd(values, cls.mounts)
             return Blueprint.create(
                 cls,
                 **{
