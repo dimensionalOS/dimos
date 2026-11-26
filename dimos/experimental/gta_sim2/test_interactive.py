@@ -51,3 +51,16 @@ def test_patch_guard_blocks_outward_but_allows_escape_in_robot_frame() -> None:
         *bounds,
     )
     np.testing.assert_allclose(backward, [-0.2, 0, -0.4], atol=1e-12)
+
+
+def test_fast_forward_does_not_raise_sideways_or_turning_limits() -> None:
+    velocity = bounded_velocity(
+        {"issued": 10.0, "forward": 1, "right": 1, "turn": 1},
+        10.1,
+        np.zeros(2),
+        0,
+        np.array([-10.0, -10.0]),
+        np.array([10.0, 10.0]),
+        speed=(3.0, 0.3, 0.7),
+    )
+    np.testing.assert_allclose(velocity, [3.0, -0.3, -0.7])

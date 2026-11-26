@@ -41,7 +41,11 @@ def test_stop_duplicate_and_motor_contract(
         return session
 
     monkeypatch.setattr("onnxruntime.InferenceSession", load)
-    module = M20PolicyModule(model_path=Path("fixture.onnx"))
+    module = M20PolicyModule(
+        model_path=Path("fixture.onnx"),
+        command_velocity_limits=(3.0, 0.5, 0.7),
+        turning_forward_speed=1.5,
+    )
     request.addfinalizer(module.stop)
     module._actor = M20Actor(Path("fixture.onnx"))
     module._clock_id = "evaluation-clock"
@@ -112,6 +116,21 @@ def test_stop_duplicate_and_motor_contract(
         module.compute(joints, imu)
     assert module.status()["mode"] == "stand"
     np.testing.assert_allclose(module.status()["policy_velocity"], 0, atol=1e-8)
+    # A faster forward ceiling must retain independent side/yaw limits and the
+    # same acceleration ramp; the old hardcoded clamp silently saturated at 1.5.
+    module.move(Twist(linear=Vector3(4, -1, 0)), duration=10)
+    for index in range(80):
+        joints.ts = imu.ts = 1.72 + index * 0.02
+        module.compute(joints, imu)
+    np.testing.assert_allclose(module.status()["policy_velocity"], [3.0, -0.5, 0])
+    ramp = np.array([row[0, 6] for row in session.inputs[-80:]])
+    assert np.max(np.diff(ramp)) <= 0.040001
+    module.move(Twist(linear=Vector3(3, 0, 0), angular=Vector3(0, 0, 2)), duration=10)
+    for index in range(40):
+        joints.ts = imu.ts = 3.32 + index * 0.02
+        module.compute(joints, imu)
+    np.testing.assert_allclose(module.status()["policy_velocity"], [1.5, 0, 0.7])
+    assert module.status()["turning_limited"]
 
 
 @pytest.mark.asyncio

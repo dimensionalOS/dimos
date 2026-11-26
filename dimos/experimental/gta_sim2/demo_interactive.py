@@ -122,15 +122,18 @@ def main() -> None:
     parser.add_argument("--policy", type=Path)
     parser.add_argument("--policy-profile", choices=("sdk57", "dreamwaq342"), default="sdk57")
     parser.add_argument("--stream-catalog", type=Path)
+    parser.add_argument("--max-forward-speed", type=float, default=1.5)
     args = parser.parse_args()
     if args.robot == "m20" and args.policy is None:
         parser.error("--robot m20 requires the explicit --policy checkpoint")
     is_m20 = args.robot == "m20"
     if args.stream_catalog and not is_m20:
         parser.error("Collision streaming is currently validated with M20 only")
+    if not math.isfinite(args.max_forward_speed) or not 0 < args.max_forward_speed <= 3:
+        parser.error("max-forward-speed must be in (0, 3] m/s; higher commands need evaluation")
     focus_body = M20_BASE if is_m20 else PELVIS
     camera_frame = (M20_BASE if is_m20 else TORSO) + "/camera_mount/camera/camera"
-    speed = (1.5, 0.3, 0.7) if is_m20 else (0.2, 0.15, 0.4)
+    speed = (args.max_forward_speed, 0.3, 0.7) if is_m20 else (0.2, 0.15, 0.4)
     args.runtime.mkdir(parents=True, exist_ok=True)
     manifest = read_json(args.scene.with_name("manifest.json"))
     origin = np.asarray(manifest["origin_rage_m"], dtype=np.float64)
@@ -225,6 +228,8 @@ def main() -> None:
                                 streaming=bool(
                                     args.stream_catalog and args.stream_catalog.suffix == ".json"
                                 ),
+                                command_velocity_limits=(args.max_forward_speed, 0.5, 0.7),
+                                turning_forward_speed=1.5,
                             )
                             if is_m20
                             else gta_g1_blueprint(args.scene)
@@ -325,6 +330,7 @@ def main() -> None:
                         position=xyz.tolist(),
                         yaw=yaw,
                         command=[vx, vy, wz],
+                        control_speed_limits=list(speed),
                         clearance_m=clearance,
                         patch_limit_m=[lo.tolist(), hi.tolist()],
                         near_boundary=bool(

@@ -70,6 +70,8 @@ class M20PolicyConfig(SceneConfig):
     period_ns: int = 20_000_000
     command_ttl_ns: int = 100_000_000
     command_acceleration: tuple[float, float, float] = (2.0, 1.0, 2.0)
+    command_velocity_limits: tuple[float, float, float] = (1.5, 0.5, 0.7)
+    turning_forward_speed: float | None = None
     streaming_required: bool = False
 
 
@@ -99,6 +101,7 @@ class M20PolicyModule(Module):
         self._park_wheels: NDArray[np.float64] | None = None
         self._safety: dict[int, dict[str, Any]] = {}
         self._governed = False
+        self._turning_limited = False
 
     @rpc
     def build(self) -> None:
@@ -113,6 +116,14 @@ class M20PolicyModule(Module):
             or min(self.config.command_acceleration) <= 0
         ):
             raise ValueError("Command acceleration limits must be finite and positive")
+        if (
+            not np.isfinite(self.config.command_velocity_limits).all()
+            or min(self.config.command_velocity_limits) <= 0
+        ):
+            raise ValueError("Command velocity limits must be finite and positive")
+        turning_speed = self.config.turning_forward_speed
+        if turning_speed is not None and (not math.isfinite(turning_speed) or turning_speed <= 0):
+            raise ValueError("Turning forward speed must be finite and positive")
         scene = self.config.scene
         if not isinstance(scene, UsdModel):
             raise TypeError("M20 requires its composed USD scene")
@@ -130,7 +141,8 @@ class M20PolicyModule(Module):
         if not np.isfinite((*values, duration)).all() or duration <= 0:
             raise ValueError("Finite velocity and positive duration required")
         with self._lock:
-            self._velocity = np.clip(values, [-1.5, -0.5, -0.7], [1.5, 0.5, 0.7])
+            limits = np.asarray(self.config.command_velocity_limits)
+            self._velocity = np.clip(values, -limits, limits)
             self._until = time.monotonic() + duration
 
     async def handle_cmd_vel(self, sample: Twist) -> None:
@@ -203,6 +215,17 @@ class M20PolicyModule(Module):
                 .apply([0, 0, -1])
             )
             velocity = self._velocity.copy() if time.monotonic() < self._until else np.zeros(3)
+            # This checkpoint loses yaw tracking at 3 m/s. Browser steering uses
+            # its lower-speed envelope, with the usual acceleration/braking ramp.
+            turning_speed = self.config.turning_forward_speed
+            self._turning_limited = bool(
+                turning_speed is not None
+                and abs(velocity[2]) > 0.1
+                and abs(velocity[0]) > turning_speed
+            )
+            if self._turning_limited:
+                assert turning_speed is not None
+                velocity[0] = np.clip(velocity[0], -turning_speed, turning_speed)
             self._governed = False
             if self.config.streaming_required:
                 available = [key for key in self._safety if key <= stamp]
@@ -303,6 +326,8 @@ class M20PolicyModule(Module):
                 "contract": self.config.profile,
                 "mode": "stand" if self._standing else "policy",
                 "policy_velocity": self._applied_velocity.tolist(),
+                "command_velocity_limits": self.config.command_velocity_limits,
+                "turning_limited": self._turning_limited,
                 "streaming_governed": self._governed,
             }
 
@@ -322,6 +347,8 @@ def m20_blueprint(
     *,
     backend: Callable[[], PhysicsBackend] = MujocoBackend,
     streaming: bool = False,
+    command_velocity_limits: tuple[float, float, float] = (1.5, 0.5, 0.7),
+    turning_forward_speed: float | None = None,
 ) -> MetaBlueprint:
     scene = UsdModel.from_file(scene_path)
     paths = joint_paths(scene)
@@ -347,6 +374,11 @@ def m20_blueprint(
         SimModule.blueprint(backend=backend, observation_hz=200, joint_ids=ids),
         SimJointEncoderModule.blueprint(sensor=EncoderConfig(ids, hz=50)),
         M20PolicyModule.blueprint(
-            scene=scene, model_path=policy_path, profile=profile, streaming_required=streaming
+            scene=scene,
+            model_path=policy_path,
+            profile=profile,
+            streaming_required=streaming,
+            command_velocity_limits=command_velocity_limits,
+            turning_forward_speed=turning_forward_speed,
         ),
     ).global_config(viewer="none", transport="zenoh", n_workers=6)

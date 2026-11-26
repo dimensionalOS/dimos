@@ -52,7 +52,7 @@ def fixture(scene: Path, output: Path, terrain: str, step_height: float = 0.1) -
     transform.SetTranslate(body.GetLocalTransformation().ExtractTranslation())
     body.MakeMatrixXform().Set(transform)
     boxes: list[tuple[str, tuple[float, float, float], tuple[float, float, float]]] = [
-        ("ground", (0, 0, -0.05), (40, 10, 0.1))
+        ("ground", (0, 0, -0.05), (500, 100, 0.1))
     ]
     if terrain == "stairs":
         for i in range(5):
@@ -78,6 +78,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--seconds", type=float, default=4)
+    parser.add_argument("--stop-after-s", type=float, help="Release input, then measure braking")
+    parser.add_argument("--yaw-rate", type=float, default=0)
+    parser.add_argument("--turn-after-s", type=float, default=0)
+    parser.add_argument("--turning-forward-speed", type=float)
     parser.add_argument("--step-height", type=float, default=0.1)
     parser.add_argument("--stream-catalog", type=Path)
     parser.add_argument("--compiler-delay-s", type=float, default=0)
@@ -90,6 +94,12 @@ def main() -> None:
     parser.add_argument("--profile", choices=("sdk57", "dreamwaq342"), default="sdk57")
     parser.add_argument("--terrain", choices=("road", "flat", "stairs"), default="road")
     args = parser.parse_args()
+    if not np.isfinite([args.speed, args.seconds, args.yaw_rate, args.turn_after_s]).all():
+        parser.error("Evaluation commands and duration must be finite")
+    if args.seconds <= 0 or abs(args.yaw_rate) > 0.7 or args.turn_after_s < 0:
+        parser.error("Positive duration, nonnegative turn delay and |yaw-rate| <= .7 required")
+    if args.stop_after_s is not None and not 0 < args.stop_after_s < args.seconds:
+        parser.error("stop-after-s must be between zero and seconds")
     if not 0 < args.step_height <= 0.3:
         parser.error("step-height must be in (0, .3] metres")
     if args.stream_catalog and args.terrain != "road":
@@ -114,6 +124,8 @@ def main() -> None:
                 else MujocoBackend
             ),
             streaming=bool(args.stream_catalog and args.stream_catalog.suffix == ".json"),
+            command_velocity_limits=(max(1.5, abs(args.speed)), 0.5, 0.7),
+            turning_forward_speed=args.turning_forward_speed,
         )
         .global_config(zenoh_domain="m20-eval-" + uuid.uuid4().hex)
         .solidify()
@@ -135,20 +147,20 @@ def main() -> None:
         forward_axis = np.zeros(2)
         reached_goal_at: float | None = None
         residency_rows = []
+        command_rows = []
         outcome = "timeout"
         while time.monotonic() - start < args.seconds:
             tick = time.monotonic()
+            elapsed = tick - start
             direction = (
-                -1
-                if args.reverse_after_s is not None and tick - start >= args.reverse_after_s
-                else 1
+                -1 if args.reverse_after_s is not None and elapsed >= args.reverse_after_s else 1
             )
-            policy.move(
-                Twist(
-                    linear=Vector3(args.speed * direction if reached_goal_at is None else 0, 0, 0)
-                ),
-                duration=0.35,
+            stopped = reached_goal_at is not None or (
+                args.stop_after_s is not None and elapsed >= args.stop_after_s
             )
+            vx = 0.0 if stopped else args.speed * direction
+            wz = args.yaw_rate if not stopped and elapsed >= args.turn_after_s else 0.0
+            policy.move(Twist(linear=Vector3(vx, 0, 0), angular=Vector3(0, 0, wz)), duration=0.35)
             sample = sim.inspect()
             for observation in sample.cbor_observations:
                 if observation.entity_id == "world" and observation.key == "gta/streaming":
@@ -163,7 +175,17 @@ def main() -> None:
             if not rows:
                 forward_axis = rotation.as_matrix()[:2, 0]
                 forward_axis /= np.linalg.norm(forward_axis)
-            rows.append([sample.header.time_ns / 1e9, p.x, p.y, p.z, rotation.as_matrix()[2, 2]])
+            rows.append(
+                [
+                    sample.header.time_ns / 1e9,
+                    p.x,
+                    p.y,
+                    p.z,
+                    rotation.as_matrix()[2, 2],
+                    rotation.as_euler("xyz")[2],
+                ]
+            )
+            command_rows.append([rows[-1][0], elapsed, vx, wz])
             if rows[-1][4] < 0.5 or p.z < 0.2:
                 outcome = "fallen"
                 break
@@ -182,6 +204,15 @@ def main() -> None:
             time.sleep(max(0, 0.05 - (time.monotonic() - tick)))
         policy.move(Twist(), duration=0.35)
         a = np.asarray(rows)
+        commands = np.asarray(command_rows)
+        dt = np.diff(a[:, 0])
+        travel = np.linalg.norm(np.diff(a[:, 1:3], axis=0), axis=1)
+        measured_speed = travel / np.maximum(dt, 1e-9)
+        steady = (commands[1:, 1] >= 3) & (commands[1:, 2] != 0) & (dt > 0)
+        turning = (commands[1:, 1] >= args.turn_after_s + 3) & (commands[1:, 3] != 0) & (dt > 0)
+        yaw_rate = np.diff(np.unwrap(a[:, 5])) / np.maximum(dt, 1e-9)
+        stop_indices = np.flatnonzero(commands[:, 2] == 0)
+        stop_index = int(stop_indices[0]) if len(stop_indices) else None
         report = {
             "terrain": args.terrain,
             "outcome": outcome,
@@ -189,6 +220,12 @@ def main() -> None:
             "step_height_m": args.step_height if args.terrain == "stairs" else None,
             "goal_sim_time_s": reached_goal_at,
             "command_mps": args.speed,
+            "command_yaw_rate": args.yaw_rate,
+            "steady_speed_mps": float(np.median(measured_speed[steady])) if steady.any() else None,
+            "peak_speed_mps": float(measured_speed.max()),
+            "turn_yaw_rate_rad_s": float(np.median(yaw_rate[turning])) if turning.any() else None,
+            "stop_path_m": float(travel[stop_index:].sum()) if stop_index is not None else None,
+            "final_2s_drift_m": float(travel[a[1:, 0] >= a[-1, 0] - 2].sum()),
             "duration_s": float(a[-1, 0] - a[0, 0]),
             "distance_xy_m": float(np.linalg.norm(a[-1, 1:3] - a[0, 1:3])),
             "forward_axis_xy": forward_axis.tolist(),
@@ -200,11 +237,18 @@ def main() -> None:
             "sim": sim.status(),
             "policy": policy.status(),
             "trajectory": rows,
+            "commands": command_rows,
             "residency": residency_rows,
         }
         args.output.write_text(json.dumps(report, indent=2))
         print(
-            json.dumps({k: v for k, v in report.items() if k not in ("trajectory", "residency")}),
+            json.dumps(
+                {
+                    k: v
+                    for k, v in report.items()
+                    if k not in ("trajectory", "residency", "commands")
+                }
+            ),
             flush=True,
         )
     except Exception:
