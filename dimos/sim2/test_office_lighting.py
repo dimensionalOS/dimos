@@ -23,8 +23,8 @@ def test_the_office_camera_sees_the_room_as_its_lighting_notes_describe_it(rende
     import mujoco
 
     from dimos.robot.unitree.g1.blueprints.basic.three_g1_office_555 import Office555Config
+    from dimos.sim2.mujoco.sensor_mount import SensorMount
     from dimos.sim2.mujoco.view import MujocoView
-    from dimos.sim2.mujoco.world import SensorMount
     from dimos.sim2.usd_layer import usd_layer
 
     view = MujocoView(

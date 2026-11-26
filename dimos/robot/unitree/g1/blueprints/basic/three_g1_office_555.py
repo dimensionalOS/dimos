@@ -21,10 +21,13 @@ and its walker runs its policy at 50 Hz of wall time, as on the real robot.
 
 import math
 
+from pydantic import Field
+
 from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.hardware_module import Mounts
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
 from dimos.robot.unitree.g1.sim2 import G1_ODOM_TF, G1Sim
 from dimos.robot.unitree.g1.sim2_walker import G1SimWalker
 from dimos.sim2.camera import SimCamera
@@ -47,11 +50,17 @@ OVERVIEW = ((-0.1, -10.5, 2.2), (-(math.pi / 2 + math.radians(25)), 0.0, 0.0))
 DRIVEN = "main"
 
 
-class Office555Config(SimSceneConfig):
-    usd: UsdModel = UsdModel.from_file(SCENE).with_frames(
+def _office_usd() -> UsdModel:
+    # The layer is Git LFS, a pointer in a checkout that skips smudging; a blueprint's checks read it before any module starts.
+    pull_lfs_files([SCENE])
+    return UsdModel.from_file(SCENE).with_frames(
         {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
         | {"overview": ("office_555", *OVERVIEW)}
     )
+
+
+class Office555Config(SimSceneConfig):
+    usd: UsdModel = Field(default_factory=_office_usd)
 
 
 class Office555(SimScene):

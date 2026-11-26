@@ -69,6 +69,5 @@ def test_a_mesh_the_layer_names_that_is_a_git_lfs_pointer_is_fetched_before_it_i
 
     usd_layer.usd_layer(UsdModel.from_file(robot))
 
-    # The layer itself is checked too; it is no pointer, so only the mesh is fetched.
-    assert [paths for paths in pulled if paths] == [[meshes / "arm.usdc"]]
+    assert pulled == [[meshes / "arm.usdc"]]
     assert (meshes / "arm.usdc").read_bytes() == b"PXR-USDC fetched"

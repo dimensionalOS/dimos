@@ -16,5 +16,5 @@
 from pathlib import Path
 
 # The layer and every mesh it references are Git LFS, so a checkout made with GIT_LFS_SKIP_SMUDGE=1
-# has pointer files here; UsdModel fetches the layer, and usd_layer the meshes a world names, before a sim reads them.
+# has pointer files here; Office555Config fetches the layer, and usd_layer the meshes a world names, before a sim reads them.
 SCENE = Path(__file__).parent / "scene.usda"

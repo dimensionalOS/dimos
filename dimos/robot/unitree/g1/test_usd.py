@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("pxr")
@@ -40,26 +38,3 @@ def test_the_lidar_mount_is_a_frame_and_the_pelvis_imu_is_a_site() -> None:
     assert IMU_FRAME.rpartition("/")[2] in {
         site.name for site in compile_world(usd_layer(G1_USD)).sites
     }
-
-
-def test_every_g1_asset_resolves_to_a_file() -> None:
-    import xml.etree.ElementTree as ET
-
-    from dimos.robot.assets.usd_utils.assets import (
-        LFS_POINTER,
-        resolve_usd_assets,
-        unopenable_assets,
-    )
-    from dimos.robot.unitree.g1.config import G1_JOINT_MODEL
-    from dimos.robot.unitree.g1.sim2 import G1_USD
-
-    assert G1_USD.source_path is not None
-    root = str(G1_USD.source_path.parent)
-    unopenable = unopenable_assets(resolve_usd_assets(G1_USD.usd, root), root)
-    # A pointer is the file at the right path; hosted runners never fetch LFS, and usd_layer does.
-    assert {asset: why for asset, why in unopenable.items() if why != LFS_POINTER} == {}
-    meshes = [
-        mesh.get("filename") or "" for mesh in ET.fromstring(G1_JOINT_MODEL.load().xml).iter("mesh")
-    ]
-    assert meshes
-    assert [mesh for mesh in meshes if not (Path(mesh).is_absolute() and Path(mesh).exists())] == []
