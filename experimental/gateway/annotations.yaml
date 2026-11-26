@@ -1120,7 +1120,7 @@ robots:
           hidden: false
     sensors:
       name: Sensors
-      description: 'Sensors on their own: Livox Mid-360 lidars, RealSense and other cameras, and the rigs that carry them.'
+      description: 'Sensors on their own: Livox Mid-360 lidars, RealSense, Orbbec, OAK and other cameras, and the rigs that carry them.'
       type: null
       manufacturer: null
       dirs: [dimos/robot/assembly, dimos/hardware/sensors]
@@ -1132,6 +1132,9 @@ robots:
         orbbec-camera-vis:
           title: Orbbec viewer
           description: An Orbbec Gemini's color, depth and RGBD cloud in Rerun.
+        oak-camera-vis:
+          title: OAK viewer
+          description: A Luxonis OAK-D's color, depth and optional RGBD cloud in Rerun (needs the oak extra).
         demo-camera:
           title: Webcam demo
           description: 'This computer''s camera as a dimos stream: the smallest blueprint there is.'

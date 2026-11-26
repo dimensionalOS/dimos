@@ -364,6 +364,11 @@ drone = [
     "pymavlink"
 ]
 
+# Luxonis OAK cameras (dimos/hardware/sensors/camera/oak/).
+oak = [
+    "depthai>=3.11,<4",
+]
+
 dds = [
     "cyclonedds>=0.10.5",
 ]
@@ -399,7 +404,7 @@ scene = [
 ]
 
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,misc,oak,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -771,6 +776,8 @@ module = [
     "cel_expr_python.*",
     "cyclonedds",
     "cyclonedds.*",
+    "depthai",
+    "depthai.*",
     "dimos_lcm.*",
     "lz4",
     "lz4.*",
