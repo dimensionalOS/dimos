@@ -24,11 +24,16 @@ Robots and sensors are HardwareModules that read those observations and send ``w
 import asyncio
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from threading import Event
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
-from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint
+from dimos.core.coordination.blueprints import (
+    Blueprint,
+    BlueprintProtocol,
+    ChoiceAtom,
+    MetaBlueprint,
+)
 from dimos.core.core import rpc
 from dimos.core.hardware_module import HardwareSpec, Mount
 from dimos.core.module import Module
@@ -143,22 +148,35 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
     return [module for module in modules if rpcs <= set(module.rpcs)]
 
 
+BlueprintT = TypeVar("BlueprintT", bound=BlueprintProtocol)
+
 # Every namespaced robot and sensor reaches the one simulated world on these.
 SIM_STREAMS = frozenset({"world_observations", "world_actions", "tf_static"})
 
 
-def on_mount(blueprint: Blueprint, mount: Mount, shared: Iterable[str] = ()) -> Blueprint:
+def on_mount(blueprint: BlueprintT, mount: Mount, shared: Iterable[str] = ()) -> BlueprintT:
     """``blueprint`` (a robot attached to ``mount`` and the hardware on it) under the namespace of the mount's frame, as attach() puts one module, with whichever SIM_STREAMS it has shared."""
-    streams = {
-        blueprint.remapping_map.get((atom.name, stream.name), stream.name)
-        for atom in blueprint.blueprints
-        for stream in atom.streams
-    }
-    shared = SIM_STREAMS.intersection(streams).union(shared)
+    shared = SIM_STREAMS.intersection(_stream_names(blueprint)).union(shared)
     # namespace() puts its prefix in front, so the last segment goes on first.
     for segment in reversed(mount.frame.split("/")):
         blueprint = blueprint.namespace(segment, shared=shared)
     return blueprint
+
+
+def _stream_names(blueprint: Blueprint | MetaBlueprint | ChoiceAtom) -> set[str]:
+    """Every stream name a blueprint's modules have, in any of its choices."""
+    if isinstance(blueprint, ChoiceAtom):
+        return set().union(*map(_stream_names, blueprint.choices.values()))
+    if isinstance(blueprint, MetaBlueprint):
+        return set().union(*map(_stream_names, blueprint.blueprints))
+    return {
+        name
+        for atom in blueprint.blueprints
+        for stream in atom.streams
+        if isinstance(
+            name := blueprint.remapping_map.get((atom.name, stream.name), stream.name), str
+        )
+    }
 
 
 class RunningHardware(HardwareSpec, Protocol):
