@@ -14,13 +14,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 import json
+from operator import itemgetter
 from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.constants import LOG_DIR
 from experimental.gateway import constants
+
+if TYPE_CHECKING:
+    from dimos.core.run_registry import RunEntry
 
 LEVEL_RANK = {"debug": 10, "warning": 30, "warn": 30, "error": 40, "critical": 50}
 
@@ -71,21 +76,25 @@ def matches(record: dict[str, Any], query: str | None, min_level: str | None) ->
     return not query or query.lower() in record["raw"].lower()
 
 
-def find(dimos_dir: Path, run_id: str) -> Path | None:
+def _run_logs(dimos_dir: Path, registered: Iterable[RunEntry]) -> Iterator[tuple[str, Path]]:
+    """Yield the registry's log location first when a run also appears under a checkout."""
+    for run in registered:
+        file = Path(run.log_dir) / "main.jsonl"
+        if file.is_file():
+            yield run.run_id, file
+    for root in sorted(logs_dirs(dimos_dir), reverse=True):
+        for file in root.glob("*/main.jsonl"):
+            if file.is_file():
+                yield file.parent.name, file
+
+
+def find(dimos_dir: Path, run_id: str) -> tuple[str, Path] | None:
     from dimos.core.run_registry import list_runs
 
-    if run_id != "latest":
-        entry = next((run for run in list_runs(alive_only=False) if run.run_id == run_id), None)
-        if entry is not None and (Path(entry.log_dir) / "main.jsonl").exists():
-            return Path(entry.log_dir) / "main.jsonl"
-    found = sorted(
-        (path.name, path / "main.jsonl")
-        for root in logs_dirs(dimos_dir)
-        if root.is_dir()
-        for path in root.iterdir()
-        if (path / "main.jsonl").exists() and (run_id == "latest" or path.name == run_id)
-    )
-    return found[-1][1] if found else None
+    files = _run_logs(dimos_dir, list_runs(alive_only=False))
+    if run_id == "latest":
+        return max(files, key=itemgetter(0), default=None)
+    return next((entry for entry in files if entry[0] == run_id), None)
 
 
 def history(dimos_dir: Path) -> list[dict[str, Any]]:
@@ -94,28 +103,19 @@ def history(dimos_dir: Path) -> list[dict[str, Any]]:
 
     known = {run.run_id: run for run in list_runs(alive_only=False)}
     alive = {run.run_id for run in list_runs(alive_only=True)}
-    ids = {
-        path.name
-        for root in logs_dirs(dimos_dir)
-        if root.is_dir()
-        for path in root.iterdir()
-        if (path / "main.jsonl").exists()
-    }
-    ids |= {
-        known_id for known_id, run in known.items() if (Path(run.log_dir) / "main.jsonl").exists()
-    }
+    files: dict[str, Path] = {}
+    for run_id, file in _run_logs(dimos_dir, known.values()):
+        files.setdefault(run_id, file)
     return [
         {
             "runId": run_id,
             # a stopped run leaves the registry: its blueprint is in its id, its start in its log
             "blueprint": known[run_id].blueprint if run_id in known else blueprint_of(run_id),
-            "startedAt": known[run_id].started_at
-            if run_id in known
-            else first_time(find(dimos_dir, run_id)),
-            "endedAt": None if run_id in alive else last_time(find(dimos_dir, run_id)),
+            "startedAt": known[run_id].started_at if run_id in known else first_time(files[run_id]),
+            "endedAt": None if run_id in alive else last_time(files[run_id]),
             "running": run_id in alive,
         }
-        for run_id in sorted(ids, reverse=True)
+        for run_id in sorted(files, reverse=True)
     ]
 
 
@@ -170,8 +170,6 @@ def read(
     query: str | None = None,
     min_level: str | None = None,
 ) -> dict[str, Any]:
-    if file is not None and run_id == "latest":
-        run_id = file.parent.name
     empty = {"runId": run_id, "records": [], "offset": after or 0, "loggers": []}
     if file is None:
         return empty
