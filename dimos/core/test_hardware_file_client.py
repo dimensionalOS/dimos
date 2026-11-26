@@ -84,7 +84,7 @@ def test_a_client_lays_the_files_out_so_its_layers_resolve_and_fetches_a_kept_fi
         # Provided under the namespace, so the prim path is the tf frame.
         forearm = stage.GetPrimAtPath(f"/{namespace}/robot/arm/forearm")
         assert forearm, "the part layer resolved from the cache"
-        skin = forearm.GetAttribute("skin").Get().resolvedPath
+        skin = forearm.GetChild("skin").GetAttribute("inputs:file").Get().resolvedPath
         assert Path(skin).read_bytes() == b"png"
 
         listening = make_transport(f"/{namespace}/hardware_file_response", FileInfo)
