@@ -115,6 +115,19 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
+def _hosted_config_overrides(config: ParsedBlueprintConfig) -> dict[str, Any]:
+    """Carry a coordinated diagnostics session across hosts without copying local paths."""
+    overrides = dict(config.file_and_cli)
+    resolved = config.global_config
+    if resolved["diagnostics_run"]:
+        overrides["g"] = {
+            **overrides.get("g", {}),
+            "diagnostics": resolved["diagnostics"],
+            "diagnostics_run": resolved["diagnostics_run"],
+        }
+    return overrides
+
+
 def _run_hosted(
     blueprint: Blueprint,
     entry: RunEntry,
@@ -376,7 +389,7 @@ def run(
         _run_hosted(
             blueprint,
             entry,
-            parsed_config.file_and_cli,
+            _hosted_config_overrides(parsed_config),
             global_option_overrides,
         )
         return
