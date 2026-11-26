@@ -20,7 +20,8 @@ import pytest
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.hardware_module import HardwareSpec
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_frame_names
+from dimos.robot.assets.usd_utils.frames import usd_frame_names
+from dimos.robot.assets.usd_utils.layers import usd_under_namespace
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sim import MujocoSim
@@ -36,20 +37,25 @@ def _room() -> str:
     )
 
 
+# The logistics room's frame a dog mounts on, and so the dog's namespace.
+_SPOT = "logistics/dog"
+
+
 def _dog() -> str:
-    return prefix_usd_frames(toy_robot().usd, "dog")
+    """The dog's USD as it serves it: its prims under its namespace."""
+    return usd_under_namespace(toy_robot().usd, _SPOT)
 
 
-def test_each_hardware_is_grafted_onto_the_frame_it_is_mounted_on() -> None:
-    world = compose_usds([(_room(), None), (_dog(), "dog")])
+def test_each_hardware_is_overlaid_at_the_frame_it_is_mounted_on() -> None:
+    world = compose_usds([(_room(), None), (_dog(), _SPOT)])
     frames = usd_frame_names(world.usd)
-    assert "dog" in frames
-    assert any(frame.startswith("dog/") for frame in frames)
+    assert _SPOT in frames
+    assert f"{_SPOT}/{toy_robot().root_link}" in frames
 
 
 def test_a_world_needs_exactly_one_unmounted_usd() -> None:
     with pytest.raises(ValueError, match="exactly one unmounted"):
-        compose_usds([(_dog(), "dog")])
+        compose_usds([(_dog(), _SPOT)])
     with pytest.raises(ValueError, match="exactly one unmounted"):
         compose_usds([(_room(), None), (_room(), None)])
 
@@ -57,6 +63,27 @@ def test_a_world_needs_exactly_one_unmounted_usd() -> None:
 def test_a_mount_frame_nothing_has_is_refused() -> None:
     with pytest.raises(ValueError, match="mount frames \\['cat'\\]"):
         compose_usds([(_room(), None), (_dog(), "cat")])
+
+
+def test_a_mount_frame_only_the_mounted_usd_itself_holds_is_refused() -> None:
+    """A mounted USD holds its mount's path as its namespace, which is no frame anything else offers."""
+    stray = usd_under_namespace(toy_robot().usd, "logistics/cat")
+    with pytest.raises(ValueError, match="mount frames \\['logistics/cat'\\]"):
+        compose_usds([(_room(), None), (stray, "logistics/cat")])
+
+
+def test_the_world_keeps_one_physics_scene_and_welds_each_part_to_its_mount() -> None:
+    from pxr import Sdf, Usd, UsdPhysics
+
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(compose_usds([(_room(), None), (_dog(), _SPOT)]).usd)
+    stage = Usd.Stage.Open(layer)
+    scenes = [prim for prim in stage.Traverse() if prim.IsA(UsdPhysics.Scene)]
+    assert [str(prim.GetPath()) for prim in scenes] == ["/PhysicsScene"]
+    welds = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
+    assert [
+        str(t) for weld in welds for t in weld.GetRelationship("physics:body0").GetTargets()
+    ] == [f"/{_SPOT}"]
 
 
 class _Running:
@@ -67,8 +94,8 @@ class _Running:
 
 
 def test_the_world_finds_its_hardware_and_robots_by_what_they_answer() -> None:
-    room = _Running("get_usd", "attached_to", "get_namespace", "start")
-    dog = _Running("get_usd", "attached_to", "get_namespace", "simulated_robot")
+    room = _Running("get_usd", "attached_to", "get_hardware_transform_ids", "start")
+    dog = _Running("get_usd", "attached_to", "get_hardware_transform_ids", "simulated_robot")
     other = _Running("get_usd", "describe")
     assert meeting(HardwareSpec, [room, dog, other]) == [room, dog]
     assert meeting(SimulatedRobotSpec, [room, dog, other]) == [dog]
