@@ -241,6 +241,10 @@ class UsdModel:
             raise ValueError("a UsdModel has neither a layer, a URDF nor a file to read one from")
         if not path.is_file():
             raise FileNotFoundError(f"no USD file at {path}")
+        from dimos.robot.assets.usd_utils.lfs import pull_lfs_files
+
+        # A layer kept in Git LFS is a pointer in a checkout that skips smudging.
+        pull_lfs_files([path])
         try:
             return path.read_text()
         except UnicodeDecodeError as error:
