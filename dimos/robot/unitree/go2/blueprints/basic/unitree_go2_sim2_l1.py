@@ -16,21 +16,27 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.sim2 import Go2Sim
+from dimos.robot.unitree.go2.sim2 import GO2_ODOM_TF, Go2Sim
 from dimos.sim2.assets.logistics import Logistics
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.mujoco.sim import MujocoSim
-from dimos.sim2.sim import sim
+from dimos.sim2.odom_tf import OdomTf
+from dimos.sim2.sim import on_mount, sim
 from dimos.visualization.vis_module import vis_module
 
 unitree_go2_sim2_l1 = autoconnect(
     sim({"mujoco": MujocoSim.blueprint()}, default="mujoco"),
     Logistics.blueprint(),
-    autoconnect(
-        Go2Sim.blueprint(attached_to=Logistics.mounts.go2),
-        SimL1.attach(Go2Sim.mounts.l1),
-        SimCamera.attach(Go2Sim.mounts.camera),
-    ).namespace("go2", shared={"cmd_vel"}),
+    on_mount(
+        autoconnect(
+            Go2Sim.blueprint(attached_to=Logistics.mounts.go2.frame),
+            OdomTf.blueprint(**GO2_ODOM_TF),
+            SimL1.attach(Go2Sim.mounts.l1),
+            SimCamera.attach(Go2Sim.mounts.camera),
+        ),
+        Logistics.mounts.go2,
+        shared={"cmd_vel"},
+    ),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
 ).global_config(robot_model="unitree_go2")

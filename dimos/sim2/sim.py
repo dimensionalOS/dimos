@@ -23,12 +23,17 @@ Robots and sensors are HardwareModules that read those observations and send ``w
 
 import asyncio
 from collections.abc import Coroutine, Iterable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
-from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint
-from dimos.core.hardware_module import HardwareSpec
+from dimos.core.coordination.blueprints import (
+    Blueprint,
+    BlueprintProtocol,
+    ChoiceAtom,
+    MetaBlueprint,
+)
+from dimos.core.hardware_module import HardwareSpec, Mount
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.spec import SimulatedRobot
@@ -70,6 +75,17 @@ def meeting(spec: type[object], modules: Iterable[Any]) -> list[Any]:
     """The running modules (as ``on_system_modules`` hands them over) that answer every rpc of ``spec``."""
     rpcs = set(get_protocol_method_signatures(spec))
     return [module for module in modules if rpcs <= set(module.rpcs)]
+
+
+BlueprintT = TypeVar("BlueprintT", bound=BlueprintProtocol)
+
+
+def on_mount(blueprint: BlueprintT, mount: Mount, shared: Iterable[str] = ()) -> BlueprintT:
+    """``blueprint`` (a robot attached to ``mount`` and the hardware on it) under the namespace of the mount's frame, as attach() puts one module."""
+    # namespace() puts its prefix in front, so the last segment goes on first.
+    for segment in reversed(mount.frame.split("/")):
+        blueprint = blueprint.namespace(segment, shared=shared)
+    return blueprint
 
 
 class RunningHardware(HardwareSpec, Protocol):
