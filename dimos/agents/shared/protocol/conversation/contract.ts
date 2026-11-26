@@ -44,6 +44,8 @@ export const ConversationContract = remote("dimos.conversation", {
   version: 1,
   input: Type.Object({
     conversation: ConversationIdSchema,
+    /** Passive gateway observers preserve unread notices. */
+    markSeen: Type.Optional(Type.Boolean()),
     role: Type.Union([Type.Literal("owner"), Type.Literal("viewer")]),
   }),
   host: hostNamed("gateway"),

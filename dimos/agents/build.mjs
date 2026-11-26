@@ -12,6 +12,7 @@ const { metafile, outputFiles } = await build({
   write: false,
   metafile: true,
   bundle: true,
+  splitting: true,
   platform: "node",
   target: "node24",
   format: "esm",
@@ -21,17 +22,21 @@ const { metafile, outputFiles } = await build({
   banner: { js: "#!/usr/bin/env node" },
 });
 
-// `dimos agent` rebuilds when a file recorded here changed. The record goes first and comes back last,
+// `dimos agent` rebuilds when a recorded file changed or disappeared. The record goes first and comes back last,
 // so a build cut off halfway reads as stale.
 await mkdir("dist", { recursive: true });
 await rm("dist/inputs.json", { force: true });
-// A launch may run dist/cli.js meanwhile, so each output replaces the old one with an atomic rename.
-for (const file of outputFiles) await writeFile(`${file.path}.tmp`, file.contents);
+// Publish the hashed chunks first so a concurrent launch can import every chunk its cli.js names.
+for (const file of outputFiles) {
+  await writeFile(`${file.path}.tmp`, file.contents);
+  if (file.path !== resolve("dist/cli.js")) await rename(`${file.path}.tmp`, file.path);
+}
 await chmod("dist/cli.js.tmp", 0o755);
-for (const file of outputFiles) await rename(`${file.path}.tmp`, file.path);
+await rename("dist/cli.js.tmp", "dist/cli.js");
 
 const read = new Set([
   ...Object.keys(metafile.inputs),
+  ...Object.keys(metafile.outputs).filter((name) => name.endsWith(".js")),
   "build.mjs",
   "web-aliases.mjs",
   "package.json",

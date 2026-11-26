@@ -5,23 +5,24 @@ import type { ConversationId } from "@earendil-works/pi-durable";
 import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import type { Command, CommandContext } from "#dimos/agents/cli/commands/base.ts";
 import { runConversations } from "#dimos/agents/cli/commands/conversations.ts";
-import { runGatewayCommand } from "#dimos/agents/cli/commands/gateway.ts";
+import { runSdk } from "#dimos/agents/cli/commands/sdk.ts";
 import { printRun } from "#dimos/agents/cli/commands/run.ts";
 import { runStatus } from "#dimos/agents/cli/commands/status.ts";
 import { runStop } from "#dimos/agents/cli/commands/stop.ts";
-import { runTui } from "#dimos/agents/cli/commands/tui.ts";
 import { runVersion } from "#dimos/agents/cli/commands/version.ts";
 import { ensureGateway } from "#dimos/agents/cli/process.ts";
 
 const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
 dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json
+dimos agent sdk OPERATION [CONVERSATION_ID]                       read a JSON request from stdin and print the reply
 dimos agent conversations                                         list conversations, newest first
 dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon
 dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams
 dimos agent stop | version`;
 
 const commands: ReadonlyMap<string, Command> = new Map([
-  ["gateway", runGatewayCommand],
+  ["sdk", runSdk],
+  ["gateway", async (ctx) => (await import("#dimos/agents/cli/commands/gateway.ts")).runGatewayCommand(ctx)],
   ["stop", runStop],
   ["status", runStatus],
   ["version", runVersion],
@@ -84,7 +85,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
       return 2;
     }
     await context.startGateway();
-    return runTui(context);
+    return (await import("#dimos/agents/cli/commands/tui.ts")).runTui(context);
   }
   const run = commands.get(command);
   if (run === undefined) {
