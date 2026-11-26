@@ -15,11 +15,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco.viewer as viewer
 import numpy as np
 import pytest
 
@@ -257,6 +259,27 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
         module.stop()
 
 
+def test_sim_steps_on_macos_without_mjpython(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=False,
+        on_after_step=lambda engine: engine._stop_event.set(),
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(viewer, "_MJPYTHON", None)
+
+    try:
+        engine._sim_loop()
+
+        assert engine.data.time == pytest.approx(0.01)
+    finally:
+        engine.disconnect()
+
+
 def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: Path) -> None:
     robot_xml = tmp_path / "freejoint.xml"
     _write_freejoint_xml(robot_xml)
@@ -421,6 +444,24 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+def test_publish_loop_reads_again_at_once_after_a_publish_slower_than_a_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 20 fps is a frame every 50 ms; each publish here takes 60 ms.
+    sleeps: list[float] = []
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(fps=20)
+        module.color_image.subscribe(lambda _: threading.Event().wait(0.06))
+
+        _run_publish_loop(module, [0.05, 0.10, 0.15, 0.20])
+
+        assert sleeps == []
     finally:
         module.stop()
 

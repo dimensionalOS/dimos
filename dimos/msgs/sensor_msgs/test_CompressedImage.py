@@ -75,6 +75,17 @@ def test_png_decode_alpha_is_bgra() -> None:
     assert np.array_equal(img.data, arr)
 
 
+def test_webp_decodes() -> None:
+    import cv2
+
+    arr = np.full((10, 10, 3), 90, dtype=np.uint8)
+    ok, buf = cv2.imencode(".webp", arr, [cv2.IMWRITE_WEBP_QUALITY, 101])
+    assert ok
+    img = CompressedImage(data=buf.tobytes(), format="webp").decode()
+    assert img.format == ImageFormat.BGR
+    assert np.array_equal(img.data, arr)
+
+
 def test_lcm_roundtrip(rgb_image) -> None:
     ci = CompressedImage.from_image(rgb_image)
     wire = ci.lcm_encode()

@@ -27,6 +27,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE
@@ -41,6 +42,9 @@ from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
 from dimos.utils.executable import find_executable
+
+# Sims and drivers publish joint_state, a ControlCoordinator publishes coordinator_joint_state.
+JOINT_STREAMS = ("joint_state", "coordinator_joint_state")
 
 
 @dataclass(frozen=True)
@@ -59,9 +63,13 @@ def frames(recording: Path) -> list[Frame]:
     store.start()
     try:
         poses = store.stream("ground_truth", PoseStamped).to_list()
-        joints = store.stream("joint_state", JointState).to_list()
+        names = set(store.list_streams())
+        joints: list[Observation[JointState]] = []
+        for name in JOINT_STREAMS:
+            if name in names and (joints := store.stream(name, JointState).to_list()):
+                break
         if not poses or not joints:
-            raise ValueError(f"{recording} holds no ground_truth and joint_state streams")
+            raise ValueError(f"{recording} holds no ground_truth and joint state streams")
         joint_t = np.array([float(j.ts) for j in joints])
         out = []
         for pose in poses:

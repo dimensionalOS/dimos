@@ -211,6 +211,12 @@ export class TopicRegistry {
     reply(this.sources());
   }
 
+  /** Congestion resets for a viewer that negotiated topics. */
+  load(viewer: TopicViewer): { aborted: number } | undefined {
+    const state = this.#viewers.get(viewer);
+    return state === undefined ? undefined : { aborted: state.budget.aborted };
+  }
+
   #announce(): void {
     const sources = this.sources();
     for (const state of this.#viewers.values()) state.reply(sources);
@@ -685,6 +691,34 @@ export class TopicRegistry {
       sub.state.reply({ t: "topic_applied", id: sub.spec.id, revision, settings });
       return;
     }
+    // A sole viewer of a provider that reconfigures encoders keeps its RTP
+    // peer and track while its encoder emits a new SPS/PPS and IDR. Never
+    // mutate a variant another viewer targets, and never duplicate a variant
+    // that already encodes the settings: the viewer moves there instead.
+    const current = sub.variant;
+    const key = variantKey(settings, group.spec.profile);
+    const sole = isVideo(group.spec.profile) &&
+      group.source.capabilities.videoReconfigure === true &&
+      current !== null && current !== group.opening && current.key !== key &&
+      ![...group.subs].some((other) =>
+        other !== sub && (other.variant === current || other.target?.variant === current)
+      ) && ![...group.variants.values()].some((variant) => variant.key === key);
+    if (sole) {
+      const previous = sub.target?.variant;
+      current.settings = { ...settings };
+      current.key = key;
+      current.ready = false;
+      sub.target = {
+        variant: current,
+        revision,
+        requested,
+        settings,
+        deadline: this.now() + REQUEST_TIMEOUT_MS,
+      };
+      if (previous !== current) this.#idle(group, previous);
+      this.#announceVariant(group, current);
+      return;
+    }
     const found = this.#variantFor(group, settings);
     if (found === null) {
       reject("variant_limit");
@@ -869,6 +903,11 @@ export class TopicRegistry {
       if (group?.source.peer !== peer || group.source.gen !== msg.gen) return;
       const variant = group.variants?.get(msg.variant);
       if (variant === undefined) return; // a late acknowledgement of a retired variant
+      if (
+        isVideo(group.spec.profile) && variant.key !== variantKey(msg.settings, group.spec.profile)
+      ) {
+        return; // an older in-place configuration completed after its successor
+      }
       variant.ready = true;
       // Before topic_opened, viewers wait for the route itself.
       if (!group.opened) return;

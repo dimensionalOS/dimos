@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import frame_path, layer_from, load_pxr
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.physics.drives import usd_with_drives
 
@@ -28,9 +28,14 @@ def test_targets_push_box_and_do_not_move_other_robot(backend, poses, motor_comm
     backend.apply_action(motor_commands(positions=(0.65,)), [])
     for _ in range(1000):
         backend.step()
-    joints = backend.read_joints(("left/slide_x", "right/slide_x"))
+    joints = backend.read_joints(
+        (
+            "world/world/left_mount/cartesian_pusher/joints/slide_x",
+            "world/world/right_mount/cartesian_pusher/joints/slide_x",
+        )
+    )
     assert joints.position == pytest.approx([0.65, 0], abs=0.001)
-    assert poses_by_id(poses())["box"].position.x > 0.15
+    assert poses_by_id(poses())["world/world/box_mount/box/box"].position.x > 0.15
 
 
 def test_unsupported_cbor_rejects_whole_action_before_joint_mutation(backend, motor_commands):
@@ -50,27 +55,39 @@ def test_unsupported_cbor_rejects_whole_action_before_joint_mutation(backend, mo
     np.testing.assert_array_equal(backend.data.ctrl, before)
     for _ in range(100):
         backend.step()
-    assert backend.read_joints(("left/slide_x",)).position == pytest.approx([0])
+    assert backend.read_joints(
+        ("world/world/left_mount/cartesian_pusher/joints/slide_x",)
+    ).position == pytest.approx([0])
 
 
 def test_invalid_target_batch_is_atomic(backend, motor_commands):
     with pytest.raises(ValueError, match="not a driven joint"):
         backend.apply_action(
-            motor_commands(names=("left/slide_x", "door/hinge"), positions=(0.5, 0.5)),
+            motor_commands(
+                names=(
+                    "world/world/left_mount/cartesian_pusher/joints/slide_x",
+                    "world/world/door_mount/door/joints/hinge",
+                ),
+                positions=(0.5, 0.5),
+            ),
             [],
         )
     for _ in range(100):
         backend.step()
-    assert backend.read_joints(("left/slide_x",)).position == pytest.approx([0])
+    assert backend.read_joints(
+        ("world/world/left_mount/cartesian_pusher/joints/slide_x",)
+    ).position == pytest.approx([0])
 
 
 @pytest.mark.parametrize("side,direction", [(0, -1), (1, 1)])
 def test_joint_limit_roundoff_is_clamped_but_out_of_range_is_rejected(
     backend, motor_commands, side, direction
 ):
-    limit = backend.model.joint("left/slide_x").range[side]
+    limit = backend.model.joint("world/world/left_mount/cartesian_pusher/joints/slide_x").range[
+        side
+    ]
     backend.apply_action(motor_commands(positions=(limit + direction * 3e-12,), kp=100), [])
-    aid = backend.model.actuator("left/slide_x").id
+    aid = backend.model.actuator("world/world/left_mount/cartesian_pusher/joints/slide_x").id
     assert backend.data.ctrl[aid] == 100 * limit
     before = backend.data.ctrl.copy()
 
@@ -85,7 +102,7 @@ def test_motor_law_applies_velocity_gains_and_feedforward_each_step(backend, mot
         [],
     )
     backend.step()
-    joints = backend.read_joints(("left/slide_x",))
+    joints = backend.read_joints(("world/world/left_mount/cartesian_pusher/joints/slide_x",))
     assert joints.effort[0] == pytest.approx(
         40 * (0.2 - joints.position[0]) + 3 * (0.2 - joints.velocity[0]) + 1.5
     )
@@ -132,7 +149,7 @@ def test_malformed_interfaces_reject_entire_action(backend, motor_commands, dama
     elif damage == "names":
         rows[0].joint_names = [""]
     else:
-        rows[1].joint_names = ["right/slide_x"]
+        rows[1].joint_names = ["world/world/right_mount/cartesian_pusher/joints/slide_x"]
     ctrl, gain, bias = (
         backend.data.ctrl.copy(),
         backend.model.actuator_gainprm.copy(),
@@ -146,20 +163,32 @@ def test_malformed_interfaces_reject_entire_action(backend, motor_commands, dama
 
 
 def test_interfaces_resolve_names_even_when_rows_are_reordered(backend, motor_commands):
-    rows = motor_commands(names=("left/slide_x", "right/slide_x"), positions=(0.2, 0.1))
+    rows = motor_commands(
+        names=(
+            "world/world/left_mount/cartesian_pusher/joints/slide_x",
+            "world/world/right_mount/cartesian_pusher/joints/slide_x",
+        ),
+        positions=(0.2, 0.1),
+    )
     rows[0].joint_names.reverse()
     rows[0].values.reverse()
     backend.apply_action(list(reversed(rows)), [])
     for _ in range(500):
         backend.step()
-    assert backend.read_joints(("left/slide_x", "right/slide_x")).position == pytest.approx(
-        [0.2, 0.1], abs=0.001
-    )
+    assert backend.read_joints(
+        (
+            "world/world/left_mount/cartesian_pusher/joints/slide_x",
+            "world/world/right_mount/cartesian_pusher/joints/slide_x",
+        )
+    ).position == pytest.approx([0.2, 0.1], abs=0.001)
 
 
 @pytest.mark.parametrize(
     "joint_id,kind,usd_target",
-    [("left/slide_x", "linear", 0.25), ("door/hinge", "angular", np.degrees(0.25))],
+    [
+        ("world/world/left_mount/cartesian_pusher/joints/slide_x", "linear", 0.25),
+        ("world/world/door_mount/door/joints/hinge", "angular", np.degrees(0.25)),
+    ],
 )
 def test_authored_drive_target_reaches_native_joint_in_si_units(
     backend, world, joint_id, kind, usd_target
@@ -167,7 +196,7 @@ def test_authored_drive_target_reaches_native_joint_in_si_units(
     usd = usd_with_drives(world.usd, {joint_id: (40, 2, 0.25)})
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "drive test", None))
-    joint = next(p for p in stage.Traverse() if frame_name(p) == joint_id)
+    joint = next(p for p in stage.Traverse() if frame_path(p) == joint_id)
     assert pxr.UsdPhysics.DriveAPI(joint, kind).GetTargetPositionAttr().Get() == pytest.approx(
         usd_target
     )

@@ -180,7 +180,7 @@ def main() -> None:
         cls.blueprint(out_path=str(out / f"sink{i}.jsonl"), work_ms=args.work_ms)
         for i, cls in enumerate(SINK_CLASSES[: args.sinks])
     ]
-    bp = autoconnect(bp, *sinks)
+    bp = autoconnect(bp, *sinks).solidify()
     if args.mode == "codec":
         bp = bp.transports(
             {

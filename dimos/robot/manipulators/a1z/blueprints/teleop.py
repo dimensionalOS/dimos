@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -31,7 +31,7 @@ from dimos.robot.manipulators.a1z.config import (
 from dimos.robot.manipulators.a1z.connection import A1ZConnection
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
-from dimos.robot.usd_manager import UsdManager
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
@@ -107,9 +107,9 @@ def _teleop(
     arm_task: TaskConfig,
     gripper_stream: str,
     *inputs: Blueprint,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Move an A1Z's end and open and close its gripper, through ``A1ZConnection``.
-    ``UsdManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
+    ``UrdfManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
 
     Wire it up with ``.remappings(_remaps(coordinator))``. The CAN port is given
     at run time (``--a1zconnection.can-port a1zcan``) or as ``A1ZCONNECTION__CAN_PORT``.
@@ -139,7 +139,7 @@ def _teleop(
             ],
         ),
         A1ZConnection.blueprint(),
-        UsdManager.blueprint(model=model),
+        UrdfManager.blueprint(model=model),
     )
 
 
@@ -150,7 +150,10 @@ a1z_teleop = _teleop(A1ZTwistCoordinator, _eef_twist_task(), "right_gripper_comm
 )
 # From the keyboard, in a pygame window.
 a1z_keyboard_teleop = _teleop(
-    A1ZKeyboardCoordinator, _eef_twist_task(), "gripper_command", KeyboardTeleopModule.blueprint()
+    A1ZKeyboardCoordinator,
+    _eef_twist_task(),
+    "gripper_command",
+    KeyboardTeleopModule.blueprint(),
 ).remappings(_remaps(A1ZKeyboardCoordinator))
 # From a VR headset's left controller; teleop_webxr_a1z adds the WebXR module.
 coordinator_teleop_a1z = _teleop(

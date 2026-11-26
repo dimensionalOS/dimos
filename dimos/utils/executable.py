@@ -14,7 +14,19 @@
 
 from pathlib import Path
 import shutil
+import subprocess
 import sys
+
+
+def spawn_detached(command: list[str]) -> subprocess.Popen[bytes]:
+    """Launch a process that can outlive the launching terminal."""
+    return subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def find_executable(name: str) -> str | None:

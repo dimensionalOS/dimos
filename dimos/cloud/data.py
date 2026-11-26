@@ -31,6 +31,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import sys
+import tarfile
 import tempfile
 import time
 from typing import Any
@@ -110,10 +111,18 @@ class MultipartBackend:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
                 time.sleep(attempt)
 
-    def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
+    def _staging(
+        self, beside: Path, *, outside: Path | None = None
+    ) -> tempfile.TemporaryDirectory[str]:
         parent = self.staging_dir or beside.parent
+        if outside is not None:
+            parent = parent.resolve()
+            if parent.is_relative_to(outside):
+                parent = outside.parent
+            if parent.is_relative_to(outside):
+                raise RuntimeError("directory upload needs staging outside the source tree")
         parent.mkdir(parents=True, exist_ok=True)
-        _reap_stale(parent)
+        _reap_stale(parent, keep=outside)
         return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
     def upload(
@@ -126,10 +135,16 @@ class MultipartBackend:
         progress: Progress | None,
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
-        manifest = _manifest(path)
-        if bp := _blueprint(path):
-            manifest = dict(manifest or {}, blueprint=bp)
-        with self._staging(path) as tmp:
+        root = path.resolve() if path.is_dir() else None
+        with self._staging(root or path, outside=root) as tmp:
+            if root is not None:
+                name = path.name if path.name not in ("", "..") else root.name or "root"
+                path = Path(tmp) / f"{name}.tar"
+                with tarfile.open(path, "w") as tar:
+                    tar.add(root, arcname=name)
+            manifest = _manifest(path)
+            if bp := _blueprint(path):
+                manifest = dict(manifest or {}, blueprint=bp)
             # A file already carrying the codec's suffix uploads as-is; it must not be
             # stamped, or pull would decompress bytes we never compressed.
             compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
@@ -159,7 +174,7 @@ class MultipartBackend:
                     **create,
                     "skipped": True,
                     "preview": self._preview(create["upload_id"], path, Path(tmp))
-                    if manifest
+                    if kind_of(path) == "recording"
                     else None,
                 }
             uid = create["upload_id"]
@@ -200,19 +215,23 @@ class MultipartBackend:
                 **done,
                 "upload_id": uid,
                 "skipped": False,
-                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+                "preview": self._preview(uid, path, Path(tmp))
+                if kind_of(path) == "recording"
+                else None,
             }
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
-        Built from a copy: the store opens read-write (WAL), and the user's recording
-        must stay byte-identical to what was uploaded. Best effort: the upload stands
-        without it."""
+        A .db is built from a copy: the store opens read-write (WAL), and the user's
+        recording must stay byte-identical to what was uploaded; an .mcap opens
+        read-only. Best effort: the upload stands without it."""
         try:
-            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
-            shutil.copyfile(path, copy)
+            source, clip = path, tmp / "timelapse.mp4"
+            if path.suffix != ".mcap":
+                source = tmp / "preview.db"
+                shutil.copyfile(path, source)
             note = ""
-            with open_store(copy) as store:
+            with open_store(source) as store:
                 doc = preview.build(store)
                 try:  # the preview stands without its clip
                     video = preview.timelapse(store, clip) if doc is not None else None
@@ -307,17 +326,19 @@ class CloudData:
         skip_recent: bool = False,
     ) -> dict[str, Any]:
         path = path.expanduser()
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        if _is_sidecar(path):
-            raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
+        is_dir = path.is_dir()
+        if not is_dir:
+            if not path.is_file():
+                raise FileNotFoundError(path)
+            if _is_sidecar(path):
+                raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
         if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
         chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
-            kind=kind or kind_of(path),
+            kind=kind or ("blob" if is_dir else kind_of(path)),
             part_size=chunk_mb * 2**20 if chunk_mb else None,
             progress=progress,
         )
@@ -398,10 +419,12 @@ def _require_space(where: Path, need: int) -> None:
         )
 
 
-def _reap_stale(parent: Path, max_age_s: float = 86400) -> None:
+def _reap_stale(parent: Path, max_age_s: float = 86400, *, keep: Path | None = None) -> None:
     """A SIGKILL mid-transfer orphans the staging dir beside the file; nothing else
     would ever remove it."""
     for d in parent.glob(".dimos-staging-*"):
+        if keep is not None and keep.is_relative_to(d):
+            continue
         try:
             if d.is_dir() and time.time() - d.stat().st_mtime > max_age_s:
                 shutil.rmtree(d, ignore_errors=True)
@@ -425,15 +448,52 @@ def _is_sidecar(path: Path) -> bool:
     return path.name.endswith(("-shm", "-wal", "-journal"))  # SQLite's own suffixes
 
 
-def _manifest(db: Path) -> dict[str, Any] | None:
+def _sqlite_streams(db: Path) -> list[dict[str, Any]] | None:
     try:
         with contextlib.closing(
             sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro", uri=True)
         ) as conn:
             rows = conn.execute("SELECT name, config FROM _streams").fetchall()
-        return {"streams": [{"name": n, **json.loads(c)} for n, c in rows]}
     except sqlite3.Error:
         return None
+    return [{"name": n, **json.loads(c)} for n, c in rows]
+
+
+def _store_streams(recording: Path) -> list[dict[str, Any]] | None:
+    """What a recording that isn't a dimos sqlite database holds, asked of the store itself."""
+    try:
+        with open_store(recording) as store:
+            streams = []
+            for name in store.list_streams():
+                try:
+                    payload = store.stream(name).data_type
+                except Exception:  # a channel whose type won't import still leaves the rest
+                    continue
+                streams.append(
+                    {
+                        "name": name,
+                        "payload_module": f"{payload.__module__}.{payload.__qualname__}"
+                        if payload
+                        else None,
+                    }
+                )
+            return streams
+    except Exception:
+        return None
+
+
+def _manifest(recording: Path) -> dict[str, Any] | None:
+    """What the recording holds: the server keeps it, and it is what says a preview can be built.
+
+    A dimos sqlite database answers from its own `_streams` table, cheaply and without importing
+    any dimos type. Anything else — an .mcap — is opened as a store and asked instead. Without
+    that an .mcap had no manifest, and no manifest meant no console preview at all, whatever the
+    preview itself could make of it.
+    """
+    streams = _sqlite_streams(recording)
+    if streams is None:
+        streams = _store_streams(recording)
+    return {"streams": streams} if streams else None
 
 
 def _plain_name(filename: str, wire: str) -> str:

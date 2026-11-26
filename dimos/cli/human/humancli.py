@@ -141,6 +141,12 @@ class ToolPanelRegion:
             assert panel.static is not None
             panel.static.update(self._render(panel))
 
+    def refresh(self) -> None:
+        """Advance elapsed titles even when no tool or agent messages arrive."""
+        for panel in self._panels.values():
+            assert panel.static is not None
+            panel.static.update(self._render(panel))
+
     def finalize(self, tool_name: str) -> None:
         panel = self._panels.pop(tool_name, None)
         if panel is None:
@@ -325,6 +331,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         self._tool_panels = ToolPanelRegion(
             self.query_one("#tool-panels", Container), self._flush_tool_panel
         )
+        self.set_interval(1.0, self._tool_panels.refresh)
         self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream)
 
         # Start subscription threads
@@ -500,8 +507,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         """Write a finalized tool box into the scrollback, keeping the
         thinking indicator pinned to the bottom."""
         assert self._thinking is not None
+        assert self.chat_log is not None
         reattach = self._thinking.detach_if_needed()
-        self.chat_log.write(renderable)  # type: ignore[union-attr]
+        self.chat_log.write(renderable, width=self.chat_log.scrollable_content_region.width)
         if reattach:
             self._thinking.reattach()
 

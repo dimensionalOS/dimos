@@ -19,24 +19,28 @@ import platform
 
 import pytest
 
-from dimos.control.components import HardwareType, make_twist_base_joints
+from dimos.control.connection.mock_base_connection import MockBaseConnection
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTaskConfig,
 )
-from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.manipulation.execution_manager import PlanExecutionManager
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.manipulation.manipulation_spec import ExecutionStatus
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview import (
     r1pro_planar_preview,
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_PLANAR_BASE
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 
 
 def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
@@ -47,10 +51,18 @@ def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
     return ControlCoordinatorConfig.model_validate(parsed.module_kwargs(atom.name))
 
 
+def _manipulation_config(blueprint) -> ManipulationModuleConfig:
+    parsed = BlueprintConfigParser(blueprint).parse(environ={})
+    atom = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ManipulationModule)
+    )
+    return ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
+
+
 def _forward(distance: float, duration: float) -> JointTrajectory:
     velocity = [distance / duration, 0.0, 0.0]
     return JointTrajectory(
-        joint_names=["x", "y", "yaw"],
+        joint_names=list(R1PRO_PLANAR_BASE.joint_names),
         points=[
             TrajectoryPoint(time_from_start=0.0, positions=[0.0, 0.0, 0.0], velocities=velocity),
             TrajectoryPoint(
@@ -61,13 +73,7 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
 
 
 def test_planar_preview_plans_on_the_planar_base_limits() -> None:
-    parsed = BlueprintConfigParser(r1pro_planar_preview).parse(environ={})
-    atom = next(
-        atom
-        for atom in r1pro_planar_preview.active_blueprints
-        if issubclass(atom.module, ManipulationModule)
-    )
-    manipulation = ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
+    manipulation = _manipulation_config(r1pro_planar_preview.solidify())
 
     assert manipulation.visualization.backend == "viser"
     assert manipulation.trajectory_parametrization is None
@@ -80,53 +86,67 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     platform.system() == "Darwin" and bool(os.environ.get("CI")),
     reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
 )
-def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
-    """The base half of a whole-body plan has to move this blueprint's mock chassis."""
-    config = _coordinator_config(r1pro_planar_preview)
-    coordinator = ControlCoordinator(
+def test_planar_preview_drives_its_mock_base_from_a_base_plan(mocker) -> None:
+    """A base plan sent the way ManipulationModule sends it moves this blueprint's mock chassis."""
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    blueprint = r1pro_planar_preview.solidify()
+    config = _coordinator_config(blueprint)
+    mock_kwargs = BlueprintConfigParser(blueprint).parse(environ={}).module_kwargs("r1pro")
+    coordinator_cls = next(
+        atom.module for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
+    )
+    coordinator = coordinator_cls(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
-        hardware=config.hardware,
+        connections=config.connections,
         tasks=config.tasks,
     )
+    mock = MockBaseConnection(**mock_kwargs)
+    manipulation = _manipulation_config(blueprint)
+    manager = PlanExecutionManager(
+        joint_names=manipulation.model.joint_names,
+        coordinator=coordinator,
+        default_timeout=5.0,
+        bindings=manipulation.trajectory_tasks,
+    )
+    wires = {
+        "r1pro_position_command": "position_command",
+        "r1pro_velocity_command": "velocity_command",
+        "r1pro_joint_state": "joint_state",
+        "odometry": "odometry",
+    }
+    transports = {port: LocalTransport() for port in wires}
+    for coordinator_port, mock_port in wires.items():
+        coordinator.set_transport(coordinator_port, transports[coordinator_port])
+        mock.set_transport(mock_port, transports[coordinator_port])
+    mock.start()
     coordinator.start()
     try:
-        accepted = coordinator.task_invoke(
-            "base_trajectory", "execute", {"trajectory": _forward(0.2, duration=0.5)}
+        plan = GeneratedPlan(
+            group_ids=("base",),
+            trajectory=_forward(0.2, duration=0.5),
+            status=PlanningStatus.SUCCESS,
         )
-        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
-        wait_until(
-            lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
-            is TrajectoryState.COMPLETED,
-            timeout=5.0,
-            message="the base trajectory never completed",
-        )
-        # The mock base moves a fixed step per tick, so a slow tick loop leaves it
-        # behind, and COMPLETED only promises it got within the goal tolerance.
-        assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(
+        result = manager.execute(plan)
+        assert result.status is ExecutionStatus.COMPLETED, result.message
+        assert transports["odometry"].sent[-1].x == pytest.approx(
             0.2, abs=PlanarBaseTrajectoryTaskConfig.position_goal_tolerance
         )
     finally:
+        manager.close()
         coordinator.stop()
+        mock.stop()
 
 
-def test_real_control_keeps_planar_joints_out_of_hardware() -> None:
-    blueprint = r1pro_control()
-    parsed = BlueprintConfigParser(blueprint).parse(environ={})
-    coordinator_atom = next(
-        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
+def test_real_control_declares_body_velocity_joints_without_position_commands() -> None:
+    """The chassis body axes are velocity-only joints on the connection."""
+    coordinator = _coordinator_config(r1pro_control().solidify())
+
+    claimed = {joint for task in coordinator.tasks for joint in task.joint_names}
+    assert claimed == {*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS}
+
+    (declaration,) = coordinator.connections
+    assert all(
+        declaration.joint_commands[joint] == (Interface.VELOCITY,) for joint in R1PRO_BASE_JOINTS
     )
-    coordinator = ControlCoordinatorConfig.model_validate(
-        parsed.module_kwargs(coordinator_atom.name)
-    )
-
-    assert [hardware.hardware_type for hardware in coordinator.hardware] == [
-        HardwareType.WHOLE_BODY,
-        HardwareType.BASE,
-    ]
-    assert coordinator.hardware[0].joints == R1PRO_UPPER_BODY_JOINTS
-    assert coordinator.hardware[1].joints == make_twist_base_joints("chassis")
-    real_joint_names = {
-        joint_name for hardware in coordinator.hardware for joint_name in hardware.joints
-    }
-    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(real_joint_names)

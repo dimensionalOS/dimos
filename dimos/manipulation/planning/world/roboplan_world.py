@@ -656,4 +656,7 @@ def _create_scene(
     scene = roboplan_core.Scene(name, description)
     scene.importSrdf(srdf)
     scene.importJointLimitsFromConfig(roboplan_core.loadJointLimitsConfig(joint_limits))
+    # Joints outside the planning groups retain this default. Zero can be
+    # outside their URDF limits, as with OpenYAM's prismatic gripper.
+    scene.setJointPositions(scene.clampToValidConfiguration(scene.getCurrentJointPositions()))
     return scene

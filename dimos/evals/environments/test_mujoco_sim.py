@@ -77,11 +77,9 @@ def test_launch_flags(monkeypatch):
 
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     proc = DimosCliCall()
-    environment(
-        module_env={"OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "yoloe"}
-    ).configure_launch(proc)
+    environment(module_env={"PERCEPTIONLOCALIZE__DETECTOR": "yoloe"}).configure_launch(proc)
     assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "false"
-    assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
+    assert proc.extra_env["PERCEPTIONLOCALIZE__DETECTOR"] == "yoloe"
 
 
 def test_module_env_reaches_blueprint_parser(monkeypatch):
@@ -94,21 +92,21 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
         tracked_bodies=("apple", "cup"),
         base_height=0.912,
         module_env={
-            "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
-            "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
+            "MANIPULATIONLOCALIZE__DETECTOR": "yoloe",
+            "MANIPULATIONLOCALIZE__SEGMENTER": "yolo",
         },
     ).configure_launch(proc)
-    parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    perception = parsed.module_kwargs("objectsceneregistrationmodule")
-    assert perception["detector_backend"] == "owlv2"
-    assert perception["segmentation_backend"] == "yolo"
+    parsed = BlueprintConfigParser(xarm_perception_sim.solidify()).parse(environ=proc.extra_env)
+    perception = parsed.module_kwargs("manipulationlocalize")
+    assert perception["detector"] == "yoloe"
+    assert perception["segmenter"] == "yolo"
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
     assert sim["tracked_bodies"] == ["apple", "cup"]
 
     mounted = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
     assert mounted.model.base_pose.position.z == pytest.approx(0.912)
-    defaults = BlueprintConfigParser(xarm_perception_sim).parse(environ={})
+    defaults = BlueprintConfigParser(xarm_perception_sim.solidify()).parse(environ={})
     default = ManipulationModuleConfig(**defaults.module_kwargs("manipulationmodule"))
     assert default.model.base_pose.position.z == pytest.approx(0.12)
     assert mounted.model.joint_names == default.model.joint_names
@@ -132,11 +130,12 @@ def test_raw_arm_blueprint_configures_its_bridge():
         blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_ARM_README
     )
     assert env.provides_raw_robot
-    parsed = BlueprintConfigParser(xarm_sim).parse(
+    parsed = BlueprintConfigParser(xarm_sim.solidify()).parse(
         environ={"RAWROBOTBRIDGE__ENDPOINT": "tcp/127.0.0.1:12345"}
     )
     bridge = parsed.module_kwargs("rawrobotbridge")
-    assert bridge["ee_frame"] == "link_tcp" and bridge["gripper_joint"] == "arm/gripper"
+    assert bridge["ee_frame"] == "link_tcp" and bridge["gripper_joint"] == "arm/drive_joint"
+    assert bridge["gripper_range"] == (0.85, 0.0)  # (closed, open) in rad
     assert bridge["endpoint"] == "tcp/127.0.0.1:12345"  # the per-run endpoint still applies
     tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
     assert any(task["type"] == "eef_twist" for task in tasks)

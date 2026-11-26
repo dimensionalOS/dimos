@@ -36,8 +36,9 @@ from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.layers import overlay_usds, usd_under_namespace
 from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.sim2.description import joint_paths, scene_revision
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.drives import usd_with_drives
 from dimos.sim2.physics.mujoco import MujocoBackend
@@ -137,35 +138,37 @@ def world(tmp_path: Path) -> UsdModel:
         .with_fixed_frame("imu", "tool")
     )
 
-    root = (
-        RobotModel.from_root_link("world")
-        .to_usd()
-        .with_frames(
-            {
-                "left_mount": ("world", (0, 0, 0), (0, 0, 0)),
-                "right_mount": ("world", (0, 1.2, 0), (0, 0, 0)),
-                "box_mount": ("world", (0, 0, 0.055), (0, 0, 0)),
-                "door_mount": ("world", (0.6, 0.4, 0), (0, 0, 0)),
-            }
-        )
+    root = RobotModel.from_root_link("world", name="world").to_usd()
+    root = root.with_frames(
+        {
+            "left_mount": (root.root_link, (0, 0, 0), (0, 0, 0)),
+            "right_mount": (root.root_link, (0, 1.2, 0), (0, 0, 0)),
+            "box_mount": (root.root_link, (0, 0, 0.055), (0, 0, 0)),
+            "door_mount": (root.root_link, (0.6, 0.4, 0), (0, 0, 0)),
+        }
     )
-    children = {
-        name + "_mount": usd_with_drives(
-            pusher.with_prefix(name + "/").to_usd().usd,
-            {name + "/" + joint: (200, 20, 0) for joint in ("slide_x", "slide_y")},
-        )
-        for name in ("left", "right")
-    }
-    children["box_mount"] = RobotModel.from_file(box_path).to_usd().usd
-    children["door_mount"] = (
-        RobotModel.from_file(door_path)
-        .with_fixed_frame("imu", "panel", xyz=(0.225, 0, 0.15))
-        .with_prefix("door/")
-        .to_usd()
-        .usd
+    pusher_model = pusher.to_usd()
+    paths = joint_paths(pusher_model)
+    driven = usd_with_drives(
+        pusher_model.usd, {paths[j]: (200, 20, 0) for j in ("slide_x", "slide_y")}
     )
+    parts = []
+    for name in ("left", "right", "box", "door"):
+        mount = f"world/world/{name}_mount"
+        if name in ("left", "right"):
+            usd = driven
+        elif name == "box":
+            usd = RobotModel.from_file(box_path).to_usd().usd
+        else:
+            usd = (
+                RobotModel.from_file(door_path)
+                .with_fixed_frame("imu", "panel", xyz=(0.225, 0, 0.15))
+                .to_usd()
+                .usd
+            )
+        parts.append((usd_under_namespace(usd, mount), mount))
     pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, graft_usd(root.usd, children), "test scene", None))
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, overlay_usds(root.usd, parts), "test scene", None))
     for prim in stage.Traverse():
         if (prim.GetDisplayName() or prim.GetName()) == "world":
             prim.RemoveAPI(pxr.UsdPhysics.RigidBodyAPI)
@@ -179,8 +182,11 @@ def world(tmp_path: Path) -> UsdModel:
                 sorted(ops, key=lambda op: op.GetOpType() == pxr.UsdGeom.XformOp.TypeScale)
             )
     for prim in list(stage.Traverse()):
+        if prim.IsA(pxr.UsdPhysics.Joint) and prim.GetName() == "world_world_box_mount_mount":
+            stage.RemovePrim(prim.GetPath())
+            continue
         if prim.GetTypeName() == "PhysicsJoint":
-            if prim.GetName() == "box_mount_mount":
+            if "/box_mount/" in str(prim.GetPath()):
                 stage.RemovePrim(prim.GetPath())
                 continue
             else:
@@ -245,7 +251,7 @@ def poses(backend, world):
         joints.header = Header(stamp=Time(sec=sec, nsec=nsec))
         return WorldState(
             header=header,
-            model_revision=world.revision,
+            model_revision=scene_revision(world),
             bodies_length=len(bodies),
             bodies=bodies,
             joint_truth=joints,
@@ -290,7 +296,12 @@ def make_sim(world, tmp_path, monkeypatch):
 @pytest.fixture
 def motor_commands():
     def make(
-        names=("left/slide_x",), positions=(0.2,), velocity=0.0, kp=200.0, kd=20.0, effort=0.0
+        names=("world/world/left_mount/cartesian_pusher/joints/slide_x",),
+        positions=(0.2,),
+        velocity=0.0,
+        kp=200.0,
+        kd=20.0,
+        effort=0.0,
     ):
         return [
             JointCommand(
@@ -315,7 +326,13 @@ def motor_commands():
 @pytest.fixture
 def command(motor_commands):
     def make(
-        header, names=("left/slide_x",), positions=(0.2,), ttl=2.0, kp=200.0, kd=20.0, effort=0.0
+        header,
+        names=("world/world/left_mount/cartesian_pusher/joints/slide_x",),
+        positions=(0.2,),
+        ttl=2.0,
+        kp=200.0,
+        kd=20.0,
+        effort=0.0,
     ):
         return ActionCommand(
             header=SampleHeader(

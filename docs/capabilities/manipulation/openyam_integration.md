@@ -2,9 +2,8 @@
 
 OpenYAM and Dual OpenYAM use `ConnectionModule` implementations that own the
 native `can-motor-control` robot. The coordinator receives `JointState` feedback
-and sends position commands through streams. It does not construct hardware
-adapters. `openyam-teach-collection` uses the same path with
-`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity compensation
+and sends position commands through streams. `openyam-teach-collection` uses the same path with
+`OpenYamConnection` in teach mode (`teach=True`): zero stiffness, teaching damping, gravity compensation
 and passive grippers, declared as zero-stiffness joints. Seeed B601-DM also uses
 its own direct connection.
 
@@ -87,13 +86,14 @@ Single YAM retains a separate physical model for gravity compensation. Dual
 YAM uses its arm-only combined model for planning and gravity compensation.
 
 `OpenYamConnection()` and `DualOpenYamConnection()` default to sources `yam` and
-`dual_openyam` when used directly. For a custom stack, the coordinator's model is
-`make_openyam_model_config(robot="arm").model` or
-`dual_openyam_control_model(robot="arm")`.
+`dual_openyam` when used directly. For a custom stack, declare the connection on
+the coordinator with `connections=[arm_declaration(OpenYamConnection)]` or
+`connections=[arm_declaration(DualOpenYamConnection)]`. The `arm_declaration` helper
+in `dimos/robot/manipulators/damiao/damiao_blueprint.py` sets source `arm` for both.
 
-New Quest recordings and policy rollout use the deployed seven-coordinate names.
-Hand-guided teaching retains its original bare names, PD gains and passive-jaw
-behavior; its CAN override remains `--controlcoordinator.can-port`.
+Quest recordings, policy rollout and hand-guided teaching all use the deployed
+seven-coordinate names. Hand-guided teaching keeps its zero-stiffness gains and
+passive-jaw behavior. Its CAN override is `--can-port`, as for the other single-arm stacks.
 
 Planner gripper routing is explicit through `ManipulationModuleConfig.gripper_tasks`:
 single YAM binds `manipulator` to `arm_gripper`; dual YAM binds
@@ -133,3 +133,5 @@ for focused tests, software-only checks and physical bring-up. The YAM tests
 cover deployed joint names, gripper routing, planner priority, Dual YAM hand
 isolation, model limits and the Quest profile. The native recorder test verifies
 Zenoh serialization and episode extraction with synthetic input streams.
+
+- Dual OpenYAM leader teleop: [Dual OpenYAM Leader Teleop](/docs/capabilities/manipulation/dual_openyam_leader_teleop.md)

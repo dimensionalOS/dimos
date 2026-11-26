@@ -394,6 +394,7 @@ class PGOState:
         self._p = len(premap) if premap is not None else 0
         self._attached = False
         self._agreeing = 0
+        self._has_settled = False
         self._last_premap_loop_ts: float | None = None
         self.n_attaches = 0
         self.n_premap_loops = 0
@@ -482,6 +483,11 @@ class PGOState:
     def settled(self) -> bool:
         return self._attached and self._agreeing >= self._cfg.reloc_settle_after
 
+    @property
+    def has_settled(self) -> bool:
+        """Whether this run has settled at least once, even if a later fix moves it."""
+        return self._has_settled
+
     def keyframe_stamps(self) -> np.ndarray:
         return self._stamps
 
@@ -552,6 +558,7 @@ class PGOState:
             self._add_edge(join)
             self._flush(self._cfg.loop_closure_extra_iterations)
             self._agreeing += 1
+            self._has_settled |= self.settled
             if self._agreeing == self._cfg.reloc_settle_after:
                 logger.info("PGO premap: settled", agreeing_fixes=self._agreeing)
             return
@@ -574,6 +581,7 @@ class PGOState:
         self._attached = True
         self._reset(self._premap.poses, to_map @ self._optimized)
         self._agreeing = 1
+        self._has_settled |= self.settled
         self.n_attaches += 1
         logger.info("PGO premap: attached", attaches=self.n_attaches)
 

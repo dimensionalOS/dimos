@@ -3,7 +3,7 @@ import type { CommitPublication } from "@earendil-works/pi-durable";
 import type { InputDraft } from "#dimos/agents/harness/inputs/gate.ts";
 import type { JobName } from "#dimos/agents/shared/protocol/jobs/state.ts";
 import type { Message } from "@earendil-works/pi-ai";
-import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import type { DimosInput, UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ContextBudget } from "#dimos/agents/harness/limit/budget.ts";
 import { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
@@ -16,7 +16,7 @@ import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { after, before, test } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { scriptedModel } from "#dimos/agents/test/scripted-model.ts";
 import { tmpdir } from "node:os";
@@ -63,6 +63,10 @@ test("withdrawing the queue hands back every queued user text in one commit and 
       requests.push(request.messages.map(line));
       return fauxAssistantMessage("walking the route");
     },
+    (request) => {
+      requests.push(request.messages.map(line));
+      return fauxAssistantMessage("following the loaded guide");
+    },
   ]);
   const storage = await SqliteStorage.open(await openNodeSqliteDatabase(join(scratch, "agent.sqlite")));
   const harness = await Harness.open(
@@ -77,8 +81,13 @@ test("withdrawing the queue hands back every queued user text in one commit and 
     report: (error) => reports.push(error),
   });
   await connection.close();
+  const skillPath = join(scratch, "guide", "SKILL.md");
+  const skillContent = "---\nname: guide\ndescription: A guide\n---\nCaptured instructions.";
+  mkdirSync(join(scratch, "guide"));
+  writeFileSync(skillPath, skillContent);
   const inputs = new InputGate({
     harness,
+    skills: [{ name: "guide", description: "A guide", path: skillPath }],
     observer: new RuntimeObserver({
       harness,
       runtime: new RuntimeClient(connection),
@@ -102,13 +111,13 @@ test("withdrawing the queue hands back every queued user text in one commit and 
   assert.equal((await inputs.submit(id, typed("start the patrol", "reject"), context)).kind, "submitted");
   const run = (await harness.snapshot(LiveDoc, id, context))?.run;
   assert.ok(run !== undefined, "the first answer holds the run");
-  const long = `${"the long one ".repeat(200)}end`;
+  const long = `/skill:guide ${"the long one ".repeat(200)}end`;
   for (const draft of [
-    typed("first queued", "followUp"),
+    typed("/skill:guide first queued", "followUp"),
     typed("a steer", "steer"),
     {
       source: { kind: "job" as const, job: "patrol" as JobName, run: { kind: "manual" as const, toolCall: "call_j" } },
-      text: "[Job patrol] Walk the route",
+      text: "/skill:missing",
       images: [],
       render: null,
       whenBusy: "followUp" as const,
@@ -122,10 +131,10 @@ test("withdrawing the queue hands back every queued user text in one commit and 
   const withdrawn = await inputs.withdrawUser(id, "withdraw", "keep", context);
   unsubscribe();
 
-  assert.equal(long.length, 2_603, "longer than the 2,000 characters an input keeps");
+  assert.equal(long.length, 2_616, "longer than the 2,000 characters an input keeps");
   assert.deepEqual(withdrawn, {
     texts: [
-      { mode: "followUp", text: "first queued" },
+      { mode: "followUp", text: "/skill:guide first queued" },
       { mode: "steer", text: "a steer" },
       { mode: "followUp", text: long },
     ],
@@ -141,7 +150,7 @@ test("withdrawing the queue hands back every queued user text in one commit and 
       [
         `user:${long} unanswered withdrawn`,
         "user:a steer unanswered withdrawn",
-        "user:first queued unanswered withdrawn",
+        "user:/skill:guide first queued unanswered withdrawn",
       ],
     ],
   );
@@ -166,13 +175,30 @@ test("withdrawing the queue hands back every queued user text in one commit and 
     "nothing of the user's is left",
   );
 
+  const queuedSkill = typed("/skill:guide keep this snapshot", "followUp");
+  assert.equal((await inputs.submit(id, queuedSkill, context)).kind, "submitted");
+  const accepted = (await harness.snapshot(InboxDoc, id, context))?.items.at(-1);
+  assert.ok(accepted?.mode === "followUp");
+  assert.deepEqual((accepted.entry?.data as DimosInput).skill, {
+    name: "guide",
+    path: skillPath,
+    content: skillContent,
+  });
+  writeFileSync(skillPath, "Changed instructions must not enter the queued input.");
+  rmSync(skillPath);
+  assert.equal((await inputs.submit(id, queuedSkill, context)).kind, "submitted", "a queued retry reuses its snapshot");
+
   answerFirst();
   await (await harness.conversation(id, context))?.waitForIdle(context);
-  assert.deepEqual(requests.at(-1), [
+  assert.deepEqual(requests.at(-1)?.slice(0, 3), [
     "user: <dimos_runtime_change>\nDimOS: not reachable, link connecting; any runtime stated earlier is as last seen.\n</dimos_runtime_change> | start the patrol",
     "assistant: started",
-    "user: [Job patrol] Walk the route",
+    "user: /skill:missing",
   ]);
+  const finalInput = requests.at(-1)?.at(-1);
+  assert.ok(finalInput?.includes(queuedSkill.text));
+  assert.ok(finalInput?.includes(skillContent), "queued model input uses the originally accepted full instructions");
+  assert.ok(!finalInput?.includes("Changed instructions"));
   assert.deepEqual(reports, []);
   await harness.close(context);
 });
@@ -197,6 +223,7 @@ test("abort stops the run before reading withdrawn texts, which fall back to the
   const results = join(scratch, "abort-results");
   const inputs = new InputGate({
     harness,
+    skills: [],
     observer: new RuntimeObserver({
       harness,
       runtime: new RuntimeClient(connection),
