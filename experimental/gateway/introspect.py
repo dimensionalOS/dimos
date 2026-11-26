@@ -340,7 +340,9 @@ def solid_blueprint(blueprint: Any) -> Any:
     # DimOS is optional in the gateway process.
     from dimos.core.coordination.blueprints import autoconnect
 
-    return autoconnect(blueprint).solidify()
+    composed = autoconnect(blueprint)
+    # Before blueprint choices, autoconnect returned the concrete blueprint directly.
+    return composed.solidify() if hasattr(composed, "solidify") else composed
 
 
 def blueprint_detail(name: str) -> dict[str, Any]:

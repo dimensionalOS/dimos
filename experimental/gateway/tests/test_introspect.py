@@ -25,6 +25,7 @@ from pytest_mock import MockerFixture
 
 from dimos.agents.annotation import skill
 from dimos.core import global_config as global_config_module
+from dimos.core.coordination import blueprints
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -102,6 +103,15 @@ class Dog(Module):
     def trick(self, name: Literal["sit", "jump"]) -> str:
         """Do a trick."""
         return name
+
+
+def test_config_from_a_checkout_where_autoconnect_returns_a_concrete_blueprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dog = Dog.blueprint()
+    monkeypatch.setattr(get_all_blueprints, "get_by_name", lambda name: dog)
+    monkeypatch.setattr(blueprints, "autoconnect", lambda part: part)
+    assert list(introspect.config("demo")["modules"]) == ["dog"]
 
 
 def test_a_modules_own_rpcs_are_listed_with_a_skill_flag() -> None:
