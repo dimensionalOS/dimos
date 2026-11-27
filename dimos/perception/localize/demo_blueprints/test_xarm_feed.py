@@ -39,13 +39,13 @@ def test_feed_logs_source_duration_and_completion(tmp_path, mocker):
             store.stream("tf", TFMessage).append(TFMessage(), ts=ts)
     log = mocker.patch("dimos.memory.replay_progress.logger")
     add = mocker.spy(Playback, "add")
-    with DepthCameraFeed(dataset=str(path), speed=10.0) as feed:
+    with DepthCameraFeed(dataset=str(path)) as feed:
         log.info.assert_called_once_with(
             "Replay started",
             source=str(path),
             path=str(path),
             duration_s=1.0,
-            speed=10.0,
+            speed=1.0,
             loop=False,
         )
         finished = threading.Event()
