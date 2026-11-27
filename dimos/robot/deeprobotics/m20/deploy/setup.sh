@@ -17,6 +17,48 @@ if [[ -z "${DIMOS_LCM_DIR:-}" && -d /var/opt/robot/data/m20-deps/dimos-lcm ]]; t
   export DIMOS_LCM_DIR=/var/opt/robot/data/m20-deps/dimos-lcm
 fi
 
+echo "Making nix reachable over ssh so a closure can be copied onto GOS..."
+# `nix copy --to ssh://user@10.21.31.104` runs `nix-store` on the far side through a non-interactive
+# shell. Two things stop that working on a fresh GOS:
+#
+# 1. Ubuntu's ~/.bashrc returns before it sets anything when the shell is not interactive, and
+#    /etc/profile.d/nix.sh is never read at all for `ssh host cmd`, so nix is not on PATH and the copy
+#    fails with "bash: nix-store: command not found". The PATH therefore has to be set ABOVE that guard.
+# 2. The daemon rejects store paths from a user that is not trusted:
+#    "cannot add path '...' because it lacks a signature by a trusted key". Signing would work too, but
+#    it needs a key on every machine that builds for the robot.
+#
+# Both are idempotent; a second run of this script changes nothing.
+nix_path_marker="dimos: nix on PATH for non-interactive"
+if ! grep -q "$nix_path_marker" "$HOME/.bashrc" 2>/dev/null; then
+  nix_block="$(mktemp)"
+  cat >"$nix_block" <<'NIXPATH'
+# dimos: nix on PATH for non-interactive shells too. `nix copy --to ssh://...` runs `nix-store` over ssh,
+# and this file returns a few lines below when the shell is not interactive, before /etc/profile.d/nix.sh
+# would have been read, so the PATH has to be set above that guard.
+for dimos_nix_bin in "$HOME/.nix-profile/bin" /nix/var/nix/profiles/default/bin; do
+    if [ -d "$dimos_nix_bin" ] && [[ ":$PATH:" != *":$dimos_nix_bin:"* ]]; then
+        PATH="$dimos_nix_bin:$PATH"
+    fi
+done
+unset dimos_nix_bin
+export PATH
+
+NIXPATH
+  cat "$HOME/.bashrc" >>"$nix_block"
+  cp "$HOME/.bashrc" "$HOME/.bashrc.before-dimos-nix-path"
+  mv "$nix_block" "$HOME/.bashrc"
+  chmod 644 "$HOME/.bashrc"
+fi
+if [[ -f /etc/nix/nix.conf ]] && ! grep -qE "^trusted-users\b.*\b$USER\b" /etc/nix/nix.conf; then
+  printf 'trusted-users = root %s\n' "$USER" | sudo tee -a /etc/nix/nix.conf >/dev/null
+  sudo systemctl restart nix-daemon 2>/dev/null || true
+fi
+# Proves it from the outside, the way `nix copy` will see it, rather than from this shell's PATH.
+ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$USER@localhost" \
+  'command -v nix-store >/dev/null' \
+  || echo "warning: nix-store is still not on the PATH of a non-interactive ssh shell" >&2
+
 echo "Building the M20 DrDDS/Zenoh bridge on GOS..."
 "$bridge_dir/build.sh"
 
