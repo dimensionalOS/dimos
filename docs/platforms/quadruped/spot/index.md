@@ -30,8 +30,10 @@ dimos run spot \
   --spothighlevel.password=<password>
 ```
 
-The username and password are printed on the sticker inside Spot's battery bay (visible
-when the battery is removed).
+Both `spot` and `spot-record` require a username and password before any modules start.
+The sticker inside Spot's battery bay lists the credentials. You can also supply them
+through `SPOTHIGHLEVEL__USERNAME` and `SPOTHIGHLEVEL__PASSWORD`. Use `spot-replay`
+to play a recording without robot credentials.
 
 The IP auto-detects (WiFi then Ethernet). Force one with `--spothighlevel.ip=<addr>`.
 
