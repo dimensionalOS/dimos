@@ -36,7 +36,7 @@ _LIST_OP_FIELDS = ("addedItems", "prependedItems", "appendedItems", "deletedItem
 
 
 def usd_under_namespace(usd: str, namespace: str, root: Path | str | None = None) -> str:
-    """The layer with every root prim moved under ``/<namespace>``, so each frame's prim path is its tf frame.
+    """The layer with every root prim moved under ``/<namespace>``.
 
     The namespace's own prims are typeless ``def``s (an ``over`` would hide what is under it from a
     traversal), the first of them is the defaultPrim, and every path the layer states into a moved

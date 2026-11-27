@@ -71,17 +71,6 @@ def probe(tmp_path: Path) -> Any:
     return RobotModel.from_file(source).load()
 
 
-def _link_paths(loaded: Any) -> dict[str, str]:
-    """Each URDF link's frame in the USD urdf_to_usd writes: ``<robot>/<root link>/.../<link>``."""
-    paths = {loaded.root_link: f"{ET.fromstring(loaded.xml).get('name')}/{loaded.root_link}"}
-    pending = list(loaded.joints)
-    while pending:
-        joint = next(joint for joint in pending if joint.parent_link in paths)
-        pending.remove(joint)
-        paths[joint.child_link] = f"{paths[joint.parent_link]}/{joint.child_link}"
-    return paths
-
-
 def _round_trip(loaded: Any, tmp_path: Path) -> Any:
     recovered = tmp_path / "recovered.urdf"
     recovered.write_text(usd_to_urdf(urdf_to_usd(loaded)))
@@ -95,11 +84,10 @@ def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path)
     for original in probe.joints:
         got = back.get_joint(original.name)
         assert got is not None, original.name
-        paths = _link_paths(probe)
         assert (got.type, got.parent_link, got.child_link) == (
             original.type,
-            paths[original.parent_link],
-            paths[original.child_link],
+            original.parent_link,
+            original.child_link,
         )
         np.testing.assert_allclose(got.origin_xyz, original.origin_xyz, atol=1e-6)
         np.testing.assert_allclose(got.origin_rpy, original.origin_rpy, atol=1e-6)
@@ -150,9 +138,8 @@ def test_a_joint_turns_about_the_axis_its_token_names() -> None:
 def test_the_kinematic_tree_comes_back_the_same(probe: Any, tmp_path: Path) -> None:
     back = _round_trip(probe, tmp_path)
 
-    paths = _link_paths(probe)
-    assert back.root_link == paths[probe.root_link] == "probe/base"
-    assert {j.child_link for j in back.joints} == {paths[j.child_link] for j in probe.joints}
+    assert back.root_link == probe.root_link == "base"
+    assert {j.child_link for j in back.joints} == {j.child_link for j in probe.joints}
 
 
 def test_the_forward_kinematics_agree(probe: Any, tmp_path: Path) -> None:
@@ -171,18 +158,18 @@ def test_collision_geometry_comes_back_as_collision(probe: Any) -> None:
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
     links = {link.get("name"): link for link in root.findall("link")}
 
-    assert links["probe/base"].find("collision/geometry/box") is not None
-    assert links["probe/base/arm"].find("collision/geometry/cylinder") is not None
-    assert links["probe/base/arm/tool"].find("collision/geometry/sphere") is not None
+    assert links["base"].find("collision/geometry/box") is not None
+    assert links["arm"].find("collision/geometry/cylinder") is not None
+    assert links["tool"].find("collision/geometry/sphere") is not None
 
 
 def test_each_shape_keeps_its_dimensions(probe: Any) -> None:
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
     links = {link.get("name"): link for link in root.findall("link")}
 
-    box = links["probe/base"].find("collision/geometry/box")
-    cylinder = links["probe/base/arm"].find("collision/geometry/cylinder")
-    sphere = links["probe/base/arm/tool"].find("collision/geometry/sphere")
+    box = links["base"].find("collision/geometry/box")
+    cylinder = links["arm"].find("collision/geometry/cylinder")
+    sphere = links["tool"].find("collision/geometry/sphere")
     assert box is not None and cylinder is not None and sphere is not None
     np.testing.assert_allclose([float(v) for v in (box.get("size") or "").split()], [0.1, 0.2, 0.3])
     assert float(cylinder.get("radius") or 0) == pytest.approx(0.05)
@@ -192,7 +179,7 @@ def test_each_shape_keeps_its_dimensions(probe: Any) -> None:
 
 def test_a_geometry_origin_survives(probe: Any) -> None:
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
-    base = next(link for link in root.findall("link") if link.get("name") == "probe/base")
+    base = next(link for link in root.findall("link") if link.get("name") == "base")
 
     origin = base.find("collision/origin")
     assert origin is not None
@@ -206,7 +193,7 @@ def test_a_geometry_origin_survives(probe: Any) -> None:
 
 def test_a_visual_mesh_keeps_the_path_the_urdf_named(probe: Any) -> None:
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
-    arm = next(link for link in root.findall("link") if link.get("name") == "probe/base/arm")
+    arm = next(link for link in root.findall("link") if link.get("name") == "arm")
 
     mesh = arm.find("visual/geometry/mesh")
     assert mesh is not None
@@ -215,7 +202,7 @@ def test_a_visual_mesh_keeps_the_path_the_urdf_named(probe: Any) -> None:
 
 def test_what_the_conversion_could_not_express_comes_back(probe: Any) -> None:
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
-    base = next(link for link in root.findall("link") if link.get("name") == "probe/base")
+    base = next(link for link in root.findall("link") if link.get("name") == "base")
 
     mass = base.find("inertial/mass")
     assert mass is not None
@@ -241,12 +228,12 @@ def test_a_continuous_joint_round_trips_as_continuous(tmp_path: Path) -> None:
 
 def test_a_layer_with_no_joints_is_still_a_robot(tmp_path: Path) -> None:
     source = tmp_path / "world.urdf"
-    source.write_text('<robot name="world"><link name="world"/></robot>')
+    source.write_text('<robot name="solo"><link name="world"/></robot>')
     loaded = RobotModel.from_file(source).load()
 
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(loaded)))
 
-    assert [link.get("name") for link in root.findall("link")] == ["world/world"]
+    assert [link.get("name") for link in root.findall("link")] == ["world"]
     assert root.findall("joint") == []
 
 
@@ -257,7 +244,7 @@ def test_the_root_link_is_found_in_the_layer_not_taken_from_the_default_prim(
 
     usd = urdf_to_usd(probe)
 
-    assert usd_root_link(usd) == "probe/base"
+    assert usd_root_link(usd) == "base"
     assert usd_root_link(usd) != "probe"
 
 
@@ -318,7 +305,7 @@ def Xform "leg"
 
 def test_a_capsule_becomes_a_cylinder_that_covers_it() -> None:
     root = ET.fromstring(usd_to_urdf(_CAPSULE_USDA))
-    (link,) = [link for link in root.findall("link") if link.get("name") == "leg/thigh"]
+    (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
 
     cylinder = link.find("collision/geometry/cylinder")
     assert cylinder is not None, "the capsule was dropped"
@@ -357,7 +344,7 @@ def Xform "leg"
 
 def test_mujocos_grouping_is_not_read_as_collision() -> None:
     root = ET.fromstring(usd_to_urdf(_MARKED_AND_GROUPED_USDA))
-    (link,) = [link for link in root.findall("link") if link.get("name") == "leg/thigh"]
+    (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
 
     assert link.find("collision/geometry/box") is not None
     assert link.find("visual/geometry/cylinder") is not None, (
@@ -464,7 +451,7 @@ def test_a_native_joint_turns_about_the_axis_it_names() -> None:
 def test_a_native_prim_keeps_the_pose_its_xform_ops_state() -> None:
     """translate + orient is how the vendored robots place every prim; transform is ours."""
     links = {link.get("name"): link for link in ET.fromstring(usd_to_urdf(_VENDORED_USDA))}
-    origin = links["walker/shin"].findall("visual")[0].find("origin")
+    origin = links["shin"].findall("visual")[0].find("origin")
 
     assert origin is not None, "a geometry placed by translate kept no origin at all"
     np.testing.assert_allclose(
@@ -506,15 +493,15 @@ _TWO_PARENTS_USDA = _SCENE_USDA.replace(
 def test_two_candidate_roots_are_not_guessed_between() -> None:
     from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
-    assert usd_root_link(_TWO_PARENTS_USDA) in {"room/desk", "room/chair"}
+    assert usd_root_link(_TWO_PARENTS_USDA) in {"desk", "chair"}
 
 
 def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
     root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
 
     assert {link.get("name") for link in root.findall("link")} == {
-        "rig/chassis",
-        "rig/chassis/mast",
+        "chassis",
+        "mast",
     }
     joints = root.findall("joint")
     assert len(joints) == 1
@@ -522,7 +509,7 @@ def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
     parent = joints[0].find("parent")
     child = joints[0].find("child")
     assert parent is not None and child is not None
-    assert (parent.get("link"), child.get("link")) == ("rig/chassis", "rig/chassis/mast")
+    assert (parent.get("link"), child.get("link")) == ("chassis", "mast")
 
 
 def test_an_inferred_weld_keeps_the_nested_prim_s_pose() -> None:
@@ -538,7 +525,7 @@ def test_an_inferred_weld_keeps_the_nested_prim_s_pose() -> None:
 def test_a_nested_layer_names_its_root_link() -> None:
     from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
-    assert usd_root_link(_NESTED_USDA) == "rig/chassis"
+    assert usd_root_link(_NESTED_USDA) == "chassis"
 
 
 _FLOATING_URDF = """<?xml version="1.0"?>
@@ -573,7 +560,7 @@ def test_a_floating_base_does_not_come_back_welded(walker: Any, tmp_path: Path) 
     joint = back.get_joint("floating_base")
     assert joint is not None, [j.name for j in back.joints]
     assert joint.type == "floating"
-    assert (joint.parent_link, joint.child_link) == ("walker/world", "walker/world/pelvis")
+    assert (joint.parent_link, joint.child_link) == ("world", "pelvis")
     np.testing.assert_allclose(joint.origin_xyz, [0, 0, 0.8], atol=1e-6)
 
 
@@ -661,7 +648,7 @@ def _expected_anchored_pose(angle: float) -> Any:
 def test_a_joint_anchored_off_the_child_origin_keeps_the_child_where_it_sits() -> None:
     urdf = usd_to_urdf(_anchored_usda("PhysicsFixedJoint"))
 
-    np.testing.assert_allclose(_link_pose(urdf, "rig/arm"), _expected_anchored_pose(0.0), atol=1e-6)
+    np.testing.assert_allclose(_link_pose(urdf, "arm"), _expected_anchored_pose(0.0), atol=1e-6)
 
 
 def test_a_moving_joint_anchored_off_the_child_origin_turns_about_the_anchor() -> None:
@@ -669,20 +656,36 @@ def test_a_moving_joint_anchored_off_the_child_origin_turns_about_the_anchor() -
 
     for angle in (0.0, 0.7, -1.3):
         np.testing.assert_allclose(
-            _link_pose(urdf, "rig/arm", {"elbow": angle}), _expected_anchored_pose(angle), atol=1e-6
+            _link_pose(urdf, "arm", {"elbow": angle}), _expected_anchored_pose(angle), atol=1e-6
         )
 
 
-def test_an_added_anchor_does_not_take_the_name_of_a_real_link() -> None:
+def _anchor_name_taken_by_the_child() -> tuple[str, str]:
     usda = _anchored_usda("PhysicsRevoluteJoint").replace('"arm"', '"elbow_anchor"')
-    usda = usda.replace("</rig/arm>", "</rig/elbow_anchor>")
+    return usda.replace("</rig/arm>", "</rig/elbow_anchor>"), "elbow_anchor"
+
+
+def _anchor_name_taken_by_a_static_parent() -> tuple[str, str]:
+    # The parent has no RigidBodyAPI: it is a frame only because the joint names it.
+    usda = _anchored_usda("PhysicsRevoluteJoint").replace(
+        'def Xform "base" (\n        prepend apiSchemas = ["PhysicsRigidBodyAPI"]\n    )',
+        'def Xform "elbow_anchor"',
+    )
+    return usda.replace("</rig/base>", "</rig/elbow_anchor>"), "arm"
+
+
+@pytest.mark.parametrize(
+    "layer", [_anchor_name_taken_by_the_child, _anchor_name_taken_by_a_static_parent]
+)
+def test_an_added_anchor_does_not_take_the_name_of_a_real_frame(layer: Any) -> None:
+    usda, child = layer()
     urdf = usd_to_urdf(usda)
 
     links = [link.get("name") for link in ET.fromstring(urdf).iter("link")]
     assert len(links) == len(set(links)) == 3
     for angle in (0.0, 0.7):
         np.testing.assert_allclose(
-            _link_pose(urdf, "rig/elbow_anchor", {"elbow": angle}),
+            _link_pose(urdf, child, {"elbow": angle}),
             _expected_anchored_pose(angle),
             atol=1e-6,
         )
@@ -696,7 +699,7 @@ def test_a_usd_model_places_an_anchored_child_where_the_layer_does(tmp_path: Pat
     joints = {joint.child_link: joint for joint in UsdModel.from_file(scene).joints}
 
     pose = np.eye(4)
-    link = "rig/arm"
+    link = "arm"
     while link in joints:
         joint = joints[link]
         pose = joint.parent_from_child(0.5 if joint.name == "elbow" else 0.0) @ pose
@@ -750,8 +753,8 @@ def Xform "rig"
 def test_geometry_inside_a_grouping_prim_stays_on_its_body() -> None:
     links = {link.get("name"): link for link in ET.fromstring(usd_to_urdf(_GROUPED_USDA))}
 
-    box = links["rig/chassis"].find("collision/geometry/box")
-    origin = links["rig/chassis"].find("collision/origin")
+    box = links["chassis"].find("collision/geometry/box")
+    origin = links["chassis"].find("collision/origin")
     assert box is not None, "geometry beneath an Xform and a Scope was dropped"
     assert origin is not None
     np.testing.assert_allclose([float(v) for v in (box.get("size") or "").split()], [0.2, 0.3, 0.4])
@@ -819,7 +822,7 @@ def test_a_round_shape_lies_along_the_axis_it_names(
     from scipy.spatial.transform import Rotation
 
     root = ET.fromstring(usd_to_urdf(_round_shape_usda(type_name, axis)))
-    collision = next(link for link in root.findall("link") if link.get("name") == "leg/thigh").find(
+    collision = next(link for link in root.findall("link") if link.get("name") == "thigh").find(
         "collision"
     )
     assert collision is not None

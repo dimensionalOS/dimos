@@ -97,10 +97,10 @@ def test_links_nest_down_the_kinematic_tree(toy: Any) -> None:
     assert str(_prim_by_link(stage, "arm_1").GetPath()) == "/toy/base_link/mount/arm_1"
 
 
-def test_a_link_is_named_by_its_prim_path(toy: Any) -> None:
+def test_a_link_is_named_by_its_urdf_name(toy: Any) -> None:
     stage = _stage(urdf_to_usd(toy))
 
-    assert {"toy", "toy/base_link/mount/arm_1"} <= usd_frame_names(urdf_to_usd(toy))
+    assert {"toy", "base_link", "mount", "arm_1"} <= usd_frame_names(urdf_to_usd(toy))
     assert not _prim_by_link(stage, "arm_1").HasAuthoredDisplayName()
 
 
@@ -278,7 +278,7 @@ def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
     from pxr import UsdPhysics
 
     grown = usd_with_frames(
-        urdf_to_usd(toy), {"spot": ("toy/base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+        urdf_to_usd(toy), {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
     )
     stage = _stage(grown)
 
@@ -305,7 +305,7 @@ def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
     from dimos.robot.assets.model import UsdModel
 
     xyz, rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
-    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy/base_link", xyz, rpy)})
+    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("base_link", xyz, rpy)})
 
     joint = next((j for j in UsdModel.from_layer(scene).joints if j.name == "spot_joint"), None)
     assert joint is not None, "the added frame is a joint of the description"
@@ -335,17 +335,15 @@ def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: 
     parent_of = {_link(joint, "child"): _link(joint, "parent") for joint in urdf.findall("joint")}
 
     assert "toy" in links, "the scene root is a link even though it is not a rigid body"
-    assert parent_of["toy/spot"] == "toy", "a body0-less weld hangs off the scene root"
+    assert parent_of["spot"] == "toy", "a body0-less weld hangs off the scene root"
     origin = next(
-        joint.find("origin")
-        for joint in urdf.findall("joint")
-        if _link(joint, "child") == "toy/spot"
+        joint.find("origin") for joint in urdf.findall("joint") if _link(joint, "child") == "spot"
     )
     assert origin is not None
     assert [float(value) for value in origin.attrib["xyz"].split()] == [0.3, 0.0, 0.7], (
         "the weld carries where the frame actually sits, not the joint's zero offset"
     )
-    assert "toy/spot" not in {name for name in links if name not in parent_of}, (
+    assert "spot" not in {name for name in links if name not in parent_of}, (
         "the frame is no longer a root of its own disconnected tree"
     )
 
@@ -374,8 +372,8 @@ def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
         usd_with_frames(
             urdf_to_usd(toy),
             {
-                "front_camera": ("toy/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
-                "lidar": ("toy/base_link/front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
+                "front_camera": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
+                "lidar": ("front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
             },
         )
     )
@@ -388,7 +386,7 @@ def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
 def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="is taken"):
         usd_with_frames(
-            urdf_to_usd(toy), {"mount": ("toy/base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
+            urdf_to_usd(toy), {"mount": ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
         )
 
 
@@ -400,26 +398,7 @@ def test_an_added_frame_name_that_cannot_be_a_prim_name_is_an_error(
     toy: Any, name: str, complaint: str
 ) -> None:
     with pytest.raises(ValueError, match=complaint):
-        usd_with_frames(
-            urdf_to_usd(toy), {name: ("toy/base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
-        )
-
-
-def test_a_frame_is_named_by_its_prim_path_through_any_scope_on_the_way() -> None:
-    from dimos.robot.assets.usd_utils.frames import usd_frame_edges
-
-    layer = (
-        '#usda 1.0\n(\n    defaultPrim = "go2"\n)\n\ndef Xform "go2"\n{\n    def Scope "Geometry"\n    {\n'
-        '        def Xform "base_link" (prepend apiSchemas = ["PhysicsRigidBodyAPI"])\n        {\n'
-        "            double3 xformOp:translate = (0, 0, 0.3)\n"
-        '            uniform token[] xformOpOrder = ["xformOp:translate"]\n'
-        '            def Mesh "visual" {}\n        }\n    }\n}\n'
-    )
-
-    assert usd_frame_names(layer) == {"go2", "go2/Geometry", "go2/Geometry/base_link"}
-    edges = {(parent, child): pose for parent, child, pose in usd_frame_edges(layer)}
-    assert set(edges) == {("go2", "go2/Geometry"), ("go2/Geometry", "go2/Geometry/base_link")}
-    assert edges["go2/Geometry", "go2/Geometry/base_link"][2, 3] == pytest.approx(0.3)
+        usd_with_frames(urdf_to_usd(toy), {name: ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
 
 
 def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:

@@ -188,15 +188,13 @@ def Scope "Looks"
 
 
 @pytest.mark.parametrize("namespace", ["left", "fleet/robot0", "arm"])
-def test_a_layer_nested_under_a_namespace_names_each_frame_as_on_tf(namespace: str) -> None:
+def test_a_layer_nested_under_a_namespace_keeps_its_frames(namespace: str) -> None:
     from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
     nested = usd_under_namespace(_BOUND_ARM, namespace)
     stage = _stage(nested)
 
-    under = {f"{namespace}/{frame}" for frame in usd_frame_names(_BOUND_ARM)}
-    ancestors = {"/".join(namespace.split("/")[: n + 1]) for n in range(namespace.count("/") + 1)}
-    assert usd_frame_names(nested) == under | ancestors
+    assert usd_frame_names(nested) == {namespace.partition("/")[0], "base", "tip"}
     assert str(stage.GetDefaultPrim().GetPath()) == f"/{namespace.partition('/')[0]}"
     assert stage.GetMetadata("upAxis") == "Z"
     base = stage.GetPrimAtPath(f"/{namespace}/arm/base")

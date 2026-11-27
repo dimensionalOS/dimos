@@ -868,8 +868,8 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
     (joint,) = model.joints
     assert joint.name == "shoulder"
     assert joint.type == "revolute"
-    assert joint.parent_link == "arm/base"
-    assert joint.child_link == "arm/base/forearm"
+    assert joint.parent_link == "base"
+    assert joint.child_link == "forearm"
 
 
 def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
@@ -918,23 +918,39 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
     assert transferred_joint.velocity == 0.2
 
 
+def test_joint_velocity_and_effort_limits_survive_the_trip_through_usd(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='arm'/><link name='tip'/>"
+        "<joint name='shoulder' type='revolute'><parent link='base'/><child link='arm'/>"
+        "<limit lower='-1' upper='1' effort='12' velocity='2.5'/></joint>"
+        "<joint name='weld' type='fixed'><parent link='arm'/><child link='tip'/></joint></robot>"
+    )
+    model = UsdModel.from_robot_model(robot_model.RobotModel.from_file(urdf))
+
+    joints = {joint.name: joint for joint in model.joints}
+    assert (joints["shoulder"].velocity, joints["shoulder"].effort) == (2.5, 12.0)
+    assert (joints["weld"].velocity, joints["weld"].effort) == (None, None)
+
+
 def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> None:
     """with_frames welds the frame into the layer, so joints and frame_names have to say so."""
     source = tmp_path / "arm.urdf"
     source.write_text('<robot name="arm"><link name="base_link"/></robot>')
     model = UsdModel.from_robot_model(robot_model.RobotModel.from_file(source)).with_frames(
-        {"tool": ("arm/base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))}
+        {"tool": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))}
     )
 
     joint = next((joint for joint in model.joints if joint.name == "tool_joint"), None)
     assert joint is not None, "the added frame is welded in the layer but absent from joints"
     assert (joint.type, joint.parent_link, joint.child_link) == (
         "fixed",
-        "arm/base_link",
-        "arm/base_link/tool",
+        "base_link",
+        "tool",
     )
     assert joint.origin_xyz == pytest.approx((0.1, 0.0, 0.2))
-    assert model.frame_names() == {"arm", "arm/base_link", "arm/base_link/tool"}
+    assert model.frame_names() == {"arm", "base_link", "tool"}
 
 
 def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
