@@ -22,9 +22,12 @@ from dimos.perception.detection.type.detection2d.imageDetections2D import ImageD
 pytestmark = pytest.mark.self_hosted
 
 
-@pytest.fixture(params=["bbox_detector", "person_detector", "yoloe_detector"], scope="session")
+@pytest.fixture(
+    params=["dfine_detector", "bbox_detector", "person_detector", "yoloe_detector"],
+    scope="session",
+)
 def detector(request):
-    """Parametrized fixture that provides both bbox and person detectors."""
+    """Parametrized fixture that provides the bbox and person detectors."""
     return request.getfixturevalue(request.param)
 
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections.abc import Callable, Sequence
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic.experimental.pipeline import validate_as
 from reactivex import operators as ops
@@ -29,7 +29,7 @@ from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.base import Detector
-from dimos.perception.detection.detectors.yolo import Yolo2DDetector
+from dimos.perception.detection.detectors.dfine import DFineDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
@@ -38,7 +38,7 @@ from dimos.utils.reactive import backpressure
 
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Callable[[Any], Detector] | None = Yolo2DDetector
+    detector: Callable[[], Detector] | None = DFineDetector
     publish_detection_images: bool = True
     camera_info: CameraInfo
     filter: Annotated[
@@ -65,7 +65,7 @@ class Detection2DModule(Module):
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self.detector = self.config.detector()  # type: ignore[call-arg, misc]
+        self.detector = self.config.detector()  # type: ignore[misc]
         self.vlm_detections_subject = Subject()  # type: ignore[var-annotated]
         self.previous_detection_count = 0
 

@@ -302,8 +302,8 @@ class Detection2DBBox(Detection2D):
             class_id = hypothesis.class_id
             confidence = hypothesis.score
 
-        # Extract track_id
-        track_id = int(ros_det.id) if ros_det.id.isdigit() else 0
+        # Extract track_id. -1 is a detection without a track.
+        track_id = int(ros_det.id) if ros_det.id.lstrip("-").isdigit() else 0
 
         # Extract timestamp
         ts = to_timestamp(ros_det.header.stamp)

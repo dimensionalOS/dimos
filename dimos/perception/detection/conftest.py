@@ -24,6 +24,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.detection.detectors.dfine import DFineDetector
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type.detection2d.base import Detection2D
@@ -140,10 +141,8 @@ def detection3dpc(detections3dpc) -> Detection3DPC:
 
 @pytest.fixture(scope="session")
 def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-
     c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
+    module = Detection2DModule(detector=lambda: DFineDetector(device="cpu"), camera_info=c)
 
     @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment2D:
@@ -199,10 +198,8 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
 @pytest.fixture(scope="session")
 def object_db_module(get_moment):
     """Create and populate an ObjectDBModule with detections from multiple frames."""
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-
     c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module2d = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
+    module2d = Detection2DModule(detector=lambda: DFineDetector(device="cpu"), camera_info=c)
     module3d = Detection3DModule(camera_info=connection._camera_info_static())
     moduleDB = ObjectDBModule(camera_info=connection._camera_info_static())
 

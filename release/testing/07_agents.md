@@ -90,7 +90,7 @@ Expected result: the robot turns toward the chair and drives up to it, and the a
 
 ## 7.5 Object detection in replay
 
-The first run pulls the YOLO weights.
+The first run downloads the D-FINE weights from Hugging Face.
 
 ```bash
 uv run dimos --replay run unitree-go2-detection

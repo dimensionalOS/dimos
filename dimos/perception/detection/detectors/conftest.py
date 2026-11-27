@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.detectors.dfine import DFineDetector
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -31,6 +32,12 @@ def test_image():
 def person_detector():
     """Create a YoloPersonDetector instance."""
     return YoloPersonDetector()
+
+
+@pytest.fixture(scope="session")
+def dfine_detector():
+    """Create a DFineDetector instance, the default of the detection modules."""
+    return DFineDetector()
 
 
 @pytest.fixture(scope="session")

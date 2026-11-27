@@ -18,7 +18,7 @@ import pytest
 def test_detection2d(detection2d) -> None:
     # def test_detection_basic_properties(detection2d):
     """Test basic detection properties."""
-    assert detection2d.track_id >= 0
+    assert detection2d.track_id == -1  # the default detector has no tracker
     assert detection2d.class_id >= 0
     assert 0.0 <= detection2d.confidence <= 1.0
     assert detection2d.name is not None
@@ -66,10 +66,10 @@ def test_detection2d(detection2d) -> None:
 
     assert cropped is not None, "Cropped image should not be None"
 
-    # The actual cropped image is (260, 192, 3)
-    assert cropped.width == 192
-    assert cropped.height == 260
-    assert cropped.shape == (260, 192, 3)
+    # The actual cropped image is (266, 191, 3)
+    assert cropped.width == 191
+    assert cropped.height == 266
+    assert cropped.shape == (266, 191, 3)
 
     # def test_to_ros_bbox(detection2d):
     """Test ROS bounding box conversion."""
