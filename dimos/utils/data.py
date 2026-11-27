@@ -106,10 +106,15 @@ def get_project_root() -> Path:
                     text=True,
                     env=env,
                 )
-            except subprocess.CalledProcessError as e:
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                reason = (
+                    "git is not installed" if isinstance(e, FileNotFoundError) else e.stderr.strip()
+                )
                 raise RuntimeError(
-                    f"Failed to clone dimos repository: {e.stderr}\n"
-                    f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
+                    "This needs the DimOS repository, and an installed package has to clone it "
+                    f"from https://github.com/dimensionalOS/dimos.git. The clone failed: {reason}\n"
+                    "Run from a source checkout, or install git and give this machine access "
+                    "to GitHub."
                 )
             logger.info(
                 "Cloned the DimOS repository", duration=f"{time.monotonic() - started:.1f}s"

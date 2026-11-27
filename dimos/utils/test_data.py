@@ -791,6 +791,27 @@ def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
     run.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (FileNotFoundError(2, "No such file or directory", "git"), "git is not installed"),
+        (
+            subprocess.CalledProcessError(128, ["git"], stderr="fatal: unable to access\n"),
+            "fatal: unable to access",
+        ),
+    ],
+)
+def test_project_root_says_an_install_needs_the_repository_when_it_cannot_clone(
+    tmp_path: Path, mocker: MockerFixture, failure: Exception, reason: str
+) -> None:
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+    mocker.patch.object(data, "_get_user_data_dir", return_value=tmp_path / "data")
+    mocker.patch.object(data.subprocess, "run", side_effect=failure)
+
+    with pytest.raises(RuntimeError, match=f"needs the DimOS repository.*{reason}"):
+        data.get_project_root.__wrapped__()
+
+
 def test_project_root_clones_again_after_unfinished_clone(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
