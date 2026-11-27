@@ -58,7 +58,12 @@ class V4L2CameraConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _jetson_build(self) -> V4L2CameraConfig:
-        if self.build_command == "nix build -L path:." and Path("/etc/nv_tegra_release").exists():
+        # An install runs the variant it ships, whatever this machine would ask for.
+        if (
+            self.build_command == "nix build -L path:."
+            and self.prebuilt_executable() is None
+            and Path("/etc/nv_tegra_release").exists()
+        ):
             self.build_command = self.alternate_builds[0]
         return self
 

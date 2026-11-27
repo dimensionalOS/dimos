@@ -131,6 +131,12 @@ _PYTHON_TO_RUST_LEVELS = {
 _NO_MESSAGE = "<no message>"
 
 
+def prebuilt_native_dir() -> Path | None:
+    """The directory named by DIMOS_NATIVE_DIR. An install keeps its built native modules there."""
+    value = os.environ.get("DIMOS_NATIVE_DIR")
+    return Path(value).expanduser().resolve() if value else None
+
+
 def _check_legacy_cwd(values: Any) -> Any:
     if isinstance(values, dict) and "cwd" in values:
         raise ValueError(
@@ -187,8 +193,28 @@ class NativeModuleConfig(ModuleConfig):
                 raise ValueError("executable must stay within the project checkout")
         return self
 
+    def prebuilt_executable(self) -> Path | None:
+        """Where an install keeps this module's binary: <DIMOS_NATIVE_DIR>/<name>/bin/<name>.
+
+        None in a checkout, and for an external binary.
+        """
+        native_dir = prebuilt_native_dir()
+        if native_dir is None or self.source_dir is None:
+            return None
+        name = Path(self.executable).name
+        return native_dir / name / "bin" / name
+
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
+        prebuilt = self.prebuilt_executable()
+        if prebuilt is not None:
+            if not prebuilt.is_file():
+                raise FileNotFoundError(
+                    f"Native module '{prebuilt.name}' has no prebuilt binary: {prebuilt} "
+                    "is missing. DIMOS_NATIVE_DIR is set, so native modules are not built "
+                    "on this machine."
+                )
+            return str(prebuilt.parent), str(prebuilt)
         if self.source_dir is not None:
             root = get_project_root()
             build_cwd = root / self.source_dir
@@ -544,6 +570,10 @@ class NativeModule(Module):
         stream.close()
 
     def _maybe_build(self) -> None:
+        # An install runs the binary it ships. resolve_paths() checked that it is there.
+        if self.config.prebuilt_executable() is not None:
+            return
+
         exe = Path(self._executable)
 
         if self.config.build_command is None:

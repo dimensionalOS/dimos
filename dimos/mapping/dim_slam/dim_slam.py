@@ -255,7 +255,8 @@ class DimSlamConfig(NativeModuleConfig):
 
     def model_post_init(self, context: Any, /) -> None:
         super().model_post_init(context)
-        if self.build_command == "nix build -L path:.":
+        # An install runs the variant it ships, whatever this machine would ask for.
+        if self.build_command == "nix build -L path:." and self.prebuilt_executable() is None:
             self.build_command = f"nix build -L path:.#{sdk_variant()}"
 
 

@@ -342,6 +342,22 @@ def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
     build.assert_not_called()
 
 
+def test_prepare_uses_the_prebuilt_recorder_and_never_builds(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("DIMOS_NATIVE_DIR", str(tmp_path))
+    monkeypatch.setattr(global_config, "build_native", True)
+    mocker.patch(
+        "dimos.core.native_module.get_project_root", side_effect=AssertionError("checkout")
+    )
+    build = mocker.patch.object(rust_cli_recorder.subprocess, "Popen")
+    with pytest.raises(FileNotFoundError, match="'dimos-memory-recorder' has no prebuilt binary"):
+        rust_cli_recorder.prepare_rust_recorder()
+    executable = tmp_path / "dimos-memory-recorder/bin/dimos-memory-recorder"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    assert rust_cli_recorder.prepare_rust_recorder() == executable
+    build.assert_not_called()
+
+
 def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
