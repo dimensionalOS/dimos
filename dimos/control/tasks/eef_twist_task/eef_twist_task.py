@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import threading
 from typing import TYPE_CHECKING
 
@@ -39,7 +38,6 @@ from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix, twist_to
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
-    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 logger = setup_logger()
@@ -220,9 +218,7 @@ class EEFTwistTaskParams(PoseTargetIKTaskParams):
 
 def create_task(
     cfg: TaskConfig,
-    hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
 ) -> EEFTwistTask:
-    del hardware
     params = EEFTwistTaskParams.model_validate(cfg.params)
     return EEFTwistTask(
         cfg.name,

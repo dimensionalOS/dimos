@@ -13,12 +13,12 @@ Expected result: each blueprint starts, processes the replay data, and displays 
 
 ## 2.2 MuJoCo simulation
 
-The first runs pull the MuJoCo scenes and models from LFS and download the MuJoCo Menagerie robot descriptions from GitHub. Allow the initial asset downloads to finish before checking the viewers.
+The first runs download missing MuJoCo scenes and models from DimOS Git LFS, including the Unitree meshes in the `mujoco_menagerie` archive. Allow the downloads to finish before checking the viewers.
 
 ```bash
 uv run dimos --simulation run unitree-go2
 uv run dimos --simulation run unitree-go2-agentic
-uv run dimos --simulation run unitree-g1-sim
+uv run dimos --simulation run unitree-g1
 ```
 
 * With `unitree-go2` running, click a visible point on the mapped floor in the Rerun 3D view. Clicking empty background/grid space only selects the view and sends no goal. The robot walks to the selected point, and the planner logs `arrived=True`.
@@ -57,3 +57,5 @@ uv run dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 ```
 
 Expected result: the summary lists one row per stream, including `lidar`, `odom` and `color_image`. `mem rerun` opens the recording in Rerun. The `replay` blueprint plays every recorded stream back, and `unitree-go2` runs on the recording instead of a robot connection.
+
+`mem rerun` writes `recordings/<run-id>/memory.rrd` alongside the source on each run and opens the stock "Rerun Viewer", separate from the DimOS Viewer. The command returns after conversion, leaving the viewer open. Close that window by hand before starting the next blueprint. Ctrl+C and `dimos stop` do not close it after the command has returned. The generated `.rrd` remains on disk and can be removed after closing the viewer. Keep `memory.db` for the replay checks.

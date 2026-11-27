@@ -17,13 +17,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator
 import math
 from pathlib import Path
-import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
 from dimos.memory.utils.time_window import RecordingWindow
-from dimos.utils.executable import find_executable
+from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -707,10 +706,10 @@ def main(
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
+        spawn_detached([find_executable("rerun") or "rerun", str(out)])
 
     if export_cloud and pgo_map is not None:
-        from dimos.mapping.relocalization.module import map_cloud_stream, named_map_frame
+        from dimos.mapping.relocalization.utils import map_cloud_stream, named_map_frame
         from dimos.memory.store.sqlite import SqliteStore
 
         out_path = Path.cwd() / f"{db_path.stem}_map.db"
@@ -721,7 +720,7 @@ def main(
             map_store.stream(stream, PointCloud2).append(pgo_map, ts=pgo_map.ts or 0.0)
         print(
             f"wrote {out_path} ({stream}, frame {named_map_frame(map_name)}), "
-            f"relocalize against it with --map-file {out_path.name}"
+            f"use with run relocalize-mid360 --map-file {out_path.name}"
         )
 
     if export:
@@ -741,7 +740,10 @@ def main(
             print("no keyframes, no graph written")
         else:
             premap.save(map_path)
-            print(f"wrote {map_path} ({len(premap)} keyframes, {len(premap.edges)} edges)")
+            print(
+                f"wrote {map_path} ({len(premap)} keyframes, {len(premap.edges)} edges), "
+                f"use with run unitree-go2 --map-file {map_path.name}"
+            )
 
 
 if __name__ == "__main__":

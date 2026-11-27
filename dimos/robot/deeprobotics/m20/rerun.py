@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rerun views for the M20 blueprints: the navigation overlays, the cameras, and the real and sim layouts."""
+"""Rerun views for the M20 blueprints: the navigation overlays and the sim layout."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.global_planner.viz import render_goal, render_path
 from dimos.navigation.local_planner.viz import motion_visual_override
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
     PLANNER_VIZ_HZ,
     VOXEL_SIZE_M,
@@ -41,9 +40,7 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
     from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.visualization.rerun.bridge import VisualOverride
 
 
@@ -78,73 +75,6 @@ def m20_nav_overrides() -> dict[str, VisualOverride]:
         **planner_visual_override(
             PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
         ),
-    }
-
-
-def _render_h265(msg: CompressedVideo) -> Any:
-    import rerun as rr
-
-    return rr.VideoStream(codec=rr.VideoCodec.H265, sample=msg.data.tobytes())
-
-
-def _render_front_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/front_camera",
-        optical_frame="front_camera_optical",
-    )
-
-
-def _render_rear_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/rear_camera",
-        optical_frame="rear_camera_optical",
-    )
-
-
-def _m20_rerun_blueprint() -> Any:
-    """Go2-style navigation layout with both M20 camera streams."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/front_camera", name="Front Camera"),
-                rrb.Spatial2DView(origin="world/rear_camera", name="Rear Camera"),
-                row_shares=[1, 1],
-            ),
-            rrb.Spatial3DView(
-                origin="world",
-                name="M20 nav",
-                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-                line_grid=rrb.LineGrid3D(
-                    plane=rr.components.Plane3D.XY.with_distance(0.5),
-                ),
-            ),
-            column_shares=[1, 2],
-        ),
-        rrb.TimePanel(state="hidden"),
-        rrb.SelectionPanel(state="hidden"),
-    )
-
-
-def m20_rerun_config() -> dict[str, Any]:
-    """The real robot's view: navigation plus both cameras."""
-    return {
-        "pubsubs": [Zenoh()],
-        "blueprint": _m20_rerun_blueprint,
-        "tf_axes": 0.35,
-        "max_hz": {
-            "world/local_map": 0.5,
-        },
-        "visual_override": {
-            **m20_nav_overrides(),
-            "world/front_camera": _render_h265,
-            "world/rear_camera": _render_h265,
-            "world/front_camera_info": _render_front_camera_info,
-            "world/rear_camera_info": _render_rear_camera_info,
-        },
-        "static": m20_nav_static(),
     }
 
 
