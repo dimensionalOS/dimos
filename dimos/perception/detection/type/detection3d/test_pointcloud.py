@@ -179,6 +179,60 @@ def test_project_pixels(D: list[float]) -> None:
     np.testing.assert_allclose(Detection3DPC.project_pixels(points, info), expected.reshape(-1, 2))
 
 
+def test_project_pixels_rational_wide_lens() -> None:
+    # the R1 Pro head camera (rational_polynomial, as head_cameras.py loads
+    # it): rays out to the image edge match OpenCV instead of being dropped
+    info = CameraInfo(
+        height=1536,
+        width=1920,
+        distortion_model="rational_polynomial",
+        D=[-0.6792, -0.638, 0.0002, -0.0002, -0.0302, -0.2868, -0.9987, -0.1752],
+        K=[1012.59, 0.0, 962.21, 0.0, 1012.13, 765.67, 0.0, 0.0, 1.0],
+    )
+    points = np.array(
+        [[0.3, -0.2, 1.0], [-0.9467, -0.757, 1.0], [0.9467, 0.757, 1.0], [1.5, 0.0, 1.0]]
+    )
+    expected, _ = cv2.projectPoints(
+        points, np.zeros(3), np.zeros(3), np.reshape(info.K, (3, 3)), np.array(info.D)
+    )
+    expected = expected.reshape(-1, 2)
+    assert ((expected >= 0) & (expected < [info.width, info.height])).all()
+
+    np.testing.assert_allclose(Detection3DPC.project_pixels(points, info), expected)
+
+
+def test_project_pixels_past_the_fold() -> None:
+    # past the radius where k1 < 0 turns the projection back, rays would land
+    # inside the image again; they get out-of-image pixels instead
+    info = CameraInfo(
+        height=480, width=640, distortion_model="plumb_bob", D=[-0.5, 0.0, 0.0, 0.0, 0.0], K=K
+    )
+    points = np.array([[0.5, 0.0, 1.0], [1.2, 0.0, 1.0]])
+
+    pixels = Detection3DPC.project_pixels(points, info)
+
+    assert pixels[0] == pytest.approx([320.0 + 100.0 * 0.5 * (1 - 0.5 * 0.25), 240.0])
+    assert (pixels[1] == -1.0).all()
+
+
+def test_project_pixels_past_a_rational_pole() -> None:
+    # k4 = -1 puts a pole at r = 1 with no numerator root to cancel it; past
+    # it the ratio turns negative and OpenCV would mirror rays back into the
+    # image, so they get out-of-image pixels
+    D = [0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0]
+    info = CameraInfo(height=480, width=640, distortion_model="rational_polynomial", D=D, K=K)
+    points = np.array([[0.5, 0.0, 1.0], [1.2, 0.0, 1.0]])
+    expected, _ = cv2.projectPoints(
+        points, np.zeros(3), np.zeros(3), np.reshape(K, (3, 3)), np.array(D)
+    )
+    assert 0 <= expected[1, 0, 0] < info.width
+
+    pixels = Detection3DPC.project_pixels(points, info)
+
+    np.testing.assert_allclose(pixels[0], expected[0, 0])
+    assert (pixels[1] == -1.0).all()
+
+
 def test_project_cloud_empty() -> None:
     # nothing in front of the camera
     cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, -1.0]]), frame_id="world", timestamp=1.0)

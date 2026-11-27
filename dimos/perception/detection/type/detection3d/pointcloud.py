@@ -290,13 +290,22 @@ class Detection3DPC(Detection3D):
             )
             radius = np.tan(theta)
         else:
-            k = np.zeros(3)
-            radial = coefficients[[0, 1]].tolist() + (
-                [coefficients[4]] if coefficients.size > 4 else []
-            )
+            # k1, k2, k3 over k4, k5, k6: the rational model divides by a second
+            # polynomial (OpenCV coefficients 5..7), which is 1 for plumb_bob.
+            k = np.zeros(6)
+            radial = coefficients[[i for i in (0, 1, 4, 5, 6, 7) if i < coefficients.size]]
             k[: len(radial)] = radial
             radius = np.tan(theta)
-            distorted = radius * (1 + k[0] * radius**2 + k[1] * radius**4 + k[2] * radius**6)
+            r2 = radius**2
+            numerator = 1 + k[0] * r2 + k[1] * r2**2 + k[2] * r2**3
+            denominator = 1 + k[3] * r2 + k[4] * r2**2 + k[5] * r2**3
+            distorted = radius * numerator / denominator
+            # A wide-lens fit can put a root of the numerator right next to one
+            # of the denominator. The ratio is smooth across the pair, but the
+            # samples closest to it are not, so the fold search skips them; a
+            # real sign change still shows between the samples either side.
+            usable = np.abs(denominator) > 1e-2
+            radius, distorted = radius[usable], distorted[usable]
         beyond = np.nonzero((np.diff(distorted) <= 0) | (distorted[1:] > corner_limit))[0]
         r_max = radius[beyond[0]] if len(beyond) else radius[-1]
 
