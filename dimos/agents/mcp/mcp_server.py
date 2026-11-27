@@ -175,11 +175,11 @@ class McpServer(Module):
         schema = json.loads(skill_info.args_schema)
         required = schema.get("required", ())
 
-        async def handler(request: mcp.MCPRequest, /, **arguments: Any) -> object:
-            return await self._call_skill(skill_info, rpc_call, dict(request.meta), arguments)
+        async def handler(_request: mcp.MCPRequest, /, **arguments: Any) -> object:
+            return await self._call_skill(skill_info, rpc_call, dict(_request.meta), arguments)
 
-        parameters = [inspect.Parameter("request", inspect.Parameter.POSITIONAL_ONLY)]
-        annotations: dict[str, Any] = {"request": mcp.MCPRequest}
+        parameters = [inspect.Parameter("_request", inspect.Parameter.POSITIONAL_ONLY)]
+        annotations: dict[str, Any] = {"_request": mcp.MCPRequest}
         properties = _inline_refs(schema.get("properties", {}), schema.get("$defs", {}))
         for name, prop in properties.items():
             default = inspect.Parameter.empty if name in required else ...
