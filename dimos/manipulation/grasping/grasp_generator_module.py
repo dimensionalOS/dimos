@@ -41,6 +41,21 @@ def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
     return math.degrees(math.acos(max(-1.0, min(1.0, axis.dot(approach)))))
 
 
+# How far back along its approach a grasp's pre-grasp sits, metres.
+PRE_GRASP_DISTANCE_M = 0.10
+
+
+def _pre_grasp(pose: Pose) -> tuple[Vector3, Vector3]:
+    """The grasp's approach direction and the point PRE_GRASP_DISTANCE_M back along it."""
+    axis = pose.orientation.rotate_vector(Vector3(0.0, 0.0, 1.0))
+    back = Vector3(
+        pose.position.x - axis.x * PRE_GRASP_DISTANCE_M,
+        pose.position.y - axis.y * PRE_GRASP_DISTANCE_M,
+        pose.position.z - axis.z * PRE_GRASP_DISTANCE_M,
+    )
+    return axis, back
+
+
 class GraspGeneratorModule(Module, GraspGenSpec):
     """A grasp generator that also proposes grasps in a cone of approach directions.
 
@@ -69,7 +84,16 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         (how many grasps the generator made) and ``nearest_angle_deg`` (the
         smallest angle among those, or None when there were none). Each grasp has
         ``rank`` (0 is best), ``score``, ``angle_deg``, ``position`` ([x, y, z],
-        metres), ``orientation`` ([x, y, z, w]) and ``generator``.
+        metres), ``orientation`` ([x, y, z, w]), ``rpy`` (the same orientation as
+        [roll, pitch, yaw], radians, for move_to_pose), ``approach`` (unit
+        [x, y, z], the way the gripper travels into the object), ``pre_grasp``
+        ([x, y, z], 10 cm back along ``approach``) and ``generator``.
+
+        ``position`` and the orientation are where the closed fingertips' centre
+        goes, not a point above it. A grasp can come from any direction, so move to
+        ``pre_grasp`` with the grasp's orientation, then straight in along
+        ``approach`` to ``position``, close, and back out the same way. Moving to
+        the position alone keeps the gripper turned the way it already is.
 
         Raises ValueError for a cloud without points, an ``approach`` of zero
         length or a ``limit`` below 1.
@@ -96,6 +120,9 @@ class GraspGeneratorModule(Module, GraspGenSpec):
                     "angle_deg": angle,
                     "position": list(c.pose.position.to_tuple()),
                     "orientation": list(c.pose.orientation.to_tuple()),
+                    "rpy": list(c.pose.orientation.to_euler().to_tuple()),
+                    "approach": list(_pre_grasp(c.pose)[0].to_tuple()),
+                    "pre_grasp": list(_pre_grasp(c.pose)[1].to_tuple()),
                     "generator": name,
                 }
                 for rank, (c, angle) in enumerate(best)

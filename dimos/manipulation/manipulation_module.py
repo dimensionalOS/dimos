@@ -153,6 +153,10 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Table boxes the planner will not route through, for a table that is not one
+    # flat plane under the whole robot: each is (top_z, center_x, center_y, size_x,
+    # size_y), metres, in the world frame, 0.2 m thick below top_z.
+    table_boxes: tuple[tuple[float, float, float, float, float], ...] = ()
     # Fixed mount edges published alongside the robot's own TF, for rigs bolted
     # to a link the model already publishes -- an eye-in-hand camera, say. One
     # publisher for the whole chain: a second module publishing the mount at its
@@ -351,6 +355,19 @@ class ManipulationModule(Module):
             )
             self._world_monitor.add_obstacle(floor_obs)
             logger.info("Floor obstacle added", z=fz)
+        for index, (top_z, cx, cy, sx, sy) in enumerate(self.config.table_boxes):
+            thickness = 0.2
+            self._world_monitor.add_obstacle(
+                Obstacle(
+                    name=f"table_{index}",
+                    pose=Pose(
+                        Vector3(cx, cy, top_z - thickness / 2), Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
+                    obstacle_type=ObstacleType.BOX,
+                    dimensions=(sx, sy, thickness),
+                )
+            )
+            logger.info("Table box added", top_z=top_z, center=(cx, cy), size=(sx, sy))
 
         self._world_monitor.start_state_monitor()
         self._world_monitor.start_obstacle_monitor()
