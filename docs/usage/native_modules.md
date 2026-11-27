@@ -319,7 +319,9 @@ DIMOS_NATIVE_DIR=/opt/dimos/native dimos --simulation run go2-sim-nav
 
 The Go2 simulation also loads its robot model, walking policy and lidar occlusion
 map from the `go2_sim` dataset. A fresh pip installation clones the repository
-to fetch those assets, even when all four native executables are prebuilt.
+to fetch those assets, even when all four native executables are prebuilt. Set
+[`DIMOS_DATA_DIR`](/docs/development/large_file_management.md#a-data-directory-without-a-repository)
+as well to read them from a directory that the installation ships.
 
 Each module has a folder named after its executable, with the binary in `bin/`.
 Libraries that the binary brings along go next to it, for example in `lib/`.
