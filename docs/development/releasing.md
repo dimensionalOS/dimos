@@ -34,15 +34,10 @@ At this point, you can leave the branch around for potential patch releases, or 
 
 When ready to cleanup the branch, follow these steps:
 
-1. Rename the release branch out of the protected `release/*` namespace, then delete it. The `release/*` ruleset blocks direct deletion; renaming takes the branch out of scope.
-
-   Web UI: Repo → Branches → find `release/X.Y.Z` → ⋯ → **Rename branch** → e.g. `archived/X.Y.Z`. Then delete it from the same Branches page.
-
-   Or via `gh`:
+1. Delete the release branch (only release-approvers can delete):
 
    ```bash
-   gh api -X POST "repos/dimensionalOS/dimos/branches/release/X.Y.Z/rename" -f new_name=archived/X.Y.Z
-   git push origin --delete archived/X.Y.Z
+   git push origin --delete release/X.Y.Z
    ```
 
 2. Delete the `backport release/X.Y.Z` label from the Labels page (or `gh label delete "backport release/X.Y.Z"`).

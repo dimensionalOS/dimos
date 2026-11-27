@@ -116,7 +116,6 @@ class MovementManager(Module):
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel_goal(frame_id="map"))
-        logger.debug("Navigation cancelled — waiting for new goal")
 
     def _on_nav(self, msg: Twist) -> None:
         with self._lock:
@@ -130,6 +129,14 @@ class MovementManager(Module):
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:
+            if (
+                not self._teleop_active
+                or time.monotonic() - self._last_teleop_time >= self.config.tele_cooldown_sec
+            ):
+                logger.info(
+                    "MovementManager: cancelling navigation via stop_movement",
+                    reason="Received tele_cmd_vel",
+                )
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
 

@@ -119,4 +119,5 @@ DUAL_METAL = DamiaoRobot(
     base_link="dual_metal_base",
     joint_names=[*ALL_ARM_JOINTS, *(FINGER_JOINTS[side][0] for side in SIDES)],
     gravity=False,
+    name="dual_metal",
 )

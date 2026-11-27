@@ -108,7 +108,6 @@ CLI_MUST_NOT_IMPORT = (
 BLUEPRINT_MUST_NOT_IMPORT = (
     *CLI_MUST_NOT_IMPORT,
     "uvicorn",
-    "mujoco_playground",
 )
 
 
