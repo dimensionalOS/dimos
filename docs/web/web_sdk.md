@@ -483,16 +483,39 @@ cockpit(channels=[
 ])
 ```
 
-```js
-try {
-  const receipt = await session.publish("human_input", "hello robot");
-  // The bridge decoded the value and published it on the dimOS stream.
-} catch (e) {
-  // e.outcome === "rejected": it definitively did not happen (e.code says why).
-  // e.outcome === "unknown": the connection died before the ack. It MAY have
-  // been published. Never auto-resend an "unknown" command.
-}
+Add a button and a receipt to `my-ui/page/index.html`, next to the canvas:
+
+```html
+<button id="send" disabled>Send hello</button>
+<output id="receipt"></output>
 ```
+
+In the existing module script, add this immediately after `const session = connect({ decoders });` so the button observes each connection. Enable it when the robot advertises the input on the current connection. Publish once per click:
+
+```js
+const send = document.querySelector("#send");
+const receipt = document.querySelector("#receipt");
+let previousManifest = null;
+function updateSendButton() {
+  const { transport, manifest } = session.status.get();
+  // The SDK retains the old manifest until the new connection confirms its watch.
+  if (transport.phase !== "connected") previousManifest = manifest;
+  send.disabled = transport.phase !== "connected" || manifest === previousManifest ||
+    !manifest?.channels.some((c) => c.ch === "human_input" && c.publish === "shared");
+}
+session.status.subscribe(updateSendButton);
+updateSendButton();
+send.addEventListener("click", async () => {
+  try {
+    const ack = await session.publish("human_input", "hello robot");
+    receipt.textContent = `Published on ${ack.ch}`;
+  } catch (e) {
+    receipt.textContent = `${e.outcome}: ${e.code}`;
+  }
+});
+```
+
+Restart the blueprint to load the new channel, then reload the page and click **Send hello**. A receipt confirms the bridge published the value on the dimOS stream. A `rejected` outcome means the value was refused. An `unknown` outcome means the value may have been published. Never automatically resend it.
 
 - Only reliable JSON-encoded tx channels declared `publish="shared"` accept `publish()`. Everything else (rx channels, teleop) rejects locally with a stable code. Values are any JSON value (`null` included), at most 32 KiB serialized and at most 100 nesting levels deep.
 - The relay rate-limits per viewer and per robot at the channel's `max_hz`, so extra open tabs never multiply the accepted rate.
