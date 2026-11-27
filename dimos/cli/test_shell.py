@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 
 from dimos.cli.dimos import main
 from dimos.cli.shell import _format_description, _register_module_completions, _shell_namespace
+from dimos.control.calibration.shell import CalibrationShell
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.introspection.module.info import ModuleInfo, ParamInfo, RpcInfo
 from dimos.core.rpc_client import RPCClient
@@ -96,6 +97,7 @@ def test_shell_rejects_non_interactive_execution(mocker):
 
 def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
     app = mocker.Mock(spec=Dimos)
+    app.list_modules.return_value = []
     mocker.patch("dimos.cli.shell._is_interactive_terminal", return_value=True)
     connect = mocker.patch("dimos.cli.shell.Dimos.connect", return_value=app)
     mocker.patch("dimos.cli.shell.get_most_recent", return_value=None)
@@ -123,6 +125,33 @@ def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
     assert "unregistered coordinator" in result.output
     assert "RPC calls execute immediately" in result.output
     app.stop.assert_called_once_with()
+
+
+def test_shell_binds_cal_to_a_deployed_calibration_module_and_says_so(mocker):
+    app = mocker.Mock(spec=Dimos)
+    app.list_modules.return_value = [
+        ModuleInfo(name="robot0/other", instance_name="robot0/other", class_name="Other"),
+        ModuleInfo(
+            name="CalibrationModule",
+            instance_name="CalibrationModule",
+            class_name="CalibrationModule",
+        ),
+    ]
+    proxy = app.get_module.return_value
+    proxy.status.return_value.arm = "dual_openyam/left"
+    mocker.patch("dimos.cli.shell._is_interactive_terminal", return_value=True)
+    mocker.patch("dimos.cli.shell.Dimos.connect", return_value=app)
+    mocker.patch("dimos.cli.shell.get_most_recent", return_value=None)
+    start_ipython = mocker.patch("IPython.start_ipython")
+
+    result = CliRunner().invoke(main, ["shell"])
+
+    assert result.exit_code == 0, result.output
+    app.get_module.assert_called_once_with("CalibrationModule")
+    cal = start_ipython.call_args.kwargs["user_ns"]["cal"]
+    assert isinstance(cal, CalibrationShell)
+    assert cal.status() is proxy.status.return_value
+    assert "cal: calibration of dual_openyam/left; cal.run() to start" in result.output
 
 
 def test_shell_guide_reprints_quick_start_guide(mocker, capsys):
@@ -245,6 +274,7 @@ def test_shell_reports_connection_failure(mocker):
 
 def test_shell_disconnects_when_ipython_reports_connection_loss(mocker):
     app = mocker.Mock(spec=Dimos)
+    app.list_modules.return_value = []
     mocker.patch("dimos.cli.shell._is_interactive_terminal", return_value=True)
     connect = mocker.patch("dimos.cli.shell.Dimos.connect", return_value=app)
     mocker.patch("dimos.cli.shell.get_most_recent", return_value=None)

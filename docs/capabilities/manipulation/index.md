@@ -19,10 +19,10 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos --simulation run keyboard-teleop-piper # Piper 6-DOF + gripper, in MuJoCo
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
-dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
-dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
+dimos run keyboard-teleop-xarm6 --choice arm=mock  # XArm6 6-DOF, mock arm
+dimos run keyboard-teleop-xarm7 --choice arm=mock  # XArm7 7-DOF, mock arm
 ```
 
 The Galaxea A1Z runs only on the real arm, through `A1ZConnection`:
@@ -39,6 +39,9 @@ lifecycle. Deployed joints use the `arm/` namespace. Gripper openings use 0 clos
 to 1 open and remain separate from angular arm coordinates. Physical startup
 calibrates the grippers. See [connection testing and CAN selection](/docs/capabilities/manipulation/damiao-connections.md)
 for mock checks, explicit selectors, planner/teleop entries, and hardware acceptance.
+
+[Calibrating a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md) measures gravity, gains and
+drift for OpenYAM, Metal, B601-DM and OpenArm arms: `dimos run <robot>-calibrate`, driven from `dimos shell`.
 
 [MakerMods Metal](/docs/capabilities/manipulation/makermods_metal_integration.md) covers the single- and dual-arm
 connections, CAN selectors, and configurable mounting geometry.
@@ -67,6 +70,7 @@ dimos run xarm7-planner-coordinator --xarmconnection.ip 192.168.1.185
 The planner and the coordinator name the arm's joints `arm/joint1` ...; its
 links and tf frames keep their URDF names (`link7`, `link_tcp`). The other
 `xarm7-planner-coordinator` commands below need the same `--xarmconnection.ip`.
+Without an arm, give `--choice arm=mock` instead: a single-xArm blueprint then runs on a mock arm.
 
 Pink IK is the default solver. Tune it with nested module config overrides:
 
@@ -266,20 +270,25 @@ velocity limits, and holds the measured position when a solve cannot produce a
 safe command. This local control path is separate from manipulation planning and
 does not use `WorldSpec` or provide world-obstacle avoidance.
 
-For a custom robot, pass the typed model configuration to the helper:
+For a custom robot, pass the typed model configuration in the task's params:
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
+from dimos.control.coordinator import TaskConfig
 
-task = cartesian_ik_task(
-    hardware,
-    robot_model=robot_model,
+task = TaskConfig(
+    name="cartesian_ik_arm",
+    type="cartesian_ik",
+    joint_names=list(robot_model.joint_names),
+    params={"robot_model": robot_model, "target_frame": "link6"},
 )
-teleop_task = teleop_ik_task(
-    hardware,
+teleop_task = TaskConfig(
     name="teleop_arm",
-    hand="right",
-    robot_model=robot_model,
+    type="teleop_ik",
+    joint_names=list(robot_model.joint_names),
+    params={
+        "robot_model": robot_model,
+        "bindings": [{"hand": "right", "target_frame": "link6"}],
+    },
 )
 ```
 
@@ -455,7 +464,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 ```
 
 - **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
-- **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
+- **ControlCoordinator**: 100Hz control loop driving the arm's connection module
 - **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
 
 A manipulation stack that plans around a camera-built voxel map adds
@@ -541,7 +550,7 @@ planner is locked for its whole native call.
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
+| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared planner and mapping helpers |
 | [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and coordinator connection config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |
@@ -554,4 +563,4 @@ planner is locked for its whole native call.
 | [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
 
-Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
+An xArm's address is `--xarmconnection.ip`. Each arm's connection takes its own address; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

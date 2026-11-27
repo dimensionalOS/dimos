@@ -53,9 +53,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.localize import LocalizeTrace, embed_index
+from dimos.perception.localize.localize import LocalizeTrace, index_recording
 from dimos.perception.localize.memento import Memento
-from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
+from dimos.perception.localize.rig import TF_TOLERANCE, Rig
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.data import get_data
 
@@ -538,9 +538,6 @@ def main() -> int:
     lo, hi = rig.time_range()
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else hi
-    rig.tf = window_tf(store, after, before)
-    if rig.lidar is not None:
-        rig.lidar = rig.lidar.after(after).before(before)
     detector = DanDetector(args.embedder, args.detector, args.segmenter)
     base, fields = parse_params(args.params, XARM_PARAMS)
     params = detector.shifted(base, fields)
@@ -561,7 +558,9 @@ def main() -> int:
     backdrop_ts: float | None = None
     memento = Memento()
     with detector as dan:
-        index = embed_index(rig, dan.embedder, after, before, embed_hz=params.embed_hz)
+        rig, index = index_recording(
+            store, rig, dan.embedder, after, before, embed_hz=params.embed_hz
+        )
         for w0, w1 in windows:
             if chunked:
                 print(f"chunk {w0 - lo:.1f}s..{w1 - lo:.1f}s:")
