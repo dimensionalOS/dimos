@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
@@ -190,6 +191,51 @@ def test_source_checkout_missing_archive_does_not_fetch(
     with pytest.raises(FileNotFoundError, match="absent"):
         data._pull_lfs_archive("absent")
     run.assert_not_called()
+
+
+@pytest.fixture
+def packaged_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> Iterator[Path]:
+    """A read-only DIMOS_DATA_DIR. A repository lookup, a lock or a subprocess fails the test."""
+    data_dir = tmp_path / "packaged"
+    (data_dir / "mujoco_sim").mkdir(parents=True)
+    (data_dir / "mujoco_sim" / "unitree_go1_policy.onnx").write_bytes(b"policy")
+    (data_dir / "cafe.jpg").write_bytes(b"jpeg")
+    read_only = [data_dir / "mujoco_sim", data_dir]
+    for path in read_only:
+        path.chmod(0o555)
+    monkeypatch.setenv("DIMOS_DATA_DIR", str(data_dir))
+    for name in ("get_project_root", "FileLock"):
+        mocker.patch.object(data, name, side_effect=AssertionError(name))
+    mocker.patch.object(data.subprocess, "run", side_effect=AssertionError("subprocess"))
+    yield data_dir
+    for path in read_only:
+        path.chmod(0o755)
+
+
+def test_data_dir_setting_replaces_the_repository_data_directory(packaged_data: Path) -> None:
+    assert data.get_data_dir() == packaged_data
+    assert data.get_data_dir("mujoco_sim") == packaged_data / "mujoco_sim"
+
+
+@pytest.mark.parametrize("name", ["cafe.jpg", "mujoco_sim", "mujoco_sim/unitree_go1_policy.onnx"])
+def test_data_dir_setting_resolves_names_in_place(packaged_data: Path, name: str) -> None:
+    assert data.get_data(name) == packaged_data / name
+
+
+@pytest.mark.parametrize("name", ["go2_short.db", "mujoco_sim/unitree_g1_policy.onnx"])
+def test_data_dir_setting_miss_names_the_request_and_the_directory(
+    packaged_data: Path, name: str
+) -> None:
+    before = sorted(packaged_data.rglob("*"))
+
+    with pytest.raises(FileNotFoundError) as error:
+        data.get_data(name)
+
+    assert name in str(error.value)
+    assert str(packaged_data) in str(error.value)
+    assert sorted(packaged_data.rglob("*")) == before
 
 
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
