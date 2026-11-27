@@ -52,6 +52,30 @@ jobs:
           git show "${policy_ref}:${policy_path}" > "$RUNNER_TEMP/commit-message-policy.py"
           python3 "$RUNNER_TEMP/commit-message-policy.py" --check
 
+  pr-description:
+    name: PR description
+    # Bots open PRs without the template.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read  # For reading the description
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test template and validator
+        run: python3 -m unittest discover -s .github/scripts -p test_pr_description.py
+      - name: Validate description
+        # Fetch the description instead of reading the event, so re-running the job after an edit checks the new text.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' | python3 .github/scripts/check_pr_description.py
+
   compute-ros-pin:
     # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
     # so downstream jobs can reference it from their `container:` field.
@@ -1400,6 +1424,7 @@ jobs:
 
     needs:
     - commit-messages
+    - pr-description
     - lint
     - rust
     - pyo3
@@ -1419,7 +1444,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: self-hosted-tests
+        allowed-skips: self-hosted-tests, pr-description
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7.1.1
