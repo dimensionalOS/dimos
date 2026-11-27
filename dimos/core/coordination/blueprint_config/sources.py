@@ -159,15 +159,19 @@ def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
     return model.model_dump(mode="python")
 
 
-def read_config_file(path: Path) -> Mapping[str, Any]:
+def read_config_file(path: Path, *, missing_ok: bool = False) -> Mapping[str, Any]:
     try:
-        raw = path.read_text()
-    except (FileNotFoundError, IsADirectoryError):
-        return {}
+        raw = path.read_bytes()
     except OSError as error:
+        if missing_ok and isinstance(error, FileNotFoundError):
+            return {}
         raise BlueprintConfigError(f"Could not read config file {path}: {error}") from error
     try:
         values = json.loads(raw)
+    except UnicodeDecodeError as error:
+        raise BlueprintConfigError(
+            f"Invalid JSON encoding in config file {path}: {error}"
+        ) from error
     except json.JSONDecodeError as error:
         raise BlueprintConfigError(
             f"Invalid JSON in config file {path}: {error.msg} "
