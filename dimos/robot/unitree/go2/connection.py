@@ -36,7 +36,6 @@ from dimos.control.connection.connection_module import (
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.core.core import rpc
-from dimos.core.global_config import global_config
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.cli.dataset import open_store, resolve_dataset
@@ -63,7 +62,6 @@ from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.optional_dependencies import check_imports
 from dimos.utils.transform_utils import pose_to_values
 
 if sys.version_info < (3, 13):
@@ -435,19 +433,6 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_lowstate: LowStateMsg | None = None
-
-    @classmethod
-    def check_dependencies(cls, **kwargs: Any) -> None:
-        super().check_dependencies(**kwargs)
-        g = kwargs.get("g", global_config)
-        ip = kwargs.get("ip") if kwargs.get("ip") is not None else g.robot_ip
-        mode = connection_type(replay=g.replay, simulation=g.simulation).lower()
-        if ip in ("fake", "mock", "replay") or mode == "replay":
-            return
-        if ip == "mujoco" or mode in ("mujoco", "true"):
-            check_imports("mujoco")
-        elif mode == "webrtc" and kwargs.get("camera", True):
-            check_imports("aiortc")
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]

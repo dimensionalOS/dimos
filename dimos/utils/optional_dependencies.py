@@ -28,9 +28,10 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 
 
 class OptionalDependencyError(ImportError):
-    """A blueprint could not import because an optional dependency is missing."""
+    """An active module could not start because an optional dependency is missing."""
 
 
+# Match exact distribution names, python-<mod> packages, and <mod>-* variants (e.g. gtsam-extended, warp-lang).
 def _matches_requirement(req_name: str, root: str, installed: set[str]) -> bool:
     return (
         req_name in installed
@@ -49,13 +50,6 @@ def explain_missing_extra() -> Iterator[None]:
         top = (module or "").partition(".")[0]
         if not module or top == "dimos":
             raise
-        if "." in module and sys.modules.get(module, True) is not None:
-            try:
-                top_installed = sys.modules.get(top) is not None or find_spec(top) is not None
-            except ModuleNotFoundError:
-                top_installed = False
-            if top_installed:
-                raise
         try:
             package = distribution("dimos")
         except PackageNotFoundError:

@@ -24,7 +24,6 @@ import json
 import math
 from pathlib import Path
 import sqlite3
-import sys
 import threading
 import time
 from unittest.mock import MagicMock
@@ -39,7 +38,7 @@ from reactivex.testing import TestScheduler
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
-from dimos.core.coordination.module_coordinator import ModuleCoordinator, check_module_dependencies
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -215,22 +214,6 @@ def test_dimsim_allows_lcm_or_replay(overrides) -> None:
     )
 
     assert parsed.global_config_values()["transport"] == overrides["transport"]
-
-
-def test_replay_address_overrides_mujoco_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "mujoco", None)
-    replay_bp = GO2Connection.blueprint(ip="replay")
-    replay_cfg = BlueprintConfigParser(replay_bp).parse(
-        environ={}, global_overrides={"simulation": "mujoco"}
-    )
-    check_module_dependencies(replay_bp, replay_cfg)
-
-    sim_bp = GO2Connection.blueprint(ip="mujoco")
-    sim_cfg = BlueprintConfigParser(sim_bp).parse(
-        environ={}, global_overrides={"simulation": "mujoco"}
-    )
-    with pytest.raises(ImportError, match=r"dimos\[sim\]"):
-        check_module_dependencies(sim_bp, sim_cfg)
 
 
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
