@@ -13,9 +13,11 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
 from typing import Any
 
@@ -96,6 +98,38 @@ class RunModuleB(Module):
 )
 def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
+
+
+def test_dotenv_in_the_working_directory_is_read(tmp_path: Path) -> None:
+    # The package where upward search finds this .env, like a checkout's.
+    install = tmp_path / "install"
+    install.mkdir()
+    (install / "dimos").symlink_to(Path(__file__).resolve().parents[1])
+    (install / ".env").write_text("DIMOS_TEST_BOTH=next-to-the-code\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / ".env").write_text(
+        "DIMOS_TEST_WORK=working-directory\n"
+        "DIMOS_TEST_BOTH=working-directory\n"
+        "DIMOS_TEST_EXPORTED=working-directory\n"
+    )
+    names = ("DIMOS_TEST_WORK", "DIMOS_TEST_BOTH", "DIMOS_TEST_EXPORTED")
+    # A file, because python-dotenv searches from the working directory under `python -c`.
+    script = tmp_path / "print_env.py"
+    script.write_text(f"import os, dimos.cli.dimos\nprint(*map(os.getenv, {names}))\n")
+
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=work,
+        # Built here, so a failure does not print the whole environment as a local.
+        env={k: v for k, v in os.environ.items() if k != "PYTEST_VERSION"}
+        | {"PYTHONPATH": str(install), "DIMOS_TEST_EXPORTED": "environment"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.split() == ["working-directory", "next-to-the-code", "environment"]
 
 
 @pytest.mark.parametrize(

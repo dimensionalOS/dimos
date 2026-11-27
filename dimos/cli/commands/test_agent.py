@@ -16,6 +16,7 @@ import fcntl
 from pathlib import Path
 import threading
 
+from dimos.cli.commands import agent
 from dimos.cli.commands.agent import _build
 
 
@@ -51,3 +52,25 @@ def test_build_waits_out_another_build_before_using_the_tree(tmp_path: Path, moc
         holder.join(timeout=5)
     assert not waiter.is_alive()
     assert not holder.is_alive()
+
+
+def test_node_environment_drops_what_either_env_file_loaded(
+    tmp_path: Path, monkeypatch, mocker
+) -> None:
+    checkout_env = tmp_path / "checkout.env"
+    checkout_env.write_text("CHECKOUT_KEY=secret-a\nROBOT_IP=10.0.0.1\n")
+    (tmp_path / ".env").write_text("WORKDIR_KEY=secret-b\n")
+    monkeypatch.chdir(tmp_path)
+    mocker.patch.object(agent, "find_dotenv", return_value=str(checkout_env))
+    mocker.patch("dimos.agents.harness.runtime.load.mcp_server_url", return_value="http://mcp")
+    loaded = {"CHECKOUT_KEY": "secret-a", "WORKDIR_KEY": "secret-b", "ROBOT_IP": "10.0.0.1"}
+    for name, value in (loaded | {"EXPORTED_KEY": "kept"}).items():
+        monkeypatch.setenv(name, value)
+
+    environment = agent._node_environment()
+
+    assert "CHECKOUT_KEY" not in environment
+    assert "WORKDIR_KEY" not in environment
+    # a GlobalConfig setting stays, and so does what the shell exported
+    assert environment["ROBOT_IP"] == "10.0.0.1"
+    assert environment["EXPORTED_KEY"] == "kept"

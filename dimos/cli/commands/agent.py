@@ -347,7 +347,8 @@ def _node_environment() -> dict[str, str]:
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.sources import global_environment_names
 
-    dotenv = dotenv_values(find_dotenv())
+    # The two files dimos/cli/dimos.py loads. The first one wins there too.
+    dotenv = {**dotenv_values(".env"), **dotenv_values(find_dotenv())}
     settings = global_environment_names()
     environment = {
         name: value

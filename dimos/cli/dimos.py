@@ -49,7 +49,11 @@ import typer
 # Load before CLI imports freeze config/state paths, so a daemon re-exec and
 # later status/stop commands resolve the same registry. Keep tests isolated.
 if "PYTEST_VERSION" not in os.environ:
+    # The first call searches upward from this file, which finds a checkout's .env. An
+    # installed package has none there, so the working directory's is read too. A
+    # variable that is already set is kept.
     load_dotenv()
+    load_dotenv(".env")
 
 from dimos.cli.cache import app as cache_app
 from dimos.cli.can import app as can_app
