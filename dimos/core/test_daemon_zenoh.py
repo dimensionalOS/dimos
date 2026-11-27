@@ -70,7 +70,9 @@ def _sweep_leftover_daemons(state_dir: Path) -> None:
         pytest.param("unitree-go2-basic", marks=pytest.mark.self_hosted),
     ],
 )
-def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: str) -> None:
+def test_daemon_serves_coordinator_ping_over_zenoh(
+    tmp_path: Path, blueprint: str, unused_tcp_port: int
+) -> None:
     env = os.environ | {
         "DIMOS_TRANSPORT": "zenoh",
         # Never touch the developer's real registry/config, even without xdist.
@@ -101,7 +103,11 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: st
                     "run",
                     blueprint,
                     "--daemon",
-                    *(["--disable", "mcp-server"] if blueprint == "demo-mcp-stress-test" else []),
+                    *(
+                        ["--mcpserver.port", str(unused_tcp_port)]
+                        if blueprint == "demo-mcp-stress-test"
+                        else []
+                    ),
                     "--viewer",
                     "none",
                     "--n-workers",
@@ -137,6 +143,10 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: st
             timeout=30,
         )
         assert blueprint in status.stdout, status.stdout + status.stderr
+        if blueprint == "demo-mcp-stress-test":
+            endpoint = f"http://127.0.0.1:{unused_tcp_port}/mcp"
+            assert endpoint in run_log.read_text()
+            assert endpoint in status.stdout
         assert list((tmp_path / "state/dimos/runs").glob("*.json"))
     finally:
         stopped = subprocess.run(
