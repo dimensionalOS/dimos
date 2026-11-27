@@ -24,7 +24,9 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 import pytest
+from typer.testing import CliRunner
 
+from dimos.cli.dimos import main
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -83,9 +85,9 @@ def _until(done: object, timeout_s: float) -> None:
     assert done()  # type: ignore[operator]
 
 
-def _verdict(pace_m: float) -> str:
+def _verdict(pace_m: float, manifest: Path, case: Case) -> str:
     """What the watch loop ends on after a stuck window of commanded motion, pacing by pace_m."""
-    driver = EpisodeDriver()
+    driver = EpisodeDriver(manifest=manifest, case_id=case.id)
     try:
         driver._rules = Rules()
         driver._recent, driver._commands = deque(), deque()
@@ -102,13 +104,15 @@ def _verdict(pace_m: float) -> str:
         driver.stop()
 
 
-def test_a_pacing_robot_ends_the_episode_as_dithering_and_a_still_one_as_stuck() -> None:
-    assert _verdict(0.1) == "dithering"
-    assert _verdict(0.0) == "stuck"
+def test_a_pacing_robot_ends_the_episode_as_dithering_and_a_still_one_as_stuck(
+    tmp_path: Path, case: Case
+) -> None:
+    assert _verdict(0.1, tmp_path / "suite.json", case) == "dithering"
+    assert _verdict(0.0, tmp_path / "suite.json", case) == "stuck"
 
 
-@pytest.mark.self_hosted
-def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) -> None:
+@pytest.fixture
+def case(tmp_path: Path) -> Case:
     scene = office(1)
     start = (scene.start[0], scene.start[1], 0.0)
     case = Case(
@@ -125,6 +129,11 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         scene_digest=scene.digest(),
     )
     Manifest("test", Rules(), 0, [case]).save(tmp_path / "suite.json")
+    return case
+
+
+@pytest.mark.self_hosted
+def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path, case: Case) -> None:
     transports = {
         name: LCMTransport(f"/test_driver/{name}", kind)
         for name, kind in (
@@ -145,7 +154,7 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
     )
     for name, transport in transports.items():
         getattr(driver, name).transport = transport
-    world = FakeWorld(transports["ground_truth"], z=scene.params["z0"])
+    world = FakeWorld(transports["ground_truth"], z=case.goal[2])
     driver._world = world
     clicks: list[PointStamped] = []
     routes: list[PathMsg] = []
@@ -185,3 +194,27 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
     assert (tmp_path / ROBOT_FILE).exists()
     assert len(routes) == 1 and routes[0].poses[-1].position.x == pytest.approx(4.0, abs=0.05)
     assert phases == ["reset", "premap", "goal", "navigate", "arrived"]
+
+
+@pytest.mark.parametrize(
+    ("options", "field"),
+    [
+        ([], "manifest"),
+        (["--manifest", ".", "--case-id", "some-case"], "manifest"),
+        (["--manifest", "suite.json"], "case_id"),
+        (["--manifest", "unreadable.json", "--case-id", "some-case"], "manifest"),
+        (["--manifest", "suite.json", "--case-id", "absent"], "absent"),
+    ],
+)
+def test_episode_rejects_invalid_inputs_before_deployment(
+    options: list[str], field: str, tmp_path: Path, case: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "unreadable.json").write_text("{")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "dimos.core.coordination.module_coordinator.check_module_dependencies",
+        lambda *_: pytest.fail("invalid episode reached dependency checks"),
+    )
+    result = CliRunner().invoke(main, ["run", "episode-driver", *options])
+    assert result.exit_code == 2
+    assert field in result.output

@@ -24,7 +24,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.runner import Episode, RunConfig, _command
-from dimos.navigation.bench.suite import Case
+from dimos.navigation.bench.suite import Case, Manifest, Rules
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.go2_sim import go2_sim
@@ -107,6 +107,7 @@ def test_dimos_run_takes_the_flags_the_bench_runner_passes(tmp_path: Path) -> No
         scene_digest="",
     )
     config = RunConfig(suite=tmp_path / "suite.json", overrides=("--simgo2world.policy=/p.bin",))
+    Manifest("test", Rules(), 0, [case]).save(config.suite)
     command = _command(config, Episode(case, tmp_path / case.id), 0)
     run = command.index("run")
     assert {flag.removeprefix("--").replace("-", "_") for flag in command[1:run:2]} <= set(

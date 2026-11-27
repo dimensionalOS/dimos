@@ -28,7 +28,9 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import Field, FilePath, PrivateAttr, model_validator
 from reactivex.disposable import Disposable
+from typing_extensions import Self
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -42,7 +44,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.navigation.bench.ground_truth import Envelope, GroundTruth
 from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
-from dimos.navigation.bench.suite import Manifest
+from dimos.navigation.bench.suite import Case, Manifest, Rules
 from dimos.simulation.sim_world.world_spec import SimWorldSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -56,13 +58,28 @@ FIRST_POSE_WAIT_S = 60.0
 
 
 class EpisodeDriverConfig(ModuleConfig):
-    manifest: Path = Path()
-    case_id: str = ""
+    manifest: FilePath = Field(description="Frozen navigation suite manifest.")
+    case_id: str = Field(min_length=1, description="Case ID from the frozen manifest.")
     out_dir: Path = Path()
     settle_s: float = 2.0
     seed_settle_s: float = 4.0
     goal_resend_s: float = 1.0
     goal_wait_s: float = 8.0
+
+    _selection: tuple[Rules, Case] = PrivateAttr()
+
+    @model_validator(mode="after")
+    def _select_case(self) -> Self:
+        try:
+            manifest = Manifest.load(self.manifest)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Cannot read episode manifest {self.manifest}: {exc}") from exc
+        try:
+            case = manifest.case(self.case_id)
+        except StopIteration:
+            raise ValueError(f"Unknown case_id {self.case_id!r} in {self.manifest}") from None
+        self._selection = manifest.rules, case
+        return self
 
 
 class EpisodeDriver(Module):
@@ -89,9 +106,7 @@ class EpisodeDriver(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        manifest = Manifest.load(self.config.manifest)
-        self._rules = manifest.rules
-        self._case = manifest.case(self.config.case_id)
+        self._rules, self._case = self.config._selection
         self._pose: tuple[float, NDArray[np.float64], NDArray[np.float64]] | None = None
         self._frame = ""
         self._recent: deque[tuple[float, NDArray[np.float64], NDArray[np.float64]]] = deque()
