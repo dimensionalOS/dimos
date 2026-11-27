@@ -18,9 +18,10 @@ import threading
 from mcap.writer import Writer
 import pytest
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
+from dimos.memory.testing import playback_finished
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.unitree.g1.g1_replay import G1Replay
 

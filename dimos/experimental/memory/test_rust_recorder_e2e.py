@@ -33,7 +33,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import DIMOS_PROJECT_ROOT, HUNG_TEST_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport, ZenohTransport
@@ -56,7 +56,6 @@ from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

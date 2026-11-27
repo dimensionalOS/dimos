@@ -15,9 +15,10 @@
 
 import numpy as np
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
+from dimos.memory.testing import playback_finished
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage

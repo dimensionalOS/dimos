@@ -23,11 +23,12 @@ from reactivex import interval
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.core.stream import Out
 from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
+from dimos.memory.testing import playback_finished
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 

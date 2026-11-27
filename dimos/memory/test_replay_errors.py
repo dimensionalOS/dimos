@@ -24,12 +24,12 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 

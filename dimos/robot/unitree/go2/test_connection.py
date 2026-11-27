@@ -35,6 +35,7 @@ from reactivex import Subject, empty, timer
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -42,7 +43,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.replay import Playback
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
+from dimos.memory.testing import playback_finished
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo

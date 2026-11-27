@@ -24,12 +24,6 @@ from reactivex import merge
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-# How long a test waits before declaring it hung. A healthy wait returns as soon as its
-# event fires, so this only decides how fast a broken test fails: far above any healthy
-# wait, far below pytest's 600 s --timeout, whose thread method kills the whole worker
-# with a stack dump instead of the test's own assertion message.
-HUNG_TEST_TIMEOUT = 30.0
-
 
 def playback_finished(add: MagicMock) -> threading.Event:
     """Set once every stream that a ``mocker.spy(Playback, "add")`` saw has completed.

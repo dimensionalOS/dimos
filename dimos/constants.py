@@ -73,6 +73,12 @@ WORKER_SHUTDOWN_TIMEOUT = 10.0
 # Cover both worker waits plus escalation and coordinator cleanup before killing the run.
 RUN_SHUTDOWN_TIMEOUT = 2 * WORKER_SHUTDOWN_TIMEOUT + 10.0
 
+# How long a test waits before declaring it hung. A healthy wait returns as soon as its
+# event fires, so this only decides how fast a broken test fails: far above any healthy
+# wait, far below pytest's 600 s --timeout, whose thread method kills the whole worker
+# with a stack dump instead of the test's own assertion message.
+HUNG_TEST_TIMEOUT = 30.0
+
 DEFAULT_BUILD_NATIVE = False
 
 # streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)

@@ -25,11 +25,12 @@ from pytest_mock import MockerFixture
 from reactivex import Observable
 from reactivex.disposable import Disposable
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
 from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT, playback_finished
+from dimos.memory.testing import playback_finished
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage

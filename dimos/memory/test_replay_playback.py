@@ -22,9 +22,9 @@ from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.replay import Playback, Replay
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT
 
 pytestmark = [
     pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning"),

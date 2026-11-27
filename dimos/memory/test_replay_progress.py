@@ -18,9 +18,9 @@ import threading
 import pytest
 from reactivex import Subject, empty
 
+from dimos.constants import HUNG_TEST_TIMEOUT
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.memory import MemoryStore
-from dimos.memory.testing import HUNG_TEST_TIMEOUT
 
 
 @pytest.mark.parametrize("seek,duration,expected", [(None, None, 20.0), (5.0, 5.0, 0.0)])
