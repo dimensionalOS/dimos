@@ -79,12 +79,10 @@ def test_explain_missing_extra_reads_provider_and_markers_from_metadata(
     assert "vendor_sdk" not in sys.modules
 
     env = markers.default_environment()
-    env.update(
-        sys_platform="linux",
-        platform_machine="x86_64",
-        python_version="3.10",
-        python_full_version="3.10.12",
-    )
+    env["sys_platform"] = "linux"
+    env["platform_machine"] = "x86_64"
+    env["python_version"] = "3.10"
+    env["python_full_version"] = "3.10.12"
     monkeypatch.setattr(markers, "default_environment", lambda: env.copy())
     monkeypatch.setattr(optional_dependencies, "packages_distributions", dict)
     monkeypatch.setitem(sys.modules, "gtsam", None)
@@ -102,7 +100,7 @@ def test_explain_missing_extra_reads_provider_and_markers_from_metadata(
         ),
     )
     with pytest.raises(
-        optional_dependencies.OptionalDependencyError, match="no compatible build"
+        optional_dependencies.MissingExtraError, match="no compatible build"
     ) as incompatible:
         optional_dependencies.check_imports("gtsam")
     assert "dimos[mapping]" in str(incompatible.value)
@@ -113,6 +111,6 @@ def test_explain_missing_extra_reads_provider_and_markers_from_metadata(
         lambda _: fake_dist('gtsam>=4.3a1; extra == "mapping"'),
     )
     with pytest.raises(
-        optional_dependencies.OptionalDependencyError, match=r"Install 'dimos\[mapping\]'"
+        optional_dependencies.MissingExtraError, match=r"Install 'dimos\[mapping\]'"
     ):
         optional_dependencies.check_imports("gtsam")

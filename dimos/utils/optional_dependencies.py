@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, distribution, packages_distributions
 from importlib.util import find_spec
@@ -27,12 +27,12 @@ from packaging.utils import canonicalize_name
 from dimos.constants import DIMOS_PROJECT_ROOT
 
 
-class OptionalDependencyError(ImportError):
+class MissingExtraError(ImportError):
     """An active module could not start because an optional dependency is missing."""
 
 
 # Match exact distribution names, python-<mod> packages, and <mod>-* variants (e.g. gtsam-extended, warp-lang).
-def _matches_requirement(req_name: str, root: str, installed: set[str]) -> bool:
+def _matches_requirement(req_name: str, root: str, installed: Collection[str]) -> bool:
     return (
         req_name in installed
         or req_name in {root, f"python-{root}"}
@@ -56,7 +56,7 @@ def explain_missing_extra() -> Iterator[None]:
             raise error from None
 
         root = canonicalize_name(top)
-        installed = {canonicalize_name(d) for d in packages_distributions().get(top, ())}
+        installed: set[str] = {canonicalize_name(d) for d in packages_distributions().get(top, ())}
         extras: set[str] = set()
         declared: set[str] = set()
         environments: set[str] = set()
@@ -76,7 +76,7 @@ def explain_missing_extra() -> Iterator[None]:
 
         choices = " or ".join(f"'dimos[{extra}]'" for extra in sorted(extras or declared))
         if not extras:
-            raise OptionalDependencyError(
+            raise MissingExtraError(
                 f"Missing {module!r}. Provided by {choices}, with no compatible build "
                 f"for this Python or platform. Create a supported dimOS environment matching "
                 f"{' or '.join(sorted(environments))} before installing the extra."
@@ -87,7 +87,7 @@ def explain_missing_extra() -> Iterator[None]:
                 f"`uv sync --extra {extra} --inexact`" for extra in sorted(extras)
             )
             hint += f" with {commands}"
-        raise OptionalDependencyError(f"Missing {module!r}. {hint}.") from error
+        raise MissingExtraError(f"Missing {module!r}. {hint}.") from error
 
 
 def check_imports(*packages: str) -> None:
