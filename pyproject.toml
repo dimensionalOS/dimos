@@ -337,6 +337,8 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    # sim2 worlds are composed as USD.
+    "usd-core>=23.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
@@ -584,6 +586,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+# world_msgs is not in a dimos-lcm release yet: pinned to the sim2_world branch's commit until one ships it.
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm", rev = "fa4b03a96d190677f60be2b314690ded16bf68a7" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
