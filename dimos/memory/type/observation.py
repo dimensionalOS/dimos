@@ -170,6 +170,11 @@ class Observation(Generic[T]):
 
     @property
     def data(self) -> T:
+        """Return the payload, loading and caching it on first access if necessary.
+
+        Access can decode stored data. Inspect the property on the class to
+        read its documentation without loading a payload.
+        """
         val = self._data
         if isinstance(val, _Unloaded):
             with self._data_lock:

@@ -1,6 +1,6 @@
 ---
 name: dimensional
-description: Build and operate DimOS apps and blueprints with the dimos CLI and Python API, and inspect real sensor and memory results.
+description: Query recorded sensor data, SQLite memory recordings and video, inspect images, and build or operate DimOS apps with the CLI and Python API.
 ---
 
 `bash` runs with DimOS's Python environment first on `PATH` and `DIMOS_ROOT` set to the DimOS checkout. DimOS reads `.env` from the working directory, so run DimOS commands and scripts from `$DIMOS_ROOT` unless the task needs another directory. When a command behaves differently than you expect, check its `--help` for the installed version.
@@ -14,7 +14,15 @@ description: Build and operate DimOS apps and blueprints with the dimos CLI and 
 
 For the running system (module APIs, streams, agent modules and cron jobs), read the dimos-runtime skill.
 
-For memory, use the existing stream operations. Evaluate a query once with `materialize()`, then derive scores, selected peaks, images and comparisons from that one result. Keep timestamps, observation IDs and coordinate frames in exports. Analysis of point-cloud frames and video belongs in DimOS memory, whose `Space.to_svg()` and `Plot.to_svg()` draw spatial and timeline views. Try a memory operation on real data before you rely on it.
+For memory, use the existing stream operations. Discover the next operation from the actual object's type and the selected member's signature and docstring with Python `help()` or `inspect`. Check the returned type before treating a query as an observation or a payload as an array. Inspect class members without evaluating lazy properties. Read the installed source when documentation leaves a unit or conversion unresolved.
+
+Evaluate a query once and reuse its results. `materialize()` loads payloads into another store and assigns destination observation metadata; copy original IDs and timestamps first when preserving source provenance. Keep timestamps and coordinate frames in exports. Analysis of point-cloud frames and video belongs in DimOS memory, whose `Space.to_svg()` and `Plot.to_svg()` draw spatial and timeline views.
+
+For recorded evidence, query the supplied memory recording first. Exported images are inspection artifacts. Reuse them only when their source recording and timestamps are known. If a query returns nothing, check its time origin, units and filters against the source stream before searching for other files. Never substitute unrelated filesystem images for missing recording evidence.
+
+Translate the question into its actor, object, time interval and relation before choosing frames. For an unknown event or a last sighting, cover the full recording before refining candidates. Inspect native frames around event boundaries and small details. For totals, keep an evidence list with timestamps and distinct identities; a repeated view is not automatically another object.
+
+When visual sampling cannot locate a candidate, discover existing local perception APIs under `dimos/models/embedding` and `dimos/perception/detection/detectors`. `dimos.memory.embed.EmbedImages` can build an embedding index for `Stream.search`; a raw image stream has no embeddings. Inspect signatures and payload types before use. Retrieval scores and detector boxes propose candidates for source-frame inspection; they do not establish event boundaries or unique-object totals. Use these models when they supply missing evidence within the task budget.
 
 Files that a `bash` command creates or changes in its working directory, one folder below it or the temp directory, and existing files whose paths appear in its output, are shown to you and to the user when they are one of these:
 
@@ -24,6 +32,6 @@ Files that a `bash` command creates or changes in its working directory, one fol
 
 To show a file saved anywhere else, print its path.
 
-A frame index plays as a loop for the user. You receive a contact sheet with each frame's timestamp, and you read any single frame with `read`. Do not claim to have inspected every frame from the contact sheet alone. For a recorded interval, materialize it once in DimOS, export its frames, and write the index with the recording's origin as `timeOrigin`.
+A frame index plays as a loop for the user. You receive a contact sheet with selected frame timestamps, and you read any single frame with `read`. Do not claim to have inspected every frame from the contact sheet alone. Keep the original recording origin as `timeOrigin`; filtering an interval does not establish a new recording start.
 
 For validation, start with the `unitree-go2` blueprint in replay mode: `dimos --replay run unitree-go2 --daemon`. Do not infer a physical robot's address from a default IP.
