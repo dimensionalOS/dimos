@@ -297,13 +297,18 @@ def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
     assert resolve_named_path(tmp_path / "house", ".map.db", must_exist=False) == (
         tmp_path / "house.map.db"
     )
-    assert resolve_named_path("no_such_house", ".map.db", must_exist=False) == (
-        data.DIMOS_PROJECT_ROOT / "no_such_house.map.db"
-    )
+    write_root = tmp_path / "write_root"
+    write_root.mkdir()
+    mocker.patch.object(data, "WRITE_ROOT", write_root)
+    created = resolve_named_path("no_such_house", ".map.db", must_exist=False)
+    assert created == write_root / "no_such_house.map.db"
     assert resolve_named_path("maps/no_such_house", ".map.db", must_exist=False) == Path(
         "maps/no_such_house.map.db"
     )
     get_data.assert_not_called()
+    # and the next run finds by name what this one saved there
+    created.touch()
+    assert resolve_named_path("no_such_house", ".map.db") == created
 
 
 def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:

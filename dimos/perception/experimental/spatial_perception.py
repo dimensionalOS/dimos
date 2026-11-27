@@ -26,7 +26,7 @@ import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import WRITE_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -41,7 +41,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-_OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
+_OUTPUT_DIR = WRITE_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"
 _SPATIAL_MEMORY_DIR = _MEMORY_DIR / "spatial_memory"
 _DB_PATH = _SPATIAL_MEMORY_DIR / "chromadb_data"

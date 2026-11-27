@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 import threading
 
 import pytest
@@ -25,7 +26,8 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import pLCMTransport
-from dimos.memory.module import StreamModule
+from dimos.memory import module as memory_module
+from dimos.memory.module import MemoryModuleConfig, StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
@@ -119,3 +121,12 @@ def test_runtime_wiring(module_cls, pipeline_scheduler, retry_until):
             assert set(received) == {84}
         finally:
             unsubscribe()
+
+
+def test_relative_db_path_is_resolved_from_the_write_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_module, "WRITE_ROOT", tmp_path)
+
+    assert MemoryModuleConfig(db_path="runs/a.db").db_path == tmp_path / "runs/a.db"
+    assert MemoryModuleConfig(db_path="/abs/a.db").db_path == Path("/abs/a.db")

@@ -28,7 +28,7 @@ from typing import Any
 
 from filelock import FileLock
 
-from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR, WRITE_ROOT
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -165,10 +165,10 @@ def get_generated_data_dir(extra_path: str = "") -> Path:
 
 
 def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = True) -> Path:
-    """A path, a stem in the working directory or project root, or an LFS name to pull.
+    """A path, a stem in the working directory or WRITE_ROOT, or an LFS name to pull.
 
     Without ``must_exist`` a name found nowhere is where it would be created: a
-    bare name in the project root, a path as given; nothing is pulled.
+    bare name in WRITE_ROOT, a path as given; nothing is pulled.
     """
     s = str(name)
     names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
@@ -176,11 +176,11 @@ def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = Tr
         p = Path(candidate)
         if p.exists():
             return p
-        if (DIMOS_PROJECT_ROOT / p).exists():
-            return DIMOS_PROJECT_ROOT / p
+        if (WRITE_ROOT / p).exists():
+            return WRITE_ROOT / p
     p = Path(names[-1])
     if not must_exist:
-        return p if p.is_absolute() or p.parent != Path() else DIMOS_PROJECT_ROOT / p
+        return p if p.is_absolute() or p.parent != Path() else WRITE_ROOT / p
     if p.is_absolute():
         return p
     try:

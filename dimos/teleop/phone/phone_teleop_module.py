@@ -33,7 +33,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import WRITE_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -175,7 +175,7 @@ class PhoneTeleopModule(Module):
 
         self._web_server_thread = threading.Thread(
             target=self._web_server.run,
-            kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
+            kwargs={"ssl": True, "ssl_certs_dir": WRITE_ROOT / "assets" / "teleop_certs"},
             daemon=True,
             name="PhoneTeleopWebServer",
         )

@@ -27,7 +27,7 @@ from pydantic import Field, field_validator
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
+from dimos.constants import RECORDINGS_DIR, WRITE_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -181,7 +181,7 @@ class MemoryModuleConfig(ModuleConfig):
     def _resolve_path(cls, v: str | Path) -> Path:
         p = Path(os.fspath(v))
         if not p.is_absolute():
-            p = DIMOS_PROJECT_ROOT / p
+            p = WRITE_ROOT / p
         return p
 
 

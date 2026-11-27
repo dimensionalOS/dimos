@@ -49,16 +49,15 @@ RUNTIME_MODULES_DIR = STATE_DIR / "modules"
 # The on-robot agent's runtime state: agent module metadata and exports.
 HARNESS_STATE_DIR = STATE_DIR / "harness"
 
-if (DIMOS_PROJECT_ROOT / ".git").exists():
-    # Running from Git repository
-    LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
-    RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
-    DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
-else:
-    # Running from an installed package - use XDG_STATE_HOME
-    LOG_DIR = STATE_DIR / "logs"
-    RECORDINGS_DIR = STATE_DIR / "recordings"
-    DOWNLOADS_DIR = STATE_DIR / "downloads"
+IS_CHECKOUT = (DIMOS_PROJECT_ROOT / ".git").exists()
+
+# Where DimOS writes its working files, and where a relative output path goes. A
+# checkout uses its own folder. An installed package cannot write next to its code.
+WRITE_ROOT = DIMOS_PROJECT_ROOT if IS_CHECKOUT else STATE_DIR
+
+LOG_DIR = WRITE_ROOT / "logs"
+RECORDINGS_DIR = WRITE_ROOT / "recordings"
+DOWNLOADS_DIR = WRITE_ROOT / "downloads"
 
 CREDENTIALS_PATH = CONFIG_DIR / "credentials"
 
