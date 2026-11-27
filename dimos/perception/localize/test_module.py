@@ -14,12 +14,16 @@
 
 import threading
 
+import numpy as np
 import pytest
 from reactivex.disposable import Disposable
 
 from dimos.memory.store.memory import MemoryStore
-from dimos.perception.localize.memento import Memento
-from dimos.perception.localize.module import PerceptionLocalize
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.perception.localize.localize import _finalize
+from dimos.perception.localize.memento import Memento, Sighting
+from dimos.perception.localize.module import PerceptionLocalize, footprint
+from dimos.perception.localize.types import LocalizeParams
 
 
 @pytest.fixture
@@ -102,3 +106,57 @@ def test_stop_after_start_releases_resources_once(localizer, mocker):
     localizer.camera_info.subscribe.return_value.assert_called_once_with()
     close.assert_called_once_with(localizer._memento)
     assert not localizer._thread.is_alive()
+
+
+def _sighting(ts: float, score: float, at: tuple[float, float, float], view: float) -> Sighting:
+    return Sighting(
+        ts=ts,
+        camera="camera",
+        score=score,
+        points=np.asarray(at) + np.zeros((5, 3)),
+        viewpoint=Vector3(view, 0.0, 1.0),
+    )
+
+
+def test_a_query_with_no_answer_reports_its_best_rejected_group() -> None:
+    sightings = [
+        _sighting(10.0, 0.21, (0.5, 0.1, 0.2), 0.0),
+        _sighting(12.0, 0.18, (0.5, 0.1, 0.2), 0.1),
+        _sighting(11.0, 0.15, (-0.5, 0.0, 0.2), 0.0),
+    ]
+
+    instances, near_miss = _finalize("mug", sightings, LocalizeParams(), "world", None)
+
+    assert instances == []
+    assert near_miss is not None
+    score, views, position = near_miss
+    assert score == pytest.approx(0.21)
+    assert views == 2
+    assert position == pytest.approx((0.5, 0.1, 0.2))
+
+
+def _box_cloud(
+    length: float, width: float, yaw_deg: float, centre: tuple[float, float]
+) -> np.ndarray:
+    """A dense top face, z 0.95, over a short side wall down to 0.91."""
+    u, v = np.meshgrid(
+        np.linspace(-length / 2, length / 2, 60), np.linspace(-width / 2, width / 2, 30)
+    )
+    yaw = np.radians(yaw_deg)
+    x = centre[0] + u * np.cos(yaw) - v * np.sin(yaw)
+    y = centre[1] + u * np.sin(yaw) + v * np.cos(yaw)
+    top = np.stack([x.ravel(), y.ravel(), np.full(x.size, 0.95)], axis=1)
+    wall = top[: len(top) // 3].copy()
+    wall[:, 2] = np.linspace(0.91, 0.95, len(wall))
+    return np.concatenate([top, wall])
+
+
+@pytest.mark.parametrize("yaw", [30.0, -60.0, 0.0])
+def test_footprint_measures_a_rotated_box(yaw: float) -> None:
+    box = footprint(_box_cloud(0.30, 0.10, yaw, (0.5, -0.1)))
+    assert box is not None
+    (cx, cy), (length, width), measured, (bottom, top) = box
+    assert (cx, cy) == pytest.approx((0.5, -0.1), abs=0.01)
+    assert (length, width) == pytest.approx((0.30, 0.10), abs=0.02)
+    assert measured == pytest.approx(yaw, abs=2.0)
+    assert (bottom, top) == pytest.approx((0.91, 0.95), abs=0.005)

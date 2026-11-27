@@ -33,6 +33,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.localize.localize import NearMiss
 from dimos.perception.localize.module import PerceptionLocalize, PerceptionLocalizeConfig
 from dimos.perception.localize.rig import TF_TOLERANCE
 from dimos.perception.localize.support_plane import window_points
@@ -380,8 +381,9 @@ class ManipulationLocalize(PerceptionLocalize):
         start: float,
         duration: float,
         overrides: dict[str, Any] | None,
+        near_misses: list[NearMiss | None] | None = None,
     ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
-        results, window = super()._localize(queries, start, duration, overrides)
+        results, window = super()._localize(queries, start, duration, overrides, near_misses)
         results = [
             [hit for hit in hits if not self._was_taken(query, hit)]
             for query, hits in zip(queries, results, strict=True)

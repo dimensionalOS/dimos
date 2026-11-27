@@ -79,6 +79,10 @@ class IndexFrame:
     sharpness: float
 
 
+# The best group a call's gates turned down: its score, distinct views, newest position.
+NearMiss = tuple[float, int, tuple[float, float, float]]
+
+
 @dataclass
 class LocalizeTrace:
     """Artifacts a renderer needs; collected only when one is passed in.
@@ -454,6 +458,7 @@ def localize(
     params: LocalizeParams,
     memento: Memento | None = None,
     traces: list[LocalizeTrace] | None = None,
+    near_misses: list[NearMiss | None] | None = None,
 ) -> list[list[Localization]]:
     """Every verified 3D instance of each query seen inside ``window``, latest-seen first.
 
@@ -467,7 +472,8 @@ def localize(
     sighting read: a frame a label has detected under the same params, the
     answer gates aside, is answered from it with no detector pass, so a window
     overlapping earlier ones detects only the frames they did not. ``traces``, one per
-    query, collect what a renderer needs.
+    query, collect what a renderer needs. ``near_misses``, when given, is filled with
+    each query's best group the gates turned down, or None.
     """
     params = replace(params, embed_hz=rig.cap_embed_hz(params.embed_hz))
     label_traces: list[LocalizeTrace | None] = (
@@ -503,6 +509,7 @@ def localize(
         params=params,
         world_frame=rig.world_frame,
         traces=label_traces,
+        near_misses=near_misses,
     )
 
 
@@ -517,10 +524,12 @@ def answer_window(
     params: LocalizeParams,
     world_frame: str,
     traces: list[LocalizeTrace | None],
+    near_misses: list[NearMiss | None] | None = None,
 ) -> list[list[Localization]]:
     """Each query's verified instances, built only from its sightings inside ``window``.
 
     ``read`` runs on the unread gaps alone; everything else comes from ``memento``.
+    ``near_misses``, when given, is filled with each query's best rejected group.
     """
     found, gaps = memento.recall(queries, key, window, head, read)
     for q in queries:
@@ -528,7 +537,12 @@ def answer_window(
             f"memento {q!r}: {len(gaps[q].read)} frame spans read in the "
             f"{window[1] - window[0]:.1f}s window, {len(found[q])} sightings in it"
         )
-    return [_finalize(q, found[q], params, world_frame, traces[j]) for j, q in enumerate(queries)]
+    answers = [
+        _finalize(q, found[q], params, world_frame, traces[j]) for j, q in enumerate(queries)
+    ]
+    if near_misses is not None:
+        near_misses[:] = [miss for _, miss in answers]
+    return [instances for instances, _ in answers]
 
 
 def memory_key(params: LocalizeParams) -> str:
@@ -543,7 +557,7 @@ def _finalize(
     params: LocalizeParams,
     world_frame: str,
     trace: LocalizeTrace | None,
-) -> list[Localization]:
+) -> tuple[list[Localization], NearMiss | None]:
     group = Groups()
     for sighting in sightings:
         group.add(sighting, params.cluster_radius_m, params.fuse_voxel_m)
@@ -561,6 +575,17 @@ def _finalize(
             for i, r in enumerate(rows)
         )
     )
+
+    near_miss: NearMiss | None = None
+    missed = [i for i in range(len(rows)) if i not in verified]
+    if missed:
+        best = max(missed, key=lambda i: float(rows[i][:, M_SCORE].max()))
+        newest = rows[best][rows[best][:, M_TS].argmax()]
+        near_miss = (
+            float(rows[best][:, M_SCORE].max()),
+            views[best],
+            (float(newest[M_CX]), float(newest[M_CY]), float(newest[M_CZ])),
+        )
 
     verified.sort(key=lambda i: rows[i][:, M_TS].max(), reverse=True)
     instances: list[Localization] = []
@@ -595,7 +620,7 @@ def _finalize(
                 n_views=views[i],
             )
         )
-    return instances
+    return instances, near_miss
 
 
 def _instance_id(query: str, first: Sighting) -> str:

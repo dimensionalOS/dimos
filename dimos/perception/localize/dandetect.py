@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from dimos.models.embedding.base import EmbeddingModel
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-    from dimos.perception.localize.localize import LocalizeTrace
+    from dimos.perception.localize.localize import LocalizeTrace, NearMiss
     from dimos.perception.localize.memento import Memento, Span
     from dimos.perception.localize.rig import Rig
 
@@ -201,6 +201,7 @@ class DanDetector(Resource):
         fields: dict[str, Any] | None = None,
         memento: Memento | None = None,
         traces: list[LocalizeTrace] | None = None,
+        near_misses: list[NearMiss | None] | None = None,
     ) -> list[list[Localization]]:
         """:func:`localize` on this resource's models, with ``params`` shifted onto their scales."""
         return localize(
@@ -215,4 +216,5 @@ class DanDetector(Resource):
             params=self.shifted(params, fields),
             memento=memento,
             traces=traces,
+            near_misses=near_misses,
         )
