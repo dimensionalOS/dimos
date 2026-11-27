@@ -115,8 +115,16 @@ def test_recall_skips_invalid_session_and_preserves_inputs(tmp_path: Path) -> No
         hit = module.recall("chair")
         stream_name = index_stream_name(module.config.clip_model_name)
 
-    assert hit is not None
-    with SqliteStore(path=history, read_only=True) as hist_store:
-        indexed = {Path(obs.tags["rec"]).name for obs in hist_store.stream(stream_name, Image)}
-    assert indexed == {current.name, later.name}
+        assert hit is not None
+        with SqliteStore(path=history, read_only=True) as hist_store:
+            indexed = {Path(obs.tags["rec"]).name for obs in hist_store.stream(stream_name, Image)}
+        assert indexed == {current.name, later.name}
+        assert {path: path.read_bytes() for path in (current, invalid, later)} == before
+
+        with closing(sqlite3.connect(later)) as conn:
+            conn.execute("DROP TABLE _streams")
+        before[later] = _delete_mode_bytes(later)
+        second_hit = module.recall("chair")
+
+    assert second_hit is not None
     assert {path: path.read_bytes() for path in (current, invalid, later)} == before
