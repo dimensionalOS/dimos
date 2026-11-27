@@ -2,13 +2,40 @@
 
 These robots use `ConnectionModule` directly. Each connection owns one native
 `can_motor_control.Robot`, its CAN buses, gripper calibration, state reader,
-and MIT commands. Position-control stacks retire their former whole-body
-adapters and registry entries. Seeed B601-DM and OpenYAM hand-guided collection
-use the same connection path: the generic Damiao whole-body adapter and its
-OpenYAM/Seeed compatibility factories are gone, so every Damiao robot now has
-one owner and one gain declaration.
+and MIT commands. Seeed B601-DM and OpenYAM hand-guided collection use the
+same connection path, so every Damiao robot has one owner and one gain
+declaration.
 Direct-connection coordinators communicate through
 `position_command` and `joint_state` streams.
+
+## Calibration
+
+At connect each arm runs its saved
+`~/.local/state/dimos/arms/<arm id>/calibration.json` (`calibration: auto`),
+none (`off`), or one file given by path. A file that does not load or fit the
+robot (model fingerprint, arm id, joints, links, MIT gain range, rated
+torques) makes connect fail; set `calibration: off` to run without it.
+
+`get_config()` returns, per arm id, an `ArmConfigState`
+(`dimos/control/calibration/schema.py`): the gains each joint is sent with,
+the floating joints, the fitted link masses, the file it runs, the deadman timeout and whether the
+robot can float a joint. `set_config(patch, save=False)` takes
+`{arm_id: ArmConfigPatch}` and needs `config_writes=True`, which only the
+`<robot>-calibrate` blueprints set, and never with `--simulation`; see
+[Calibrate a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md).
+
+- It is all or nothing: one bad entry raises an error naming every bad entry,
+  and nothing changes.
+- Live, it takes gains only, within the MIT frame's range (0 to 500 N m/rad,
+  0 to 5 N m s/rad). kp 0 floats a joint with kd as its damping and gravity
+  still compensated; a robot without gravity compensation refuses it.
+- Every halt undoes the live changes: the command deadman, a failed write,
+  or stop. The arm then holds where it is with the file's gains, and the next
+  position command moves it again. So live changes last only while commands
+  keep arriving.
+- `save=True` merges gains, links, fit and notes into the arm's file, keeps
+  the old one in `history/`, and applies it, dropping the live changes. It
+  refuses to save over a file it cannot read or one made for another model.
 
 ## Run software tests first
 

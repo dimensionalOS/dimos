@@ -183,6 +183,7 @@ export function dimosFixture(): () => TestDimos | null {
         RELAYBRIDGEMODULE__RTC: "false",
         XDG_STATE_HOME: join(scratch, "state"),
         XDG_CONFIG_HOME: join(scratch, "config"),
+        XDG_DATA_HOME: join(scratch, "data"),
         XDG_CACHE_HOME: join(scratch, "cache"),
         XDG_RUNTIME_DIR: join(scratch, "runtime"),
         ROBOT_IP: "",

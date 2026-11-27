@@ -152,6 +152,7 @@ def test_run_records_tool_results_and_reports_unanswered_cases(
         "DIMOS_EVAL_API_KEY": "test-key",
     }
     assert process_env["XDG_CONFIG_HOME"] == str(paths.config)
+    assert process_env["XDG_DATA_HOME"] == str(tmp_path / "agent-data")
     assert process_env["XDG_STATE_HOME"] == str(tmp_path / "agent-state")
     assert process_env["XDG_CACHE_HOME"] == str(paths.cache)
     config = paths.config / "dimos" / "agent"

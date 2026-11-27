@@ -26,10 +26,9 @@ logged once as a Pinhole on their matching image entity (see
 from __future__ import annotations
 
 from pathlib import Path
-import subprocess
 from typing import TYPE_CHECKING, Any
 
-from dimos.utils.executable import find_executable
+from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -104,7 +103,7 @@ def _frame_first_seen(
 def _open_viewer(rrd: str) -> None:
     exe = find_executable("rerun")
     if exe:
-        subprocess.Popen([exe, rrd])
+        spawn_detached([exe, rrd])
         print(f"  opening {rrd} in rerun")
     else:
         print(f"  rerun viewer not found; open manually:\n    rerun {rrd}")
