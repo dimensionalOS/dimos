@@ -110,7 +110,7 @@ self-signed certificate.
 
 | Input | Operation |
 |---|---|
-| Hold X + A | Engage both arms from a shared reference pose |
+| Hold both grips | Engage both arms from a shared reference pose |
 | B | Start or save a recording episode |
 | Y | Discard the current episode |
 

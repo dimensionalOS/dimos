@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from pathlib import Path
+import sys
 from typing import Any
 
 from click import unstyle
+import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main as app
@@ -29,6 +33,10 @@ from dimos.evals.vqa.generate import (
     PublicCase,
     VqaGenerationConfig,
 )
+from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 def test_vqa_cli_exposes_generate_and_run() -> None:
@@ -71,7 +79,10 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
     seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
 
     def fake_generate(
-        request: GenerationRequest, config: VqaGenerationConfig | None = None
+        request: GenerationRequest,
+        config: VqaGenerationConfig | None = None,
+        *,
+        progress: Callable[[str], None] | None = None,
     ) -> GenerationResult:
         seen.append((request, config))
         return GenerationResult(
@@ -118,7 +129,10 @@ def test_vqa_generate_cli_accepts_frame_range(
     seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
 
     def fake_generate(
-        request: GenerationRequest, config: VqaGenerationConfig | None = None
+        request: GenerationRequest,
+        config: VqaGenerationConfig | None = None,
+        *,
+        progress: Callable[[str], None] | None = None,
     ) -> GenerationResult:
         seen.append((request, config))
         return GenerationResult(output=request.output_directory(), cases=())
@@ -164,7 +178,10 @@ def test_vqa_generate_cli_accepts_quality_window_options(
     seen: list[GenerationRequest] = []
 
     def fake_generate(
-        request: GenerationRequest, config: VqaGenerationConfig | None = None
+        request: GenerationRequest,
+        config: VqaGenerationConfig | None = None,
+        *,
+        progress: Callable[[str], None] | None = None,
     ) -> GenerationResult:
         seen.append(request)
         return GenerationResult(output=request.output_directory(), cases=())
@@ -206,7 +223,10 @@ def test_vqa_generate_cli_accepts_quality_window_options(
 
 def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_generate(
-        request: GenerationRequest, config: VqaGenerationConfig | None = None
+        request: GenerationRequest,
+        config: VqaGenerationConfig | None = None,
+        *,
+        progress: Callable[[str], None] | None = None,
     ) -> GenerationResult:
         raise ValueError("dataset has no 'tf' stream")
 
@@ -294,3 +314,69 @@ def test_vqa_source_fingerprints_change_with_reload_inputs(tmp_path: Path) -> No
     assert before["path"] == str(tmp_path.resolve())
     assert set(before["fingerprints"]) == {"cases.jsonl", "labels.jsonl", "assets/frame.png"}
     assert before["fingerprints"]["assets/frame.png"] != after["fingerprints"]["assets/frame.png"]
+
+
+@pytest.mark.parametrize(
+    ("selection", "indices"),
+    [
+        (["--start", "20", "--stop", "300", "--stride", "100"], (20, 120, 220)),
+        (["--image-index", "20"], (20,)),
+        (["--start", "0", "--stop", "300", "--quality-window", "0.5"], (12, 22)),
+    ],
+)
+def test_vqa_generate_reports_progress_before_slow_work(
+    selection: list[str], indices: tuple[int, ...], tmp_path: Path, mocker: MockerFixture
+) -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    loader_factory = mocker.patch.object(generate_module, "PointCloudFrameLoader")
+    loader = loader_factory.return_value.__enter__.return_value
+    loader.image_count = 300
+    loader.load_image.return_value = image
+    mocker.patch.object(generate_module, "select_quality_indices", return_value=indices)
+    author = mocker.patch("dimos.models.vl.openai.OpenAIVlModel").return_value
+    author.config.model_name = "test-author"
+    author.query_json.return_value = [{"family": "presence", "object_names": ["chair"]}]
+    detector = mocker.patch("dimos.models.vl.moondream.MoondreamVlModel").return_value
+    detector.config.model_name = "test-detector"
+    detector.query_detections.return_value = ImageDetections2D(
+        image,
+        [
+            Detection2DBBox(
+                bbox=(0, 0, 2, 2),
+                name="chair",
+                image=image,
+                track_id=1,
+                class_id=1,
+                confidence=1.0,
+                ts=1.0,
+            )
+        ],
+    )
+
+    def open_recording(*args: Any, **kwargs: Any) -> Any:
+        assert "Preparing VQA generation..." in sys.stdout.buffer.getvalue().decode()
+        assert "Loading recording recording.db..." in sys.stdout.buffer.getvalue().decode()
+        return loader_factory.return_value
+
+    def load_frame(index: int) -> None:
+        # Check the captured stream while work is running, not only after CLI completion.
+        output = sys.stdout.buffer.getvalue().decode()
+        assert f"Selected {len(indices)} frame(s)." in output
+        assert "Initializing VQA models" in output
+        number = indices.index(index) + 1
+        assert f"Processing frame {number}/{len(indices)} (color_image index {index})" in output
+        assert "Generated " not in output
+        raise PointCloudFrameUnavailableError("no point cloud")
+
+    loader_factory.side_effect = open_recording
+    loader.load.side_effect = load_frame
+    output = tmp_path / "vqa"
+    result = CliRunner().invoke(
+        app, ["evals", "vqa", "generate", "recording.db", *selection, "--output", str(output)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert loader.load.call_args_list == [mocker.call(index) for index in indices]
+    assert author.query_json.call_count == len(indices)
+    assert f"Generated {len(indices)} VQA case(s) in {output}" in result.stdout
+    assert (output / "cases.jsonl").is_file()

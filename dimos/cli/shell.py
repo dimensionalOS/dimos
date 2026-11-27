@@ -16,12 +16,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import sys
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 import typer
+from typing_extensions import NotRequired
 
 from dimos.cli import theme
 from dimos.core.introspection.module.info import ModuleInfo, RpcInfo
@@ -29,6 +30,9 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.run_registry import get_most_recent
 from dimos.porcelain.dimos import DescribeTarget, Dimos
 from dimos.porcelain.module_handle import ModuleHandle, RemoteModuleProxy
+
+if TYPE_CHECKING:
+    from dimos.control.calibration.shell import CalibrationShell
 
 QUICK_START = """\
 [bold]Quick start[/bold]
@@ -47,6 +51,7 @@ class ShellNamespace(TypedDict):
     modules: Callable[[], None]
     rpcs: Callable[[str | ModuleHandle | None], None]
     describe: Callable[[DescribeTarget], None]
+    cal: NotRequired[CalibrationShell]
 
 
 def _is_interactive_terminal() -> bool:
@@ -143,7 +148,17 @@ def _shell_namespace(app: Dimos) -> ShellNamespace:
     }
 
 
-def _print_shell_banner() -> None:
+def _calibration(app: Dimos) -> CalibrationShell | None:
+    """``cal`` for the attached run's ``CalibrationModule``, if it deploys one."""
+    for info in app.list_modules():
+        if info.class_name == "CalibrationModule":
+            from dimos.control.calibration.shell import CalibrationShell
+
+            return CalibrationShell(app.get_module(info.instance_name or info.name))
+    return None
+
+
+def _print_shell_banner(cal: CalibrationShell | None = None) -> None:
     entry = get_most_recent(alive_only=True)
     run = (
         f"run {entry.run_id} ({entry.blueprint})"
@@ -156,6 +171,8 @@ def _print_shell_banner() -> None:
     console.print(f"Attached to {run}.")
     console.print()
     console.print(QUICK_START)
+    if cal is not None:
+        console.print(f"cal: calibration of {cal.arm}; cal.run() to start")
     console.print(
         Text(
             "WARNING: RPC calls execute immediately against the running system.",
@@ -187,10 +204,14 @@ def shell() -> None:
 
     try:
         _register_module_completions()
-        _print_shell_banner()
+        namespace = _shell_namespace(app)
+        cal = _calibration(app)
+        if cal is not None:
+            namespace["cal"] = cal
+        _print_shell_banner(cal)
         start_ipython(  # type: ignore[no-untyped-call]
             argv=["--no-banner"],
-            user_ns=_shell_namespace(app),
+            user_ns=namespace,
         )
     finally:
         app.stop()

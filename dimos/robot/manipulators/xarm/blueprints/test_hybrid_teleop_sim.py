@@ -14,9 +14,9 @@
 
 """OperatorHoldCoordinator: the hold and e-stop status streams.
 
-A rig wires one mock arm, the trajectory task and the hold task into a real
-OperatorHoldCoordinator, then ticks it by hand so every assertion is
-deterministic.
+A rig drives one arm through connection ports, with the trajectory task and
+the hold task, on a real OperatorHoldCoordinator, then ticks it by hand so
+every assertion is deterministic.
 
 The collection tests write a small session folder by hand and export it, to
 check that a camera running at the blueprint's frame rate passes the
@@ -28,12 +28,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control._control_test_helpers import LocalTransport, Recorder, fake_arm_model
+from dimos.control.components import make_joints
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
@@ -49,7 +51,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.module_coordinator import resolve_module_refs
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema, Sample
@@ -85,23 +87,43 @@ def _trajectory() -> JointTrajectory:
     )
 
 
+class ArmHoldCoordinator(OperatorHoldCoordinator):
+    """Ports for one arm behind a connection module."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
 class Rig:
     def __init__(self) -> None:
-        self.arm = MagicMock(spec=ManipulatorAdapter)
-        self.arm.get_dof.return_value = len(ARM_JOINTS)
-        self.arm.read_joint_positions.return_value = list(ARM_POSITIONS)
-        self.arm.read_joint_velocities.return_value = [0.0] * len(ARM_JOINTS)
-        self.arm.read_joint_efforts.return_value = [0.0] * len(ARM_JOINTS)
-        self.arm.write_joint_positions.return_value = True
-        self.arm.set_control_mode.return_value = True
-
-        self.coordinator = OperatorHoldCoordinator(publish_joint_state=False)
-        self.coordinator.add_hardware(
-            self.arm,
-            HardwareComponent(
-                hardware_id="arm", hardware_type=HardwareType.MANIPULATOR, joints=ARM_JOINTS
-            ),
+        self.coordinator = ArmHoldCoordinator(
+            publish_joint_state=False,
+            reading_timeout_s=60.0,
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=fake_arm_model(("joint1", "joint2", "joint3")),
+                    joint_commands={
+                        name: (Interface.POSITION,) for name in ("joint1", "joint2", "joint3")
+                    },
+                )
+            ],
         )
+        reading = LocalTransport()
+        self.coordinator.set_transport("arm_joint_state", reading)  # type: ignore[arg-type]
+        self.sent: list[tuple[str, JointState]] = []
+        self.coordinator.set_transport(
+            "arm_position_command",
+            Recorder("arm_position_command", self.sent),  # type: ignore[arg-type]
+        )
+        self.coordinator.start()
+        assert self.coordinator._tick_loop is not None
+        self._loop = self.coordinator._tick_loop
+        still = [0.0] * len(ARM_JOINTS)
+        reading.publish(
+            JointState(name=ARM_JOINTS, position=list(ARM_POSITIONS), velocity=still, effort=still)
+        )
+
         self.trajectory_task = JointTrajectoryTask(
             JointTrajectoryTaskConfig(
                 joint_names=ARM_JOINTS,
@@ -119,26 +141,16 @@ class Rig:
         self.estop_statuses: list[Bool] = []
         self.coordinator.operator_estop_status.subscribe(self.estop_statuses.append)
 
-        self._loop = TickLoop(
-            tick_rate=100.0,
-            hardware=self.coordinator._hardware,
-            hardware_lock=self.coordinator._hardware_lock,
-            tasks=self.coordinator._tasks,
-            task_lock=self.coordinator._task_lock,
-            joint_to_hardware=self.coordinator._joint_to_hardware,
-        )
-        # The coordinator reads joint positions from its tick loop's last tick.
-        self.coordinator._tick_loop = self._loop
-
     def tick(self) -> None:
         self._loop._tick()
 
     def arm_writes(self) -> list[list[float]]:
-        return [call.args[0] for call in self.arm.write_joint_positions.call_args_list]
+        return [list(msg.position) for _, msg in self.sent]
 
 
 @pytest.fixture
-def rig() -> Iterator[Rig]:
+def rig(mocker) -> Iterator[Rig]:
+    mocker.patch.object(TickLoop, "start")
     rig = Rig()
     try:
         yield rig

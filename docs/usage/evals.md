@@ -549,11 +549,11 @@ run <blueprint> <modules>` without `--simulation`. It needs an operator at an in
 `dimos.evals.suites.hardware_go2` (walk forward and turn around) hold one case each,
 so one run is one robot and one scene. Keep the e-stop within reach. The robot's
 address reaches the launched dimos through the environment: `ROBOT_IP` for the Go2,
-and the coordinator's `addresses` for the xArm:
+and `XArmConnection`'s `ip` for the xArm:
 
 ```bash
 ROBOT_IP=192.168.123.161 dimos evals run dimos.evals.suites.hardware_go2 --agent dimos.evals.agents.pi
-CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.168.1.185"}' dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
+XARMCONNECTION__IP=192.168.1.185 dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
 ```
 
 ## Running

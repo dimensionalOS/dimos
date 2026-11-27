@@ -145,16 +145,53 @@ def test_discover_reports_no_robots_after_timeout(
     result = CliRunner().invoke(go2tool.app, ["discover", *options, "-t", "0.01"])
 
     assert result.exit_code == 0
-    assert result.stderr == ""
+    assert ("No LAN robots found." in result.stderr) == (options != ["--ble"])
     assert result.stdout.splitlines()[-1] == "No robots found."
     assert "Stopped." not in result.stdout
+
+
+def test_discover_reports_empty_lan_despite_ble_result(
+    mocker: MockerFixture, scans: dict[str, Mock]
+) -> None:
+    device = ble.Go2Device(name="Go2_test", address="AA:BB:CC:DD:EE:FF", serial="test-serial")
+    scans["BLE"].return_value = _scan([device], on_close=mocker.Mock())
+    scans["LAN"].return_value = _scan(on_close=mocker.Mock())
+
+    result = CliRunner().invoke(go2tool.app, ["discover", "-t", "0.01"])
+
+    assert result.exit_code == 0
+    assert "test-serial" in result.stdout
+    assert "No LAN robots found." in result.stderr
+    assert "multicast" in result.stderr
+    assert "reachable by IP" in result.stderr
+    assert "serial" in result.stderr
+
+
+def test_discover_reports_ble_serial_missing_from_lan(
+    mocker: MockerFixture, scans: dict[str, Mock]
+) -> None:
+    scans["BLE"].return_value = _scan(
+        [ble.Go2Device(name="Go2_test", address="AA:BB:CC:DD:EE:FF", serial="nearby-serial")],
+        on_close=mocker.Mock(),
+    )
+    scans["LAN"].return_value = _scan(
+        [landiscovery.Go2Device(serial="other-serial", ip="192.0.2.1", iface="test")],
+        on_close=mocker.Mock(),
+    )
+
+    result = CliRunner().invoke(go2tool.app, ["discover", "-t", "0.01"])
+
+    assert result.exit_code == 0
+    assert "192.0.2.1" in result.stdout
+    assert "No LAN match for BLE serial(s): nearby-serial." in result.stderr
+    assert "No LAN robots found." not in result.stderr
 
 
 def test_discover_prints_devices_and_completes(
     mocker: MockerFixture, scans: dict[str, Mock]
 ) -> None:
     ble_device = ble.Go2Device(name="Go2_test", address="AA:BB:CC:DD:EE:FF", serial="ble-serial")
-    lan_device = landiscovery.Go2Device(serial="lan-serial", ip="192.0.2.1", iface="test")
+    lan_device = landiscovery.Go2Device(serial="ble-serial", ip="192.0.2.1", iface="test")
     scans["BLE"].return_value = _scan([ble_device, ble_device], on_close=mocker.Mock())
     scans["LAN"].return_value = _scan([lan_device, lan_device], on_close=mocker.Mock())
 
@@ -162,8 +199,7 @@ def test_discover_prints_devices_and_completes(
 
     assert result.exit_code == 0
     assert result.stderr == ""
-    assert result.stdout.count("ble-serial") == 1
-    assert result.stdout.count("lan-serial") == 1
+    assert result.stdout.count("ble-serial") == 2
     assert "Go2_test" in result.stdout
     assert "192.0.2.1" in result.stdout
     assert result.stdout.splitlines()[-1] == "Scan complete."

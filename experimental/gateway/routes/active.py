@@ -39,6 +39,12 @@ class LaunchRequest(BaseModel):
     module: str | None = None
     config: JsonValue = None
 
+    def prepared(self) -> tuple[str, LaunchConfig]:
+        if (self.blueprint is None) == (self.module is None):
+            raise ApiError(400, "give exactly one of blueprint or module")
+        name = check_name(self.module if self.blueprint is None else self.blueprint)
+        return name, launches.parse(self.config)
+
 
 class ExecRequest(BaseModel):
     args: list[str]
@@ -79,6 +85,8 @@ def check_known(state: State, name: str) -> None:
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
     await asyncio.to_thread(check_known, state, name)
     launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
+    # the run reads its code now, so the graph and config read it again too
+    state.cache.forget_name(name)
     state.bus.launch(launch)
     return launch
 
@@ -113,11 +121,7 @@ async def active_log(
 
 @router.post("/launch", response_model=responses.Launch)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
-    if (request.blueprint is None) == (request.module is None):
-        raise ApiError(400, "give exactly one of blueprint or module")
-    name = check_name(request.module if request.blueprint is None else request.blueprint)
-    launch_config = launches.parse(request.config)
-    return await started(state, name, launch_config)
+    return await started(state, *request.prepared())
 
 
 @router.post("/exec", response_model=responses.Launch)
@@ -129,10 +133,15 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
 
 
 @router.post("/relaunch", response_model=responses.Launch)
-async def relaunch(state: GatewayState) -> dict[str, Any]:
+async def relaunch(state: GatewayState, request: LaunchRequest | None = None) -> dict[str, Any]:
     launch = await asyncio.to_thread(
-        launches.relaunch, state.dimos_dir, partial(check_known, state)
+        launches.relaunch,
+        state.dimos_dir,
+        partial(check_known, state),
+        request.prepared() if request is not None else None,
     )
+    if launch.get("blueprint"):
+        state.cache.forget_name(str(launch["blueprint"]))
     state.bus.launch(launch)
     return launch
 
@@ -170,9 +179,23 @@ async def module(state: GatewayState, id: str) -> dict[str, Any]:
     return await asyncio.to_thread(state.live.module, state.scanner.cache(), id)
 
 
+@router.get("/modules/{id}/config", response_model=responses.ModuleConfig)
+async def module_config(state: GatewayState, id: str) -> dict[str, Any]:
+    return await asyncio.to_thread(state.live.config, id)
+
+
+class RestartRequest(BaseModel):
+    # config fields (name -> value) merged over the module's config before it's deployed again
+    config: dict[str, JsonValue] | None = None
+    reloadSource: bool = True
+
+
 @router.post("/modules/{id}/restart", response_model=responses.ModuleAction)
-async def restart_module(state: GatewayState, id: str) -> dict[str, Any]:
-    return await asyncio.to_thread(state.live.restart, id)
+async def restart_module(
+    state: GatewayState, id: str, request: RestartRequest | None = None
+) -> dict[str, Any]:
+    request = request or RestartRequest()
+    return await asyncio.to_thread(state.live.restart, id, request.config, request.reloadSource)
 
 
 @router.post("/modules/{id}/stop", response_model=responses.ModuleAction)

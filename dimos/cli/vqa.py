@@ -52,6 +52,7 @@ def generate(
     ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
+    typer.echo("Preparing VQA generation...")
     # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import (
         GenerationRequest,
@@ -69,7 +70,7 @@ def generate(
             quality_window=quality_window,
             min_brightness=min_brightness,
         )
-        result = generate_dataset(request)
+        result = generate_dataset(request, progress=typer.echo)
     except (ValueError, IndexError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")

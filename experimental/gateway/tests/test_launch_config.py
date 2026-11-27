@@ -128,7 +128,6 @@ def test_nested_model_values_round_trip_with_secret_and_public_siblings(
         "CAM_CAMERA__AUTH__TOKEN": "nested-secret",
     }
     assert parsed.module_kwargs("cam/camera") == {
-        "frame_id_prefix": "cam",
         "auth": {"token": "nested-secret", "region": "west", "identity": "explicit-secret"},
         "profile": {"exposure": {"gain": 3.0}},
     }
@@ -246,7 +245,6 @@ def test_module_and_model_field_aliases_round_trip_with_secret_values(
     assert "automatic-secret" not in " ".join(args)
     assert "explicit-secret" not in " ".join(args)
     assert parsed.module_kwargs("cam/camera") == {
-        "frame_id_prefix": "cam",
         "frame_id": "camera-frame",
         "auth": {"token": "automatic-secret", "region": "west", "identity": "explicit-secret"},
         "profile": {"exposure": {"gain": 4.0}},
@@ -330,7 +328,6 @@ def test_atomic_collections_keep_arbitrary_keys_and_list_secret_values(
     assert args == ["run", "demo"]
     assert set(env) == {"CAM_CAMERA__CREDENTIALS", "CAM_CAMERA__ACCOUNTS"}
     assert parsed.module_kwargs("cam/camera") == {
-        "frame_id_prefix": "cam",
         "credentials": credentials,
         "accounts": accounts,
     }
@@ -501,9 +498,9 @@ def test_normalized_flags_are_accepted_by_the_real_cli(
 
 def test_dotted_module_fields_become_one_object_flag() -> None:
     flags = launches.module_flags(
-        {"controlcoordinator": {"addresses.xarm_arm": "192.0.2.1", "addresses.piper_arm": "can0"}}
+        {"rerunbridgemodule": {"rerun_config.left": "a", "rerun_config.right": "b"}}
     )
-    assert flags == ['--controlcoordinator.addresses={"piper_arm":"can0","xarm_arm":"192.0.2.1"}']
+    assert flags == ['--rerunbridgemodule.rerun-config={"left":"a","right":"b"}']
 
 
 def test_launch_env_defaults_are_settings_dimos_reads() -> None:

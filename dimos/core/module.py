@@ -196,11 +196,19 @@ class ModuleBase(Configurable, CompositeResource):
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
     @property
+    def namespace(self) -> str:
+        """The ``Blueprint.namespace`` levels in the instance name: ``fleet/robot0`` for ``fleet/robot0/odom``."""
+        return (self.config.instance_name or "").rpartition("/")[0]
+
+    @property
+    def frame_id_prefix(self) -> str:
+        """The namespace, then the config's own frame_id_prefix: ``robot0/custom``."""
+        return "/".join(part for part in (self.namespace, self.config.frame_id_prefix) if part)
+
+    @property
     def frame_id(self) -> str:
         base = self.config.frame_id or self.__class__.__name__
-        if self.config.frame_id_prefix:
-            return f"{self.config.frame_id_prefix}/{base}"
-        return base
+        return f"{self.frame_id_prefix}/{base}" if self.frame_id_prefix else base
 
     @rpc
     def build(self) -> None:
