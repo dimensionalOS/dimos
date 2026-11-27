@@ -46,7 +46,7 @@ pytestmark = [
             (RecordingPlayer, "dataset", {"speed": 20.0, "buffer_size": 1}), id="recording"
         ),
         pytest.param(
-            (SpotReplay, "db_path", {"loop": False, "speed": 20.0, "buffer_size": 1}), id="spot"
+            (SpotReplay, "dataset", {"loop": False, "speed": 20.0, "buffer_size": 1}), id="spot"
         ),
     ]
 )
@@ -171,9 +171,7 @@ def test_player_logs_source_duration_and_completion(player, mocker):
         finished.set() if message == "Replay finished" else None
     )
     player.start()
-    path = (
-        str(player.config.dataset) if isinstance(player, RecordingPlayer) else player.config.db_path
-    )
+    path = player.config.dataset
     log.info.assert_called_once_with(
         "Replay started",
         source=path,

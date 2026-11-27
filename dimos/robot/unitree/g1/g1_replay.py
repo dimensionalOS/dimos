@@ -16,31 +16,17 @@
 
 from __future__ import annotations
 
-from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import Field
-from reactivex import timer
 
-from dimos.core.core import rpc
-from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
-from dimos.memory.cli.dataset import open_store, resolve_dataset
-from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
-from dimos.memory.replay import Playback
-from dimos.memory.replay_progress import ReplayProgress
-from dimos.memory.store.base import Store
+from dimos.memory.replay_module import ReplayModule, ReplayModuleConfig
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.memory.replay import ReplayStream
-
-logger = setup_logger()
 
 DEFAULT_G1_DATASET = "g1_sf_office.db"
 
@@ -52,12 +38,11 @@ def _default_g1_dataset(model: dict[str, Any]) -> str:
     return replay_db
 
 
-class G1ReplayConfig(PlaybackModuleConfig):
+class G1ReplayConfig(ReplayModuleConfig):
     dataset: str = Field(default_factory=_default_g1_dataset)
-    replay_lidar: bool = False
 
 
-class G1Replay(PlaybackModule):
+class G1Replay(ReplayModule):
     """Replays a G1 recording (SQLite or MCAP) onto the live G1 stream names."""
 
     config: G1ReplayConfig
@@ -70,61 +55,3 @@ class G1Replay(PlaybackModule):
     pointlio_odometry: Out[Odometry]
     pointlio_lidar: Out[PointCloud2]
     tf: Out[TFMessage]
-
-    _store: Store | None = None
-    _first_infos: list[tuple[Out[CameraInfo], CameraInfo]] = []
-
-    def open_playback(self) -> Playback:
-        path = resolve_dataset(self.config.dataset)
-        store = open_store(path)
-        store.start()
-        self._store = store
-        replay = self.replay_of(store)
-        available = set(replay.list_streams())
-        streams: dict[str, ReplayStream[Any]] = {}
-        for name in self.outputs:
-            if name == "pointlio_lidar" and not self.config.replay_lidar:
-                continue
-            if name in available:
-                streams[name] = replay.stream(name)
-
-        progress = ReplayProgress(str(path))
-        progress.start(replay, streams.values())
-        playback = replay.playback()
-        self._first_infos = [
-            (getattr(self, name), first)
-            for name in ("realsense_camera_info", "realsense_depth_camera_info")
-            if name in streams and (first := streams[name].first()) is not None
-        ]
-        for name, stream in streams.items():
-            port = getattr(self, name)
-            logger.info(
-                "G1Replay: %s:%s (%d frames at %.1fx)",
-                path.name,
-                name,
-                stream.count(),
-                self.config.speed,
-            )
-            frames = playback.add(stream)
-            self.register_disposable(progress.track(frames).subscribe(port.publish))
-        progress.seal()
-        return playback
-
-    @rpc
-    def on_system_modules_ready(self, modules: list[RPCClient]) -> None:
-        for port, first_info in self._first_infos:
-            port.publish(first_info)
-            self.register_disposable(timer(0.5).subscribe(partial(_publish_once, port, first_info)))
-        self._first_infos = []
-        super().on_system_modules_ready(modules)
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-        if self._store is not None:
-            self._store.stop()
-            self._store = None
-
-
-def _publish_once(port: Out[Any], msg: Any, _tick: int) -> None:
-    port.publish(msg)

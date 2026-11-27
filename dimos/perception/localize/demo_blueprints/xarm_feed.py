@@ -31,22 +31,14 @@ blueprint with its consumers.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
 import threading
-from typing import Any
-
-from reactivex.disposable import CompositeDisposable
 
 from dimos.core.stream import Out
-from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
-from dimos.memory.replay import Playback, ReplayStream
-from dimos.memory.replay_progress import ReplayProgress
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.replay_module import ReplayModule, ReplayModuleConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -57,11 +49,11 @@ XARM_DATASET = (
 )
 
 
-class DepthCameraFeedConfig(PlaybackModuleConfig):
+class DepthCameraFeedConfig(ReplayModuleConfig):
     dataset: str = XARM_DATASET
 
 
-class DepthCameraFeed(PlaybackModule):
+class DepthCameraFeed(ReplayModule):
     """Replay a recording's colour, depth, camera_info and tf as the sensors published them."""
 
     config: DepthCameraFeedConfig
@@ -70,34 +62,6 @@ class DepthCameraFeed(PlaybackModule):
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
-
-    def open_playback(self) -> Playback:
-        given = Path(self.config.dataset)
-        path = given if given.exists() else get_data(self.config.dataset)
-        store = SqliteStore(path=str(path), must_exist=True)
-        subscriptions = CompositeDisposable()
-        # One disposer stops the playback before closing its store.
-        self.register_disposable(CompositeDisposable(subscriptions, store))
-        store.start()
-        replay = self.replay_of(store)
-        ports: dict[str, Out[Any]] = {
-            "color_image": self.color_image,
-            "depth_image": self.depth_image,
-            "camera_info": self.camera_info,
-            "tf": self.tf,
-        }
-        streams: dict[str, ReplayStream[Any]] = {name: replay.stream(name) for name in ports}
-        progress = ReplayProgress(str(path))
-        progress.start(replay, streams.values())
-        playback = replay.playback()
-        for name, port in ports.items():
-            logger.info(
-                f"feed: {path.name}:{name} ({streams[name].count()} frames at {self.config.speed}x)"
-            )
-            frames = playback.add(streams[name])
-            subscriptions.add(progress.track(frames).subscribe(port.publish))
-        progress.seal()
-        return playback
 
 
 xarm_feed = DepthCameraFeed.blueprint()

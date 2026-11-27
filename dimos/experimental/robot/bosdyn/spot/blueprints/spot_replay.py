@@ -22,11 +22,11 @@ anchors to its optical frame.
 
 Usage:
     # the shared recording, pulled from LFS on first run:
-    dimos run spot-replay --db-path=spot_small_loop.db
-    # newest *.db under dimos' recordings dir (RECORDINGS_DIR/spot):
+    dimos run spot-replay --spotreplay.dataset=spot_small_loop.db
+    # newest recording under dimos' recordings dir (RECORDINGS_DIR/spot):
     dimos run spot-replay
     # a specific recording:
-    dimos run spot-replay --db-path=/path/to/spot.db
+    dimos run spot-replay --spotreplay.dataset=/path/to/spot.db
 """
 
 from __future__ import annotations

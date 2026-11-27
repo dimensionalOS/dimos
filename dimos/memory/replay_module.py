@@ -27,14 +27,15 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any
 
+from pydantic import Field
 from reactivex import interval
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
-from dimos.memory.playback_module import PlaybackModule, PlaybackModuleConfig
 from dimos.memory.replay import Playback
 from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
@@ -43,15 +44,24 @@ from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.memory.replay import Replay, ReplayStream
+    from dimos.memory.replay import ReplayStream
     from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
 
 
-class ReplayModuleConfig(PlaybackModuleConfig):
+class ReplayModuleConfig(ModuleConfig):
+    # A recording path, a dataset name (data/, LFS), or a directory: its newest recording.
     dataset: str = ""
     topics: str = "*"
+    speed: float = 1.0
+    loop: bool = False
+    seek: float | None = None
+    duration: float | None = None
+    # Decoded frames read ahead of the publisher; start() returns once this many are ready.
+    buffer_size: int = Field(default=128, gt=0)
+    # Seconds the publisher may fall behind schedule before it warns.
+    lag_warning: float = 0.5
 
 
 def dataset_path(name: str, *, explicit: bool = True) -> str:
@@ -89,13 +99,20 @@ def stream_types_of(dataset: str) -> dict[str, type]:
         store.stop()
 
 
-class ReplayModule(PlaybackModule):
-    """Publishes every ``Out`` port from the recording at recorded timing."""
+class ReplayModule(Module):
+    """Publishes each ``Out`` port from the recorded stream of the same name, in recorded order.
+
+    Subclass it and declare the ports to replay; a class that declares none gets one
+    per stream in its ``dataset``. ``start()`` fills the playback buffer, the clock
+    starts in ``on_system_modules_ready`` once every subscriber is listening, and
+    ``stop()`` stops reading before the recording closes.
+    """
 
     config: ReplayModuleConfig
     stream_types: dict[str, type] = {}  # set by replay_module()
     topics: str = "*"  # set by replay_module(); carried to workers via the blueprint kwargs
     _store: Store | None = None
+    _playback: Playback | None = None
     _static: list[tuple[Out[Any], Any]] = []
 
     @classproperty
@@ -106,7 +123,7 @@ class ReplayModule(PlaybackModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        if self.config.dataset:
+        if self.config.dataset and not self.outputs:
             try:
                 self._add_ports()
             except Exception:
@@ -115,53 +132,80 @@ class ReplayModule(PlaybackModule):
 
     def _add_ports(self) -> None:
         types = stream_types_of(self.config.dataset)
-        existing = self.outputs
         for name in _port_names(self.config.topics, types):
-            if name not in existing:
-                setattr(self, name, Out(types[name], name, self))
+            setattr(self, name, Out(types[name], name, self))
 
-    def open_playback(self) -> Playback:
+    @rpc
+    def start(self) -> None:
+        super().start()
         if not self.config.dataset:
             raise ValueError("no recording: pass --replay-db <memory.db>")
-        path = resolve_dataset(self.config.dataset)
+        path = recording_path(self.config.dataset)
         store: Store = open_store(path)
         store.start()
         self._store = store
-        replay: Replay = self.replay_of(store)
+        config = self.config
+        replay = store.replay(
+            speed=config.speed,
+            loop=config.loop,
+            seek=config.seek,
+            duration=config.duration,
+            buffer_size=config.buffer_size,
+            lag_warning=config.lag_warning,
+        )
+        available = set(replay.list_streams())
+        missing = sorted(set(self.outputs) - available)
+        if missing:
+            logger.warning("Recording has no stream for these ports", path=str(path), ports=missing)
         streams: dict[str, ReplayStream[DimosMsg]] = {
-            name: replay.stream(name) for name in self.outputs
+            name: replay.stream(name) for name in self.outputs if name in available
         }
         # A stream whose rows all carry one timestamp (camera_info recorded from a
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not start the timeline: otherwise the
         # replay would spend that lead time emitting nothing.
         static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
-        timed = [s for n, s in streams.items() if n not in static]
+        timed = {n: s for n, s in streams.items() if n not in static}
         progress = ReplayProgress(str(path))
-        progress.start(replay, timed)
+        progress.start(replay, timed.values())
         playback = replay.playback()
+        self._playback = playback
         self._static = [(self.outputs[n], streams[n].first()) for n in static]
-        for name, port in self.outputs.items():
+        for name, stream in timed.items():
+            port = self.outputs[name]
             logger.info("Replaying %s -> %s", name, port)
-            if name not in static:
-                timed_frames = playback.add(streams[name])
-                self.register_disposable(progress.track(timed_frames).subscribe(port.publish))
+            self.register_disposable(progress.track(playback.add(stream)).subscribe(port.publish))
         progress.seal()
-        return playback
+        playback.load()
 
     @rpc
-    def on_system_modules_ready(self, modules: list[RPCClient]) -> None:
+    def on_system_modules_ready(self, _modules: list[RPCClient]) -> None:
+        # Every module has started, so every subscriber is listening for the first frame.
         for port, msg in self._static:
             self.register_disposable(interval(1.0).subscribe(partial(_republish, port, msg)))
         self._static = []
-        super().on_system_modules_ready(modules)
+        if self._playback is not None:
+            self._playback.play()
 
     @rpc
     def stop(self) -> None:
+        if self._playback is not None:
+            self._playback.stop()
         super().stop()
         if self._store is not None:
             self._store.stop()
             self._store = None
+
+
+def recording_path(dataset: str) -> Path:
+    """*dataset* resolved to one recording; a directory resolves to its newest."""
+    path = resolve_dataset(Path(dataset).expanduser())
+    if not path.is_dir():
+        return path
+    recordings = [p for p in path.iterdir() if p.suffix in (".db", ".mcap")]
+    if not recordings:
+        raise FileNotFoundError(f"No .db or .mcap recordings in {path}")
+    return max(recordings, key=lambda p: p.stat().st_mtime)
 
 
 def _republish(port: Out[Any], msg: Any, _tick: int) -> None:
