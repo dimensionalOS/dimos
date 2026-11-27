@@ -181,7 +181,12 @@ from dimos.robot.assets.model import JointDescription, RobotModel
 
 
 def yourarm_model(*, robot: str | None = None) -> RobotModel:
-    """YourArm's model (replace ``from_root_link`` with ``RobotModel.from_file(...)``)."""
+    """YourArm's model.
+
+    For a real URDF, replace the entire model expression below, including
+    ``.with_added_joints(...)``, with ``RobotModel.from_file(...)``.
+    Keep the naming step.
+    """
     joints = [f"joint{i}" for i in range(1, 7)]
     model = RobotModel.from_root_link("base_link", name="yourarm").with_added_joints(
         *(
