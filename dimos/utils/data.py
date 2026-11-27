@@ -121,7 +121,7 @@ def get_project_root() -> Path:
 def _explicit_data_dir() -> Path | None:
     """The directory named by DIMOS_DATA_DIR. It holds unpacked data and is only read."""
     value = os.environ.get("DIMOS_DATA_DIR")
-    return Path(value) if value else None
+    return Path(value).expanduser().resolve() if value else None
 
 
 def get_data_dir(extra_path: str | None = None) -> Path:
@@ -129,10 +129,38 @@ def get_data_dir(extra_path: str | None = None) -> Path:
     return data_dir / extra_path if extra_path else data_dir
 
 
-def get_generated_data_dir(extra_path: str) -> Path:
+def is_packaged_data(path: str | Path) -> bool:
+    root = _explicit_data_dir()
+    if root is None:
+        return False
+    path = Path(path)
+    return path.resolve().is_relative_to(root) or path.parent.resolve().is_relative_to(root)
+
+
+def writable_data_path(path: str | Path) -> Path:
+    """Reject an output inside the configured read-only data directory."""
+    if is_packaged_data(path):
+        raise PermissionError(f"Cannot write {path} inside DIMOS_DATA_DIR")
+    return Path(path)
+
+
+def generated_sibling(path: Path) -> Path:
+    """Redirect output normally written next to a packaged input to the state directory."""
+    root = _explicit_data_dir()
+    if root is None:
+        return path
+    parent = path.parent.resolve()
+    if parent.is_relative_to(root):
+        path = writable_data_path(STATE_DIR / parent.relative_to(root) / path.name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    return writable_data_path(path)
+
+
+def get_generated_data_dir(extra_path: str = "") -> Path:
     """Where to write data that DimOS generates. A directory set by DIMOS_DATA_DIR is only read."""
     if _explicit_data_dir() is not None:
-        return STATE_DIR / extra_path
+        return writable_data_path(STATE_DIR / extra_path)
     return get_data_dir(extra_path)
 
 
@@ -164,7 +192,7 @@ def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = Tr
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
-    path = Path(path)
+    path = writable_data_path(path)
     if not path.exists():
         return None
 
@@ -182,7 +210,6 @@ def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
     return backup if backup.exists() else None
 
 
-@cache
 def _get_lfs_dir() -> Path:
     # The archives belong to the repository, also when DIMOS_DATA_DIR names the data directory.
     return get_project_root() / "data" / ".lfs"

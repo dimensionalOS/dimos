@@ -43,6 +43,8 @@ from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
+from dimos.memory.utils.sqlite import read_only_sqlite_uri
+from dimos.utils.data import is_packaged_data, writable_data_path
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -115,13 +117,15 @@ class MultipartBackend:
         self, beside: Path, *, outside: Path | None = None
     ) -> tempfile.TemporaryDirectory[str]:
         parent = self.staging_dir or beside.parent
+        if self.staging_dir is None and is_packaged_data(parent):
+            parent = Path(tempfile.gettempdir())
         if outside is not None:
             parent = parent.resolve()
             if parent.is_relative_to(outside):
                 parent = outside.parent
             if parent.is_relative_to(outside):
                 raise RuntimeError("directory upload needs staging outside the source tree")
-        parent.mkdir(parents=True, exist_ok=True)
+        writable_data_path(parent).mkdir(parents=True, exist_ok=True)
         _reap_stale(parent, keep=outside)
         return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
@@ -262,7 +266,7 @@ class MultipartBackend:
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
         out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
-        out.parent.mkdir(parents=True, exist_ok=True)
+        writable_data_path(out).parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
             if size:
                 # wire and decompressed copies coexist in staging before the move
@@ -450,9 +454,7 @@ def _is_sidecar(path: Path) -> bool:
 
 def _sqlite_streams(db: Path) -> list[dict[str, Any]] | None:
     try:
-        with contextlib.closing(
-            sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro", uri=True)
-        ) as conn:
+        with contextlib.closing(sqlite3.connect(read_only_sqlite_uri(db), uri=True)) as conn:
             rows = conn.execute("SELECT name, config FROM _streams").fetchall()
     except sqlite3.Error:
         return None

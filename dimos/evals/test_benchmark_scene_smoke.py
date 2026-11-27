@@ -23,6 +23,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.evals.environments.lib import export_benchmark_scenes
 from dimos.evals.environments.lib.benchmark_scenes import (
     BenchmarkCase,
     GradeSpec,
@@ -120,6 +121,23 @@ def test_export_loadable_and_autogen(exported: Path, monkeypatch: pytest.MonkeyP
         assert isinstance(suite[0].environment, MujocoEnvironment)
         assert suite[0].inputs
         assert body in suite[0].environment.config.tracked_bodies
+
+
+def test_export_and_load_from_state_with_packaged_inputs(tmp_path, monkeypatch) -> None:
+    packaged = tmp_path / "data"
+    _fake_xarm7(packaged)
+    source = _fake_libero(tmp_path / "upstream")
+    state = tmp_path / "state"
+    monkeypatch.setenv("DIMOS_DATA_DIR", str(packaged))
+    monkeypatch.setattr("dimos.utils.data.STATE_DIR", state)
+
+    assert export_benchmark_scenes.main(["--libero-pro", str(source)]) == 0
+    suite = cases_from_manifest(load_manifest("libero_pro"))
+
+    scene = suite[0].environment.config.scene
+    assert scene == state / "libero_pro/smoke/scene.xml"
+    assert mujoco.MjModel.from_xml_path(str(scene)).nbody > 1
+    assert list(packaged.iterdir()) == [packaged / "xarm7"]
 
 
 def test_scene_flag(exported: Path) -> None:

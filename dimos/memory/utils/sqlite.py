@@ -19,6 +19,9 @@ import sqlite3
 import threading
 
 from reactivex.disposable import Disposable
+import sqlite_vec
+
+from dimos.utils.data import is_packaged_data
 
 # ``sqlite3.Connection`` does not allow arbitrary attribute assignment nor
 # weak references, so we keep the per-connection locks in a side-table keyed
@@ -58,13 +61,24 @@ def close_sqlite_connection(conn: sqlite3.Connection) -> None:
         _locks.pop(id(conn), None)
 
 
+def read_only_sqlite_uri(path: str | Path) -> str:
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    if is_packaged_data(path):
+        # Even mode=ro can create -shm and -wal files. An immutable snapshot
+        # needs no sidecars, but SQLite ignores outstanding WAL transactions.
+        wal = Path(f"{Path(path).resolve()}-wal")
+        if wal.exists() and wal.stat().st_size:
+            raise sqlite3.OperationalError(
+                f"Checkpoint {path} before packaging it in DIMOS_DATA_DIR"
+            )
+        uri += "&immutable=1"
+    return uri
+
+
 def open_sqlite_connection(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
     """Open SQLite with sqlite-vec, using WAL only for writable connections."""
-    import sqlite_vec
-
-    if read_only:
-        uri = Path(path).resolve().as_uri() + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+    if read_only or (str(path) != ":memory:" and is_packaged_data(path)):
+        conn = sqlite3.connect(read_only_sqlite_uri(path), uri=True, check_same_thread=False)
     else:
         conn = sqlite3.connect(path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")

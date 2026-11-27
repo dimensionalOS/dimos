@@ -28,6 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dimos.utils.data import generated_sibling, writable_data_path
 from dimos.utils.executable import find_executable, spawn_detached
 
 if TYPE_CHECKING:
@@ -135,7 +136,9 @@ def render_store(
 
     if out is None:
         src = getattr(store.config, "path", None) or "store"
-        out = str(Path(src).with_suffix(".rrd"))
+        out = str(generated_sibling(Path(src).with_suffix(".rrd")))
+    else:
+        writable_data_path(out)
 
     base = root.strip("/") if root else ""
 

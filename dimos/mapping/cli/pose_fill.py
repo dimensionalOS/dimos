@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 import typer
 
 from dimos.memory.utils.time_window import RecordingWindow
+from dimos.utils.data import generated_sibling, resolve_named_path, writable_data_path
 
 # Heavy dimos imports are deferred (TYPE_CHECKING / inside functions) so that
 # `dimos map --help` stays fast. See test_cli_startup.py.
@@ -108,7 +109,7 @@ def pose_fill_db(
     """
     from dimos.memory.store.sqlite import SqliteStore
 
-    dest_p = Path(dest_path)
+    dest_p = writable_data_path(dest_path)
     if dest_p.exists():
         raise FileExistsError(
             f"{dest_p} already exists — refusing to append into it (stale rows would "
@@ -187,10 +188,8 @@ def main(
     ),
 ) -> None:
     """Copy a recording, baking nearest pose_source poses into the target stream."""
-    from dimos.utils.data import resolve_named_path
-
     src = resolve_named_path(dataset, ".db")
-    dest = Path(out) if out else src.with_name(f"{src.stem}_posed.db")
+    dest = Path(out) if out else generated_sibling(src.with_name(f"{src.stem}_posed.db"))
     names = [s.strip() for s in streams.split(",")] if streams else None
     print(f"pose-filling {src.name}: {target!r} <- nearest {pose_source!r} (±{tolerance}s)")
     written = pose_fill_db(

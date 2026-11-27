@@ -35,6 +35,7 @@ from dimos.memory.utils.sqlite import (
 from dimos.memory.utils.validation import validate_identifier
 from dimos.memory.vectorstore.base import VectorStore
 from dimos.memory.vectorstore.sqlite import SqliteVectorStore
+from dimos.utils.data import is_packaged_data
 
 
 class SqliteStoreConfig(StoreConfig):
@@ -55,6 +56,8 @@ class SqliteStore(Store):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        if self.config.path != ":memory:" and is_packaged_data(self.config.path):
+            self.config.read_only = True
         if (self.config.must_exist or self.config.read_only) and not os.path.exists(
             self.config.path
         ):

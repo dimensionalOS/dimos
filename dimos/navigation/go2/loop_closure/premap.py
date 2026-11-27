@@ -37,7 +37,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.data import resolve_named_path
+from dimos.utils.data import resolve_named_path, writable_data_path
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -212,7 +212,7 @@ class Premap:
 
     def save(self, path: str | Path) -> None:
         """Write to a temporary file and swap it in, so a crash mid-write leaves the old one whole."""
-        path = Path(path)
+        path = writable_data_path(path)
         tmp = path.with_name(path.name + ".tmp")
         tmp.unlink(missing_ok=True)
         with SqliteStore(path=str(tmp)) as store:
