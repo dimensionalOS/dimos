@@ -187,6 +187,29 @@ def test_loop_replays_in_order_after_the_last_frame(store: SqliteStore) -> None:
     assert published[:6] == [*_RECORDING["odom"], *_RECORDING["odom"]]
 
 
+def test_loop_gap_delays_the_next_pass(store: SqliteStore) -> None:
+    replay = store.replay(loop=True, loop_gap=0.3)
+    playback = replay.playback()
+    arrivals: list[float] = []
+    next_pass = threading.Event()
+
+    def on_frame(_frame: float) -> None:
+        arrivals.append(time.monotonic())
+        if len(arrivals) == len(_RECORDING["odom"]) + 1:
+            next_pass.set()
+
+    playback.add(replay.stream("odom")).subscribe(on_frame)
+    started = time.monotonic()
+    try:
+        playback.play()
+        assert next_pass.wait(HUNG_TEST_TIMEOUT)
+    finally:
+        playback.stop()
+
+    # The pass's last frame is 0.04 s in; the gap puts the next pass 0.3 s after it.
+    assert arrivals[3] - started >= 0.34
+
+
 def test_empty_stream_completes(store: SqliteStore) -> None:
     store.stream("empty", float)
     playback, published, done = _record(store.replay(), ["empty", "lidar"])

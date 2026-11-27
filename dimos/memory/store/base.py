@@ -119,6 +119,7 @@ class Store(Configurable, CompositeResource):
         duration: float | None = None,
         from_timestamp: float | None = None,
         loop: bool = False,
+        loop_gap: float = 0.0,
         buffer_size: int = 128,
         lag_warning: float = 0.5,
     ) -> Replay:
@@ -136,6 +137,7 @@ class Store(Configurable, CompositeResource):
             duration=duration,
             from_timestamp=from_timestamp,
             loop=loop,
+            loop_gap=loop_gap,
             buffer_size=buffer_size,
             lag_warning=lag_warning,
         )

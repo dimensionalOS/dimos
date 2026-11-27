@@ -791,7 +791,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
             module.start()
             finished = playback_finished(add)
             module.on_system_modules_ready([])
-            # A loop starts over 1.05 s after its last frame; a single pass finishes.
+            # A loop starts over right after its last frame; a single pass finishes.
             assert (third if loop else finished).wait(HUNG_TEST_TIMEOUT)
     finally:
         module.stop()

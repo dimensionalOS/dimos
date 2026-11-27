@@ -48,9 +48,6 @@ T = TypeVar("T")
 
 logger = setup_logger()
 
-# Recording seconds between the last frame of a loop pass and the first of the next.
-_LOOP_GAP = 0.05
-
 
 def resolve_db_path(dataset: str | Path) -> Path:
     """Resolve a recording, trying the exact input before appending ``.db``."""
@@ -63,6 +60,8 @@ class ReplayConfig(BaseConfig):
     duration: float | None = None
     from_timestamp: float | None = None
     loop: bool = False
+    # With ``loop``, recording seconds between the last frame of a pass and the first of the next.
+    loop_gap: float = Field(default=0.0, ge=0.0)
     # Frames read ahead of the publisher.
     buffer_size: int = Field(default=128, gt=0)
     # Seconds the publisher may fall behind schedule before it warns.
@@ -398,7 +397,7 @@ class Playback:
                     self._close(iterator)
             if not self._replay.config.loop or first is None or last is None:
                 return True
-            offset += last - first + _LOOP_GAP
+            offset += last - first + self._replay.config.loop_gap
 
     def _open(
         self,

@@ -56,6 +56,8 @@ class ReplayModuleConfig(ModuleConfig):
     topics: str = "*"
     speed: float = 1.0
     loop: bool = False
+    # With ``loop``, recording seconds between the last frame of a pass and the first of the next.
+    loop_gap: float = Field(default=0.0, ge=0.0)
     seek: float | None = None
     duration: float | None = None
     # Decoded frames read ahead of the publisher; start() returns once this many are ready.
@@ -148,6 +150,7 @@ class ReplayModule(Module):
         replay = store.replay(
             speed=config.speed,
             loop=config.loop,
+            loop_gap=config.loop_gap,
             seek=config.seek,
             duration=config.duration,
             buffer_size=config.buffer_size,
