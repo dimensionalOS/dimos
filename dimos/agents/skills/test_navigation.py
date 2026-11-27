@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import threading
 from typing import Any
 
@@ -25,7 +26,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
@@ -209,6 +211,28 @@ def test_navigate_with_text_keeps_the_tool_open_while_the_goal_is_under_way(cont
     assert (goal.position.x, goal.position.y) == (1.0, 2.0)
     container.start_tool.assert_called_once_with("navigate_with_text")
     container.stop_tool.assert_not_called()
+
+
+@pytest.mark.parametrize("yaw_deg", [180.0, 90.0, -90.0, 0.0])
+def test_tag_location_round_trips_heading(container: Any, yaw_deg: float) -> None:
+    orientation = Quaternion.from_euler(Vector3(0.1, -0.05, math.radians(yaw_deg)))
+    container._latest_odom = PoseStamped(
+        position=make_vector3(1.5, -0.5, 0.3), orientation=orientation, frame_id="world"
+    )
+    saved: dict[str, RobotLocation] = {}
+    container._spatial_memory.tag_location.side_effect = (
+        lambda loc: saved.setdefault(
+            loc.name, RobotLocation.from_vector_metadata(loc.to_vector_metadata())
+        )
+        is not None
+    )
+    container._spatial_memory.query_tagged_location.side_effect = saved.get
+
+    assert container.tag_location("dock") == "Tagged 'dock': (1.5,-0.5)."
+    container.navigate_with_text("dock")
+
+    goal = container._navigation.set_goal.call_args.args[0]
+    assert goal.orientation.angle_to(orientation) == pytest.approx(0.0, abs=1e-6)
 
 
 def test_goal_reached_reports_where_the_robot_stopped_and_closes_the_tool(container) -> None:
