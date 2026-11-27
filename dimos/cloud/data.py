@@ -40,9 +40,13 @@ from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.cloud.config import CloudConfig
+from dimos.cloud.constants import PREVIEW_MAX_BYTES
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -241,6 +245,16 @@ class MultipartBackend:
                 return "none (no lidar, camera or odometry)"
             if video:
                 doc["video"] = video
+            # The transport sends ASCII-escaped JSON, so its length is the UTF-8 byte count.
+            size = len(json.dumps(doc, allow_nan=False))
+            if "timing" in doc and size > PREVIEW_MAX_BYTES:
+                del doc["timing"]
+                if "lidar" in doc["streams"]:
+                    doc["streams"].pop("odom", None)  # only the timing report needed both counts
+                logger.warning("Preview timing omitted: preview exceeds size limit", size=size)
+                size = len(json.dumps(doc, allow_nan=False))
+            if size > PREVIEW_MAX_BYTES:
+                return f"failed: preview size {size} exceeds {PREVIEW_MAX_BYTES} bytes"
             sent = self.api.put_preview(upload_id, doc)
             if not (video and sent.get("video_url")):
                 return "sent" + note

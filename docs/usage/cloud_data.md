@@ -28,6 +28,12 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
 - Each successful upload prints a `console:` link to it (production and staging APIs only).
 
+The uploader includes stored timestamp intervals for the selected camera, LiDAR and odometry streams
+in a SQLite recording. Console versions with the timing table show the first and last offsets from preview start,
+the largest interval, and the total number of intervals over one second. It lists the first 64 such
+intervals per stream. Timing is optional when timestamps cannot be read or adding it would exceed
+the 4 MiB preview limit. If the spatial preview alone exceeds the limit or contains non-finite JSON values, the upload completes and reports the preview failure.
+
 ## Pulls
 
 Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` so nothing overwrites. `--dest` takes an exact target path. The wire bytes are sha256-verified, decoded, and moved into place atomically; a failed pull never clobbers an existing destination file.
