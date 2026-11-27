@@ -238,6 +238,19 @@ def test_data_dir_setting_miss_names_the_request_and_the_directory(
     assert sorted(packaged_data.rglob("*")) == before
 
 
+def test_generated_data_is_written_outside_a_data_dir_setting(packaged_data: Path) -> None:
+    assert data.get_generated_data_dir("scene_packages") == data.STATE_DIR / "scene_packages"
+
+
+def test_generated_data_is_written_to_the_repository_data_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.delenv("DIMOS_DATA_DIR", raising=False)
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+
+    assert data.get_generated_data_dir("scene_packages") == tmp_path / "data" / "scene_packages"
+
+
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
     (tmp_path / "premap.map.db").touch()
     assert resolve_named_path(tmp_path / "premap", ".map.db") == tmp_path / "premap.map.db"

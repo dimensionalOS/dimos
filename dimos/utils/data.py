@@ -28,7 +28,7 @@ from typing import Any
 
 from filelock import FileLock
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -127,6 +127,13 @@ def _explicit_data_dir() -> Path | None:
 def get_data_dir(extra_path: str | None = None) -> Path:
     data_dir = _explicit_data_dir() or get_project_root() / "data"
     return data_dir / extra_path if extra_path else data_dir
+
+
+def get_generated_data_dir(extra_path: str) -> Path:
+    """Where to write data that DimOS generates. A directory set by DIMOS_DATA_DIR is only read."""
+    if _explicit_data_dir() is not None:
+        return STATE_DIR / extra_path
+    return get_data_dir(extra_path)
 
 
 def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = True) -> Path:

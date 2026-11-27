@@ -53,12 +53,12 @@ from dimos.simulation.scene_assets.spec import (
     SceneMeshAlignment,
     ScenePackage,
 )
-from dimos.utils.data import get_data_dir
+from dimos.utils.data import get_generated_data_dir
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-SCENE_PACKAGE_DIR = get_data_dir("scene_packages")
+SCENE_PACKAGE_DIR = get_generated_data_dir("scene_packages")
 _PACKAGE_KEY_LEN = 12
 _COOK_VERSION = 4
 #: Cap on entity id samples recorded in cook stats -- diagnostics only, not
