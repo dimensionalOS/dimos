@@ -34,7 +34,11 @@ from dimos.core import run_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
+from dimos.core.coordination.process_lifecycle import (
+    DIMOS_RUN_ID_ENV,
+    is_pid_alive,
+    kill_run_processes,
+)
 from dimos.core.daemon import run_coordinator
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import (
@@ -429,6 +433,106 @@ coordinators[0].stop()
         assert time.monotonic() - float(ready_file.read_text()) < 5
         assert "Traceback" not in result.stderr, result.stderr
         assert stop_file.read_text().splitlines() == ["stop"]
+    finally:
+        kill_run_processes(run_id)
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGINT"])
+def test_signal_during_recorder_startup_aborts_before_readiness(tmp_path: Path, sig: str) -> None:
+    run_id = f"recorder-signal-{uuid.uuid4().hex}"
+    recorder_pid_file, release_file, ready_file = (
+        tmp_path / n for n in ("pid", "release", "ready")
+    )
+    registry_dir, recorder = tmp_path / "runs", tmp_path / "dimos-memory-recorder"
+    recorder.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, signal, sys, time\n"
+        "from pathlib import Path\n"
+        "sys.stdin.readline()\n"
+        f"Path({str(recorder_pid_file)!r}).write_text(f'{{os.getpid()}}\\n')\n"
+        f"while not Path({str(release_file)!r}).exists():\n"
+        "    time.sleep(0.01)\n"
+        'print(json.dumps({"level": "INFO", "fields": {"message": "memory recorder ready"}}), flush=True)\n'
+        "signal.pause()\n"
+    )
+    recorder.chmod(0o755)
+    code = """
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+from dimos.cli.commands.lifecycle import _run_registered
+from dimos.core import run_registry
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.run_registry import RunEntry
+from dimos.core.transport import ZenohTransport
+from dimos.experimental.memory import rust_cli_recorder
+from dimos.memory import tap
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic
+
+recorder, ready_file, registry_dir, recordings_dir, run_id = sys.argv[1:]
+run_registry.REGISTRY_DIR = Path(registry_dir)
+tap.RECORDINGS_DIR = Path(recordings_dir)
+global_config.update(record="sqlite", record_engine="rust", record_topics="*", replay=False)
+blueprint = autoconnect().solidify()
+config = BlueprintConfigParser(blueprint).parse(
+    global_overrides={"record": "sqlite", "record_engine": "rust", "viewer": "none"}
+)
+coordinator = ModuleCoordinator(GlobalConfig(serve_coordinator_rpc=False))
+coordinator._managers = {}
+coordinator._transport_registry = {
+    ("odom", PoseStamped): ZenohTransport(Topic("/odom", PoseStamped))
+}
+entry = RunEntry(run_id, 0, "bp", "now", str(Path(ready_file).parent))
+
+with (
+    patch.object(ModuleCoordinator, "build", return_value=coordinator),
+    patch.object(rust_cli_recorder, "prepare_rust_recorder", return_value=Path(recorder)),
+):
+    _run_registered(
+        blueprint,
+        config,
+        entry,
+        on_ready=lambda _: Path(ready_file).write_text("ready"),
+    )
+"""
+    try:
+        with subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                code,
+                str(recorder),
+                str(ready_file),
+                str(registry_dir),
+                str(tmp_path / "recordings"),
+                run_id,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        ) as child:
+            wait_until(
+                lambda: recorder_pid_file.exists() and recorder_pid_file.read_text().endswith("\n"),
+                timeout=10,
+            )
+            recorder_pid = int(recorder_pid_file.read_text())
+            os.kill(child.pid, getattr(signal, sig))
+            release_file.touch()
+            output, _ = child.communicate(timeout=15)
+        assert child.returncode != 0, output
+        assert not ready_file.exists(), output
+        assert not registry_dir.exists() or not list(registry_dir.iterdir())
+        wait_until(
+            lambda: not is_pid_alive(recorder_pid),
+            timeout=10,
+            message="Failed startup left its recorder subprocess running",
+        )
     finally:
         kill_run_processes(run_id)
 

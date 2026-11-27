@@ -201,11 +201,11 @@ def run_coordinator(
         remote_module_refs=remote_module_refs,
     )
     try:
-        install_signal_handlers(run_id, coordinator, sigint=sigint)
         with recording(coordinator, rust_executable=rust_executable):
             if not coordinator.health_check():
                 raise RuntimeError("health check failed, a worker process died")
             coordinator.start_rpc_service(name=rpc_name)
+            install_signal_handlers(run_id, coordinator, sigint=sigint)
             if on_ready is not None:
                 on_ready(coordinator)
             coordinator.loop()
