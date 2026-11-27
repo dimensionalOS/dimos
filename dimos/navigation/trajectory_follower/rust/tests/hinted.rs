@@ -141,6 +141,27 @@ fn a_terminal_fan_turns_in_place_at_the_goal() {
     );
 }
 
+#[test]
+fn small_errors_are_raised_to_commands_the_gait_executes() {
+    let c = hinted_params(&Emb {
+        walk_gain: 1.0,
+        walk_slip: 0.0,
+        min_yaw_rate: 0.8,
+        ..Emb::fixture()
+    });
+    let p: Vec<[f64; 3]> = (0..10).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect();
+    let (vx, vy, wz) = update((0.82, 0.0, 0.3), &p, None, None, &c);
+    assert!(vx >= c.base.min_speed, "vx={vx}");
+    assert!(vy.abs() < c.base.min_speed, "vy={vy}");
+    assert!((wz + 0.8).abs() < 1e-9, "wz={wz}");
+    // inside the precision and fan_yaw_done the law is unfloored
+    let (vx, _, wz) = update((0.87, 0.0, 0.1), &p, None, None, &c);
+    assert!(
+        vx < c.base.min_speed && (wz + 0.2).abs() < 1e-9,
+        "vx={vx} wz={wz}"
+    );
+}
+
 /// A straight leg along +x to `(1, 0)`, a turn in place there of `turn` rad in 0.05 rad
 /// steps, then a leg on along the heading it ends on.
 fn dense_turn(turn: f64) -> Vec<[f64; 3]> {

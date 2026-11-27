@@ -35,6 +35,7 @@ HABITAT = Embodiment(
     walk_gain=1.0,  # the sim integrates the command exactly
     walk_slip=0.0,
     walk_slip_ramp=0.08,
+    min_yaw_rate=0.0,  # no turn floor
     strafe=1.5,  # holonomic, but priced above forward so the camera faces long legs
     reverse=1.8,  # backwards drives into what the camera has not seen
     yaw_w=0.15,  # planner cost per rad of rotation

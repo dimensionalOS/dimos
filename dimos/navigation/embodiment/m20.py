@@ -35,6 +35,7 @@ M20 = Embodiment(
     walk_gain=1.0,  # assumed to deliver the command
     walk_slip=0.0,
     walk_slip_ramp=0.08,
+    min_yaw_rate=0.6,  # slower commanded turns barely rotate it (rad/s)
     strafe=1.5,  # holonomic if /NAV_CMD honors vy, priced so the long body turns to face the path
     reverse=1.8,  # and backwards
     yaw_w=0.15,  # planner cost per rad of rotation

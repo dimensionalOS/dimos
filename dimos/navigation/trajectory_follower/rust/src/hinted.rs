@@ -138,5 +138,14 @@ pub fn update(
         vx = vx / speed * cmd;
         vy = vy / speed * cmd;
     }
-    (vx, vy, yaw_command(target_yaw, pyaw, base))
+    // Floors for commands the gait would not execute; vy has none.
+    if bx.abs() > base.speed_floor_clearance {
+        vx = vx.signum() * vx.abs().max(base.min_speed);
+    }
+    let mut wz = yaw_command(target_yaw, pyaw, base);
+    let yaw_err = angle_diff(target_yaw, pyaw);
+    if yaw_err.abs() > base.fan_yaw_done {
+        wz = yaw_err.signum() * wz.abs().max(base.min_yaw_rate).min(base.max_yaw_rate);
+    }
+    (vx, vy, wz)
 }
