@@ -29,15 +29,18 @@ import threading
 import time
 from typing import Any
 
+from pydantic import model_validator
 from reactivex import Subject, interval
 from reactivex.disposable import Disposable
+from typing_extensions import Self
 
 from dimos.agents.annotation import skill
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.models.vl.base import VlModel
+from dimos.models.vl.base import HostedVlModelConfig, VlModel
+from dimos.models.vl.openai import OpenAIVlModel, OpenAIVlModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
@@ -110,6 +113,13 @@ class TemporalMemoryConfig(ModuleConfig):
     # Graph context (query-time)
     max_relations_per_entity: int = 10
     nearby_distance_meters: float = 5.0
+
+    @model_validator(mode="after")
+    def _validate_model_runtime(self) -> Self:
+        config = OpenAIVlModelConfig() if self.vlm is None else getattr(self.vlm, "config", None)
+        if isinstance(config, HostedVlModelConfig):
+            config.validate_runtime()
+        return self
 
 
 class TemporalMemory(Module):
@@ -207,12 +217,7 @@ class TemporalMemory(Module):
     @property
     def vlm(self) -> VlModel:
         if self._vlm_raw is None:
-            from dimos.models.vl.openai import OpenAIVlModel
-
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY not set and no vlm instance provided")
-            self._vlm_raw = OpenAIVlModel(api_key=api_key)
+            self._vlm_raw = OpenAIVlModel()
             logger.info("Created OpenAIVlModel from OPENAI_API_KEY")
         return self._vlm_raw
 
