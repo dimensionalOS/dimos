@@ -38,10 +38,8 @@ in that pane; until then the wrist cameras log and retry.
   uv pip install python-socketio         # runtime dep of the viewer, only declared in the lint group
   ```
 
-  `--all-extras` does not work on the robot's arm64 board: the `scene` extra
-  needs `usd-core` (x86_64/macOS wheels only) and `mapping` needs
-  `gtsam-extended` (arm64 Linux wheels start at cp311). `mapping` is also
-  reachable through `unitree` and `all`, so excluding it by name is not enough.
+  On Linux ARM64, select extras individually. `--all-extras` includes `scene`,
+  whose `usd-core` dependency has no wheel for this platform.
 - The planning model fetches the vendor URDF from the pinned upstream repo.
 
 ## Blueprints

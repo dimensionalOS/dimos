@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import gtsam
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -33,9 +34,6 @@ from dimos.navigation.go2.loop_closure.pgo import (
     _obs_to_pose3,
     _pose3_to_transform,
 )
-
-# TODO(PY311): drop; the mapping extra has no gtsam-extended wheels on py3.10 Linux.
-pytest.importorskip("gtsam")
 
 
 def _random_R(rng: np.random.Generator) -> np.ndarray:
@@ -110,23 +108,19 @@ class TestTransformHelpers:
         np.testing.assert_allclose(np.asarray(p.translation()), t, atol=1e-9)
 
     def test_pose3_to_transform(self) -> None:
-        import gtsam  # type: ignore[import-not-found,import-untyped]
-
         rng = np.random.default_rng(2)
         R = _random_R(rng)
         t = rng.uniform(-3, 3, size=3)
-        p = gtsam.Pose3(gtsam.Rot3(R), gtsam.Point3(t))
+        p = gtsam.Pose3(gtsam.Rot3(R), t)
         tf = _pose3_to_transform(p, ts=7.89, frame_id="world", child_frame_id="body")
         np.testing.assert_allclose(tf.rotation.to_rotation_matrix(), R, atol=1e-10)
         np.testing.assert_allclose(tf.translation.to_numpy(), t, atol=1e-10)
 
     def test_pose3_to_transform_with_frames(self) -> None:
-        import gtsam
-
         rng = np.random.default_rng(3)
         R = _random_R(rng)
         t = rng.uniform(-3, 3, size=3)
-        p = gtsam.Pose3(gtsam.Rot3(R), gtsam.Point3(t))
+        p = gtsam.Pose3(gtsam.Rot3(R), t)
         tf = _pose3_to_transform(p, ts=1.0, frame_id="world_corrected", child_frame_id="body")
         assert tf.frame_id == "world_corrected"
         assert tf.child_frame_id == "body"

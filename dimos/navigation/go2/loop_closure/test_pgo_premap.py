@@ -17,12 +17,10 @@
 from itertools import pairwise
 from pathlib import Path
 
+import gtsam
 import numpy as np
-import pytest
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
-
-gtsam = pytest.importorskip("gtsam")
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

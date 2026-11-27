@@ -328,7 +328,7 @@ def _pose_to_pose3(pose: Pose) -> gtsam.Pose3:
     t, r = pose.position, pose.orientation
     return gtsam.Pose3(
         gtsam.Rot3.Quaternion(r.w, r.x, r.y, r.z),
-        gtsam.Point3(t.x, t.y, t.z),
+        t.to_numpy(),
     )
 
 

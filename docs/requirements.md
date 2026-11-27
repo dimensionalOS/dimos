@@ -51,12 +51,22 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
-| `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
+| `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam | No |
 | `cuda` | GPU inference and mesh generation | onnxruntime-gpu, warp-lang | **Yes** |
 | `cpu` | CPU inference backend | onnxruntime | No |
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
+
+Both the old `gtsam-extended` distribution and upstream `gtsam` install files under `gtsam/`. In an existing environment, remove the fork **before** installing the updated mapping extra. From a checkout, with that environment active:
+
+```sh
+uv pip uninstall gtsam-extended &&
+  uv pip install --reinstall-package gtsam -e '.[mapping]' &&
+  python -c 'from gtsam import Pose3; print(Pose3().translation())'
+```
+
+The reinstall also restores shared files if the fork was removed after an upgrade. Keep any other extras you use in the install command.
 
 ## Headless / Server Environments
 

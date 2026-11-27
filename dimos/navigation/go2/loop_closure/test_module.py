@@ -38,7 +38,6 @@ from dimos.navigation.go2.loop_closure.relocalizer import PremapMatcher
 
 @pytest.fixture
 def mapper(tmp_path: Path) -> Iterator[PGOVoxelMapper]:
-    pytest.importorskip("gtsam")  # no Python 3.10 wheel on Linux
     premap = Premap(
         stamps=np.array([0.0]),
         poses=np.eye(4)[None],

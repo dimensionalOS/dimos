@@ -341,11 +341,7 @@ sim = [
 ]
 
 mapping = [
-    # PGO for reloc premap
-    # Jeff's https://github.com/jeff-hykin/gtsam-extended
-    # TODO(PY311): drop the marker. gtsam-extended has no cp310 wheels beyond
-    # macOS arm64 (cp310 Linux x86_64 is missing in every release).
-    "gtsam-extended>=4.3a1.post1; python_full_version >= '3.11' or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    "gtsam>=4.3a1",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
@@ -666,7 +662,6 @@ eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
 ftservo-python-sdk = "scservo_sdk"
 GitPython = "git"
-gtsam-extended = "gtsam"
 hydra-core = "hydra"
 ipython = "IPython"
 openai-whisper = "whisper"
