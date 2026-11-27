@@ -4,10 +4,10 @@ These checks need the `manipulation` extra. Most run on mock arms or in MuJoCo w
 
 ## 3.1 Motion planning in Viser
 
-Use the Lite6 mock without an arm address configured. This checks the shared planning stack. The xArm7 and xArm6 hardware planners have a separate check in section 3.9.
+Select the Lite6 mock arm with `--choice arm=mock`. This checks the shared planning stack. The xArm7 and xArm6 hardware planners have a separate check in section 3.9.
 
 ```bash
-uv run dimos run lite6-planner-coordinator
+uv run dimos run lite6-planner-coordinator --choice arm=mock
 # In another terminal:
 uv run dimos shell
 ```
@@ -29,15 +29,15 @@ Expected result: the mock arm reaches the target in both planning modes, and `mo
 
 ## 3.2 Arms on mock hardware
 
-Without an arm address the keyboard blueprints below drive a mock arm. The Lite6 planner is already covered by section 3.1.
+With `--choice arm=mock`, the xArm and Lite6 keyboard blueprints below drive a mock arm. The Lite6 planner is already covered by section 3.1.
 
 ```bash
-uv run dimos run keyboard-teleop-xarm7
+uv run dimos run keyboard-teleop-xarm7 --choice arm=mock
 ```
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6` and `keyboard-teleop-lite6`.
+* Repeat the keyboard check with `keyboard-teleop-xarm6 --choice arm=mock` and `keyboard-teleop-lite6 --choice arm=mock`.
 * `keyboard-teleop-piper` has no mock; run it in MuJoCo as `uv run dimos --simulation run keyboard-teleop-piper` and repeat the keyboard check.
 * The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints. The OpenArm arms start stretched straight down, so drag the target up.
 * `keyboard-teleop-a750` has no mock. It needs the real A-750 and its `a750_control` binding, see the [A-750 guide](../../docs/capabilities/manipulation/a750.md). Run it as `uv run dimos run keyboard-teleop-a750 --a750connection.device-path /dev/ttyACM0` and repeat the keyboard check.
