@@ -250,10 +250,9 @@ class ConnectionModule(Module, ABC):
                 self._call_halt()
 
     def frame(self, name: str) -> str:
-        """The frame to stamp a reading with: ``name`` behind the config's
-        ``frame_id_prefix``, e.g. "go2b/odom", or just "odom" without one."""
-        prefix = self.config.frame_id_prefix
-        return f"{prefix}/{name}" if prefix else name
+        """The frame to stamp a reading with: ``name`` behind ``frame_id_prefix``,
+        e.g. "go2b/odom", or just "odom" without one."""
+        return f"{self.frame_id_prefix}/{name}" if self.frame_id_prefix else name
 
     def _on_loop(self, step: Any) -> None:
         """Run a deadman step on the module's event loop, from any thread, in order."""

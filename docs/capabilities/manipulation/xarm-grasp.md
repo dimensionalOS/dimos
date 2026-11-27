@@ -36,8 +36,8 @@ In another terminal, use `dimos shell` and follow [Driving it](#driving-it) to s
 objects and request grasps. See the [isolated-runtime development guide](/dimos/experimental/isolated_python/README.md#runtime-development)
 for test and type-check commands.
 
-What differs between the arm and the sim is decided at import time: the hardware
-adapter, the base pose, the camera (RealSense plus its mount edge, versus the
+What differs between the arm and the sim is decided at import time: the arm's
+connection, the base pose, the camera (RealSense plus its mount edge, versus the
 MuJoCo wrist camera), and the home pose.
 
 The manipulation viewer is on viser at `http://127.0.0.1:8095`. To watch the
@@ -123,8 +123,9 @@ geometry is used for contact. The table lists those contact dimensions, with
 the smaller horizontal dimension as the closing width for box shapes. Some
 targets exceed the gripper's 88.9 mm opening, so use the gray can as the
 designated pick smoke target. The blueprint starts the arm at an elevated,
-collision-free top-down scan pose so all six visual meshes fit in the
-wrist-camera frame.
+collision-free top-down scan pose covering the table. The gripper can partially
+occlude the front row, so fitting the targets in the camera frame does not
+guarantee that they can all be localized.
 
 Detectors label these synthetic renders unreliably, so match objects by position,
 not label. A visible point-cloud centroid can differ from the body origin in the
@@ -156,20 +157,56 @@ time.sleep(2.0)  # let the second view reach memory
 print(localize.localize(",".join(XARM_GRASP_PROMPTS), -30.0, 30.0))
 ```
 
-`scan` returns the same answer as data, one entry per object: `id`, `label`,
-`position`, `size`, `score`, `views` and `seen_s_ago`. To pick, hand `pick_object`
+`scan` returns the same answer as data, one entry per verified instance: `id`,
+`label`, `position`, `size`, `score`, `views` and `seen_s_ago`. The six scene
+objects are not an expected scan count. The default OWLv2 configuration requires
+a score of at least 0.40 and two distinct camera positions per instance. Low
+confidence or a single view can leave a visible object out of the answer.
+To pick, hand `pick_object`
 an `id`, or a label only one object has. Choose the target by where it actually is
 rather than by name:
 
 ```python skip
-for obj in localize.scan(XARM_GRASP_PROMPTS, window_s=30.0):
-    print(obj["id"], obj["label"], obj["position"])
+objects = localize.scan(XARM_GRASP_PROMPTS, window_s=30.0)
+for obj in objects:
+    print(obj["id"], obj["label"], obj["position"], "score", obj["score"], "views", obj["views"])
+```
 
-# the can sits at roughly (0.57, 0.00). Pick whichever id landed there
-pick = app.PickAndPlaceModule.pick_object("<object_id>")
+If the can is missing, inspect the `verification '<label>'` lines in the blueprint
+log for scores and view counts. Capture additional views with the can visible,
+keeping both camera poses inside the requested time window, then scan again.
+Do not proceed with the pick until the can is verified. A missing target is a
+perception failure even though fewer than six results is valid.
+
+```python skip
+# The can sits at roughly (0.57, 0.00). Require a unique verified target there.
+can_candidates = [
+    obj for obj in objects
+    if abs(obj["position"][0] - 0.57) < 0.05 and abs(obj["position"][1]) < 0.05
+]
+assert len(can_candidates) == 1, "Expected one verified can near (0.57, 0.00); inspect the scan before picking"
+pick = app.PickAndPlaceModule.pick_object(can_candidates[0]["id"])
 print(pick)
 
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
+```
+
+`find_surface` measures the table from the same memory: each flat surface's height,
+size, heading and tilt in any tf frame. `surfaces` returns the same as data:
+
+```python skip
+print(localize.find_surface(frame="link_base"))
+table = localize.surfaces(frame="link_base")[0]
+print(table["height"], table["tilt_deg"], table["size"])
+```
+
+`add_surface` gives the planner the surface the arm works on, such as the table, as one
+flat box the size of its measured outline, 5 cm wider on each side, and cuts its voxel
+map cells, so grasps reach the real surface. Call it once after looking over the whole
+surface, since a part the camera has not seen is left out; `clear_surface` removes it:
+
+```python skip
+print(localize.add_surface(start=-30.0, duration=30.0))
 ```
 
 `pick_object` generates the grasps itself, so there is no separate grasp call.

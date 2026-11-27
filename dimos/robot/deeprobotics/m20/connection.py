@@ -90,6 +90,7 @@ _CHARGE_POLL_S = 0.25
 # Reports arrive at 2 Hz, so a status read this soon after a command can predate it.
 _CHARGE_COMMAND_GRACE_S = 1.0
 _BUSY_GOAL_CANCEL_PERIOD_S = 1.0
+_LIGHT_CONFIRM_S = 2.0
 
 ChargeTask = Literal["dock", "undock"]
 
@@ -123,7 +124,7 @@ class M20ConnectionConfig(ModuleConfig):
     auto_stand: bool = False
     dock_settle_s: float = Field(default=1.0, ge=0.0)
     dock_start_timeout_s: float = Field(default=5.0, gt=0.0)
-    dock_timeout_s: float = Field(default=150.0, gt=0.0)
+    dock_timeout_s: float = Field(default=60.0, gt=0.0)
     undock_timeout_s: float = Field(default=45.0, gt=0.0)
 
 
@@ -460,6 +461,29 @@ class M20Connection(Module):
         if error is not None:
             parts.append(f"error {_charge_error_text(error)}")
         return ", ".join(parts)
+
+    @rpc
+    def set_lights(self, front: bool, back: bool) -> bool:
+        """Switch the front and back flashlights. Returns True once the robot reports the new state."""
+        requested_at = time.monotonic()
+        if not self._basic_server.set_lights(front, back):
+            return False
+
+        def switched() -> bool:
+            report = self._basic_server.lights
+            return (
+                report is not None
+                and report.received_at > requested_at
+                and (report.front, report.back) == (front, back)
+            )
+
+        try:
+            confirmed = self._wait_unless_stopping(switched, _LIGHT_CONFIRM_S)
+        except _StoppingError:
+            return False
+        if not confirmed:
+            logger.error("M20 did not report the flashlights switched")
+        return confirmed
 
     @staticmethod
     def _finish(job: _ChargeJob) -> None:

@@ -33,8 +33,11 @@ REAR_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video2"
 # The NOS bridge's watchdog, kCommandTimeoutS in drdds-zenoh-bridge.
 CMD_VEL_TIMEOUT_S = 0.4
 
-# The vendor LIO's odometry frame, passed through by drdds-zenoh-bridge.
-WORLD_FRAME = "map"
+# The vendor LIO's odometry frame (base_link hangs off it), passed through by drdds-zenoh-bridge
+MAP_FRAME = "map"
+# The frame the ray tracer, planners and premap work in: relocalization places the premap in it
+# once and then moves world -> map (identity until a fix moves it)
+WORLD_FRAME = "world"
 
 # Lidar mounts in base_link from the vendor URDF, each Airy looking straight out
 # its end of the body with its spin axis level.

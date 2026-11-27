@@ -45,6 +45,7 @@ class SqliteStoreConfig(StoreConfig):
     ] = "memory.db"
     page_size: int = 256
     must_exist: bool = False
+    read_only: bool = False
 
 
 class SqliteStore(Store):
@@ -54,11 +55,13 @@ class SqliteStore(Store):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        if self.config.must_exist and not os.path.exists(self.config.path):
+        if (self.config.must_exist or self.config.read_only) and not os.path.exists(
+            self.config.path
+        ):
             raise FileNotFoundError(
                 f"SQLite database not found: {os.path.abspath(self.config.path)}"
             )
-        if not self.config.must_exist:
+        if not self.config.must_exist and not self.config.read_only:
             parent = os.path.dirname(self.config.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -68,8 +71,10 @@ class SqliteStore(Store):
         self._stopped = False
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Open a new WAL-mode connection with sqlite-vec loaded."""
-        disposable, connection = open_disposable_sqlite_connection(self.config.path)
+        """Open a connection respecting the store's access mode."""
+        disposable, connection = open_disposable_sqlite_connection(
+            self.config.path, read_only=self.config.read_only
+        )
         self.register_disposable(disposable)
         return connection
 
