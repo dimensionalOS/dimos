@@ -45,7 +45,7 @@ def main(
     """
     import rerun as rr
 
-    from dimos.mapping.relocalization.module import load_premap
+    from dimos.mapping.relocalization.utils import load_premap
     from dimos.visualization.rerun.init import rerun_init
 
     cloud = load_premap(str(path), stream)

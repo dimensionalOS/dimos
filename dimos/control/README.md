@@ -11,15 +11,20 @@ Centralized control system for multi-arm robots with per-joint arbitration.
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │                    TickLoop (100Hz)                  │   │
 │  │                                                      │   │
-│  │   READ ──► COMPUTE ──► ARBITRATE ──► ROUTE ──► WRITE │   │
+│  │      READ ──► COMPUTE ──► ARBITRATE ──► WRITE        │   │
 │  └──────────────────────────────────────────────────────┘   │
 │         │           │           │              │            │
 │         ▼           ▼           ▼              ▼            │
 │    ┌─────────┐  ┌───────┐  ┌─────────┐   ┌──────────┐       │
-│    │Connected│  │ Tasks │  │Priority │   │ Adapters │       │
-│    │Hardware │  │       │  │ Winners │   │          │       │
+│    │ Robot   │  │ Tasks │  │Priority │   │ Command  │       │
+│    │readings │  │       │  │ Winners │   │  ports   │       │
 │    └─────────┘  └───────┘  └─────────┘   └──────────┘       │
 └─────────────────────────────────────────────────────────────┘
+         ▲  <robot>_<kind> ports, one set per robot     │
+         │                                              ▼
+    ┌────────────────────────────────────────────────────────┐
+    │   ConnectionModule (one per robot: SDK, CAN, DDS, ...) │
+    └────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -28,7 +33,7 @@ Centralized control system for multi-arm robots with per-joint arbitration.
 # Terminal 1: Run coordinator
 dimos run coordinator-mock          # Single 7-DOF mock arm
 dimos run coordinator-dual-mock     # Dual arms (7+6 DOF)
-dimos run coordinator-piper-xarm    # Real hardware
+dimos run coordinator-xarm7 --xarmconnection.ip 192.168.1.185  # Real arm
 
 # Terminal 2: Control via CLI
 python -m dimos.manipulation.control.coordinator_client
@@ -38,11 +43,10 @@ python -m dimos.manipulation.control.coordinator_client
 
 ### Tick Loop
 Single deterministic loop at 100Hz:
-1. **Read** - Get joint positions from all hardware
+1. **Read** - Take the latest joint readings of every robot
 2. **Compute** - Each task calculates desired output
 3. **Arbitrate** - Per-joint, highest priority wins
-4. **Route** - Group commands by hardware
-5. **Write** - Send commands to adapters
+4. **Write** - Send each robot that has reported its complete command
 
 ### Tasks (Controllers)
 Tasks are passive controllers called by the coordinator:
@@ -87,8 +91,8 @@ dimos/control/
 ├── tick_loop.py         # 100Hz control loop
 ├── task.py              # ControlTask protocol + types
 ├── routing.py           # Routing rules + card types
-├── hardware_interface.py # ConnectedHardware wrapper
-├── components.py        # HardwareComponent config + type aliases
+├── connection_source.py # One robot's ports, readings and commands
+├── components.py        # Joint-name helpers + type aliases
 ├── blueprints/          # Pre-configured setups
 └── tasks/
     ├── registry.py         # Task-card discovery + lazy factories
@@ -97,41 +101,57 @@ dimos/control/
 
 ## Configuration
 
-```python
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+Each robot sits behind a `ConnectionModule` (see
+`dimos/control/connection/connection_module.py`). The coordinator subclass
+names one port per robot and kind, `<robot>_<kind>`, and the blueprint remaps
+the connection module's ports onto them. The same `ConnectionConfig` tells the
+coordinator the robot's joints, command interfaces and limits. The A-750
+(`dimos/robot/manipulators/a750/`) is a small example:
 
-my_robot = ControlCoordinator.blueprint(
-    tick_rate=100.0,
-    hardware=[
-        HardwareComponent(
-            hardware_id="left_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("left_arm", 7),
-            adapter_type="xarm",
-            address="192.168.1.100",
-        ),
-        HardwareComponent(
-            hardware_id="right_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("right_arm", 6),
-            adapter_type="piper",
-            address="can0",
-        ),
-    ],
-    tasks=[
-        joint_trajectory_task([...]),  # union of both arms
-    ],
-)
+```python skip
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.a750.config import a750_coordinator_connection
+from dimos.robot.manipulators.a750.connection import A750Connection
+
+
+class A750Coordinator(ControlCoordinator):
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+my_arm = autoconnect(
+    A750Coordinator.blueprint(
+        instance_name="ControlCoordinator",
+        connections=[a750_coordinator_connection()],
+        tasks=[joint_trajectory_task([f"arm/joint{i}" for i in range(1, 7)])],
+    ),
+    A750Connection.blueprint(),
+).remappings([
+    (A750Connection, "position_command", "arm_position_command"),
+    (A750Coordinator, "arm_joint_state", "joint_state"),
+])
+```
+
+The serial port is given at run time (`--a750connection.device-path
+/dev/ttyACM0`). An xArm's address is given the same way
+(`--xarmconnection.ip 192.168.1.185`), or it runs in MuJoCo with
+`simulated=True`:
+
+```python
+from dimos.robot.manipulators.xarm.blueprints.basic import xarm_coordinator
+
+my_xarm = xarm_coordinator("xarm7")
 ```
 
 ## RPC Methods
 
 | Method | Description |
 |--------|-------------|
-| `list_hardware()` | List hardware IDs |
+| `list_hardware()` | List the robots driven |
 | `list_joints()` | List all joint names |
 | `list_tasks()` | List task names |
 | `get_joint_positions()` | Get current positions |
@@ -315,12 +335,11 @@ closed and `1.0` is fully open. Input devices translate buttons and triggers
 to this scale before publishing.
 
 ```python
-class _Go2Coordinator(PathFollowingCoordinator):
-    go2_joints: Out[JointState]
+class _ArmCoordinator(ControlCoordinator):
+    cartesian_command: In[PoseStamped]
 
-blueprint = _Go2Coordinator.blueprint(
+blueprint = _ArmCoordinator.blueprint(
     instance_name="ControlCoordinator",  # RPC clients look the coordinator up by class name
-    publish_robot_joint_states=True,
 )
 ```
 
@@ -340,18 +359,15 @@ TaskConfig(name="teleop_xarm", type="teleop_ik",
 
 ## Joint State Views
 
-The coordinator publishes two views of the same per-tick read. Both are
-permanent; neither is a downgrade from the other.
-
-| View | Stream | Carries | Enabled by |
-|------|--------|---------|------------|
-| Aggregate | `coordinator_joint_state` | every joint, `frame_id="coordinator"` | `publish_joint_state` (on by default) |
-| Per-robot | `{hardware_id}_joints` | one robot, `frame_id=hardware_id` | `publish_robot_joint_states` plus a matching `Out[JointState]` annotation |
-
-Both carry canonical `{hardware_id}/{joint}` names sampled once per tick, so
-they line up with the commands sent on that tick. That is the *control* view.
-Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
-*device* view instead: raw state at the device's own rate, units and ordering.
+`coordinator_joint_state` carries every joint, `frame_id="coordinator"`, with
+canonical `{robot}/{joint}` names sampled once per tick, so it lines up with the
+commands sent on that tick (`publish_joint_state`, on by default). That is the
+*control* view. `coordinator_joint_command` carries the positions tasks
+commanded on each tick, for recording.
+Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish canonical
+named `joint_state` readings at the device's own rate. Vendor names, ordering,
+and body/world conversions belong inside those concrete connections. The
+coordinator does not republish their per-robot view.
 
 Choose by what the consumer is, not by how many robots the deployment has.
 
@@ -359,4 +375,39 @@ Consumers that capture or model whatever is present read the aggregate:
 `CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
-reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.
+reads `/g1/joints`, and the Go2 controller blueprints pin the connection's
+`joint_state` to `/coordinator/joint_state` for existing observers.
+
+### Unitree connection boundary
+
+The G1 and Go2 coordinator blueprints declare connection models and per-joint
+command interfaces, not shared transport adapters. G1 accepts named
+`position_command` messages and reports all 29 model joints plus `imu`. The
+concrete DDS connection owns motor order, configured PD gains, CRC,
+firmware-reported mode, and damping-first stiffness soft-start. GR00T supplies
+its trained gains to that connection; the task reads its explicitly selected
+`g1/imu` sensor from `CoordinatorState`. No task selects another robot's IMU.
+
+G1 command silence requests damping, not torque disable. Module teardown also
+retains the firmware safe-stop packet before closing DDS. SDK stop sentinels
+are internal firmware values, never ordinary joint position targets. Feedback
+silence is not hidden by republishing cached DDS samples with fresh timestamps.
+
+Go2's velocity-only control resources are `go2/base_forward`,
+`go2/base_lateral`, and `go2/base_turn`. Commands map directly to the vendor's
+body Twist, without a cached yaw gate. The backend exposes measured
+`PoseStamped` odometry, not native base rates (lowstate carries IMU/motors/battery).
+The concrete connection estimates average body rates from successive valid
+source-timestamped poses. It publishes those rates without positions on
+`joint_state`, and pose plus estimated body twist on independent
+`odometry: Out[Odometry]`. The first pose and invalid/nonpositive/too-large
+intervals cannot produce a rate measurement. WebRTC pose stamps are preserved,
+not replaced by callback receipt time.
+
+The existing `odom: Out[PoseStamped]` port remains for navigation consumers.
+Holonomic and RPP follower cards consume `odometry` separately from the action
+resources. Their control laws already convert world path goals using measured
+pose and produce body velocities; no second output rotation is performed.
+The camera, lidar, replay/simulation backends, body-Twist RPC/stream, and sport
+skills remain available. The canonical command path retains the connection
+deadman and rejects commands after stop without replaying a target.
