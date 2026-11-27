@@ -2,6 +2,10 @@
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
+Declare each stream with its message type, such as `value: In[Int32]`.
+The coordinator uses this type and the stream name to match inputs and outputs.
+A bare `In`, `Out` or `IO` raises a `TypeError` when you define the module.
+
 Some examples of modules are:
 
 - Webcam (outputs image)

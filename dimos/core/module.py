@@ -844,16 +844,37 @@ class Module(ModuleBase):
         super().__init_subclass__(**kwargs)
 
         try:
-            hints = get_type_hints(cls, include_extras=True)
+            resolved = get_type_hints(cls, include_extras=True)
         except (NameError, AttributeError, TypeError):
-            hints = {}
+            resolved = {}
+
+        # get_type_hints prefers module globals for postponed class annotations.
+        # A bare name belongs to its declaring class first, even with unresolved peers.
+        hints = {}
+        for base in reversed(cls.__mro__):
+            class_vars = vars(base)
+            module_vars = getattr(sys.modules.get(base.__module__), "__dict__", {})
+            for name, raw in inspect.get_annotations(base).items():
+                hint = resolved.get(name, raw)
+                if isinstance(raw, str):
+                    root, *path = raw.strip().strip("'\"").split(".")
+                    root = root.strip()
+                    if root in class_vars or name not in resolved:
+                        hint = class_vars.get(root, module_vars.get(root))
+                        for part in path:
+                            hint = inspect.getattr_static(hint, part.strip(), None)
+                hints[name] = hint
 
         for name, ann in hints.items():
             origin = get_origin(ann)
-            if origin in (In, Out, IO):
+            if name in resolved and origin in (In, Out, IO):
                 # Set class-level attribute if not already set.
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
+            elif ann is In or ann is Out or ann is IO:
+                raise TypeError(
+                    f"{cls.__name__}.{name} needs a message type: use {ann.__name__}[MessageType]"
+                )
 
     def __init__(self, **kwargs: Any) -> None:
         self.ref = None
