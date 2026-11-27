@@ -16,7 +16,7 @@ Expected result: MuJoCo shows the G1 standing in the office scene. The tool list
 
 ## 10.2 G1 whole-body control in MuJoCo
 
-The first run pulls the GR00T model and the office scene. The arm teleop needs a Quest headset on the same network.
+The first run pulls the GR00T model and the office scene. The arm teleop needs a Quest headset on the same network. MuJoCo runs headless in both blueprints, so no MuJoCo window opens. The GR00T blueprint opens the DimOS Viewer and the teleop blueprint opens no window.
 
 ```bash
 uv run dimos --simulation mujoco --scene-package office run unitree-g1-groot-wbc
@@ -67,10 +67,14 @@ Expected result: each teleop window drives only its own robot, and the echo prin
 
 ## 10.5 Go2 over DDS on the Jetson
 
-Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, and a laptop that reaches the Jetson on port 7447.
+Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, the dimos Host running on the Jetson (see the [Host daemon check](05_cli-and-api.md#510-host-daemon)), and a laptop that reaches the Jetson on port 7447. Without the Host `go2-nav` stops with `no Host router on this machine`.
+
+A Host listens only on loopback by default, and then the laptop viewer shows no camera or map. If `uv run dimos host config` prints `listen` as `tcp/127.0.0.1:7447`, open the Host with the first two commands below. `tcp/0.0.0.0` listens on every interface, and `go2-nav` still reaches the Host on loopback. With `iface/<name>` as the first endpoint `go2-nav` stops with `the Host router listens on ...`. Anyone who reaches port 7447 can run code on the Jetson, so use a network you trust. `uv run dimos host config listen=` and a restart close the Host again.
 
 ```bash
 # On the Jetson:
+uv run dimos host config listen=tcp/0.0.0.0
+uv run dimos host restart   # also starts a Host that is not running
 uv run dimos run go2-nav --mid360.lidar-ip <lidar-ip>
 # On the laptop:
 uv run dimos --zenoh-connect tcp/<robot-ip>:7447 run go2-nav-viewer
@@ -78,7 +82,10 @@ uv run dimos --zenoh-connect tcp/<robot-ip>:7447 run go2-nav-viewer
 uv run dimos mem rerun go2_dds_stairs.mcap --seconds 60
 ```
 
-* The viewer shows the camera, the odometry and the surface map. Click a point in the 3D view. The robot drives there.
+* Hardware: the DimOS Viewer shows the camera, the odometry and the surface map. Click a point in the 3D view. The robot drives there.
+* Recording: `mem rerun` opens the stock "Rerun Viewer", separate from the DimOS Viewer. The command returns after conversion. `--seconds 60` limits the recording data converted, not how long the viewer stays open. Close the viewer window by hand before the next check. Ctrl+C and `dimos stop` do not close it after the command has returned.
+
+The recording step unpacks `data/go2_dds_stairs.mcap` if needed (about 395 MB) and writes `data/go2_dds_stairs.rrd` alongside it on each run (about 44 MB for this command, ignored by Git). Both files remain after the viewer closes, using about 439 MB in total. If you need to reclaim that space, remove those two files after closing the viewer. Keep `data/.lfs/go2_dds_stairs.mcap.tar.gz` so the dataset can be unpacked again.
 
 Expected result: the robot reaches the clicked goal, and the recording plays its point cloud, odometry and camera in Rerun.
 

@@ -5,12 +5,17 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 `/apps/<name>/` reaches it as `../../dimos-gateway/`. `GET /openapi.json` has every route with its request and answer;
 `GET /info` `api` is the API version (released as `desktop-gateway-v<version>` tags).
 
+The catalog reads blueprints from the checkout it serves. It uses the default options for blueprint choices and also accepts blueprints from checkouts that predate choices.
+
 ## Rules
 
 1. **Relative URLs only:** `../../dimos-gateway/active`, never a host or port.
 2. **Declare every route you call** in your app's `dimos.yaml`: `uses: {"@dimos-gateway": [GET /active, POST /active/launch]}`.
 3. **Config is per launch.** The gateway saves none: keep your defaults and send all of them in each
    `POST /active/launch` `{blueprint, config: {global, modules}}`. `GET /catalog/blueprints/{name}/config` is the schema.
+   When supplied, `global` and `modules` must be objects and `secrets` must be a list of field paths.
+   Packaged paths appear under their asset names. Omit an unchanged path to keep its lazy lookup, or supply a local file
+   to replace it. A collection containing packaged paths is a read-only preview (`json_compatible: false`).
    When saved and explicit module settings overlap, send the same body to `POST /active/launch-with-defaults`
    with a separate `module_defaults` object. The explicit value wins for each CLI field. Nested model fields
    keep untouched siblings. Dictionary and list fields are replaced as a whole. A null clears the saved field.
@@ -25,18 +30,25 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
    `go2connection` with no namespace).
 7. **RPCs are for buttons.** `POST /active/modules/{id}/rpcs/{name}` calls the module directly, not through MCP, so a
    skill's capability holds don't apply; call one only from a user's action. Agents use the python API.
-8. **The catalog is a cache.** It changes only when a `POST /catalog/scan` job finishes (`?timeout=` per blueprint);
+8. **A running module's config can be read.** `GET /active/modules/{id}/config` answers
+   `{config: {field: value}, readonly: [field]}`: a readonly field is a secret (sent as `•••`) or one JSON can't carry
+   (its text). `POST /active/modules/{id}/restart` with `{"config": {field: value}}` restarts it with those changed.
+9. **The catalog is a cache.** It changes only when a `POST /catalog/scan` job finishes (`?timeout=` per blueprint);
    follow the job at `GET /jobs/{job}`. What is read from the code on demand (a blueprint's or module's detail, source
    and `config`, and `extras`) is reused for ten minutes, and read again once a scan is asked for or the checkout
    changes (an edit, a commit, an install).
+
+`POST /active/relaunch` takes an optional launch body (as `POST /active/launch`) to relaunch with edited settings.
+The checkout's own `dimos run` checks it before the current run is stopped: 400 if it refuses, 500 if the check could not
+run, and 409 if a stop or another launch lands during the check; the current run keeps running in all three.
 
 ## Routes
 
 | | |
 | -- | -- |
 | `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema and `{name}/source` (its .py file; a module's `?blueprint=` reads it from that blueprint's live run's checkout) |
-| `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
-| `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
+| `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `config`, `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
+| `/history` | every run with a log; `{runId}` (or `latest`, the newest across every registered checkout), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
 | views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |

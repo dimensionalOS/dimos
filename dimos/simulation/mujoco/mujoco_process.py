@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import base64
+from contextlib import nullcontext
 import json
 import os
 import pickle
@@ -39,7 +40,6 @@ from dimos.simulation.mujoco.constants import (
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
-from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
@@ -129,8 +129,6 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
 
-    person_position_controller = PersonPositionController(model)
-
     if config.shadows == "off" or (
         config.shadows == "auto" and _shadow_render_is_slow(model, data)
     ):
@@ -150,7 +148,12 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
     )
 
-    with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
+    window = (
+        nullcontext(None)
+        if config.headless
+        else viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
+    )
+    with window as m_viewer:
         camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
 
         # Create renderers
@@ -172,23 +175,29 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
         video_interval = 1.0 / VIDEO_FPS
         lidar_interval = 1.0 / LIDAR_FPS
 
-        m_viewer.cam.lookat = config.camera_position[0:3]
-        m_viewer.cam.distance = config.camera_position[3]
-        m_viewer.cam.azimuth = config.camera_position[4]
-        m_viewer.cam.elevation = config.camera_position[5]
+        if m_viewer is not None:
+            m_viewer.cam.lookat = config.camera_position[0:3]
+            m_viewer.cam.distance = config.camera_position[3]
+            m_viewer.cam.azimuth = config.camera_position[4]
+            m_viewer.cam.elevation = config.camera_position[5]
 
         parent_pid = os.getppid()
 
         def alive() -> bool:
             # Also exit when the connection's process is gone, whatever killed it.
-            return m_viewer.is_running() and not shm.should_stop() and os.getppid() == parent_pid
+            return (
+                (m_viewer is None or m_viewer.is_running())
+                and not shm.should_stop()
+                and os.getppid() == parent_pid
+            )
 
         shm.signal_ready()
 
         # The world stands still until the connection's start(): the parent is
         # still deploying and wiring the other modules.
         while alive() and not shm.should_run():
-            m_viewer.sync()
+            if m_viewer is not None:
+                m_viewer.sync()
             time.sleep(0.05)
 
         while alive():
@@ -198,9 +207,8 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
             for _ in range(config.steps_per_frame):
                 mujoco.mj_step(model, data)
 
-            person_position_controller.tick(data)
-
-            m_viewer.sync()
+            if m_viewer is not None:
+                m_viewer.sync()
 
             # Always update odometry
             pos = data.qpos[0:3].copy()
@@ -271,8 +279,6 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
             time_until_next_step = model.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
-
-        person_position_controller.stop()
 
 
 if __name__ == "__main__":

@@ -134,7 +134,8 @@ def test_raw_arm_blueprint_configures_its_bridge():
         environ={"RAWROBOTBRIDGE__ENDPOINT": "tcp/127.0.0.1:12345"}
     )
     bridge = parsed.module_kwargs("rawrobotbridge")
-    assert bridge["ee_frame"] == "link_tcp" and bridge["gripper_joint"] == "arm/gripper"
+    assert bridge["ee_frame"] == "link_tcp" and bridge["gripper_joint"] == "arm/drive_joint"
+    assert bridge["gripper_range"] == (0.85, 0.0)  # (closed, open) in rad
     assert bridge["endpoint"] == "tcp/127.0.0.1:12345"  # the per-run endpoint still applies
     tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
     assert any(task["type"] == "eef_twist" for task in tasks)

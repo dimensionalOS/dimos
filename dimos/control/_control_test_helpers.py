@@ -25,6 +25,7 @@ from here rather than reaching into each other's test modules.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import functools
 from pathlib import Path
 import tempfile
@@ -227,3 +228,40 @@ class FakeArm(ConnectionModule):
             self.joint_state.publish(
                 joint_state_from_values(self._readings, self._joints, ts=time.time())
             )
+
+
+class LocalTransport:
+    """An in-process transport: publishing calls every subscriber at once."""
+
+    def __init__(self) -> None:
+        self.subscribers: list[Callable[[Any], Any]] = []
+
+    def broadcast(self, selfstream: Any, value: Any) -> None:
+        for cb in list(self.subscribers):
+            cb(value)
+
+    def publish(self, value: Any) -> None:
+        self.broadcast(None, value)
+
+    def subscribe(self, cb: Callable[[Any], Any], selfstream: Any = None) -> Callable[[], None]:
+        self.subscribers.append(cb)
+        return lambda: self.subscribers.remove(cb)
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
+class Recorder(LocalTransport):
+    """A transport on one command port that notes each message sent as (port, message)."""
+
+    def __init__(self, port: str, sent: list[tuple[str, Any]]) -> None:
+        super().__init__()
+        self._port = port
+        self._sent = sent
+
+    def broadcast(self, selfstream: Any, value: Any) -> None:
+        self._sent.append((self._port, value))
+        super().broadcast(selfstream, value)

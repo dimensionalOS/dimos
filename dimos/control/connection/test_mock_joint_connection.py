@@ -20,6 +20,7 @@ from dimos.control._control_test_helpers import fake_arm_model
 from dimos.control.connection.mock_joint_connection import (
     MockJointConnection,
     MockJointConnectionConfig,
+    mock_base_model,
 )
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.keys import Interface
@@ -90,3 +91,31 @@ def test_mock_rejects_the_removed_tuple_declaration():
         MockJointConnectionConfig.model_validate(
             {"model": fake_arm_model(("joint1",)), "joint_commands": (Interface.POSITION,)}
         )
+
+
+def test_mock_base_reports_commanded_speeds_without_positions(mocker):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    joints = ["base/base_forward", "base/base_lateral", "base/base_turn"]
+    module = MockJointConnection(
+        source="base",
+        model=mock_base_model("base"),
+        joint_commands=dict.fromkeys(joints, (Interface.VELOCITY,)),
+        deadman_timeout_s=10,
+    )
+    commands, readings = LocalTransport(), LocalTransport()
+    module.set_transport("velocity_command", commands)
+    module.set_transport("joint_state", readings)
+    try:
+        module.start()
+        commands.publish(JointState(name=joints, velocity=[0.5, -0.2, 1.0]))
+        wait_until(
+            lambda: bool(readings.sent) and readings.sent[-1].velocity == [0.5, -0.2, 1.0],
+            timeout=2,
+        )
+        assert readings.sent[-1].name == joints
+        assert readings.sent[-1].position == []
+        module._on_loop(lambda: module._deadman_expired(module._command_seq))
+        wait_until(lambda: readings.sent[-1].velocity == [0.0, 0.0, 0.0], timeout=2)
+    finally:
+        module.stop()

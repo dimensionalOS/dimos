@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -28,9 +31,10 @@ import psutil
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.core.run_registry import RunEntry
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.run_registry import RunEntry, get_most_recent, stop_entry
 from experimental.gateway import launches, shared_config
-from experimental.gateway.introspect import IntrospectError
+from experimental.gateway.introspect import IntrospectError, run_child
 from experimental.gateway.routes import active as active_routes
 from experimental.gateway.state import State
 
@@ -113,6 +117,32 @@ def test_a_bad_config_or_name_is_refused(client: TestClient) -> None:
     assert bad.status_code == 400 and "robot_iq" in bad.json()["error"]
     assert client.post("/active/exec", json={"args": ["--n-workers=7"]}).status_code == 400
     assert client.post("/active/exec", json={"args": []}).status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("section", "value"), [("global", []), ("modules", False), ("secrets", {}), ("global", None)]
+)
+def test_wrong_config_sections_are_refused_before_launch_or_relaunch(
+    client: TestClient, section: str, value: Any
+) -> None:
+    bad = {section: value}
+    refused = client.post("/active/launch", json={"blueprint": "demo", "config": bad})
+    assert refused.status_code == 400 and section in refused.json()["error"]
+    assert not launches.launch_file().exists()
+    assert not launches.request_file().exists()
+
+    valid = {"global": {}, "modules": {}, "secrets": []}
+    started = client.post("/active/launch", json={"blueprint": "demo", "config": valid})
+    assert started.status_code == 200
+    until(running(client))
+    path = launches.request_file()
+    saved = json.dumps({**json.loads(path.read_text()), **bad})
+    path.write_text(saved)
+
+    refused = client.post("/active/relaunch")
+    assert refused.status_code == 400 and section in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == started.json()["pid"]
+    assert path.read_text() == saved
 
 
 @pytest.mark.parametrize("scan", ["missing", "stale", "fresh"])
@@ -280,7 +310,7 @@ def test_nested_launch_and_relaunch_keep_secrets_out_of_args_and_metadata(
     relaunched = client.post("/active/relaunch")
     assert relaunched.status_code == 200, relaunched.text
     assert assert_private_launch() != first_pid
-    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
+    launch_targets.assert_any_await(checkout, ["targets", "demo"], stdin={})
 
 
 @pytest.mark.parametrize(
@@ -458,6 +488,23 @@ def test_launch_refuses_unreadable_schema_before_spawning_or_saving_config(
     assert not launches.request_file().exists()
 
 
+def test_a_launch_forgets_what_was_read_of_its_blueprint(client: TestClient, state: State) -> None:
+    async def remember(answer: str) -> str:
+        return answer
+
+    other = state.introspect_key(["blueprint", "other"])
+    for args in (["blueprint", "demo"], ["config", "demo"], ["blueprint", "other"]):
+        key = state.introspect_key(args)
+        asyncio.run(state.cache.get(key, 600, partial(remember, key)))
+    assert client.post("/active/exec", json={"args": ["demo"]}).status_code == 200
+    assert set(state.cache.entries) == {other}
+    until(running(client))
+    key = state.introspect_key(["blueprint", "demo"])
+    asyncio.run(state.cache.get(key, 600, partial(remember, "again")))
+    assert client.post("/active/relaunch").status_code == 200
+    assert set(state.cache.entries) == {other}
+
+
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -626,6 +673,268 @@ def test_relaunch_refuses_bad_saved_names_before_stopping(
     assert launches.alive(first.json()["pid"])
 
 
+@pytest.mark.parametrize(
+    ("values", "error"),
+    [
+        ([], "global"),
+        ({"n_workers": "invalid"}, "n_workers"),
+        ({"record": "sqlite"}, "record-topics"),
+    ],
+)
+def test_replace_checks_the_new_settings_before_stopping_the_current_run(
+    client: TestClient, launch_targets: AsyncMock, values: Any, error: str
+) -> None:
+    launch_targets.side_effect = run_child
+    module = {"module": "demo-calculator-skill"}
+    first = client.post("/active/launch", json=module).json()
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+
+    refused = client.post("/active/relaunch", json={**module, "config": {"global": values}})
+
+    assert refused.status_code == 400 and error in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == first["pid"]
+    assert launches.request_file().read_bytes() == saved
+
+    replaced = client.post(
+        "/active/relaunch", json={**module, "config": {"global": {"n_workers": 2}}}
+    )
+    assert replaced.status_code == 200 and replaced.json()["pid"] != first["pid"]
+    until(running(client))
+    repeated = client.post("/active/relaunch")
+    assert repeated.status_code == 200 and repeated.json()["config"]["global"] == {"n_workers": 2}
+
+
+def test_relaunch_accepts_a_saved_null_global_option(
+    client: TestClient, launch_targets: AsyncMock
+) -> None:
+    launch_targets.side_effect = run_child
+    request = {"module": "demo-calculator-skill", "config": {"global": {"n_workers": None}}}
+    started = client.post("/active/launch", json=request)
+    assert started.status_code == 200
+    until(running(client))
+
+    repeated = client.post("/active/relaunch")
+
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["pid"] != started.json()["pid"]
+    until(running(client))
+
+
+def test_replace_validates_checkout_dotenv_and_honors_launch_environment(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (checkout / "dimos").symlink_to(DIMOS_PROJECT_ROOT / "dimos")
+    monkeypatch.delenv("PYTEST_VERSION", raising=False)
+    monkeypatch.delenv("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT", raising=False)
+    launch_targets.side_effect = run_child
+    module = {"module": "demo-calculator-skill"}
+    started = client.post("/active/launch", json=module)
+    assert started.status_code == 200
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+    (checkout / ".env").write_text("DEMOCALCULATORSKILL__DEFAULT_RPC_TIMEOUT=invalid\n")
+
+    refused = client.post("/active/relaunch", json=module)
+
+    assert refused.status_code == 400 and "default_rpc_timeout" in refused.json()["error"]
+    active = client.get("/active").json()
+    assert active["running"] and active["pid"] == started.json()["pid"]
+    assert launches.request_file().read_bytes() == saved
+    config = {
+        "modules": {"democalculatorskill": {"default_rpc_timeout": 2}},
+        "secrets": ["democalculatorskill.default_rpc_timeout"],
+    }
+    accepted = client.post("/active/relaunch", json={**module, "config": config})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["pid"] != started.json()["pid"]
+    until(running(client))
+
+
+def hold_validation(launch_targets: AsyncMock) -> tuple[threading.Semaphore, threading.Event]:
+    """Validation children that wait: `entered` counts them, `release` lets them answer."""
+    entered, release = threading.Semaphore(0), threading.Event()
+
+    async def validate(dimos_dir: Path, args: list[str], **kwargs: Any) -> dict[str, Any]:
+        if args[0] == "validate_launch":
+            entered.release()
+            assert release.wait(60)
+        return {}
+
+    launch_targets.side_effect = validate
+    return entered, release
+
+
+def stop_here(client: TestClient) -> None:
+    assert client.post("/active/stop").status_code == 200
+
+
+def stop_in_a_terminal(client: TestClient) -> None:
+    """`dimos stop`: the gateway only finds the run gone from the registry."""
+    entry = get_most_recent()
+    assert entry is not None
+    stop_entry(entry)
+
+
+@pytest.mark.parametrize(
+    ("body", "change"),
+    [
+        (None, stop_here),
+        ({"blueprint": "demo"}, stop_here),
+        ({"blueprint": "demo"}, stop_in_a_terminal),
+    ],
+)
+def test_a_relaunch_does_not_start_after_a_stop_during_its_check(
+    client: TestClient,
+    launch_targets: AsyncMock,
+    mocker: MockerFixture,
+    body: dict[str, Any] | None,
+    change: Callable[[TestClient], None],
+) -> None:
+    pid = client.post("/active/launch", json={"blueprint": "demo"}).json()["pid"]
+    until(running(client))
+    entered, release = hold_validation(launch_targets)
+    with ThreadPoolExecutor() as pool:
+        try:
+            replacing = pool.submit(client.post, "/active/relaunch", json=body)
+            assert entered.acquire(timeout=10)
+            # answered while the relaunch is still being checked
+            pool.submit(change, client).result(timeout=20)
+            until(lambda: not launches.alive(pid))
+            spawn = mocker.spy(launches, "_spawn")
+        finally:
+            release.set()
+        refused = replacing.result(timeout=10)
+    assert refused.status_code == 409 and refused.json()["error"].startswith("not started")
+    spawn.assert_not_called()
+    assert not client.get("/active").json()["running"]
+    # and nothing is left held: with nothing running, the next one is an ordinary start
+    assert client.post("/active/relaunch", json={"blueprint": "demo"}).status_code == 200
+
+
+def test_one_of_two_replacements_validated_against_the_same_run_starts(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    first = client.post("/active/launch", json={"blueprint": "demo"}).json()
+    until(running(client))
+    entered, release = hold_validation(launch_targets)
+    spawn = mocker.spy(launches, "_spawn")
+    with ThreadPoolExecutor() as pool:
+        try:
+            replacing = [
+                pool.submit(
+                    client.post,
+                    "/active/relaunch",
+                    json={"blueprint": "demo", "config": {"global": {"n_workers": workers}}},
+                )
+                for workers in (2, 3)
+            ]
+            assert entered.acquire(timeout=10) and entered.acquire(timeout=10)
+        finally:
+            release.set()
+        answers = [future.result(timeout=10) for future in replacing]
+    assert sorted(answer.status_code for answer in answers) == [200, 409]
+    assert spawn.call_count == 1
+    won = next(answer.json() for answer in answers if answer.status_code == 200)
+    until(running(client))
+    assert client.get("/active").json()["pid"] == won["pid"] != first["pid"]
+    assert json.loads(launches.request_file().read_text())["global"] == won["config"]["global"]
+
+
+@pytest.mark.parametrize(
+    ("schema", "error"),
+    [(IntrospectError("schema unavailable"), "schema unavailable"), ({"camera": ["rate"]}, "auth")],
+)
+def test_relaunch_keeps_the_running_blueprint_when_module_config_no_longer_loads(
+    client: TestClient, launch_targets: AsyncMock, schema: Any, error: str
+) -> None:
+    config = {"modules": {"camera": {"auth": {"region": "west"}}}}
+    started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
+    assert started.status_code == 200
+    until(running(client))
+    saved = launches.request_file().read_bytes()
+    launch_targets.side_effect = [schema]
+
+    refused = client.post("/active/relaunch")
+
+    assert refused.status_code == 400
+    assert error in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == started.json()["pid"]
+    assert launches.request_file().read_bytes() == saved
+
+
+def camera_module(checkout: Path) -> Path:
+    """The file of a module the served checkout runs as `demo`, with one setting."""
+    robot = checkout / "dimos" / "robot"
+    robot.mkdir(parents=True)
+    for package in (robot, robot.parent):
+        (package / "__init__.py").write_text(
+            "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n"
+        )
+    (robot / "all_blueprints.py").write_text(
+        'all_blueprints = {}\nall_modules = {"demo": "dimos.robot.camera.Camera"}\n'
+    )
+    source = robot / "camera.py"
+    source.write_text(
+        "from typing import Literal\n"
+        "from dimos.core.module import Module, ModuleConfig\n"
+        "class CameraConfig(ModuleConfig):\n    mode: str = 'photo'\n"
+        "class Camera(Module):\n    config: CameraConfig\n"
+    )
+    return source
+
+
+def test_a_launch_the_checkout_could_not_validate_is_not_reported_as_a_bad_config(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock
+) -> None:
+    source = camera_module(checkout)
+    launch_targets.side_effect = run_child
+    started = client.post("/active/launch", json={"blueprint": "demo"}).json()
+    until(running(client))
+    source.write_text("import a_package_this_checkout_lacks\n")
+
+    refused = client.post("/active/relaunch")
+
+    assert refused.status_code == 500, refused.text
+    assert refused.json()["error"].startswith("could not validate the launch")
+    assert "a_package_this_checkout_lacks" in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == started["pid"]
+
+
+@pytest.mark.parametrize("secrets", [[], ["camera.mode"]], ids=["flag", "environment"])
+def test_relaunch_keeps_the_run_when_a_module_field_rejects_its_old_value(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock, secrets: list[str]
+) -> None:
+    source = camera_module(checkout)
+    module = source.read_text()
+    launch_targets.side_effect = run_child
+    start = client.post(
+        "/active/launch",
+        json={
+            "blueprint": "demo",
+            "config": {"modules": {"camera": {"mode": "video"}}, "secrets": secrets},
+        },
+    )
+    assert start.status_code == 200, start.text
+    until(running(client))
+    pid = start.json()["pid"]
+    saved = launches.request_file().read_bytes()
+
+    source.write_text(module.replace("mode: str", "mode: Literal['photo']"))
+    refused = client.post("/active/relaunch")
+    assert refused.status_code == 400, refused.text
+    assert "camera.mode" in refused.json()["error"]
+    assert "video" not in refused.json()["error"]
+    assert client.get("/active").json()["pid"] == pid and launches.alive(pid)
+    assert launches.request_file().read_bytes() == saved
+
+    source.write_text(module)
+    retried = client.post("/active/relaunch")
+    assert retried.status_code == 200, retried.text
+    until(running(client))
+    assert retried.json()["pid"] != pid
+
+
 def test_relaunch_copies_a_run_the_gateway_did_not_launch(
     client: TestClient, tmp_path: Path, state: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -721,6 +1030,26 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     tail = client.get(f"/active/log?after={page['offset']}").json()
     assert [record["event"] for record in tail["records"]] == ["later"]
     assert client.get("/history").json()["runs"][0]["running"]
+
+
+def test_latest_log_uses_the_same_run_as_history(client: TestClient, home: Path) -> None:
+    terminal_id = "20260101-100000-terminal"
+    terminal = home / "other-checkout" / "custom-log-directory"
+    terminal.mkdir(parents=True)
+    (terminal / "main.jsonl").write_text(json.dumps({"event": terminal_id}) + "\n")
+    RunEntry(terminal_id, os.getpid(), "terminal", "2026-01-01T10:00:00Z", str(terminal)).save()
+
+    for hour in ("09", "11"):
+        local_id = f"20260101-{hour}0000-local"
+        local = home / "logs" / local_id
+        local.mkdir(parents=True)
+        (local / "main.jsonl").write_text(json.dumps({"event": local_id}) + "\n")
+        newest = max(local_id, terminal_id)
+        assert client.get("/history/latest").json()["runId"] == newest
+        page = client.get("/history/latest/logs").json()
+        assert page == client.get(f"/history/{newest}/logs").json()
+        assert page["runId"] == newest
+        assert [record["event"] for record in page["records"]] == [newest]
 
 
 def test_recordings_is_the_standard_directory(

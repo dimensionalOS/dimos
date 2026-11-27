@@ -33,7 +33,7 @@ ls "$RELEASE_TRACE_DIR"
 uv run dimos stop
 ```
 
-Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start.
+Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start. Start it only once `ollama ps` lists no model: Ollama keeps its model on the GPU for 5 minutes after the last request, and with both loaded a 12 GB card fails the start with `CUDA out of memory`.
 
 ## 7.2 Tool streams and capability conflicts
 
@@ -60,7 +60,7 @@ uv run dimos run habitat-nav
 uv run dimos shell
 ```
 
-* For each goal, hover over a free spot on the planner surface a few metres away in Rerun and read its coordinates. Send the second goal after the robot arrives, and stop it on the way.
+* For each goal, hover over a free spot on the planner surface a few metres away in Rerun and read the `Hover position` line of the tooltip. The `positions` line below it is in the camera frame when the pointer is on a scan point. Send the second goal after the robot arrives, and stop it on the way.
 
 ...in the shell:
 
@@ -71,7 +71,7 @@ app.MLSPlannerNative.go_to(PoseStamped(position=(<x2>, <y2>, <z2>), frame_id="wo
 app.MLSPlannerNative.stop_navigation()
 ```
 
-Expected result: each `go_to` draws a path. The robot stops at the first point, and `stop_navigation` halts it short of the second.
+Expected result: each `go_to` returns a `Time` stamp at once and draws a path. The robot stops at the first point, and `stop_navigation` halts it short of the second.
 
 ## 7.4 TypeSafe navigation agent
 
@@ -124,7 +124,7 @@ uv run dimos run desk-marker-tf rerun-bridge-module --marker-length-m 0.1
 ```
 
 * Calibration: `<square-m>` is the measured edge of one printed square in meters. Press Space on about 20 sharp views of the board.
-* Markers: hold the tag in front of the webcam.
+* Markers: hold the tag in front of the webcam. Scroll in the 3D view to zoom out: the camera frustum points straight up from the origin, and the feed and the box are drawn at its far end. The box is labelled `DICT_APRILTAG_36h11:0 id=0`.
 
 `desk-marker-tf` uses its bundled `fixtures/camera_info.yaml`, not the file the calibration wrote.
 
@@ -157,7 +157,9 @@ uv run dimos evals vqa run ~/.local/state/dimos/datasets/vqa/memory-frames --mod
 
 The first recorded images can precede the first `camera_info` or `tf` message. If generation reports missing calibration or pose at the selected image timestamp, increase `--start` until the first selected image is after both streams begin. `20` skipped the startup gap in this check.
 
-Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors.
+The simulated robot stands still until it is driven, so the three selected frames show the same view and the same questions repeat for each frame.
+
+Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors. The summary line ends in the run directory, which holds `results.jsonl` and `summary.json`. A `fail` line is a wrong answer from the model, not an error.
 
 ## 7.10 xArm6 WorldBelief
 
@@ -176,7 +178,7 @@ Expected result: `scan` prints `Scan complete: <n> object(s) present` with a con
 
 ## 7.11 Depth2DepthCloud
 
-Needs a Go2 whose Jetson has a dimos checkout and nix. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
+Needs a Go2 whose Jetson has a dimos checkout and nix, and the dimos Host running on the Jetson (`uv run dimos host start`, see the [Host daemon check](05_cli-and-api.md#510-host-daemon)). Without it the run stops with `no Host router on this machine`. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
 
 ```bash
 # On the Jetson:

@@ -170,9 +170,9 @@ def parse(raw: Any) -> LaunchConfig:
     if other is not None:
         raise LaunchConfigError(f"overrides has `{other}` next to `global`/`modules`")
     global_, modules, secrets = (
-        raw.get("global") or {},
-        raw.get("modules") or {},
-        raw.get("secrets") or [],
+        raw.get("global", {}),
+        raw.get("modules", {}),
+        raw.get("secrets", []),
     )
     if not isinstance(global_, dict):
         raise LaunchConfigError("overrides.global must be an object")
@@ -766,42 +766,64 @@ def check_idle() -> None:
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     check_name(blueprint)
-    return _start(dimos_dir, blueprint, launch.normalized())
-
-
-def _start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
-    """Spawn a prepared launch; relaunch also prepares before stopping the current process."""
     with _lock:
         check_idle()
-        program = store.dimos_bin(dimos_dir)
-        if not program.exists():
-            raise RunError(f"no dimos at {dimos_dir} (no {program})")
-        targets = None
-        if launch.modules or launch.module_defaults:
-            try:
-                targets = asyncio.run(
-                    introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
+        spawn = _prepare(dimos_dir, blueprint, launch.normalized())
+        return spawn()
+
+
+def _prepare(
+    dimos_dir: Path, blueprint: str, launch: LaunchConfig, *, validate: bool = False
+) -> Callable[[], dict[str, Any]]:
+    """Read the checkout for a launch, which can take minutes; the answer spawns it, under the lock."""
+    program = store.dimos_bin(dimos_dir)
+    if not program.exists():
+        raise RunError(f"no dimos at {dimos_dir} (no {program})")
+    targets = None
+    if launch.modules or launch.module_defaults:
+        try:
+            targets = asyncio.run(
+                introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
+            )
+        except introspect.IntrospectError as error:
+            raise LaunchConfigError(f"could not read launch config fields: {error}") from error
+        launch = launch.with_module_defaults(targets)
+    paths = launch.secret_paths(targets)
+    secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
+    shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
+    shown_launch_args = shown_args(launch.args)
+    shown_run = run_args(blueprint, replace(launch, args=shown_launch_args), targets)
+    venv = store.venv_dir(dimos_dir)
+    launch_env = {**launch_env_defaults(), **secret_vars}
+    env = {
+        **os.environ,
+        "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "VIRTUAL_ENV": str(venv),
+        "PYTHONUNBUFFERED": "1",
+        "NO_COLOR": "1",
+        **launch_env,
+    }
+    command = [str(program), *run_args(blueprint, launch, targets)]
+    if validate:
+        try:
+            checked = asyncio.run(
+                introspect.run_child(
+                    dimos_dir,
+                    ["validate_launch"],
+                    stdin={"argv": command[1:], "env": launch_env},
                 )
-            except introspect.IntrospectError as error:
-                raise LaunchConfigError(f"could not read launch config fields: {error}") from error
-            launch = launch.with_module_defaults(targets)
-        paths = launch.secret_paths(targets)
-        secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
-        shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
-        shown_launch_args = shown_args(launch.args)
-        shown_run = run_args(blueprint, replace(launch, args=shown_launch_args), targets)
-        venv = store.venv_dir(dimos_dir)
-        env = {
-            **os.environ,
-            "PATH": f"{venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
-            "VIRTUAL_ENV": str(venv),
-            "PYTHONUNBUFFERED": "1",
-            "NO_COLOR": "1",
-            **launch_env_defaults(),
-            **secret_vars,
-        }
+            )
+        except introspect.IntrospectError as error:
+            # the checkout couldn't be asked (a timeout, an import error), which says nothing about the settings
+            raise RunError(
+                f"could not validate the launch, so nothing was stopped or started: {error}"
+            ) from error
+        if "rejected" in checked:
+            raise LaunchConfigError(checked["rejected"])
+
+    def spawn() -> dict[str, Any]:
         pid = _spawn(
-            [str(program), *run_args(blueprint, launch, targets)],
+            command,
             [*shown_env, "dimos", *shown_run],
             str(dimos_dir),
             env,
@@ -817,6 +839,8 @@ def _start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, A
         started = current_launch()
         assert started is not None
         return started
+
+    return spawn
 
 
 def copy_of(entry: Any) -> dict[str, Any]:
@@ -880,32 +904,58 @@ def stop() -> str:
         return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
 
 
-def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, Any]:
-    """Stop the running blueprint and start it again: the gateway's own launch as it was POSTed, another one
-    (`dimos run` in a terminal) as a copy of its process."""
-    # one change: nothing else starts in between the stop and the start
+def _running() -> tuple[int, float | None] | None:
+    """The process a stop would end, by pid and start time: the newest run, else a launch yet to register."""
+    entry = get_most_recent(alive_only=True)
+    if entry is not None:
+        return entry.pid, started_time(entry.pid)
+    launch = current_launch()
+    if launch is not None and launch["phase"] == "starting":
+        return launch["pid"], started_time(launch["pid"])
+    return None
+
+
+def relaunch(
+    dimos_dir: Path,
+    check_known: Callable[[str], None],
+    replacement: tuple[str, LaunchConfig] | None = None,
+) -> dict[str, Any]:
+    """Replace with a submitted launch, or repeat the saved launch or external command."""
     with _lock:
-        entry = get_most_recent(alive_only=True)
-        record = _record()
-        ours = entry is not None and record is not None and int(record["pid"]) == entry.pid
-        request = store.read_json(request_file()) if entry is None or ours else None
-        if entry is not None and request is None:
-            request = {"blueprint": entry.blueprint, "copy": copy_of(entry)}
-        if request is None:
+        if replacement is None:
+            entry = get_most_recent(alive_only=True)
+            record = _record()
+            ours = entry is not None and record is not None and int(record["pid"]) == entry.pid
+            request = store.read_json(request_file()) if entry is None or ours else None
+            if entry is not None and request is None:
+                request = {"blueprint": entry.blueprint, "copy": copy_of(entry)}
+            if request is None:
+                raise ApiError(
+                    409, "nothing running, and the gateway hasn't launched anything to relaunch"
+                )
+            blueprint = check_name(request.get("blueprint"))
+            if "copy" in request:
+                # An externally started process can belong to a different checkout.
+                if _running() is not None:
+                    stop()
+                return start_copy(blueprint, request["copy"])
+            config = LaunchConfig.from_json(request)
+        else:
+            blueprint, config = replacement
+        check_known(blueprint)
+        running = _running()
+        if running is None:
+            # nothing to keep alive, so this is an ordinary start
+            check_idle()
+            return _prepare(dimos_dir, blueprint, config.normalized())()
+    # outside the lock: the run being replaced keeps running, and a stop mustn't wait minutes behind this check
+    spawn = _prepare(dimos_dir, blueprint, config.normalized(), validate=True)
+    with _lock:
+        if _running() != running:
             raise ApiError(
-                409, "nothing running, and the gateway hasn't launched anything to relaunch"
+                409,
+                "not started: what runs changed (a stop, another launch) during the launch's check",
             )
-        blueprint = check_name(request.get("blueprint"))
-        # A copied process may belong to another checkout, outside this catalog.
-        if "copy" not in request:
-            check_known(blueprint)
-        config = None if "copy" in request else LaunchConfig.from_json(request).normalized()
-        if entry is not None or (
-            (launch := current_launch()) is not None and launch["phase"] == "starting"
-        ):
-            # a stuck or slow startup too: start()'s idle check would refuse while it lives
-            stop()
-        if "copy" in request:
-            return start_copy(blueprint, request["copy"])
-        assert config is not None
-        return _start(dimos_dir, blueprint, config)
+        stop()
+        check_idle()
+        return spawn()

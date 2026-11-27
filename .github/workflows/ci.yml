@@ -52,6 +52,30 @@ jobs:
           git show "${policy_ref}:${policy_path}" > "$RUNNER_TEMP/commit-message-policy.py"
           python3 "$RUNNER_TEMP/commit-message-policy.py" --check
 
+  pr-description:
+    name: PR description
+    # Bots open PRs without the template.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read  # For reading the description
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test template and validator
+        run: python3 -m unittest discover -s .github/scripts -p test_pr_description.py
+      - name: Validate description
+        # Fetch the description instead of reading the event, so re-running the job after an edit checks the new text.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' | python3 .github/scripts/check_pr_description.py
+
   compute-ros-pin:
     # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
     # so downstream jobs can reference it from their `container:` field.
@@ -1076,7 +1100,14 @@ jobs:
             exit 1
           fi
           echo "$bin" >> "$GITHUB_PATH"
-          echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
+          # The daemon honours the substituter and key only if the runner user is trusted; otherwise the host's nix.conf must list them.
+          {
+            echo "NIX_CONFIG<<EOF"
+            echo "experimental-features = nix-command flakes"
+            echo "extra-substituters = https://dimensionalos.cachix.org"
+            echo "extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI="
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - name: Configure LCM networking (macOS)
         # LCM sends datagrams up to 64 KB; macOS caps UDP at 9216 bytes by default, so point clouds never leave the sender.
         if: matrix.os == 'macOS'
@@ -1114,7 +1145,12 @@ jobs:
         # Without a marker (expired artifact) this falls back to the full nix build.
         run: |
           if [ "${{ steps.native-marker.outcome }}" = "success" ]; then
-            python3 bin/native-modules --link-results .cachix-marker/links.txt
+            # A macOS host whose store lacks the paths and whose daemon distrusts Cachix cannot substitute, so it builds them into its persistent store once.
+            python3 bin/native-modules --link-results .cachix-marker/links.txt || {
+              [ "${{ matrix.os }}" = "macOS" ] || exit 1
+              echo "::warning::$RUNNER_NAME could not substitute the native modules from Cachix (add dimensionalos.cachix.org's key to its /etc/nix/nix.conf); building them instead"
+              python3 bin/native-modules --build
+            }
           else
             python3 bin/native-modules --build
           fi
@@ -1388,6 +1424,7 @@ jobs:
 
     needs:
     - commit-messages
+    - pr-description
     - lint
     - rust
     - pyo3
@@ -1407,7 +1444,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: self-hosted-tests
+        allowed-skips: self-hosted-tests, pr-description
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7.1.1
