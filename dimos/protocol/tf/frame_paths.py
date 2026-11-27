@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""tf frame ids as paths: ``go2_A/go2/base`` is the prim ``/go2/base`` under the namespace ``go2_A``.
+"""tf frame ids as paths: ``go2_A/base_link`` is the frame ``base_link`` under the namespace ``go2_A``.
 
-Each "/"-separated segment is a USD prim name, so a frame id is a prim path without its leading "/".
+A frame is named by its USD prim's own name, and each "/"-separated segment is a USD prim name.
 """
 
 import re

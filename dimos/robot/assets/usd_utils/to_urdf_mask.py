@@ -23,8 +23,9 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.usd_utils.from_urdf import OUT_OF_PLANE, PASSTHROUGH_KEY
-from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, frame_path, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.frames import frame_prims
+from dimos.robot.assets.usd_utils.from_urdf import LIMIT_KEY, OUT_OF_PLANE, PASSTHROUGH_KEY
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, joint_name, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -47,14 +48,17 @@ def usd_to_urdf(usd: str, *, root: Path | str | None = None) -> str:
     layer = layer_from(pxr, usd, "a layer", root)
     stage = pxr.Usd.Stage.Open(layer)
 
-    links = _usd_links_of(pxr, stage)
+    frames = frame_prims(stage)
+    links = _usd_links_of(pxr, frames)
     world = _world_body(stage)
     joint_prims = _joint_prims(pxr, stage)
     # Every name the layer already uses: a link or joint this converter adds must not take one.
-    taken = set(links) | {str(prim.GetDisplayName() or prim.GetName()) for prim in joint_prims}
-    joints = [joint for prim in joint_prims for joint in _joints_of(pxr, prim, taken, world)]
+    taken = set(links) | set(joint_prims)
+    joints = [
+        joint for prim in joint_prims.values() for joint in _joints_of(pxr, prim, taken, world)
+    ]
     links |= {joint.child: None for joint in joints if joint.child_is_frame}
-    links |= _static_bodies_of(pxr, stage, links, joints)
+    links |= _static_bodies_of(frames, links, joints)
 
     default_prim = stage.GetDefaultPrim()
     robot_name = default_prim.GetName() if default_prim else "robot"
@@ -73,8 +77,8 @@ def usd_to_urdf(usd: str, *, root: Path | str | None = None) -> str:
 def usd_root_link(usd: str, root: Path | str | None = None) -> str:
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
-    links = _usd_links_of(pxr, stage)
-    joints = list(_joint_prims(pxr, stage))
+    links = _usd_links_of(pxr, frame_prims(stage))
+    joints = list(_joint_prims(pxr, stage).values())
     children = {_body_name(prim, "physics:body1") for prim in joints} | _nested_link_names(
         pxr, links
     )
@@ -109,37 +113,35 @@ def _link_ancestor(pxr: Pxr, prim: Prim) -> Any | None:
     return None
 
 
-def _usd_links_of(pxr: Pxr, stage: Stage) -> dict[str, Any]:
-    links: dict[str, Any] = {}
-    for prim in stage.Traverse():
-        if not prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
-            continue
-        links[frame_path(prim)] = prim
-    return links
+def _usd_links_of(pxr: Pxr, frames: dict[str, Prim]) -> dict[str, Any]:
+    return {name: prim for name, prim in frames.items() if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI)}
 
 
 def _world_body(stage: Stage) -> str | None:
     root = stage.GetDefaultPrim()
-    return frame_path(root) if root else None
+    return str(root.GetName()) if root else None
 
 
 def _static_bodies_of(
-    pxr: Pxr, stage: Stage, links: dict[str, Any], joints: list[_Joint]
+    frames: dict[str, Prim], links: dict[str, Any], joints: list[_Joint]
 ) -> dict[str, Any]:
     named = {joint.parent for joint in joints} | {joint.child for joint in joints}
-    wanted = named - set(links)
-    if not wanted:
-        return {}
-    found: dict[str, Any] = {}
+    return {name: prim for name, prim in frames.items() if name in named and name not in links}
+
+
+def _joint_prims(pxr: Pxr, stage: Stage) -> dict[str, Prim]:
+    """Every joint prim, by joint name; two joints with one name raise ValueError."""
+    joints: dict[str, Prim] = {}
     for prim in stage.Traverse():
-        name = frame_path(prim)
-        if name in wanted:
-            found[name] = prim
-    return found
-
-
-def _joint_prims(pxr: Pxr, stage: Stage) -> list[Any]:
-    return [prim for prim in stage.Traverse() if prim.IsA(pxr.UsdPhysics.Joint)]
+        if not prim.IsA(pxr.UsdPhysics.Joint):
+            continue
+        name = joint_name(prim)
+        if name in joints:
+            raise ValueError(
+                f"the joints {joints[name].GetPath()} and {prim.GetPath()} are both named {name!r}"
+            )
+        joints[name] = prim
+    return joints
 
 
 class _Joint:
@@ -156,6 +158,8 @@ class _Joint:
         upper: float | None,
         extras: list[str],
         child_is_frame: bool = False,
+        velocity: float | None = None,
+        effort: float | None = None,
     ) -> None:
         self.name = name
         self.kind = kind
@@ -169,6 +173,8 @@ class _Joint:
         self.extras = extras
         # The child is a frame this reader made up (a joint's anchor), so no prim backs it.
         self.child_is_frame = child_is_frame
+        self.velocity = velocity
+        self.effort = effort
 
 
 def _unused_name(base: str, taken: set[str]) -> str:
@@ -221,7 +227,8 @@ def _joints_of(pxr: Pxr, prim: Prim, taken: set[str], world: str | None = None) 
             pxr, _pose_in(pxr, _body_prim(prim, "physics:body1"), world_prim)
         )
 
-    name = prim.GetDisplayName() or prim.GetName()
+    name = joint_name(prim)
+    velocity, effort = _speed_limits_of(prim)
     anchored = kind != "fixed" and bool(np.any(pos1))
     origin_xyz = child_xyz + child_rotation.apply(pos1) if anchored else child_xyz
     moving = _Joint(
@@ -236,6 +243,8 @@ def _joints_of(pxr: Pxr, prim: Prim, taken: set[str], world: str | None = None) 
         upper=upper,
         extras=_passthrough_of(prim),
         child_is_frame=anchored,
+        velocity=velocity,
+        effort=effort,
     )
     if not anchored:
         return [moving]
@@ -280,7 +289,7 @@ def _body_name(prim: Prim, relationship: str) -> str | None:
     if not body:
         logger.warning(f"{prim.GetPath()} {relationship} points at {targets[0]}, which is absent")
         return None
-    return frame_path(body)
+    return str(body.GetName())
 
 
 def _limits_of(prim: Prim, kind: str) -> tuple[float | None, float | None]:
@@ -302,6 +311,16 @@ def _quat_rotation(quat: Any) -> Rotation:
         return Rotation.identity()
     imaginary = quat.GetImaginary()
     return Rotation.from_quat([imaginary[0], imaginary[1], imaginary[2], quat.GetReal()])
+
+
+def _speed_limits_of(prim: Prim) -> tuple[float | None, float | None]:
+    """The URDF velocity (m/s or rad/s) and effort (N or N*m) limits urdf_to_usd kept, if any."""
+    limits = ((prim.GetCustomData() or {}).get("urdf") or {}).get(LIMIT_KEY.split(":", 1)[1]) or {}
+    velocity, effort = (limits.get(key) for key in ("velocity", "effort"))
+    return (
+        None if velocity is None else float(velocity),
+        None if effort is None else float(effort),
+    )
 
 
 def _passthrough_of(prim: Prim) -> list[str]:
@@ -525,16 +544,16 @@ def _write_joint(root: ET.Element, joint: _Joint) -> None:
     ET.SubElement(element, "origin", xyz=_triple(joint.origin_xyz), rpy=_triple(joint.origin_rpy))
     if joint.kind != "fixed":
         ET.SubElement(element, "axis", xyz=_triple(joint.axis))
+    limit = {}
     if joint.kind not in {"fixed", "continuous"} and joint.lower is not None:
         assert joint.upper is not None
-        ET.SubElement(
-            element,
-            "limit",
-            lower=_number(joint.lower),
-            upper=_number(joint.upper),
-            effort="0",
-            velocity="0",
-        )
+        limit = {"lower": _number(joint.lower), "upper": _number(joint.upper)}
+    if joint.effort is not None:
+        limit["effort"] = _number(joint.effort)
+    if joint.velocity is not None:
+        limit["velocity"] = _number(joint.velocity)
+    if limit:
+        ET.SubElement(element, "limit", limit)
     for fragment in joint.extras:
         _append_fragment(element, fragment)
 
@@ -559,13 +578,13 @@ def _welds_of(
             continue
         xyz, rotation, _ = _decompose(pxr, _pose_in(pxr, prim, ancestor))
         rpy = _rpy_of(rotation)
-        parent = frame_path(ancestor)
-        joint_name = _unused_name(f"{prim.GetName()}_weld", taken)
+        parent = str(ancestor.GetName())
+        weld_name = _unused_name(f"{prim.GetName()}_weld", taken)
         kind = "fixed"
         logger.debug(f"{name} is nested with no joint prim; reading it as welded to {parent}")
         welds.append(
             _Joint(
-                name=joint_name,
+                name=weld_name,
                 kind=kind,
                 parent=parent,
                 child=name,

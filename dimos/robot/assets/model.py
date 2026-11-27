@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 
 class TfEdge(NamedTuple):
-    """One parent -> child edge of a description's tf: frame paths, translation and x, y, z, w rotation."""
+    """One parent -> child edge of a description's tf: frame names, translation and x, y, z, w rotation."""
 
     parent: str
     child: str
@@ -148,9 +148,8 @@ class UsdModel:
                     f"cannot add the frame {name!r}: it is hung off its parent, so its name has no '/'"
                 )
             check_frame_path(name, "the added frame")
-        # A frame is its path (parent/name), so the same name under another parent is another frame.
         merged = {
-            f"{parent}/{name}": (name, parent, xyz, rpy)
+            name: (name, parent, xyz, rpy)
             for name, parent, xyz, rpy in (
                 *self._added_frames,
                 *((name, *spec) for name, spec in frames.items()),
@@ -227,9 +226,16 @@ class UsdModel:
             .joints
         )
 
+    @cached_property
+    def frame_paths(self) -> Mapping[str, str]:
+        """Each frame's prim path in ``usd``, by frame name: ``{"base_link": "/go2/Geometry/base_link"}``."""
+        from dimos.robot.assets.usd_utils.frames import usd_frame_paths
+
+        return usd_frame_paths(self.usd, self.asset_root)
+
     @property
     def root_link(self) -> str:
-        """The root link's frame: its prim path without the leading "/", e.g. ``go2/base``."""
+        """The root link's frame, e.g. ``base_link``."""
         from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
         return usd_root_link(self.usd, self.asset_root)
@@ -243,7 +249,7 @@ class UsdModel:
 
     @property
     def prim_edges(self) -> tuple[JointDescription, ...]:
-        """The frame edges no joint makes, as fixed joints: a frame on its path-parent where its own prim transform puts it."""
+        """The frame edges no joint makes, as fixed joints: a frame on its nearest frame ancestor, where the prims put it."""
         from dimos.robot.assets.usd_utils.frames import usd_frame_edges
 
         # A floating joint's child keeps its rest pose here; what moves it (odometry) is another parent.
@@ -271,7 +277,7 @@ class UsdModel:
         )
 
     def static_transforms(self) -> list[TfEdge]:
-        """The edges that never move: fixed joints, and each frame on its path-parent where no joint holds it."""
+        """The edges that never move: fixed joints, and each frame on its frame ancestor where no joint holds it."""
         return self._edges_at(self._static_joints, {})
 
     def moving_transforms(self, positions: Mapping[str, float] | None = None) -> list[TfEdge]:
@@ -310,9 +316,7 @@ class UsdModel:
         ]
 
     def frame_names(self) -> set[str]:
-        from dimos.robot.assets.usd_utils.frames import usd_frame_names
-
-        return usd_frame_names(self.usd, self.asset_root)
+        return set(self.frame_paths)
 
 
 _USD_SUFFIXES = frozenset({".usd", ".usda"})

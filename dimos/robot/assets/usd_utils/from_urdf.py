@@ -50,6 +50,8 @@ logger = setup_logger()
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 PASSTHROUGH_KEY = "urdf:unconverted"
+# customData holding a joint's URDF velocity and effort limits, which UsdPhysics has no field for.
+LIMIT_KEY = "urdf:limit"
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,7 @@ def urdf_to_usd(model: LoadedRobotModel) -> str:
 
 
 def _robot_name(model: LoadedRobotModel) -> str:
-    """The USD's top prim, which is the first segment of every frame: the URDF robot's name."""
+    """The USD's top prim, the top frame: the URDF robot's name."""
     name = ET.fromstring(model.xml).get("name") or "robot"
     if "/" in name:
         raise ValueError(f"the robot name {name!r} cannot be a USD prim name: it has a '/'")
@@ -226,7 +228,7 @@ def _free_identifier(pxr: Pxr, stage: Stage, parent_path: str, name: str) -> str
 
     Tf.MakeValidIdentifier is not injective -- `arm-1` and `arm_1` both come out `arm_1` -- so
     two joints URDF considers distinct would otherwise define the same prim. A joint's real name
-    is in displayName, which is what every reader here maps back from (links are named by path).
+    is in displayName, which is what every reader here maps back from.
     """
     identifier = prim_identifier(pxr, name)
     tries = itertools.chain([identifier], (f"{identifier}_{n}" for n in itertools.count(2)))
@@ -376,6 +378,13 @@ def _set_joint_frames(pxr: Pxr, prim: Prim, joint: JointDescription) -> None:
 
 
 def _set_joint_limits(prim: Prim, joint: JointDescription) -> None:
+    kept = {
+        key: float(value)
+        for key, value in (("velocity", joint.velocity), ("effort", joint.effort))
+        if value is not None
+    }
+    if kept:
+        prim.GetPrim().SetCustomDataByKey(LIMIT_KEY, kept)
     if joint.type == "continuous" or joint.lower is None or joint.upper is None:
         return
     scale = 180.0 / np.pi if joint.type in {"revolute", "continuous"} else 1.0
