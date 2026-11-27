@@ -56,6 +56,7 @@ from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.testing import PLAYBACK_TIMEOUT
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -66,8 +67,6 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 from dimos.teleop.webxr.module import WebXRTeleopModule
-
-_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
 
 pytestmark = pytest.mark.self_hosted
 
@@ -637,7 +636,7 @@ def test_native_json_events_replay_to_the_live_quest_hud(
         cleanup.callback(subscription)
         replay.start()
         replay.on_system_modules_ready([])
-        assert both.wait(_TIMEOUT)
+        assert both.wait(PLAYBACK_TIMEOUT)
         assert [(p["ts"], p["last_event"]) for p in received] == [(12.0, "start"), (13.0, "save")]
         assert received[-1]["type"] == "episode_status"
         assert received[-1]["episodes_saved"] == 1

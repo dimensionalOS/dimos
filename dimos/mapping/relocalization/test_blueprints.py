@@ -29,11 +29,10 @@ from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
 from dimos.memory.replay import Playback, ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.testing import HANDOFF_TIMEOUT, PLAYBACK_TIMEOUT
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-
-_TIMEOUT = 5.0  # seconds a test waits on the replay before failing
 
 pytestmark = [
     pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning"),
@@ -97,7 +96,7 @@ def test_concurrent_stop_keeps_store_open_until_decode_finishes(
         if calls == 1:  # the frame start() buffers
             return decode(self, obs)
         entered.set()
-        assert release.wait(_TIMEOUT), "decode was not released"
+        assert release.wait(HANDOFF_TIMEOUT), "decode was not released"
         value = decode(self, obs)
         decoded.set()
         return value
@@ -109,14 +108,14 @@ def test_concurrent_stop_keeps_store_open_until_decode_finishes(
         try:
             player.start()
             store = replay.spy_return.store
-            assert entered.wait(_TIMEOUT), "the reader did not decode ahead of the buffer"
+            assert entered.wait(HANDOFF_TIMEOUT), "the reader did not decode ahead of the buffer"
             stops = [workers.submit(player.stop) for _ in range(2)]
             assert not disposing.wait(0.1), "stop disposed before the in-flight decode finished"
             assert store.stream("tf").count() == 3
         finally:
             release.set()
         for stop in stops:
-            stop.result(timeout=_TIMEOUT)
+            stop.result(timeout=HANDOFF_TIMEOUT)
 
     assert decoded.is_set()
     assert disposing.is_set()
@@ -139,7 +138,7 @@ def test_player_can_stop_from_replay_callback(
     with Disposable(player.tf.subscribe(stop_on_frame)):
         player.start()
         player.on_system_modules_ready([])
-        assert stopped.wait(_TIMEOUT)
+        assert stopped.wait(PLAYBACK_TIMEOUT)
 
     assert len(received) == 1
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
@@ -183,5 +182,5 @@ def test_player_logs_source_duration_and_completion(player, mocker):
         loop=False,
     )
     player.on_system_modules_ready([])
-    assert finished.wait(_TIMEOUT)
+    assert finished.wait(PLAYBACK_TIMEOUT)
     assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=path)]
