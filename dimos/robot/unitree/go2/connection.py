@@ -57,7 +57,7 @@ from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.unitree.config import connection_type, require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.simulation.dimsim.config import DimSimConfig
+from dimos.simulation.dimsim.config import DIMSIM_DIR, DimSimConfig
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -156,15 +156,17 @@ class ConnectionConfig(JointConnectionConfig):
         self.validate_ip()
         mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
         # make_connection gives these offline IP aliases precedence over simulation.
-        if (
-            mode == "dimsim"
-            and self.ip not in ("fake", "mock", "replay", "mujoco")
-            and self.g.transport != "lcm"
-        ):
-            raise ValueError(
-                "DimSim publishes over LCM only; the transport is "
-                f"{self.g.transport!r}. Use --transport lcm with --simulation dimsim."
-            )
+        if mode == "dimsim" and self.ip not in ("fake", "mock", "replay", "mujoco"):
+            if not DIMSIM_DIR.is_dir():
+                raise ValueError(
+                    "--simulation dimsim needs a DimOS source checkout. An installed "
+                    f"package does not include DimSim: {DIMSIM_DIR} is missing."
+                )
+            if self.g.transport != "lcm":
+                raise ValueError(
+                    "DimSim publishes over LCM only; the transport is "
+                    f"{self.g.transport!r}. Use --transport lcm with --simulation dimsim."
+                )
         return self
 
     def validate_ip(self) -> None:

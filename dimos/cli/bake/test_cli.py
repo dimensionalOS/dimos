@@ -46,6 +46,17 @@ def test_list_prints_the_registry() -> None:
     assert "mls_planner" in result.output
 
 
+def test_an_installed_package_says_bake_needs_a_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "DIMOS_PROJECT_ROOT", tmp_path)
+
+    result = CliRunner().invoke(app(), ["--list"])
+
+    assert result.exit_code == 1
+    assert "needs a DimOS source checkout" in result.output
+
+
 def test_a_bake_error_exits_nonzero() -> None:
     result = CliRunner().invoke(app(), ["ray_tracing", "-o", "bad.name"])
     assert result.exit_code == 1

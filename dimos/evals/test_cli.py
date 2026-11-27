@@ -314,3 +314,20 @@ def test_run_cli_exit_status(
     assert [line.split()[0] for line in lines[: len(statuses)]] == statuses
     assert lines[-1].endswith(str(run_dir)), "the summary is printed before the exit status"
     assert json.loads((run_dir / "summary.json").read_text())["n"] == len(statuses)
+
+
+def test_docker_says_it_needs_a_checkout_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: Any
+) -> None:
+    # An installed package: there is no docker/evals/compose.yaml next to the code.
+    monkeypatch.setattr("dimos.constants.DIMOS_PROJECT_ROOT", tmp_path)
+    docker = mocker.patch.object(cli.subprocess, "run")
+
+    result = CliRunner().invoke(
+        app, ["evals", "run", SUITE_MODULE, "--agent", AGENT_MODULE, "--docker"]
+    )
+
+    assert result.exit_code == 2
+    assert "needs a DimOS source checkout" in result.output
+    assert list(tmp_path.iterdir()) == []
+    docker.assert_not_called()

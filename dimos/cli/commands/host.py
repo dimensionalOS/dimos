@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
 
+from dimos.constants import IS_CHECKOUT
 from dimos.hosted.machine import load_host_id
 from dimos.hosted.tags import format_tags
 from dimos.utils.logging_config import setup_logger
@@ -243,7 +244,8 @@ def start(
         host_id=load_host_id(),
         revision=machine.code_revision(),
         tags=auto_tags(),
-        sync_checkout=machine.sync_checkout,
+        # An installed package has no checkout to sync. It is updated by a new install.
+        sync_checkout=machine.sync_checkout if IS_CHECKOUT else None,
     )
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):

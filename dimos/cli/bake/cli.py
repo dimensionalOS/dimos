@@ -25,7 +25,7 @@ from typing import get_type_hints
 import typer
 
 from dimos.cli.bake.build import BUILDERS, build_host, install
-from dimos.cli.bake.codegen import check_host_name, generate_crate
+from dimos.cli.bake.codegen import RUNTIME_CRATE, check_host_name, generate_crate
 from dimos.cli.bake.discovery import (
     RegisteredModule,
     discover_modules,
@@ -34,6 +34,7 @@ from dimos.cli.bake.discovery import (
 )
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Graph, build_graph, parse_remap, render
+from dimos.constants import DIMOS_PROJECT_ROOT
 
 
 def default_config(module: RegisteredModule) -> dict[str, object]:
@@ -94,6 +95,12 @@ def bake(
 ) -> None:
     """Compose rust native modules into a single host binary."""
     try:
+        runtime_crate = DIMOS_PROJECT_ROOT / RUNTIME_CRATE
+        if not runtime_crate.is_dir():
+            raise BakeError(
+                "dimos bake needs a DimOS source checkout. An installed package does not "
+                f"include the Rust sources: {runtime_crate} is missing."
+            )
         registry = discover_modules()
         if list_modules:
             typer.echo(render_registry(registry))

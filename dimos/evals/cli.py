@@ -209,6 +209,12 @@ def _run_in_docker(
     name = f"evals-{stamp}-{secrets.token_hex(2)}-{suite.rsplit('.', 1)[-1]}"
     # COMPOSE_FILE set in the environment (e.g. to add compose.gpu.yaml) wins.
     compose = DIMOS_PROJECT_ROOT / "docker" / "evals" / "compose.yaml"
+    if not compose.is_file():
+        raise typer.BadParameter(
+            "it needs a DimOS source checkout. An installed package does not include "
+            f"the worker image: {compose} is missing.",
+            param_hint="--docker",
+        )
     files = [] if os.environ.get("COMPOSE_FILE") else ["-f", str(compose)]
     command = ["docker", "compose", *files, "run", "--rm", "-d", "--name", name, "worker"]
     command += ["dimos", "evals", "run", *argv]

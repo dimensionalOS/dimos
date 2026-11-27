@@ -204,6 +204,23 @@ def test_dimsim_rejects_zenoh_before_starting_resources(headless, monkeypatch, m
     start.assert_not_called()
 
 
+def test_dimsim_says_it_needs_a_checkout_before_starting_resources(
+    tmp_path, monkeypatch, mocker
+) -> None:
+    for field, value in {"simulation": "dimsim", "replay": False, "transport": "lcm"}.items():
+        monkeypatch.setattr(global_config, field, value)
+    # An installed package: the wheel has no misc/DimSim.
+    monkeypatch.setattr(go2_conn, "DIMSIM_DIR", tmp_path / "misc" / "DimSim")
+    materialize = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+    start = mocker.patch.object(ModuleCoordinator, "start")
+
+    with pytest.raises(BlueprintConfigError, match="dimsim needs a DimOS source checkout"):
+        ModuleCoordinator.build(GO2Connection.blueprint())
+
+    materialize.assert_not_called()
+    start.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "overrides",
     [{"transport": "lcm"}, {"transport": "zenoh", "replay": True}],
