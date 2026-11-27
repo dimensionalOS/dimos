@@ -76,10 +76,11 @@ stored filename or stem, original filename or stem, timestamp-and-ID tag, or
 upload ID prefix. Downloads store only the first eight ID characters; use that
 stored ID or a shorter unique prefix, not the full upload ID.
 
-Lookup checks cwd and the project root, then data/LFS, before searching the
-default recording and download directories. An installed package may need to
-clone the data repository before finding an existing local recording, and a
-network failure can prevent that fallback. If recording or download aliases
+Lookup checks cwd and the checkout (`~/.local/state/dimos/` for an installed
+package), then data/LFS, before searching the default recording and download
+directories. An installed package may need to clone the data repository before
+finding an existing local recording, and a network failure can prevent that
+fallback. If recording or download aliases
 match multiple files, the error lists every candidate; use an explicit path to
 choose one. Recordings or downloads saved under a custom root require a path.
 

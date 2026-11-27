@@ -116,6 +116,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
   - Put deps in the right extra group, and include new groups in `all` where expected.
   - Comment non-obvious deps (e.g. why `bitsandbytes` is needed).
 * Don't write state/output files to the repo root or `data/` (that's for static LFS data). Use a state dir (`STATE_DIR`, `~/.local/state/dimos`, XDG). Runtime files that must live in the tree use the `.ignore.*` convention so they're git-ignored.
+* Never write under `DIMOS_PROJECT_ROOT`: an installed package cannot write next to its code. Resolve a relative output path from a user against `WRITE_ROOT` (the checkout, or `STATE_DIR` for an install).
 * Put project scripts in `pyproject.toml` `[project.scripts]` instead of adding to `bin/`.
 
 ## Resource lifecycle and cleanup

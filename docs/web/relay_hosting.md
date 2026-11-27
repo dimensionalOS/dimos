@@ -65,7 +65,7 @@ The first build takes a few minutes: Deno installs the web dependencies and buil
 
 ## Robot
 
-The robot needs the key bound to its id. A plain robot blueprint takes it from the environment or the `.env` file of the checkout it runs from (the `--relay-key` flag exists but shows in the process list). A blueprint with `cockpit(...)` has a generated bridge module name, so `RELAYBRIDGEMODULE__RELAY_KEY` does not reach it: give it `--relay-key` on the command line, as in [LAN without a domain](#lan-without-a-domain). The robot-side flags are listed on the [Bridge](/docs/web/bridge.md#robot-side-options) page:
+The robot needs the key bound to its id. A plain robot blueprint takes it from the environment, or from the `.env` file of the checkout it runs from or of the working directory (the `--relay-key` flag exists but shows in the process list). A blueprint with `cockpit(...)` has a generated bridge module name, so `RELAYBRIDGEMODULE__RELAY_KEY` does not reach it: give it `--relay-key` on the command line, as in [LAN without a domain](#lan-without-a-domain). The robot-side flags are listed on the [Bridge](/docs/web/bridge.md#robot-side-options) page:
 
 ```bash
 RELAYBRIDGEMODULE__RELAY_KEY=<key> dimos run unitree-go2 --relay-url https://dimos-relay.example.com --robot-id go2-lab

@@ -14,7 +14,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 |------|------|---------|-------------|
 | `--robot-ip` | TEXT | `None` | Robot IP address |
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
-| `--simulation` | TEXT | empty | Select simulation (`mujoco` or `dimsim`); a bare flag selects MuJoCo |
+| `--simulation` | TEXT | empty | Select simulation (`mujoco` or `dimsim`); a bare flag selects MuJoCo. `dimsim` needs a source checkout |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_short` | Recording to replay: a dataset name, or a `.db` or `.mcap` path |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
@@ -32,6 +32,8 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 ### Configuration Precedence
 
 Values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Global environment variables use uppercase field names, such as `ROBOT_IPS` (transport also accepts `DIMOS_TRANSPORT`).
+
+`dimos` reads two `.env` files: the one of the checkout it runs from, then the one in the working directory. An installed package has no checkout, so put its `.env` in the folder you start `dimos` from. A variable that is already set is kept, so the environment wins over both files and the checkout's file wins over the working directory's.
 
 Module settings go after the blueprint names, for example `dimos run unitree-go2 --go2connection.replay-exit true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
 
@@ -267,6 +269,8 @@ dimos restart [--force]
 | `--force`, `-f` | Force kill before restarting |
 
 Reads saved CLI args from the run registry, stops the current instance, then re-runs with the same arguments.
+
+The new instance runs on the Python that runs `dimos restart`, not on the stored program path. So a restart also works after dimOS was installed again in another folder: run `restart` from the new install.
 
 ### `dimos log`
 
@@ -519,4 +523,5 @@ dimos rerun-bridge --help
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
 | `logs/<run-id>/main.jsonl` (Git checkout) or `~/.local/state/dimos/logs/<run-id>/main.jsonl` (installed package) | Structured logs (main process + all workers) |
-| `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |
+| `.env` in the checkout and in the working directory | Local config overrides (`ROBOT_IP=192.168.123.161`) |
+| The checkout, or `~/.local/state/dimos/` (installed package) | Files given by a relative path or a bare name: a recorder's `db_path`, a map saved with `map_file`. Also `assets/teleop_certs/` and the SpatialMemory database in `assets/output/` |
