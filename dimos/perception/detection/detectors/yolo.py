@@ -14,8 +14,12 @@
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.detectors.ultralytics_utils import (
+    cache_path,
+    detections_from_results,
+    import_ultralytics,
+)
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
@@ -25,17 +29,10 @@ logger = setup_logger()
 class Yolo2DDetector(Detector):
     def __init__(
         self,
-        model_path: str = "models_yolo",
         model_name: str = "yolo11n.pt",
         device: str | None = None,
     ) -> None:
-        # ~0.5s: deferred to keep module import (test collection) light.
-        from ultralytics import YOLO  # type: ignore[attr-defined]
-
-        self.model = YOLO(
-            get_data(model_path) / model_name,
-            task="detect",
-        )
+        self.model = import_ultralytics().YOLO(cache_path(model_name), task="detect")
 
         if device:
             self.device = device
@@ -67,7 +64,7 @@ class Yolo2DDetector(Detector):
             verbose=False,
         )
 
-        return ImageDetections2D.from_ultralytics_result(image, results)
+        return detections_from_results(image, results)
 
     def stop(self) -> None:
         """

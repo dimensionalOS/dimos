@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing_extensions import Self
-    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -208,56 +207,6 @@ class Detection2DBBox(Detection2D):
                 return False
 
         return True
-
-    @classmethod
-    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> Detection2DBBox:
-        """Create Detection2DBBox from ultralytics Results object.
-
-        Args:
-            result: Ultralytics Results object containing detection data
-            idx: Index of the detection in the results
-            image: Source image
-
-        Returns:
-            Detection2DBBox instance
-        """
-        if result.boxes is None:
-            raise ValueError("Result has no boxes")
-
-        # Extract bounding box coordinates
-        bbox_array = result.boxes.xyxy[idx].cpu().numpy()
-        bbox: Bbox = (
-            float(bbox_array[0]),
-            float(bbox_array[1]),
-            float(bbox_array[2]),
-            float(bbox_array[3]),
-        )
-
-        # Extract confidence
-        confidence = float(result.boxes.conf[idx].cpu())
-
-        # Extract class ID and name
-        class_id = int(result.boxes.cls[idx].cpu())
-        name = (
-            result.names.get(class_id, f"class_{class_id}")
-            if hasattr(result, "names")
-            else f"class_{class_id}"
-        )
-
-        # Extract track ID if available
-        track_id = -1
-        if hasattr(result.boxes, "id") and result.boxes.id is not None:
-            track_id = int(result.boxes.id[idx].cpu())
-
-        return cls(
-            bbox=bbox,
-            track_id=track_id,
-            class_id=class_id,
-            confidence=confidence,
-            name=name,
-            ts=image.ts,
-            image=image,
-        )
 
     def get_bbox_center(self) -> CenteredBbox:
         x1, y1, x2, y2 = self.bbox

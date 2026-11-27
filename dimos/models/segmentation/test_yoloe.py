@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
+
+# Ultralytics is optional (the yolo extra).
+pytest.importorskip("ultralytics")
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.perception.detection.detectors.ultralytics_utils import cache_path
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
@@ -120,10 +124,6 @@ def test_missing_yoloe_mask_drops_box_instead_of_using_rectangle() -> None:
 
 
 def test_visual_box_prompts_use_segmentation_predictor(mocker: Any) -> None:
-    get_data = mocker.patch(
-        "dimos.perception.detection.detectors.yoloe.get_data",
-        return_value=Path("/models"),
-    )
     model_factory = mocker.patch("ultralytics.YOLOE")
     model = model_factory.return_value
     model.predict.return_value = []
@@ -134,8 +134,7 @@ def test_visual_box_prompts_use_segmentation_predictor(mocker: Any) -> None:
     result = segmenter.segment(ImageDetections2D(image, [detection]))
 
     assert result.detections == []
-    get_data.assert_called_once_with("models_yoloe")
-    model_factory.assert_called_once_with(Path("/models/yoloe-11s-seg.pt"))
+    model_factory.assert_called_once_with(cache_path("yoloe-11s-seg.pt"))
     kwargs = dict(model.predict.call_args.kwargs)
     np.testing.assert_array_equal(kwargs.pop("source"), image.to_opencv())
     visual_prompts = kwargs.pop("visual_prompts")

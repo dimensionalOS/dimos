@@ -21,9 +21,9 @@ from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
-from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.detectors.ultralytics_utils import detections_from_results
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -51,6 +51,9 @@ class _YoloeVisualPromptSegmentationDetector(Yoloe2DDetector):
     """YOLO-E box prompting pinned to its mask-capable predictor."""
 
     def predict_image(self, image: Image) -> ImageDetections2D:
+        # Not at the top of the file: Ultralytics is optional (the yolo extra).
+        from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+
         # Ultralytics 8.4 defaults visual prompts to its detection predictor,
         # even for segmentation checkpoints. That predictor cannot postprocess
         # the segmentation head's tuple output.
@@ -66,7 +69,7 @@ class _YoloeVisualPromptSegmentationDetector(Yoloe2DDetector):
                 visual_prompts=self._visual_prompts,  # type: ignore[arg-type]
                 predictor=YOLOEVPSegPredictor,
             )
-        detections = ImageDetections2D.from_ultralytics_result(image, results)
+        detections = detections_from_results(image, results)
         return self._apply_filters(image, detections)
 
 

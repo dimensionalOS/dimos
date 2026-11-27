@@ -22,8 +22,12 @@ import torch
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.detectors.ultralytics_utils import (
+    cache_path,
+    detections_from_results,
+    import_ultralytics,
+)
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -39,7 +43,6 @@ class YoloePromptMode(Enum):
 class Yoloe2DDetector(Detector):
     def __init__(
         self,
-        model_path: str = "models_yoloe",
         model_name: str | None = None,
         device: str | None = None,
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
@@ -51,24 +54,21 @@ class Yoloe2DDetector(Detector):
         Initialize YOLO-E 2D detector.
 
         Args:
-            model_path: Path to model directory (fetched via get_data from LFS).
-            model_name: Model filename. Defaults based on prompt_mode.
+            model_name: Model filename. Defaults based on prompt_mode. Ultralytics
+                downloads it when it is missing.
             device: Device to run inference on ('cuda', 'cpu', or None for auto).
             prompt_mode: LRPC for prompt-free detection, PROMPT for text/visual prompting.
             exclude_class_ids: Class IDs to filter out from results (pass [] to disable).
             max_area_ratio: Maximum bbox area ratio (0-1) relative to image.
             conf: Confidence threshold passed to Ultralytics inference.
         """
-        # ~0.5s: deferred to keep module import (test collection) light.
-        from ultralytics import YOLOE  # type: ignore[attr-defined]
-
         if model_name is None:
             if prompt_mode == YoloePromptMode.LRPC:
                 model_name = "yoloe-11s-seg-pf.pt"
             else:
                 model_name = "yoloe-11s-seg.pt"
 
-        self.model = YOLOE(get_data(model_path) / model_name)
+        self.model = import_ultralytics().YOLOE(cache_path(model_name))
         self.prompt_mode = prompt_mode
         self._text_prompts: tuple[str, ...] | None = None
         self._visual_prompts: dict[str, NDArray[Any]] | None = None
@@ -160,7 +160,7 @@ class Yoloe2DDetector(Detector):
             infer = self.model.track if track else self.model.predict
             results = infer(**kwargs)  # type: ignore[arg-type]
 
-        detections = ImageDetections2D.from_ultralytics_result(image, results)
+        detections = detections_from_results(image, results)
         return self._apply_filters(image, detections)
 
     def _apply_filters(
