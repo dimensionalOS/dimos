@@ -228,6 +228,10 @@ def test_fit_box_keeps_even_sides_and_never_upscales() -> None:
 async def test_one_encode_feeds_every_peer_and_a_joiner_starts_from_an_idr(
     harness: Harness, mocker: MockerFixture
 ) -> None:
+    # Freeze only the video clock, leaving asyncio's clock real. Otherwise an
+    # encode that CI load stalls past the deadline is dropped as stale.
+    clock = mocker.patch.object(topic_video, "time", wraps=time)
+    clock.monotonic.return_value = 100.0
     encode = mocker.spy(SharedEncoder, "encode")
     first = await harness.offer("r1")
     second = await harness.offer("r2")
