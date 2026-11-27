@@ -259,7 +259,7 @@ class WorldBeliefModule(Module):
 
         rec_path = self._recording_path()
 
-        with SqliteStore(path=rec_path, must_exist=True) as read_store:
+        with SqliteStore(path=rec_path, read_only=True) as read_store:
             with self._engine() as (scanner, belief):
                 vocabulary = tuple(prompts)
                 active = getattr(self, "_active_scan_prompts", None)
@@ -336,6 +336,7 @@ class WorldBeliefModule(Module):
 
         from dimos.experimental.world_belief.recall import recall as _recall
         from dimos.memory.store.sqlite import SqliteStore
+        from dimos.memory.utils.sqlite import RecordingRegistryError
 
         text = text.strip()
         if not text:
@@ -345,7 +346,7 @@ class WorldBeliefModule(Module):
 
         rec_path = self._recording_path()
         with (
-            SqliteStore(path=rec_path, must_exist=True) as read_store,
+            SqliteStore(path=rec_path, read_only=True) as read_store,
             SqliteStore(path=str(self.config.history_path)) as hist_store,
         ):
             with self._engine() as (scanner, _belief):
@@ -358,9 +359,9 @@ class WorldBeliefModule(Module):
                         self._index_recall_frames(read_store, hist_store, rec_path)
                         continue
                     try:
-                        with SqliteStore(path=recording, must_exist=True) as old_store:
+                        with SqliteStore(path=recording, read_only=True) as old_store:
                             self._index_recall_frames(old_store, hist_store, recording)
-                    except (FileNotFoundError, OSError) as exc:
+                    except (FileNotFoundError, OSError, RecordingRegistryError) as exc:
                         logger.warning("recall skipped recording %s: %s", recording, exc)
                 hit, obj_center = _recall(
                     hist_store,
@@ -373,7 +374,7 @@ class WorldBeliefModule(Module):
                     open_recording=lambda rec: (
                         nullcontext(read_store)
                         if rec == rec_path
-                        else SqliteStore(path=rec, must_exist=True)
+                        else SqliteStore(path=rec, read_only=True)
                         if Path(rec).exists()
                         else None
                     ),

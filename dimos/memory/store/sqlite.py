@@ -168,11 +168,14 @@ class SqliteStore(Store):
                     )
             return self._assemble_backend(name, stored)
 
+        if self.config.read_only:
+            raise sqlite3.OperationalError(
+                f"No stream {name!r} in a readonly recording. Available: {self.list_streams()}"
+            )
+
         # Create path: inject conn-shared defaults, then delegate to base
         if payload_type is None:
             raise TypeError(f"Stream {name!r} does not exist yet — payload_type is required")
-        if self.config.read_only:
-            raise sqlite3.OperationalError(f"Cannot create stream {name!r} in a readonly recording")
 
         backend_conn = self._open_connection()
 
