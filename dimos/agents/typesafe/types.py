@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 from typing_extensions import NotRequired
@@ -66,6 +67,14 @@ class NoulAnswer(TypedDict):
 
 Answer = ChoiceAnswer | ScoreAnswer | NoulAnswer
 Answers = dict[str, Answer]
+
+
+@dataclass(frozen=True)
+class SystemOneRequest:
+    """One System One call: the state and the questions asked about it."""
+
+    state: object
+    questions: Mapping[str, Question]
 
 
 def choice(instructions: Text, criteria: Mapping[str, Text | None]) -> ChoiceQuestion:

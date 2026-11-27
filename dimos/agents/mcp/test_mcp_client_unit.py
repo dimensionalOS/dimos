@@ -16,7 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty
-from threading import RLock, Thread
+from threading import Event, RLock, Thread
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, create_autospec, patch
@@ -27,7 +28,7 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
-from dimos.agents.agent import Agent
+from dimos.agents.agent import Agent, _append_image_to_history
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.testing.mock_model import MockModel
 from dimos.utils.testing.waiting import wait_until
@@ -180,7 +181,7 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> N
     greet_tool = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
 
     reply = greet_tool.func(name="Alice")
-    msg: BaseMessage = mcp_client._message_queue.get_nowait()
+    msg: BaseMessage = mcp_client._artifacts.pop()
 
     assert reply.startswith("Tool call started with UUID: ")
     uuid_ = reply.removeprefix("Tool call started with UUID: ").split(".")[0]
@@ -511,3 +512,353 @@ def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
     assert isinstance(result, ToolMessage)
     assert (result.tool_call_id, result.status) == ("c1", "error")
     assert note.content == "This turn failed with ConnectionError: MCP server unreachable"
+
+
+class _AnswersGraph:
+    """Fake agent graph that streams `turn` for every message, then "turn N" once it runs out."""
+
+    def __init__(self, *turn: BaseMessage) -> None:
+        self.turn = turn
+        self.turns = 0
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        self.turns += 1
+        for message in self.turn or (AIMessage(content=f"turn {self.turns}"),):
+            yield {"model": {"messages": [message]}}
+
+
+@pytest.fixture
+def running_agent(
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> Agent:
+    """An agent whose message loop runs, as it does once its blueprint has started."""
+    monkeypatch.setattr(mcp_client, "_thread", agent_thread)
+    return mcp_client
+
+
+def test_infer_returns_the_final_answer_of_its_turn(
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _AnswersGraph(
+        AIMessage(content="", tool_calls=[_call("add", "c1", x=1, y=2)]),
+        ToolMessage(content="3", tool_call_id="c1"),
+        AIMessage(content=[{"type": "text", "text": "It is "}, {"type": "text", "text": "3."}]),
+    )
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+
+    assert mcp_client.infer(HumanMessage("what is 1 + 2?")).text == "It is 3."
+    assert mcp_client._history[0].content == "what is 1 + 2?"
+
+
+def test_infer_raises_when_its_turn_fails(
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_client, "_state_graph", _FailsOnceGraph([]))
+
+    with pytest.raises(RuntimeError, match="TimeoutError: LLM API timed out"):
+        mcp_client.infer(HumanMessage("first"))
+    assert mcp_client.infer(HumanMessage("second")).text == "done"
+
+
+def test_infer_needs_a_mcp_client(mcp_client: Agent) -> None:
+    with pytest.raises(RuntimeError, match="not running"):
+        mcp_client.infer(HumanMessage("too early"))
+
+
+class _EchoGraph:
+    """Answers each message with its own text, after a short pause."""
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        question = state["messages"][-1].content
+        time.sleep(0.002)
+        yield {"model": {"messages": [AIMessage(content=f"answer to {question}")]}}
+
+
+def test_infer_under_load_gives_every_caller_its_own_answer(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent infer() calls with stream messages arriving among them."""
+    monkeypatch.setattr(running_agent, "_state_graph", _EchoGraph())
+    answers: dict[str, str] = {}
+
+    def ask(question: str) -> None:
+        answers[question] = str(running_agent.infer(HumanMessage(question)).text)
+
+    questions = [f"q{i}" for i in range(20)]
+    callers = [Thread(target=ask, args=(question,)) for question in questions]
+    same = HumanMessage("same object")
+    callers += [Thread(target=running_agent.infer, args=(same,)) for _ in range(5)]
+    for i, caller in enumerate(callers):
+        caller.start()
+        running_agent.add_message(HumanMessage(f"stream {i}"))
+    for caller in callers:
+        caller.join(timeout=30)
+
+    assert answers == {question: f"answer to {question}" for question in questions}
+    assert not any(caller.is_alive() for caller in callers)
+    wait_until(lambda: len(running_agent._history) == 100, timeout=5, interval=0.01)
+    # Turns never interleave: every question is followed by its own answer.
+    history = [str(message.content) for message in running_agent._history]
+    assert history[1::2] == [f"answer to {question}" for question in history[::2]]
+
+
+class _HeldGraph(_AnswersGraph):
+    """Starts a turn, then holds it until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        self.started.set()
+        self.release.wait(timeout=5)
+        yield from super().stream(state, stream_mode)
+
+
+def test_infer_called_during_a_turn_raises_once_the_agent_stops(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _HeldGraph()
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
+    errors: list[BaseException] = []
+
+    def ask() -> None:
+        try:
+            running_agent.infer(HumanMessage("never answered"))
+        except RuntimeError as error:
+            errors.append(error)
+
+    running_agent.add_message(HumanMessage("a turn from the stream"))
+    assert graph.started.wait(timeout=5)
+    caller = Thread(target=ask)
+    caller.start()
+    stopper = Thread(target=running_agent.stop)
+    stopper.start()
+    wait_until(running_agent._stop_event.is_set, timeout=5, interval=0.01)
+    graph.release.set()
+    caller.join(timeout=5)
+    stopper.join(timeout=5)
+
+    assert not caller.is_alive() and not stopper.is_alive()
+    assert len(errors) == 1 and "not running" in str(errors[0])
+    assert len(running_agent._history) == 2
+
+
+def _image(label: str) -> dict[str, Any]:
+    return {"type": "image_url", "image_url": {"url": label}}
+
+
+def _blocks(message: BaseMessage) -> Any:
+    """The content blocks of an image message: [text, image]."""
+    return message.content
+
+
+class _CameraGraph:
+    """A model whose tools return images.
+
+    A question makes each tool in `looks[question]` return its images; the model then
+    answers "pending". Each image arrives as its own message and is answered "saw <label>".
+    An image in `chain` makes one more tool call, and one in `broken` fails its model call.
+    """
+
+    def __init__(
+        self,
+        agent: Agent,
+        looks: dict[str, list[tuple[str, list[str]]]],
+        chain: dict[str, str] | None = None,
+        broken: tuple[str, ...] = (),
+    ) -> None:
+        self.agent, self.looks, self.chain, self.broken = agent, looks, chain or {}, broken
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        last = state["messages"][-1]
+        if TOOL_ORIGIN_KEY not in last.additional_kwargs:
+            for tool, labels in self.looks.get(str(last.content), []):
+                for label in labels:
+                    _append_image_to_history(self.agent, tool, label, _image(label))
+            yield {"model": {"messages": [AIMessage(content="pending")]}}
+            return
+        label = _blocks(last)[1]["image_url"]["url"]
+        if label in self.broken:
+            raise RuntimeError(f"cannot read {label}")
+        if label in self.chain:
+            _append_image_to_history(
+                self.agent, "zoom", self.chain[label], _image(self.chain[label])
+            )
+        yield {"model": {"messages": [AIMessage(content=f"saw {label}")]}}
+
+
+def _transcript(agent: Agent) -> list[str]:
+    """The history as short strings: questions, answers, and "<tool>:<label>" for images."""
+    lines = []
+    for message in agent._history:
+        if TOOL_ORIGIN_KEY in message.additional_kwargs:
+            url = _blocks(message)[1]["image_url"]["url"]
+            lines.append(f"{message.additional_kwargs[TOOL_ORIGIN_KEY]}:{url}")
+        else:
+            lines.append(str(message.content))
+    return lines
+
+
+@pytest.mark.parametrize(
+    "looks, chain, answer, transcript",
+    [
+        pytest.param(
+            [("look", ["a"])], {}, "saw a", ["q", "pending", "look:a", "saw a"], id="one image"
+        ),
+        pytest.param(
+            [("look", ["a", "b", "c"])],
+            {},
+            "saw c",
+            ["q", "pending", "look:a", "saw a", "look:b", "saw b", "look:c", "saw c"],
+            id="one tool, three images",
+        ),
+        pytest.param(
+            [("left", ["a"]), ("right", ["b"])],
+            {},
+            "saw b",
+            ["q", "pending", "left:a", "saw a", "right:b", "saw b"],
+            id="two tools in one turn",
+        ),
+        pytest.param(
+            [("look", ["a", "b"])],
+            {"a": "a2"},
+            "saw a2",
+            ["q", "pending", "look:a", "saw a", "look:b", "saw b", "zoom:a2", "saw a2"],
+            id="an image whose answer asks for another image",
+        ),
+        pytest.param([], {}, "pending", ["q", "pending"], id="no image"),
+    ],
+)
+def test_infer_answers_after_every_image_its_tools_returned(
+    mcp_client: Agent,
+    monkeypatch: pytest.MonkeyPatch,
+    looks: list[tuple[str, list[str]]],
+    chain: dict[str, str],
+    answer: str,
+    transcript: list[str],
+) -> None:
+    monkeypatch.setattr(mcp_client, "_state_graph", _CameraGraph(mcp_client, {"q": looks}, chain))
+
+    assert mcp_client.infer(HumanMessage("q")).content == answer
+    assert _transcript(mcp_client) == transcript
+    assert mcp_client._message_queue.empty() and mcp_client._artifacts == []
+
+
+def test_infer_raises_when_any_image_of_its_turn_fails(
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _CameraGraph(mcp_client, {"q": [("look", ["a", "b"])]}, broken=("a",))
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+
+    with pytest.raises(RuntimeError, match="cannot read a"):
+        mcp_client.infer(HumanMessage("q"))
+    assert _transcript(mcp_client)[-2:] == ["look:b", "saw b"], "b was still shown"
+    assert mcp_client._artifacts == []
+
+    graph.broken = ()
+    assert mcp_client.infer(HumanMessage("q")).content == "saw b"
+
+
+def test_infer_raises_when_the_turn_has_no_answer(
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Silent:
+        def stream(self, state: Any, stream_mode: str) -> Iterator[dict[str, Any]]:
+            return iter(())
+
+    monkeypatch.setattr(mcp_client, "_state_graph", _Silent())
+    with pytest.raises(RuntimeError, match="no answer"):
+        mcp_client.infer(HumanMessage("q"))
+
+
+def test_concurrent_infer_calls_each_see_their_own_images(
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    looks = {f"q{i}": [("look", [f"a{i}", f"b{i}"])] for i in range(10)}
+    monkeypatch.setattr(mcp_client, "_state_graph", _CameraGraph(mcp_client, looks))
+    answers: dict[str, str] = {}
+
+    def ask(question: str) -> None:
+        answers[question] = str(mcp_client.infer(HumanMessage(question)).content)
+
+    callers = [Thread(target=ask, args=(question,)) for question in looks]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=10)
+
+    assert answers == {f"q{i}": f"saw b{i}" for i in range(10)}
+    lines = _transcript(mcp_client)
+    for i in range(10):
+        at = lines.index(f"q{i}")
+        assert lines[at : at + 6] == [
+            f"q{i}", "pending", f"look:a{i}", f"saw a{i}", f"look:b{i}", f"saw b{i}"
+        ]  # fmt: skip
+
+
+def test_a_stream_turn_shows_its_images_before_the_next_message(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _CameraGraph(running_agent, {"q1": [("look", ["a", "b"])]})
+    held = Event()
+    stream = graph.stream
+
+    def hold_first(state: dict[str, list[BaseMessage]], stream_mode: str) -> Iterator[Any]:
+        held.wait(timeout=5)  # both messages are queued before the first turn runs
+        return stream(state, stream_mode)
+
+    monkeypatch.setattr(graph, "stream", hold_first)
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
+    events: list[str] = []
+    monkeypatch.setattr(
+        running_agent.agent_idle, "publish", lambda idle: events.append(f"idle={idle}")
+    )
+    monkeypatch.setattr(running_agent.agent, "publish", lambda m: events.append(_line(m)))
+
+    running_agent.add_message(HumanMessage("q1"))
+    running_agent.add_message(HumanMessage("q2"))
+    held.set()
+    wait_until(lambda: len(running_agent._history) == 8, timeout=5, interval=0.01)
+    wait_until(lambda: events[-1] == "idle=True", timeout=5, interval=0.01)
+
+    assert _transcript(running_agent) == [
+        "q1", "pending", "look:a", "saw a", "look:b", "saw b", "q2", "pending"
+    ]  # fmt: skip
+    assert "idle=True" not in events[: events.index("pending", events.index("q2"))]
+
+
+def _line(message: BaseMessage) -> str:
+    return "image" if TOOL_ORIGIN_KEY in message.additional_kwargs else str(message.content)
+
+
+def test_a_tool_result_with_several_images_queues_each_in_order(mcp_client: Agent) -> None:
+    """Through the real tool wrapper: text plus two images in one MCP result."""
+    images = [_image("a"), _image("b")]
+
+    def payload(body: dict[str, object]) -> dict[str, object]:
+        if body["method"] != "tools/call":
+            return _mock_payload(body)
+        content = [{"type": "text", "text": "two frames. "}, *images]
+        return {"jsonrpc": "2.0", "id": body["id"], "result": {"content": content}}
+
+    mcp_client._http_client = _mock_session(payload)
+    greet = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
+    assert greet.func is not None
+
+    reply = greet.func(name="Alice")
+
+    assert reply.startswith("two frames. ") and reply.count("Tool call started with UUID") == 2
+    assert [_blocks(m)[1] for m in mcp_client._artifacts] == images
+    for artifact in mcp_client._artifacts:
+        uuid_ = str(_blocks(artifact)[0]["text"]).split("UUID:=")[1].rstrip(".")
+        assert uuid_ in reply

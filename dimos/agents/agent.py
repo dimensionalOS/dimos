@@ -98,7 +98,7 @@ class AgentConfig(ModuleConfig):
     trace_dir: Path | None = None
 
 
-class Agent(BaseAgent):
+class Agent(BaseAgent[HumanMessage, AIMessage]):
     config: AgentConfig
 
     # Injected when the blueprint has an McpServer.
@@ -112,6 +112,7 @@ class Agent(BaseAgent):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
+    _artifacts: list[BaseMessage]
     _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
@@ -130,6 +131,7 @@ class Agent(BaseAgent):
             daemon=True,
         )
         self._stop_event = Event()
+        self._artifacts = []  # images the tools of the turn in progress returned
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
@@ -338,6 +340,19 @@ class Agent(BaseAgent):
         self._message_queue.put(message)
 
     @rpc
+    def infer(self, x: HumanMessage) -> AIMessage:
+        """Run one turn on x, under the lock the message loop takes, and return its answer."""
+        with self._lock:
+            if self._state_graph is None or self._stop_event.is_set():
+                raise RuntimeError("Agent is not running; it starts with the blueprint")
+            turn = self._process_message(self._state_graph, x)
+        answers = [m for m in turn if isinstance(m, AIMessage)]
+        failed = [m for m in answers if TURN_FAILED_KEY in m.additional_kwargs]
+        if failed or not answers:
+            raise RuntimeError(str(failed[0].text) if failed else "The turn produced no answer")
+        return answers[-1]
+
+    @rpc
     def dispatch_continuation(
         self, continuation: dict[str, Any], continuation_context: dict[str, Any]
     ) -> None:
@@ -410,8 +425,21 @@ class Agent(BaseAgent):
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
-    ) -> None:
+    ) -> list[BaseMessage]:
+        """Run one turn on message and return every message the turn added to the history."""
         self.agent_idle.publish(False)
+        turn_start = len(self._history)
+        self._call_model(state_graph, message)
+        # The model sees an image a tool returned as the next message, before the turn ends.
+        while self._artifacts:
+            self._call_model(state_graph, self._artifacts.pop(0))
+        if self._message_queue.empty():
+            self.agent_idle.publish(True)
+        return self._history[turn_start:]
+
+    def _call_model(
+        self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
+    ) -> None:
         turn_start = len(self._history)
         self._record(message)
 
@@ -446,9 +474,6 @@ class Agent(BaseAgent):
                 )
             )
 
-        if self._message_queue.empty():
-            self.agent_idle.publish(True)
-
     def _record(self, message: BaseMessage) -> None:
         self._history.append(message)
         pretty_print_langchain_message(message)
@@ -468,7 +493,7 @@ def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
 
 def _append_image_to_history(agent: Agent, func_name: str, uuid_: str, result: Any) -> None:
     # Tagged with its tool, or chat UIs would show this user turn as typed input.
-    agent.add_message(
+    agent._artifacts.append(
         HumanMessage(
             content=[
                 {
