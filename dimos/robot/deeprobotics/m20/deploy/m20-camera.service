@@ -1,0 +1,30 @@
+# Copyright 2026 Dimensional Inc.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The M20's direct camera relay, on the vendor AOS board: captures both head
+# cameras off V4L2 as MJPEG, hardware-encodes H.264 (Rockchip mpph264enc) and
+# publishes CompressedVideo on zenoh. Runs instead of the vendor RTSP server
+# (two gst-launch pipelines into mediamtx): ExecStartPre frees the devices by
+# stopping those pipelines, so this wins even when the vendor launched them at
+# boot. The Desktop gateway passes the H.264 through to the browser (no decode/
+# re-encode), which frees the GOS big cores the old H.265 transcode used.
+[Unit]
+Description=DimOS M20 direct camera relay (V4L2 MJPEG -> H.264 -> zenoh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# free /dev/video0 and /dev/video2 from the vendor RTSP pipelines
+ExecStartPre=-/usr/bin/pkill -f gst-launch-1.0.*rtspclientsink
+ExecStartPre=/bin/sleep 1
+# the relay reads its launch config (topics/config/session) on stdin
+ExecStart=/bin/sh -c 'exec /usr/local/bin/m20_camera < /etc/dimos-m20-camera/config.json'
+Environment=DIMOS_TRANSPORT=zenoh
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
