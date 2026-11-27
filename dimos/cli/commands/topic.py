@@ -40,7 +40,9 @@ def echo(
 
 @topic_app.command()
 def send(
-    topic: str = typer.Argument(..., help="Topic to send to, in any form that echo accepts"),
+    topic: str = typer.Argument(
+        ..., help="Topic to send to, in any form that echo accepts, without Zenoh wildcards"
+    ),
     message_expr: str = typer.Argument(..., help="Python expression for the message"),
 ) -> None:
     from dimos.cli.topic import topic_send

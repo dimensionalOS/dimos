@@ -46,13 +46,13 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, av | No |
-| `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
+| `sim` | MuJoCo simulation | mujoco, mjcf-to-urdf, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam | No |
-| `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
+| `cuda` | GPU inference and mesh generation | onnxruntime-gpu, warp-lang | **Yes** |
 | `cpu` | CPU inference backend | onnxruntime | No |
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |

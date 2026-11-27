@@ -149,6 +149,7 @@ DUAL_OPENYAM = DamiaoRobot(
     joint_names=[*DUAL_OPENYAM_ARM_JOINTS, *DUAL_OPENYAM_GRIPPER_JOINTS],
     gravity=True,
     home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
+    name="dual_openyam",
 )
 
 # dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
